@@ -42,6 +42,7 @@ impl rustc_driver::Callbacks for Callbacks {
             let mut visitor = Visitor { tcx };
             tcx.hir().deep_visit_all_item_likes(&mut visitor);
         });
+        println!("All elems walked");
         rustc_driver::Compilation::Stop
     }
 }
@@ -80,13 +81,28 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
             let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
             let loc_dom = flow.analysis.location_domain();
+            println!("{:?}", fd);
             use flowistry::indexed::IndexedDomain;
-            for loc in loc_dom.as_vec().iter() {
+            let ldom_vec = loc_dom.as_vec();
+            let ldom_v_len = ldom_vec.len();
+            for (i, loc) in ldom_vec.iter().enumerate() {
+                println!("Loc {} of {}", i, ldom_v_len);
                 let matrix = flow.state_at(*loc);
                 for (r, deps) in matrix.rows() {
-                    println!("{:?}:", r);
+                    println!("  {:?}:", r);
                     for loc in deps.iter() {
-                        println!("  {:?}", loc);
+                        print!("    ");
+                        let bi = loc.block.index();
+                        let bblen = body_with_facts.body.basic_blocks().len();
+                        if bi == bblen {
+                            println!("ref to end? bb {} of {}, stmt {}", bi, bblen, loc.statement_index);
+                        } else {
+                            body_with_facts.body.stmt_at(*loc).either(
+                                |stmt| println!("{:?}", stmt),
+                                |term| println!("{:?}", term.kind),
+                            )
+                            
+                        }
                     }
                 }
             }
