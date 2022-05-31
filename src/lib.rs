@@ -12,7 +12,7 @@ extern crate rustc_span;
 
 
 use clap::Parser;
-use flowistry::{infoflow, mir::borrowck_facts};
+use flowistry::{infoflow, mir::{borrowck_facts, utils::{BodyExt, location_to_string}}};
 use rustc_hir::{
     hir_id::HirId,
     intravisit::{self, FnKind},
@@ -80,29 +80,16 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
             let local_def_id = tcx.hir().body_owner_def_id(b);
             let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
-            let loc_dom = flow.analysis.location_domain();
+            let body = &body_with_facts.body;
             println!("{:?}", fd);
             use flowistry::indexed::IndexedDomain;
-            let ldom_vec = loc_dom.as_vec();
-            let ldom_v_len = ldom_vec.len();
-            for (i, loc) in ldom_vec.iter().enumerate() {
-                println!("Loc {} of {}", i, ldom_v_len);
-                let matrix = flow.state_at(*loc);
+            for loc in body.all_locations() {
+                let matrix = flow.state_at(loc);
                 for (r, deps) in matrix.rows() {
                     println!("  {:?}:", r);
                     for loc in deps.iter() {
                         print!("    ");
-                        let bi = loc.block.index();
-                        let bblen = body_with_facts.body.basic_blocks().len();
-                        if bi == bblen {
-                            println!("ref to end? bb {} of {}, stmt {}", bi, bblen, loc.statement_index);
-                        } else {
-                            body_with_facts.body.stmt_at(*loc).either(
-                                |stmt| println!("{:?}", stmt),
-                                |term| println!("{:?}", term.kind),
-                            )
-                            
-                        }
+                        println!("{}", location_to_string(*loc, body));
                     }
                 }
             }
