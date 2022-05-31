@@ -15,3 +15,6 @@ serde = { version = "1", features = ["derive"] }
 
 [[bin]]
 name = "cargo-dfpp"
+
+[[bin]]
+name = "dfpp"
