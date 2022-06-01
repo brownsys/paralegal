@@ -25,6 +25,7 @@ use std::collections::HashSet;
 use rustc_hir::{
     self as hir,
     hir_id::HirId,
+    def_id::DefId,
     intravisit::{self, FnKind},
     BodyId,
 };
@@ -98,6 +99,14 @@ impl rustc_driver::Callbacks for Callbacks {
     }
 }
 
+fn called_fn<'tcx>(tcx: TyCtxt<'tcx>, call: &mir::terminator::Terminator<'tcx>) -> Option<DefId> {
+    match &call.kind {
+        mir::terminator::TerminatorKind::Call { func: mir::Operand::Constant(konst), .. } => 
+            konst.check_static_ptr(tcx),
+        _ => None
+    }
+}
+
 pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     sink_marker: AttrMatchT,
@@ -106,7 +115,7 @@ pub struct Visitor<'tcx> {
     auth_witness_marker: AttrMatchT,
     marked_sinks: HashSet<HirId>,
     marked_sources: HashSet<HirId>,
-    functions_to_analyze: Vec<(BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
+    functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
 }
 
 impl<'tcx> Visitor<'tcx> {
@@ -148,44 +157,54 @@ impl<'tcx> Visitor<'tcx> {
     fn run(&mut self) {
         let tcx = self.tcx;
         tcx.hir().deep_visit_all_item_likes(self);
-        //println!("{:?}\n{:?}", self.marked_sinks, self.functions_to_analyze);
+        //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
         self.analyze();
     }
 
     fn analyze(&mut self) {
         let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
         let tcx = self.tcx;
-        for (b, fd) in targets.drain(..) {
+        let sink_fn_defs = self.marked_sinks.iter().map(|s| tcx.hir().local_def_id(*s).to_def_id()).collect::<HashSet<_>>();
+        let source_fn_defs = self.marked_sources.iter().map(|s| tcx.hir().local_def_id(*s).to_def_id()).collect::<HashSet<_>>();
+        for (id, b, fd) in targets.drain(..) {
             let local_def_id = tcx.hir().body_owner_def_id(b);
             let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
-            use flowistry::indexed::impls::LocationDomain;
+            use flowistry::indexed::{IndexedDomain, impls::LocationDomain};
             let body = &body_with_facts.body;
             let loc_dom = LocationDomain::new(body);
-
-            let auth_args = body
+            println!("{}", id.as_str());
+            let mut source_locs = body
                 .args_iter()
                 .zip(fd.inputs.iter())
                 .filter_map(|(l, t)| {
                     if self.is_interesting_type(t) {
-                        Some(l)
+                        Some(*loc_dom.value(loc_dom.arg_to_location(l)))
                     } else {
                         None
                     }
                 })
                 .collect::<Vec<_>>();
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
-            use flowistry::indexed::IndexedDomain;
-            /*             for loc in body.all_locations().filter(|l| self.is_interesting_loc(l)) {
-                println!("{}", location_to_string(loc, body));
+            for (bb, bbdat) in body.basic_blocks().iter_enumerated() { //.filter(|l| self.is_interesting_loc(l)) {
+                //println!("{}", location_to_string(loc, body));
+                let loc = body.terminator_loc(bb);
+                if let Some(p) = bbdat.terminator.as_ref().and_then(|term| called_fn(tcx, term)) {
+                    if source_fn_defs.contains(&p) {
+                        source_locs.push(loc);
+                    }
+                    if !sink_fn_defs.contains(&p) {
+                        continue;
+                    }
+                };
                 let matrix = flow.state_at(loc);
                 for (r, deps) in matrix.rows() {
                     println!("  {:?}:", r);
-                    for loc in deps.iter().filter(|l| auth_args.contains(l)) {
+                    for loc in deps.iter().filter(|l| source_locs.contains(l)) {
                         print!("    ");
                         println!("{}", location_to_string(*loc, body));
                     }
                 }
-            } */
+            }
         }
     }
 }
@@ -226,12 +245,12 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
         s: Span,
         id: HirId,
     ) {
-        if match &fk {
-            FnKind::ItemFn(_, _, _) | FnKind::Method(_, _) => self.is_interesting_fn(id),
-            _ => false,
-        } {
-            self.functions_to_analyze.push((b, fd));
-        };
+        match &fk {
+            FnKind::ItemFn(ident, _, _) | FnKind::Method(ident, _) if self.is_interesting_fn(id) => {
+                self.functions_to_analyze.push((*ident, b, fd));
+            }
+            _ => (),
+        } 
 
         // dispatch to recursive walk. This is probably unnecessary but if in
         // the future we decide to do something with nested items we may need
