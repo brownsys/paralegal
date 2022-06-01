@@ -113,6 +113,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "flowistry",
+ "lazy_static",
  "rustc_plugin",
  "serde",
 ]

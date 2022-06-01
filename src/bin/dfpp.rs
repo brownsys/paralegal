@@ -1,4 +1,3 @@
-
 extern crate rustc_plugin;
 
 fn main() {

@@ -12,6 +12,7 @@ flowistry = { version = "0.5.23", path = "../flowistry/crates/flowistry"}
 rustc_plugin = { versio = "0.5.23", path = "../flowistry/crates/rustc_plugin"}
 clap = { version = "3", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+lazy_static = "1"
 
 [[bin]]
 name = "cargo-dfpp"

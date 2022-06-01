@@ -1,25 +1,70 @@
 #![feature(rustc_private)]
 
 extern crate clap;
-extern crate serde;
 extern crate rustc_plugin;
+extern crate serde;
 
+extern crate rustc_ast;
+extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_span;
 
-
 use clap::Parser;
-use flowistry::{infoflow, mir::{borrowck_facts, utils::{BodyExt, location_to_string}}};
+use flowistry::{
+    infoflow,
+    mir::{
+        borrowck_facts,
+        utils::{location_to_string, BodyExt},
+    },
+};
+use std::collections::HashSet;
+
 use rustc_hir::{
+    self as hir,
     hir_id::HirId,
     intravisit::{self, FnKind},
     BodyId,
 };
-use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
-use rustc_span::{symbol::Ident, Span};
+use rustc_middle::{hir::nested_filter::OnlyBodies, mir, ty::TyCtxt};
+use rustc_span::{symbol::Ident, Span, Symbol};
+
+type AttrMatchT = Vec<Symbol>;
+
+trait MetaItemMatch {
+    fn matches_path(&self, p: &[Symbol]) -> bool;
+}
+
+impl MetaItemMatch for rustc_ast::ast::Attribute {
+    fn matches_path(&self, p: &[Symbol]) -> bool {
+        match &self.kind {
+            rustc_ast::ast::AttrKind::Normal(
+                rustc_ast::ast::AttrItem {
+                    args: rustc_ast::ast::MacArgs::Empty,
+                    path,
+                    ..
+                },
+                _,
+            ) => {
+                path.segments.len() == p.len()
+                    && path
+                        .segments
+                        .iter()
+                        .zip(p)
+                        .all(|(seg, i)| seg.ident.name == *i)
+            }
+            _ => false,
+        }
+    }
+}
+
+macro_rules! sym_vec {
+    ($($e:expr),*) => {
+        vec![$(Symbol::intern($e)),*]
+    };
+}
 
 pub struct DfppPlugin;
 
@@ -39,8 +84,14 @@ impl rustc_driver::Callbacks for Callbacks {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().take().enter(|tcx| {
-            let mut visitor = Visitor { tcx };
-            tcx.hir().deep_visit_all_item_likes(&mut visitor);
+            Visitor::new(
+                tcx,
+                sym_vec!["dfpp", "sink"],
+                sym_vec!["dfpp", "source"],
+                sym_vec!["dfpp", "analyze"],
+                sym_vec!["dfpp", "auth_witness"],
+            )
+            .run();
         });
         println!("All elems walked");
         rustc_driver::Compilation::Stop
@@ -49,11 +100,93 @@ impl rustc_driver::Callbacks for Callbacks {
 
 pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,
+    sink_marker: AttrMatchT,
+    source_marker: AttrMatchT,
+    analyze_marker: AttrMatchT,
+    auth_witness_marker: AttrMatchT,
+    marked_sinks: HashSet<HirId>,
+    marked_sources: HashSet<HirId>,
+    functions_to_analyze: Vec<(BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
 }
 
 impl<'tcx> Visitor<'tcx> {
-    fn is_interesting(&self, ident: &Ident) -> bool {
-        ["answers"].contains(&ident.as_str())
+    fn new(
+        tcx: TyCtxt<'tcx>,
+        sink_marker: AttrMatchT,
+        source_marker: AttrMatchT,
+        analyze_marker: AttrMatchT,
+        auth_witness_marker: AttrMatchT,
+    ) -> Self {
+        Self {
+            tcx,
+            sink_marker,
+            source_marker,
+            analyze_marker,
+            auth_witness_marker,
+            marked_sinks: HashSet::new(),
+            marked_sources: HashSet::new(),
+            functions_to_analyze: vec![],
+        }
+    }
+
+    fn is_interesting_fn(&self, ident: HirId) -> bool {
+        self.tcx
+            .hir()
+            .attrs(ident)
+            .iter()
+            .any(|a| a.matches_path(&self.analyze_marker))
+    }
+
+    fn is_interesting_type(&self, ty: &hir::Ty) -> bool {
+        self.tcx
+            .hir()
+            .attrs(ty.hir_id)
+            .iter()
+            .any(|a| a.matches_path(&self.auth_witness_marker))
+    }
+
+    fn run(&mut self) {
+        let tcx = self.tcx;
+        tcx.hir().deep_visit_all_item_likes(self);
+        //println!("{:?}\n{:?}", self.marked_sinks, self.functions_to_analyze);
+        self.analyze();
+    }
+
+    fn analyze(&mut self) {
+        let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
+        let tcx = self.tcx;
+        for (b, fd) in targets.drain(..) {
+            let local_def_id = tcx.hir().body_owner_def_id(b);
+            let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
+            use flowistry::indexed::impls::LocationDomain;
+            let body = &body_with_facts.body;
+            let loc_dom = LocationDomain::new(body);
+
+            let auth_args = body
+                .args_iter()
+                .zip(fd.inputs.iter())
+                .filter_map(|(l, t)| {
+                    if self.is_interesting_type(t) {
+                        Some(l)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let flow = infoflow::compute_flow(tcx, b, body_with_facts);
+            use flowistry::indexed::IndexedDomain;
+            /*             for loc in body.all_locations().filter(|l| self.is_interesting_loc(l)) {
+                println!("{}", location_to_string(loc, body));
+                let matrix = flow.state_at(loc);
+                for (r, deps) in matrix.rows() {
+                    println!("  {:?}:", r);
+                    for loc in deps.iter().filter(|l| auth_args.contains(l)) {
+                        print!("    ");
+                        println!("{}", location_to_string(*loc, body));
+                    }
+                }
+            } */
+        }
     }
 }
 
@@ -62,6 +195,27 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
 
     fn nested_visit_map(&mut self) -> Self::Map {
         self.tcx.hir()
+    }
+
+    fn visit_id(&mut self, id: HirId) {
+        if self
+            .tcx
+            .hir()
+            .attrs(id)
+            .iter()
+            .any(|a| a.matches_path(&self.sink_marker))
+        {
+            self.marked_sinks.insert(id);
+        }
+        if self
+            .tcx
+            .hir()
+            .attrs(id)
+            .iter()
+            .any(|a| a.matches_path(&self.source_marker))
+        {
+            self.marked_sources.insert(id);
+        }
     }
 
     fn visit_fn(
@@ -73,26 +227,10 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
         id: HirId,
     ) {
         if match &fk {
-            FnKind::ItemFn(ident, _, _) | FnKind::Method(ident, _) => self.is_interesting(ident),
+            FnKind::ItemFn(_, _, _) | FnKind::Method(_, _) => self.is_interesting_fn(id),
             _ => false,
         } {
-            let tcx = self.tcx;
-            let local_def_id = tcx.hir().body_owner_def_id(b);
-            let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
-            let flow = infoflow::compute_flow(tcx, b, body_with_facts);
-            let body = &body_with_facts.body;
-            println!("{:?}", fd);
-            use flowistry::indexed::IndexedDomain;
-            for loc in body.all_locations() {
-                let matrix = flow.state_at(loc);
-                for (r, deps) in matrix.rows() {
-                    println!("  {:?}:", r);
-                    for loc in deps.iter() {
-                        print!("    ");
-                        println!("{}", location_to_string(*loc, body));
-                    }
-                }
-            }
+            self.functions_to_analyze.push((b, fd));
         };
 
         // dispatch to recursive walk. This is probably unnecessary but if in
@@ -128,4 +266,3 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks).run()
     }
 }
-
