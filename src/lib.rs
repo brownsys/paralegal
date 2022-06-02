@@ -24,12 +24,16 @@ use std::collections::HashSet;
 
 use rustc_hir::{
     self as hir,
-    hir_id::HirId,
     def_id::DefId,
+    hir_id::HirId,
     intravisit::{self, FnKind},
     BodyId,
 };
-use rustc_middle::{hir::nested_filter::OnlyBodies, mir, ty::TyCtxt};
+use rustc_middle::{
+    hir::nested_filter::OnlyBodies,
+    mir,
+    ty::{self, TyCtxt},
+};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 type AttrMatchT = Vec<Symbol>;
@@ -99,11 +103,23 @@ impl rustc_driver::Callbacks for Callbacks {
     }
 }
 
-fn called_fn<'tcx>(tcx: TyCtxt<'tcx>, call: &mir::terminator::Terminator<'tcx>) -> Option<DefId> {
+fn called_fn<'tcx>(call: &mir::terminator::Terminator<'tcx>) -> Option<DefId> {
     match &call.kind {
-        mir::terminator::TerminatorKind::Call { func: mir::Operand::Constant(konst), .. } => 
-            konst.check_static_ptr(tcx),
-        _ => None
+        mir::terminator::TerminatorKind::Call { func, .. } => {
+            if let Some(mir::Constant {
+                literal: mir::ConstantKind::Val(_, ty),
+                ..
+            }) = func.constant()
+            {
+                match ty.kind() {
+                    ty::FnDef(defid, _) => Some(*defid),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -164,12 +180,29 @@ impl<'tcx> Visitor<'tcx> {
     fn analyze(&mut self) {
         let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
         let tcx = self.tcx;
-        let sink_fn_defs = self.marked_sinks.iter().map(|s| tcx.hir().local_def_id(*s).to_def_id()).collect::<HashSet<_>>();
-        let source_fn_defs = self.marked_sources.iter().map(|s| tcx.hir().local_def_id(*s).to_def_id()).collect::<HashSet<_>>();
+        let sink_fn_defs = self
+            .marked_sinks
+            .iter()
+            .map(|s| tcx.hir().local_def_id(*s).to_def_id())
+            .collect::<HashSet<_>>();
+        let source_fn_defs = self
+            .marked_sources
+            .iter()
+            .map(|s| tcx.hir().local_def_id(*s).to_def_id())
+            .collect::<HashSet<_>>();
+        println!(
+            "Analysis begin:\n  {} targets\n  {} marked sinks\n  {} marked sources",
+            targets.len(),
+            sink_fn_defs.len(),
+            source_fn_defs.len()
+        );
         for (id, b, fd) in targets.drain(..) {
+            let mut called_fns_found = 0;
+            let mut source_fns_found = 0;
+            let mut sink_fn_defs_found = 0;
             let local_def_id = tcx.hir().body_owner_def_id(b);
             let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
-            use flowistry::indexed::{IndexedDomain, impls::LocationDomain};
+            use flowistry::indexed::{impls::LocationDomain, IndexedDomain};
             let body = &body_with_facts.body;
             let loc_dom = LocationDomain::new(body);
             println!("{}", id.as_str());
@@ -184,27 +217,59 @@ impl<'tcx> Visitor<'tcx> {
                     }
                 })
                 .collect::<Vec<_>>();
+            let source_args_found = source_locs.len();
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
-            for (bb, bbdat) in body.basic_blocks().iter_enumerated() { //.filter(|l| self.is_interesting_loc(l)) {
+            for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
+                //.filter(|l| self.is_interesting_loc(l)) {
                 //println!("{}", location_to_string(loc, body));
                 let loc = body.terminator_loc(bb);
-                if let Some(p) = bbdat.terminator.as_ref().and_then(|term| called_fn(tcx, term)) {
+                /* match bbdat.terminator.as_ref() {
+                    Some(mir::terminator::Terminator { kind, .. }) => {
+                        println!("{:?}", kind);
+                        match kind {
+                            mir::terminator::TerminatorKind::Call {
+                                func: mir::Operand::Constant(konst),
+                                ..
+                            } => {
+                                println!("  {:?}", konst.literal);
+                                match konst.literal {
+                                    mir::ConstantKind::Val(_, ty) => {
+                                        println!("  {:?}", ty.kind());
+                                        match ty.kind() {
+                                            ty::FnDef(defid, _) => {
+                                                println!("  {:?}", tcx.def_path(*defid))
+                                            }
+                                            _ => (),
+                                        }
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                    _ => (),
+                }; */
+                if let Some(p) = bbdat.terminator.as_ref().and_then(called_fn) {
+                    called_fns_found += 1;
                     if source_fn_defs.contains(&p) {
+                        source_fns_found += 1;
                         source_locs.push(loc);
                     }
-                    if !sink_fn_defs.contains(&p) {
-                        continue;
+                    if sink_fn_defs.contains(&p) {
+                        sink_fn_defs_found += 1;
+                        let matrix = flow.state_at(loc);
+                        for (r, deps) in matrix.rows() {
+                            println!("  {:?}:", r);
+                            for loc in deps.iter().filter(|l| source_locs.contains(l)) {
+                                print!("    ");
+                                println!("{}", location_to_string(*loc, body));
+                            }
+                        }
                     }
                 };
-                let matrix = flow.state_at(loc);
-                for (r, deps) in matrix.rows() {
-                    println!("  {:?}:", r);
-                    for loc in deps.iter().filter(|l| source_locs.contains(l)) {
-                        print!("    ");
-                        println!("{}", location_to_string(*loc, body));
-                    }
-                }
             }
+            println!("Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found);
         }
     }
 }
@@ -246,11 +311,13 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
         id: HirId,
     ) {
         match &fk {
-            FnKind::ItemFn(ident, _, _) | FnKind::Method(ident, _) if self.is_interesting_fn(id) => {
+            FnKind::ItemFn(ident, _, _) | FnKind::Method(ident, _)
+                if self.is_interesting_fn(id) =>
+            {
                 self.functions_to_analyze.push((*ident, b, fd));
             }
             _ => (),
-        } 
+        }
 
         // dispatch to recursive walk. This is probably unnecessary but if in
         // the future we decide to do something with nested items we may need
