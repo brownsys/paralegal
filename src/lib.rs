@@ -149,6 +149,19 @@ fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> b
     )
 }
 
+fn extract_places<'tcx>(t: &mir::Terminator<'tcx>, loc: mir::Location) -> HashSet<mir::Place<'tcx>> {
+    struct Visitor<'tcx>(HashSet<mir::Place<'tcx>>);
+    impl <'tcx> mir::visit::Visitor<'tcx> for Visitor<'tcx> {
+        fn visit_place(&mut self, place: &mir::Place<'tcx>, _ctx: mir::visit::PlaceContext, location: mir::Location) {
+            self.0.insert(*place);
+        }
+    }
+    let mut vis = Visitor(HashSet::new());
+    use mir::visit::MirVisitable;
+    t.apply(loc, &mut vis);
+    vis.0
+}
+
 pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     sink_marker: AttrMatchT,
@@ -239,18 +252,21 @@ impl<'tcx> Visitor<'tcx> {
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
             for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
                 let loc = body.terminator_loc(bb);
-                if let Some(p) = bbdat.terminator.as_ref().and_then(called_fn) {
+                if let Some((t, p)) = bbdat.terminator.as_ref().and_then(|t| called_fn(t).map(|p| (t, p))) {
                     called_fns_found += 1;
                     if source_fn_defs.contains(&p) {
                         source_fns_found += 1;
                         source_locs.push(loc);
                     }
                     if sink_fn_defs.contains(&p) {
+                        let mentioned_places = extract_places(t, loc);
                         sink_fn_defs_found += 1;
                         let matrix = flow.state_at(loc);
-                        for (r, deps) in matrix.rows() {
-                            println!("  {:?}:", r);
-                            for loc in deps.iter().filter(|l| source_locs.contains(l)) {
+                        for r in mentioned_places.iter() {
+                            let deps = matrix.row(*r);
+                            let mut header_printed = false;
+                            for loc in deps.filter(|l| source_locs.contains(l)) {
+                                if !header_printed { println!("  {:?}:", r); header_printed = true };
                                 print!("    ");
                                 println!("{}", location_to_string(*loc, body));
                             }
