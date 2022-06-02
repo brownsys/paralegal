@@ -123,6 +123,32 @@ fn called_fn<'tcx>(call: &mir::terminator::Terminator<'tcx>) -> Option<DefId> {
     }
 }
 
+fn ty_def(ty: &ty::Ty) -> Option<DefId> {
+    match ty.kind() {
+        ty::TyKind::Adt(def, _) => Some(def.did()),
+        ty::TyKind::Foreign(did) 
+        | ty::TyKind::FnDef(did, _)
+        | ty::TyKind::Closure(did, _)
+        | ty::TyKind::Generator(did, _, _)
+        | ty::TyKind::Opaque(did, _) => Some(*did),
+        _ => None,
+    }
+}
+
+fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> bool {
+    ty.walk().any(|generic|
+        if let ty::subst::GenericArgKind::Type(ty) = generic.unpack() {
+            ty_def(&ty).and_then(DefId::as_local).map_or(false, |def|
+                tcx.hir().attrs(tcx.hir().local_def_id_to_hir_id(def))
+                .iter()
+                .any(|a| a.matches_path(auth_witness_marker)))
+            
+        } else {
+            false
+        }
+    )
+}
+
 pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     sink_marker: AttrMatchT,
@@ -162,13 +188,6 @@ impl<'tcx> Visitor<'tcx> {
             .any(|a| a.matches_path(&self.analyze_marker))
     }
 
-    fn is_interesting_type(&self, ty: &hir::Ty) -> bool {
-        self.tcx
-            .hir()
-            .attrs(ty.hir_id)
-            .iter()
-            .any(|a| a.matches_path(&self.auth_witness_marker))
-    }
 
     fn run(&mut self) {
         let tcx = self.tcx;
@@ -208,9 +227,8 @@ impl<'tcx> Visitor<'tcx> {
             println!("{}", id.as_str());
             let mut source_locs = body
                 .args_iter()
-                .zip(fd.inputs.iter())
-                .filter_map(|(l, t)| {
-                    if self.is_interesting_type(t) {
+                .filter_map(|l| {
+                    if type_has_ann(tcx, &self.auth_witness_marker, &body.local_decls[l].ty) {
                         Some(*loc_dom.value(loc_dom.arg_to_location(l)))
                     } else {
                         None
@@ -220,36 +238,7 @@ impl<'tcx> Visitor<'tcx> {
             let source_args_found = source_locs.len();
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
             for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
-                //.filter(|l| self.is_interesting_loc(l)) {
-                //println!("{}", location_to_string(loc, body));
                 let loc = body.terminator_loc(bb);
-                /* match bbdat.terminator.as_ref() {
-                    Some(mir::terminator::Terminator { kind, .. }) => {
-                        println!("{:?}", kind);
-                        match kind {
-                            mir::terminator::TerminatorKind::Call {
-                                func: mir::Operand::Constant(konst),
-                                ..
-                            } => {
-                                println!("  {:?}", konst.literal);
-                                match konst.literal {
-                                    mir::ConstantKind::Val(_, ty) => {
-                                        println!("  {:?}", ty.kind());
-                                        match ty.kind() {
-                                            ty::FnDef(defid, _) => {
-                                                println!("  {:?}", tcx.def_path(*defid))
-                                            }
-                                            _ => (),
-                                        }
-                                    }
-                                    _ => (),
-                                }
-                            }
-                            _ => (),
-                        }
-                    }
-                    _ => (),
-                }; */
                 if let Some(p) = bbdat.terminator.as_ref().and_then(called_fn) {
                     called_fns_found += 1;
                     if source_fn_defs.contains(&p) {
