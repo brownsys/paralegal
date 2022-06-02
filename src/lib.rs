@@ -126,7 +126,7 @@ fn called_fn<'tcx>(call: &mir::terminator::Terminator<'tcx>) -> Option<DefId> {
 fn ty_def(ty: &ty::Ty) -> Option<DefId> {
     match ty.kind() {
         ty::TyKind::Adt(def, _) => Some(def.did()),
-        ty::TyKind::Foreign(did) 
+        ty::TyKind::Foreign(did)
         | ty::TyKind::FnDef(did, _)
         | ty::TyKind::Closure(did, _)
         | ty::TyKind::Generator(did, _, _)
@@ -136,23 +136,32 @@ fn ty_def(ty: &ty::Ty) -> Option<DefId> {
 }
 
 fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> bool {
-    ty.walk().any(|generic|
+    ty.walk().any(|generic| {
         if let ty::subst::GenericArgKind::Type(ty) = generic.unpack() {
-            ty_def(&ty).and_then(DefId::as_local).map_or(false, |def|
-                tcx.hir().attrs(tcx.hir().local_def_id_to_hir_id(def))
-                .iter()
-                .any(|a| a.matches_path(auth_witness_marker)))
-            
+            ty_def(&ty).and_then(DefId::as_local).map_or(false, |def| {
+                tcx.hir()
+                    .attrs(tcx.hir().local_def_id_to_hir_id(def))
+                    .iter()
+                    .any(|a| a.matches_path(auth_witness_marker))
+            })
         } else {
             false
         }
-    )
+    })
 }
 
-fn extract_places<'tcx>(t: &mir::Terminator<'tcx>, loc: mir::Location) -> HashSet<mir::Place<'tcx>> {
+fn extract_places<'tcx>(
+    t: &mir::Terminator<'tcx>,
+    loc: mir::Location,
+) -> HashSet<mir::Place<'tcx>> {
     struct Visitor<'tcx>(HashSet<mir::Place<'tcx>>);
-    impl <'tcx> mir::visit::Visitor<'tcx> for Visitor<'tcx> {
-        fn visit_place(&mut self, place: &mir::Place<'tcx>, _ctx: mir::visit::PlaceContext, location: mir::Location) {
+    impl<'tcx> mir::visit::Visitor<'tcx> for Visitor<'tcx> {
+        fn visit_place(
+            &mut self,
+            place: &mir::Place<'tcx>,
+            _ctx: mir::visit::PlaceContext,
+            location: mir::Location,
+        ) {
             self.0.insert(*place);
         }
     }
@@ -200,7 +209,6 @@ impl<'tcx> Visitor<'tcx> {
             .iter()
             .any(|a| a.matches_path(&self.analyze_marker))
     }
-
 
     fn run(&mut self) {
         let tcx = self.tcx;
@@ -252,7 +260,11 @@ impl<'tcx> Visitor<'tcx> {
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
             for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
                 let loc = body.terminator_loc(bb);
-                if let Some((t, p)) = bbdat.terminator.as_ref().and_then(|t| called_fn(t).map(|p| (t, p))) {
+                if let Some((t, p)) = bbdat
+                    .terminator
+                    .as_ref()
+                    .and_then(|t| called_fn(t).map(|p| (t, p)))
+                {
                     called_fns_found += 1;
                     if source_fn_defs.contains(&p) {
                         source_fns_found += 1;
@@ -262,13 +274,23 @@ impl<'tcx> Visitor<'tcx> {
                         let mentioned_places = extract_places(t, loc);
                         sink_fn_defs_found += 1;
                         let matrix = flow.state_at(loc);
+                        let mut terminator_printed = false;
                         for r in mentioned_places.iter() {
                             let deps = matrix.row(*r);
                             let mut header_printed = false;
                             for loc in deps.filter(|l| source_locs.contains(l)) {
-                                if !header_printed { println!("  {:?}:", r); header_printed = true };
-                                print!("    ");
-                                println!("{}", location_to_string(*loc, body));
+                                if !terminator_printed {
+                                    println!("  {:?}", t.kind);
+                                    terminator_printed = true;
+                                }
+                                if !header_printed {
+                                    print!("    {:?}:", r);
+                                    header_printed = true
+                                };
+                                print!(" {}", location_to_string(*loc, body));
+                            }
+                            if header_printed {
+                                println!("")
                             }
                         }
                     }
