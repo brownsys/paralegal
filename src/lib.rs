@@ -90,6 +90,9 @@ pub struct DfppPlugin;
 
 #[derive(serde::Serialize, serde::Deserialize, Parser)]
 pub struct Args {
+    /// This argument doesn't do anything, but when cargo invokes `cargo-dfpp`
+    /// it always provides "dfpp" as the first argument and since we parse with
+    /// clap it otherwise complains about the superfluous argument.
     _progname: String,
     #[clap(short, long)]
     verbose: bool,
