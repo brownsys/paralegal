@@ -111,19 +111,24 @@ impl ProgramDescription {
         ProgramDescription { d: HashMap::new() }
     }
 
-    fn ser<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
+    fn ser_frg<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
         for (e, g) in self.d.iter() {
-            writeln!(w, "{e}:")?;
+            writeln!(w, "{e} = (")?;
+            let mut first_src = true;
             for (src, sinks) in g.g.0.iter() {
-                write!(w, "  {src} -> ")?;
-                let mut first = true;
+                if sinks.is_empty() { continue; }
+                if first_src { first_src = false }
+                else { write!(w, " +")}
+                writeln!(w, "  {src}->(")?;
+                let mut first_sink = true;
                 for (sink, sn) in sinks.iter() {
-                    if first { first = false }
-                    else { write!(w, ", "); }
-                    write!(w, "{sink}_{sn}")?;
+                    if first_sink { first_sink = false }
+                    else { writeln!(w, " +")?; }
+                    write!(w, "    {sink}_{sn}")?;
                 }
-                writeln!(w, "")?;
+                writeln!(w, ")")?;
             }
+            writeln!(w, ")")?;
         }
         Ok(())
     }
@@ -188,8 +193,8 @@ impl rustc_driver::Callbacks for Callbacks {
         }).unwrap();
         writeln!(self.printer.deref_mut(), "All elems walked").unwrap();
         let mut outf = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&self.res_p).unwrap();
-        res.ser(&mut outf).unwrap();
-        writeln!(self.printer.deref_mut(), "Wrote analysis result to {}", &self.res_p.canonicalize().unwrap().display());
+        res.ser_frg(&mut outf).unwrap();
+        writeln!(self.printer.deref_mut(), "Wrote analysis result to {}", &self.res_p.canonicalize().unwrap().display()).unwrap();
         rustc_driver::Compilation::Stop
     }
 }
@@ -325,7 +330,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             use flowistry::indexed::{impls::LocationDomain, IndexedDomain};
             let body = &body_with_facts.body;
             let loc_dom = LocationDomain::new(body);
-            writeln!(prnt, "{}", id.as_str());
+            writeln!(prnt, "{}", id.as_str())?;
             let mut source_locs = body
                 .args_iter()
                 .enumerate()
