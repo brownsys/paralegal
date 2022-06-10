@@ -246,24 +246,14 @@ fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> b
     })
 }
 
-type ContainedPlaces<'tcx> = Vec<mir::Place<'tcx>>;
-
-fn extract_places<'tcx>(t: &mir::Terminator<'tcx>, loc: mir::Location) -> ContainedPlaces<'tcx> {
-    struct Visitor<'tcx>(ContainedPlaces<'tcx>);
-    impl<'tcx> mir::visit::Visitor<'tcx> for Visitor<'tcx> {
-        fn visit_place(
-            &mut self,
-            place: &mir::Place<'tcx>,
-            _ctx: mir::visit::PlaceContext,
-            _location: mir::Location,
-        ) {
-            self.0.push(*place);
-        }
+fn extract_args<'tcx>(t: &mir::Terminator<'tcx>, loc: mir::Location) -> Option<Vec<Option<mir::Place<'tcx>>>> {
+    match &t.kind {
+        mir::TerminatorKind::Call {args, .. } => Some(args.iter().map(|a| match a {
+                mir::Operand::Move(p) | mir::Operand::Copy(p) => Some(*p),
+                mir::Operand::Constant(_) => None,
+            }).collect()),
+        _ => None,
     }
-    let mut vis = Visitor(ContainedPlaces::new());
-    use mir::visit::MirVisitable;
-    t.apply(loc, &mut vis);
-    vis.0
 }
 
 pub struct Visitor<'tcx, 'p> {
@@ -360,8 +350,8 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                         source_locs.insert(loc, format!("call_{}", tcx.item_name(p).to_string()));
                     }
                     if sink_fn_defs.contains(&p) {
-                        let ordered_mentioned_places = extract_places(t, loc);
-                        let mentioned_places = ordered_mentioned_places.iter().copied().collect::<HashSet<_>>();
+                        let ordered_mentioned_places = extract_args(t, loc).expect("Not a function call");
+                        let mentioned_places = ordered_mentioned_places.iter().filter_map(|a| *a).collect::<HashSet<_>>();
                         sink_fn_defs_found += 1;
                         let matrix = flow.state_at(loc);
                         let mut terminator_printed = false;
@@ -377,7 +367,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                                     write!(prnt, "    {:?}:", r)?;
                                     header_printed = true
                                 };
-                                flows.add(&source_locs[loc], (tcx.item_name(p).to_string(), ordered_mentioned_places.iter().enumerate().filter(|(i, e)| e == &r).next().unwrap().0));
+                                flows.add(&source_locs[loc], (tcx.item_name(p).to_string(), ordered_mentioned_places.iter().enumerate().filter(|(_, e)| **e == Some(*r)).next().unwrap().0));
                                 write!(prnt, " {}", location_to_string(*loc, body))?;
                             }
                             if header_printed {
