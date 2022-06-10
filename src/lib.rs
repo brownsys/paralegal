@@ -1,8 +1,13 @@
 #![feature(rustc_private)]
 
 extern crate clap;
+extern crate ordermap;
 extern crate rustc_plugin;
 extern crate serde;
+#[macro_use]
+extern crate trait_enum;
+#[macro_use]
+extern crate lazy_static;
 
 extern crate rustc_ast;
 extern crate rustc_data_structures;
@@ -20,7 +25,10 @@ use flowistry::{
         utils::{location_to_string, BodyExt},
     },
 };
-use std::collections::HashSet;
+use ordermap::OrderSet;
+use std::collections::{HashMap, HashSet};
+use std::io::{Sink, Stdout, Write};
+use std::ops::DerefMut;
 
 use rustc_hir::{
     self as hir,
@@ -37,6 +45,13 @@ use rustc_middle::{
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 type AttrMatchT = Vec<Symbol>;
+
+trait_enum! {
+    enum Printers : Write {
+        Stdout,
+        Sink,
+    }
+}
 
 trait MetaItemMatch {
     fn matches_path(&self, p: &[Symbol]) -> bool;
@@ -74,9 +89,63 @@ macro_rules! sym_vec {
 pub struct DfppPlugin;
 
 #[derive(serde::Serialize, serde::Deserialize, Parser)]
-pub struct Args {}
+pub struct Args {
+    #[clap(short, long)]
+    verbose: bool,
+}
 
-struct Callbacks;
+type Endpoint = String;
+
+struct ProgramDescription {
+    d: HashMap<Endpoint, DfGraph>,
+}
+
+impl ProgramDescription {
+    fn empty() -> Self {
+        ProgramDescription { d: HashMap::new() }
+    }
+}
+
+struct Relation<X, Y>(HashMap<X, HashSet<Y>>);
+
+impl<X, Y> Relation<X, Y> {
+    fn empty() -> Self {
+        Relation(HashMap::new())
+    }
+}
+
+type DataSource = String;
+type DataSink = (String, usize);
+
+struct DfGraph {
+    g: Relation<DataSource, DataSink>,
+}
+
+impl DfGraph {
+    fn empty() -> Self {
+        DfGraph {
+            g: Relation::empty(),
+        }
+    }
+    fn add(&mut self, from: &DataSource, to: DataSink) {
+        let m = &mut self.g.0;
+        if let Some(e) = m.get_mut(from) {
+            e.insert(to);
+        } else {
+            m.insert(from.clone(), std::iter::once(to).collect());
+        }
+    }
+}
+
+struct Callbacks(Printers);
+
+lazy_static! {
+    static ref SINK_MARKER: AttrMatchT = sym_vec!["dfpp", "sink"];
+    static ref SOURCE_MARKER: AttrMatchT = sym_vec!["dfpp", "source"];
+    static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
+    static ref AUTH_WITNESS_MARKER: AttrMatchT = sym_vec!["dfpp", "auth_witness"];
+    static ref SENSITIVE_MARKER: AttrMatchT = sym_vec!["dfpp", "sensitive"];
+}
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
@@ -88,17 +157,10 @@ impl rustc_driver::Callbacks for Callbacks {
         compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        queries.global_ctxt().unwrap().take().enter(|tcx| {
-            Visitor::new(
-                tcx,
-                sym_vec!["dfpp", "sink"],
-                sym_vec!["dfpp", "source"],
-                sym_vec!["dfpp", "analyze"],
-                sym_vec!["dfpp", "auth_witness"],
-            )
-            .run();
-        });
-        println!("All elems walked");
+        let res = queries.global_ctxt().unwrap().take().enter(|tcx| {
+            Visitor::new(tcx, &mut self.0).run()
+        }).unwrap();
+        writeln!(self.0.deref_mut(), "All elems walked").unwrap();
         rustc_driver::Compilation::Stop
     }
 }
@@ -150,55 +212,42 @@ fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> b
     })
 }
 
-fn extract_places<'tcx>(
-    t: &mir::Terminator<'tcx>,
-    loc: mir::Location,
-) -> HashSet<mir::Place<'tcx>> {
-    struct Visitor<'tcx>(HashSet<mir::Place<'tcx>>);
+type ContainedPlaces<'tcx> = Vec<mir::Place<'tcx>>;
+
+fn extract_places<'tcx>(t: &mir::Terminator<'tcx>, loc: mir::Location) -> ContainedPlaces<'tcx> {
+    struct Visitor<'tcx>(ContainedPlaces<'tcx>);
     impl<'tcx> mir::visit::Visitor<'tcx> for Visitor<'tcx> {
         fn visit_place(
             &mut self,
             place: &mir::Place<'tcx>,
             _ctx: mir::visit::PlaceContext,
-            location: mir::Location,
+            _location: mir::Location,
         ) {
-            self.0.insert(*place);
+            self.0.push(*place);
         }
     }
-    let mut vis = Visitor(HashSet::new());
+    let mut vis = Visitor(ContainedPlaces::new());
     use mir::visit::MirVisitable;
     t.apply(loc, &mut vis);
     vis.0
 }
 
-pub struct Visitor<'tcx> {
+pub struct Visitor<'tcx, 'p> {
     tcx: TyCtxt<'tcx>,
-    sink_marker: AttrMatchT,
-    source_marker: AttrMatchT,
-    analyze_marker: AttrMatchT,
-    auth_witness_marker: AttrMatchT,
     marked_sinks: HashSet<HirId>,
     marked_sources: HashSet<HirId>,
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
+    printers: &'p mut Printers,
 }
 
-impl<'tcx> Visitor<'tcx> {
-    fn new(
-        tcx: TyCtxt<'tcx>,
-        sink_marker: AttrMatchT,
-        source_marker: AttrMatchT,
-        analyze_marker: AttrMatchT,
-        auth_witness_marker: AttrMatchT,
-    ) -> Self {
+impl<'tcx, 'p> Visitor<'tcx, 'p> {
+    fn new(tcx: TyCtxt<'tcx>, printers: &'p mut Printers) -> Self {
         Self {
             tcx,
-            sink_marker,
-            source_marker,
-            analyze_marker,
-            auth_witness_marker,
             marked_sinks: HashSet::new(),
             marked_sources: HashSet::new(),
             functions_to_analyze: vec![],
+            printers,
         }
     }
 
@@ -207,19 +256,20 @@ impl<'tcx> Visitor<'tcx> {
             .hir()
             .attrs(ident)
             .iter()
-            .any(|a| a.matches_path(&self.analyze_marker))
+            .any(|a| a.matches_path(&ANALYZE_MARKER))
     }
 
-    fn run(&mut self) {
+    fn run(&mut self) -> std::io::Result<ProgramDescription> {
         let tcx = self.tcx;
         tcx.hir().deep_visit_all_item_likes(self);
         //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
-        self.analyze();
+        self.analyze()
     }
 
-    fn analyze(&mut self) {
+    fn analyze(&mut self) -> std::io::Result<ProgramDescription> {
         let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
         let tcx = self.tcx;
+        let prnt: &mut dyn Write = self.printers.deref_mut();
         let sink_fn_defs = self
             .marked_sinks
             .iter()
@@ -230,13 +280,14 @@ impl<'tcx> Visitor<'tcx> {
             .iter()
             .map(|s| tcx.hir().local_def_id(*s).to_def_id())
             .collect::<HashSet<_>>();
-        println!(
+        writeln!(
+            prnt,
             "Analysis begin:\n  {} targets\n  {} marked sinks\n  {} marked sources",
             targets.len(),
             sink_fn_defs.len(),
             source_fn_defs.len()
-        );
-        for (id, b, fd) in targets.drain(..) {
+        )?;
+        targets.drain(..).map(|(id, b, fd)| {
             let mut called_fns_found = 0;
             let mut source_fns_found = 0;
             let mut sink_fn_defs_found = 0;
@@ -245,19 +296,23 @@ impl<'tcx> Visitor<'tcx> {
             use flowistry::indexed::{impls::LocationDomain, IndexedDomain};
             let body = &body_with_facts.body;
             let loc_dom = LocationDomain::new(body);
-            println!("{}", id.as_str());
+            writeln!(prnt, "{}", id.as_str());
             let mut source_locs = body
                 .args_iter()
-                .filter_map(|l| {
-                    if type_has_ann(tcx, &self.auth_witness_marker, &body.local_decls[l].ty) {
-                        Some(*loc_dom.value(loc_dom.arg_to_location(l)))
+                .enumerate()
+                .filter_map(|(i, l)| {
+                    let ty = &body.local_decls[l].ty;
+                    if type_has_ann(tcx, &AUTH_WITNESS_MARKER, ty) ||
+                    type_has_ann(tcx, &SENSITIVE_MARKER, ty) {
+                        Some((*loc_dom.value(loc_dom.arg_to_location(l)), format!("arg_{}", i)))
                     } else {
                         None
                     }
                 })
-                .collect::<Vec<_>>();
+                .collect::<HashMap<_, _>>();
             let source_args_found = source_locs.len();
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
+            let mut flows = DfGraph::empty();
             for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
                 let loc = body.terminator_loc(bb);
                 if let Some((t, p)) = bbdat
@@ -268,40 +323,43 @@ impl<'tcx> Visitor<'tcx> {
                     called_fns_found += 1;
                     if source_fn_defs.contains(&p) {
                         source_fns_found += 1;
-                        source_locs.push(loc);
+                        source_locs.insert(loc, format!("call_{}", tcx.item_name(p).to_string()));
                     }
                     if sink_fn_defs.contains(&p) {
-                        let mentioned_places = extract_places(t, loc);
+                        let ordered_mentioned_places = extract_places(t, loc);
+                        let mentioned_places = ordered_mentioned_places.iter().copied().collect::<HashSet<_>>();
                         sink_fn_defs_found += 1;
                         let matrix = flow.state_at(loc);
                         let mut terminator_printed = false;
                         for r in mentioned_places.iter() {
                             let deps = matrix.row(*r);
                             let mut header_printed = false;
-                            for loc in deps.filter(|l| source_locs.contains(l)) {
+                            for loc in deps.filter(|l| source_locs.contains_key(l)) {
                                 if !terminator_printed {
-                                    println!("  {:?}", t.kind);
+                                    writeln!(prnt, "  {:?}", t.kind)?;
                                     terminator_printed = true;
                                 }
                                 if !header_printed {
-                                    print!("    {:?}:", r);
+                                    writeln!(prnt, "    {:?}:", r)?;
                                     header_printed = true
                                 };
-                                print!(" {}", location_to_string(*loc, body));
+                                flows.add(&source_locs[loc], (tcx.item_name(p).to_string(), ordered_mentioned_places.iter().enumerate().filter(|(i, e)| e == &r).next().unwrap().0));
+                                write!(prnt, " {}", location_to_string(*loc, body))?;
                             }
                             if header_printed {
-                                println!("")
+                                write!(prnt, "")?;
                             }
                         }
                     }
                 };
             }
-            println!("Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found);
-        }
+            writeln!(prnt, "Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found)?;
+            Ok((id.as_str().to_string(), flows))
+        }).collect::<std::io::Result<HashMap<Endpoint,DfGraph>>>().map(|d| ProgramDescription { d })
     }
 }
 
-impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
+impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
     type NestedFilter = OnlyBodies;
 
     fn nested_visit_map(&mut self) -> Self::Map {
@@ -314,7 +372,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
             .hir()
             .attrs(id)
             .iter()
-            .any(|a| a.matches_path(&self.sink_marker))
+            .any(|a| a.matches_path(&SINK_MARKER))
         {
             self.marked_sinks.insert(id);
         }
@@ -323,7 +381,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
             .hir()
             .attrs(id)
             .iter()
-            .any(|a| a.matches_path(&self.source_marker))
+            .any(|a| a.matches_path(&SOURCE_MARKER))
         {
             self.marked_sources.insert(id);
         }
@@ -365,7 +423,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         target_dir: &rustc_plugin::Utf8Path,
     ) -> rustc_plugin::RustcPluginArgs<Self::Args> {
         rustc_plugin::RustcPluginArgs {
-            args: Args {},
+            args: Args::parse(),
             file: None,
             flags: None,
         }
@@ -376,6 +434,11 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
-        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks).run()
+        let printers = if plugin_args.verbose {
+            Printers::Stdout(std::io::stdout())
+        } else {
+            Printers::Sink(std::io::sink())
+        };
+        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks(printers)).run()
     }
 }

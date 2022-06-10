@@ -114,13 +114,15 @@ dependencies = [
  "clap",
  "flowistry",
  "lazy_static",
+ "ordermap",
  "rustc_plugin",
  "serde",
+ "trait_enum",
 ]
 
 [[package]]
 name = "flowistry"
-version = "0.5.23"
+version = "0.5.24"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -205,6 +207,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordermap"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a86ed3f5f244b372d6b1a00b72ef7f8876d0bc6a78a4c9985c53614041512063"
+
+[[package]]
 name = "os_str_bytes"
 version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -254,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "rustc_plugin"
-version = "0.5.23"
+version = "0.5.24"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -352,6 +360,12 @@ name = "textwrap"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1141d4d61095b28419e22cb0bbf02755f5e54e0526f97f1e3d1d160e60885fb"
+
+[[package]]
+name = "trait_enum"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "130dd741d3c71f76d031e58caffff3624eaaa2db9bd8c4b05406a71885300fc7"
 
 [[package]]
 name = "unicode-ident"
