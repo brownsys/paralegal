@@ -90,8 +90,11 @@ pub struct DfppPlugin;
 
 #[derive(serde::Serialize, serde::Deserialize, Parser)]
 pub struct Args {
+    _progname: String,
     #[clap(short, long)]
     verbose: bool,
+    #[clap(long, default_value = "analysis_result.txt")]
+    result_path: std::path::PathBuf,
 }
 
 type Endpoint = String;
@@ -103,6 +106,23 @@ struct ProgramDescription {
 impl ProgramDescription {
     fn empty() -> Self {
         ProgramDescription { d: HashMap::new() }
+    }
+
+    fn ser<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
+        for (e, g) in self.d.iter() {
+            writeln!(w, "{e}:")?;
+            for (src, sinks) in g.g.0.iter() {
+                write!(w, "  {src} -> ")?;
+                let mut first = true;
+                for (sink, sn) in sinks.iter() {
+                    if first { first = false }
+                    else { write!(w, ", "); }
+                    write!(w, "{sink}_{sn}")?;
+                }
+                writeln!(w, "")?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -137,7 +157,10 @@ impl DfGraph {
     }
 }
 
-struct Callbacks(Printers);
+struct Callbacks {
+    printer: Printers,
+    res_p: std::path::PathBuf,
+}
 
 lazy_static! {
     static ref SINK_MARKER: AttrMatchT = sym_vec!["dfpp", "sink"];
@@ -158,9 +181,12 @@ impl rustc_driver::Callbacks for Callbacks {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         let res = queries.global_ctxt().unwrap().take().enter(|tcx| {
-            Visitor::new(tcx, &mut self.0).run()
+            Visitor::new(tcx, &mut self.printer).run()
         }).unwrap();
-        writeln!(self.0.deref_mut(), "All elems walked").unwrap();
+        writeln!(self.printer.deref_mut(), "All elems walked").unwrap();
+        let mut outf = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&self.res_p).unwrap();
+        res.ser(&mut outf).unwrap();
+        writeln!(self.printer.deref_mut(), "Wrote analysis result to {}", &self.res_p.canonicalize().unwrap().display());
         rustc_driver::Compilation::Stop
     }
 }
@@ -340,14 +366,14 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                                     terminator_printed = true;
                                 }
                                 if !header_printed {
-                                    writeln!(prnt, "    {:?}:", r)?;
+                                    write!(prnt, "    {:?}:", r)?;
                                     header_printed = true
                                 };
                                 flows.add(&source_locs[loc], (tcx.item_name(p).to_string(), ordered_mentioned_places.iter().enumerate().filter(|(i, e)| e == &r).next().unwrap().0));
                                 write!(prnt, " {}", location_to_string(*loc, body))?;
                             }
                             if header_printed {
-                                write!(prnt, "")?;
+                                writeln!(prnt, "")?;
                             }
                         }
                     }
@@ -434,11 +460,12 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
-        let printers = if plugin_args.verbose {
+        let printer = if plugin_args.verbose {
             Printers::Stdout(std::io::stdout())
         } else {
             Printers::Sink(std::io::sink())
         };
-        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks(printers)).run()
+        let res_p = plugin_args.result_path;
+        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks{printer, res_p}).run()
     }
 }
