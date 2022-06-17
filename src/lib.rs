@@ -101,45 +101,77 @@ pub struct Args {
     result_path: std::path::PathBuf,
 }
 
-type Endpoint = String;
+type Endpoint = Identifier;
 
 struct ProgramDescription {
     d: HashMap<Endpoint, DfGraph>,
 }
 
+trait ToForge {
+    fn as_forge<'b, 'a : 'b, A: pretty::DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> pretty::DocBuilder<'b, A, ()> 
+    where A::Doc: Clone;
+}
+
+
 impl ProgramDescription {
     fn empty() -> Self {
         ProgramDescription { d: HashMap::new() }
     }
+}
 
-    fn ser_frg_doc<'b, A: pretty::DocAllocator<'b, ()>>(&self, mk: &'b A) -> pretty::DocBuilder<'b, A, ()> 
+impl ToForge for Identifier {
+    fn as_forge<'b, 'a : 'b, A: pretty::DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> pretty::DocBuilder<'b, A, ()> 
+    where A::Doc: Clone {
+        alloc.text(&self.0)
+    }
+}
+
+impl <X: ToForge, Y:ToForge> ToForge for Relation<X,Y> {
+    fn as_forge<'b, 'a : 'b, A: pretty::DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> pretty::DocBuilder<'b, A, ()> 
+    where A::Doc: Clone {
+        alloc.intersperse(
+            self.0.iter().map(|(src, sinks)|
+                src.as_forge(alloc)
+                    .append("->")
+                    .append(
+                        alloc.intersperse(
+                            sinks.iter().map(|sink| sink.as_forge(alloc)), alloc.text(" + ")).parens())
+            ),
+            alloc.text(" +").append(alloc.hardline())
+        )
+    }
+}
+
+impl ToForge for DataSink {
+    fn as_forge<'b, 'a : 'b, A: pretty::DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> pretty::DocBuilder<'b, A, ()> 
+    where A::Doc: Clone {
+        self.function.as_forge(alloc).append(alloc.text("_")).append(alloc.as_string(self.arg_slot))
+    }
+}
+
+
+impl ToForge for ProgramDescription {
+    fn as_forge<'b, 'a : 'b, A: pretty::DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> pretty::DocBuilder<'b, A, ()> 
     where A::Doc: Clone
     {
-        mk.intersperse(
+        alloc.intersperse(
             self.d.iter().map(|(e, g)| 
-                mk.as_string(e)
+                alloc.as_string(e)
                     .append(" = ")
                     .append(
-                        mk.hardline()
+                        alloc.hardline()
                         .append(
-                            mk.intersperse(
-                                g.g.0.iter().map(|(src, sinks)|
-                                    mk.as_string(src)
-                                        .append("->")
-                                        .append(
-                                            mk.intersperse(
-                                                sinks.iter().map(|(sink, sn)| mk.as_string(sink).append(mk.text("_")).append(mk.as_string(sn))), mk.text(" + ")).parens())
-                                ),
-                                mk.text(" +").append(mk.hardline())
-                            ).indent(4)
+                            g.g.as_forge(alloc).indent(4)
                         )
                         .parens()
                     )
             ),
-            mk.hardline()
+            alloc.hardline()
         )
     }
+}
 
+impl ProgramDescription {
     fn ser_frg<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
         for (e, g) in self.d.iter() {
             writeln!(w, "{e} = (")?;
@@ -150,16 +182,25 @@ impl ProgramDescription {
                 else { write!(w, " +")?}
                 writeln!(w, "  {src}->(")?;
                 let mut first_sink = true;
-                for (sink, sn) in sinks.iter() {
+                for sink in sinks.iter() {
                     if first_sink { first_sink = false }
                     else { writeln!(w, " +")?; }
-                    write!(w, "    {sink}_{sn}")?;
+                    write!(w, "    {sink}_{sn}", sink=sink.function, sn= sink.arg_slot)?;
                 }
                 writeln!(w, ")")?;
             }
             writeln!(w, ")")?;
         }
         Ok(())
+    }
+}
+
+#[derive(Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone)]
+struct Identifier(String);
+
+impl std::fmt::Display for Identifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        self.0.fmt(f)
     }
 }
 
@@ -171,8 +212,13 @@ impl<X, Y> Relation<X, Y> {
     }
 }
 
-type DataSource = String;
-type DataSink = (String, usize);
+type DataSource = Identifier;
+
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+struct DataSink { 
+    function: Identifier,
+    arg_slot: usize
+}
 
 struct DfGraph {
     g: Relation<DataSource, DataSink>,
@@ -223,7 +269,7 @@ impl rustc_driver::Callbacks for Callbacks {
         writeln!(self.printer.deref_mut(), "All elems walked").unwrap();
         let mut outf = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&self.res_p).unwrap();
         let doc_alloc = pretty::BoxAllocator;
-        let doc = res.ser_frg_doc(&doc_alloc);
+        let doc = res.as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();
         writeln!(self.printer.deref_mut(), "Wrote analysis result to {}", &self.res_p.canonicalize().unwrap().display()).unwrap();
         rustc_driver::Compilation::Stop
@@ -398,7 +444,13 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                                     write!(prnt, "    {:?}:", r)?;
                                     header_printed = true
                                 };
-                                flows.add(&source_locs[loc], (tcx.item_name(p).to_string(), ordered_mentioned_places.iter().enumerate().filter(|(_, e)| **e == Some(*r)).next().unwrap().0));
+                                flows.add(
+                                    &Identifier(source_locs[loc].clone()), 
+                                    DataSink {
+                                        function: Identifier(tcx.item_name(p).to_string()),
+                                        arg_slot: ordered_mentioned_places.iter().enumerate().filter(|(_, e)| **e == Some(*r)).next().unwrap().0,
+                                    }
+                                );
                                 write!(prnt, " {}", location_to_string(*loc, body))?;
                             }
                             if header_printed {
@@ -409,7 +461,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                 };
             }
             writeln!(prnt, "Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found)?;
-            Ok((id.as_str().to_string(), flows))
+            Ok((Identifier(id.as_str().to_string()), flows))
         }).collect::<std::io::Result<HashMap<Endpoint,DfGraph>>>().map(|d| ProgramDescription { d })
     }
 }
