@@ -10,7 +10,7 @@ rustc_private = true
 [dependencies]
 flowistry = { version = "0.5.24", path = "../flowistry/crates/flowistry"}
 rustc_plugin = { versio = "0.5.24", path = "../flowistry/crates/rustc_plugin"}
-clap = { version = "3", features = ["derive"] }
+clap = { version = "3", features = ["derive", "cargo"] }
 serde = { version = "1", features = ["derive"] }
 lazy_static = "1"
 ordermap = "0.3"
