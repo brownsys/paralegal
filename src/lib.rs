@@ -8,6 +8,7 @@ extern crate serde;
 extern crate trait_enum;
 #[macro_use]
 extern crate lazy_static;
+extern crate pretty;
 
 extern crate rustc_ast;
 extern crate rustc_data_structures;
@@ -111,6 +112,34 @@ impl ProgramDescription {
         ProgramDescription { d: HashMap::new() }
     }
 
+    fn ser_frg_doc<'b, A: pretty::DocAllocator<'b, ()>>(&self, mk: &'b A) -> pretty::DocBuilder<'b, A, ()> 
+    where A::Doc: Clone
+    {
+        mk.intersperse(
+            self.d.iter().map(|(e, g)| 
+                mk.as_string(e)
+                    .append(" = ")
+                    .append(
+                        mk.hardline()
+                        .append(
+                            mk.intersperse(
+                                g.g.0.iter().map(|(src, sinks)|
+                                    mk.as_string(src)
+                                        .append("->")
+                                        .append(
+                                            mk.intersperse(
+                                                sinks.iter().map(|(sink, sn)| mk.as_string(sink).append(mk.text("_")).append(mk.as_string(sn))), mk.text(" + ")).parens())
+                                ),
+                                mk.text(" +").append(mk.hardline())
+                            ).indent(4)
+                        )
+                        .parens()
+                    )
+            ),
+            mk.hardline()
+        )
+    }
+
     fn ser_frg<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
         for (e, g) in self.d.iter() {
             writeln!(w, "{e} = (")?;
@@ -118,7 +147,7 @@ impl ProgramDescription {
             for (src, sinks) in g.g.0.iter() {
                 if sinks.is_empty() { continue; }
                 if first_src { first_src = false }
-                else { write!(w, " +")}
+                else { write!(w, " +")?}
                 writeln!(w, "  {src}->(")?;
                 let mut first_sink = true;
                 for (sink, sn) in sinks.iter() {
@@ -193,7 +222,9 @@ impl rustc_driver::Callbacks for Callbacks {
         }).unwrap();
         writeln!(self.printer.deref_mut(), "All elems walked").unwrap();
         let mut outf = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&self.res_p).unwrap();
-        res.ser_frg(&mut outf).unwrap();
+        let doc_alloc = pretty::BoxAllocator;
+        let doc = res.ser_frg_doc(&doc_alloc);
+        doc.render(100, &mut outf).unwrap();
         writeln!(self.printer.deref_mut(), "Wrote analysis result to {}", &self.res_p.canonicalize().unwrap().display()).unwrap();
         rustc_driver::Compilation::Stop
     }
