@@ -56,28 +56,30 @@ trait_enum! {
 }
 
 trait MetaItemMatch {
-    fn matches_path(&self, p: &[Symbol]) -> bool;
+    fn match_extract<A, F: Fn(&rustc_ast::MacArgs) -> A>(&self, p: &[Symbol], f: F) -> Option<A>;
+    fn matches_path(&self, p: &[Symbol]) -> bool {
+        self.match_extract(p, |_| ()).is_some()
+    }
 }
 
 impl MetaItemMatch for rustc_ast::ast::Attribute {
-    fn matches_path(&self, p: &[Symbol]) -> bool {
+    fn match_extract<A, F: Fn(&rustc_ast::MacArgs) -> A>(&self, p: &[Symbol], f: F) -> Option<A> {
         match &self.kind {
             rustc_ast::ast::AttrKind::Normal(
                 rustc_ast::ast::AttrItem {
-                    args: rustc_ast::ast::MacArgs::Empty,
                     path,
+                    args,
                     ..
                 },
                 _,
-            ) => {
-                path.segments.len() == p.len()
+            ) if path.segments.len() == p.len()
                     && path
                         .segments
                         .iter()
                         .zip(p)
                         .all(|(seg, i)| seg.ident.name == *i)
-            }
-            _ => false,
+            => Some(f(args)),
+            _ => None,
         }
     }
 }
@@ -431,9 +433,15 @@ fn extract_args<'tcx>(t: &mir::Terminator<'tcx>, loc: mir::Location) -> Option<V
     }
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct SinkAnnotationPayload {
+    leaks: Vec<u16>,
+    scopes: Vec<u16>,
+}
+
 pub struct Visitor<'tcx, 'p> {
     tcx: TyCtxt<'tcx>,
-    marked_sinks: HashSet<HirId>,
+    marked_sinks: HashMap<HirId, SinkAnnotationPayload>,
     marked_sources: HashSet<HirId>,
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
     printers: &'p mut Printers,
@@ -443,14 +451,14 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
     fn new(tcx: TyCtxt<'tcx>, printers: &'p mut Printers) -> Self {
         Self {
             tcx,
-            marked_sinks: HashSet::new(),
+            marked_sinks: HashMap::new(),
             marked_sources: HashSet::new(),
             functions_to_analyze: vec![],
             printers,
         }
     }
 
-    fn is_interesting_fn(&self, ident: HirId) -> bool {
+    fn should_analyze_function(&self, ident: HirId) -> bool {
         self.tcx
             .hir()
             .attrs(ident)
@@ -471,7 +479,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
         let prnt: &mut dyn Write = self.printers.deref_mut();
         let sink_fn_defs = self
             .marked_sinks
-            .iter()
+            .keys()
             .map(|s| tcx.hir().local_def_id(*s).to_def_id())
             .collect::<HashSet<_>>();
         let source_fn_defs = self
@@ -567,6 +575,135 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
     }
 }
 
+mod ann_parse {
+    use rustc_ast::{tokenstream, token};
+    use tokenstream::*;
+    use token::*;
+
+    pub extern crate nom;
+
+    use nom::{ Parser, error::{Error, ErrorKind}};
+
+    #[derive(Clone)]
+    pub struct I<'a>(CursorRef<'a>);
+    type R<'a, T> = nom::IResult<I<'a>, T>;
+
+    impl <'a> Iterator for I<'a> {
+        type Item = &'a TokenTree;
+        fn next(&mut self) -> Option<Self::Item> {
+            self.0.next()
+        }
+    }
+
+    impl <'a> I<'a> {
+        pub fn from_stream(s: &'a TokenStream) -> Self {
+            I(s.trees())
+        }
+    }
+
+    impl <'a> nom::InputLength for I<'a> {
+        fn input_len(&self) -> usize {
+            // Extremely yikes, but the only way to get to this information. :( 
+            // It's a trick to break visibility as per https://www.reddit.com/r/rust/comments/cfxg60/comment/eud8n3y/
+            type __EvilTarget<'a> = (&'a TokenStream, usize);
+            use std::mem::{size_of, transmute};
+            assert_eq!(size_of::<__EvilTarget>(), size_of::<Self>());
+            let slf = unsafe { transmute::<&Self, &__EvilTarget<'_>>(&self) };
+            slf.0.len() - slf.1
+        }
+    }
+    fn one<'a>() -> impl FnMut(I<'a>) -> R<'a, &'a TokenTree> {
+        |mut tree: I<'a>| match tree.next() {
+            None => Result::Err(nom::Err::Error(Error::new(tree, nom::error::ErrorKind::IsNot))),
+            Some(t) => Ok((tree, t))
+        }
+    }
+
+    pub fn one_token<'a>() -> impl FnMut(I<'a>) -> R<'a, &'a Token> {
+        nom::combinator::map_res(one(), |t| match t {
+            TokenTree::Token(t) => Ok(t),
+            _ => Result::Err(())
+        })
+    }
+
+    pub fn lit<'a, A, F: Fn(&str) -> Result<A, String> + 'a>(k: LitKind, f: F) -> impl FnMut(I<'a>) -> R<'a, A> 
+    {
+        nom::combinator::map_res(one_token(), move |t| match t {
+            Token { kind: TokenKind::Literal(Lit { kind: knd, symbol, .. }), .. } if *knd == k =>
+                f(symbol.as_str()),
+            _ => Result::Err("Wrong kind of token".to_string())
+        })
+    }
+
+    pub fn integer<'a>() -> impl FnMut(I<'a>) -> R<'a, u16> {
+        lit(LitKind::Integer, |symbol : &str| symbol.parse().map_err(|e : <u16 as std::str::FromStr>::Err| e.to_string()))
+    }
+
+
+    pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>>>(mut p: P, delim: Delimiter) -> impl FnMut(I<'a>) -> R<'a, A> {
+        move |i| one()(i).and_then(|(i, t)| match t {
+            TokenTree::Delimited(_, d, s) if *d == delim => p.parse(I::from_stream(s)).map(|(mut rest, r)| { assert!(rest.next().is_none());  (i, r) }),
+            _ => Result::Err(nom::Err::Error(Error::new(i, ErrorKind::Fail)))
+        })
+    }
+
+    pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
+        nom::combinator::map_res(one_token(), move |t| if *t == k { Ok(()) } else { Result::Err(()) })
+    }
+
+    pub fn dict<'a, K, V, P : Parser<I<'a>, K, Error<I<'a>>>, G : Parser<I<'a>, V, Error<I<'a>>>>(keys: P, values: G) -> impl FnMut(I<'a>) -> R<'a, Vec<(K, V)>>
+    {
+        delimited(
+            nom::multi::separated_list0(
+                assert_token(TokenKind::Comma),
+                nom::sequence::separated_pair(keys, assert_token(TokenKind::Eq), values)),
+            Delimiter::Brace
+        )
+    }
+}
+
+lazy_static! {
+    static ref LEAKS_SYM : Symbol = Symbol::intern("leaks");
+    static ref SCOPED_SYM : Symbol = Symbol::intern("scopes");
+    static ref SINK_ANN_SYMS : HashSet<Symbol> = [*LEAKS_SYM, *SCOPED_SYM].into_iter().collect();
+}
+
+fn sink_ann_match_fn(ann: &rustc_ast::MacArgs) -> SinkAnnotationPayload {
+    use rustc_ast::*;
+    use token::*;
+    use ann_parse::*;
+
+    let mut m = match ann {
+        ast::MacArgs::Delimited(sp, delim, stream) => {
+            let s = tokenstream::TokenStream::new(vec![tokenstream::TreeAndSpacing::from(tokenstream::TokenTree::Delimited(
+                sp.clone(), 
+                match delim {
+                    MacDelimiter::Parenthesis => Delimiter::Parenthesis,
+                    MacDelimiter::Brace => Delimiter::Brace,
+                    MacDelimiter::Bracket => Delimiter::Bracket,
+                },
+                stream.clone()
+            ))]);
+            let mut p = dict(
+                nom::combinator::map_res(one_token(), |t| match t.ident() {
+                    Some((Ident { name, ..}, _)) if SINK_ANN_SYMS.contains(&name) => Ok(name),
+                    _ => Result::Err(())
+                }),
+                delimited(
+                    nom::multi::separated_list0(assert_token(TokenKind::Comma), integer()),
+                    Delimiter::Bracket,
+                )
+            );
+            p(I::from_stream(&s)).unwrap_or_else(|_| panic!("parser failed")).1.into_iter().collect::<HashMap<_,_>>()
+        }
+        _ => panic!("Incorrect annotation")
+    };
+    SinkAnnotationPayload {
+        leaks: m.remove(&LEAKS_SYM).expect("leaks not found"),
+        scopes: m.remove(&SCOPED_SYM).expect("scoped not found"),
+    }
+}
+
 impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
     type NestedFilter = OnlyBodies;
 
@@ -575,14 +712,17 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
     }
 
     fn visit_id(&mut self, id: HirId) {
-        if self
+        let mut sink_matches = self
             .tcx
             .hir()
             .attrs(id)
             .iter()
-            .any(|a| a.matches_path(&SINK_MARKER))
+            .filter_map(|a| a.match_extract(&SINK_MARKER, sink_ann_match_fn))
+            .collect::<Vec<_>>();
+        assert!(sink_matches.len() < 2, "Double annotated sink function");
+        if let Some(anns) = sink_matches.pop()
         {
-            self.marked_sinks.insert(id);
+            self.marked_sinks.insert(id, anns);
         }
         if self
             .tcx
@@ -605,7 +745,7 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
     ) {
         match &fk {
             FnKind::ItemFn(ident, _, _) | FnKind::Method(ident, _)
-                if self.is_interesting_fn(id) =>
+                if self.should_analyze_function(id) =>
             {
                 self.functions_to_analyze.push((*ident, b, fd));
             }
