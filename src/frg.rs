@@ -65,6 +65,7 @@ const CTRL_NAME : &'static str = "Ctrl";
 const FLOW_NAME : &'static str = "flow";
 const SENSITIVE_NAME : &'static str = "sensitive";
 const WITNESS_NAME : &'static str = "witness";
+const FLOWS_PREDICATE_NAME: &'static str = "Flows";
 
 impl ToForge for ProgramDescription {
     fn as_forge<'b, 'a : 'b, A: DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> DocBuilder<'b, A, ()> 
@@ -77,7 +78,7 @@ impl ToForge for ProgramDescription {
             (FN_NAME, None, &[]),
             (ARG_NAME, Some(SRC_NAME), &[]),
             (CTRL_NAME, None, &[
-                (FLOW_NAME, "set Src->Fn"),
+                (FLOW_NAME, "set Src->Fn"), // I'd have liked to define these types in terms of other string constants, but it seems rust doesn't let you concatenate strings at compile time
                 (SENSITIVE_NAME, "set Src"),
                 (WITNESS_NAME, "set Src")
             ])
@@ -125,7 +126,7 @@ impl ToForge for ProgramDescription {
             alloc.nil(),
             alloc.lines(self.d.keys().map(|e| make_one_sig(alloc, e, CTRL_NAME))),
             alloc.nil(),
-            alloc.text("pred Flows ").append(
+            alloc.text("pred ").append(FLOWS_PREDICATE_NAME).append(" ").append(
                 alloc.hardline()
                     .append(
                         alloc.lines(
@@ -191,7 +192,9 @@ where A::Doc : Clone
                 alloc.hardline().append(
                     alloc.text("safety_properties: ").append(
                         alloc.hardline().append(
-                            alloc.text("all c: ").append(CTRL_NAME).append(" | ").append(
+                            alloc.text(FLOWS_PREDICATE_NAME)
+                            .append(" implies all c: ")
+                            .append(CTRL_NAME).append(" | ").append(
                                 alloc.hardline().append(
                                     alloc.lines(
                                         anns.keys().map(|i|
