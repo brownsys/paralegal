@@ -1,212 +1,363 @@
-
 extern crate pretty;
 
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
-use super::{Identifier, ProgramDescription, Relation, DataSink, SinkAnnotations};
+use super::{DataSink, Identifier, ProgramDescription, Relation, SinkAnnotations};
 
-trait DocLines<'a, A = ()> : DocAllocator<'a, A> 
-where A: 'a
+trait DocLines<'a, A = ()>: DocAllocator<'a, A>
+where
+    A: 'a,
 {
     #[inline]
     fn lines<I>(&'a self, docs: I) -> DocBuilder<'a, Self, A>
     where
         I: IntoIterator,
         I::Item: Pretty<'a, Self, A>,
-        DocBuilder<'a, Self, A> : Clone
+        DocBuilder<'a, Self, A>: Clone,
     {
-        self.intersperse(docs, self.hardline())  
+        self.intersperse(docs, self.hardline())
     }
 }
 
-impl <'a, T, A> DocLines<'a, A> for T
-where T : DocAllocator<'a, A>, A : 'a
-{}
+impl<'a, T, A> DocLines<'a, A> for T
+where
+    T: DocAllocator<'a, A>,
+    A: 'a,
+{
+}
 
 pub trait ToForge {
-    fn as_forge<'b, 'a : 'b, A: DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> DocBuilder<'b, A, ()> 
-    where A::Doc: Clone;
+    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
+        &'a self,
+        alloc: &'b A,
+    ) -> DocBuilder<'b, A, ()>
+    where
+        A::Doc: Clone;
 }
 
 impl ToForge for Identifier {
-    fn as_forge<'b, 'a : 'b, A: DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> DocBuilder<'b, A, ()> 
-    where A::Doc: Clone {
+    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
+        &'a self,
+        alloc: &'b A,
+    ) -> DocBuilder<'b, A, ()>
+    where
+        A::Doc: Clone,
+    {
         alloc.text(&self.0)
     }
 }
 
-impl <X: ToForge, Y:ToForge> ToForge for Relation<X,Y> {
-    fn as_forge<'b, 'a : 'b, A: DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> DocBuilder<'b, A, ()> 
-    where A::Doc: Clone {
+impl<X: ToForge, Y: ToForge> ToForge for Relation<X, Y> {
+    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
+        &'a self,
+        alloc: &'b A,
+    ) -> DocBuilder<'b, A, ()>
+    where
+        A::Doc: Clone,
+    {
         alloc.intersperse(
-            self.0.iter().map(|(src, sinks)|
-                src.as_forge(alloc)
-                    .append("->")
-                    .append(
-                        alloc.intersperse(
-                            sinks.iter().map(|sink| sink.as_forge(alloc)), alloc.text(" + ")).parens())
-            ),
-            alloc.text(" +").append(alloc.hardline())
+            self.0.iter().map(|(src, sinks)| {
+                src.as_forge(alloc).append("->").append(
+                    alloc
+                        .intersperse(
+                            sinks.iter().map(|sink| sink.as_forge(alloc)),
+                            alloc.text(" + "),
+                        )
+                        .parens(),
+                )
+            }),
+            alloc.text(" +").append(alloc.hardline()),
         )
     }
 }
 
 impl ToForge for DataSink {
-    fn as_forge<'b, 'a : 'b, A: DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> DocBuilder<'b, A, ()> 
-    where A::Doc: Clone {
-        self.function.as_forge(alloc).append(alloc.text("_")).append(alloc.as_string(self.arg_slot))
+    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
+        &'a self,
+        alloc: &'b A,
+    ) -> DocBuilder<'b, A, ()>
+    where
+        A::Doc: Clone,
+    {
+        self.function
+            .as_forge(alloc)
+            .append(alloc.text("_"))
+            .append(alloc.as_string(self.arg_slot))
     }
 }
 
-const SRC_NAME : &'static str = "Src";
-const ARG_NAME : &'static str = "Arg";
-const FN_NAME : &'static str = "Fn";
-const CTRL_NAME : &'static str = "Ctrl";
-const FLOW_NAME : &'static str = "flow";
-const SENSITIVE_NAME : &'static str = "sensitive";
-const WITNESS_NAME : &'static str = "witness";
+const SRC_NAME: &'static str = "Src";
+const ARG_NAME: &'static str = "Arg";
+const FN_NAME: &'static str = "Fn";
+const CTRL_NAME: &'static str = "Ctrl";
+const FLOW_NAME: &'static str = "flow";
+const SENSITIVE_NAME: &'static str = "sensitive";
+const WITNESS_NAME: &'static str = "witness";
 const FLOWS_PREDICATE_NAME: &'static str = "Flows";
 
 impl ToForge for ProgramDescription {
-    fn as_forge<'b, 'a : 'b, A: DocAllocator<'b, ()>>(&'a self, alloc: &'b A) -> DocBuilder<'b, A, ()> 
-    where A::Doc: Clone
+    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
+        &'a self,
+        alloc: &'b A,
+    ) -> DocBuilder<'b, A, ()>
+    where
+        A::Doc: Clone,
     {
-
         /// For now the order here *must* be topological as the code gen does not reorder this automatically
-        const SIGS : &[(&'static str, Option<&'static str>, &'static [(&'static str, &'static str)])] = &[
+        const SIGS: &[(
+            &'static str,
+            Option<&'static str>,
+            &'static [(&'static str, &'static str)],
+        )] = &[
             (SRC_NAME, None, &[]),
             (FN_NAME, None, &[]),
             (ARG_NAME, Some(SRC_NAME), &[]),
-            (CTRL_NAME, None, &[
-                (FLOW_NAME, "set Src->Fn"), // I'd have liked to define these types in terms of other string constants, but it seems rust doesn't let you concatenate strings at compile time
-                (SENSITIVE_NAME, "set Src"),
-                (WITNESS_NAME, "set Src")
-            ])
+            (
+                CTRL_NAME,
+                None,
+                &[
+                    (FLOW_NAME, "set Src->Fn"), // I'd have liked to define these types in terms of other string constants, but it seems rust doesn't let you concatenate strings at compile time
+                    (SENSITIVE_NAME, "set Src"),
+                    (WITNESS_NAME, "set Src"),
+                ],
+            ),
         ];
-        
-        fn make_one_sig<'b, A: DocAllocator<'b, ()>, I: ToForge>(alloc: &'b A, i: &'b I, parent: &'static str) -> DocBuilder<'b, A, ()> 
-            where A::Doc : Clone
+
+        fn make_one_sig<'b, A: DocAllocator<'b, ()>, I: ToForge>(
+            alloc: &'b A,
+            i: &'b I,
+            parent: &'static str,
+        ) -> DocBuilder<'b, A, ()>
+        where
+            A::Doc: Clone,
         {
-            alloc.text("one sig ").append(i.as_forge(alloc)).append(" extends ").append(parent).append(" {}")
+            alloc
+                .text("one sig ")
+                .append(i.as_forge(alloc))
+                .append(" extends ")
+                .append(parent)
+                .append(" {}")
         }
 
         alloc.lines([
             alloc.text("#lang forge"),
             alloc.nil(),
-            alloc.text("/* This file is auto-generated by ")
+            alloc
+                .text("/* This file is auto-generated by ")
                 .append(crate_name!())
                 .append(" version ")
                 .append(crate_version!())
                 .append(". */"),
             alloc.nil(),
+            alloc.lines(SIGS.iter().map(|(name, parent, fields)| {
+                alloc
+                    .text("abstract sig ")
+                    .append(*name)
+                    .append(parent.map_or(alloc.nil(), |p| alloc.text(" extends ").append(p)))
+                    .append(alloc.space())
+                    .append(
+                        if fields.is_empty() {
+                            alloc.nil()
+                        } else {
+                            alloc.hardline().append(
+                                alloc
+                                    .intersperse(
+                                        fields.iter().map(|(name, typ)| {
+                                            alloc.text(*name).append(": ").append(alloc.text(*typ))
+                                        }),
+                                        alloc.text(",").append(alloc.hardline()),
+                                    )
+                                    .indent(4)
+                                    .append(alloc.hardline()),
+                            )
+                        }
+                        .braces(),
+                    )
+            })),
+            alloc.nil(),
             alloc.lines(
-                SIGS.iter().map(|(name, parent, fields)| 
-                    alloc.text("abstract sig ")
-                        .append(*name)
-                        .append(parent.map_or(alloc.nil(), |p| alloc.text(" extends ").append(p)))
-                        .append(alloc.space())
-                        .append(
-                            if fields.is_empty() {
-                                alloc.nil()
-                            } else {
-                                alloc.hardline().append(
-                                    alloc.intersperse(
-                                        fields.iter().map(|(name, typ)| alloc.text(*name).append(": ").append(alloc.text(*typ))),
-                                        alloc.text(",").append(alloc.hardline())
-                                    ).indent(4).append(alloc.hardline())
-                                )
-                            }.braces()
-                        )
-                )
+                self.all_arguments()
+                    .into_iter()
+                    .map(|a| make_one_sig(alloc, a, ARG_NAME)),
             ),
             alloc.nil(),
-            alloc.lines(self.all_arguments().into_iter().map(|a| make_one_sig(alloc, a, ARG_NAME))),
-            alloc.nil(),
-            alloc.lines(self.all_sinks().into_iter().map(|s| make_one_sig(alloc, s, FN_NAME))),
+            alloc.lines(
+                self.all_sinks()
+                    .into_iter()
+                    .map(|s| make_one_sig(alloc, s, FN_NAME)),
+            ),
             alloc.nil(),
             alloc.lines(self.d.keys().map(|e| make_one_sig(alloc, e, CTRL_NAME))),
             alloc.nil(),
-            alloc.text("pred ").append(FLOWS_PREDICATE_NAME).append(" ").append(
-                alloc.hardline()
-                    .append(
-                        alloc.lines(
-                            self.d.iter().map(|(e, ctrl)| 
-                                alloc.lines([
-                                    e.as_forge(alloc)
-                                        .append(".")
-                                        .append(FLOW_NAME)
-                                        .append(" = ")
-                                        .append(
-                                            alloc.hardline()
+            alloc
+                .text("pred ")
+                .append(FLOWS_PREDICATE_NAME)
+                .append(" ")
+                .append(
+                    alloc
+                        .hardline()
+                        .append(
+                            alloc
+                                .lines(self.d.iter().map(|(e, ctrl)| {
+                                    alloc.lines([
+                                        e.as_forge(alloc)
+                                            .append(".")
+                                            .append(FLOW_NAME)
+                                            .append(" = ")
                                             .append(
-                                                ctrl.flow.as_forge(alloc).indent(4)
-                                            )
-                                            .parens()
-                                        ),
-                                    e.as_forge(alloc)
-                                        .append(".")
-                                        .append(WITNESS_NAME)
-                                        .append(" = ")
-                                        .append(alloc.intersperse(ctrl.witnesses.iter().map(|w| w.as_forge(alloc)), "+")),
-                                    e.as_forge(alloc)
-                                        .append(".")
-                                        .append(SENSITIVE_NAME)
-                                        .append(" = ")
-                                        .append(alloc.intersperse(ctrl.sensitive.iter().map(|s| s.as_forge(alloc)), "+")),
-                                ])
-                            )
-                        ).indent(4)
-                        .append(alloc.hardline())
-                    ).braces()
-            ),
+                                                alloc
+                                                    .hardline()
+                                                    .append(ctrl.flow.as_forge(alloc).indent(4))
+                                                    .parens(),
+                                            ),
+                                        e.as_forge(alloc)
+                                            .append(".")
+                                            .append(WITNESS_NAME)
+                                            .append(" = ")
+                                            .append(alloc.intersperse(
+                                                ctrl.witnesses.iter().map(|w| w.as_forge(alloc)),
+                                                "+",
+                                            )),
+                                        e.as_forge(alloc)
+                                            .append(".")
+                                            .append(SENSITIVE_NAME)
+                                            .append(" = ")
+                                            .append(alloc.intersperse(
+                                                ctrl.sensitive.iter().map(|s| s.as_forge(alloc)),
+                                                "+",
+                                            )),
+                                    ])
+                                }))
+                                .indent(4)
+                                .append(alloc.hardline()),
+                        )
+                        .braces(),
+                ),
         ])
     }
 }
 
-
-pub(crate) fn generate_safety_constraints<'b, 'a : 'b, A: pretty::DocAllocator<'b, ()>>(alloc: &'a A,anns: &'a SinkAnnotations, prog: &ProgramDescription) -> DocBuilder<'b, A, ()> 
-where A::Doc : Clone
+pub(crate) fn generate_safety_constraints<'b, 'a: 'b, A: pretty::DocAllocator<'b, ()>>(
+    alloc: &'a A,
+    anns: &'a SinkAnnotations,
+    prog: &ProgramDescription,
+) -> DocBuilder<'b, A, ()>
+where
+    A::Doc: Clone,
 {
-    fn safety_predicate_name<'b, 'a : 'b, A: pretty::DocAllocator<'b, ()>>(alloc:&'a A, name: &Identifier) -> DocBuilder<'b, A, ()> {
+    fn safety_predicate_name<'b, 'a: 'b, A: pretty::DocAllocator<'b, ()>>(
+        alloc: &'a A,
+        name: &Identifier,
+    ) -> DocBuilder<'b, A, ()> {
         alloc.as_string(name).append("IsSafe")
     }
 
     alloc.lines(
-        anns.iter().map(|(id, marked)| 
-            alloc.text("pred ").append(safety_predicate_name(alloc, id).append(alloc.text("ctrl: one ").append(CTRL_NAME).brackets())).append(
-                alloc.hardline().append(
-                    alloc.text("all s: ctrl.").append(SENSITIVE_NAME).append(" & ").append(ARG_NAME).append(" |").append(alloc.hardline()).append(
-                        alloc.lines([
-                            alloc.text("some (s->").append(
-                                alloc.intersperse( 
-                                    marked.leaks.iter().map(|l| alloc.as_string(id).append("_").append(alloc.as_string(l))),
-                                    " + ").parens().append(" & ctrl.").append(FLOW_NAME)
-                                ),
-                            alloc.text("implies ctrl.").append(WITNESS_NAME).append("->").append(alloc.intersperse(marked.scopes.iter().map(|s| alloc.as_string(id).append("_").append(alloc.as_string(s))),  " + ").parens()).append(" in ctrl.").append(FLOW_NAME)
-                        ]).indent(4)
-                    ).indent(4)
-                ).append(alloc.hardline()).braces()
-            )
-        ).chain([
-            alloc.text("test expect ").append(
-                alloc.hardline().append(
-                    alloc.text("safety_properties: ").append(
-                        alloc.hardline().append(
-                            alloc.text(FLOWS_PREDICATE_NAME)
-                            .append(" implies all c: ")
-                            .append(CTRL_NAME).append(" | ").append(
-                                alloc.hardline().append(
-                                    alloc.lines(
-                                        anns.keys().map(|i|
-                                            safety_predicate_name(alloc, i).append(alloc.text("c").brackets())
-                                        )
-                                    ).indent(4)
-                                ).append(alloc.hardline()).braces()
-                            ).indent(4)
-                        ).append(alloc.hardline()).braces()
-                    ).indent(4)
-                ).append(alloc.hardline()).braces()
-            )]
-        )
+        anns.iter()
+            .map(|(id, marked)| {
+                alloc
+                    .text("pred ")
+                    .append(
+                        safety_predicate_name(alloc, id)
+                            .append(alloc.text("ctrl: one ").append(CTRL_NAME).brackets()),
+                    )
+                    .append(
+                        alloc
+                            .hardline()
+                            .append(
+                                alloc
+                                    .text("all s: ctrl.")
+                                    .append(SENSITIVE_NAME)
+                                    .append(" & ")
+                                    .append(ARG_NAME)
+                                    .append(" |")
+                                    .append(alloc.hardline())
+                                    .append(
+                                        alloc
+                                            .lines([
+                                                alloc.text("some (s->").append(
+                                                    alloc
+                                                        .intersperse(
+                                                            marked.leaks.iter().map(|l| {
+                                                                alloc
+                                                                    .as_string(id)
+                                                                    .append("_")
+                                                                    .append(alloc.as_string(l))
+                                                            }),
+                                                            " + ",
+                                                        )
+                                                        .parens()
+                                                        .append(" & ctrl.")
+                                                        .append(FLOW_NAME),
+                                                ),
+                                                alloc
+                                                    .text("implies ctrl.")
+                                                    .append(WITNESS_NAME)
+                                                    .append("->")
+                                                    .append(
+                                                        alloc
+                                                            .intersperse(
+                                                                marked.scopes.iter().map(|s| {
+                                                                    alloc
+                                                                        .as_string(id)
+                                                                        .append("_")
+                                                                        .append(alloc.as_string(s))
+                                                                }),
+                                                                " + ",
+                                                            )
+                                                            .parens(),
+                                                    )
+                                                    .append(" in ctrl.")
+                                                    .append(FLOW_NAME),
+                                            ])
+                                            .indent(4),
+                                    )
+                                    .indent(4),
+                            )
+                            .append(alloc.hardline())
+                            .braces(),
+                    )
+            })
+            .chain([alloc.text("test expect ").append(
+                alloc
+                    .hardline()
+                    .append(
+                        alloc
+                            .text("safety_properties: ")
+                            .append(
+                                alloc
+                                    .hardline()
+                                    .append(
+                                        alloc
+                                            .text(FLOWS_PREDICATE_NAME)
+                                            .append(" implies all c: ")
+                                            .append(CTRL_NAME)
+                                            .append(" | ")
+                                            .append(
+                                                alloc
+                                                    .hardline()
+                                                    .append(
+                                                        alloc
+                                                            .lines(anns.keys().map(|i| {
+                                                                safety_predicate_name(alloc, i)
+                                                                    .append(
+                                                                        alloc.text("c").brackets(),
+                                                                    )
+                                                            }))
+                                                            .indent(4),
+                                                    )
+                                                    .append(alloc.hardline())
+                                                    .braces(),
+                                            )
+                                            .indent(4),
+                                    )
+                                    .append(alloc.hardline())
+                                    .braces(),
+                            )
+                            .indent(4),
+                    )
+                    .append(alloc.hardline())
+                    .braces(),
+            )]),
     )
 }

@@ -45,7 +45,6 @@ use rustc_middle::{
 };
 use rustc_span::{symbol::Ident, Span, Symbol};
 
-
 mod frg;
 
 type AttrMatchT = Vec<Symbol>;
@@ -67,20 +66,16 @@ trait MetaItemMatch {
 impl MetaItemMatch for rustc_ast::ast::Attribute {
     fn match_extract<A, F: Fn(&rustc_ast::MacArgs) -> A>(&self, p: &[Symbol], f: F) -> Option<A> {
         match &self.kind {
-            rustc_ast::ast::AttrKind::Normal(
-                rustc_ast::ast::AttrItem {
-                    path,
-                    args,
-                    ..
-                },
-                _,
-            ) if path.segments.len() == p.len()
+            rustc_ast::ast::AttrKind::Normal(rustc_ast::ast::AttrItem { path, args, .. }, _)
+                if path.segments.len() == p.len()
                     && path
                         .segments
                         .iter()
                         .zip(p)
-                        .all(|(seg, i)| seg.ident.name == *i)
-            => Some(f(args)),
+                        .all(|(seg, i)| seg.ident.name == *i) =>
+            {
+                Some(f(args))
+            }
             _ => None,
         }
     }
@@ -122,25 +117,44 @@ impl ProgramDescription {
 
 impl ProgramDescription {
     fn all_arguments(&self) -> HashSet<&Identifier> {
-        self.d.values().flat_map(|ctrl| ctrl.flow.0.keys()).collect()
+        self.d
+            .values()
+            .flat_map(|ctrl| ctrl.flow.0.keys())
+            .collect()
     }
     fn all_sinks(&self) -> HashSet<&DataSink> {
-        self.d.values().flat_map(|ctrl| ctrl.flow.0.values().flat_map(|v| v.iter())).collect()
+        self.d
+            .values()
+            .flat_map(|ctrl| ctrl.flow.0.values().flat_map(|v| v.iter()))
+            .collect()
     }
     fn ser_frg<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
         for (e, g) in self.d.iter() {
             writeln!(w, "{e} = (")?;
             let mut first_src = true;
             for (src, sinks) in g.flow.0.iter() {
-                if sinks.is_empty() { continue; }
-                if first_src { first_src = false }
-                else { write!(w, " +")?}
+                if sinks.is_empty() {
+                    continue;
+                }
+                if first_src {
+                    first_src = false
+                } else {
+                    write!(w, " +")?
+                }
                 writeln!(w, "  {src}->(")?;
                 let mut first_sink = true;
                 for sink in sinks.iter() {
-                    if first_sink { first_sink = false }
-                    else { writeln!(w, " +")?; }
-                    write!(w, "    {sink}_{sn}", sink=sink.function, sn= sink.arg_slot)?;
+                    if first_sink {
+                        first_sink = false
+                    } else {
+                        writeln!(w, " +")?;
+                    }
+                    write!(
+                        w,
+                        "    {sink}_{sn}",
+                        sink = sink.function,
+                        sn = sink.arg_slot
+                    )?;
                 }
                 writeln!(w, ")")?;
             }
@@ -170,9 +184,9 @@ impl<X, Y> Relation<X, Y> {
 type DataSource = Identifier;
 
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-struct DataSink { 
+struct DataSink {
     function: Identifier,
-    arg_slot: usize
+    arg_slot: usize,
 }
 
 struct Ctrl {
@@ -222,16 +236,33 @@ impl rustc_driver::Callbacks for Callbacks {
         compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        let (desc, anns) = queries.global_ctxt().unwrap().take().enter(|tcx| {
-            Visitor::new(tcx, &mut self.printer).run()
-        }).unwrap();
+        let (desc, anns) = queries
+            .global_ctxt()
+            .unwrap()
+            .take()
+            .enter(|tcx| Visitor::new(tcx, &mut self.printer).run())
+            .unwrap();
         writeln!(self.printer.deref_mut(), "All elems walked").unwrap();
-        let mut outf = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&self.res_p).unwrap();
+        let mut outf = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&self.res_p)
+            .unwrap();
         use pretty::DocAllocator;
         let doc_alloc = pretty::BoxAllocator;
-        let doc = desc.as_forge(&doc_alloc).append(doc_alloc.hardline()).append(doc_alloc.hardline()).append(frg::generate_safety_constraints(&doc_alloc, &anns, &desc));
+        let doc = desc
+            .as_forge(&doc_alloc)
+            .append(doc_alloc.hardline())
+            .append(doc_alloc.hardline())
+            .append(frg::generate_safety_constraints(&doc_alloc, &anns, &desc));
         doc.render(100, &mut outf).unwrap();
-        writeln!(self.printer.deref_mut(), "Wrote analysis result to {}", &self.res_p.canonicalize().unwrap().display()).unwrap();
+        writeln!(
+            self.printer.deref_mut(),
+            "Wrote analysis result to {}",
+            &self.res_p.canonicalize().unwrap().display()
+        )
+        .unwrap();
         rustc_driver::Compilation::Stop
     }
 }
@@ -283,12 +314,19 @@ fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> b
     })
 }
 
-fn extract_args<'tcx>(t: &mir::Terminator<'tcx>, loc: mir::Location) -> Option<Vec<Option<mir::Place<'tcx>>>> {
+fn extract_args<'tcx>(
+    t: &mir::Terminator<'tcx>,
+    loc: mir::Location,
+) -> Option<Vec<Option<mir::Place<'tcx>>>> {
     match &t.kind {
-        mir::TerminatorKind::Call {args, .. } => Some(args.iter().map(|a| match a {
-                mir::Operand::Move(p) | mir::Operand::Copy(p) => Some(*p),
-                mir::Operand::Constant(_) => None,
-            }).collect()),
+        mir::TerminatorKind::Call { args, .. } => Some(
+            args.iter()
+                .map(|a| match a {
+                    mir::Operand::Move(p) | mir::Operand::Copy(p) => Some(*p),
+                    mir::Operand::Constant(_) => None,
+                })
+                .collect(),
+        ),
         _ => None,
     }
 }
@@ -343,7 +381,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             .marked_sinks
             .drain()
             .map(|(s, p)| (tcx.hir().local_def_id(s).to_def_id(), p))
-            .collect::<HashMap<_,_>>();
+            .collect::<HashMap<_, _>>();
         let source_fn_defs = self
             .marked_sources
             .iter()
@@ -416,7 +454,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                                     header_printed = true
                                 };
                                 flows.add(
-                                    &Identifier(source_locs[loc].clone()), 
+                                    &Identifier(source_locs[loc].clone()),
                                     DataSink {
                                         function: Identifier(tcx.item_name(p).to_string()),
                                         arg_slot: ordered_mentioned_places.iter().enumerate().filter(|(_, e)| **e == Some(*r)).next().unwrap().0,
@@ -438,34 +476,37 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
 }
 
 mod ann_parse {
-    use rustc_ast::{tokenstream, token};
-    use tokenstream::*;
+    use rustc_ast::{token, tokenstream};
     use token::*;
+    use tokenstream::*;
 
     pub extern crate nom;
 
-    use nom::{ Parser, error::{Error, ErrorKind}};
+    use nom::{
+        error::{Error, ErrorKind},
+        Parser,
+    };
 
     #[derive(Clone)]
     pub struct I<'a>(CursorRef<'a>);
     type R<'a, T> = nom::IResult<I<'a>, T>;
 
-    impl <'a> Iterator for I<'a> {
+    impl<'a> Iterator for I<'a> {
         type Item = &'a TokenTree;
         fn next(&mut self) -> Option<Self::Item> {
             self.0.next()
         }
     }
 
-    impl <'a> I<'a> {
+    impl<'a> I<'a> {
         pub fn from_stream(s: &'a TokenStream) -> Self {
             I(s.trees())
         }
     }
 
-    impl <'a> nom::InputLength for I<'a> {
+    impl<'a> nom::InputLength for I<'a> {
         fn input_len(&self) -> usize {
-            // Extremely yikes, but the only way to get to this information. :( 
+            // Extremely yikes, but the only way to get to this information. :(
             // It's a trick to break visibility as per https://www.reddit.com/r/rust/comments/cfxg60/comment/eud8n3y/
             type __EvilTarget<'a> = (&'a TokenStream, usize);
             use std::mem::{size_of, transmute};
@@ -476,89 +517,124 @@ mod ann_parse {
     }
     fn one<'a>() -> impl FnMut(I<'a>) -> R<'a, &'a TokenTree> {
         |mut tree: I<'a>| match tree.next() {
-            None => Result::Err(nom::Err::Error(Error::new(tree, nom::error::ErrorKind::IsNot))),
-            Some(t) => Ok((tree, t))
+            None => Result::Err(nom::Err::Error(Error::new(
+                tree,
+                nom::error::ErrorKind::IsNot,
+            ))),
+            Some(t) => Ok((tree, t)),
         }
     }
 
     pub fn one_token<'a>() -> impl FnMut(I<'a>) -> R<'a, &'a Token> {
         nom::combinator::map_res(one(), |t| match t {
             TokenTree::Token(t) => Ok(t),
-            _ => Result::Err(())
+            _ => Result::Err(()),
         })
     }
 
-    pub fn lit<'a, A, F: Fn(&str) -> Result<A, String> + 'a>(k: LitKind, f: F) -> impl FnMut(I<'a>) -> R<'a, A> 
-    {
+    pub fn lit<'a, A, F: Fn(&str) -> Result<A, String> + 'a>(
+        k: LitKind,
+        f: F,
+    ) -> impl FnMut(I<'a>) -> R<'a, A> {
         nom::combinator::map_res(one_token(), move |t| match t {
-            Token { kind: TokenKind::Literal(Lit { kind: knd, symbol, .. }), .. } if *knd == k =>
-                f(symbol.as_str()),
-            _ => Result::Err("Wrong kind of token".to_string())
+            Token {
+                kind:
+                    TokenKind::Literal(Lit {
+                        kind: knd, symbol, ..
+                    }),
+                ..
+            } if *knd == k => f(symbol.as_str()),
+            _ => Result::Err("Wrong kind of token".to_string()),
         })
     }
 
     pub fn integer<'a>() -> impl FnMut(I<'a>) -> R<'a, u16> {
-        lit(LitKind::Integer, |symbol : &str| symbol.parse().map_err(|e : <u16 as std::str::FromStr>::Err| e.to_string()))
-    }
-
-
-    pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>>>(mut p: P, delim: Delimiter) -> impl FnMut(I<'a>) -> R<'a, A> {
-        move |i| one()(i).and_then(|(i, t)| match t {
-            TokenTree::Delimited(_, d, s) if *d == delim => p.parse(I::from_stream(s)).map(|(mut rest, r)| { assert!(rest.next().is_none());  (i, r) }),
-            _ => Result::Err(nom::Err::Error(Error::new(i, ErrorKind::Fail)))
+        lit(LitKind::Integer, |symbol: &str| {
+            symbol
+                .parse()
+                .map_err(|e: <u16 as std::str::FromStr>::Err| e.to_string())
         })
     }
 
-    pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
-        nom::combinator::map_res(one_token(), move |t| if *t == k { Ok(()) } else { Result::Err(()) })
+    pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>>>(
+        mut p: P,
+        delim: Delimiter,
+    ) -> impl FnMut(I<'a>) -> R<'a, A> {
+        move |i| {
+            one()(i).and_then(|(i, t)| match t {
+                TokenTree::Delimited(_, d, s) if *d == delim => {
+                    p.parse(I::from_stream(s)).map(|(mut rest, r)| {
+                        assert!(rest.next().is_none());
+                        (i, r)
+                    })
+                }
+                _ => Result::Err(nom::Err::Error(Error::new(i, ErrorKind::Fail))),
+            })
+        }
     }
 
-    pub fn dict<'a, K, V, P : Parser<I<'a>, K, Error<I<'a>>>, G : Parser<I<'a>, V, Error<I<'a>>>>(keys: P, values: G) -> impl FnMut(I<'a>) -> R<'a, Vec<(K, V)>>
-    {
+    pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
+        nom::combinator::map_res(
+            one_token(),
+            move |t| if *t == k { Ok(()) } else { Result::Err(()) },
+        )
+    }
+
+    pub fn dict<'a, K, V, P: Parser<I<'a>, K, Error<I<'a>>>, G: Parser<I<'a>, V, Error<I<'a>>>>(
+        keys: P,
+        values: G,
+    ) -> impl FnMut(I<'a>) -> R<'a, Vec<(K, V)>> {
         delimited(
             nom::multi::separated_list0(
                 assert_token(TokenKind::Comma),
-                nom::sequence::separated_pair(keys, assert_token(TokenKind::Eq), values)),
-            Delimiter::Brace
+                nom::sequence::separated_pair(keys, assert_token(TokenKind::Eq), values),
+            ),
+            Delimiter::Brace,
         )
     }
 }
 
 lazy_static! {
-    static ref LEAKS_SYM : Symbol = Symbol::intern("leaks");
-    static ref SCOPED_SYM : Symbol = Symbol::intern("scopes");
-    static ref SINK_ANN_SYMS : HashSet<Symbol> = [*LEAKS_SYM, *SCOPED_SYM].into_iter().collect();
+    static ref LEAKS_SYM: Symbol = Symbol::intern("leaks");
+    static ref SCOPED_SYM: Symbol = Symbol::intern("scopes");
+    static ref SINK_ANN_SYMS: HashSet<Symbol> = [*LEAKS_SYM, *SCOPED_SYM].into_iter().collect();
 }
 
 fn sink_ann_match_fn(ann: &rustc_ast::MacArgs) -> SinkAnnotationPayload {
+    use ann_parse::*;
     use rustc_ast::*;
     use token::*;
-    use ann_parse::*;
 
     let mut m = match ann {
         ast::MacArgs::Delimited(sp, delim, stream) => {
-            let s = tokenstream::TokenStream::new(vec![tokenstream::TreeAndSpacing::from(tokenstream::TokenTree::Delimited(
-                sp.clone(), 
-                match delim {
-                    MacDelimiter::Parenthesis => Delimiter::Parenthesis,
-                    MacDelimiter::Brace => Delimiter::Brace,
-                    MacDelimiter::Bracket => Delimiter::Bracket,
-                },
-                stream.clone()
-            ))]);
+            let s = tokenstream::TokenStream::new(vec![tokenstream::TreeAndSpacing::from(
+                tokenstream::TokenTree::Delimited(
+                    sp.clone(),
+                    match delim {
+                        MacDelimiter::Parenthesis => Delimiter::Parenthesis,
+                        MacDelimiter::Brace => Delimiter::Brace,
+                        MacDelimiter::Bracket => Delimiter::Bracket,
+                    },
+                    stream.clone(),
+                ),
+            )]);
             let mut p = dict(
                 nom::combinator::map_res(one_token(), |t| match t.ident() {
-                    Some((Ident { name, ..}, _)) if SINK_ANN_SYMS.contains(&name) => Ok(name),
-                    _ => Result::Err(())
+                    Some((Ident { name, .. }, _)) if SINK_ANN_SYMS.contains(&name) => Ok(name),
+                    _ => Result::Err(()),
                 }),
                 delimited(
                     nom::multi::separated_list0(assert_token(TokenKind::Comma), integer()),
                     Delimiter::Bracket,
-                )
+                ),
             );
-            p(I::from_stream(&s)).unwrap_or_else(|_| panic!("parser failed")).1.into_iter().collect::<HashMap<_,_>>()
+            p(I::from_stream(&s))
+                .unwrap_or_else(|_| panic!("parser failed"))
+                .1
+                .into_iter()
+                .collect::<HashMap<_, _>>()
         }
-        _ => panic!("Incorrect annotation {ann:?}")
+        _ => panic!("Incorrect annotation {ann:?}"),
     };
     SinkAnnotationPayload {
         leaks: m.remove(&LEAKS_SYM).expect("leaks not found"),
@@ -582,8 +658,7 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
             .filter_map(|a| a.match_extract(&SINK_MARKER, sink_ann_match_fn))
             .collect::<Vec<_>>();
         assert!(sink_matches.len() < 2, "Double annotated sink function");
-        if let Some(anns) = sink_matches.pop()
-        {
+        if let Some(anns) = sink_matches.pop() {
             self.marked_sinks.insert(id, anns);
         }
         if self
@@ -650,6 +725,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             Printers::Sink(std::io::sink())
         };
         let res_p = plugin_args.result_path;
-        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks{printer, res_p}).run()
+        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { printer, res_p }).run()
     }
 }
