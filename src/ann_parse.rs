@@ -1,5 +1,6 @@
 use crate::rust::*;
 
+use crate::desc::SinkAnnotationPayload;
 use crate::HashMap;
 use ast::{token, tokenstream};
 use token::*;
@@ -115,12 +116,6 @@ pub fn dict<'a, K, V, P: Parser<I<'a>, K, Error<I<'a>>>, G: Parser<I<'a>, V, Err
         ),
         Delimiter::Brace,
     )
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct SinkAnnotationPayload {
-    pub leaks: Vec<u16>,
-    pub scopes: Vec<u16>,
 }
 
 pub(crate) fn sink_ann_match_fn(ann: &rustc_ast::MacArgs) -> SinkAnnotationPayload {

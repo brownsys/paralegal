@@ -27,7 +27,7 @@ pub mod rust {
 use rust::*;
 
 use clap::Parser;
-use flowistry::mir::{borrowck_facts};
+use flowistry::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
 use std::io::{Sink, Stdout, Write};
 use std::ops::DerefMut;
@@ -40,7 +40,6 @@ mod desc;
 mod frg;
 
 use ana::AttrMatchT;
-pub use ann_parse::SinkAnnotationPayload;
 
 use frg::ToForge;
 
@@ -67,7 +66,7 @@ pub struct Args {
     _progname: String,
     #[clap(short, long)]
     verbose: bool,
-    #[clap(long, default_value = "analysis_result.txt")]
+    #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
 }
 
@@ -94,7 +93,7 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        let (desc, anns) = queries
+        let desc = queries
             .global_ctxt()
             .unwrap()
             .take()
@@ -113,7 +112,10 @@ impl rustc_driver::Callbacks for Callbacks {
             .as_forge(&doc_alloc)
             .append(doc_alloc.hardline())
             .append(doc_alloc.hardline())
-            .append(frg::generate_safety_constraints(&doc_alloc, &anns));
+            .append(frg::generate_safety_constraints(
+                &doc_alloc,
+                &desc.annotations,
+            ));
         doc.render(100, &mut outf).unwrap();
         writeln!(
             self.printer.deref_mut(),
@@ -124,8 +126,6 @@ impl rustc_driver::Callbacks for Callbacks {
         rustc_driver::Compilation::Stop
     }
 }
-
-type SinkAnnotations = HashMap<desc::Identifier, SinkAnnotationPayload>;
 
 lazy_static! {
     static ref LEAKS_SYM: Symbol = Symbol::intern("leaks");

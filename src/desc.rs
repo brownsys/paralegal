@@ -2,25 +2,34 @@ use crate::{HashMap, HashSet};
 
 pub type Endpoint = Identifier;
 
-pub struct ProgramDescription {
-    pub d: HashMap<Endpoint, Ctrl>,
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct SinkAnnotationPayload {
+    pub leaks: Vec<u16>,
+    pub scopes: Vec<u16>,
 }
 
-impl ProgramDescription {
-    pub fn empty() -> Self {
-        ProgramDescription { d: HashMap::new() }
-    }
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct Sink {
+    pub ann: SinkAnnotationPayload,
+    pub num_args: usize,
+}
+
+pub type Sinks = HashMap<Identifier, Sink>;
+
+pub struct ProgramDescription {
+    pub controllers: HashMap<Endpoint, Ctrl>,
+    pub annotations: Sinks,
 }
 
 impl ProgramDescription {
     pub fn all_arguments(&self) -> HashSet<&Identifier> {
-        self.d
+        self.controllers
             .values()
             .flat_map(|ctrl| ctrl.flow.0.keys())
             .collect()
     }
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
-        self.d
+        self.controllers
             .values()
             .flat_map(|ctrl| ctrl.flow.0.values().flat_map(|v| v.iter()))
             .collect()

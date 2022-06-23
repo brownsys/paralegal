@@ -3,7 +3,6 @@ use std::ops::DerefMut;
 
 use crate::desc::*;
 use crate::rust::*;
-use crate::SinkAnnotations;
 use crate::{HashMap, HashSet, Printers};
 
 use hir::{
@@ -20,10 +19,7 @@ use rustc_span::{symbol::Ident, Span, Symbol};
 
 use flowistry::{
     infoflow,
-    mir::{
-        borrowck_facts,
-        utils::{location_to_string},
-    },
+    mir::{borrowck_facts, utils::location_to_string},
 };
 
 pub type AttrMatchT = Vec<Symbol>;
@@ -119,7 +115,7 @@ fn extract_args<'tcx>(
 
 pub struct Visitor<'tcx, 'p> {
     tcx: TyCtxt<'tcx>,
-    marked_sinks: HashMap<HirId, crate::SinkAnnotationPayload>,
+    marked_sinks: HashMap<HirId, crate::desc::Sink>,
     marked_sources: HashSet<HirId>,
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
     printers: &'p mut Printers,
@@ -144,14 +140,14 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             .any(|a| a.matches_path(&crate::ANALYZE_MARKER))
     }
 
-    pub fn run(&mut self) -> std::io::Result<(ProgramDescription, SinkAnnotations)> {
+    pub fn run(&mut self) -> std::io::Result<ProgramDescription> {
         let tcx = self.tcx;
         tcx.hir().deep_visit_all_item_likes(self);
         //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
         self.analyze()
     }
 
-    fn analyze(&mut self) -> std::io::Result<(ProgramDescription, SinkAnnotations)> {
+    fn analyze(&mut self) -> std::io::Result<ProgramDescription> {
         let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
         let tcx = self.tcx;
         let prnt: &mut dyn Write = self.printers.deref_mut();
@@ -249,7 +245,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             }
             writeln!(prnt, "Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found)?;
             Ok((Identifier::new(id.as_str().to_string()), flows))
-        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|d| (ProgramDescription { d }, sink_fn_defs.into_iter().map(|(k, v)| (Identifier::new(tcx.item_name(k).to_string()), v)).collect() ))
+        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: sink_fn_defs.into_iter().map(|(k, v)| (Identifier::new(tcx.item_name(k).to_string()), v)).collect() })
     }
 }
 
@@ -268,6 +264,16 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
             .iter()
             .filter_map(|a| {
                 a.match_extract(&crate::SINK_MARKER, crate::ann_parse::sink_ann_match_fn)
+                    .map(|ann| Sink {
+                        ann,
+                        num_args: self
+                            .tcx
+                            .hir()
+                            .fn_decl_by_hir_id(id)
+                            .expect("impossible")
+                            .inputs
+                            .len(),
+                    })
             })
             .collect::<Vec<_>>();
         assert!(sink_matches.len() < 2, "Double annotated sink function");

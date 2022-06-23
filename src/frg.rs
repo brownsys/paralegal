@@ -1,11 +1,9 @@
 extern crate pretty;
 
+use crate::HashSet;
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
-use crate::{
-    desc::{DataSink, Identifier, ProgramDescription, Relation},
-    SinkAnnotations,
-};
+use crate::desc::{DataSink, Identifier, ProgramDescription, Relation, Sinks};
 
 trait DocLines<'a, A = ()>: DocAllocator<'a, A>
 where
@@ -74,6 +72,16 @@ impl<X: ToForge, Y: ToForge> ToForge for Relation<X, Y> {
     }
 }
 
+fn data_sink_as_forge<'b, A: DocAllocator<'b, ()>>(alloc: &'b A, function: &'b Identifier, arg_slot: usize) -> DocBuilder<'b, A, ()> 
+where A::Doc : Clone
+{
+
+        function
+            .as_forge(alloc)
+            .append(alloc.text("_"))
+            .append(alloc.as_string(arg_slot))
+}
+
 impl ToForge for DataSink {
     fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
         &'a self,
@@ -82,10 +90,23 @@ impl ToForge for DataSink {
     where
         A::Doc: Clone,
     {
-        self.function
-            .as_forge(alloc)
-            .append(alloc.text("_"))
-            .append(alloc.as_string(self.arg_slot))
+        data_sink_as_forge(alloc, &self.function, self.arg_slot)
+    }
+}
+
+impl<T: ToForge> ToForge for HashSet<T> {
+    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
+        &'a self,
+        alloc: &'b A,
+    ) -> DocBuilder<'b, A, ()>
+    where
+        A::Doc: Clone,
+    {
+        if self.is_empty() {
+            alloc.text("none")
+        } else {
+            alloc.intersperse(self.iter().map(|w| w.as_forge(alloc)), "+")
+        }
     }
 }
 
@@ -126,9 +147,9 @@ impl ToForge for ProgramDescription {
             ),
         ];
 
-        fn make_one_sig<'b, A: DocAllocator<'b, ()>, I: ToForge>(
+        fn make_one_sig<'b, A: DocAllocator<'b, ()>, I: Pretty<'b, A, ()>>(
             alloc: &'b A,
-            i: &'b I,
+            inner: I,
             parent: &'static str,
         ) -> DocBuilder<'b, A, ()>
         where
@@ -136,7 +157,7 @@ impl ToForge for ProgramDescription {
         {
             alloc
                 .text("one sig ")
-                .append(i.as_forge(alloc))
+                .append(inner)
                 .append(" extends ")
                 .append(parent)
                 .append(" {}")
@@ -181,16 +202,24 @@ impl ToForge for ProgramDescription {
             alloc.lines(
                 self.all_arguments()
                     .into_iter()
-                    .map(|a| make_one_sig(alloc, a, ARG_NAME)),
+                    .map(|a| make_one_sig(alloc, a.as_forge(alloc), ARG_NAME)),
             ),
+            alloc.nil(),
+            alloc.lines(self.annotations.iter().flat_map(|(name, sink)| {
+                (0..sink.num_args).map(|arg_slot| {
+                    make_one_sig(
+                        alloc,
+                        data_sink_as_forge(alloc, name, arg_slot),
+                        FN_NAME,
+                    )
+                })
+            })),
             alloc.nil(),
             alloc.lines(
-                self.all_sinks()
-                    .into_iter()
-                    .map(|s| make_one_sig(alloc, s, FN_NAME)),
+                self.controllers
+                    .keys()
+                    .map(|e| make_one_sig(alloc, e.as_forge(alloc), CTRL_NAME)),
             ),
-            alloc.nil(),
-            alloc.lines(self.d.keys().map(|e| make_one_sig(alloc, e, CTRL_NAME))),
             alloc.nil(),
             alloc
                 .text("pred ")
@@ -201,7 +230,7 @@ impl ToForge for ProgramDescription {
                         .hardline()
                         .append(
                             alloc
-                                .lines(self.d.iter().map(|(e, ctrl)| {
+                                .lines(self.controllers.iter().map(|(e, ctrl)| {
                                     alloc.lines([
                                         e.as_forge(alloc)
                                             .append(".")
@@ -217,18 +246,12 @@ impl ToForge for ProgramDescription {
                                             .append(".")
                                             .append(WITNESS_NAME)
                                             .append(" = ")
-                                            .append(alloc.intersperse(
-                                                ctrl.witnesses.iter().map(|w| w.as_forge(alloc)),
-                                                "+",
-                                            )),
+                                            .append(ctrl.witnesses.as_forge(alloc)),
                                         e.as_forge(alloc)
                                             .append(".")
                                             .append(SENSITIVE_NAME)
                                             .append(" = ")
-                                            .append(alloc.intersperse(
-                                                ctrl.sensitive.iter().map(|s| s.as_forge(alloc)),
-                                                "+",
-                                            )),
+                                            .append(ctrl.sensitive.as_forge(alloc)),
                                     ])
                                 }))
                                 .indent(4)
@@ -242,7 +265,7 @@ impl ToForge for ProgramDescription {
 
 pub(crate) fn generate_safety_constraints<'b, 'a: 'b, A: pretty::DocAllocator<'b, ()>>(
     alloc: &'a A,
-    anns: &'a SinkAnnotations,
+    anns: &'a Sinks,
 ) -> DocBuilder<'b, A, ()>
 where
     A::Doc: Clone,
@@ -277,16 +300,28 @@ where
                                     .append(
                                         alloc
                                             .lines([
-                                                alloc.text("some (s->").append(
+                                                alloc.text("some ").append(
                                                     alloc
-                                                        .intersperse(
-                                                            marked.leaks.iter().map(|l| {
-                                                                alloc
-                                                                    .as_string(id)
-                                                                    .append("_")
-                                                                    .append(alloc.as_string(l))
-                                                            }),
-                                                            " + ",
+                                                        .text("s->")
+                                                        .append(
+                                                            alloc
+                                                                .intersperse(
+                                                                    marked.ann.leaks.iter().map(
+                                                                        |l| {
+                                                                            alloc
+                                                                                .as_string(id)
+                                                                                .append("_")
+                                                                                .append(
+                                                                                    alloc
+                                                                                        .as_string(
+                                                                                            l,
+                                                                                        ),
+                                                                                )
+                                                                        },
+                                                                    ),
+                                                                    " + ",
+                                                                )
+                                                                .parens(),
                                                         )
                                                         .parens()
                                                         .append(" & ctrl.")
@@ -299,7 +334,7 @@ where
                                                     .append(
                                                         alloc
                                                             .intersperse(
-                                                                marked.scopes.iter().map(|s| {
+                                                                marked.ann.scopes.iter().map(|s| {
                                                                     alloc
                                                                         .as_string(id)
                                                                         .append("_")
@@ -332,29 +367,39 @@ where
                                     .append(
                                         alloc
                                             .text(FLOWS_PREDICATE_NAME)
-                                            .append(" implies all c: ")
-                                            .append(CTRL_NAME)
-                                            .append(" | ")
+                                            .append(" implies ")
                                             .append(
                                                 alloc
-                                                    .hardline()
+                                                    .text("all c: ")
+                                                    .append(CTRL_NAME)
+                                                    .append(" |")
                                                     .append(
                                                         alloc
-                                                            .lines(anns.keys().map(|i| {
-                                                                safety_predicate_name(alloc, i)
-                                                                    .append(
-                                                                        alloc.text("c").brackets(),
-                                                                    )
-                                                            }))
-                                                            .indent(4),
+                                                            .hardline()
+                                                            .append(
+                                                                alloc
+                                                                    .lines(anns.keys().map(|i| {
+                                                                        safety_predicate_name(
+                                                                            alloc, i,
+                                                                        )
+                                                                        .append(
+                                                                            alloc
+                                                                                .text("c")
+                                                                                .brackets(),
+                                                                        )
+                                                                    }))
+                                                                    .indent(4),
+                                                            )
+                                                            .append(alloc.hardline())
+                                                            .braces(),
                                                     )
-                                                    .append(alloc.hardline())
-                                                    .braces(),
+                                                    .parens(),
                                             )
                                             .indent(4),
                                     )
                                     .append(alloc.hardline())
-                                    .braces(),
+                                    .braces()
+                                    .append(" is theorem"),
                             )
                             .indent(4),
                     )
