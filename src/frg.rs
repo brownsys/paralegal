@@ -2,7 +2,10 @@ extern crate pretty;
 
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
-use super::{DataSink, Identifier, ProgramDescription, Relation, SinkAnnotations};
+use crate::{
+    desc::{DataSink, Identifier, ProgramDescription, Relation},
+    SinkAnnotations,
+};
 
 trait DocLines<'a, A = ()>: DocAllocator<'a, A>
 where
@@ -43,7 +46,7 @@ impl ToForge for Identifier {
     where
         A::Doc: Clone,
     {
-        alloc.text(&self.0)
+        alloc.text(self.as_str())
     }
 }
 
@@ -240,7 +243,6 @@ impl ToForge for ProgramDescription {
 pub(crate) fn generate_safety_constraints<'b, 'a: 'b, A: pretty::DocAllocator<'b, ()>>(
     alloc: &'a A,
     anns: &'a SinkAnnotations,
-    prog: &ProgramDescription,
 ) -> DocBuilder<'b, A, ()>
 where
     A::Doc: Clone,
