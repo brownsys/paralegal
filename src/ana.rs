@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::Write;
 use std::ops::DerefMut;
 
@@ -179,22 +180,22 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             let loc_dom = LocationDomain::new(body);
             writeln!(prnt, "{}", id.as_str())?;
             let mut flows = Ctrl::empty();
-            let mut source_locs = body
+            let mut source_locs: HashMap<_, DataSource> = body
                 .args_iter()
                 .enumerate()
                 .filter_map(|(i, l)| {
                     let ty = &body.local_decls[l].ty;
                     if type_has_ann(tcx, &crate::AUTH_WITNESS_MARKER, ty) {
                         flows.witnesses.insert(Identifier::new(format!("arg_{}", i)));
-                        Some((*loc_dom.value(loc_dom.arg_to_location(l)), format!("arg_{}", i)))
+                        Some((*loc_dom.value(loc_dom.arg_to_location(l)), DataSource::Argument(i)))
                     } else if type_has_ann(tcx, &crate::SENSITIVE_MARKER, ty) {
                         flows.sensitive.insert(Identifier::new(format!("arg_{}", i)));
-                        Some((*loc_dom.value(loc_dom.arg_to_location(l)), format!("arg_{}", i)))
+                        Some((*loc_dom.value(loc_dom.arg_to_location(l)), DataSource::Argument(i)))
                     } else {
                         None
                     }
                 })
-                .collect::<HashMap<_, _>>();
+                .collect();
             let source_args_found = source_locs.len();
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
             for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
@@ -207,7 +208,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                     called_fns_found += 1;
                     if source_fn_defs.contains(&p) {
                         source_fns_found += 1;
-                        source_locs.insert(loc, format!("call_{}", tcx.item_name(p).to_string()));
+                        source_locs.insert(loc, DataSource::FunctionCall(Identifier::new(tcx.item_name(p).to_string())));
                     }
                     if sink_fn_defs.contains_key(&p) {
                         let ordered_mentioned_places = extract_args(t, loc).expect("Not a function call");
@@ -228,7 +229,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                                     header_printed = true
                                 };
                                 flows.add(
-                                    &Identifier::new(source_locs[loc].clone()),
+                                    Cow::Borrowed(&source_locs[loc]),
                                     DataSink {
                                         function: Identifier::new(tcx.item_name(p).to_string()),
                                         arg_slot: ordered_mentioned_places.iter().enumerate().filter(|(_, e)| **e == Some(*r)).next().unwrap().0,

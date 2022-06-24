@@ -3,7 +3,7 @@ extern crate pretty;
 use crate::HashSet;
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
-use crate::desc::{DataSink, Identifier, ProgramDescription, Relation, Sinks};
+use crate::desc::{DataSink, DataSource, Identifier, ProgramDescription, Relation, Sinks};
 
 trait DocLines<'a, A = ()>: DocAllocator<'a, A>
 where
@@ -72,14 +72,18 @@ impl<X: ToForge, Y: ToForge> ToForge for Relation<X, Y> {
     }
 }
 
-fn data_sink_as_forge<'b, A: DocAllocator<'b, ()>>(alloc: &'b A, function: &'b Identifier, arg_slot: usize) -> DocBuilder<'b, A, ()> 
-where A::Doc : Clone
+fn data_sink_as_forge<'b, A: DocAllocator<'b, ()>>(
+    alloc: &'b A,
+    function: &'b Identifier,
+    arg_slot: usize,
+) -> DocBuilder<'b, A, ()>
+where
+    A::Doc: Clone,
 {
-
-        function
-            .as_forge(alloc)
-            .append(alloc.text("_"))
-            .append(alloc.as_string(arg_slot))
+    function
+        .as_forge(alloc)
+        .append(alloc.text("_"))
+        .append(alloc.as_string(arg_slot))
 }
 
 impl ToForge for DataSink {
@@ -110,8 +114,24 @@ impl<T: ToForge> ToForge for HashSet<T> {
     }
 }
 
+impl ToForge for DataSource {
+    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
+        &'a self,
+        alloc: &'b A,
+    ) -> DocBuilder<'b, A, ()>
+    where
+        A::Doc: Clone,
+    {
+        match self {
+            DataSource::FunctionCall(f) => alloc.text("call_").append(alloc.as_string(f)),
+            DataSource::Argument(a) => alloc.text("arg").append(alloc.as_string(a)),
+        }
+    }
+}
+
 const SRC_NAME: &'static str = "Src";
 const ARG_NAME: &'static str = "Arg";
+const FN_CALL_NAME: &'static str = "Call";
 const FN_NAME: &'static str = "Fn";
 const CTRL_NAME: &'static str = "Ctrl";
 const FLOW_NAME: &'static str = "flow";
@@ -136,6 +156,7 @@ impl ToForge for ProgramDescription {
             (SRC_NAME, None, &[]),
             (FN_NAME, None, &[]),
             (ARG_NAME, Some(SRC_NAME), &[]),
+            (FN_CALL_NAME, Some(SRC_NAME), &[]),
             (
                 CTRL_NAME,
                 None,
@@ -199,19 +220,20 @@ impl ToForge for ProgramDescription {
                     )
             })),
             alloc.nil(),
-            alloc.lines(
-                self.all_arguments()
-                    .into_iter()
-                    .map(|a| make_one_sig(alloc, a.as_forge(alloc), ARG_NAME)),
-            ),
+            alloc.lines(self.all_sources().into_iter().map(|a| {
+                make_one_sig(
+                    alloc,
+                    a.as_forge(alloc),
+                    match a {
+                        DataSource::Argument(_) => ARG_NAME,
+                        DataSource::FunctionCall(_) => FN_CALL_NAME,
+                    },
+                )
+            })),
             alloc.nil(),
             alloc.lines(self.annotations.iter().flat_map(|(name, sink)| {
                 (0..sink.num_args).map(|arg_slot| {
-                    make_one_sig(
-                        alloc,
-                        data_sink_as_forge(alloc, name, arg_slot),
-                        FN_NAME,
-                    )
+                    make_one_sig(alloc, data_sink_as_forge(alloc, name, arg_slot), FN_NAME)
                 })
             })),
             alloc.nil(),
@@ -294,7 +316,7 @@ where
                                     .text("all s: ctrl.")
                                     .append(SENSITIVE_NAME)
                                     .append(" & ")
-                                    .append(ARG_NAME)
+                                    .append(SRC_NAME)
                                     .append(" |")
                                     .append(alloc.hardline())
                                     .append(

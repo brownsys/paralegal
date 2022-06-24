@@ -22,10 +22,10 @@ pub struct ProgramDescription {
 }
 
 impl ProgramDescription {
-    pub fn all_arguments(&self) -> HashSet<&Identifier> {
+    pub fn all_sources(&self) -> HashSet<&DataSource> {
         self.controllers
             .values()
-            .flat_map(|ctrl| ctrl.flow.0.keys())
+            .flat_map(|c| c.flow.0.keys())
             .collect()
     }
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
@@ -62,7 +62,11 @@ impl<X, Y> Relation<X, Y> {
     }
 }
 
-pub type DataSource = Identifier;
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone)]
+pub enum DataSource {
+    FunctionCall(Identifier),
+    Argument(usize),
+}
 
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DataSink {
@@ -84,12 +88,12 @@ impl Ctrl {
             sensitive: HashSet::new(),
         }
     }
-    pub fn add(&mut self, from: &DataSource, to: DataSink) {
+    pub fn add(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {
         let m = &mut self.flow.0;
-        if let Some(e) = m.get_mut(from) {
+        if let Some(e) = m.get_mut(&from) {
             e.insert(to);
         } else {
-            m.insert(from.clone(), std::iter::once(to).collect());
+            m.insert(from.into_owned(), std::iter::once(to).collect());
         }
     }
 }
