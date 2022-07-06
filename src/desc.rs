@@ -1,24 +1,23 @@
-use crate::{HashMap, HashSet};
+use crate::{HashMap, HashSet, Symbol};
 
 pub type Endpoint = Identifier;
+pub type TypeDescriptor = Symbol;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct SinkAnnotationPayload {
-    pub leaks: Vec<u16>,
-    pub scopes: Vec<u16>,
+pub struct Annotation {
+    pub label: Symbol,
+    pub refinement: AnnotationRefinement,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct Sink {
-    pub ann: SinkAnnotationPayload,
-    pub num_args: usize,
+pub enum AnnotationRefinement {
+    Argument(Vec<u16>),
+    None,
 }
-
-pub type Sinks = HashMap<Identifier, Sink>;
 
 pub struct ProgramDescription {
     pub controllers: HashMap<Endpoint, Ctrl>,
-    pub annotations: Sinks,
+    pub annotations: HashMap<Identifier, (Vec<Annotation>, Option<usize>)>,
 }
 
 impl ProgramDescription {
@@ -37,14 +36,14 @@ impl ProgramDescription {
 }
 
 #[derive(Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone)]
-pub struct Identifier(String);
+pub struct Identifier(Symbol);
 
 impl Identifier {
-    pub fn new(s: String) -> Self {
+    pub fn new(s: Symbol) -> Self {
         Identifier(s)
     }
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
@@ -74,18 +73,18 @@ pub struct DataSink {
     pub arg_slot: usize,
 }
 
+pub type CtrlTypes = HashMap<usize, TypeDescriptor>;
+
 pub struct Ctrl {
     pub flow: Relation<DataSource, DataSink>,
-    pub witnesses: HashSet<Identifier>,
-    pub sensitive: HashSet<Identifier>,
+    pub types: CtrlTypes,
 }
 
 impl Ctrl {
-    pub fn empty() -> Self {
+    pub fn with_input_types(types: CtrlTypes) -> Self {
         Ctrl {
             flow: Relation::empty(),
-            witnesses: HashSet::new(),
-            sensitive: HashSet::new(),
+            types: HashMap::new(),
         }
     }
     pub fn add(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {

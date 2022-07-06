@@ -32,7 +32,7 @@ pub use std::collections::{HashMap, HashSet};
 use std::io::{Sink, Stdout, Write};
 use std::ops::DerefMut;
 
-use rustc_span::Symbol;
+pub use rustc_span::Symbol;
 
 mod ana;
 mod ann_parse;
@@ -76,11 +76,8 @@ struct Callbacks {
 }
 
 lazy_static! {
-    static ref SINK_MARKER: AttrMatchT = sym_vec!["dfpp", "sink"];
-    static ref SOURCE_MARKER: AttrMatchT = sym_vec!["dfpp", "source"];
+    static ref LABEL_MARKER: AttrMatchT = sym_vec!["dfpp", "label"];
     static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
-    static ref AUTH_WITNESS_MARKER: AttrMatchT = sym_vec!["dfpp", "auth_witness"];
-    static ref SENSITIVE_MARKER: AttrMatchT = sym_vec!["dfpp", "sensitive"];
 }
 
 impl rustc_driver::Callbacks for Callbacks {
@@ -109,13 +106,7 @@ impl rustc_driver::Callbacks for Callbacks {
         use pretty::DocAllocator;
         let doc_alloc = pretty::BoxAllocator;
         let doc = desc
-            .as_forge(&doc_alloc)
-            .append(doc_alloc.hardline())
-            .append(doc_alloc.hardline())
-            .append(frg::generate_safety_constraints(
-                &doc_alloc,
-                &desc.annotations,
-            ));
+            .as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();
         writeln!(
             self.printer.deref_mut(),
@@ -130,6 +121,7 @@ impl rustc_driver::Callbacks for Callbacks {
 lazy_static! {
     static ref LEAKS_SYM: Symbol = Symbol::intern("leaks");
     static ref SCOPED_SYM: Symbol = Symbol::intern("scopes");
+    static ref ARG_SYM: Symbol = Symbol::intern("argument");
     static ref SINK_ANN_SYMS: HashSet<Symbol> = [*LEAKS_SYM, *SCOPED_SYM].into_iter().collect();
 }
 

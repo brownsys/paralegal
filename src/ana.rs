@@ -77,6 +77,40 @@ fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> b
     })
 }
 
+fn type_ann_extract<A, F: Fn(&rustc_ast::MacArgs) -> A>(
+    tcx: TyCtxt,
+    ann_marker: &AttrMatchT,
+    f: F,
+    ty: &ty::Ty,
+) -> Vec<(HirId, Vec<A>)> {
+    ty.walk()
+        .filter_map(|generic| {
+            if let ty::subst::GenericArgKind::Type(ty) = generic.unpack() {
+                ty_def(&ty).and_then(DefId::as_local).map_or(None, |def| {
+                    let hid = tcx.hir().local_def_id_to_hir_id(def);
+                    let anns = tcx
+                        .hir()
+                        .attrs(hid)
+                        .iter()
+                        .filter_map(|a| a.match_extract(ann_marker, &f))
+                        .collect::<Vec<_>>();
+                    if anns.is_empty() {
+                        None
+                    } else {
+                        Some((hid, anns))
+                    }
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn type_descriptor_from_type<'tcx>(ty: ty::Ty<'tcx>) -> TypeDescriptor {
+    Symbol::intern(&format!("{ty}").replace(":", "_"))
+}
+
 fn called_fn<'tcx>(call: &mir::terminator::Terminator<'tcx>) -> Option<DefId> {
     match &call.kind {
         mir::terminator::TerminatorKind::Call { func, .. } => {
@@ -116,8 +150,7 @@ fn extract_args<'tcx>(
 
 pub struct Visitor<'tcx, 'p> {
     tcx: TyCtxt<'tcx>,
-    marked_sinks: HashMap<HirId, crate::desc::Sink>,
-    marked_sources: HashSet<HirId>,
+    marked_objects: HashMap<HirId, Vec<Annotation>>,
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
     printers: &'p mut Printers,
 }
@@ -126,8 +159,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, printers: &'p mut Printers) -> Self {
         Self {
             tcx,
-            marked_sinks: HashMap::new(),
-            marked_sources: HashSet::new(),
+            marked_objects: HashMap::new(),
             functions_to_analyze: vec![],
             printers,
         }
@@ -141,33 +173,27 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             .any(|a| a.matches_path(&crate::ANALYZE_MARKER))
     }
 
-    pub fn run(&mut self) -> std::io::Result<ProgramDescription> {
+    pub fn run(mut self) -> std::io::Result<ProgramDescription> {
         let tcx = self.tcx;
-        tcx.hir().deep_visit_all_item_likes(self);
+        tcx.hir().deep_visit_all_item_likes(&mut self);
         //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
         self.analyze()
     }
 
-    fn analyze(&mut self) -> std::io::Result<ProgramDescription> {
+    fn analyze(mut self) -> std::io::Result<ProgramDescription> {
         let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
         let tcx = self.tcx;
         let prnt: &mut dyn Write = self.printers.deref_mut();
-        let sink_fn_defs = self
-            .marked_sinks
-            .drain()
-            .map(|(s, p)| (tcx.hir().local_def_id(s).to_def_id(), p))
-            .collect::<HashMap<_, _>>();
-        let source_fn_defs = self
-            .marked_sources
-            .iter()
+        let interesting_fn_defs = self
+            .marked_objects
+            .keys()
             .map(|s| tcx.hir().local_def_id(*s).to_def_id())
             .collect::<HashSet<_>>();
         writeln!(
             prnt,
-            "Analysis begin:\n  {} targets\n  {} marked sinks\n  {} marked sources",
+            "Analysis begin:\n  {} targets\n  {} marked objects",
             targets.len(),
-            sink_fn_defs.len(),
-            source_fn_defs.len()
+            interesting_fn_defs.len(),
         )?;
         targets.drain(..).map(|(id, b, fd)| {
             let mut called_fns_found = 0;
@@ -179,23 +205,25 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             let body = &body_with_facts.body;
             let loc_dom = LocationDomain::new(body);
             writeln!(prnt, "{}", id.as_str())?;
-            let mut flows = Ctrl::empty();
-            let mut source_locs: HashMap<_, DataSource> = body
+            let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
                 .args_iter()
                 .enumerate()
                 .filter_map(|(i, l)| {
                     let ty = &body.local_decls[l].ty;
-                    if type_has_ann(tcx, &crate::AUTH_WITNESS_MARKER, ty) {
-                        flows.witnesses.insert(Identifier::new(format!("arg_{}", i)));
-                        Some((*loc_dom.value(loc_dom.arg_to_location(l)), DataSource::Argument(i)))
-                    } else if type_has_ann(tcx, &crate::SENSITIVE_MARKER, ty) {
-                        flows.sensitive.insert(Identifier::new(format!("arg_{}", i)));
-                        Some((*loc_dom.value(loc_dom.arg_to_location(l)), DataSource::Argument(i)))
+                    let ty_anns = type_ann_extract(tcx, &crate::LABEL_MARKER, crate::ann_parse::ann_match_fn, ty);
+                    if !ty_anns.is_empty() {
+                        
+                        self.marked_objects.extend(ty_anns);
+                        Some((
+                            (*loc_dom.value(loc_dom.arg_to_location(l)), DataSource::Argument(i)),
+                            (i, type_descriptor_from_type(*ty))
+                        ))
                     } else {
                         None
                     }
                 })
-                .collect();
+                .unzip();
+            let mut flows = Ctrl::with_input_types(types);
             let source_args_found = source_locs.len();
             let flow = infoflow::compute_flow(tcx, b, body_with_facts);
             for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
@@ -206,11 +234,9 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                     .and_then(|t| called_fn(t).map(|p| (t, p)))
                 {
                     called_fns_found += 1;
-                    if source_fn_defs.contains(&p) {
+                    if interesting_fn_defs.contains(&p) {
                         source_fns_found += 1;
-                        source_locs.insert(loc, DataSource::FunctionCall(Identifier::new(tcx.item_name(p).to_string())));
-                    }
-                    if sink_fn_defs.contains_key(&p) {
+                        source_locs.insert(loc, DataSource::FunctionCall(Identifier::new(tcx.item_name(p))));
                         let ordered_mentioned_places = extract_args(t, loc).expect("Not a function call");
                         let mentioned_places = ordered_mentioned_places.iter().filter_map(|a| *a).collect::<HashSet<_>>();
                         sink_fn_defs_found += 1;
@@ -231,7 +257,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                                 flows.add(
                                     Cow::Borrowed(&source_locs[loc]),
                                     DataSink {
-                                        function: Identifier::new(tcx.item_name(p).to_string()),
+                                        function: Identifier::new(tcx.item_name(p)),
                                         arg_slot: ordered_mentioned_places.iter().enumerate().filter(|(_, e)| **e == Some(*r)).next().unwrap().0,
                                     }
                                 );
@@ -245,8 +271,13 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                 };
             }
             writeln!(prnt, "Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found)?;
-            Ok((Identifier::new(id.as_str().to_string()), flows))
-        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: sink_fn_defs.into_iter().map(|(k, v)| (Identifier::new(tcx.item_name(k).to_string()), v)).collect() })
+            Ok((Identifier::new(id.name), flows))
+        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: self.marked_objects.into_iter().map(|(k, v)| (Identifier::new(tcx.item_name( tcx.hir().local_def_id(k).to_def_id())), (v, 
+                            tcx
+                            .hir()
+                            .fn_decl_by_hir_id(k)
+                            .map(|f| f.inputs.len())
+        ))).collect() })
     }
 }
 
@@ -263,32 +294,10 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
             .hir()
             .attrs(id)
             .iter()
-            .filter_map(|a| {
-                a.match_extract(&crate::SINK_MARKER, crate::ann_parse::sink_ann_match_fn)
-                    .map(|ann| Sink {
-                        ann,
-                        num_args: self
-                            .tcx
-                            .hir()
-                            .fn_decl_by_hir_id(id)
-                            .expect("impossible")
-                            .inputs
-                            .len(),
-                    })
-            })
+            .filter_map(|a| a.match_extract(&crate::LABEL_MARKER, crate::ann_parse::ann_match_fn))
             .collect::<Vec<_>>();
-        assert!(sink_matches.len() < 2, "Double annotated sink function");
-        if let Some(anns) = sink_matches.pop() {
-            self.marked_sinks.insert(id, anns);
-        }
-        if self
-            .tcx
-            .hir()
-            .attrs(id)
-            .iter()
-            .any(|a| a.matches_path(&crate::SOURCE_MARKER))
-        {
-            self.marked_sources.insert(id);
+        if !sink_matches.is_empty() {
+            self.marked_objects.insert(id, sink_matches);
         }
     }
 

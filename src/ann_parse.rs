@@ -1,7 +1,7 @@
 use crate::rust::*;
 
-use crate::desc::SinkAnnotationPayload;
-use crate::HashMap;
+use crate::desc::{Annotation, AnnotationRefinement};
+use crate::{HashMap, Symbol};
 use ast::{token, tokenstream};
 use token::*;
 use tokenstream::*;
@@ -81,6 +81,20 @@ pub fn integer<'a>() -> impl FnMut(I<'a>) -> R<'a, u16> {
     })
 }
 
+pub fn identifier<'a>() -> impl FnMut(I<'a>) -> R<'a, Symbol> {
+    nom::combinator::map_res(one_token(), |t| match t.ident() {
+        Some((rustc_span::symbol::Ident { name, .. }, _)) => Ok(name),
+        _ => Result::Err(()),
+    })
+}
+
+pub fn assert_identifier<'a>(s: Symbol) -> impl FnMut(I<'a>) -> R<'a, ()> {
+    nom::combinator::map_res(
+        identifier(),
+        move |i| if i == s { Ok(()) } else { Result::Err(()) },
+    )
+}
+
 pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>>>(
     mut p: P,
     delim: Delimiter,
@@ -118,47 +132,45 @@ pub fn dict<'a, K, V, P: Parser<I<'a>, K, Error<I<'a>>>, G: Parser<I<'a>, V, Err
     )
 }
 
-pub(crate) fn sink_ann_match_fn(ann: &rustc_ast::MacArgs) -> SinkAnnotationPayload {
+pub fn integer_list<'a>() -> impl FnMut(I<'a>) -> R<'a, Vec<u16>> {
+    delimited(
+        nom::multi::separated_list0(assert_token(TokenKind::Comma), integer()),
+        Delimiter::Bracket,
+    )
+}
+
+fn translate_delimiter(d: rustc_ast::MacDelimiter) -> rustc_ast::token::Delimiter {
+    use rustc_ast::*;
+    match d {
+        MacDelimiter::Parenthesis => Delimiter::Parenthesis,
+        MacDelimiter::Brace => Delimiter::Brace,
+        MacDelimiter::Bracket => Delimiter::Bracket,
+    }
+}
+
+pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> Annotation {
     use rustc_ast::*;
     use token::*;
-
-    let mut m = match ann {
+    match ann {
         ast::MacArgs::Delimited(sp, delim, stream) => {
-            let s = tokenstream::TokenStream::new(vec![tokenstream::TreeAndSpacing::from(
-                tokenstream::TokenTree::Delimited(
-                    sp.clone(),
-                    match delim {
-                        MacDelimiter::Parenthesis => Delimiter::Parenthesis,
-                        MacDelimiter::Brace => Delimiter::Brace,
-                        MacDelimiter::Bracket => Delimiter::Bracket,
-                    },
-                    stream.clone(),
-                ),
-            )]);
-            let mut p = dict(
-                nom::combinator::map_res(one_token(), |t| match t.ident() {
-                    Some((rustc_span::symbol::Ident { name, .. }, _))
-                        if crate::SINK_ANN_SYMS.contains(&name) =>
-                    {
-                        Ok(name)
-                    }
-                    _ => Result::Err(()),
-                }),
-                delimited(
-                    nom::multi::separated_list0(assert_token(TokenKind::Comma), integer()),
-                    Delimiter::Bracket,
-                ),
-            );
-            p(I::from_stream(&s))
-                .unwrap_or_else(|_| panic!("parser failed"))
-                .1
-                .into_iter()
-                .collect::<HashMap<_, _>>()
+            let p = |i| {
+                let (i, label) = identifier()(i)?;
+                let (i, refinement) = nom::combinator::map(
+                    nom::combinator::opt(nom::sequence::preceded(
+                        assert_token(TokenKind::Comma),
+                        nom::sequence::preceded(
+                            assert_identifier(*crate::ARG_SYM),
+                            nom::combinator::map(integer_list(), |il| {
+                                AnnotationRefinement::Argument(il)
+                            }),
+                        ),
+                    )),
+                    |o| o.unwrap_or(AnnotationRefinement::None),
+                )(i)?;
+                Ok(Annotation { label, refinement })
+            };
+            p(I::from_stream(&stream)).unwrap_or_else(|_: nom::Err<_>| panic!("parser failed"))
         }
-        _ => panic!("Incorrect annotation {ann:?}"),
-    };
-    SinkAnnotationPayload {
-        leaks: m.remove(&crate::LEAKS_SYM).expect("leaks not found"),
-        scopes: m.remove(&crate::SCOPED_SYM).expect("scoped not found"),
+        _ => panic!(),
     }
 }
