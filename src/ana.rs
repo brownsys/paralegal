@@ -176,6 +176,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
     pub fn run(mut self) -> std::io::Result<ProgramDescription> {
         let tcx = self.tcx;
         tcx.hir().deep_visit_all_item_likes(&mut self);
+        println!("{:?}", self.marked_objects);
         //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
         self.analyze()
     }
@@ -212,7 +213,6 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                     let ty = &body.local_decls[l].ty;
                     let ty_anns = type_ann_extract(tcx, &crate::LABEL_MARKER, crate::ann_parse::ann_match_fn, ty);
                     if !ty_anns.is_empty() {
-                        
                         self.marked_objects.extend(ty_anns);
                         Some((
                             (*loc_dom.value(loc_dom.arg_to_location(l)), DataSource::Argument(i)),
@@ -272,11 +272,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             }
             writeln!(prnt, "Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found)?;
             Ok((Identifier::new(id.name), flows))
-        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: self.marked_objects.into_iter().map(|(k, v)| (Identifier::new(tcx.item_name( tcx.hir().local_def_id(k).to_def_id())), (v, 
-                            tcx
-                            .hir()
-                            .fn_decl_by_hir_id(k)
-                            .map(|f| f.inputs.len())
+        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: self.marked_objects.into_iter().map(|(k, v)| (Identifier::new(tcx.item_name( tcx.hir().local_def_id(k).to_def_id())), (v, tcx.hir().fn_decl_by_hir_id(k).map_or(ObjectType::Type, |f| ObjectType::Function(f.inputs.len()))
         ))).collect() })
     }
 }

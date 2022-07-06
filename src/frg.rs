@@ -3,7 +3,10 @@ extern crate pretty;
 use crate::HashSet;
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
-use crate::desc::{DataSink, DataSource, Identifier, ProgramDescription, Relation, Annotation, AnnotationRefinement};
+use crate::desc::{
+    AnnotationRefinement, DataSink, DataSource, Identifier, ObjectType, ProgramDescription,
+    Relation,
+};
 
 trait DocLines<'a, A = ()>: DocAllocator<'a, A>
 where
@@ -114,7 +117,10 @@ impl<T: ToForge> ToForge for HashSet<T> {
     }
 }
 
-fn data_source_as_forge<'b, A: DocAllocator<'b, ()>>(src: &DataSource, alloc: &'b A) -> DocBuilder<'b, A, ()> {
+fn data_source_as_forge<'b, A: DocAllocator<'b, ()>>(
+    src: &DataSource,
+    alloc: &'b A,
+) -> DocBuilder<'b, A, ()> {
     match src {
         DataSource::FunctionCall(f) => alloc.text("call_").append(alloc.as_string(f)),
         DataSource::Argument(a) => alloc.text("arg_").append(alloc.as_string(a)),
@@ -128,7 +134,7 @@ impl ToForge for DataSource {
     ) -> DocBuilder<'b, A, ()>
     where
         A::Doc: Clone,
-    {   
+    {
         data_source_as_forge(self, alloc)
     }
 }
@@ -174,7 +180,7 @@ impl ToForge for ProgramDescription {
                 CTRL_NAME,
                 None,
                 &[
-                    (FLOW_NAME, "set Src->Fn"), // I'd have liked to define these types in terms of other string constants, but it seems rust doesn't let you concatenate strings at compile time
+                    (FLOW_NAME, "set Src->CallSite"), // I'd have liked to define these types in terms of other string constants, but it seems rust doesn't let you concatenate strings at compile time
                     (TYPES_NAME, "set Src->Type"),
                 ],
             ),
@@ -233,7 +239,13 @@ impl ToForge for ProgramDescription {
             })),
             alloc.nil(),
             alloc.lines(
-                self.annotations.values().flat_map(|v| v.0.iter()).map(|a| a.label).collect::<HashSet<_>>().into_iter().map(|s| make_one_sig(alloc, alloc.text(s.as_str().to_string()), LABEL_NAME))
+                self.annotations
+                    .values()
+                    .flat_map(|v| v.0.iter())
+                    .map(|a| a.label)
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .map(|s| make_one_sig(alloc, alloc.text(s.as_str().to_string()), LABEL_NAME)),
             ),
             alloc.nil(),
             alloc.lines(self.all_sources().into_iter().map(|a| {
@@ -248,22 +260,23 @@ impl ToForge for ProgramDescription {
             })),
             alloc.nil(),
             alloc.lines(self.annotations.iter().flat_map(|(name, (anns, nums))| {
-                if let Some(num_args) = nums {
+                if let ObjectType::Function(num_args) = nums {
                     Box::new(
-                        std::iter::once(
-                            make_one_sig(alloc, name.as_forge(alloc), FN_OBJ_NAME)
-                        ).chain(
-                            (0..*num_args).map(|arg_slot| {
-                                make_one_sig(alloc, data_sink_as_forge(alloc, name, arg_slot), FN_NAME)
-                            })
-                        )
-                    ) as Box::<dyn Iterator<Item=_>>
+                        std::iter::once(make_one_sig(alloc, name.as_forge(alloc), FN_OBJ_NAME))
+                            .chain((0..*num_args).map(|arg_slot| {
+                                make_one_sig(
+                                    alloc,
+                                    data_sink_as_forge(alloc, name, arg_slot),
+                                    FN_NAME,
+                                )
+                            })),
+                    ) as Box<dyn Iterator<Item = _>>
                 } else {
-                    Box::new(
-                        std::iter::once(
-                            make_one_sig(alloc, name.as_forge(alloc), FN_CALL_NAME)
-                        )
-                    )
+                    Box::new(std::iter::once(make_one_sig(
+                        alloc,
+                        name.as_forge(alloc),
+                        TYPE_NAME,
+                    )))
                 }
             })),
             alloc.nil(),
@@ -277,11 +290,11 @@ impl ToForge for ProgramDescription {
                 .text("pred ")
                 .append(FLOWS_PREDICATE_NAME)
                 .append(" ")
-                .append(alloc.hardline())
                 .append(
-                    alloc.lines([
-                        alloc
-                            .lines(self.controllers.iter().map(|(e, ctrl)| {
+                    alloc
+                        .lines([
+                            alloc.nil(),
+                            alloc.lines(self.controllers.iter().map(|(e, ctrl)| {
                                 alloc.lines([
                                     e.as_forge(alloc)
                                         .append(".")
@@ -291,71 +304,104 @@ impl ToForge for ProgramDescription {
                                             alloc
                                                 .hardline()
                                                 .append(ctrl.flow.as_forge(alloc).indent(4))
+                                                .append(alloc.hardline())
                                                 .parens(),
                                         ),
                                     e.as_forge(alloc)
                                         .append(".")
                                         .append(TYPES_NAME)
                                         .append(" = ")
-                                        .append(
-                                            alloc.hardline()
+                                        .append(if ctrl.types.is_empty() {
+                                            alloc.text("none")
+                                        } else {
+                                            alloc
+                                                .hardline()
                                                 .append(
-                                                    alloc.intersperse(
-                                                        ctrl.types.iter().map(|(i, desc)| data_source_as_forge(&DataSource::Argument(*i), alloc).append("->").append(alloc.text(desc.as_str()))),
-                                                        alloc.text(" +").append(alloc.hardline())
-                                                    ).indent(4))
+                                                    alloc
+                                                        .intersperse(
+                                                            ctrl.types.iter().map(|(i, desc)| {
+                                                                data_source_as_forge(
+                                                                    &DataSource::Argument(*i),
+                                                                    alloc,
+                                                                )
+                                                                .append("->")
+                                                                .append(alloc.text(desc.as_str()))
+                                                            }),
+                                                            alloc
+                                                                .text(" +")
+                                                                .append(alloc.hardline()),
+                                                        )
+                                                        .nest(4),
+                                                )
+                                                .append(alloc.hardline())
                                                 .parens()
-                                        )
+                                        }),
                                 ])
-                            }))
-                            .indent(4)
-                            .append(alloc.hardline()),
-                        alloc.text(LABELS_REL_NAME)
-                            .append(" = ")
-                            .append(
-                                alloc.hardline()
-                                    .append(
-                                        alloc.intersperse(
-                                            self.annotations.iter().flat_map(|(id, (anns, _))| anns.iter().map(|a| 
-                                                match &a.refinement {
-                                                    AnnotationRefinement::None => 
-                                                        id.as_forge(alloc).append(" -> ").append(alloc.text(a.label.as_str())),
-                                                    AnnotationRefinement::Argument(args) => 
-                                                        alloc.intersperse(
-                                                            args.iter().map(|i| id.as_forge(alloc).append("_").append(alloc.as_string(*i))),
-                                                            " + ").parens()
-                                                            .append("->")
-                                                            .append(a.label.as_str())
-                                                        
-                                                }
-                                            )),
-                                            alloc.text(" +").append(alloc.hardline())
-                                        )
-                                        .indent(4)
-                                    )
-                                    .parens()
+                            })),
+                            alloc.text(LABELS_REL_NAME).append(" = ").append(
+                                alloc
+                                    .hardline()
+                                    .append(alloc.intersperse(
+                                        self.annotations.iter().flat_map(|(id, (anns, _))| {
+                                            anns.iter().map(|a| match &a.refinement {
+                                                AnnotationRefinement::None => id
+                                                    .as_forge(alloc)
+                                                    .append("->")
+                                                    .append(alloc.text(a.label.as_str())),
+                                                AnnotationRefinement::Argument(args) => alloc
+                                                    .intersperse(
+                                                        args.iter().map(|i| {
+                                                            id.as_forge(alloc)
+                                                                .append("_")
+                                                                .append(alloc.as_string(*i))
+                                                        }),
+                                                        " + ",
+                                                    )
+                                                    .parens()
+                                                    .append("->")
+                                                    .append(a.label.as_str()),
+                                            })
+                                        }),
+                                        alloc.text(" +").append(alloc.hardline()),
+                                    ))
+                                    .nest(4)
+                                    .append(alloc.hardline())
+                                    .parens(),
                             ),
-                        alloc.text(FN_REL_NAME)
-                            .append(" = ")
-                            .append(
-                                alloc.hardline()
+                            alloc.text(FN_REL_NAME).append(" = ").append(
+                                alloc
+                                    .hardline()
                                     .append(
-                                        alloc.intersperse(
-                                            self.annotations.iter().filter_map(|(name, (_, num))| num.map(|n| 
-                                                alloc.intersperse(
-                                                    (0..n).map(|arg_slot| 
-                                                        data_sink_as_forge(alloc, name, arg_slot)
-                                                    ),
-                                                    " + ",
-                                                ).parens()
-                                                .append("->")
-                                                .append(name.as_forge(alloc))
-                                            )),
-                                            alloc.text(" +").append(alloc.hardline()),
-                                        )
+                                        alloc
+                                            .intersperse(
+                                                self.annotations.iter().filter_map(
+                                                    |(name, (_, num))| {
+                                                        num.is_function().map(|n| {
+                                                            alloc
+                                                                .intersperse(
+                                                                    (0..n).map(|arg_slot| {
+                                                                        data_sink_as_forge(
+                                                                            alloc, name, arg_slot,
+                                                                        )
+                                                                    }),
+                                                                    " + ",
+                                                                )
+                                                                .parens()
+                                                                .append("->")
+                                                                .append(name.as_forge(alloc))
+                                                        })
+                                                    },
+                                                ),
+                                                alloc.text(" +").append(alloc.hardline()),
+                                            )
+                                            .indent(4)
+                                            .append(alloc.hardline()),
                                     )
-                            )
-                    ])
+                                    .parens(),
+                            ),
+                        ])
+                        .nest(4)
+                        .append(alloc.hardline())
                         .braces(),
                 ),
         ])

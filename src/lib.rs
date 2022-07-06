@@ -105,8 +105,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .unwrap();
         use pretty::DocAllocator;
         let doc_alloc = pretty::BoxAllocator;
-        let doc = desc
-            .as_forge(&doc_alloc);
+        let doc = desc.as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();
         writeln!(
             self.printer.deref_mut(),
@@ -121,7 +120,7 @@ impl rustc_driver::Callbacks for Callbacks {
 lazy_static! {
     static ref LEAKS_SYM: Symbol = Symbol::intern("leaks");
     static ref SCOPED_SYM: Symbol = Symbol::intern("scopes");
-    static ref ARG_SYM: Symbol = Symbol::intern("argument");
+    static ref ARG_SYM: Symbol = Symbol::intern("arguments");
     static ref SINK_ANN_SYMS: HashSet<Symbol> = [*LEAKS_SYM, *SCOPED_SYM].into_iter().collect();
 }
 

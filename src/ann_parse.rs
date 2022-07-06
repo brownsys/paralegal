@@ -30,6 +30,12 @@ impl<'a> I<'a> {
     }
 }
 
+impl<'a> std::fmt::Debug for I<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        Ok(())
+    }
+}
+
 impl<'a> nom::InputLength for I<'a> {
     fn input_len(&self) -> usize {
         // Extremely yikes, but the only way to get to this information. :(
@@ -157,19 +163,23 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> Annotation {
                 let (i, label) = identifier()(i)?;
                 let (i, refinement) = nom::combinator::map(
                     nom::combinator::opt(nom::sequence::preceded(
-                        assert_token(TokenKind::Comma),
-                        nom::sequence::preceded(
+                        nom::sequence::tuple((
+                            assert_token(TokenKind::Comma),
                             assert_identifier(*crate::ARG_SYM),
-                            nom::combinator::map(integer_list(), |il| {
-                                AnnotationRefinement::Argument(il)
-                            }),
-                        ),
+                            assert_token(TokenKind::Eq),
+                        )),
+                        nom::combinator::map(integer_list(), |il| {
+                            AnnotationRefinement::Argument(il)
+                        }),
                     )),
                     |o| o.unwrap_or(AnnotationRefinement::None),
                 )(i)?;
+                let _ = nom::combinator::eof(i)?;
                 Ok(Annotation { label, refinement })
             };
-            p(I::from_stream(&stream)).unwrap_or_else(|_: nom::Err<_>| panic!("parser failed"))
+            p(I::from_stream(&stream)).unwrap_or_else(|err: nom::Err<_>| {
+                panic!("parser failed on {ann:?} with error {err:?}")
+            })
         }
         _ => panic!(),
     }

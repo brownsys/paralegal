@@ -15,9 +15,24 @@ pub enum AnnotationRefinement {
     None,
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum ObjectType {
+    Function(usize),
+    Type,
+}
+
+impl ObjectType {
+    pub fn is_function(&self) -> Option<usize> {
+        match self {
+            ObjectType::Function(f) => Some(*f),
+            _ => None,
+        }
+    }
+}
+
 pub struct ProgramDescription {
     pub controllers: HashMap<Endpoint, Ctrl>,
-    pub annotations: HashMap<Identifier, (Vec<Annotation>, Option<usize>)>,
+    pub annotations: HashMap<Identifier, (Vec<Annotation>, ObjectType)>,
 }
 
 impl ProgramDescription {
