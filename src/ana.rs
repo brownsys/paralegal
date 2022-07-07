@@ -50,7 +50,7 @@ impl MetaItemMatch for ast::Attribute {
     }
 }
 
-fn ty_def(ty: &ty::Ty) -> Option<DefId> {
+fn ty_def(ty: ty::Ty) -> Option<DefId> {
     match ty.kind() {
         ty::TyKind::Adt(def, _) => Some(def.did()),
         ty::TyKind::Foreign(did)
@@ -65,7 +65,7 @@ fn ty_def(ty: &ty::Ty) -> Option<DefId> {
 fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> bool {
     ty.walk().any(|generic| {
         if let ty::subst::GenericArgKind::Type(ty) = generic.unpack() {
-            ty_def(&ty).and_then(DefId::as_local).map_or(false, |def| {
+            ty_def(ty).and_then(DefId::as_local).map_or(false, |def| {
                 tcx.hir()
                     .attrs(tcx.hir().local_def_id_to_hir_id(def))
                     .iter()
@@ -77,16 +77,22 @@ fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> b
     })
 }
 
-fn type_ann_extract<A, F: Fn(&rustc_ast::MacArgs) -> A>(
+fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
+    match a.unpack() {
+        ty::subst::GenericArgKind::Type(t) => Some(t),
+        _ => None,
+    }
+}
+
+fn type_ann_extract<'a, A, F: Fn(&rustc_ast::MacArgs) -> A>(
     tcx: TyCtxt,
     ann_marker: &AttrMatchT,
     f: F,
-    ty: &ty::Ty,
-) -> Vec<(HirId, Vec<A>)> {
+    ty: ty::Ty<'a>,
+) -> Vec<(HirId, ty::Ty<'a>, Vec<A>)> {
     ty.walk()
         .filter_map(|generic| {
-            if let ty::subst::GenericArgKind::Type(ty) = generic.unpack() {
-                ty_def(&ty).and_then(DefId::as_local).map_or(None, |def| {
+            generic_arg_as_type(generic).and_then(ty_def).and_then(DefId::as_local).and_then(|def| {
                     let hid = tcx.hir().local_def_id_to_hir_id(def);
                     let anns = tcx
                         .hir()
@@ -97,18 +103,20 @@ fn type_ann_extract<A, F: Fn(&rustc_ast::MacArgs) -> A>(
                     if anns.is_empty() {
                         None
                     } else {
-                        Some((hid, anns))
+                        Some((hid, ty, anns))
                     }
-                })
-            } else {
-                None
-            }
+                }
+            )
         })
         .collect()
 }
 
-fn type_descriptor_from_type<'tcx>(ty: ty::Ty<'tcx>) -> TypeDescriptor {
-    Symbol::intern(&format!("{ty}").replace(":", "_"))
+fn type_descriptor_from_type<'tcx>(ty: ty::Ty<'tcx>) -> Symbol {
+    Symbol::intern(
+        &format!("{ty}")
+            .replace(&[':', '<', '>'], "_")
+            .replace("()", "unit"),
+    )
 }
 
 fn called_fn<'tcx>(call: &mir::terminator::Terminator<'tcx>) -> Option<DefId> {
@@ -176,22 +184,33 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
     pub fn run(mut self) -> std::io::Result<ProgramDescription> {
         let tcx = self.tcx;
         tcx.hir().deep_visit_all_item_likes(&mut self);
-        println!("{:?}", self.marked_objects);
         //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
         self.analyze()
+    }
+
+    fn annotated_subtypes(&self, ty: ty::Ty) -> HashSet<TypeDescriptor> {
+        ty.walk().filter_map(|ty|
+            generic_arg_as_type(ty).and_then(ty_def).and_then(DefId::as_local).and_then(|def| {
+                let hid = self.tcx.hir().local_def_id_to_hir_id(def);
+                if self.marked_objects.contains_key(&hid) {
+                    Some(Identifier::new(self.tcx.item_name( self.tcx.hir().local_def_id(hid).to_def_id())))
+                } else {
+                    None
+                }
+            })
+        ).collect()
     }
 
     fn analyze(mut self) -> std::io::Result<ProgramDescription> {
         let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
         let tcx = self.tcx;
-        let prnt: &mut dyn Write = self.printers.deref_mut();
         let interesting_fn_defs = self
             .marked_objects
             .keys()
             .map(|s| tcx.hir().local_def_id(*s).to_def_id())
             .collect::<HashSet<_>>();
         writeln!(
-            prnt,
+            self.printers,
             "Analysis begin:\n  {} targets\n  {} marked objects",
             targets.len(),
             interesting_fn_defs.len(),
@@ -205,18 +224,17 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             use flowistry::indexed::{impls::LocationDomain, IndexedDomain};
             let body = &body_with_facts.body;
             let loc_dom = LocationDomain::new(body);
-            writeln!(prnt, "{}", id.as_str())?;
+            writeln!(self.printers, "{}", id.as_str())?;
             let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
                 .args_iter()
                 .enumerate()
                 .filter_map(|(i, l)| {
-                    let ty = &body.local_decls[l].ty;
-                    let ty_anns = type_ann_extract(tcx, &crate::LABEL_MARKER, crate::ann_parse::ann_match_fn, ty);
-                    if !ty_anns.is_empty() {
-                        self.marked_objects.extend(ty_anns);
+                    let ty = body.local_decls[l].ty;
+                    let subtypes = self.annotated_subtypes(ty);
+                    if !subtypes.is_empty() {
                         Some((
                             (*loc_dom.value(loc_dom.arg_to_location(l)), DataSource::Argument(i)),
-                            (i, type_descriptor_from_type(*ty))
+                            (DataSource::Argument(i), subtypes)
                         ))
                     } else {
                         None
@@ -236,7 +254,12 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                     called_fns_found += 1;
                     if interesting_fn_defs.contains(&p) {
                         source_fns_found += 1;
-                        source_locs.insert(loc, DataSource::FunctionCall(Identifier::new(tcx.item_name(p))));
+                        let src_desc = DataSource::FunctionCall(Identifier::new(tcx.item_name(p)));
+                        source_locs.insert(loc, src_desc.clone());
+                        let interesting_output_types : HashSet<_> = self.annotated_subtypes(tcx.fn_sig(p).skip_binder().output());
+                        if !interesting_output_types.is_empty() {
+                            flows.types.insert(src_desc, interesting_output_types);
+                        }
                         let ordered_mentioned_places = extract_args(t, loc).expect("Not a function call");
                         let mentioned_places = ordered_mentioned_places.iter().filter_map(|a| *a).collect::<HashSet<_>>();
                         sink_fn_defs_found += 1;
@@ -247,11 +270,11 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                             let mut header_printed = false;
                             for loc in deps.filter(|l| source_locs.contains_key(l)) {
                                 if !terminator_printed {
-                                    writeln!(prnt, "  {:?}", t.kind)?;
+                                    writeln!(self.printers, "  {:?}", t.kind)?;
                                     terminator_printed = true;
                                 }
                                 if !header_printed {
-                                    write!(prnt, "    {:?}:", r)?;
+                                    write!(self.printers, "    {:?}:", r)?;
                                     header_printed = true
                                 };
                                 flows.add(
@@ -261,16 +284,16 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                                         arg_slot: ordered_mentioned_places.iter().enumerate().filter(|(_, e)| **e == Some(*r)).next().unwrap().0,
                                     }
                                 );
-                                write!(prnt, " {}", location_to_string(*loc, body))?;
+                                write!(self.printers, " {}", location_to_string(*loc, body))?;
                             }
                             if header_printed {
-                                writeln!(prnt, "")?;
+                                writeln!(self.printers, "")?;
                             }
                         }
                     }
                 };
             }
-            writeln!(prnt, "Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found)?;
+            writeln!(self.printers, "Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found)?;
             Ok((Identifier::new(id.name), flows))
         }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: self.marked_objects.into_iter().map(|(k, v)| (Identifier::new(tcx.item_name( tcx.hir().local_def_id(k).to_def_id())), (v, tcx.hir().fn_decl_by_hir_id(k).map_or(ObjectType::Type, |f| ObjectType::Function(f.inputs.len()))
         ))).collect() })
@@ -290,7 +313,16 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
             .hir()
             .attrs(id)
             .iter()
-            .filter_map(|a| a.match_extract(&crate::LABEL_MARKER, crate::ann_parse::ann_match_fn))
+            .filter_map(|a| {
+                a.match_extract(&crate::LABEL_MARKER, |i| {
+                    Annotation::Label(crate::ann_parse::ann_match_fn(i))
+                })
+                .or_else(|| {
+                    a.match_extract(&crate::OTYPE_MARKER, |i| {
+                        Annotation::OType(crate::ann_parse::otype_ann_match(i))
+                    })
+                })
+            })
             .collect::<Vec<_>>();
         if !sink_matches.is_empty() {
             self.marked_objects.insert(id, sink_matches);

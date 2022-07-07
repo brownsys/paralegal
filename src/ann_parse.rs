@@ -1,6 +1,6 @@
 use crate::rust::*;
 
-use crate::desc::{Annotation, AnnotationRefinement};
+use crate::desc::{Annotation, AnnotationRefinement, Identifier, LabelAnnotation, TypeDescriptor};
 use crate::{HashMap, Symbol};
 use ast::{token, tokenstream};
 use token::*;
@@ -154,7 +154,24 @@ fn translate_delimiter(d: rustc_ast::MacDelimiter) -> rustc_ast::token::Delimite
     }
 }
 
-pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> Annotation {
+pub(crate) fn otype_ann_match(ann: &ast::MacArgs) -> Vec<TypeDescriptor> {
+    match ann {
+        ast::MacArgs::Delimited(sp, delim, stream) => {
+            let mut p = nom::multi::separated_list0(
+                assert_token(TokenKind::Comma),
+                nom::combinator::map(identifier(), Identifier::new),
+            );
+            p(I::from_stream(&stream))
+                .unwrap_or_else(|err: nom::Err<_>| {
+                    panic!("parser failed on {ann:?} with error {err:?}")
+                })
+                .1
+        }
+        _ => panic!(),
+    }
+}
+
+pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> LabelAnnotation {
     use rustc_ast::*;
     use token::*;
     match ann {
@@ -175,7 +192,7 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> Annotation {
                     |o| o.unwrap_or(AnnotationRefinement::None),
                 )(i)?;
                 let _ = nom::combinator::eof(i)?;
-                Ok(Annotation { label, refinement })
+                Ok(LabelAnnotation { label, refinement })
             };
             p(I::from_stream(&stream)).unwrap_or_else(|err: nom::Err<_>| {
                 panic!("parser failed on {ann:?} with error {err:?}")

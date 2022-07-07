@@ -4,8 +4,8 @@ use crate::HashSet;
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
-    AnnotationRefinement, DataSink, DataSource, Identifier, ObjectType, ProgramDescription,
-    Relation,
+    Annotation, AnnotationRefinement, DataSink, DataSource, Identifier, ObjectType,
+    ProgramDescription, Relation,
 };
 
 trait DocLines<'a, A = ()>: DocAllocator<'a, A>
@@ -24,6 +24,52 @@ where
 }
 
 impl<'a, T, A> DocLines<'a, A> for T
+where
+    T: DocAllocator<'a, A>,
+    A: 'a,
+{
+}
+
+trait DocFrgRel<'a, A = ()>: DocAllocator<'a, A>
+where
+    A: 'a,
+{
+    #[inline]
+    fn forge_relation<I, LIter, RIter>(&'a self, rel: I) -> DocBuilder<'a, Self, A>
+    where
+        I: IntoIterator<Item = (LIter, RIter)>,
+        LIter: IntoIterator,
+        LIter::Item: Pretty<'a, Self, A>,
+        RIter: IntoIterator,
+        RIter::Item: Pretty<'a, Self, A>,
+        DocBuilder<'a, Self, A>: Clone,
+    {
+        let mut prit = rel.into_iter().peekable();
+        if prit.peek().is_some() {
+            self.intersperse(
+                prit.filter_map(|(l, r)| {
+                    let mut pl = l.into_iter().peekable();
+                    let mut pr = r.into_iter().peekable();
+                    if pl.peek().is_some() && pr.peek().is_some() {
+                        Some(
+                            self.intersperse(pl, self.text(" + "))
+                                .parens()
+                                .append("->")
+                                .append(self.intersperse(pr, self.text(" + ")).parens()),
+                        )
+                    } else {
+                        None
+                    }
+                }),
+                self.text(" +").append(self.hardline()),
+            )
+        } else {
+            self.text("none")
+        }
+    }
+}
+
+impl<'a, T, A> DocFrgRel<'a, A> for T
 where
     T: DocAllocator<'a, A>,
     A: 'a,
@@ -59,19 +105,12 @@ impl<X: ToForge, Y: ToForge> ToForge for Relation<X, Y> {
     where
         A::Doc: Clone,
     {
-        alloc.intersperse(
-            self.0.iter().map(|(src, sinks)| {
-                src.as_forge(alloc).append("->").append(
-                    alloc
-                        .intersperse(
-                            sinks.iter().map(|sink| sink.as_forge(alloc)),
-                            alloc.text(" + "),
-                        )
-                        .parens(),
-                )
-            }),
-            alloc.text(" +").append(alloc.hardline()),
-        )
+        alloc.forge_relation(self.0.iter().map(|(src, sinks)| {
+            (
+                std::iter::once(src.as_forge(alloc)),
+                sinks.iter().map(|sink| sink.as_forge(alloc)),
+            )
+        }))
     }
 }
 
@@ -153,6 +192,7 @@ const LABELS_REL_NAME: &'static str = "labels";
 const TYPES_NAME: &'static str = "types";
 const TYPE_NAME: &'static str = "Type";
 const FN_REL_NAME: &'static str = "function";
+const OTYPE_REL_NAME: &'static str = "otype";
 
 impl ToForge for ProgramDescription {
     fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
@@ -174,7 +214,7 @@ impl ToForge for ProgramDescription {
             (FN_OBJ_NAME, Some(OBJ_NAME), &[]),
             (FN_NAME, Some(OBJ_NAME), &[(FN_REL_NAME, "one Fn")]),
             (ARG_NAME, Some(SRC_NAME), &[]),
-            (TYPE_NAME, Some(OBJ_NAME), &[]),
+            (TYPE_NAME, Some(OBJ_NAME), &[(OTYPE_REL_NAME, "set Type")]),
             (FN_CALL_NAME, Some(SRC_NAME), &[]),
             (
                 CTRL_NAME,
@@ -242,6 +282,7 @@ impl ToForge for ProgramDescription {
                 self.annotations
                     .values()
                     .flat_map(|v| v.0.iter())
+                    .filter_map(Annotation::as_label_ann)
                     .map(|a| a.label)
                     .collect::<HashSet<_>>()
                     .into_iter()
@@ -311,59 +352,55 @@ impl ToForge for ProgramDescription {
                                         .append(".")
                                         .append(TYPES_NAME)
                                         .append(" = ")
-                                        .append(if ctrl.types.is_empty() {
-                                            alloc.text("none")
-                                        } else {
+                                        .append(
                                             alloc
                                                 .hardline()
-                                                .append(
-                                                    alloc
-                                                        .intersperse(
-                                                            ctrl.types.iter().map(|(i, desc)| {
-                                                                data_source_as_forge(
-                                                                    &DataSource::Argument(*i),
-                                                                    alloc,
-                                                                )
-                                                                .append("->")
-                                                                .append(alloc.text(desc.as_str()))
-                                                            }),
-                                                            alloc
-                                                                .text(" +")
-                                                                .append(alloc.hardline()),
+                                                .append(alloc.forge_relation(
+                                                    ctrl.types.iter().map(|(i, desc)| {
+                                                        (
+                                                            std::iter::once(data_source_as_forge(
+                                                                i, alloc,
+                                                            )),
+                                                            desc.iter()
+                                                                .map(|t| alloc.text(t.as_str())),
                                                         )
-                                                        .nest(4),
-                                                )
+                                                    }),
+                                                ))
+                                                .nest(4)
                                                 .append(alloc.hardline())
-                                                .parens()
-                                        }),
+                                                .parens(),
+                                        ),
                                 ])
                             })),
                             alloc.text(LABELS_REL_NAME).append(" = ").append(
                                 alloc
                                     .hardline()
-                                    .append(alloc.intersperse(
-                                        self.annotations.iter().flat_map(|(id, (anns, _))| {
-                                            anns.iter().map(|a| match &a.refinement {
-                                                AnnotationRefinement::None => id
-                                                    .as_forge(alloc)
-                                                    .append("->")
-                                                    .append(alloc.text(a.label.as_str())),
-                                                AnnotationRefinement::Argument(args) => alloc
-                                                    .intersperse(
-                                                        args.iter().map(|i| {
-                                                            id.as_forge(alloc)
-                                                                .append("_")
-                                                                .append(alloc.as_string(*i))
-                                                        }),
-                                                        " + ",
+                                    .append(alloc.forge_relation(self.annotations.iter().flat_map(
+                                        |(id, (anns, _))| {
+                                            anns.iter().filter_map(Annotation::as_label_ann).map(
+                                                |a| {
+                                                    (
+                                                        match &a.refinement {
+                                                            AnnotationRefinement::None => Box::new(
+                                                                std::iter::once(id.as_forge(alloc)),
+                                                            )
+                                                                as Box<dyn Iterator<Item = _>>,
+                                                            AnnotationRefinement::Argument(
+                                                                args,
+                                                            ) => Box::new(args.iter().map(|i| {
+                                                                id.as_forge(alloc)
+                                                                    .append("_")
+                                                                    .append(alloc.as_string(*i))
+                                                            })),
+                                                        },
+                                                        std::iter::once(
+                                                            alloc.text(a.label.as_str()),
+                                                        ),
                                                     )
-                                                    .parens()
-                                                    .append("->")
-                                                    .append(a.label.as_str()),
-                                            })
-                                        }),
-                                        alloc.text(" +").append(alloc.hardline()),
-                                    ))
+                                                },
+                                            )
+                                        },
+                                    )))
                                     .nest(4)
                                     .append(alloc.hardline())
                                     .parens(),
@@ -373,27 +410,41 @@ impl ToForge for ProgramDescription {
                                     .hardline()
                                     .append(
                                         alloc
-                                            .intersperse(
-                                                self.annotations.iter().filter_map(
-                                                    |(name, (_, num))| {
-                                                        num.is_function().map(|n| {
-                                                            alloc
-                                                                .intersperse(
-                                                                    (0..n).map(|arg_slot| {
-                                                                        data_sink_as_forge(
-                                                                            alloc, name, arg_slot,
-                                                                        )
-                                                                    }),
-                                                                    " + ",
+                                            .forge_relation(self.annotations.iter().filter_map(
+                                                |(name, (_, num))| {
+                                                    num.is_function().map(|n| {
+                                                        (
+                                                            (0..n).map(|arg_slot| {
+                                                                data_sink_as_forge(
+                                                                    alloc, name, arg_slot,
                                                                 )
-                                                                .parens()
-                                                                .append("->")
-                                                                .append(name.as_forge(alloc))
-                                                        })
-                                                    },
-                                                ),
-                                                alloc.text(" +").append(alloc.hardline()),
-                                            )
+                                                            }),
+                                                            std::iter::once(name.as_forge(alloc)),
+                                                        )
+                                                    })
+                                                },
+                                            ))
+                                            .indent(4)
+                                            .append(alloc.hardline()),
+                                    )
+                                    .parens(),
+                            ),
+                            alloc.text(OTYPE_REL_NAME).append(" = ").append(
+                                alloc
+                                    .hardline()
+                                    .append(
+                                        alloc
+                                            .forge_relation(self.annotations.iter().map(
+                                                |(o, (anns, _))| {
+                                                    (
+                                                        std::iter::once(o.as_forge(alloc)),
+                                                        anns.iter()
+                                                            .filter_map(Annotation::as_otype_ann)
+                                                            .flat_map(|v| v.iter())
+                                                            .map(|t| t.as_forge(alloc)),
+                                                    )
+                                                },
+                                            ))
                                             .indent(4)
                                             .append(alloc.hardline()),
                                     )

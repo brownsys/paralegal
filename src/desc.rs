@@ -1,10 +1,32 @@
 use crate::{HashMap, HashSet, Symbol};
 
 pub type Endpoint = Identifier;
-pub type TypeDescriptor = Symbol;
+pub type TypeDescriptor = Identifier;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct Annotation {
+pub enum Annotation {
+    Label(LabelAnnotation),
+    OType(Vec<TypeDescriptor>),
+}
+
+impl Annotation {
+    pub fn as_label_ann(&self) -> Option<&LabelAnnotation> {
+        match self {
+            Annotation::Label(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    pub fn as_otype_ann(&self) -> Option<&[TypeDescriptor]> {
+        match self {
+            Annotation::OType(t) => Some(t),
+            _ => None,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct LabelAnnotation {
     pub label: Symbol,
     pub refinement: AnnotationRefinement,
 }
@@ -88,7 +110,7 @@ pub struct DataSink {
     pub arg_slot: usize,
 }
 
-pub type CtrlTypes = HashMap<usize, TypeDescriptor>;
+pub type CtrlTypes = HashMap<DataSource, HashSet<TypeDescriptor>>;
 
 pub struct Ctrl {
     pub flow: Relation<DataSource, DataSink>,
@@ -99,7 +121,7 @@ impl Ctrl {
     pub fn with_input_types(types: CtrlTypes) -> Self {
         Ctrl {
             flow: Relation::empty(),
-            types: HashMap::new(),
+            types,
         }
     }
     pub fn add(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {

@@ -78,6 +78,7 @@ struct Callbacks {
 lazy_static! {
     static ref LABEL_MARKER: AttrMatchT = sym_vec!["dfpp", "label"];
     static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
+    static ref OTYPE_MARKER: AttrMatchT = sym_vec!["dfpp", "output_types"];
 }
 
 impl rustc_driver::Callbacks for Callbacks {
@@ -118,10 +119,7 @@ impl rustc_driver::Callbacks for Callbacks {
 }
 
 lazy_static! {
-    static ref LEAKS_SYM: Symbol = Symbol::intern("leaks");
-    static ref SCOPED_SYM: Symbol = Symbol::intern("scopes");
     static ref ARG_SYM: Symbol = Symbol::intern("arguments");
-    static ref SINK_ANN_SYMS: HashSet<Symbol> = [*LEAKS_SYM, *SCOPED_SYM].into_iter().collect();
 }
 
 impl rustc_plugin::RustcPlugin for DfppPlugin {
