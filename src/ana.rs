@@ -4,7 +4,7 @@ use std::ops::DerefMut;
 
 use crate::desc::*;
 use crate::rust::*;
-use crate::{HashMap, HashSet, Printers};
+use crate::{HashMap, HashSet};
 
 use hir::{
     def_id::DefId,
@@ -158,22 +158,20 @@ fn extract_args<'tcx>(
     }
 }
 
-pub struct Visitor<'tcx, 'p> {
+pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     marked_objects: HashMap<HirId, (Vec<Annotation>, ObjectType)>,
-    marked_stmts: HashMap<HirId, Span>,
+    marked_stmts: HashMap<HirId, (Vec<Annotation>, Span)>,
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
-    printers: &'p mut Printers,
 }
 
-impl<'tcx, 'p> Visitor<'tcx, 'p> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, printers: &'p mut Printers) -> Self {
+impl<'tcx> Visitor<'tcx> {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
             marked_objects: HashMap::new(),
             marked_stmts: HashMap::new(),
             functions_to_analyze: vec![],
-            printers,
         }
     }
 
@@ -221,12 +219,11 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             .keys()
             .map(|s| tcx.hir().local_def_id(*s).to_def_id())
             .collect::<HashSet<_>>();
-        writeln!(
-            self.printers,
+        info!(
             "Analysis begin:\n  {} targets\n  {} marked objects",
             targets.len(),
             interesting_fn_defs.len(),
-        )?;
+        );
         let mut extra_anns: HashMap<Identifier, (Vec<Annotation>, ObjectType)> = HashMap::new();
         targets.drain(..).map(|(id, b, fd)| {
             let mut called_fns_found = 0;
@@ -237,7 +234,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             use flowistry::indexed::{impls::LocationDomain, IndexedDomain};
             let body = &body_with_facts.body;
             let loc_dom = LocationDomain::new(body);
-            writeln!(self.printers, "{}", id.as_str())?;
+            info!("{}", id.as_str());
             let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
                 .args_iter()
                 .enumerate()
@@ -277,19 +274,9 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                         let mentioned_places = ordered_mentioned_places.iter().filter_map(|a| *a).collect::<HashSet<_>>();
                         sink_fn_defs_found += 1;
                         let matrix = flow.state_at(loc);
-                        let mut terminator_printed = false;
                         for r in mentioned_places.iter() {
                             let deps = matrix.row(*r);
-                            let mut header_printed = false;
                             for loc in deps.filter(|l| source_locs.contains_key(l)) {
-                                if !terminator_printed {
-                                    writeln!(self.printers, "  {:?}", t.kind)?;
-                                    terminator_printed = true;
-                                }
-                                if !header_printed {
-                                    write!(self.printers, "    {:?}:", r)?;
-                                    header_printed = true
-                                };
                                 flows.add(
                                     Cow::Borrowed(&source_locs[loc]),
                                     DataSink {
@@ -297,26 +284,21 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                                         arg_slot: ordered_mentioned_places.iter().enumerate().filter(|(_, e)| **e == Some(*r)).next().unwrap().0,
                                     }
                                 );
-                                write!(self.printers, " {}", location_to_string(*loc, body))?;
-                            }
-                            if header_printed {
-                                writeln!(self.printers, "")?;
                             }
                         }
                     }
-                    if let Some((hid, _)) = self.marked_stmts.iter().find(|(_, s)| s.contains(t.source_info.span)) {
-                        let ann = &self.marked_objects[hid];
+                    if let Some((_, (ann, _))) = self.marked_stmts.iter().find(|(_, (_, s))| s.contains(t.source_info.span)) {
                         // TODO this is attaching to functions instead of call
                         // sites. Once we start actually tracking call sites
                         // this needs to be adjusted
-                        extra_anns.entry(identifier_for_fn(tcx, p)).or_insert_with(|| (vec![], ObjectType::Other)).0.extend(ann.0.iter().cloned());
+                        extra_anns.entry(identifier_for_fn(tcx, p)).or_insert_with(|| (vec![], ObjectType::Other)).0.extend(ann.iter().cloned());
                     }
                 };
             }
-            writeln!(self.printers, "Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found)?;
+            info!("Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found);
             Ok((Identifier::new(id.name), flows))
-        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: self.marked_objects.into_iter().filter(|v| v.1.1 != ObjectType::Stmt).map(|(k, v)| (identifier_for_hid(tcx, k), v, 
-        )).chain(extra_anns.into_iter()).collect() })
+        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: self.marked_objects.into_iter().map(|(k, v)| (identifier_for_hid(tcx, k), v)
+        ).chain(extra_anns.into_iter()).collect() })
     }
 }
 
@@ -328,7 +310,7 @@ fn identifier_for_fn<'tcx>(tcx: TyCtxt<'tcx>, p: DefId) -> Identifier {
     Identifier::new(tcx.item_name(p))
 }
 
-impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
+impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
     type NestedFilter = OnlyBodies;
 
     fn nested_visit_map(&mut self) -> Self::Map {
@@ -353,21 +335,21 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
             })
             .collect::<Vec<_>>();
         if !sink_matches.is_empty() {
-            self.marked_objects.insert(id, (sink_matches, {
-                let node = self.tcx.hir().find(id).unwrap();
+            let node = self.tcx.hir().find(id).unwrap();
+            assert!(
                 if let Some(decl) = node.fn_decl() {
-                    ObjectType::Function(decl.inputs.len())   
+                    self.marked_objects.insert(id, (sink_matches, 
+                        ObjectType::Function(decl.inputs.len())   
+                    )).is_none()
                 } else {
                     match node {
-                        hir::Node::Ty(_) | hir::Node::Item(hir::Item { kind: hir::ItemKind::Struct(..), ..}) => ObjectType::Type,
-                        hir::Node::Stmt(_) | hir::Node::Expr(_) => ObjectType::Stmt,
+                        hir::Node::Ty(_) | hir::Node::Item(hir::Item { kind: hir::ItemKind::Struct(..), ..}) => 
+                            self.marked_objects.insert(id, (sink_matches, ObjectType::Type)).is_none(),
+                        hir::Node::Stmt(hir::Stmt{ span, ..}) | hir::Node::Expr(hir::Expr {span, ..}) => 
+                            self.marked_stmts.insert(id, (sink_matches, *span)).is_none(),
                         _ => panic!("Unsupported object type for annotation {node:?}"),
                     }
-                }
-            }
-            )
-        
-        );
+                })
         }
     }
 
@@ -392,12 +374,5 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
         // the future we decide to do something with nested items we may need
         // it.
         intravisit::walk_fn(self, fk, fd, b, s, id)
-    }
-
-    fn visit_stmt(&mut self, s: &'tcx hir::Stmt<'tcx>) {
-        intravisit::walk_stmt(self, s);
-        if self.marked_objects.contains_key(&s.hir_id) {
-            self.marked_stmts.insert(s.hir_id, s.span);
-        }
     }
 }

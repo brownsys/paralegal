@@ -9,6 +9,9 @@ extern crate serde;
 extern crate trait_enum;
 #[macro_use]
 extern crate lazy_static;
+extern crate simple_logger;
+#[macro_use]
+extern crate log;
 
 pub mod rust {
     pub extern crate rustc_ast;
@@ -29,8 +32,6 @@ use rust::*;
 use clap::Parser;
 use flowistry::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
-use std::io::{Sink, Stdout, Write};
-use std::ops::DerefMut;
 
 pub use rustc_span::Symbol;
 
@@ -43,12 +44,6 @@ use ana::AttrMatchT;
 
 use frg::ToForge;
 
-trait_enum! {
-    enum Printers : Write {
-        Stdout,
-        Sink,
-    }
-}
 
 macro_rules! sym_vec {
     ($($e:expr),*) => {
@@ -71,7 +66,6 @@ pub struct Args {
 }
 
 struct Callbacks {
-    printer: Printers,
     res_p: std::path::PathBuf,
 }
 
@@ -95,9 +89,9 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .take()
-            .enter(|tcx| ana::Visitor::new(tcx, &mut self.printer).run())
+            .enter(|tcx| ana::Visitor::new(tcx).run())
             .unwrap();
-        writeln!(self.printer.deref_mut(), "All elems walked").unwrap();
+        info!("All elems walked");
         let mut outf = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -108,12 +102,10 @@ impl rustc_driver::Callbacks for Callbacks {
         let doc_alloc = pretty::BoxAllocator;
         let doc = desc.as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();
-        writeln!(
-            self.printer.deref_mut(),
+        info!(
             "Wrote analysis result to {}",
             &self.res_p.canonicalize().unwrap().display()
-        )
-        .unwrap();
+        );
         rustc_driver::Compilation::Stop
     }
 }
@@ -145,12 +137,13 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
-        let printer = if plugin_args.verbose {
-            Printers::Stdout(std::io::stdout())
+        let lvl = if plugin_args.verbose {
+            log::Level::Info
         } else {
-            Printers::Sink(std::io::sink())
+            log::Level::Warn
         };
+        simple_logger::init_with_level(lvl).unwrap();
         let res_p = plugin_args.result_path;
-        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { printer, res_p }).run()
+        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { res_p }).run()
     }
 }

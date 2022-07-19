@@ -17,6 +17,8 @@ ordermap = "0.3"
 trait_enum = "0.5"
 pretty = "0.11"
 nom = "7"
+log = "0.4"
+simple_logger = "2"
 
 [[bin]]
 name = "cargo-dfpp"

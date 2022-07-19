@@ -41,7 +41,6 @@ pub enum AnnotationRefinement {
 pub enum ObjectType {
     Function(usize),
     Type,
-    Stmt,
     Other,
 }
 
