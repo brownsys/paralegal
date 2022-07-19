@@ -161,7 +161,7 @@ fn extract_args<'tcx>(
 pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     marked_objects: HashMap<HirId, (Vec<Annotation>, ObjectType)>,
-    marked_stmts: HashMap<HirId, (Vec<Annotation>, Span)>,
+    marked_stmts: HashMap<HirId, ((Vec<Annotation>, usize), Span, DefId)>,
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
 }
 
@@ -216,15 +216,38 @@ impl<'tcx> Visitor<'tcx> {
         let tcx = self.tcx;
         let interesting_fn_defs = self
             .marked_objects
-            .keys()
-            .map(|s| tcx.hir().local_def_id(*s).to_def_id())
-            .collect::<HashSet<_>>();
+            .iter()
+            .filter_map(|(s, v)| match v.1 {
+                ObjectType::Function(i) => {
+                    Some((tcx.hir().local_def_id(*s).to_def_id(), (v.0.clone(), i)))
+                }
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
         info!(
             "Analysis begin:\n  {} targets\n  {} marked objects",
             targets.len(),
             interesting_fn_defs.len(),
         );
-        let mut extra_anns: HashMap<Identifier, (Vec<Annotation>, ObjectType)> = HashMap::new();
+        type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
+        let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
+        fn register_call_site(
+            map: &mut CallSiteAnnotations,
+            did: DefId,
+            ann: &(Vec<Annotation>, usize),
+        ) {
+            // This is a bit ugly. This basically just cleans up the fact that
+            // when we integrate an annotation on a call, its slightly
+            // cumbersome to find out how many arguments the call has. So I just
+            // fill in the largest annotated value and then have it merge here
+            // later in case we know of more arguments.
+            map.entry(did)
+                .and_modify(|e| {
+                    e.0.extend(ann.0.iter().cloned());
+                    e.1 = ann.1.max(e.1);
+                })
+                .or_insert_with(|| ann.clone());
+        }
         targets.drain(..).map(|(id, b, fd)| {
             let mut called_fns_found = 0;
             let mut source_fns_found = 0;
@@ -262,7 +285,8 @@ impl<'tcx> Visitor<'tcx> {
                     .and_then(|t| called_fn(t).map(|p| (t, p)))
                 {
                     called_fns_found += 1;
-                    if interesting_fn_defs.contains(&p) {
+                    if let Some(ann) = interesting_fn_defs.get(&p) {
+                        register_call_site(&mut call_site_annotations, p, ann);
                         source_fns_found += 1;
                         let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
                         source_locs.insert(loc, src_desc.clone());
@@ -287,18 +311,18 @@ impl<'tcx> Visitor<'tcx> {
                             }
                         }
                     }
-                    if let Some((_, (ann, _))) = self.marked_stmts.iter().find(|(_, (_, s))| s.contains(t.source_info.span)) {
+                    if let Some((_, (ann, _, _))) = self.marked_stmts.iter().find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span)) {
                         // TODO this is attaching to functions instead of call
                         // sites. Once we start actually tracking call sites
                         // this needs to be adjusted
-                        extra_anns.entry(identifier_for_fn(tcx, p)).or_insert_with(|| (vec![], ObjectType::Other)).0.extend(ann.iter().cloned());
+                        register_call_site(&mut call_site_annotations, p, ann);
                     }
                 };
             }
             info!("Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found);
             Ok((Identifier::new(id.name), flows))
-        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: self.marked_objects.into_iter().map(|(k, v)| (identifier_for_hid(tcx, k), v)
-        ).chain(extra_anns.into_iter()).collect() })
+        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: call_site_annotations.into_iter().map(|(k, v)| (identifier_for_fn(tcx, k), (v.0, ObjectType::Function(v.1)))
+        ).chain(self.marked_objects.iter().filter(|kv| kv.1.1 == ObjectType::Type).map(|(k, v)| (identifier_for_hid(tcx, *k), v.clone()))).collect() })
     }
 }
 
@@ -310,6 +334,20 @@ fn identifier_for_fn<'tcx>(tcx: TyCtxt<'tcx>, p: DefId) -> Identifier {
     Identifier::new(tcx.item_name(p))
 }
 
+fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
+    *anns
+        .iter()
+        .flat_map(|a| match a {
+            Annotation::Label(LabelAnnotation {
+                refinement: AnnotationRefinement::Argument(nums),
+                ..
+            }) => nums.iter(),
+            _ => panic!("Unsupported annotation type for statement annotation"),
+        })
+        .max()
+        .unwrap() as usize
+}
+
 impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
     type NestedFilter = OnlyBodies;
 
@@ -318,9 +356,9 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
     }
 
     fn visit_id(&mut self, id: HirId) {
-        let mut sink_matches = self
-            .tcx
-            .hir()
+        let tcx = self.tcx;
+        let hir = self.tcx.hir();
+        let mut sink_matches = hir
             .attrs(id)
             .iter()
             .filter_map(|a| {
@@ -336,20 +374,61 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
             .collect::<Vec<_>>();
         if !sink_matches.is_empty() {
             let node = self.tcx.hir().find(id).unwrap();
-            assert!(
-                if let Some(decl) = node.fn_decl() {
-                    self.marked_objects.insert(id, (sink_matches, 
-                        ObjectType::Function(decl.inputs.len())   
-                    )).is_none()
-                } else {
-                    match node {
-                        hir::Node::Ty(_) | hir::Node::Item(hir::Item { kind: hir::ItemKind::Struct(..), ..}) => 
-                            self.marked_objects.insert(id, (sink_matches, ObjectType::Type)).is_none(),
-                        hir::Node::Stmt(hir::Stmt{ span, ..}) | hir::Node::Expr(hir::Expr {span, ..}) => 
-                            self.marked_stmts.insert(id, (sink_matches, *span)).is_none(),
-                        _ => panic!("Unsupported object type for annotation {node:?}"),
+            assert!(if let Some(decl) = node.fn_decl() {
+                self.marked_objects
+                    .insert(id, (sink_matches, ObjectType::Function(decl.inputs.len())))
+                    .is_none()
+            } else {
+                match node {
+                    hir::Node::Ty(_)
+                    | hir::Node::Item(hir::Item {
+                        kind: hir::ItemKind::Struct(..),
+                        ..
+                    }) => self
+                        .marked_objects
+                        .insert(id, (sink_matches, ObjectType::Type))
+                        .is_none(),
+                    _ => {
+                        let e = match node {
+                            hir::Node::Expr(e) => e,
+                            hir::Node::Stmt(hir::Stmt { kind, .. }) => match kind {
+                                hir::StmtKind::Expr(e) | hir::StmtKind::Semi(e) => e,
+                                _ => panic!("Unsupported statement kind"),
+                            },
+                            _ => panic!("Unsupported object type for annotation {node:?}"),
+                        };
+                        let obj_type = obj_type_for_stmt_ann(&sink_matches);
+                        let did = match e.kind {
+                            hir::ExprKind::MethodCall(_, _, _) => {
+                                let body_id = hir.enclosing_body_owner(id);
+                                let tcres = tcx.typeck(hir.local_def_id(body_id));
+                                tcres.type_dependent_def_id(e.hir_id).unwrap_or_else(|| {
+                                    panic!("No DefId found for method call {e:?}")
+                                })
+                            }
+                            hir::ExprKind::Call(
+                                hir::Expr {
+                                    hir_id,
+                                    kind: hir::ExprKind::Path(p),
+                                    ..
+                                },
+                                _,
+                            ) => {
+                                let body_id = hir.enclosing_body_owner(id);
+                                let tcres = tcx.typeck(hir.local_def_id(body_id));
+                                match tcres.qpath_res(p, *hir_id) {
+                                    hir::def::Res::Def(_, did) => did,
+                                    res => panic!("Not a function? {res:?}"),
+                                }
+                            }
+                            _ => panic!("Unuspported expression kind {:?}", e.kind),
+                        };
+                        self.marked_stmts
+                            .insert(id, ((sink_matches, obj_type), e.span, did))
+                            .is_none()
                     }
-                })
+                }
+            })
         }
     }
 

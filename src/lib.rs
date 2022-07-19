@@ -44,7 +44,6 @@ use ana::AttrMatchT;
 
 use frg::ToForge;
 
-
 macro_rules! sym_vec {
     ($($e:expr),*) => {
         vec![$(Symbol::intern($e)),*]

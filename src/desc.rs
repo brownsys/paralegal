@@ -37,7 +37,7 @@ pub enum AnnotationRefinement {
     None,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum ObjectType {
     Function(usize),
     Type,
@@ -49,6 +49,24 @@ impl ObjectType {
         match self {
             ObjectType::Function(f) => Some(*f),
             _ => None,
+        }
+    }
+    pub fn merge(&mut self, other: &Self) {
+        if self != other {
+            warn!(
+                "Merging two different object types {:?} and {:?}!",
+                self, other
+            );
+            match (self, other) {
+                (ObjectType::Function(ref mut i), ObjectType::Function(j)) => {
+                    if j > i {
+                        *i = *j
+                    }
+                }
+                (slf, other) => {
+                    panic!("Cannot merge two different object types {slf:?} and {other:?}")
+                }
+            }
         }
     }
 }
