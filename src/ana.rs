@@ -92,7 +92,10 @@ fn type_ann_extract<'a, A, F: Fn(&rustc_ast::MacArgs) -> A>(
 ) -> Vec<(HirId, ty::Ty<'a>, Vec<A>)> {
     ty.walk()
         .filter_map(|generic| {
-            generic_arg_as_type(generic).and_then(ty_def).and_then(DefId::as_local).and_then(|def| {
+            generic_arg_as_type(generic)
+                .and_then(ty_def)
+                .and_then(DefId::as_local)
+                .and_then(|def| {
                     let hid = tcx.hir().local_def_id_to_hir_id(def);
                     let anns = tcx
                         .hir()
@@ -105,8 +108,7 @@ fn type_ann_extract<'a, A, F: Fn(&rustc_ast::MacArgs) -> A>(
                     } else {
                         Some((hid, ty, anns))
                     }
-                }
-            )
+                })
         })
         .collect()
 }
@@ -158,7 +160,8 @@ fn extract_args<'tcx>(
 
 pub struct Visitor<'tcx, 'p> {
     tcx: TyCtxt<'tcx>,
-    marked_objects: HashMap<HirId, Vec<Annotation>>,
+    marked_objects: HashMap<HirId, (Vec<Annotation>, ObjectType)>,
+    marked_stmts: HashMap<HirId, Span>,
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
     printers: &'p mut Printers,
 }
@@ -168,6 +171,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
         Self {
             tcx,
             marked_objects: HashMap::new(),
+            marked_stmts: HashMap::new(),
             functions_to_analyze: vec![],
             printers,
         }
@@ -189,16 +193,24 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
     }
 
     fn annotated_subtypes(&self, ty: ty::Ty) -> HashSet<TypeDescriptor> {
-        ty.walk().filter_map(|ty|
-            generic_arg_as_type(ty).and_then(ty_def).and_then(DefId::as_local).and_then(|def| {
-                let hid = self.tcx.hir().local_def_id_to_hir_id(def);
-                if self.marked_objects.contains_key(&hid) {
-                    Some(Identifier::new(self.tcx.item_name( self.tcx.hir().local_def_id(hid).to_def_id())))
-                } else {
-                    None
-                }
+        ty.walk()
+            .filter_map(|ty| {
+                generic_arg_as_type(ty)
+                    .and_then(ty_def)
+                    .and_then(DefId::as_local)
+                    .and_then(|def| {
+                        let hid = self.tcx.hir().local_def_id_to_hir_id(def);
+                        if self.marked_objects.contains_key(&hid) {
+                            Some(Identifier::new(
+                                self.tcx
+                                    .item_name(self.tcx.hir().local_def_id(hid).to_def_id()),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
             })
-        ).collect()
+            .collect()
     }
 
     fn analyze(mut self) -> std::io::Result<ProgramDescription> {
@@ -215,6 +227,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
             targets.len(),
             interesting_fn_defs.len(),
         )?;
+        let mut extra_anns: HashMap<Identifier, (Vec<Annotation>, ObjectType)> = HashMap::new();
         targets.drain(..).map(|(id, b, fd)| {
             let mut called_fns_found = 0;
             let mut source_fns_found = 0;
@@ -254,7 +267,7 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                     called_fns_found += 1;
                     if interesting_fn_defs.contains(&p) {
                         source_fns_found += 1;
-                        let src_desc = DataSource::FunctionCall(Identifier::new(tcx.item_name(p)));
+                        let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
                         source_locs.insert(loc, src_desc.clone());
                         let interesting_output_types : HashSet<_> = self.annotated_subtypes(tcx.fn_sig(p).skip_binder().output());
                         if !interesting_output_types.is_empty() {
@@ -291,13 +304,28 @@ impl<'tcx, 'p> Visitor<'tcx, 'p> {
                             }
                         }
                     }
+                    if let Some((hid, _)) = self.marked_stmts.iter().find(|(_, s)| s.contains(t.source_info.span)) {
+                        let ann = &self.marked_objects[hid];
+                        // TODO this is attaching to functions instead of call
+                        // sites. Once we start actually tracking call sites
+                        // this needs to be adjusted
+                        extra_anns.entry(identifier_for_fn(tcx, p)).or_insert_with(|| (vec![], ObjectType::Other)).0.extend(ann.0.iter().cloned());
+                    }
                 };
             }
             writeln!(self.printers, "Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found)?;
             Ok((Identifier::new(id.name), flows))
-        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: self.marked_objects.into_iter().map(|(k, v)| (Identifier::new(tcx.item_name( tcx.hir().local_def_id(k).to_def_id())), (v, tcx.hir().fn_decl_by_hir_id(k).map_or(ObjectType::Type, |f| ObjectType::Function(f.inputs.len()))
-        ))).collect() })
+        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: self.marked_objects.into_iter().filter(|v| v.1.1 != ObjectType::Stmt).map(|(k, v)| (identifier_for_hid(tcx, k), v, 
+        )).chain(extra_anns.into_iter()).collect() })
     }
+}
+
+fn identifier_for_hid<'tcx>(tcx: TyCtxt<'tcx>, hid: HirId) -> Identifier {
+    Identifier::new(tcx.item_name(tcx.hir().local_def_id(hid).to_def_id()))
+}
+
+fn identifier_for_fn<'tcx>(tcx: TyCtxt<'tcx>, p: DefId) -> Identifier {
+    Identifier::new(tcx.item_name(p))
 }
 
 impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
@@ -325,7 +353,21 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
             })
             .collect::<Vec<_>>();
         if !sink_matches.is_empty() {
-            self.marked_objects.insert(id, sink_matches);
+            self.marked_objects.insert(id, (sink_matches, {
+                let node = self.tcx.hir().find(id).unwrap();
+                if let Some(decl) = node.fn_decl() {
+                    ObjectType::Function(decl.inputs.len())   
+                } else {
+                    match node {
+                        hir::Node::Ty(_) | hir::Node::Item(hir::Item { kind: hir::ItemKind::Struct(..), ..}) => ObjectType::Type,
+                        hir::Node::Stmt(_) | hir::Node::Expr(_) => ObjectType::Stmt,
+                        _ => panic!("Unsupported object type for annotation {node:?}"),
+                    }
+                }
+            }
+            )
+        
+        );
         }
     }
 
@@ -350,5 +392,12 @@ impl<'tcx, 'p> intravisit::Visitor<'tcx> for Visitor<'tcx, 'p> {
         // the future we decide to do something with nested items we may need
         // it.
         intravisit::walk_fn(self, fk, fd, b, s, id)
+    }
+
+    fn visit_stmt(&mut self, s: &'tcx hir::Stmt<'tcx>) {
+        intravisit::walk_stmt(self, s);
+        if self.marked_objects.contains_key(&s.hir_id) {
+            self.marked_stmts.insert(s.hir_id, s.span);
+        }
     }
 }

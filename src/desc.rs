@@ -3,7 +3,7 @@ use crate::{HashMap, HashSet, Symbol};
 pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum Annotation {
     Label(LabelAnnotation),
     OType(Vec<TypeDescriptor>),
@@ -25,13 +25,13 @@ impl Annotation {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct LabelAnnotation {
     pub label: Symbol,
     pub refinement: AnnotationRefinement,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum AnnotationRefinement {
     Argument(Vec<u16>),
     None,
@@ -41,6 +41,8 @@ pub enum AnnotationRefinement {
 pub enum ObjectType {
     Function(usize),
     Type,
+    Stmt,
+    Other,
 }
 
 impl ObjectType {
