@@ -300,7 +300,7 @@ impl ToForge for ProgramDescription {
                 )
             })),
             alloc.nil(),
-            alloc.lines(self.annotations.iter().flat_map(|(name, (anns, nums))| {
+            alloc.lines(self.annotations.iter().flat_map(|(name, (_, nums))| {
                 if let ObjectType::Function(num_args) = nums {
                     Box::new(
                         std::iter::once(make_one_sig(alloc, name.as_forge(alloc), FN_OBJ_NAME))

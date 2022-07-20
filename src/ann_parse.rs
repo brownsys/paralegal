@@ -1,7 +1,7 @@
 use crate::rust::*;
 
-use crate::desc::{Annotation, AnnotationRefinement, Identifier, LabelAnnotation, TypeDescriptor};
-use crate::{HashMap, Symbol};
+use crate::desc::{AnnotationRefinement, Identifier, LabelAnnotation, TypeDescriptor};
+use crate::Symbol;
 use ast::{token, tokenstream};
 use token::*;
 use tokenstream::*;
@@ -31,7 +31,10 @@ impl<'a> I<'a> {
 }
 
 impl<'a> std::fmt::Debug for I<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+    /// This only exists so we can use the standard `nom::Err`. A better
+    /// solution would be to make our own error type that does not rely on this
+    /// being printable.
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         Ok(())
     }
 }
@@ -145,18 +148,9 @@ pub fn integer_list<'a>() -> impl FnMut(I<'a>) -> R<'a, Vec<u16>> {
     )
 }
 
-fn translate_delimiter(d: rustc_ast::MacDelimiter) -> rustc_ast::token::Delimiter {
-    use rustc_ast::*;
-    match d {
-        MacDelimiter::Parenthesis => Delimiter::Parenthesis,
-        MacDelimiter::Brace => Delimiter::Brace,
-        MacDelimiter::Bracket => Delimiter::Bracket,
-    }
-}
-
 pub(crate) fn otype_ann_match(ann: &ast::MacArgs) -> Vec<TypeDescriptor> {
     match ann {
-        ast::MacArgs::Delimited(sp, delim, stream) => {
+        ast::MacArgs::Delimited(_, _, stream) => {
             let mut p = nom::multi::separated_list0(
                 assert_token(TokenKind::Comma),
                 nom::combinator::map(identifier(), Identifier::new),
@@ -175,7 +169,7 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> LabelAnnotation {
     use rustc_ast::*;
     use token::*;
     match ann {
-        ast::MacArgs::Delimited(sp, delim, stream) => {
+        ast::MacArgs::Delimited(_, _, stream) => {
             let p = |i| {
                 let (i, label) = identifier()(i)?;
                 let (i, refinement) = nom::combinator::map(

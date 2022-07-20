@@ -6,8 +6,6 @@ extern crate ordermap;
 extern crate rustc_plugin;
 extern crate serde;
 #[macro_use]
-extern crate trait_enum;
-#[macro_use]
 extern crate lazy_static;
 extern crate simple_logger;
 #[macro_use]
@@ -36,8 +34,8 @@ pub use std::collections::{HashMap, HashSet};
 pub use rustc_span::Symbol;
 
 mod ana;
-mod ann_parse;
-mod desc;
+pub mod ann_parse;
+pub mod desc;
 mod frg;
 
 use ana::AttrMatchT;
@@ -97,7 +95,6 @@ impl rustc_driver::Callbacks for Callbacks {
             .truncate(true)
             .open(&self.res_p)
             .unwrap();
-        use pretty::DocAllocator;
         let doc_alloc = pretty::BoxAllocator;
         let doc = desc.as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();

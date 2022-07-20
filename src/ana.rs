@@ -1,6 +1,4 @@
 use std::borrow::Cow;
-use std::io::Write;
-use std::ops::DerefMut;
 
 use crate::desc::*;
 use crate::rust::*;
@@ -18,10 +16,7 @@ use rustc_middle::{
 };
 use rustc_span::{symbol::Ident, Span, Symbol};
 
-use flowistry::{
-    infoflow,
-    mir::{borrowck_facts, utils::location_to_string},
-};
+use flowistry::{infoflow, mir::borrowck_facts};
 
 pub type AttrMatchT = Vec<Symbol>;
 
@@ -62,63 +57,11 @@ fn ty_def(ty: ty::Ty) -> Option<DefId> {
     }
 }
 
-fn type_has_ann(tcx: TyCtxt, auth_witness_marker: &AttrMatchT, ty: &ty::Ty) -> bool {
-    ty.walk().any(|generic| {
-        if let ty::subst::GenericArgKind::Type(ty) = generic.unpack() {
-            ty_def(ty).and_then(DefId::as_local).map_or(false, |def| {
-                tcx.hir()
-                    .attrs(tcx.hir().local_def_id_to_hir_id(def))
-                    .iter()
-                    .any(|a| a.matches_path(auth_witness_marker))
-            })
-        } else {
-            false
-        }
-    })
-}
-
 fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
     match a.unpack() {
         ty::subst::GenericArgKind::Type(t) => Some(t),
         _ => None,
     }
-}
-
-fn type_ann_extract<'a, A, F: Fn(&rustc_ast::MacArgs) -> A>(
-    tcx: TyCtxt,
-    ann_marker: &AttrMatchT,
-    f: F,
-    ty: ty::Ty<'a>,
-) -> Vec<(HirId, ty::Ty<'a>, Vec<A>)> {
-    ty.walk()
-        .filter_map(|generic| {
-            generic_arg_as_type(generic)
-                .and_then(ty_def)
-                .and_then(DefId::as_local)
-                .and_then(|def| {
-                    let hid = tcx.hir().local_def_id_to_hir_id(def);
-                    let anns = tcx
-                        .hir()
-                        .attrs(hid)
-                        .iter()
-                        .filter_map(|a| a.match_extract(ann_marker, &f))
-                        .collect::<Vec<_>>();
-                    if anns.is_empty() {
-                        None
-                    } else {
-                        Some((hid, ty, anns))
-                    }
-                })
-        })
-        .collect()
-}
-
-fn type_descriptor_from_type<'tcx>(ty: ty::Ty<'tcx>) -> Symbol {
-    Symbol::intern(
-        &format!("{ty}")
-            .replace(&[':', '<', '>'], "_")
-            .replace("()", "unit"),
-    )
 }
 
 fn called_fn<'tcx>(call: &mir::terminator::Terminator<'tcx>) -> Option<DefId> {
@@ -248,7 +191,7 @@ impl<'tcx> Visitor<'tcx> {
                 })
                 .or_insert_with(|| ann.clone());
         }
-        targets.drain(..).map(|(id, b, fd)| {
+        targets.drain(..).map(|(id, b, _)| {
             let mut called_fns_found = 0;
             let mut source_fns_found = 0;
             let mut sink_fn_defs_found = 0;
@@ -358,7 +301,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
     fn visit_id(&mut self, id: HirId) {
         let tcx = self.tcx;
         let hir = self.tcx.hir();
-        let mut sink_matches = hir
+        let sink_matches = hir
             .attrs(id)
             .iter()
             .filter_map(|a| {
