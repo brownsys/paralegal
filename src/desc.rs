@@ -7,6 +7,7 @@ pub type TypeDescriptor = Identifier;
 pub enum Annotation {
     Label(LabelAnnotation),
     OType(Vec<TypeDescriptor>),
+    Exception(ExceptionAnnotation),
 }
 
 impl Annotation {
@@ -23,6 +24,20 @@ impl Annotation {
             _ => None,
         }
     }
+
+    pub fn as_exception_annotation(&self) -> Option<&ExceptionAnnotation> {
+        match self {
+            Annotation::Exception(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+pub type VerificationHash = u128;
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+pub struct ExceptionAnnotation {
+    pub verification_hash: Option<VerificationHash>,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]

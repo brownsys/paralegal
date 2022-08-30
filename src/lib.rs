@@ -19,6 +19,7 @@ pub mod rust {
     pub extern crate rustc_interface;
     pub extern crate rustc_middle;
     pub extern crate rustc_span;
+    pub extern crate rustc_mir_dataflow;
 
     pub use rustc_ast as ast;
     pub use rustc_hir as hir;
@@ -70,6 +71,7 @@ lazy_static! {
     static ref LABEL_MARKER: AttrMatchT = sym_vec!["dfpp", "label"];
     static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
     static ref OTYPE_MARKER: AttrMatchT = sym_vec!["dfpp", "output_types"];
+    static ref EXCEPTION_MARKER: AttrMatchT = sym_vec!["dfpp", "exception"];
 }
 
 impl rustc_driver::Callbacks for Callbacks {
@@ -108,6 +110,7 @@ impl rustc_driver::Callbacks for Callbacks {
 
 lazy_static! {
     static ref ARG_SYM: Symbol = Symbol::intern("arguments");
+    static ref VERIFICATION_HASH_SYM: Symbol = Symbol::intern("verification_hash");
 }
 
 impl rustc_plugin::RustcPlugin for DfppPlugin {

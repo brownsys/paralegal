@@ -1,6 +1,6 @@
 use crate::rust::*;
 
-use crate::desc::{AnnotationRefinement, Identifier, LabelAnnotation, TypeDescriptor};
+use crate::desc::{AnnotationRefinement, Identifier, LabelAnnotation, TypeDescriptor, ExceptionAnnotation};
 use crate::Symbol;
 use ast::{token, tokenstream};
 use token::*;
@@ -160,6 +160,31 @@ pub(crate) fn otype_ann_match(ann: &ast::MacArgs) -> Vec<TypeDescriptor> {
                     panic!("parser failed on {ann:?} with error {err:?}")
                 })
                 .1
+        }
+        _ => panic!(),
+    }
+}
+
+pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
+    use rustc_ast::*;
+    match ann {
+        ast::MacArgs::Delimited(_, _, stream) => {
+            let p = |i| {
+                let (i, verification_hash) = nom::combinator::opt(
+                    nom::sequence::preceded(
+                        nom::sequence::tuple((
+                            assert_identifier(*crate::VERIFICATION_HASH_SYM),
+                            assert_token(TokenKind::Eq),
+                        )),
+                        lit(token::LitKind::Str, |s| s.parse().map_err(|e: <u128 as std::str::FromStr>::Err| e.to_string()))
+                    )
+                )(i)?;
+                let _ = nom::combinator::eof(i)?;
+                Ok(ExceptionAnnotation { verification_hash })
+            };
+            p(I::from_stream(&stream)).unwrap_or_else(|err: nom::Err<_>| {
+                panic!("parser failed on {ann:?} with error {err:?}")
+            })
         }
         _ => panic!(),
     }

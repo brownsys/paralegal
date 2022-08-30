@@ -1,8 +1,11 @@
+extern crate either;
+
 use std::borrow::Cow;
 
 use crate::desc::*;
 use crate::rust::*;
 use crate::{HashMap, HashSet};
+use either::Either;
 
 use hir::{
     def_id::DefId,
@@ -101,6 +104,41 @@ fn extract_args<'tcx>(
     }
 }
 
+struct PlaceVisitor<F>(F);
+
+impl <'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisitor<F> {
+    fn visit_place(
+        &mut self,
+        place: &mir::Place<'tcx>,
+        _context: mir::visit::PlaceContext,
+        _location: mir::Location
+    ) {
+        self.0(place)
+    }
+}
+
+fn compute_verification_hash_for_stmt<'tcx>(tcx: TyCtxt<'tcx>, t: &mir::Terminator<'tcx>, loc: mir::Location, body: &mir::Body<'tcx>, matrix: &<flowistry::infoflow::FlowAnalysis<'_, 'tcx> as rustc_mir_dataflow::AnalysisDomain<'tcx>>::Domain) -> VerificationHash {
+    use rustc_data_structures::stable_hasher::{StableHasher, HashStable};
+    use mir::visit::Visitor;
+    let mut hctx = tcx.create_stable_hashing_context();
+    let mut hasher = StableHasher::new();
+    t.kind.hash_stable(&mut hctx, &mut hasher);
+    {
+        let mut vis = PlaceVisitor(|pl : &mir::Place<'tcx>| {
+            for loc in matrix.row(*pl) {
+                match body.stmt_at(*loc) {
+                    Either::Left(stmt) => stmt.kind.hash_stable(&mut hctx, &mut hasher),
+                    // TODO escalate to the called function as well
+                    Either::Right(term) => term.kind.hash_stable(&mut hctx, &mut hasher),
+                }
+            }
+        });
+
+        vis.visit_terminator(t, loc);
+    }
+    hasher.finish()
+}
+
 pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     marked_objects: HashMap<HirId, (Vec<Annotation>, ObjectType)>,
@@ -191,7 +229,8 @@ impl<'tcx> Visitor<'tcx> {
                 })
                 .or_insert_with(|| ann.clone());
         }
-        targets.drain(..).map(|(id, b, _)| {
+        let mut unsuccessful_hash_verifications = 0;
+        let res = targets.drain(..).map(|(id, b, _)| {
             let mut called_fns_found = 0;
             let mut source_fns_found = 0;
             let mut sink_fn_defs_found = 0;
@@ -255,6 +294,20 @@ impl<'tcx> Visitor<'tcx> {
                         }
                     }
                     if let Some((_, (ann, _, _))) = self.marked_stmts.iter().find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span)) {
+
+                        let matrix = flow.state_at(loc);
+                        for ann in ann.0.iter().filter_map(Annotation::as_exception_annotation) {
+                            let hash = compute_verification_hash_for_stmt(tcx, t, loc, body, matrix);
+                            if let Some(old_hash) = ann.verification_hash {
+                                if !hash == old_hash {
+                                    unsuccessful_hash_verifications += 1;
+                                    println!("Verification hash checking failed for exception annotation. Please review the code and then paste in the updated hash \"{hash}\"");
+                                }
+                            } else {
+                                unsuccessful_hash_verifications += 1;
+                                println!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `verification_hash = \"{hash}\"` into the annotation.");
+                            }
+                        }
                         // TODO this is attaching to functions instead of call
                         // sites. Once we start actually tracking call sites
                         // this needs to be adjusted
@@ -265,7 +318,9 @@ impl<'tcx> Visitor<'tcx> {
             info!("Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found);
             Ok((Identifier::new(id.name), flows))
         }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: call_site_annotations.into_iter().map(|(k, v)| (identifier_for_fn(tcx, k), (v.0, ObjectType::Function(v.1)))
-        ).chain(self.marked_objects.iter().filter(|kv| kv.1.1 == ObjectType::Type).map(|(k, v)| (identifier_for_hid(tcx, *k), v.clone()))).collect() })
+        ).chain(self.marked_objects.iter().filter(|kv| kv.1.1 == ObjectType::Type).map(|(k, v)| (identifier_for_hid(tcx, *k), v.clone()))).collect() });
+        assert_eq!(unsuccessful_hash_verifications, 0, "{unsuccessful_hash_verifications} verification hashes were not present or invalid. Please review, update and rerun.");
+        return res;
     }
 }
 
@@ -284,7 +339,8 @@ fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
             Annotation::Label(LabelAnnotation {
                 refinement: AnnotationRefinement::Argument(nums),
                 ..
-            }) => nums.iter(),
+            }) => Box::new(nums.iter()) as Box<dyn Iterator<Item=&u16>>,
+            Annotation::Exception(_) => Box::new(std::iter::once(&0)),
             _ => panic!("Unsupported annotation type for statement annotation"),
         })
         .max()
@@ -313,6 +369,11 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
                         Annotation::OType(crate::ann_parse::otype_ann_match(i))
                     })
                 })
+                .or_else(||
+                    a.match_extract(&crate::EXCEPTION_MARKER, |i| 
+                        Annotation::Exception(crate::ann_parse::match_exception(i))
+                    )
+                )
             })
             .collect::<Vec<_>>();
         if !sink_matches.is_empty() {
@@ -364,7 +425,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
                                     res => panic!("Not a function? {res:?}"),
                                 }
                             }
-                            _ => panic!("Unuspported expression kind {:?}", e.kind),
+                            _ => panic!("Unsupported expression kind {:?}", e.kind),
                         };
                         self.marked_stmts
                             .insert(id, ((sink_matches, obj_type), e.span, did))
