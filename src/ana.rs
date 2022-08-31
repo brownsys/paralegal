@@ -19,7 +19,11 @@ use rustc_middle::{
 };
 use rustc_span::{symbol::Ident, Span, Symbol};
 
-use flowistry::{infoflow, mir::borrowck_facts};
+use flowistry::{
+    indexed::{impls::LocationDomain, IndexedDomain},
+    infoflow,
+    mir::borrowck_facts,
+};
 
 pub type AttrMatchT = Vec<Symbol>;
 
@@ -106,26 +110,45 @@ fn extract_args<'tcx>(
 
 struct PlaceVisitor<F>(F);
 
-impl <'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisitor<F> {
+impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisitor<F> {
     fn visit_place(
         &mut self,
         place: &mir::Place<'tcx>,
         _context: mir::visit::PlaceContext,
-        _location: mir::Location
+        _location: mir::Location,
     ) {
         self.0(place)
     }
 }
 
-fn compute_verification_hash_for_stmt<'tcx>(tcx: TyCtxt<'tcx>, t: &mir::Terminator<'tcx>, loc: mir::Location, body: &mir::Body<'tcx>, matrix: &<flowistry::infoflow::FlowAnalysis<'_, 'tcx> as rustc_mir_dataflow::AnalysisDomain<'tcx>>::Domain) -> VerificationHash {
-    use rustc_data_structures::stable_hasher::{StableHasher, HashStable};
+fn is_real_location(loc_dom: &LocationDomain, body: &mir::Body, l: mir::Location) -> bool {
+    body.basic_blocks()
+        .get(l.block)
+        .and_then(|bb| bb.statements.get(l.statement_index))
+        .is_some()
+}
+
+fn compute_verification_hash_for_stmt<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    t: &mir::Terminator<'tcx>,
+    loc: mir::Location,
+    body: &mir::Body<'tcx>,
+    loc_dom: &LocationDomain,
+    matrix: &<flowistry::infoflow::FlowAnalysis<'_, 'tcx> as rustc_mir_dataflow::AnalysisDomain<
+        'tcx,
+    >>::Domain,
+) -> VerificationHash {
     use mir::visit::Visitor;
+    use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
     let mut hctx = tcx.create_stable_hashing_context();
     let mut hasher = StableHasher::new();
     t.kind.hash_stable(&mut hctx, &mut hasher);
     {
-        let mut vis = PlaceVisitor(|pl : &mir::Place<'tcx>| {
-            for loc in matrix.row(*pl) {
+        let mut vis = PlaceVisitor(|pl: &mir::Place<'tcx>| {
+            for loc in matrix
+                .row(*pl)
+                .filter(|l| is_real_location(loc_dom, body, **l))
+            {
                 match body.stmt_at(*loc) {
                     Either::Left(stmt) => stmt.kind.hash_stable(&mut hctx, &mut hasher),
                     // TODO escalate to the called function as well
@@ -236,7 +259,6 @@ impl<'tcx> Visitor<'tcx> {
             let mut sink_fn_defs_found = 0;
             let local_def_id = tcx.hir().body_owner_def_id(b);
             let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
-            use flowistry::indexed::{impls::LocationDomain, IndexedDomain};
             let body = &body_with_facts.body;
             let loc_dom = LocationDomain::new(body);
             info!("{}", id.as_str());
@@ -297,7 +319,7 @@ impl<'tcx> Visitor<'tcx> {
 
                         let matrix = flow.state_at(loc);
                         for ann in ann.0.iter().filter_map(Annotation::as_exception_annotation) {
-                            let hash = compute_verification_hash_for_stmt(tcx, t, loc, body, matrix);
+                            let hash = compute_verification_hash_for_stmt(tcx, t, loc, body, &loc_dom, matrix);
                             if let Some(old_hash) = ann.verification_hash {
                                 if !hash == old_hash {
                                     unsuccessful_hash_verifications += 1;
@@ -339,7 +361,7 @@ fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
             Annotation::Label(LabelAnnotation {
                 refinement: AnnotationRefinement::Argument(nums),
                 ..
-            }) => Box::new(nums.iter()) as Box<dyn Iterator<Item=&u16>>,
+            }) => Box::new(nums.iter()) as Box<dyn Iterator<Item = &u16>>,
             Annotation::Exception(_) => Box::new(std::iter::once(&0)),
             _ => panic!("Unsupported annotation type for statement annotation"),
         })
@@ -369,11 +391,11 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
                         Annotation::OType(crate::ann_parse::otype_ann_match(i))
                     })
                 })
-                .or_else(||
-                    a.match_extract(&crate::EXCEPTION_MARKER, |i| 
+                .or_else(|| {
+                    a.match_extract(&crate::EXCEPTION_MARKER, |i| {
                         Annotation::Exception(crate::ann_parse::match_exception(i))
-                    )
-                )
+                    })
+                })
             })
             .collect::<Vec<_>>();
         if !sink_matches.is_empty() {

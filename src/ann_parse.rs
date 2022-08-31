@@ -1,6 +1,8 @@
 use crate::rust::*;
 
-use crate::desc::{AnnotationRefinement, Identifier, LabelAnnotation, TypeDescriptor, ExceptionAnnotation};
+use crate::desc::{
+    AnnotationRefinement, ExceptionAnnotation, Identifier, LabelAnnotation, TypeDescriptor,
+};
 use crate::Symbol;
 use ast::{token, tokenstream};
 use token::*;
@@ -170,15 +172,16 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
     match ann {
         ast::MacArgs::Delimited(_, _, stream) => {
             let p = |i| {
-                let (i, verification_hash) = nom::combinator::opt(
-                    nom::sequence::preceded(
-                        nom::sequence::tuple((
-                            assert_identifier(*crate::VERIFICATION_HASH_SYM),
-                            assert_token(TokenKind::Eq),
-                        )),
-                        lit(token::LitKind::Str, |s| s.parse().map_err(|e: <u128 as std::str::FromStr>::Err| e.to_string()))
-                    )
-                )(i)?;
+                let (i, verification_hash) = nom::combinator::opt(nom::sequence::preceded(
+                    nom::sequence::tuple((
+                        assert_identifier(*crate::VERIFICATION_HASH_SYM),
+                        assert_token(TokenKind::Eq),
+                    )),
+                    lit(token::LitKind::Str, |s| {
+                        s.parse()
+                            .map_err(|e: <u128 as std::str::FromStr>::Err| e.to_string())
+                    }),
+                ))(i)?;
                 let _ = nom::combinator::eof(i)?;
                 Ok(ExceptionAnnotation { verification_hash })
             };

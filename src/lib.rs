@@ -18,8 +18,8 @@ pub mod rust {
     pub extern crate rustc_hir;
     pub extern crate rustc_interface;
     pub extern crate rustc_middle;
-    pub extern crate rustc_span;
     pub extern crate rustc_mir_dataflow;
+    pub extern crate rustc_span;
 
     pub use rustc_ast as ast;
     pub use rustc_hir as hir;
