@@ -193,6 +193,7 @@ const TYPES_NAME: &'static str = "types";
 const TYPE_NAME: &'static str = "Type";
 const FN_REL_NAME: &'static str = "function";
 const OTYPE_REL_NAME: &'static str = "otype";
+const EXCEPTIONS_LABEL_NAME: &'static str = "exception";
 
 impl ToForge for ProgramDescription {
     fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
@@ -284,6 +285,7 @@ impl ToForge for ProgramDescription {
                     .flat_map(|v| v.0.iter())
                     .filter_map(Annotation::as_label_ann)
                     .map(|a| a.label)
+                    .chain(std::iter::once(crate::Symbol::intern(EXCEPTIONS_LABEL_NAME)))
                     .collect::<HashSet<_>>()
                     .into_iter()
                     .map(|s| make_one_sig(alloc, alloc.text(s.as_str().to_string()), LABEL_NAME)),
@@ -401,6 +403,16 @@ impl ToForge for ProgramDescription {
                                             )
                                         },
                                     )))
+                                    .append(" +")
+                                    .append(alloc.hardline())
+                                    .append(alloc.forge_relation(
+                                        self.annotations.iter().map(|(id, (anns, _))| 
+                                            (anns.iter().filter_map(Annotation::as_exception_annotation).next().map(
+                                                |_| id.as_forge(alloc)
+                                            ).into_iter(),
+                                            std::iter::once(alloc.text(EXCEPTIONS_LABEL_NAME)))
+                                        )
+                                    ))
                                     .nest(4)
                                     .append(alloc.hardline())
                                     .parens(),
