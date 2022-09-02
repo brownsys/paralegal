@@ -144,30 +144,32 @@ fn compute_verification_hash_for_stmt<'tcx>(
 ) -> VerificationHash {
     use mir::visit::Visitor;
     use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
-    let mut hctx = tcx.create_stable_hashing_context();
     let mut hasher = StableHasher::new();
-    t.kind.hash_stable(&mut hctx, &mut hasher);
-    {
-        let mut loc_set = HashSet::<mir::Location>::new();
-        let mut vis = PlaceVisitor(|pl: &mir::Place<'tcx>| {
-            loc_set.extend(matrix.row(*pl).filter(|l| is_real_location(loc_dom, body, **l)));
-        });
+    tcx.create_stable_hashing_context().while_hashing_spans(false, |mut hctx|{
 
-        vis.visit_terminator(t, loc);
-        loc_set.iter().map(|loc| {
-            let mut local_hasher = StableHasher::new();
-            match body.stmt_at(*loc) {
-                Either::Left(stmt) => {
-                    stmt.kind.hash_stable(&mut hctx, &mut local_hasher);
+        t.kind.hash_stable(&mut hctx, &mut hasher);
+        {
+            let mut loc_set = HashSet::<mir::Location>::new();
+            let mut vis = PlaceVisitor(|pl: &mir::Place<'tcx>| {
+                loc_set.extend(matrix.row(*pl).filter(|l| is_real_location(loc_dom, body, **l)));
+            });
+
+            vis.visit_terminator(t, loc);
+            loc_set.iter().map(|loc| {
+                let mut local_hasher = StableHasher::new();
+                match body.stmt_at(*loc) {
+                    Either::Left(stmt) => {
+                        stmt.kind.hash_stable(&mut hctx, &mut local_hasher);
+                    }
+                    // TODO escalate to the called function as well
+                    Either::Right(term) => {
+                        term.kind.hash_stable(&mut hctx, &mut local_hasher);
+                    }
                 }
-                // TODO escalate to the called function as well
-                Either::Right(term) => {
-                    term.kind.hash_stable(&mut hctx, &mut local_hasher);
-                }
-            }
-            local_hasher.finish()
-        }).fold(0 as u128, |accum, item| accum.wrapping_add(item));
-    }.hash_stable(&mut hctx, &mut hasher);
+                local_hasher.finish()
+            }).fold(0 as u128, |accum, item| accum.wrapping_add(item));
+        }.hash_stable(&mut hctx, &mut hasher);
+    });
     hasher.finish()
 }
 
