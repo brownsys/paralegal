@@ -178,8 +178,8 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
                         assert_token(TokenKind::Eq),
                     )),
                     lit(token::LitKind::Str, |s| {
-                        s.parse()
-                            .map_err(|e: <u128 as std::str::FromStr>::Err| e.to_string())
+                        crate::desc::VerificationHash::from_str_radix(s, 16)
+                            .map_err(|e: std::num::ParseIntError| e.to_string())
                     }),
                 ))(i)?;
                 let _ = nom::combinator::eof(i)?;

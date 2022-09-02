@@ -332,11 +332,11 @@ impl<'tcx> Visitor<'tcx> {
                             if let Some(old_hash) = ann.verification_hash {
                                 if hash != old_hash {
                                     unsuccessful_hash_verifications += 1;
-                                    println!("Verification hash checking failed for exception annotation. Please review the code and then paste in the updated hash \"{hash}\"");
+                                    println!("Verification hash checking failed for exception annotation. Please review the code and then paste in the updated hash \"{hash:032x}\"");
                                 }
                             } else {
                                 unsuccessful_hash_verifications += 1;
-                                println!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `verification_hash = \"{hash}\"` into the annotation.");
+                                println!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `verification_hash = \"{hash:032x}\"` into the annotation.");
                             }
                         }
                         // TODO this is attaching to functions instead of call
