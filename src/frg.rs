@@ -44,27 +44,29 @@ where
         RIter::Item: Pretty<'a, Self, A>,
         DocBuilder<'a, Self, A>: Clone,
     {
-        let mut prit = rel.into_iter().peekable();
+        let mut prit = rel.into_iter()
+            .filter_map(|(l, r)| {
+                let mut pl = l.into_iter().peekable();
+                let mut pr = r.into_iter().peekable();
+                if pl.peek().is_some() && pr.peek().is_some() {
+                    Some(
+                        self.intersperse(pl, self.text(" + "))
+                            .parens()
+                            .append("->")
+                            .append(self.intersperse(pr, self.text(" + ")).parens()),
+                    )
+                } else {
+                    None
+                }
+            })
+            .peekable();
         if prit.peek().is_some() {
             self.intersperse(
-                prit.filter_map(|(l, r)| {
-                    let mut pl = l.into_iter().peekable();
-                    let mut pr = r.into_iter().peekable();
-                    if pl.peek().is_some() && pr.peek().is_some() {
-                        Some(
-                            self.intersperse(pl, self.text(" + "))
-                                .parens()
-                                .append("->")
-                                .append(self.intersperse(pr, self.text(" + ")).parens()),
-                        )
-                    } else {
-                        None
-                    }
-                }),
+                prit,
                 self.text(" +").append(self.hardline()),
             )
         } else {
-            self.text("none")
+            self.text("none->none")
         }
     }
 }
@@ -291,7 +293,11 @@ impl ToForge for ProgramDescription {
                     .map(|s| make_one_sig(alloc, alloc.text(s.as_str().to_string()), LABEL_NAME)),
             ),
             alloc.nil(),
-            alloc.lines(self.all_sources().into_iter().map(|a| {
+            alloc.lines(self.all_sources()
+                .chain(self.controllers.values().flat_map(|c| c.types.keys()))
+                .collect::<HashSet<_>>()
+                .iter()
+                .map(|a| {
                 make_one_sig(
                     alloc,
                     a.as_forge(alloc),

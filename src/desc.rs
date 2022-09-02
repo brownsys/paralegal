@@ -92,11 +92,10 @@ pub struct ProgramDescription {
 }
 
 impl ProgramDescription {
-    pub fn all_sources(&self) -> HashSet<&DataSource> {
+    pub fn all_sources(&self) -> impl Iterator<Item=&DataSource> {
         self.controllers
             .values()
             .flat_map(|c| c.flow.0.keys())
-            .collect()
     }
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
         self.controllers
