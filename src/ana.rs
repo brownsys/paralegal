@@ -124,8 +124,12 @@ impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisit
 fn is_real_location(loc_dom: &LocationDomain, body: &mir::Body, l: mir::Location) -> bool {
     body.basic_blocks()
         .get(l.block)
-        .and_then(|bb| bb.statements.get(l.statement_index))
-        .is_some()
+        .map(|bb| 
+            // Its `<=` because if len == statement_index it refers to the
+            // terminator
+            // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
+            bb.statements.len() <= l.statement_index)
+        == Some(true)
 }
 
 fn compute_verification_hash_for_stmt<'tcx>(
@@ -144,21 +148,26 @@ fn compute_verification_hash_for_stmt<'tcx>(
     let mut hasher = StableHasher::new();
     t.kind.hash_stable(&mut hctx, &mut hasher);
     {
+        let mut loc_set = HashSet::<mir::Location>::new();
         let mut vis = PlaceVisitor(|pl: &mir::Place<'tcx>| {
-            for loc in matrix
-                .row(*pl)
-                .filter(|l| is_real_location(loc_dom, body, **l))
-            {
-                match body.stmt_at(*loc) {
-                    Either::Left(stmt) => stmt.kind.hash_stable(&mut hctx, &mut hasher),
-                    // TODO escalate to the called function as well
-                    Either::Right(term) => term.kind.hash_stable(&mut hctx, &mut hasher),
-                }
-            }
+            loc_set.extend(matrix.row(*pl).filter(|l| is_real_location(loc_dom, body, **l)));
         });
 
         vis.visit_terminator(t, loc);
-    }
+        loc_set.iter().map(|loc| {
+            let mut local_hasher = StableHasher::new();
+            match body.stmt_at(*loc) {
+                Either::Left(stmt) => {
+                    stmt.kind.hash_stable(&mut hctx, &mut local_hasher);
+                }
+                // TODO escalate to the called function as well
+                Either::Right(term) => {
+                    term.kind.hash_stable(&mut hctx, &mut local_hasher);
+                }
+            }
+            local_hasher.finish()
+        }).fold(0 as u128, |accum, item| accum.wrapping_add(item));
+    }.hash_stable(&mut hctx, &mut hasher);
     hasher.finish()
 }
 
@@ -321,7 +330,7 @@ impl<'tcx> Visitor<'tcx> {
                         for ann in ann.0.iter().filter_map(Annotation::as_exception_annotation) {
                             let hash = compute_verification_hash_for_stmt(tcx, t, loc, body, &loc_dom, matrix);
                             if let Some(old_hash) = ann.verification_hash {
-                                if !hash == old_hash {
+                                if hash != old_hash {
                                     unsuccessful_hash_verifications += 1;
                                     println!("Verification hash checking failed for exception annotation. Please review the code and then paste in the updated hash \"{hash}\"");
                                 }
