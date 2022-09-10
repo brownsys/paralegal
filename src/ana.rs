@@ -121,6 +121,23 @@ impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisit
     }
 }
 
+struct RePlacer<'tcx, F>(TyCtxt<'tcx>, F);
+
+
+impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for RePlacer<'tcx, F> {
+    fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
+        self.0
+    }
+    fn visit_place(
+        &mut self,
+        place: &mut mir::Place<'tcx>,
+        _context: mir::visit::PlaceContext,
+        _location: mir::Location,
+    ) {
+        self.1(place)
+    }
+}
+
 fn is_real_location(loc_dom: &LocationDomain, body: &mir::Body, l: mir::Location) -> bool {
     body.basic_blocks()
         .get(l.block)
@@ -149,26 +166,51 @@ fn compute_verification_hash_for_stmt<'tcx>(
 
         t.kind.hash_stable(&mut hctx, &mut hasher);
         {
+            use mir::visit::MutVisitor;
             let mut loc_set = HashSet::<mir::Location>::new();
             let mut vis = PlaceVisitor(|pl: &mir::Place<'tcx>| {
                 loc_set.extend(matrix.row(*pl).filter(|l| is_real_location(loc_dom, body, **l)));
             });
 
             vis.visit_terminator(t, loc);
-            loc_set.iter().map(|loc| {
-                let mut local_hasher = StableHasher::new();
-                match body.stmt_at(*loc) {
-                    Either::Left(stmt) => {
-                        stmt.kind.hash_stable(&mut hctx, &mut local_hasher);
-                    }
-                    // TODO escalate to the called function as well
-                    Either::Right(term) => {
-                        term.kind.hash_stable(&mut hctx, &mut local_hasher);
-                    }
+            let mut replacer = RePlacer(tcx, {
+                let mut re_local_er = HashMap::new();
+                let mut new_local_er = mir::Local::from_usize(0);
+                move |place : &mut mir::Place| {
+                    place.local = *re_local_er.entry(place.local).or_insert_with(|| {
+                        let new = new_local_er;
+                        new_local_er = new_local_er + 1;
+                        new
+                    })
                 }
-                local_hasher.finish()
-            }).fold(0 as u128, |accum, item| accum.wrapping_add(item));
-        }.hash_stable(&mut hctx, &mut hasher);
+            });
+
+            // This computation does two things at one. It takes all basic
+            // blocks, creating a slice over each with respect to the program
+            // location of interest. Then it immediately hashes all interesting
+            // locations. As a result it never needs to materialize the actual
+            // slice but only its hash.
+            //
+            // Read the Notion to know more about this https://www.notion.so/justus-adam/Attestation-Hash-shouldn-t-change-if-unrelated-statements-change-19f4b036d85643b4ae6a9b8358e3cb70#7c35960849524580b720d3207c70004f
+            body.basic_blocks().iter_enumerated().for_each(|(bbidx, bbdat)| {
+                let termidx = bbdat.statements.len();
+                bbdat.statements.iter().enumerate().for_each(|(stmtidx, stmt)| {
+                    let loc = mir::Location {block: bbidx, statement_index: stmtidx};
+                    if loc_set.contains(&loc) {
+                        let mut new_stmt = stmt.clone();
+                        replacer.visit_statement(&mut new_stmt, loc);
+                        new_stmt.hash_stable(&mut hctx, &mut hasher);
+                    }
+                });
+                let termloc = mir::Location {block: bbidx, statement_index: termidx};
+                if loc_set.contains(&termloc) {
+                    let mut new_term = bbdat.terminator().clone();
+                    replacer.visit_terminator(&mut new_term, termloc);
+                    new_term.hash_stable(&mut hctx, &mut hasher);
+                }
+            });
+
+        }
     });
     hasher.finish()
 }
