@@ -5,7 +5,6 @@ use std::borrow::Cow;
 use crate::desc::*;
 use crate::rust::*;
 use crate::{HashMap, HashSet};
-use either::Either;
 
 use hir::{
     def_id::DefId,
@@ -144,20 +143,95 @@ impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for ReP
     }
 }
 
+struct Reindexer<I> {
+    mapper: HashMap<I, I>,
+    source: I,
+}
+
+impl <I> Reindexer<I> {
+    fn new(base_val: I) -> Self {
+        Self {
+            mapper: HashMap::new(),
+            source: base_val,
+        }
+    }
+
+    fn reindex(&mut self, old: I) -> I 
+    where 
+        I: Eq + std::hash::Hash + std::ops::Add<usize, Output=I> + Copy
+    {
+        let ref mut src = self.source;
+        *self.mapper.entry(old).or_insert_with(|| {
+            let entry = *src;
+            *src = entry + 1;
+            entry
+        })
+    }
+}
+
+/// A strut with the task of renaming/repayloading all MIR values of numerical nature to create consistent code slices. Currently only `mir::Place` and basic block indices, e.g. `mir::BasicBlock` are renamed.
+struct MirReindexer<'tcx> {
+    local_reindexer: Reindexer<mir::Local>,
+    bb_reindexer: Reindexer<mir::BasicBlock>,
+    tcx: TyCtxt<'tcx>,
+}
+
+impl <'tcx> MirReindexer<'tcx> {
+    fn new(tcx: TyCtxt<'tcx>) -> Self {
+        MirReindexer {
+            tcx,
+            local_reindexer: Reindexer::new(mir::Local::from_usize(0)),
+            bb_reindexer: Reindexer::new(mir::BasicBlock::from_usize(0)),
+        }
+    }
+}
+
+impl <'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
+    fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
+        self.tcx
+    }
+    fn visit_place(
+        &mut self,
+        place: &mut mir::Place<'tcx>,
+        _context: mir::visit::PlaceContext,
+        _location: mir::Location,
+    ) {
+        place.local = self.local_reindexer.reindex(place.local);
+    }
+    fn visit_terminator(&mut self,
+        terminator: &mut mir::Terminator<'tcx>,
+        location: mir::Location,
+    ) {
+        terminator.successors_mut().for_each(|suc| *suc = self.bb_reindexer.reindex(*suc));
+        terminator.unwind_mut().and_then(Option::as_mut).map(|s| *s = self.bb_reindexer.reindex(*s));
+        self.super_terminator(terminator, location);
+    }
+
+    fn visit_basic_block_data(
+        &mut self,
+        _block: mir::BasicBlock,
+        _data: &mut mir::BasicBlockData<'tcx>
+    ) {
+        unimplemented!()
+    }
+}
+
 /// This function deals with the fact that flowistry uses special locations to
 /// refer to function arguments. Those locations are not recognized the rustc
 /// functions that operate on MIR and thus need to be filtered before doing
 /// things such as indexing into a `mir::Body`.
-fn is_real_location(loc_dom: &LocationDomain, body: &mir::Body, l: mir::Location) -> bool {
+fn is_real_location(_loc_dom: &LocationDomain, body: &mir::Body, l: mir::Location) -> bool {
     body.basic_blocks()
         .get(l.block)
         .map(|bb| 
             // Its `<=` because if len == statement_index it refers to the
             // terminator
             // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
-            bb.statements.len() <= l.statement_index)
+            l.statement_index <= bb.statements.len())
         == Some(true)
 }
+
+const DUMP_VERIFICATION_HASHES : bool = false;
 
 fn compute_verification_hash_for_stmt<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -172,55 +246,49 @@ fn compute_verification_hash_for_stmt<'tcx>(
     use mir::visit::Visitor;
     use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
     let mut hasher = StableHasher::new();
+    use std::io::Write;
+    let mut out : Box<dyn Write> = if DUMP_VERIFICATION_HASHES {
+        Box::new(std::fs::OpenOptions::new().write(true).create(true).truncate(true).open("verification_hash_input").unwrap())
+    } else {
+        Box::new(std::io::sink())
+    };
     tcx.create_stable_hashing_context().while_hashing_spans(false, |mut hctx|{
 
-        t.kind.hash_stable(&mut hctx, &mut hasher);
-        {
-            use mir::visit::MutVisitor;
-            let mut loc_set = HashSet::<mir::Location>::new();
-            let mut vis = PlaceVisitor(|pl: &mir::Place<'tcx>| {
-                loc_set.extend(matrix.row(*pl).filter(|l| is_real_location(loc_dom, body, **l)));
-            });
+        use mir::visit::MutVisitor;
+        let mut loc_set = HashSet::<mir::Location>::new();
+        let mut vis = PlaceVisitor(|pl: &mir::Place<'tcx>| {
+            loc_set.extend(matrix.row(*pl).filter(|l| is_real_location(loc_dom, body, **l)));
+        });
 
-            vis.visit_terminator(t, loc);
-            let mut replacer = RePlacer(tcx, {
-                let mut re_local_er = HashMap::new();
-                let mut new_local_er = mir::Local::from_usize(0);
-                move |place : &mut mir::Place| {
-                    place.local = *re_local_er.entry(place.local).or_insert_with(|| {
-                        let new = new_local_er;
-                        new_local_er = new_local_er + 1;
-                        new
-                    })
+        vis.visit_terminator(t, loc);
+        let mut replacer = MirReindexer::new(tcx);
+
+        // This computation does two things at one. It takes all basic
+        // blocks, creating a slice over each with respect to the program
+        // location of interest. Then it immediately hashes all interesting
+        // locations. As a result it never needs to materialize the actual
+        // slice but only its hash.
+        //
+        // Read the Notion to know more about this https://www.notion.so/justus-adam/Attestation-Hash-shouldn-t-change-if-unrelated-statements-change-19f4b036d85643b4ae6a9b8358e3cb70#7c35960849524580b720d3207c70004f
+        body.basic_blocks().iter_enumerated().for_each(|(bbidx, bbdat)| {
+            let termidx = bbdat.statements.len();
+            bbdat.statements.iter().enumerate().for_each(|(stmtidx, stmt)| {
+                let loc = mir::Location {block: bbidx, statement_index: stmtidx};
+                if loc_set.contains(&loc) {
+                    let mut new_stmt = stmt.clone();
+                    replacer.visit_statement(&mut new_stmt, loc);
+                    writeln!(out, "{:?}", new_stmt.kind).unwrap();
+                    new_stmt.kind.hash_stable(&mut hctx, &mut hasher);
                 }
             });
-
-            // This computation does two things at one. It takes all basic
-            // blocks, creating a slice over each with respect to the program
-            // location of interest. Then it immediately hashes all interesting
-            // locations. As a result it never needs to materialize the actual
-            // slice but only its hash.
-            //
-            // Read the Notion to know more about this https://www.notion.so/justus-adam/Attestation-Hash-shouldn-t-change-if-unrelated-statements-change-19f4b036d85643b4ae6a9b8358e3cb70#7c35960849524580b720d3207c70004f
-            body.basic_blocks().iter_enumerated().for_each(|(bbidx, bbdat)| {
-                let termidx = bbdat.statements.len();
-                bbdat.statements.iter().enumerate().for_each(|(stmtidx, stmt)| {
-                    let loc = mir::Location {block: bbidx, statement_index: stmtidx};
-                    if loc_set.contains(&loc) {
-                        let mut new_stmt = stmt.clone();
-                        replacer.visit_statement(&mut new_stmt, loc);
-                        new_stmt.hash_stable(&mut hctx, &mut hasher);
-                    }
-                });
-                let termloc = mir::Location {block: bbidx, statement_index: termidx};
-                if loc_set.contains(&termloc) {
-                    let mut new_term = bbdat.terminator().clone();
-                    replacer.visit_terminator(&mut new_term, termloc);
-                    new_term.hash_stable(&mut hctx, &mut hasher);
-                }
-            });
-
-        }
+            let termloc = mir::Location {block: bbidx, statement_index: termidx};
+            if loc_set.contains(&termloc) {
+                let mut new_term = bbdat.terminator().clone();
+                replacer.visit_terminator(&mut new_term, termloc);
+                writeln!(out, "{:?}", new_term.kind).unwrap();
+                new_term.kind.hash_stable(&mut hctx, &mut hasher);
+            }
+        })
     });
     hasher.finish()
 }
