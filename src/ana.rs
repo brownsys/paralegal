@@ -108,6 +108,9 @@ fn extract_args<'tcx>(
     }
 }
 
+/// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
+/// object via the visit::Visitor` trait. Usually used to accumulate information
+/// about the places.
 struct PlaceVisitor<F>(F);
 
 impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisitor<F> {
@@ -121,6 +124,9 @@ impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisit
     }
 }
 
+/// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
+/// object via the `visit::MutVisitor` trait. Crucial difference to
+/// `PlaceVisitor` is that this function can alter the place itself.
 struct RePlacer<'tcx, F>(TyCtxt<'tcx>, F);
 
 
@@ -138,6 +144,10 @@ impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for ReP
     }
 }
 
+/// This function deals with the fact that flowistry uses special locations to
+/// refer to function arguments. Those locations are not recognized the rustc
+/// functions that operate on MIR and thus need to be filtered before doing
+/// things such as indexing into a `mir::Body`.
 fn is_real_location(loc_dom: &LocationDomain, body: &mir::Body, l: mir::Location) -> bool {
     body.basic_blocks()
         .get(l.block)
