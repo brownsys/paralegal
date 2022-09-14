@@ -148,9 +148,9 @@ pub fn compute_verification_hash_for_stmt<'tcx>(
         // slice but only its hash.
         //
         // Read the Notion to know more about this https://www.notion.so/justus-adam/Attestation-Hash-shouldn-t-change-if-unrelated-statements-change-19f4b036d85643b4ae6a9b8358e3cb70#7c35960849524580b720d3207c70004f
-        type Slices<'a, 'tcx> = LazyTree<'a, mir::BasicBlock, (mir::BasicBlockData<'tcx>, MirReindexer<'tcx>), ()>;
+        type Slices<'a, 'tcx> = LazyTree<'a, mir::BasicBlock, Option<(mir::BasicBlockData<'tcx>, MirReindexer<'tcx>)>>;
         let slice_maker = |bbidx: &mir::BasicBlock, tree: &mut Slices<'_, 'tcx>| {
-            let bbdat = body.basic_blocks()[*bbidx]; 
+            let bbdat = &body.basic_blocks()[*bbidx]; 
             let termidx = bbdat.statements.len();
             let new_stmts = bbdat.statements.iter().enumerate().filter_map(|(stmtidx, stmt)| {
                 let loc = mir::Location {block: *bbidx, statement_index: stmtidx};
@@ -162,42 +162,55 @@ pub fn compute_verification_hash_for_stmt<'tcx>(
             }).collect();
             let termloc = mir::Location {block: *bbidx, statement_index: termidx};
             if loc_set.contains(&termloc) {
-                let dom = body.dominators().immediate_dominator(*bbidx);
-                let renamer = tree.get(&dom).1.clone();
+                let mut renamer_may = None;
+                while renamer_may.is_none() {
+                    let dom = body.dominators().immediate_dominator(*bbidx);
+                    renamer_may = if dom == *bbidx {
+                        Some(MirReindexer::new(tcx))
+                    } else {
+                        tree.get(&dom).as_ref().map(|s| s.1.clone())
+                    };
+                }
+                let mut renamer = renamer_may.unwrap();
                 let mut new_block = mir::BasicBlockData {
                     statements: new_stmts,
-                    terminator: bbdat.terminator,
+                    terminator: bbdat.terminator.clone(),
                     is_cleanup: bbdat.is_cleanup,
                 };
-
-                (new_block, renamer)
+                renamer.visit_basic_block_data(*bbidx, &mut new_block);
+                Some((new_block, renamer))
             } else if !new_stmts.is_empty() {
                 unimplemented!()
             } else {
-                unimplemented!()
+                None
             }
         };
         
-        let mut slice : Slices = LazyTree::new((), &slice_maker);
-        type Hashes<'a, 'b, 'tcx> = LazyTree<'a, mir::BasicBlock, VerificationHash, (&'a mut StableHashingContext<'tcx>, &'b mut Slices<'b, 'tcx>)>;
-        let hashes_maker = |bb : &mir::BasicBlock, tree: &mut Hashes<'_, '_, 'tcx>| {
+        let mut slice : RefCell<Slices> = RefCell::new(LazyTree::new(&slice_maker));
+        let hctx_cell = RefCell::new(hctx);
+        type Hashes<'a, 'tcx> = LazyTree<'a, mir::BasicBlock, VerificationHash>;
+        let hashes_maker = |bb : &mir::BasicBlock, tree: &mut Hashes<'_, 'tcx>| {
             let mut hasher = StableHasher::new();
             let subs = 
-                body.basic_blocks()[*bb].terminator().successors().filter(|b| b != bb).map(|b| tree.get(&b)).collect::<Vec<_>>();
+                (&body.basic_blocks()[*bb]).terminator().successors().filter(|b| b != bb).map(|b| *tree.get(&b)).collect::<Vec<_>>();
             order_independent_hash(
                 subs.into_iter(),
-                tree.state().0,
+                &mut hctx_cell.borrow_mut(),
                 &mut hasher,
             );
-            tree.state().1.get(bb).0.hash_stable(tree.state().0, &mut hasher);
+            slice.borrow_mut().get(bb).as_ref().map(|b| b.0.hash_stable(&mut hctx_cell.borrow_mut(), &mut hasher));
             hasher.finish()
         };
-        let mut hashes : Hashes<'_, '_, 'tcx> = LazyTree::new((&mut hctx, &mut slice), &hashes_maker);
+        let mut hashes : Hashes<'_, 'tcx> = LazyTree::new(&hashes_maker);
 
-        hashes.get(&mir::START_BLOCK).hash_stable(hashes.state(), &mut hasher);
+        hashes.get(&mir::START_BLOCK).hash_stable(&mut hctx_cell.borrow_mut(), &mut hasher);
 
     });
     hasher.finish()
+}
+
+enum SliceResult {
+    
 }
 
 /// This structure allows you to use knot-tying to compute values that depend on
@@ -207,36 +220,30 @@ pub fn compute_verification_hash_for_stmt<'tcx>(
 /// However there is a caveat, you have to ensure that you traverse this
 /// hierarchy in only one direction at a time or that you early initialize a
 /// value (using `init`), otherwise you will create an infinite loop.
-struct LazyTree<'a, I, P, S> {
+struct LazyTree<'a, I, P> {
     tree: HashMap<I, Option<P>>,
     make: &'a dyn Fn(&I, &mut Self) -> P,
-    state: S,
 }
 
-impl <'a, I: Eq + std::hash::Hash + Clone, P, S> LazyTree<'a, I, P, S> {
-    fn new<F: Fn(&I, &mut Self) -> P>(state: S, make: &'a F) -> Self {
+impl <'a, I: Eq + std::hash::Hash + Clone, P> LazyTree<'a, I, P> {
+    fn new<F: Fn(&I, &mut Self) -> P>(make: &'a F) -> Self {
         Self {
             tree: HashMap::new(),
             make,
-            state,
         }
     }
 
-    fn get_may(&mut self, i: &I) -> Option<&P> {
+    fn get_may<'b>(&'b mut self, i: &I) -> Option<&'b P> {
         if !self.tree.contains_key(&i) {
             let f = self.make;
             self.tree.insert(i.clone(), None);
             let v = f(i, self);
-            assert!(self.tree.insert(i.clone(), Some(v)).is_none());
+            assert!(self.tree.insert(i.clone(), Some(v)).as_ref().map_or(false, Option::is_none));
         };
         self.tree[i].as_ref()
     }
 
     fn get(&mut self, i: &I) -> &P {
         self.get_may(i).expect("Still initializing")
-    }
-
-    fn state(&mut self) -> &mut S {
-        &mut self.state
     }
 }
