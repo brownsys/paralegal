@@ -123,23 +123,18 @@ impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisit
     }
 }
 
-
-
 /// This function deals with the fact that flowistry uses special locations to
 /// refer to function arguments. Those locations are not recognized the rustc
 /// functions that operate on MIR and thus need to be filtered before doing
 /// things such as indexing into a `mir::Body`.
 pub fn is_real_location(_loc_dom: &LocationDomain, body: &mir::Body, l: mir::Location) -> bool {
-    body.basic_blocks()
-        .get(l.block)
-        .map(|bb| 
+    body.basic_blocks().get(l.block).map(|bb| 
             // Its `<=` because if len == statement_index it refers to the
             // terminator
             // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
             l.statement_index <= bb.statements.len())
         == Some(true)
 }
-
 
 pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,

@@ -1,12 +1,11 @@
+use crate::desc::*;
 /// Semantics aware hashing for MIR slices.
-
 use crate::rust::*;
+use crate::{HashMap, HashSet};
 use rustc_middle::{
     hir::nested_filter::OnlyBodies,
     ty::{self, TyCtxt},
 };
-use crate::{HashMap, HashSet};
-use crate::desc::*;
 use std::cell::RefCell;
 
 use flowistry::indexed::{impls::LocationDomain, IndexedDomain};
@@ -15,7 +14,6 @@ use flowistry::indexed::{impls::LocationDomain, IndexedDomain};
 /// object via the `visit::MutVisitor` trait. Crucial difference to
 /// `PlaceVisitor` is that this function can alter the place itself.
 struct RePlacer<'tcx, F>(TyCtxt<'tcx>, F);
-
 
 impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for RePlacer<'tcx, F> {
     fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
@@ -37,7 +35,7 @@ struct Reindexer<I> {
     source: I,
 }
 
-impl <I> Reindexer<I> {
+impl<I> Reindexer<I> {
     fn new(base_val: I) -> Self {
         Self {
             mapper: HashMap::new(),
@@ -45,9 +43,9 @@ impl <I> Reindexer<I> {
         }
     }
 
-    fn reindex(&mut self, old: I) -> I 
-    where 
-        I: Eq + std::hash::Hash + std::ops::Add<usize, Output=I> + Copy
+    fn reindex(&mut self, old: I) -> I
+    where
+        I: Eq + std::hash::Hash + std::ops::Add<usize, Output = I> + Copy,
     {
         let ref mut src = self.source;
         *self.mapper.entry(old).or_insert_with(|| {
@@ -66,7 +64,7 @@ struct MirReindexer<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
-impl <'tcx> MirReindexer<'tcx> {
+impl<'tcx> MirReindexer<'tcx> {
     fn new(tcx: TyCtxt<'tcx>) -> Self {
         MirReindexer {
             tcx,
@@ -76,7 +74,7 @@ impl <'tcx> MirReindexer<'tcx> {
     }
 }
 
-impl <'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
+impl<'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
     fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
         self.tcx
     }
@@ -88,12 +86,18 @@ impl <'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
     ) {
         place.local = self.local_reindexer.reindex(place.local);
     }
-    fn visit_terminator(&mut self,
+    fn visit_terminator(
+        &mut self,
         terminator: &mut mir::Terminator<'tcx>,
         location: mir::Location,
     ) {
-        terminator.successors_mut().for_each(|suc| *suc = self.bb_reindexer.reindex(*suc));
-        terminator.unwind_mut().and_then(Option::as_mut).map(|s| *s = self.bb_reindexer.reindex(*s));
+        terminator
+            .successors_mut()
+            .for_each(|suc| *suc = self.bb_reindexer.reindex(*suc));
+        terminator
+            .unwind_mut()
+            .and_then(Option::as_mut)
+            .map(|s| *s = self.bb_reindexer.reindex(*s));
         self.super_terminator(terminator, location);
     }
 }
@@ -101,16 +105,23 @@ impl <'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
 use crate::rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_query_system::ich::StableHashingContext;
 
-fn order_independent_hash<CTX, T: HashStable<CTX>,I: Iterator<Item=T>>(mut i: I, hctx: &mut CTX, hasher: &mut StableHasher) {
-    let n = i.map(|it| {
-        let mut hasher = StableHasher::new();
-        it.hash_stable(hctx, &mut hasher);
-        hasher.finish::<u128>()
-    }).reduce(|one, two| one.wrapping_add(two)).unwrap_or(0);
+fn order_independent_hash<CTX, T: HashStable<CTX>, I: Iterator<Item = T>>(
+    mut i: I,
+    hctx: &mut CTX,
+    hasher: &mut StableHasher,
+) {
+    let n = i
+        .map(|it| {
+            let mut hasher = StableHasher::new();
+            it.hash_stable(hctx, &mut hasher);
+            hasher.finish::<u128>()
+        })
+        .reduce(|one, two| one.wrapping_add(two))
+        .unwrap_or(0);
     n.hash_stable(hctx, hasher);
 }
 
-const DUMP_VERIFICATION_HASHES : bool = false;
+const DUMP_VERIFICATION_HASHES: bool = false;
 
 pub fn compute_verification_hash_for_stmt<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -125,8 +136,15 @@ pub fn compute_verification_hash_for_stmt<'tcx>(
     use mir::visit::Visitor;
     let mut hasher = StableHasher::new();
     use std::io::Write;
-    let mut out : Box<dyn Write> = if DUMP_VERIFICATION_HASHES {
-        Box::new(std::fs::OpenOptions::new().write(true).create(true).truncate(true).open("verification_hash_input").unwrap())
+    let mut out: Box<dyn Write> = if DUMP_VERIFICATION_HASHES {
+        Box::new(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open("verification_hash_input")
+                .unwrap(),
+        )
     } else {
         Box::new(std::io::sink())
     };
@@ -227,11 +245,11 @@ enum SliceResult<'tcx> {
     Consolidate(Vec<mir::Statement<'tcx>>),
 }
 
-impl <'tcx> SliceResult<'tcx> {
+impl<'tcx> SliceResult<'tcx> {
     fn slice_may(&self) -> Option<&mir::BasicBlockData<'tcx>> {
         match self {
-            SliceResult::Sliced {slice, .. } => Some(slice),
-            _ => None
+            SliceResult::Sliced { slice, .. } => Some(slice),
+            _ => None,
         }
     }
 }
@@ -248,7 +266,7 @@ struct LazyTree<'a, I, P> {
     make: &'a dyn Fn(&I, &mut Self) -> P,
 }
 
-impl <'a, I: Eq + std::hash::Hash + Clone, P> LazyTree<'a, I, P> {
+impl<'a, I: Eq + std::hash::Hash + Clone, P> LazyTree<'a, I, P> {
     fn new<F: Fn(&I, &mut Self) -> P>(make: &'a F) -> Self {
         Self {
             tree: HashMap::new(),
@@ -261,7 +279,11 @@ impl <'a, I: Eq + std::hash::Hash + Clone, P> LazyTree<'a, I, P> {
             let f = self.make;
             self.tree.insert(i.clone(), None);
             let v = f(i, self);
-            assert!(self.tree.insert(i.clone(), Some(v)).as_ref().map_or(false, Option::is_none));
+            assert!(self
+                .tree
+                .insert(i.clone(), Some(v))
+                .as_ref()
+                .map_or(false, Option::is_none));
         };
         self.tree.get_mut(i).unwrap().as_mut()
     }

@@ -44,7 +44,8 @@ where
         RIter::Item: Pretty<'a, Self, A>,
         DocBuilder<'a, Self, A>: Clone,
     {
-        let mut prit = rel.into_iter()
+        let mut prit = rel
+            .into_iter()
             .filter_map(|(l, r)| {
                 let mut pl = l.into_iter().peekable();
                 let mut pr = r.into_iter().peekable();
@@ -61,10 +62,7 @@ where
             })
             .peekable();
         if prit.peek().is_some() {
-            self.intersperse(
-                prit,
-                self.text(" +").append(self.hardline()),
-            )
+            self.intersperse(prit, self.text(" +").append(self.hardline()))
         } else {
             self.text("none->none")
         }
@@ -287,26 +285,30 @@ impl ToForge for ProgramDescription {
                     .flat_map(|v| v.0.iter())
                     .filter_map(Annotation::as_label_ann)
                     .map(|a| a.label)
-                    .chain(std::iter::once(crate::Symbol::intern(EXCEPTIONS_LABEL_NAME)))
+                    .chain(std::iter::once(crate::Symbol::intern(
+                        EXCEPTIONS_LABEL_NAME,
+                    )))
                     .collect::<HashSet<_>>()
                     .into_iter()
                     .map(|s| make_one_sig(alloc, alloc.text(s.as_str().to_string()), LABEL_NAME)),
             ),
             alloc.nil(),
-            alloc.lines(self.all_sources()
-                .chain(self.controllers.values().flat_map(|c| c.types.keys()))
-                .collect::<HashSet<_>>()
-                .iter()
-                .map(|a| {
-                make_one_sig(
-                    alloc,
-                    a.as_forge(alloc),
-                    match a {
-                        DataSource::Argument(_) => ARG_NAME,
-                        DataSource::FunctionCall(_) => FN_CALL_NAME,
-                    },
-                )
-            })),
+            alloc.lines(
+                self.all_sources()
+                    .chain(self.controllers.values().flat_map(|c| c.types.keys()))
+                    .collect::<HashSet<_>>()
+                    .iter()
+                    .map(|a| {
+                        make_one_sig(
+                            alloc,
+                            a.as_forge(alloc),
+                            match a {
+                                DataSource::Argument(_) => ARG_NAME,
+                                DataSource::FunctionCall(_) => FN_CALL_NAME,
+                            },
+                        )
+                    }),
+            ),
             alloc.nil(),
             alloc.lines(self.annotations.iter().flat_map(|(name, (_, nums))| {
                 if let ObjectType::Function(num_args) = nums {
@@ -411,14 +413,18 @@ impl ToForge for ProgramDescription {
                                     )))
                                     .append(" +")
                                     .append(alloc.hardline())
-                                    .append(alloc.forge_relation(
-                                        self.annotations.iter().map(|(id, (anns, _))| 
-                                            (anns.iter().filter_map(Annotation::as_exception_annotation).next().map(
-                                                |_| id.as_forge(alloc)
-                                            ).into_iter(),
-                                            std::iter::once(alloc.text(EXCEPTIONS_LABEL_NAME)))
-                                        )
-                                    ))
+                                    .append(alloc.forge_relation(self.annotations.iter().map(
+                                        |(id, (anns, _))| {
+                                            (
+                                                anns.iter()
+                                                    .filter_map(Annotation::as_exception_annotation)
+                                                    .next()
+                                                    .map(|_| id.as_forge(alloc))
+                                                    .into_iter(),
+                                                std::iter::once(alloc.text(EXCEPTIONS_LABEL_NAME)),
+                                            )
+                                        },
+                                    )))
                                     .nest(4)
                                     .append(alloc.hardline())
                                     .parens(),
