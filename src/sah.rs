@@ -1,5 +1,5 @@
-use crate::desc::*;
 /// Semantics aware hashing for MIR slices.
+use crate::desc::*;
 use crate::rust::*;
 use crate::{HashMap, HashSet};
 use rustc_middle::{
@@ -56,12 +56,31 @@ impl<I> Reindexer<I> {
     }
 }
 
-/// A strut with the task of renaming/repayloading all MIR values of numerical nature to create consistent code slices. Currently only `mir::Place` and basic block indices, e.g. `mir::BasicBlock` are renamed.
-#[derive(Clone)]
+impl Default for Reindexer<mir::BasicBlock> {
+    fn default() -> Self {
+        Reindexer::new(mir::START_BLOCK)
+    }
+}
+
+/// A struct with the task of renaming/repayloading all MIR values of numerical
+/// nature to create consistent code slices. Currently only `mir::Place` and
+/// basic block indices, e.g. `mir::BasicBlock` are renamed.
 struct MirReindexer<'tcx> {
     local_reindexer: Reindexer<mir::Local>,
     bb_reindexer: Reindexer<mir::BasicBlock>,
+    promotion_reindexer: Reindexer<mir::Promoted>,
     tcx: TyCtxt<'tcx>,
+}
+
+impl <'tcx> MirReindexer<'tcx> {
+    fn derived(&self) -> Self {
+        MirReindexer {
+            local_reindexer: self.local_reindexer.clone(),
+            bb_reindexer: Reindexer::default(),
+            promotion_reindexer: self.promotion_reindexer.clone(),
+            tcx: self.tcx,
+        }
+    }
 }
 
 impl<'tcx> MirReindexer<'tcx> {
@@ -69,7 +88,8 @@ impl<'tcx> MirReindexer<'tcx> {
         MirReindexer {
             tcx,
             local_reindexer: Reindexer::new(mir::Local::from_usize(0)),
-            bb_reindexer: Reindexer::new(mir::BasicBlock::from_usize(0)),
+            bb_reindexer: Reindexer::default(),
+            promotion_reindexer: Reindexer::new(mir::Promoted::from_usize(10)),
         }
     }
 }
@@ -81,10 +101,11 @@ impl<'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
     fn visit_place(
         &mut self,
         place: &mut mir::Place<'tcx>,
-        _context: mir::visit::PlaceContext,
-        _location: mir::Location,
+        context: mir::visit::PlaceContext,
+        location: mir::Location,
     ) {
         place.local = self.local_reindexer.reindex(place.local);
+        self.super_place(place, context, location);
     }
     fn visit_terminator(
         &mut self,
@@ -99,6 +120,30 @@ impl<'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
             .and_then(Option::as_mut)
             .map(|s| *s = self.bb_reindexer.reindex(*s));
         self.super_terminator(terminator, location);
+    }
+
+    fn visit_operand(&mut self, operand: &mut mir::Operand<'tcx>, location: mir::Location) {
+        match operand {
+            mir::Operand::Constant(op) => match op.literal {
+                mir::ConstantKind::Ty(ref mut t) => {
+                    let mut new_val = t.val();
+                    match new_val {
+                        ty::ConstKind::Unevaluated(ref mut unev) => {
+                            if unev.promoted.as_mut().map(|p| {
+                                *p = self.promotion_reindexer.reindex(*p);
+                            }).is_some() {
+                                *t = self.tcx.mk_const(ty::ConstS { ty: t.ty(), val: new_val});
+                                println!("{operand:?}");
+                            };
+                        }
+                        _ => (),
+                    }
+                } 
+                _ => (),
+            },
+            _ => ()
+        };
+        self.super_operand(operand, location);
     }
 }
 
@@ -134,20 +179,8 @@ pub fn compute_verification_hash_for_stmt<'tcx>(
     >>::Domain,
 ) -> VerificationHash {
     use mir::visit::Visitor;
-    let mut hasher = StableHasher::new();
     use std::io::Write;
-    let mut out: Box<dyn Write> = if DUMP_VERIFICATION_HASHES {
-        Box::new(
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open("verification_hash_input")
-                .unwrap(),
-        )
-    } else {
-        Box::new(std::io::sink())
-    };
+    let mut final_hash = 0;
     tcx.create_stable_hashing_context().while_hashing_spans(false, |mut hctx|{
 
         use mir::visit::MutVisitor;
@@ -158,6 +191,8 @@ pub fn compute_verification_hash_for_stmt<'tcx>(
 
         vis.visit_terminator(t, loc);
         let mut replacer = MirReindexer::new(tcx);
+        let out_prefix = std::env::var("DBG_FILE_PREFIX").unwrap_or("".to_string());
+        let mut out = RefCell::new(std::fs::OpenOptions::new().write(true).truncate(true).create(true).open(out_prefix.clone() + "sliced.txt").unwrap());
 
         // This computation does two things at one. It takes all basic
         // blocks, creating a slice over each with respect to the program
@@ -189,7 +224,7 @@ pub fn compute_verification_hash_for_stmt<'tcx>(
                     } else {
                         match tree.get(&dom) {
                             SliceResult::Dropped => None,
-                            SliceResult::Sliced{ renamer, .. } => Some(renamer.clone()),
+                            SliceResult::Sliced{ renamer, .. } => Some(renamer.derived()),
                             SliceResult::Consolidate(stmts) => {
                                 assert!(!stmts.is_empty());
                                 new_stmts = stmts.drain(..).chain(new_stmts.into_iter()).collect();
@@ -205,6 +240,12 @@ pub fn compute_verification_hash_for_stmt<'tcx>(
                     is_cleanup: bbdat.is_cleanup,
                 };
                 renamer.visit_basic_block_data(*bbidx, &mut new_block);
+                let mut out = out.borrow_mut();
+                for stmt in new_block.statements.iter() {
+                    writeln!(out, "{:?}", stmt.kind).unwrap();
+                }
+
+                writeln!(out, "{:?}", new_block.terminator().kind).unwrap();
                 SliceResult::Sliced{ slice: new_block, renamer }
             } else if !new_stmts.is_empty() {
                 SliceResult::Consolidate(new_stmts)
@@ -212,28 +253,29 @@ pub fn compute_verification_hash_for_stmt<'tcx>(
                 SliceResult::Dropped
             }
         };
-        
+        let hash_out = RefCell::new(std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(out_prefix + "hashes.txt").unwrap());
         let mut slice : RefCell<Slices> = RefCell::new(LazyTree::new(&slice_maker));
         let hctx_cell = RefCell::new(hctx);
-        type Hashes<'a, 'tcx> = LazyTree<'a, mir::BasicBlock, VerificationHash>;
+        type Hashes<'a, 'tcx> = LazyTree<'a, mir::BasicBlock, Option<VerificationHash>>;
         let hashes_maker = |bb : &mir::BasicBlock, tree: &mut Hashes<'_, 'tcx>| {
-            let mut hasher = StableHasher::new();
-            let subs = 
-                (&body.basic_blocks()[*bb]).terminator().successors().filter(|b| b != bb).filter_map(|b| /* This is a bit dangerous. I've added this filter because it is possible you are transitively in your own successors. However there could be other things wrong with the code that could also cause that situation which this would ignore. */  tree.get_may(&b).map(|b| *b)).collect::<Vec<_>>();
-            order_independent_hash(
-                subs.into_iter(),
-                &mut hctx_cell.borrow_mut(),
-                &mut hasher,
-            );
-            slice.borrow_mut().get(bb).slice_may().map(|b| b.hash_stable(&mut hctx_cell.borrow_mut(), &mut hasher));
-            hasher.finish()
+            /* This is a bit dangerous. I've added this filter because it is possible you are transitively in your own successors. However there could be other things wrong with the code that could also cause that situation which this would ignore. */  
+            /* This encodes the order of successors so we preserve it. I use an addition of the index after filtering non-hashed successors because this just so happens to propagate the successor hash unchanged in the case where we are a consolidated basic block with only one successor.  */
+            let h = (&body.basic_blocks()[*bb]).terminator().successors().filter(|b| b != bb).filter_map(|b| tree.get_may(&b).and_then(|o| o.as_ref()).map(|b| *b)).enumerate().map(|(i, h)| h.wrapping_add(i as u128)).reduce(|a, b| a.wrapping_add(b));
+            let hash = slice.borrow_mut().get(bb).slice_may().map_or(h, |b| {
+                let mut hasher = StableHasher::new();
+                b.hash_stable(&mut hctx_cell.borrow_mut(), &mut hasher);
+                h.map(|h| h.hash_stable(&mut hctx_cell.borrow_mut(), &mut hasher));
+                let hash = hasher.finish();
+                writeln!(hash_out.borrow_mut(), "{hash:?}").unwrap();
+                Some(hash)
+            });
+            hash
         };
         let mut hashes : Hashes<'_, 'tcx> = LazyTree::new(&hashes_maker);
 
-        hashes.get(&mir::START_BLOCK).hash_stable(&mut hctx_cell.borrow_mut(), &mut hasher);
-
+        final_hash = hashes.get(&mir::START_BLOCK).unwrap();
     });
-    hasher.finish()
+    final_hash
 }
 
 enum SliceResult<'tcx> {
