@@ -1,6 +1,5 @@
 /// Semantics aware hashing for MIR slices.
 extern crate either;
-extern crate dot;
 
 use either::Either;
 
@@ -102,7 +101,7 @@ impl<I> Reindexer<I> {
 
 impl Default for Reindexer<mir::BasicBlock> {
     fn default() -> Self {
-        Reindexer::new(mir::BasicBlock::from_usize(1000))
+        Reindexer::new(mir::BasicBlock::from_usize(0))
     }
 }
 
@@ -113,6 +112,7 @@ struct MirReindexer<'tcx> {
     local_reindexer: Reindexer<mir::Local>,
     bb_reindexer: Reindexer<mir::BasicBlock>,
     promotion_reindexer: Reindexer<mir::Promoted>,
+    region_reindexer: Reindexer<ty::RegionVid>,
     tcx: TyCtxt<'tcx>,
 }
 
@@ -123,6 +123,7 @@ impl<'tcx> MirReindexer<'tcx> {
             bb_reindexer: Reindexer::default(),
             promotion_reindexer: self.promotion_reindexer.clone(),
             tcx: self.tcx,
+            region_reindexer: self.region_reindexer.clone(),
         }
     }
 }
@@ -133,7 +134,22 @@ impl<'tcx> MirReindexer<'tcx> {
             tcx,
             local_reindexer: Reindexer::new(mir::Local::from_usize(0)),
             bb_reindexer: Reindexer::default(),
-            promotion_reindexer: Reindexer::new(mir::Promoted::from_usize(10)),
+            promotion_reindexer: Reindexer::new(mir::Promoted::from_usize(0)),
+            region_reindexer: Reindexer::new(ty::RegionVid::from_usize(0))
+        }
+    }
+}
+
+impl <'tcx> TypeFolder<'tcx> for MirReindexer<'tcx> {
+    fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
+        self.tcx
+    }
+    fn fold_region(&mut self, r: ty::Region<'tcx>) -> ty::Region<'tcx> {
+        match r.kind() {
+            ty::ReVar(v) => {
+                self.tcx.mk_region(ty::ReVar(self.region_reindexer.reindex(v)))
+            }
+            _ => r
         }
     }
 }
@@ -197,11 +213,16 @@ impl<'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
         };
         self.super_operand(operand, location);
     }
+
+    fn visit_ty(&mut self, ty: &mut ty::Ty<'tcx>, ctx: mir::visit::TyContext) {
+        *ty = self.fold_ty(*ty);
+        self.super_ty(ty)
+    }
 }
 
 enum MemoEntry<'tcx> {
     Computing,
-    Dropped,
+    Dropped(Option<mir::BasicBlock>),
     Consolidated,
     Processed {
         slice: mir::BasicBlockData<'tcx>,
@@ -244,11 +265,14 @@ impl<'tcx, 'a> BasicBlockSlicingAwareReindexer<'tcx, 'a> {
         // right now and don't want to split this into the multiple passes
         // required to do this properly.
         match self.bb_map.get(&bb) {
-            Some(MemoEntry::Dropped) | None => DROPPED_BB,
+            Some(MemoEntry::Dropped(Some(other))) => self.reindex_basic_block(*other),
+            None | Some(MemoEntry::Dropped(None)) => DROPPED_BB,
             _ => self.generic_reindexer.bb_reindexer.reindex(bb),
         }
     }
 }
+
+use ty::fold::TypeFolder;
 
 impl<'tcx, 'a> mir::visit::MutVisitor<'tcx> for BasicBlockSlicingAwareReindexer<'tcx, 'a> {
     fn tcx<'b>(&'b self) -> TyCtxt<'tcx> {
@@ -279,6 +303,9 @@ impl<'tcx, 'a> mir::visit::MutVisitor<'tcx> for BasicBlockSlicingAwareReindexer<
 
     fn visit_operand(&mut self, operand: &mut mir::Operand<'tcx>, location: mir::Location) {
         self.generic_reindexer.visit_operand(operand, location);
+    }
+    fn visit_ty(&mut self, ty: &mut ty::Ty<'tcx>, ctx: mir::visit::TyContext) {
+        self.generic_reindexer.visit_ty(ty, ctx);
     }
 }
 
@@ -338,6 +365,61 @@ fn slice_basic_block<'tcx, F: FnMut(mir::Location) -> bool>(
     }
 }
 
+mod graphviz_out {
+    pub extern crate dot;
+    use crate::rust::mir;
+    use crate::{HashSet};
+    use super::Either;
+    pub struct DotGraph<'a, 'tcx> {
+        pub body: &'a mir::Body<'tcx>,
+        pub loc_set: &'a HashSet<mir::Location>,
+    }
+    type N = mir::BasicBlock;
+    type E = (mir::BasicBlock, usize, mir::BasicBlock);
+    impl <'tcx, 'a> dot::GraphWalk<'a, N, E> for DotGraph<'a, 'tcx> {
+        fn nodes(&'a self) -> dot::Nodes<'a, N> {
+            self.body.basic_blocks().indices().collect::<Vec<_>>().into()
+        }
+        fn edges(&'a self) -> dot::Edges<'a, E> {
+            self.body.basic_blocks().iter_enumerated().flat_map(|(bb, bbdat)| bbdat.terminator().successors().enumerate().map(move |(i, s)| (bb, i, s))).collect::<Vec<_>>().into()
+        }
+        fn source(&'a self, edge: &E) -> N {
+            edge.0
+        }
+        fn target(&'a self, edge: &E) -> N {
+            edge.2
+        }
+    }
+    impl <'tcx, 'a> dot::Labeller<'a, N, E> for DotGraph<'a, 'tcx> {
+        fn graph_id(&'a self) -> dot::Id<'a> {
+            dot::Id::new("g").unwrap()
+        }
+        fn node_id(&'a self, n: &N) -> dot::Id<'a> {
+            dot::Id::new(format!("{:?}", n)).unwrap()
+        }
+        fn node_label(&'a self, bb: &N) -> dot::LabelText<'a> {
+            use std::fmt::Write;
+            let bbdat = &self.body.basic_blocks()[*bb];
+            let (stmts, term) = match super::slice_basic_block(|l| self.loc_set.contains(&l), *bb, &bbdat) {
+                Either::Left(stmts) => (stmts, None),
+                Either::Right(bbdat) => (bbdat.statements, bbdat.terminator),
+            };
+            let mut label = String::new();
+            writeln!(label, "{bb:?}").unwrap();
+            for s in stmts.iter() {
+                writeln!(label, "{:?}", s.kind).unwrap();
+            }
+            if let Some(t) = term {
+                writeln!(label, "{:?}", t.kind).unwrap();
+            }
+            dot::LabelText::LabelStr(label.into())
+        }
+        fn edge_label(&'a self, e: &E) -> dot::LabelText<'a> {
+            dot::LabelText::LabelStr(format!("{:?}", e.1).into())
+        }
+    }
+}
+
 pub fn compute_verification_hash_for_stmt_2<'tcx>(
     tcx: TyCtxt<'tcx>,
     t: &mir::Terminator<'tcx>,
@@ -352,6 +434,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
     use std::io::Write;
 
     let mut hasher = StableHasher::new();
+    let mut indiv_hasher = StableHasher::new();
     let out_prefix = std::env::var("DBG_FILE_PREFIX").unwrap_or("".to_string());
     let mut out = std::fs::OpenOptions::new()
         .write(true)
@@ -378,56 +461,8 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
             })
             .visit_terminator(t, loc);
 
-            struct DotGraph<'a, 'tcx> {
-                body: &'a mir::Body<'tcx>,
-                loc_set: &'a HashSet<mir::Location>,
-            }
-            type N = mir::BasicBlock;
-            type E = (mir::BasicBlock, usize, mir::BasicBlock);
-            impl <'tcx, 'a> dot::GraphWalk<'a, N, E> for DotGraph<'a, 'tcx> {
-                fn nodes(&'a self) -> dot::Nodes<'a, N> {
-                    self.body.basic_blocks().indices().collect::<Vec<_>>().into()
-                }
-                fn edges(&'a self) -> dot::Edges<'a, E> {
-                    self.body.basic_blocks().iter_enumerated().flat_map(|(bb, bbdat)| bbdat.terminator().successors().enumerate().map(move |(i, s)| (bb, i, s))).collect::<Vec<_>>().into()
-                }
-                fn source(&'a self, edge: &E) -> N {
-                    edge.0
-                }
-                fn target(&'a self, edge: &E) -> N {
-                    edge.2
-                }
-            }
-            impl <'tcx, 'a> dot::Labeller<'a, N, E> for DotGraph<'a, 'tcx> {
-                fn graph_id(&'a self) -> dot::Id<'a> {
-                    dot::Id::new("g").unwrap()
-                }
-                fn node_id(&'a self, n: &N) -> dot::Id<'a> {
-                    dot::Id::new(format!("{:?}", n)).unwrap()
-                }
-                fn node_label(&'a self, bb: &N) -> dot::LabelText<'a> {
-                    use std::fmt::Write;
-                    let bbdat = &self.body.basic_blocks()[*bb];
-                    let (stmts, term) = match slice_basic_block(|l| self.loc_set.contains(&l), *bb, &bbdat) {
-                        Either::Left(stmts) => (stmts, None),
-                        Either::Right(bbdat) => (bbdat.statements, bbdat.terminator),
-                    };
-                    let mut label = String::new();
-                    for s in stmts.iter() {
-                        writeln!(label, "{:?}", s.kind);
-                    }
-                    if let Some(t) = term {
-                        writeln!(label, "{:?}", t.kind);
-                    }
-                    dot::LabelText::LabelStr(label.into())
-                }
-                fn edge_label(&'a self, e: &E) -> dot::LabelText<'a> {
-                    dot::LabelText::LabelStr(format!("{:?}", e.1).into())
-                }
-            }
-
-            dot::render(
-                &DotGraph {
+            graphviz_out::dot::render(
+                &graphviz_out::DotGraph {
                     body, loc_set: &loc_set
                 },
                 &mut std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(out_prefix + "slice.gv").unwrap(),
@@ -437,73 +472,66 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
             let mut basic_renamer = MirReindexer::new(tcx);
             mir::traversal::postorder(body).for_each(|(bb, bbdat)| {
                 memoization.insert(bb, MemoEntry::Computing);
-                let new_entry = if let Some(slice) =
-                    match slice_basic_block(|l| loc_set.contains(&l), bb, bbdat) {
-                        Either::Left(consolidate) => {
-                            let its = bbdat
-                                .terminator()
-                                .successors()
-                                .filter_map(|s| memoization.get(&s).map(|v| (s, v)))
-                                .filter_map(|(s, entry)| match entry {
-                                    MemoEntry::Processed { .. } => Some(s),
-                                    MemoEntry::Computing | MemoEntry::Consolidated => {
-                                        unreachable!()
+                let new_entry = 
+                    match slice_basic_block(|l| loc_set.contains(&l), bb, bbdat).left_and_then(|consolidate| {
+                        let its = bbdat
+                            .terminator()
+                            .successors()
+                            .filter_map(|s| memoization.get(&s).map(|v| (s, v)))
+                            .filter_map(|(s, entry)| match entry {
+                                MemoEntry::Processed { .. } => Some(s),
+                                MemoEntry::Computing | MemoEntry::Consolidated => {
+                                    unreachable!("{bb:?} -> {s:?}")
+                                }
+                                MemoEntry::Dropped(next) => *next,
+                            }).collect::<Vec<_>>();
+                        assert!(its.len() <= 1);
+                        if consolidate.is_empty() {
+                            Either::Left(its.first().copied())
+                        } else {
+                            let s = its.first().unwrap();
+                            let (_, mut slice) = std::mem::replace(
+                                memoization.get_mut(&s).unwrap(),
+                                MemoEntry::Consolidated,
+                            ).into_processed().unwrap();
+                            if !consolidate.is_empty() {
+                                slice.statements = consolidate
+                                    .into_iter()
+                                    .chain(slice.statements.iter().cloned())
+                                    .collect();
+                            }
+                            Either::Right(slice)
+                        }
+                    }) {
+                        Either::Right(slice) => {
+                            // Otherwise we're double renaming it on consolidation
+                            let mut for_hashing = slice.clone();
+                            let self_idx = basic_renamer.bb_reindexer.reindex(bb);
+                            BasicBlockSlicingAwareReindexer::new(&mut basic_renamer, &mut memoization)
+                                .visit_basic_block_data(bb, &mut for_hashing);
+                         
+                            let mut hasher = StableHasher::new();
+                            for_hashing.hash_stable(hctx, &mut hasher);
+                            slice.terminator().successors().for_each(|s| {
+                                if let Some(entry) = memoization.get(&s) {
+                                    match entry {
+                                        MemoEntry::Processed { hash, .. } => {
+                                            hash.hash_stable(hctx, &mut hasher)
+                                        }
+                                        _ => (),
                                     }
-                                    _ => None,
-                                }).collect::<Vec<_>>();
-                            if let Some(s) = its.first() {
-                                let (_, mut slice) = std::mem::replace(
-                                    memoization.get_mut(&s).unwrap(),
-                                    MemoEntry::Consolidated,
-                                ).into_processed().unwrap();
-                                assert_eq!(its.len(), 1);
-                                if !consolidate.is_empty() {
-                                    slice.statements = consolidate
-                                        .into_iter()
-                                        .chain(slice.statements.iter().cloned())
-                                        .collect();
                                 }
-                                Some(slice)
-                            } else {
-                                assert!(consolidate.is_empty());
-                                None
+                            });
+                            let hash = hasher.finish();
+                            writeln!(hash_out, "{bb:?} {hash:?}").unwrap();
+                            MemoEntry::Processed {
+                                self_idx,
+                                slice: for_hashing,
+                                hash,
                             }
                         }
-                        Either::Right(done) => Some(done),
-                    } {
-                    // Otherwise we're double renaming it on consolidation
-                    let mut for_hashing = slice.clone();
-                    let self_idx = basic_renamer.bb_reindexer.reindex(bb);
-                    BasicBlockSlicingAwareReindexer::new(&mut basic_renamer, &mut memoization)
-                        .visit_basic_block_data(bb, &mut for_hashing);
-                    writeln!(out, "{bb:?}");
-                    for stmt in for_hashing.statements.iter() {
-                        writeln!(out, "{:?}", stmt.kind).unwrap();
-                    }
-
-                    writeln!(out, "{:?}", for_hashing.terminator().kind).unwrap();
-                    let mut hasher = StableHasher::new();
-                    for_hashing.hash_stable(hctx, &mut hasher);
-                    slice.terminator().successors().for_each(|s| {
-                        if let Some(entry) = memoization.get(&s) {
-                            match entry {
-                                MemoEntry::Processed { hash, .. } => {
-                                    hash.hash_stable(hctx, &mut hasher)
-                                }
-                                _ => (),
-                            }
-                        }
-                    });
-                    let hash = hasher.finish();
-                    writeln!(hash_out, "{bb:?} {hash:?}").unwrap();
-                    MemoEntry::Processed {
-                        self_idx,
-                        slice,
-                        hash,
-                    }
-                } else {
-                    MemoEntry::Dropped
-                };
+                        Either::Left(mnext) => MemoEntry::Dropped(mnext)
+                    };
 
                 memoization.insert(bb, new_entry);
             });
@@ -513,9 +541,43 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                 .filter_map(|(_, v)| v.into_processed())
                 .collect::<Vec<_>>();
             complete_slice.sort_by_key(|p| p.0);
+            for (bb, bbdat) in complete_slice.iter() {
+                writeln!(out, "{bb:?}");
+                for stmt in bbdat.statements.iter() {
+                    stmt.kind.hash_stable(hctx, &mut indiv_hasher);
+                    //stmt.kind.hash_stable(hctx, &mut h);
+                    //writeln!(out, "{:?} {}", stmt.kind, h.finish::<u128>()).unwrap();
+                    if let mir::StatementKind::Assign(pr) = &stmt.kind {
+                        if let mir::Rvalue::Aggregate(ag0, ag1) = &pr.1 {
+                            use std::borrow::Borrow;
+                            if let mir::AggregateKind::Array(ty) = ag0.borrow() {
+                                if let ty::TyKind::Adt(adt, subs) = ty.kind() {
+                                    for sub in subs.iter() {
+                                        if let ty::subst::GenericArgKind::Lifetime(lt) = sub.unpack() {
+
+                                            writeln!(out, "{:?} {:?} {}", ty, lt , quick_hash(&lt, hctx)).unwrap();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut h = StableHasher::new();
+                bbdat.terminator().kind.hash_stable(hctx, &mut h);
+                //writeln!(out, "{:?} {}", bbdat.terminator().kind, h.finish::<u128>()).unwrap();
+                bbdat.terminator().kind.hash_stable(hctx, &mut indiv_hasher);
+            }
             complete_slice.hash_stable(hctx, &mut hasher)
         });
-    hasher.finish()
+    //hasher.finish();
+    indiv_hasher.finish()
+}
+
+fn quick_hash<CTX, T : HashStable<CTX>>(dat : &T, hctx : &mut CTX) -> VerificationHash {
+    let mut h = StableHasher::new();
+    dat.hash_stable(hctx, &mut h);
+    h.finish()
 }
 
 // pub fn compute_verification_hash_for_stmt<'tcx>(
