@@ -293,7 +293,7 @@ impl<'tcx> Visitor<'tcx> {
 
                         let matrix = flow.state_at(loc);
                         for ann in ann.0.iter().filter_map(Annotation::as_exception_annotation) {
-                            let hash = crate::sah::compute_verification_hash_for_stmt(tcx, t, loc, body, &loc_dom, matrix);
+                            let hash = crate::sah::compute_verification_hash_for_stmt_2(tcx, t, loc, body, &loc_dom, matrix);
                             if let Some(old_hash) = ann.verification_hash {
                                 if hash != old_hash {
                                     unsuccessful_hash_verifications += 1;
