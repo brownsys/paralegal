@@ -70,6 +70,10 @@ impl<I> Reindexer<I> {
         self.is_fixed = true;
     }
 
+    fn unseal(&mut self) {
+        self.is_fixed = false;
+    }
+
     fn make_fixed<It: Iterator<Item=I>>(src: It, mut base: I, default: Option<I>) -> Self 
     where I: Eq + std::hash::Hash + std::ops::Add<usize, Output = I> + Copy
     {
@@ -90,7 +94,7 @@ impl<I> Reindexer<I> {
 
 impl Default for Reindexer<mir::BasicBlock> {
     fn default() -> Self {
-        Reindexer::new(mir::START_BLOCK)
+        Reindexer::new(mir::BasicBlock::from_usize(1000))
     }
 }
 
@@ -179,6 +183,71 @@ impl<'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
     }
 }
 
+enum MemoEntry<'tcx> {
+    Computing,
+    Dropped,
+    Processed(mir::BasicBlockData<'tcx>, VerificationHash),
+}
+
+struct BasicBlockSlicingAwareReindexer<'tcx, 'a, > {
+    generic_reindexer: &'a mut MirReindexer<'tcx>,
+    bb_map: &'a HashMap<mir::BasicBlock, MemoEntry<'tcx>>,
+}
+
+const DROPPED_BB : mir::BasicBlock = mir::BasicBlock::from_usize(1337);
+
+impl <'tcx, 'a> BasicBlockSlicingAwareReindexer<'tcx, 'a> {
+    fn new(generic_reindexer: &'a mut MirReindexer<'tcx>,
+    bb_map: &'a HashMap<mir::BasicBlock, MemoEntry<'tcx>>) -> Self {
+        Self {
+            generic_reindexer, bb_map
+        }
+    }
+    fn reindex_basic_block(&mut self, bb: mir::BasicBlock) -> mir::BasicBlock {
+        // TODO(hazard): THIS IS NOT CORRECT. If the return is `None`, we are
+        // looking at a back edge that COULD go to a block that is contained in
+        // the slice and thus might have a valid renaming!!!. But I am lazy
+        // right now and don't want to split this into the multiple passes
+        // required to do this properly.
+        match self.bb_map.get(&bb) {
+            Some(MemoEntry::Dropped) | None => DROPPED_BB,
+            _ => self.generic_reindexer.bb_reindexer.reindex(bb),
+        }
+    }
+}
+
+impl<'tcx, 'a> mir::visit::MutVisitor<'tcx> for BasicBlockSlicingAwareReindexer<'tcx, 'a> {
+    fn tcx<'b>(&'b self) -> TyCtxt<'tcx> {
+        self.generic_reindexer.tcx
+    }
+    fn visit_place(
+        &mut self,
+        place: &mut mir::Place<'tcx>,
+        context: mir::visit::PlaceContext,
+        location: mir::Location,
+    ) {
+        self.generic_reindexer.visit_place(place, context, location)
+    }
+    fn visit_terminator(
+        &mut self,
+        terminator: &mut mir::Terminator<'tcx>,
+        location: mir::Location,
+    ) {
+        terminator
+            .successors_mut()
+            .for_each(|suc| *suc = self.reindex_basic_block(*suc));
+        terminator
+            .unwind_mut()
+            .and_then(Option::as_mut)
+            .map(|s| *s = self.reindex_basic_block(*s));
+        self.super_terminator(terminator, location);
+    }
+
+    fn visit_operand(&mut self, operand: &mut mir::Operand<'tcx>, location: mir::Location) {
+        self.generic_reindexer.visit_operand(operand, location);
+    }
+}
+
 use crate::rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_query_system::ich::StableHashingContext;
 
@@ -234,6 +303,9 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
     use std::io::Write;
 
     let mut final_hash = 0;
+    let out_prefix = std::env::var("DBG_FILE_PREFIX").unwrap_or("".to_string());
+    let mut out = std::fs::OpenOptions::new().write(true).truncate(true).create(true).open(out_prefix.clone() + "sliced.txt").unwrap();
+    let mut hash_out = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(out_prefix + "hashes.txt").unwrap();
     tcx.create_stable_hashing_context().while_hashing_spans(false, |hctx|{
 
         use mir::visit::MutVisitor;
@@ -241,47 +313,58 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
         crate::ana::PlaceVisitor(|pl: &mir::Place<'tcx>| {
             loc_set.extend(matrix.row(*pl).filter(|l| crate::ana::is_real_location(loc_dom, body, **l)));
         }).visit_terminator(t, loc);
-        enum MemoEntry<'tcx> {
-            Computing,
-            Dropped,
-            Processed(mir::BasicBlockData<'tcx>, VerificationHash),
-        }
+
         let mut memoization = HashMap::new();
-        let mut renamer = MirReindexer::new(tcx);
+        let mut basic_renamer = MirReindexer::new(tcx);
         mir::traversal::postorder(body).for_each(|(bb, bbdat)| {
             memoization.insert(bb, MemoEntry::Computing);
-            memoization.insert(bb,
-                if let Some(slice) = match slice_basic_block(|l| loc_set.contains(&l), bb, bbdat) {
-                    Either::Left(consolidate) if consolidate.is_empty() => None,
-                    Either::Left(consolidate) => {
-                        let mut it = bbdat.terminator().successors().filter_map(|s| match memoization.get(&s).unwrap() {
-                            MemoEntry::Processed(bb, _) => Some(bb.clone()),
-                            MemoEntry::Computing => unreachable!(),
-                            _ => None,
-                        });
-                        let mut s = it.next().unwrap();
-                        assert!(it.next().is_none());
-                        s.statements = consolidate.into_iter().chain(s.statements.iter().cloned()).collect();
-                        Some(s)
-                    }
-                    Either::Right(done) => Some(done),
-                } {
-                    // Otherwise we're double renaming it on consolidation
-                    let mut for_hashing = slice.clone();
-                    renamer.visit_basic_block_data(bb, &mut for_hashing);
-                    let mut hasher = StableHasher::new();
-                    for_hashing.hash_stable(hctx, &mut hasher);
-                    slice.terminator().successors().for_each(|s| if let Some(entry) = memoization.get(&s) { 
-                        match entry {
-                            MemoEntry::Processed(_, hash) => hash.hash_stable(hctx, &mut hasher),
-                            _ => (),
-                        }
+            let new_entry = if let Some(slice) = match slice_basic_block(|l| loc_set.contains(&l), bb, bbdat) {
+                Either::Left(consolidate) => {
+                    let mut it = bbdat.terminator().successors().filter_map(|s| memoization.get(&s)).filter_map(|entry| match entry {
+                        MemoEntry::Processed(bb, _) => Some(bb.clone()),
+                        MemoEntry::Computing => unreachable!(),
+                        _ => None,
                     });
-                    MemoEntry::Processed(slice, hasher.finish())
-                } else {
-                    MemoEntry::Dropped
+                    if let Some(mut s) = it.next() {
+                        assert!(it.next().is_none());
+                        if !consolidate.is_empty() {
+                            s.statements = consolidate.into_iter().chain(s.statements.iter().cloned()).collect();
+                        }
+                        Some(s)
+                    } else {
+                        assert!(consolidate.is_empty());
+                        None
+                    }
                 }
-            );
+                Either::Right(done) => Some(done),
+            } {
+                // Otherwise we're double renaming it on consolidation
+                let mut for_hashing = slice.clone();
+                BasicBlockSlicingAwareReindexer::new(&mut basic_renamer, &mut memoization)
+                    .visit_basic_block_data(bb, &mut for_hashing);
+                writeln!(out, "{bb:?}");
+                for stmt in for_hashing.statements.iter() {
+                    writeln!(out, "{:?}", stmt.kind).unwrap();
+                }
+
+                writeln!(out, "{:?}", for_hashing.terminator().kind).unwrap();
+                let mut hasher = StableHasher::new();
+                for_hashing.hash_stable(hctx, &mut hasher);
+                slice.terminator().successors().for_each(|s| if let Some(entry) = memoization.get(&s) { 
+                    match entry {
+                        MemoEntry::Processed(_, hash) => hash.hash_stable(hctx, &mut hasher),
+                        _ => (),
+                    }
+                });
+                let hash = hasher.finish();  
+                writeln!(hash_out, "{bb:?} {hash:?}").unwrap();
+                MemoEntry::Processed(slice, hash)
+            } else {
+                MemoEntry::Dropped
+            };
+
+            memoization.insert(bb, new_entry);
+
         });
 
         final_hash = match memoization.get(&mir::START_BLOCK).unwrap() {
