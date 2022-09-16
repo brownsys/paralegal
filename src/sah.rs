@@ -1,5 +1,6 @@
 /// Semantics aware hashing for MIR slices.
 extern crate either;
+extern crate dot;
 
 use either::Either;
 
@@ -201,7 +202,22 @@ impl<'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
 enum MemoEntry<'tcx> {
     Computing,
     Dropped,
-    Processed(mir::BasicBlockData<'tcx>, VerificationHash),
+    Consolidated,
+    Processed {
+        slice: mir::BasicBlockData<'tcx>,
+        hash: VerificationHash,
+        self_idx: mir::BasicBlock,
+    },
+}
+
+impl<'tcx> MemoEntry<'tcx> {
+    fn into_processed(self) -> Option<(mir::BasicBlock, mir::BasicBlockData<'tcx>)> {
+        match self {
+            MemoEntry::Processed { slice, self_idx, .. } => Some((self_idx, slice)),
+            MemoEntry::Computing => unreachable!(),
+            _ => None,
+        }
+    }
 }
 
 struct BasicBlockSlicingAwareReindexer<'tcx, 'a> {
@@ -335,7 +351,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
     use mir::visit::Visitor;
     use std::io::Write;
 
-    let mut final_hash = 0;
+    let mut hasher = StableHasher::new();
     let out_prefix = std::env::var("DBG_FILE_PREFIX").unwrap_or("".to_string());
     let mut out = std::fs::OpenOptions::new()
         .write(true)
@@ -347,7 +363,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
         .create(true)
         .write(true)
         .truncate(true)
-        .open(out_prefix + "hashes.txt")
+        .open(out_prefix.clone() + "hashes.txt")
         .unwrap();
     tcx.create_stable_hashing_context()
         .while_hashing_spans(false, |hctx| {
@@ -362,6 +378,61 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
             })
             .visit_terminator(t, loc);
 
+            struct DotGraph<'a, 'tcx> {
+                body: &'a mir::Body<'tcx>,
+                loc_set: &'a HashSet<mir::Location>,
+            }
+            type N = mir::BasicBlock;
+            type E = (mir::BasicBlock, usize, mir::BasicBlock);
+            impl <'tcx, 'a> dot::GraphWalk<'a, N, E> for DotGraph<'a, 'tcx> {
+                fn nodes(&'a self) -> dot::Nodes<'a, N> {
+                    self.body.basic_blocks().indices().collect::<Vec<_>>().into()
+                }
+                fn edges(&'a self) -> dot::Edges<'a, E> {
+                    self.body.basic_blocks().iter_enumerated().flat_map(|(bb, bbdat)| bbdat.terminator().successors().enumerate().map(move |(i, s)| (bb, i, s))).collect::<Vec<_>>().into()
+                }
+                fn source(&'a self, edge: &E) -> N {
+                    edge.0
+                }
+                fn target(&'a self, edge: &E) -> N {
+                    edge.2
+                }
+            }
+            impl <'tcx, 'a> dot::Labeller<'a, N, E> for DotGraph<'a, 'tcx> {
+                fn graph_id(&'a self) -> dot::Id<'a> {
+                    dot::Id::new("g").unwrap()
+                }
+                fn node_id(&'a self, n: &N) -> dot::Id<'a> {
+                    dot::Id::new(format!("{:?}", n)).unwrap()
+                }
+                fn node_label(&'a self, bb: &N) -> dot::LabelText<'a> {
+                    use std::fmt::Write;
+                    let bbdat = &self.body.basic_blocks()[*bb];
+                    let (stmts, term) = match slice_basic_block(|l| self.loc_set.contains(&l), *bb, &bbdat) {
+                        Either::Left(stmts) => (stmts, None),
+                        Either::Right(bbdat) => (bbdat.statements, bbdat.terminator),
+                    };
+                    let mut label = String::new();
+                    for s in stmts.iter() {
+                        writeln!(label, "{:?}", s.kind);
+                    }
+                    if let Some(t) = term {
+                        writeln!(label, "{:?}", t.kind);
+                    }
+                    dot::LabelText::LabelStr(label.into())
+                }
+                fn edge_label(&'a self, e: &E) -> dot::LabelText<'a> {
+                    dot::LabelText::LabelStr(format!("{:?}", e.1).into())
+                }
+            }
+
+            dot::render(
+                &DotGraph {
+                    body, loc_set: &loc_set
+                },
+                &mut std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(out_prefix + "slice.gv").unwrap(),
+            ).unwrap();
+
             let mut memoization = HashMap::new();
             let mut basic_renamer = MirReindexer::new(tcx);
             mir::traversal::postorder(body).for_each(|(bb, bbdat)| {
@@ -369,24 +440,30 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                 let new_entry = if let Some(slice) =
                     match slice_basic_block(|l| loc_set.contains(&l), bb, bbdat) {
                         Either::Left(consolidate) => {
-                            let mut it = bbdat
+                            let its = bbdat
                                 .terminator()
                                 .successors()
-                                .filter_map(|s| memoization.get(&s))
-                                .filter_map(|entry| match entry {
-                                    MemoEntry::Processed(bb, _) => Some(bb.clone()),
-                                    MemoEntry::Computing => unreachable!(),
+                                .filter_map(|s| memoization.get(&s).map(|v| (s, v)))
+                                .filter_map(|(s, entry)| match entry {
+                                    MemoEntry::Processed { .. } => Some(s),
+                                    MemoEntry::Computing | MemoEntry::Consolidated => {
+                                        unreachable!()
+                                    }
                                     _ => None,
-                                });
-                            if let Some(mut s) = it.next() {
-                                assert!(it.next().is_none());
+                                }).collect::<Vec<_>>();
+                            if let Some(s) = its.first() {
+                                let (_, mut slice) = std::mem::replace(
+                                    memoization.get_mut(&s).unwrap(),
+                                    MemoEntry::Consolidated,
+                                ).into_processed().unwrap();
+                                assert_eq!(its.len(), 1);
                                 if !consolidate.is_empty() {
-                                    s.statements = consolidate
+                                    slice.statements = consolidate
                                         .into_iter()
-                                        .chain(s.statements.iter().cloned())
+                                        .chain(slice.statements.iter().cloned())
                                         .collect();
                                 }
-                                Some(s)
+                                Some(slice)
                             } else {
                                 assert!(consolidate.is_empty());
                                 None
@@ -396,6 +473,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                     } {
                     // Otherwise we're double renaming it on consolidation
                     let mut for_hashing = slice.clone();
+                    let self_idx = basic_renamer.bb_reindexer.reindex(bb);
                     BasicBlockSlicingAwareReindexer::new(&mut basic_renamer, &mut memoization)
                         .visit_basic_block_data(bb, &mut for_hashing);
                     writeln!(out, "{bb:?}");
@@ -409,7 +487,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                     slice.terminator().successors().for_each(|s| {
                         if let Some(entry) = memoization.get(&s) {
                             match entry {
-                                MemoEntry::Processed(_, hash) => {
+                                MemoEntry::Processed { hash, .. } => {
                                     hash.hash_stable(hctx, &mut hasher)
                                 }
                                 _ => (),
@@ -418,7 +496,11 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                     });
                     let hash = hasher.finish();
                     writeln!(hash_out, "{bb:?} {hash:?}").unwrap();
-                    MemoEntry::Processed(slice, hash)
+                    MemoEntry::Processed {
+                        self_idx,
+                        slice,
+                        hash,
+                    }
                 } else {
                     MemoEntry::Dropped
                 };
@@ -426,12 +508,14 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                 memoization.insert(bb, new_entry);
             });
 
-            final_hash = match memoization.get(&mir::START_BLOCK).unwrap() {
-                MemoEntry::Processed(_, h) => *h,
-                _ => unreachable!(),
-            };
+            let mut complete_slice = memoization
+                .into_iter()
+                .filter_map(|(_, v)| v.into_processed())
+                .collect::<Vec<_>>();
+            complete_slice.sort_by_key(|p| p.0);
+            complete_slice.hash_stable(hctx, &mut hasher)
         });
-    final_hash
+    hasher.finish()
 }
 
 // pub fn compute_verification_hash_for_stmt<'tcx>(

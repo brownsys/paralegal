@@ -19,6 +19,7 @@ pretty = "0.11"
 nom = "7"
 log = "0.4"
 simple_logger = "2"
+dot = "0.1"
 
 # This is just for pinning this dependency
 camino = "= 1.0.9"
