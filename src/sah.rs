@@ -34,68 +34,90 @@ impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for ReP
 }
 
 #[derive(Clone)]
-struct Reindexer<I> {
-    mapper: HashMap<I, I>,
+struct Reindexer<I : ReindexableWith> {
+    mapper: HashMap<I::Reindexed, I::Reindexed>,
     source: I,
-    is_fixed: bool,
 }
 
-impl<I> Reindexer<I> {
+impl<I: ReindexableWith> Reindexer<I> {
     fn new(base_val: I) -> Self {
         Self {
             mapper: HashMap::new(),
             source: base_val,
-            is_fixed: false,
         }
     }
+}
 
-    fn reindex(&mut self, old: I) -> I
-    where
-        I: Eq + std::hash::Hash + std::ops::Add<usize, Output = I> + Copy,
-    {
-        if self.is_fixed {
-            *self.mapper.get(&old).unwrap_or(&self.source)
-        } else {
-            let ref mut src = self.source;
-            *self.mapper.entry(old).or_insert_with(|| {
-                let entry = *src;
-                *src = entry + 1;
-                entry
-            })
-        }
+trait ReindexableWith {
+    type Reindexed;
+    fn advance(&mut self, old: &Self::Reindexed) -> Self::Reindexed;
+    fn default(&mut self) -> Self::Reindexed {
+        unimplemented!()
+    }
+}
+
+trait ReindexWithAdd : std::ops::Add<usize, Output = Self> + Copy {}
+
+impl <T : ReindexWithAdd> ReindexableWith for T {
+    type Reindexed = Self;
+    fn advance(&mut self, _old: &T) -> T {
+        let new = *self;
+        *self = *self + 1;
+        new
+    }
+    fn default(&mut self) -> T {
+        *self
+    }
+}
+
+impl ReindexWithAdd for mir::BasicBlock {}
+impl ReindexWithAdd for mir::Local {}
+impl ReindexWithAdd for mir::Promoted {}
+impl ReindexWithAdd for ty::RegionVid {}
+impl ReindexWithAdd for DefIndex {}
+
+impl<I> Reindexer<I> 
+where
+    I: ReindexableWith,
+    I::Reindexed : Eq + std::hash::Hash + Copy
+{
+    fn reindex(&mut self, old: I::Reindexed) -> I::Reindexed {
+        let ref mut src = self.source;
+        *self.mapper.entry(old).or_insert_with(||
+            src.advance(&old)
+        )
     }
 
-    fn seal(&mut self) {
-        self.is_fixed = true;
-    }
-
-    fn unseal(&mut self) {
-        self.is_fixed = false;
-    }
-
-    fn make_fixed<It: Iterator<Item = I>>(src: It, mut base: I, default: Option<I>) -> Self
-    where
-        I: Eq + std::hash::Hash + std::ops::Add<usize, Output = I> + Copy,
-    {
-        let mapper = src
-            .zip(std::iter::repeat_with(|| {
-                let ret = base;
-                base = base + 1;
-                ret
-            }))
-            .collect();
-        Self {
-            mapper,
-            source: default.unwrap_or(base),
-            is_fixed: true,
-        }
-    }
-
-    fn set_reindex(&mut self, from: I, to: I)
-    where
-        I: Eq + std::hash::Hash,
-    {
+    fn set_reindex(&mut self, from: I::Reindexed, to: I::Reindexed) {
         assert!(self.mapper.insert(from, to).is_none())
+    }
+}
+
+use crate::rust::rustc_span::def_id::{CrateNum, DefIndex, DefId};
+
+#[derive(Clone)]
+struct DefIdReindexer { 
+    map: HashMap<CrateNum, DefIndex>,
+    default: DefIndex,
+}
+
+impl DefIdReindexer {
+    fn new(default: DefIndex) -> Self {
+        Self {
+            map: HashMap::new(),
+            default,
+        }
+    }
+}
+
+impl ReindexableWith for DefIdReindexer {
+    type Reindexed = DefId;
+
+    fn advance(&mut self, old: &DefId) -> DefId {
+        DefId {
+            krate: old.krate,
+            index: self.map.entry(old.krate).or_insert(self.default).advance(&old.index),
+        }
     }
 }
 
@@ -108,39 +130,63 @@ impl Default for Reindexer<mir::BasicBlock> {
 /// A struct with the task of renaming/repayloading all MIR values of numerical
 /// nature to create consistent code slices. Currently only `mir::Place` and
 /// basic block indices, e.g. `mir::BasicBlock` are renamed.
-struct MirReindexer<'tcx> {
+struct MirReindexer<'tcx, F> {
     local_reindexer: Reindexer<mir::Local>,
     bb_reindexer: Reindexer<mir::BasicBlock>,
     promotion_reindexer: Reindexer<mir::Promoted>,
     region_reindexer: Reindexer<ty::RegionVid>,
+    defid_reindexer: Reindexer<DefIdReindexer>,
     tcx: TyCtxt<'tcx>,
+    bb_select: F,
 }
 
-impl<'tcx> MirReindexer<'tcx> {
-    fn derived(&self) -> Self {
+impl<'tcx, F> MirReindexer<'tcx, F> {
+    fn derived(&self) -> Self 
+    where F: Clone
+    {
         MirReindexer {
             local_reindexer: self.local_reindexer.clone(),
             bb_reindexer: Reindexer::default(),
             promotion_reindexer: self.promotion_reindexer.clone(),
             tcx: self.tcx,
             region_reindexer: self.region_reindexer.clone(),
+            bb_select: self.bb_select.clone(),
+            defid_reindexer: self.defid_reindexer.clone()
         }
     }
 }
 
-impl<'tcx> MirReindexer<'tcx> {
-    fn new(tcx: TyCtxt<'tcx>) -> Self {
+const REINDEX_DEF_IDS : bool = false;
+
+impl<'tcx, F> MirReindexer<'tcx, F> {
+    fn new(tcx: TyCtxt<'tcx>, basic_block_selector: F) -> Self {
         MirReindexer {
             tcx,
             local_reindexer: Reindexer::new(mir::Local::from_usize(0)),
             bb_reindexer: Reindexer::default(),
             promotion_reindexer: Reindexer::new(mir::Promoted::from_usize(0)),
-            region_reindexer: Reindexer::new(ty::RegionVid::from_usize(0))
+            region_reindexer: Reindexer::new(ty::RegionVid::from_usize(0)),
+            bb_select: basic_block_selector,
+            defid_reindexer: Reindexer::new(DefIdReindexer::new(DefIndex::from_usize(0))),
+        }
+    }
+    fn reindex_basic_block(&mut self, bb: mir::BasicBlock) -> mir::BasicBlock 
+    where F: FnMut(mir::BasicBlock) -> Option<Option<mir::BasicBlock>>
+    {
+        // TODO(hazard): THIS IS NOT CORRECT. If the return is `None`, we are
+        // looking at a back edge that COULD go to a block that is contained in
+        // the slice and thus might have a valid renaming!!!. But I am lazy
+        // right now and don't want to split this into the multiple passes
+        // required to do this properly.
+        match (self.bb_select)(bb) {
+            Some(Some(other)) => self.reindex_basic_block(other),
+            None => DROPPED_BB,
+            Some(None) => self.bb_reindexer.reindex(bb),
         }
     }
 }
 
-impl <'tcx> TypeFolder<'tcx> for MirReindexer<'tcx> {
+impl <'tcx, F> TypeFolder<'tcx> for MirReindexer<'tcx, F> {
     fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
         self.tcx
     }
@@ -152,9 +198,23 @@ impl <'tcx> TypeFolder<'tcx> for MirReindexer<'tcx> {
             _ => r
         }
     }
+    // fn fold_ty(&mut self, ty: ty::Ty<'tcx>) -> ty::Ty<'tcx> {
+    //     if !REINDEX_DEF_IDS {
+    //         return ty.fold_with(self);
+    //     }
+    //     use ty::{TyKind::*, TypeFoldable};
+    //     match ty.kind() {
+    //         // Adt?
+    //         Foreign(did) => Some(Foreign(self.defid_reindexer.reindex(*did))),
+    //         FnDef(did, sub) => Some(FnDef(self.defid_reindexer.reindex(*did), sub.fold_with(self))),
+    //         Closure(did, sub) => Some(Closure(self.defid_reindexer.reindex(*did), sub.fold_with(self))),
+    //         Opaque(did, sub) => Some(Opaque(self.defid_reindexer.reindex(*did), sub.fold_with(self))),
+    //         _ => None
+    //     }.map(|tk| self.tcx.mk_ty(tk)).unwrap_or(ty)
+    // }
 }
 
-impl<'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
+impl<'tcx, F: FnMut(mir::BasicBlock) -> Option<Option<mir::BasicBlock>>> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx, F> {
     fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
         self.tcx
     }
@@ -174,11 +234,11 @@ impl<'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
     ) {
         terminator
             .successors_mut()
-            .for_each(|suc| *suc = self.bb_reindexer.reindex(*suc));
+            .for_each(|suc| *suc = self.reindex_basic_block(*suc));
         terminator
             .unwind_mut()
             .and_then(Option::as_mut)
-            .map(|s| *s = self.bb_reindexer.reindex(*s));
+            .map(|s| *s = self.reindex_basic_block(*s));
         self.super_terminator(terminator, location);
     }
 
@@ -214,9 +274,30 @@ impl<'tcx> mir::visit::MutVisitor<'tcx> for MirReindexer<'tcx> {
         self.super_operand(operand, location);
     }
 
+    fn visit_const(&mut self, constant: &mut ty::Const<'tcx>, _: mir::Location) {
+        let new_ty = self.fold_ty(constant.ty());
+        *constant = self.tcx.mk_const(ty::ConstS {
+                ty: new_ty,
+                val: constant.val(),
+            }
+        );
+        self.super_const(constant)
+    }
+    /// This is necessary so that we set `user_ty` to `None` everywhere prior to
+    /// hashing. The reason is that it is again a linearly generated index and
+    /// it influences hashing, but has no semantic meaning to us.
+    fn visit_constant(&mut self, constant: &mut mir::Constant<'tcx>, location: mir::Location) {
+        constant.user_ty = None;
+        self.super_constant(constant, location);
+    }
+
     fn visit_ty(&mut self, ty: &mut ty::Ty<'tcx>, ctx: mir::visit::TyContext) {
         *ty = self.fold_ty(*ty);
         self.super_ty(ty)
+    }
+    fn visit_region(&mut self, region: &mut ty::Region<'tcx>, loc: mir::Location) {
+        *region = self.fold_region(*region);
+        self.super_region(region)
     }
 }
 
@@ -241,73 +322,9 @@ impl<'tcx> MemoEntry<'tcx> {
     }
 }
 
-struct BasicBlockSlicingAwareReindexer<'tcx, 'a> {
-    generic_reindexer: &'a mut MirReindexer<'tcx>,
-    bb_map: &'a HashMap<mir::BasicBlock, MemoEntry<'tcx>>,
-}
-
 const DROPPED_BB: mir::BasicBlock = mir::BasicBlock::from_usize(1337);
 
-impl<'tcx, 'a> BasicBlockSlicingAwareReindexer<'tcx, 'a> {
-    fn new(
-        generic_reindexer: &'a mut MirReindexer<'tcx>,
-        bb_map: &'a HashMap<mir::BasicBlock, MemoEntry<'tcx>>,
-    ) -> Self {
-        Self {
-            generic_reindexer,
-            bb_map,
-        }
-    }
-    fn reindex_basic_block(&mut self, bb: mir::BasicBlock) -> mir::BasicBlock {
-        // TODO(hazard): THIS IS NOT CORRECT. If the return is `None`, we are
-        // looking at a back edge that COULD go to a block that is contained in
-        // the slice and thus might have a valid renaming!!!. But I am lazy
-        // right now and don't want to split this into the multiple passes
-        // required to do this properly.
-        match self.bb_map.get(&bb) {
-            Some(MemoEntry::Dropped(Some(other))) => self.reindex_basic_block(*other),
-            None | Some(MemoEntry::Dropped(None)) => DROPPED_BB,
-            _ => self.generic_reindexer.bb_reindexer.reindex(bb),
-        }
-    }
-}
-
 use ty::fold::TypeFolder;
-
-impl<'tcx, 'a> mir::visit::MutVisitor<'tcx> for BasicBlockSlicingAwareReindexer<'tcx, 'a> {
-    fn tcx<'b>(&'b self) -> TyCtxt<'tcx> {
-        self.generic_reindexer.tcx
-    }
-    fn visit_place(
-        &mut self,
-        place: &mut mir::Place<'tcx>,
-        context: mir::visit::PlaceContext,
-        location: mir::Location,
-    ) {
-        self.generic_reindexer.visit_place(place, context, location)
-    }
-    fn visit_terminator(
-        &mut self,
-        terminator: &mut mir::Terminator<'tcx>,
-        location: mir::Location,
-    ) {
-        terminator
-            .successors_mut()
-            .for_each(|suc| *suc = self.reindex_basic_block(*suc));
-        terminator
-            .unwind_mut()
-            .and_then(Option::as_mut)
-            .map(|s| *s = self.reindex_basic_block(*s));
-        self.super_terminator(terminator, location);
-    }
-
-    fn visit_operand(&mut self, operand: &mut mir::Operand<'tcx>, location: mir::Location) {
-        self.generic_reindexer.visit_operand(operand, location);
-    }
-    fn visit_ty(&mut self, ty: &mut ty::Ty<'tcx>, ctx: mir::visit::TyContext) {
-        self.generic_reindexer.visit_ty(ty, ctx);
-    }
-}
 
 use crate::rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_query_system::ich::StableHashingContext;
@@ -468,12 +485,17 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                 &mut std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(out_prefix + "slice.gv").unwrap(),
             ).unwrap();
 
-            let mut memoization = HashMap::new();
-            let mut basic_renamer = MirReindexer::new(tcx);
+            let memoization = RefCell::new(HashMap::new());
+            let mut basic_renamer = MirReindexer::new(tcx, |bb| match memoization.borrow().get(&bb) {
+                Some(MemoEntry::Dropped(Some(other))) => Some(Some(*other)),
+                None | Some(MemoEntry::Dropped(None)) => None,
+                _ => Some(None),
+            });
             mir::traversal::postorder(body).for_each(|(bb, bbdat)| {
-                memoization.insert(bb, MemoEntry::Computing);
+                memoization.borrow_mut().insert(bb, MemoEntry::Computing);
                 let new_entry = 
                     match slice_basic_block(|l| loc_set.contains(&l), bb, bbdat).left_and_then(|consolidate| {
+                        let mut memoization = memoization.borrow_mut();
                         let its = bbdat
                             .terminator()
                             .successors()
@@ -507,13 +529,12 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                             // Otherwise we're double renaming it on consolidation
                             let mut for_hashing = slice.clone();
                             let self_idx = basic_renamer.bb_reindexer.reindex(bb);
-                            BasicBlockSlicingAwareReindexer::new(&mut basic_renamer, &mut memoization)
-                                .visit_basic_block_data(bb, &mut for_hashing);
+                            basic_renamer.visit_basic_block_data(bb, &mut for_hashing);
                          
                             let mut hasher = StableHasher::new();
                             for_hashing.hash_stable(hctx, &mut hasher);
                             slice.terminator().successors().for_each(|s| {
-                                if let Some(entry) = memoization.get(&s) {
+                                if let Some(entry) = memoization.borrow().get(&s) {
                                     match entry {
                                         MemoEntry::Processed { hash, .. } => {
                                             hash.hash_stable(hctx, &mut hasher)
@@ -533,40 +554,29 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                         Either::Left(mnext) => MemoEntry::Dropped(mnext)
                     };
 
-                memoization.insert(bb, new_entry);
+                memoization.borrow_mut().insert(bb, new_entry);
             });
 
-            let mut complete_slice = memoization
+            let mut complete_slice = memoization.take()
                 .into_iter()
                 .filter_map(|(_, v)| v.into_processed())
                 .collect::<Vec<_>>();
             complete_slice.sort_by_key(|p| p.0);
+            // Maltes genius idea of just hashing the slice, because that
+            // doesn't contain any of the hidden values that have inconsistent
+            // ids
+            use std::fmt::Write;
+            let mut buf = String::new();
             for (bb, bbdat) in complete_slice.iter() {
-                writeln!(out, "{bb:?}");
                 for stmt in bbdat.statements.iter() {
-                    stmt.kind.hash_stable(hctx, &mut indiv_hasher);
-                    //stmt.kind.hash_stable(hctx, &mut h);
-                    //writeln!(out, "{:?} {}", stmt.kind, h.finish::<u128>()).unwrap();
-                    if let mir::StatementKind::Assign(pr) = &stmt.kind {
-                        if let mir::Rvalue::Aggregate(ag0, ag1) = &pr.1 {
-                            use std::borrow::Borrow;
-                            if let mir::AggregateKind::Array(ty) = ag0.borrow() {
-                                if let ty::TyKind::Adt(adt, subs) = ty.kind() {
-                                    for sub in subs.iter() {
-                                        if let ty::subst::GenericArgKind::Lifetime(lt) = sub.unpack() {
-
-                                            writeln!(out, "{:?} {:?} {}", ty, lt , quick_hash(&lt, hctx)).unwrap();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    write!(buf, "{:?}", stmt.kind).unwrap();
+                    buf.hash_stable(hctx, &mut indiv_hasher);
+                    buf.clear();
                 }
-                let mut h = StableHasher::new();
-                bbdat.terminator().kind.hash_stable(hctx, &mut h);
-                //writeln!(out, "{:?} {}", bbdat.terminator().kind, h.finish::<u128>()).unwrap();
-                bbdat.terminator().kind.hash_stable(hctx, &mut indiv_hasher);
+                let term = bbdat.terminator();
+                write!(buf, "{:?}", term.kind).unwrap();
+                buf.hash_stable(hctx, &mut indiv_hasher);
+                buf.clear();
             }
             complete_slice.hash_stable(hctx, &mut hasher)
         });
@@ -701,7 +711,6 @@ enum SliceResult<'tcx> {
     Dropped,
     Sliced {
         slice: mir::BasicBlockData<'tcx>,
-        renamer: MirReindexer<'tcx>,
     },
     Consolidate(Vec<mir::Statement<'tcx>>, mir::BasicBlock),
 }
