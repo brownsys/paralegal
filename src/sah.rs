@@ -345,12 +345,16 @@ fn order_independent_hash<CTX, T: HashStable<CTX>, I: Iterator<Item = T>>(
     n.hash_stable(hctx, hasher);
 }
 
+fn terminator_location(bb: mir::BasicBlock, dat: &mir::BasicBlockData) -> mir::Location {
+    mir::Location { block: bb, statement_index: dat.statements.len() }
+}
+
 fn slice_basic_block<'tcx, F: FnMut(mir::Location) -> bool>(
     mut is_contained: F,
     idx: mir::BasicBlock,
     body: &mir::BasicBlockData<'tcx>,
 ) -> Either<Vec<mir::Statement<'tcx>>, mir::BasicBlockData<'tcx>> {
-    let termidx = body.statements.len();
+    let termloc = terminator_location(idx, body);
     let new_stmts: Vec<mir::Statement> = body
         .statements
         .iter()
@@ -367,10 +371,6 @@ fn slice_basic_block<'tcx, F: FnMut(mir::Location) -> bool>(
             }
         })
         .collect();
-    let termloc = mir::Location {
-        block: idx,
-        statement_index: termidx,
-    };
     if is_contained(termloc) {
         Either::Right(mir::BasicBlockData {
             statements: new_stmts,
@@ -577,11 +577,56 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                 write!(buf, "{:?}", term.kind).unwrap();
                 buf.hash_stable(hctx, &mut indiv_hasher);
                 buf.clear();
+                let termloc = terminator_location(*bb, bbdat);
+                ExternalDependencyHasher::new(tcx, &mut indiv_hasher, hctx).visit_terminator(term, termloc);
             }
             complete_slice.hash_stable(hctx, &mut hasher)
         });
     //hasher.finish();
     indiv_hasher.finish()
+}
+
+struct ExternalDependencyHasher<'tcx, 'a> {
+    tcx: TyCtxt<'tcx>,
+    hasher: &'a mut StableHasher,
+    hctx: &'a mut StableHashingContext<'tcx>,
+}
+
+impl <'tcx, 'a> ExternalDependencyHasher<'tcx, 'a> {
+    fn new(tcx: TyCtxt<'tcx>, hasher: &'a mut StableHasher, hctx: &'a mut StableHashingContext<'tcx>) -> Self {
+        Self {
+            tcx, hasher, hctx
+        }
+    }
+}
+
+impl <'tcx, 'a> ty::TypeVisitor<'tcx> for ExternalDependencyHasher<'tcx, 'a> {
+    fn visit_ty(&mut self, t: ty::Ty<'tcx>) -> std::ops::ControlFlow<Self::BreakTy> {
+        use ty::{TyKind::*, TypeFoldable};
+        match t.kind() {
+            Foreign(did) | FnDef(did, _) | Closure(did, _) | Generator(did, _, _) | Opaque(did, _) => {
+                if let Some(ldid) = did.as_local() {
+                    flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(self.tcx, ldid)
+                        .body
+                        .hash_stable(self.hctx, self.hasher);
+                } else {
+                    use crate::rust::rustc_middle::dep_graph::DepContext;
+                    self.tcx.dep_graph().with_query(|g| 
+                        // ???
+                        ()
+                    );
+                }
+            }
+            _ => (),
+        }
+        t.super_visit_with(self)
+    }
+}
+
+impl <'tcx, 'a> mir::visit::Visitor<'tcx> for ExternalDependencyHasher<'tcx, 'a> {
+    fn visit_ty(&mut self, ty: ty::Ty<'tcx>, ctx: mir::visit::TyContext) {
+        <Self as ty::TypeVisitor>::visit_ty(self, ty);
+    }
 }
 
 fn quick_hash<CTX, T : HashStable<CTX>>(dat : &T, hctx : &mut CTX) -> VerificationHash {
