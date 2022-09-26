@@ -202,11 +202,6 @@ impl<'tcx> Visitor<'tcx> {
                 _ => None,
             })
             .collect::<HashMap<_, _>>();
-        info!(
-            "Analysis begin:\n  {} targets\n  {} marked objects",
-            targets.len(),
-            interesting_fn_defs.len(),
-        );
         type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         fn register_call_site(
@@ -226,97 +221,114 @@ impl<'tcx> Visitor<'tcx> {
                 })
                 .or_insert_with(|| ann.clone());
         }
-        let mut unsuccessful_hash_verifications = 0;
-        let res = targets.drain(..).map(|(id, b, _)| {
-            let mut called_fns_found = 0;
-            let mut source_fns_found = 0;
-            let mut sink_fn_defs_found = 0;
-            let local_def_id = tcx.hir().body_owner_def_id(b);
-            let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
-            let body = &body_with_facts.body;
-            let loc_dom = LocationDomain::new(body);
-            info!("{}", id.as_str());
-            let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
-                .args_iter()
-                .enumerate()
-                .filter_map(|(i, l)| {
-                    let ty = body.local_decls[l].ty;
-                    let subtypes = self.annotated_subtypes(ty);
-                    if !subtypes.is_empty() {
-                        Some((
-                            (*loc_dom.value(loc_dom.arg_to_location(l)), DataSource::Argument(i)),
-                            (DataSource::Argument(i), subtypes)
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .unzip();
-            let mut flows = Ctrl::with_input_types(types);
-            let source_args_found = source_locs.len();
-            let flow = infoflow::compute_flow(tcx, b, body_with_facts);
-            for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
-                let loc = body.terminator_loc(bb);
-                if let Some((t, p)) = bbdat
-                    .terminator
-                    .as_ref()
-                    .and_then(|t| called_fn(t).map(|p| (t, p)))
-                {
-                    called_fns_found += 1;
-                    if let Some(ann) = interesting_fn_defs.get(&p) {
-                        register_call_site(&mut call_site_annotations, p, ann);
-                        source_fns_found += 1;
-                        let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
-                        source_locs.insert(loc, src_desc.clone());
-                        let interesting_output_types : HashSet<_> = self.annotated_subtypes(tcx.fn_sig(p).skip_binder().output());
-                        if !interesting_output_types.is_empty() {
-                            flows.types.insert(src_desc, interesting_output_types);
-                        }
-                        let ordered_mentioned_places = extract_args(t, loc).expect("Not a function call");
-                        let mentioned_places = ordered_mentioned_places.iter().filter_map(|a| *a).collect::<HashSet<_>>();
-                        sink_fn_defs_found += 1;
-                        let matrix = flow.state_at(loc);
-                        for r in mentioned_places.iter() {
-                            let deps = matrix.row(*r);
-                            for loc in deps.filter(|l| source_locs.contains_key(l)) {
-                                flows.add(
-                                    Cow::Borrowed(&source_locs[loc]),
-                                    DataSink {
-                                        function: Identifier::new(tcx.item_name(p)),
-                                        arg_slot: ordered_mentioned_places.iter().enumerate().filter(|(_, e)| **e == Some(*r)).next().unwrap().0,
-                                    }
-                                );
-                            }
-                        }
-                    }
-                    if let Some((_, (ann, _, _))) = self.marked_stmts.iter().find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span)) {
-
-                        let matrix = flow.state_at(loc);
-                        for ann in ann.0.iter().filter_map(Annotation::as_exception_annotation) {
-                            let hash = crate::sah::compute_verification_hash_for_stmt_2(tcx, t, loc, body, &loc_dom, matrix);
-                            if let Some(old_hash) = ann.verification_hash {
-                                if hash != old_hash {
-                                    unsuccessful_hash_verifications += 1;
-                                    println!("Verification hash checking failed for exception annotation. Please review the code and then paste in the updated hash \"{hash:032x}\"");
-                                }
+        crate::sah::HashVerifications::with(|hash_verifications| {
+            targets
+                .drain(..)
+                .map(|(id, b, _)| {
+                    let local_def_id = tcx.hir().body_owner_def_id(b);
+                    let body_with_facts =
+                        borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
+                    let body = &body_with_facts.body;
+                    let loc_dom = LocationDomain::new(body);
+                    let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
+                        .args_iter()
+                        .enumerate()
+                        .filter_map(|(i, l)| {
+                            let ty = body.local_decls[l].ty;
+                            let subtypes = self.annotated_subtypes(ty);
+                            if !subtypes.is_empty() {
+                                Some((
+                                    (
+                                        *loc_dom.value(loc_dom.arg_to_location(l)),
+                                        DataSource::Argument(i),
+                                    ),
+                                    (DataSource::Argument(i), subtypes),
+                                ))
                             } else {
-                                unsuccessful_hash_verifications += 1;
-                                println!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `verification_hash = \"{hash:032x}\"` into the annotation.");
+                                None
                             }
-                        }
-                        // TODO this is attaching to functions instead of call
-                        // sites. Once we start actually tracking call sites
-                        // this needs to be adjusted
-                        register_call_site(&mut call_site_annotations, p, ann);
+                        })
+                        .unzip();
+                    let mut flows = Ctrl::with_input_types(types);
+                    let flow = infoflow::compute_flow(tcx, b, body_with_facts);
+                    for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
+                        let loc = body.terminator_loc(bb);
+                        if let Some((t, p)) = bbdat
+                            .terminator
+                            .as_ref()
+                            .and_then(|t| called_fn(t).map(|p| (t, p)))
+                        {
+                            if let Some(ann) = interesting_fn_defs.get(&p) {
+                                register_call_site(&mut call_site_annotations, p, ann);
+                                let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
+                                source_locs.insert(loc, src_desc.clone());
+                                let interesting_output_types: HashSet<_> =
+                                    self.annotated_subtypes(tcx.fn_sig(p).skip_binder().output());
+                                if !interesting_output_types.is_empty() {
+                                    flows.types.insert(src_desc, interesting_output_types);
+                                }
+                                let ordered_mentioned_places =
+                                    extract_args(t, loc).expect("Not a function call");
+                                let mentioned_places = ordered_mentioned_places
+                                    .iter()
+                                    .filter_map(|a| *a)
+                                    .collect::<HashSet<_>>();
+                                let matrix = flow.state_at(loc);
+                                for r in mentioned_places.iter() {
+                                    let deps = matrix.row(*r);
+                                    for loc in deps.filter(|l| source_locs.contains_key(l)) {
+                                        flows.add(
+                                            Cow::Borrowed(&source_locs[loc]),
+                                            DataSink {
+                                                function: Identifier::new(tcx.item_name(p)),
+                                                arg_slot: ordered_mentioned_places
+                                                    .iter()
+                                                    .enumerate()
+                                                    .filter(|(_, e)| **e == Some(*r))
+                                                    .next()
+                                                    .unwrap()
+                                                    .0,
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                            if let Some((_, (ann, _, _))) = self
+                                .marked_stmts
+                                .iter()
+                                .find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span))
+                            {
+                                let matrix = flow.state_at(loc);
+                                for ann in
+                                    ann.0.iter().filter_map(Annotation::as_exception_annotation)
+                                {
+                                    hash_verifications
+                                        .handle(ann, tcx, t, body, loc, &loc_dom, matrix);
+                                }
+                                // TODO this is attaching to functions instead of call
+                                // sites. Once we start actually tracking call sites
+                                // this needs to be adjusted
+                                register_call_site(&mut call_site_annotations, p, ann);
+                            }
+                        };
                     }
-                };
-            }
-            info!("Function {}:\n  {} called functions found\n  {} source args found\n  {} source fns matched\n  {} sink fns matched", id, called_fns_found, source_args_found, source_fns_found, sink_fn_defs_found);
-            Ok((Identifier::new(id.name), flows))
-        }).collect::<std::io::Result<HashMap<Endpoint,Ctrl>>>().map(|controllers| ProgramDescription { controllers, annotations: call_site_annotations.into_iter().map(|(k, v)| (identifier_for_fn(tcx, k), (v.0, ObjectType::Function(v.1)))
-        ).chain(self.marked_objects.iter().filter(|kv| kv.1.1 == ObjectType::Type).map(|(k, v)| (identifier_for_hid(tcx, *k), v.clone()))).collect() });
-        assert_eq!(unsuccessful_hash_verifications, 0, "{unsuccessful_hash_verifications} verification hashes were not present or invalid. Please review, update and rerun.");
-        return res;
+                    Ok((Identifier::new(id.name), flows))
+                })
+                .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()
+                .map(|controllers| ProgramDescription {
+                    controllers,
+                    annotations: call_site_annotations
+                        .into_iter()
+                        .map(|(k, v)| (identifier_for_fn(tcx, k), (v.0, ObjectType::Function(v.1))))
+                        .chain(
+                            self.marked_objects
+                                .iter()
+                                .filter(|kv| kv.1 .1 == ObjectType::Type)
+                                .map(|(k, v)| (identifier_for_hid(tcx, *k), v.clone())),
+                        )
+                        .collect(),
+                })
+        })
     }
 }
 

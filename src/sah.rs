@@ -11,6 +11,51 @@ use std::cell::RefCell;
 
 use flowistry::indexed::impls::LocationDomain;
 
+pub struct HashVerifications(usize);
+
+impl HashVerifications {
+    fn new() -> Self {
+        Self(0)
+    }
+
+    fn discharge(self) {
+        assert_eq!(
+            self.0, 0,
+            "{} verification hashes were not present or invalid. Please review, update and rerun.",
+            self.0
+        );
+    }
+
+    pub fn with<T, F: FnOnce(&mut Self) -> T>(f: F) -> T {
+        let mut s = Self::new();
+        let r = f(&mut s);
+        s.discharge();
+        r
+    }
+
+    pub fn handle<'tcx>(
+        &mut self,
+        ann: &ExceptionAnnotation,
+        tcx: TyCtxt<'tcx>,
+        t: &mir::Terminator<'tcx>,
+        body: &mir::Body<'tcx>,
+        loc: mir::Location,
+        loc_dom: &LocationDomain,
+        matrix: &Matrix<'tcx, '_>,
+    ) {
+        let hash = compute_verification_hash_for_stmt_2(tcx, t, loc, body, &loc_dom, matrix);
+        if let Some(old_hash) = ann.verification_hash {
+            if hash != old_hash {
+                self.0 += 1;
+                error!("Verification hash checking failed for exception annotation. Please review the code and then paste in the updated hash \"{hash:032x}\"");
+            }
+        } else {
+            self.0 += 1;
+            error!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `verification_hash = \"{hash:032x}\"` into the annotation.");
+        }
+    }
+}
+
 /// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
 /// object via the `visit::MutVisitor` trait. Crucial difference to
 /// `PlaceVisitor` is that this function can alter the place itself.
@@ -386,15 +431,15 @@ mod graphviz_out {
     }
 }
 
+pub type Matrix<'tcx, 'a> = <flowistry::infoflow::FlowAnalysis<'a, 'tcx> as rustc_mir_dataflow::AnalysisDomain<'tcx>>::Domain;
+
 pub fn compute_verification_hash_for_stmt_2<'tcx>(
     tcx: TyCtxt<'tcx>,
     t: &mir::Terminator<'tcx>,
     loc: mir::Location,
     body: &mir::Body<'tcx>,
     loc_dom: &LocationDomain,
-    matrix: &<flowistry::infoflow::FlowAnalysis<'_, 'tcx> as rustc_mir_dataflow::AnalysisDomain<
-        'tcx,
-    >>::Domain,
+    matrix: &Matrix<'tcx, '_>,
 ) -> VerificationHash {
     use mir::visit::Visitor;
 
