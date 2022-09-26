@@ -194,22 +194,59 @@ impl ToForge for DataSource {
     }
 }
 
-const SRC_NAME: &'static str = "Src";
-const ARG_NAME: &'static str = "Arg";
-const FN_CALL_NAME: &'static str = "Call";
-const FN_OBJ_NAME: &'static str = "Fn";
-const FN_NAME: &'static str = "CallSite";
-const CTRL_NAME: &'static str = "Ctrl";
-const FLOW_NAME: &'static str = "flow";
-const FLOWS_PREDICATE_NAME: &'static str = "Flows";
-const OBJ_NAME: &'static str = "Object";
-const LABEL_NAME: &'static str = "Label";
-const LABELS_REL_NAME: &'static str = "labels";
-const TYPES_NAME: &'static str = "types";
-const TYPE_NAME: &'static str = "Type";
-const FN_REL_NAME: &'static str = "function";
-const OTYPE_REL_NAME: &'static str = "otype";
-const EXCEPTIONS_LABEL_NAME: &'static str = "exception";
+mod name {
+    pub const SRC: &'static str = "Src";
+    /// Previously "Arg"
+    pub const INPUT_ARGUMENT: &'static str = "InputArgument";
+    /// Previously "Call"
+    pub const CALL_ARGUMENT_OUTPUT: &'static str = "FnOut";
+    /// Previously "Fn"
+    pub const FUNCTION: &'static str = "Function";
+    /// Previously "CallSite"
+    pub const CALL_ARGUMENT: &'static str = "CallArgument";
+    pub const CTRL: &'static str = "Ctrl";
+    pub const FLOW: &'static str = "flow";
+    pub const FLOWS_PREDICATE: &'static str = "Flows";
+    pub const OBJ: &'static str = "Object";
+    pub const LABEL: &'static str = "Label";
+    pub const LABELS_REL: &'static str = "labels";
+    pub const TYPES: &'static str = "types";
+    pub const TYPE: &'static str = "Type";
+    pub const CALL_ARGUMENT_REL: &'static str = "function";
+    pub const OTYPE_REL: &'static str = "otype";
+    pub const EXCEPTIONS_LABEL: &'static str = "exception";
+
+    lazy_static! {
+        /// For now the order here *must* be topological as the code gen does not reorder this automatically
+        pub static ref SIGS: Vec<(
+                &'static str,
+                Option<&'static str>,
+                Vec<(&'static str, String)>,
+            )> = {
+                let set = |i| "set ".to_string() + i;
+                let one = |i| "one ".to_string() + i;
+                let arr = |from: &str, to| from.to_string() + "->" + to;
+                vec![
+                    (LABEL, None, vec![]),
+                    (OBJ, None, vec![(LABELS_REL, set(LABEL))]),
+                    (SRC, Some(OBJ), vec![]),
+                    (FUNCTION, Some(OBJ), vec![]),
+                    (CALL_ARGUMENT, Some(OBJ), vec![(CALL_ARGUMENT_REL, one(FUNCTION))]),
+                    (INPUT_ARGUMENT, Some(SRC), vec![]),
+                    (TYPE, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
+                    (CALL_ARGUMENT_OUTPUT, Some(SRC), vec![]),
+                    (
+                        CTRL,
+                        None,
+                        vec![
+                            (FLOW, set(&arr(SRC, CALL_ARGUMENT))), 
+                            (TYPES, set(&arr(SRC, TYPE))),
+                        ],
+                    ),
+                ]
+            };
+    }
+}
 
 impl ToForge for ProgramDescription {
     fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
@@ -219,30 +256,6 @@ impl ToForge for ProgramDescription {
     where
         A::Doc: Clone,
     {
-        /// For now the order here *must* be topological as the code gen does not reorder this automatically
-        const SIGS: &[(
-            &'static str,
-            Option<&'static str>,
-            &'static [(&'static str, &'static str)],
-        )] = &[
-            (LABEL_NAME, None, &[]),
-            (OBJ_NAME, None, &[(LABELS_REL_NAME, "set Label")]),
-            (SRC_NAME, Some(OBJ_NAME), &[]),
-            (FN_OBJ_NAME, Some(OBJ_NAME), &[]),
-            (FN_NAME, Some(OBJ_NAME), &[(FN_REL_NAME, "one Fn")]),
-            (ARG_NAME, Some(SRC_NAME), &[]),
-            (TYPE_NAME, Some(OBJ_NAME), &[(OTYPE_REL_NAME, "set Type")]),
-            (FN_CALL_NAME, Some(SRC_NAME), &[]),
-            (
-                CTRL_NAME,
-                None,
-                &[
-                    (FLOW_NAME, "set Src->CallSite"), // I'd have liked to define these types in terms of other string constants, but it seems rust doesn't let you concatenate strings at compile time
-                    (TYPES_NAME, "set Src->Type"),
-                ],
-            ),
-        ];
-
         fn make_one_sig<'b, A: DocAllocator<'b, ()>, I: Pretty<'b, A, ()>>(
             alloc: &'b A,
             inner: I,
@@ -269,7 +282,7 @@ impl ToForge for ProgramDescription {
                 .append(crate_version!())
                 .append(". */"),
             alloc.nil(),
-            alloc.lines(SIGS.iter().map(|(name, parent, fields)| {
+            alloc.lines(name::SIGS.iter().map(|(name, parent, fields)| {
                 alloc
                     .text("abstract sig ")
                     .append(*name)
@@ -283,7 +296,7 @@ impl ToForge for ProgramDescription {
                                 alloc
                                     .intersperse(
                                         fields.iter().map(|(name, typ)| {
-                                            alloc.text(*name).append(": ").append(alloc.text(*typ))
+                                            alloc.text(*name).append(": ").append(alloc.text(typ))
                                         }),
                                         alloc.text(",").append(alloc.hardline()),
                                     )
@@ -302,11 +315,11 @@ impl ToForge for ProgramDescription {
                     .filter_map(Annotation::as_label_ann)
                     .map(|a| a.label)
                     .chain(std::iter::once(crate::Symbol::intern(
-                        EXCEPTIONS_LABEL_NAME,
+                        name::EXCEPTIONS_LABEL,
                     )))
                     .collect::<HashSet<_>>()
                     .into_iter()
-                    .map(|s| make_one_sig(alloc, alloc.text(s.as_str().to_string()), LABEL_NAME)),
+                    .map(|s| make_one_sig(alloc, alloc.text(s.as_str().to_string()), name::LABEL)),
             ),
             alloc.nil(),
             alloc.lines(
@@ -319,8 +332,8 @@ impl ToForge for ProgramDescription {
                             alloc,
                             a.as_forge(alloc),
                             match a {
-                                DataSource::Argument(_) => ARG_NAME,
-                                DataSource::FunctionCall(_) => FN_CALL_NAME,
+                                DataSource::Argument(_) => name::INPUT_ARGUMENT,
+                                DataSource::FunctionCall(_) => name::CALL_ARGUMENT_OUTPUT,
                             },
                         )
                     }),
@@ -329,12 +342,12 @@ impl ToForge for ProgramDescription {
             alloc.lines(self.annotations.iter().flat_map(|(name, (_, nums))| {
                 if let ObjectType::Function(num_args) = nums {
                     Box::new(
-                        std::iter::once(make_one_sig(alloc, name.as_forge(alloc), FN_OBJ_NAME))
+                        std::iter::once(make_one_sig(alloc, name.as_forge(alloc), name::FUNCTION))
                             .chain((0..*num_args).map(|arg_slot| {
                                 make_one_sig(
                                     alloc,
                                     data_sink_as_forge(alloc, name, arg_slot),
-                                    FN_NAME,
+                                    name::CALL_ARGUMENT,
                                 )
                             })),
                     ) as Box<dyn Iterator<Item = _>>
@@ -342,7 +355,7 @@ impl ToForge for ProgramDescription {
                     Box::new(std::iter::once(make_one_sig(
                         alloc,
                         name.as_forge(alloc),
-                        TYPE_NAME,
+                        name::TYPE,
                     )))
                 }
             })),
@@ -350,12 +363,12 @@ impl ToForge for ProgramDescription {
             alloc.lines(
                 self.controllers
                     .keys()
-                    .map(|e| make_one_sig(alloc, e.as_forge(alloc), CTRL_NAME)),
+                    .map(|e| make_one_sig(alloc, e.as_forge(alloc), name::CTRL)),
             ),
             alloc.nil(),
             alloc
                 .text("pred ")
-                .append(FLOWS_PREDICATE_NAME)
+                .append(name::FLOWS_PREDICATE)
                 .append(" ")
                 .append(
                     alloc
@@ -365,7 +378,7 @@ impl ToForge for ProgramDescription {
                                 alloc.lines([
                                     e.as_forge(alloc)
                                         .append(".")
-                                        .append(FLOW_NAME)
+                                        .append(name::FLOW)
                                         .append(" = ")
                                         .append(
                                             alloc
@@ -376,7 +389,7 @@ impl ToForge for ProgramDescription {
                                         ),
                                     e.as_forge(alloc)
                                         .append(".")
-                                        .append(TYPES_NAME)
+                                        .append(name::TYPES)
                                         .append(" = ")
                                         .append(
                                             alloc
@@ -398,7 +411,7 @@ impl ToForge for ProgramDescription {
                                         ),
                                 ])
                             })),
-                            alloc.text(LABELS_REL_NAME).append(" = ").append(
+                            alloc.text(name::LABELS_REL).append(" = ").append(
                                 alloc
                                     .hardline()
                                     .append(alloc.forge_relation(self.annotations.iter().flat_map(
@@ -437,7 +450,7 @@ impl ToForge for ProgramDescription {
                                                     .next()
                                                     .map(|_| id.as_forge(alloc))
                                                     .into_iter(),
-                                                std::iter::once(alloc.text(EXCEPTIONS_LABEL_NAME)),
+                                                std::iter::once(alloc.text(name::EXCEPTIONS_LABEL)),
                                             )
                                         },
                                     )))
@@ -445,7 +458,7 @@ impl ToForge for ProgramDescription {
                                     .append(alloc.hardline())
                                     .parens(),
                             ),
-                            alloc.text(FN_REL_NAME).append(" = ").append(
+                            alloc.text(name::CALL_ARGUMENT_REL).append(" = ").append(
                                 alloc
                                     .hardline()
                                     .append(
@@ -469,7 +482,7 @@ impl ToForge for ProgramDescription {
                                     )
                                     .parens(),
                             ),
-                            alloc.text(OTYPE_REL_NAME).append(" = ").append(
+                            alloc.text(name::OTYPE_REL).append(" = ").append(
                                 alloc
                                     .hardline()
                                     .append(
