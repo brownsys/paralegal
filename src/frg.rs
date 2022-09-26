@@ -88,8 +88,13 @@ pub trait ToForge {
 }
 
 lazy_static! {
-    static ref FORGE_RESERVED_SYMBOLS: HashSet<Identifier> =
-        ["expect"].into_iter().map(Identifier::from_str).collect();
+    static ref FORGE_RESERVED_SYMBOLS: HashSet<Identifier> = [
+        "expect", "test", "implies", "is", "not", "some", "all", "sig", "pred", "no", "one", "sig",
+        "open", "and", "abstract", "extends", "none", "set"
+    ]
+    .into_iter()
+    .map(Identifier::from_str)
+    .collect();
 }
 
 impl ToForge for Identifier {
