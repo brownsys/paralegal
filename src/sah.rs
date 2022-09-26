@@ -51,7 +51,7 @@ impl HashVerifications {
             }
         } else {
             self.0 += 1;
-            error!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `verification_hash = \"{hash:032x}\"` into the annotation.");
+            error!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `{} = \"{hash:032x}\"` into the annotation.", crate::VERIFICATION_HASH_SYM.as_str());
         }
     }
 }
