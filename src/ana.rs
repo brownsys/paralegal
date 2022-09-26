@@ -2,9 +2,7 @@ extern crate either;
 
 use std::borrow::Cow;
 
-use crate::desc::*;
-use crate::rust::*;
-use crate::{HashMap, HashSet};
+use crate::{desc::*, rust::*, sah::HashVerifications, HashMap, HashSet};
 
 use hir::{
     def_id::DefId,
@@ -143,6 +141,8 @@ pub struct Visitor<'tcx> {
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
 }
 
+type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
+
 impl<'tcx> Visitor<'tcx> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
@@ -189,21 +189,14 @@ impl<'tcx> Visitor<'tcx> {
             .collect()
     }
 
-    fn analyze(mut self) -> std::io::Result<ProgramDescription> {
-        let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
-        let tcx = self.tcx;
-        let interesting_fn_defs = self
-            .marked_objects
-            .iter()
-            .filter_map(|(s, v)| match v.1 {
-                ObjectType::Function(i) => {
-                    Some((tcx.hir().local_def_id(*s).to_def_id(), (v.0.clone(), i)))
-                }
-                _ => None,
-            })
-            .collect::<HashMap<_, _>>();
-        type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
-        let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
+    fn handle_target(
+        &self,
+        hash_verifications: &mut HashVerifications,
+        call_site_annotations: &mut CallSiteAnnotations,
+        interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
+        id: Ident,
+        b: BodyId,
+    ) -> std::io::Result<(Endpoint, Ctrl)> {
         fn register_call_site(
             map: &mut CallSiteAnnotations,
             did: DefId,
@@ -221,98 +214,119 @@ impl<'tcx> Visitor<'tcx> {
                 })
                 .or_insert_with(|| ann.clone());
         }
+
+        let tcx = self.tcx;
+        let local_def_id = tcx.hir().body_owner_def_id(b);
+        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
+        let body = &body_with_facts.body;
+        let loc_dom = LocationDomain::new(body);
+        let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
+            .args_iter()
+            .enumerate()
+            .filter_map(|(i, l)| {
+                let ty = body.local_decls[l].ty;
+                let subtypes = self.annotated_subtypes(ty);
+                if !subtypes.is_empty() {
+                    Some((
+                        (
+                            *loc_dom.value(loc_dom.arg_to_location(l)),
+                            DataSource::Argument(i),
+                        ),
+                        (DataSource::Argument(i), subtypes),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unzip();
+        let mut flows = Ctrl::with_input_types(types);
+        let flow = infoflow::compute_flow(tcx, b, body_with_facts);
+        for (bb, t, p) in body
+            .basic_blocks()
+            .iter_enumerated()
+            .filter_map(|(bb, bbdat)| {
+                let t = bbdat.terminator();
+                called_fn(t).map(|p| (bb, t, p))
+            })
+        {
+            let loc = body.terminator_loc(bb);
+            if let Some(ann) = interesting_fn_defs.get(&p) {
+                register_call_site(call_site_annotations, p, ann);
+                let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
+                source_locs.insert(loc, src_desc.clone());
+                let interesting_output_types: HashSet<_> =
+                    self.annotated_subtypes(tcx.fn_sig(p).skip_binder().output());
+                if !interesting_output_types.is_empty() {
+                    flows.types.insert(src_desc, interesting_output_types);
+                }
+                let ordered_mentioned_places = extract_args(t, loc).expect("Not a function call");
+                let mentioned_places = ordered_mentioned_places
+                    .iter()
+                    .filter_map(|a| *a)
+                    .collect::<HashSet<_>>();
+                let matrix = flow.state_at(loc);
+                for r in mentioned_places.iter() {
+                    let deps = matrix.row(*r);
+                    for loc in deps.filter(|l| source_locs.contains_key(l)) {
+                        flows.add(
+                            Cow::Borrowed(&source_locs[loc]),
+                            DataSink {
+                                function: Identifier::new(tcx.item_name(p)),
+                                arg_slot: ordered_mentioned_places
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, e)| **e == Some(*r))
+                                    .next()
+                                    .unwrap()
+                                    .0,
+                            },
+                        );
+                    }
+                }
+            }
+            if let Some(anns) = self.statement_anns_by_loc(p, t) {
+                let matrix = flow.state_at(loc);
+                for ann in anns
+                    .0
+                    .iter()
+                    .filter_map(Annotation::as_exception_annotation)
+                {
+                    hash_verifications.handle(ann, tcx, t, body, loc, &loc_dom, matrix);
+                }
+                // TODO this is attaching to functions instead of call
+                // sites. Once we start actually tracking call sites
+                // this needs to be adjusted
+                register_call_site(call_site_annotations, p, anns);
+            }
+        }
+        Ok((Identifier::new(id.name), flows))
+    }
+
+    fn analyze(mut self) -> std::io::Result<ProgramDescription> {
+        let tcx = self.tcx;
+        let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
+        let interesting_fn_defs = self
+            .marked_objects
+            .iter()
+            .filter_map(|(s, v)| match v.1 {
+                ObjectType::Function(i) => {
+                    Some((tcx.hir().local_def_id(*s).to_def_id(), (v.0.clone(), i)))
+                }
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         crate::sah::HashVerifications::with(|hash_verifications| {
             targets
                 .drain(..)
                 .map(|(id, b, _)| {
-                    let local_def_id = tcx.hir().body_owner_def_id(b);
-                    let body_with_facts =
-                        borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
-                    let body = &body_with_facts.body;
-                    let loc_dom = LocationDomain::new(body);
-                    let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
-                        .args_iter()
-                        .enumerate()
-                        .filter_map(|(i, l)| {
-                            let ty = body.local_decls[l].ty;
-                            let subtypes = self.annotated_subtypes(ty);
-                            if !subtypes.is_empty() {
-                                Some((
-                                    (
-                                        *loc_dom.value(loc_dom.arg_to_location(l)),
-                                        DataSource::Argument(i),
-                                    ),
-                                    (DataSource::Argument(i), subtypes),
-                                ))
-                            } else {
-                                None
-                            }
-                        })
-                        .unzip();
-                    let mut flows = Ctrl::with_input_types(types);
-                    let flow = infoflow::compute_flow(tcx, b, body_with_facts);
-                    for (bb, bbdat) in body.basic_blocks().iter_enumerated() {
-                        let loc = body.terminator_loc(bb);
-                        if let Some((t, p)) = bbdat
-                            .terminator
-                            .as_ref()
-                            .and_then(|t| called_fn(t).map(|p| (t, p)))
-                        {
-                            if let Some(ann) = interesting_fn_defs.get(&p) {
-                                register_call_site(&mut call_site_annotations, p, ann);
-                                let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
-                                source_locs.insert(loc, src_desc.clone());
-                                let interesting_output_types: HashSet<_> =
-                                    self.annotated_subtypes(tcx.fn_sig(p).skip_binder().output());
-                                if !interesting_output_types.is_empty() {
-                                    flows.types.insert(src_desc, interesting_output_types);
-                                }
-                                let ordered_mentioned_places =
-                                    extract_args(t, loc).expect("Not a function call");
-                                let mentioned_places = ordered_mentioned_places
-                                    .iter()
-                                    .filter_map(|a| *a)
-                                    .collect::<HashSet<_>>();
-                                let matrix = flow.state_at(loc);
-                                for r in mentioned_places.iter() {
-                                    let deps = matrix.row(*r);
-                                    for loc in deps.filter(|l| source_locs.contains_key(l)) {
-                                        flows.add(
-                                            Cow::Borrowed(&source_locs[loc]),
-                                            DataSink {
-                                                function: Identifier::new(tcx.item_name(p)),
-                                                arg_slot: ordered_mentioned_places
-                                                    .iter()
-                                                    .enumerate()
-                                                    .filter(|(_, e)| **e == Some(*r))
-                                                    .next()
-                                                    .unwrap()
-                                                    .0,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                            if let Some((_, (ann, _, _))) = self
-                                .marked_stmts
-                                .iter()
-                                .find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span))
-                            {
-                                let matrix = flow.state_at(loc);
-                                for ann in
-                                    ann.0.iter().filter_map(Annotation::as_exception_annotation)
-                                {
-                                    hash_verifications
-                                        .handle(ann, tcx, t, body, loc, &loc_dom, matrix);
-                                }
-                                // TODO this is attaching to functions instead of call
-                                // sites. Once we start actually tracking call sites
-                                // this needs to be adjusted
-                                register_call_site(&mut call_site_annotations, p, ann);
-                            }
-                        };
-                    }
-                    Ok((Identifier::new(id.name), flows))
+                    self.handle_target(
+                        hash_verifications,
+                        &mut call_site_annotations,
+                        &interesting_fn_defs,
+                        id,
+                        b,
+                    )
                 })
                 .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()
                 .map(|controllers| ProgramDescription {
@@ -329,6 +343,20 @@ impl<'tcx> Visitor<'tcx> {
                         .collect(),
                 })
         })
+    }
+
+    /// XXX: This selector is somewhat problematic. For one it matches via
+    /// source locations, rather than id, and for another we're using `find`
+    /// here, which would discard additional matching annotations.
+    fn statement_anns_by_loc(
+        &self,
+        p: DefId,
+        t: &mir::Terminator<'tcx>,
+    ) -> Option<&(Vec<Annotation>, usize)> {
+        self.marked_stmts
+            .iter()
+            .find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span))
+            .map(|t| &t.1 .0)
     }
 }
 
