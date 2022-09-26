@@ -197,10 +197,11 @@ impl<'tcx> Visitor<'tcx> {
         id: Ident,
         b: BodyId,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
-        fn register_call_site(
+        fn register_call_site<'tcx>(
+            tcx: TyCtxt<'tcx>,
             map: &mut CallSiteAnnotations,
             did: DefId,
-            ann: &(Vec<Annotation>, usize),
+            ann: Option<&[Annotation]>,
         ) {
             // This is a bit ugly. This basically just cleans up the fact that
             // when we integrate an annotation on a call, its slightly
@@ -209,10 +210,14 @@ impl<'tcx> Visitor<'tcx> {
             // later in case we know of more arguments.
             map.entry(did)
                 .and_modify(|e| {
-                    e.0.extend(ann.0.iter().cloned());
-                    e.1 = ann.1.max(e.1);
+                    e.0.extend(ann.iter().flat_map(|a| a.iter()).cloned());
                 })
-                .or_insert_with(|| ann.clone());
+                .or_insert_with(|| {
+                    (
+                        ann.iter().flat_map(|a| a.iter()).cloned().collect(),
+                        tcx.fn_sig(did).skip_binder().inputs().len(),
+                    )
+                });
         }
 
         let tcx = self.tcx;
@@ -250,8 +255,33 @@ impl<'tcx> Visitor<'tcx> {
             })
         {
             let loc = body.terminator_loc(bb);
-            if let Some(ann) = interesting_fn_defs.get(&p) {
-                register_call_site(call_site_annotations, p, ann);
+            let matrix = flow.state_at(loc);
+            let ordered_mentioned_places = extract_args(t, loc).expect("Not a function call");
+            let mentioned_places = ordered_mentioned_places
+                .iter()
+                .filter_map(|a| *a)
+                .collect::<HashSet<_>>();
+            let mut flow_added = false;
+            for r in mentioned_places.iter() {
+                let deps = matrix.row(*r);
+                for loc in deps.filter(|l| source_locs.contains_key(l)) {
+                    flow_added = true;
+                    flows.add(
+                        Cow::Borrowed(&source_locs[loc]),
+                        DataSink {
+                            function: Identifier::new(tcx.item_name(p)),
+                            arg_slot: ordered_mentioned_places
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, e)| **e == Some(*r))
+                                .next()
+                                .unwrap()
+                                .0,
+                        },
+                    );
+                }
+            }
+            if flow_added {
                 let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
                 source_locs.insert(loc, src_desc.clone());
                 let interesting_output_types: HashSet<_> =
@@ -259,44 +289,21 @@ impl<'tcx> Visitor<'tcx> {
                 if !interesting_output_types.is_empty() {
                     flows.types.insert(src_desc, interesting_output_types);
                 }
-                let ordered_mentioned_places = extract_args(t, loc).expect("Not a function call");
-                let mentioned_places = ordered_mentioned_places
-                    .iter()
-                    .filter_map(|a| *a)
-                    .collect::<HashSet<_>>();
-                let matrix = flow.state_at(loc);
-                for r in mentioned_places.iter() {
-                    let deps = matrix.row(*r);
-                    for loc in deps.filter(|l| source_locs.contains_key(l)) {
-                        flows.add(
-                            Cow::Borrowed(&source_locs[loc]),
-                            DataSink {
-                                function: Identifier::new(tcx.item_name(p)),
-                                arg_slot: ordered_mentioned_places
-                                    .iter()
-                                    .enumerate()
-                                    .filter(|(_, e)| **e == Some(*r))
-                                    .next()
-                                    .unwrap()
-                                    .0,
-                            },
-                        );
-                    }
-                }
+                register_call_site(
+                    tcx,
+                    call_site_annotations,
+                    p,
+                    interesting_fn_defs.get(&p).map(|a| a.0.as_slice()),
+                );
             }
             if let Some(anns) = self.statement_anns_by_loc(p, t) {
-                let matrix = flow.state_at(loc);
-                for ann in anns
-                    .0
-                    .iter()
-                    .filter_map(Annotation::as_exception_annotation)
-                {
+                for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
                     hash_verifications.handle(ann, tcx, t, body, loc, &loc_dom, matrix);
                 }
                 // TODO this is attaching to functions instead of call
                 // sites. Once we start actually tracking call sites
                 // this needs to be adjusted
-                register_call_site(call_site_annotations, p, anns);
+                register_call_site(tcx, call_site_annotations, p, Some(anns));
             }
         }
         Ok((Identifier::new(id.name), flows))
@@ -348,15 +355,11 @@ impl<'tcx> Visitor<'tcx> {
     /// XXX: This selector is somewhat problematic. For one it matches via
     /// source locations, rather than id, and for another we're using `find`
     /// here, which would discard additional matching annotations.
-    fn statement_anns_by_loc(
-        &self,
-        p: DefId,
-        t: &mir::Terminator<'tcx>,
-    ) -> Option<&(Vec<Annotation>, usize)> {
+    fn statement_anns_by_loc(&self, p: DefId, t: &mir::Terminator<'tcx>) -> Option<&[Annotation]> {
         self.marked_stmts
             .iter()
             .find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span))
-            .map(|t| &t.1 .0)
+            .map(|t| t.1 .0 .0.as_slice())
     }
 }
 

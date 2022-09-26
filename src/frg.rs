@@ -3,6 +3,8 @@ extern crate pretty;
 use crate::HashSet;
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
+use std::borrow::Cow;
+
 use crate::desc::{
     Annotation, AnnotationRefinement, DataSink, DataSource, Identifier, ObjectType,
     ProgramDescription, Relation,
@@ -85,6 +87,11 @@ pub trait ToForge {
         A::Doc: Clone;
 }
 
+lazy_static! {
+    static ref FORGE_RESERVED_SYMBOLS: HashSet<Identifier> =
+        ["expect"].into_iter().map(Identifier::from_str).collect();
+}
+
 impl ToForge for Identifier {
     fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
         &'a self,
@@ -93,7 +100,11 @@ impl ToForge for Identifier {
     where
         A::Doc: Clone,
     {
-        alloc.text(self.as_str())
+        alloc.text(if FORGE_RESERVED_SYMBOLS.contains(self) {
+            Cow::Owned("s__".to_string() + self.as_str())
+        } else {
+            Cow::Borrowed(self.as_str())
+        })
     }
 }
 
