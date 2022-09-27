@@ -190,6 +190,7 @@ impl<'tcx> Visitor<'tcx> {
             .collect()
     }
 
+    /// Handles a single target function
     fn handle_target(
         &self,
         hash_verifications: &mut HashVerifications,
@@ -297,6 +298,7 @@ impl<'tcx> Visitor<'tcx> {
         Ok((Identifier::new(id.name), flows))
     }
 
+    /// Main analysis driver
     fn analyze(mut self) -> std::io::Result<ProgramDescription> {
         let tcx = self.tcx;
         let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
@@ -381,6 +383,8 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
         self.tcx.hir()
     }
 
+    /// Checks for annotations on this id and collects all those id's that have
+    /// been annotated.
     fn visit_id(&mut self, id: HirId) {
         let tcx = self.tcx;
         let hir = self.tcx.hir();
@@ -463,6 +467,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
         }
     }
 
+    /// Finds the functions that have been marked as targets.
     fn visit_fn(
         &mut self,
         fk: FnKind<'tcx>,

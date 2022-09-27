@@ -1,3 +1,5 @@
+/// Nom-based parser-combinators for parsing the token stream in HIR
+/// annotations.
 use crate::rust::*;
 
 use crate::desc::{
