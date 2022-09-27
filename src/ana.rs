@@ -73,18 +73,19 @@ fn fn_defid_and_args<'tcx>(
 ) -> Option<(DefId, Vec<Option<mir::Place<'tcx>>>)> {
     match &t.kind {
         mir::TerminatorKind::Call { func, args, .. } => {
-            let fn_id = func.constant().ok_or("Not a constant").and_then(|c|
-                match c {
+            let fn_id = func
+                .constant()
+                .ok_or("Not a constant")
+                .and_then(|c| match c {
                     mir::Constant {
                         literal: mir::ConstantKind::Val(_, ty),
                         ..
                     } => match ty.kind() {
                         ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),
                         _ => Err("Not function type"),
-                    }
+                    },
                     _ => Err("Not value level constant"),
-                }
-            );
+                });
             match fn_id {
                 Err(e) => {
                     error!("Could not extract root function from {func:?}. Reason: {e}");
@@ -98,7 +99,7 @@ fn fn_defid_and_args<'tcx>(
                             mir::Operand::Constant(_) => None,
                         })
                         .collect(),
-                ))
+                )),
             }
         }
         _ => None,
@@ -256,10 +257,7 @@ impl<'tcx> Visitor<'tcx> {
         {
             let loc = body.terminator_loc(bb);
             let matrix = flow.state_at(loc);
-            let mentioned_places = args
-                .iter()
-                .filter_map(|a| *a)
-                .collect::<HashSet<_>>();
+            let mentioned_places = args.iter().filter_map(|a| *a).collect::<HashSet<_>>();
             for r in mentioned_places.iter() {
                 let deps = matrix.row(*r);
                 for loc in deps.filter(|l| source_locs.contains_key(l)) {

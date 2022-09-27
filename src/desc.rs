@@ -138,6 +138,15 @@ pub enum DataSource {
     Argument(usize),
 }
 
+impl DataSource {
+    pub fn as_function_call(&self) -> Option<&Identifier> {
+        match self {
+            DataSource::FunctionCall(i) => Some(i),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DataSink {
     pub function: Identifier,

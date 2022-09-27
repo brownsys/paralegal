@@ -213,6 +213,7 @@ mod name {
     pub const TYPES: &'static str = "types";
     pub const TYPE: &'static str = "Type";
     pub const CALL_ARGUMENT_REL: &'static str = "function";
+    pub const RETURN_FUNC_REL: &'static str = "rfunc";
     pub const OTYPE_REL: &'static str = "otype";
     pub const EXCEPTIONS_LABEL: &'static str = "exception";
 
@@ -234,12 +235,12 @@ mod name {
                     (CALL_ARGUMENT, Some(OBJ), vec![(CALL_ARGUMENT_REL, one(FUNCTION))]),
                     (INPUT_ARGUMENT, Some(SRC), vec![]),
                     (TYPE, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
-                    (CALL_ARGUMENT_OUTPUT, Some(SRC), vec![]),
+                    (CALL_ARGUMENT_OUTPUT, Some(SRC), vec![(RETURN_FUNC_REL, one(FUNCTION))]),
                     (
                         CTRL,
                         None,
                         vec![
-                            (FLOW, set(&arr(SRC, CALL_ARGUMENT))), 
+                            (FLOW, set(&arr(SRC, CALL_ARGUMENT))),
                             (TYPES, set(&arr(SRC, TYPE))),
                         ],
                     ),
@@ -477,6 +478,27 @@ impl ToForge for ProgramDescription {
                                                     })
                                                 },
                                             ))
+                                            .indent(4)
+                                            .append(alloc.hardline()),
+                                    )
+                                    .parens(),
+                            ),
+                            alloc.text(name::RETURN_FUNC_REL).append(" = ").append(
+                                alloc
+                                    .hardline()
+                                    .append(
+                                        alloc
+                                            .forge_relation(
+                                                self.all_sources().into_iter().filter_map(|src| {
+                                                    match src {
+                                                        DataSource::FunctionCall(f) => Some((
+                                                            std::iter::once(src.as_forge(alloc)),
+                                                            std::iter::once(f.as_forge(alloc)),
+                                                        )),
+                                                        _ => None,
+                                                    }
+                                                }),
+                                            )
                                             .indent(4)
                                             .append(alloc.hardline()),
                                     )
