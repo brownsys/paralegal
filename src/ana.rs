@@ -229,20 +229,16 @@ impl<'tcx> Visitor<'tcx> {
         let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
             .args_iter()
             .enumerate()
-            .filter_map(|(i, l)| {
+            .map(|(i, l)| {
                 let ty = body.local_decls[l].ty;
                 let subtypes = self.annotated_subtypes(ty);
-                if !subtypes.is_empty() {
-                    Some((
-                        (
-                            *loc_dom.value(loc_dom.arg_to_location(l)),
-                            DataSource::Argument(i),
-                        ),
-                        (DataSource::Argument(i), subtypes),
-                    ))
-                } else {
-                    None
-                }
+                (
+                    (
+                        *loc_dom.value(loc_dom.arg_to_location(l)),
+                        DataSource::Argument(i),
+                    ),
+                    (DataSource::Argument(i), subtypes),
+                )
             })
             .unzip();
         let mut flows = Ctrl::with_input_types(types);
