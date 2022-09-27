@@ -68,39 +68,39 @@ fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
     }
 }
 
-fn called_fn<'tcx>(call: &mir::terminator::Terminator<'tcx>) -> Option<DefId> {
-    match &call.kind {
-        mir::terminator::TerminatorKind::Call { func, .. } => {
-            if let Some(mir::Constant {
-                literal: mir::ConstantKind::Val(_, ty),
-                ..
-            }) = func.constant()
-            {
-                match ty.kind() {
-                    ty::FnDef(defid, _) => Some(*defid),
-                    _ => None,
+fn fn_defid_and_args<'tcx>(
+    t: &mir::Terminator<'tcx>,
+) -> Option<(DefId, Vec<Option<mir::Place<'tcx>>>)> {
+    match &t.kind {
+        mir::TerminatorKind::Call { func, args, .. } => {
+            let fn_id = func.constant().ok_or("Not a constant").and_then(|c|
+                match c {
+                    mir::Constant {
+                        literal: mir::ConstantKind::Val(_, ty),
+                        ..
+                    } => match ty.kind() {
+                        ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),
+                        _ => Err("Not function type"),
+                    }
+                    _ => Err("Not value level constant"),
                 }
-            } else {
-                None
+            );
+            match fn_id {
+                Err(e) => {
+                    error!("Could not extract root function from {func:?}. Reason: {e}");
+                    None
+                }
+                Ok(defid) => Some((
+                    defid,
+                    args.iter()
+                        .map(|a| match a {
+                            mir::Operand::Move(p) | mir::Operand::Copy(p) => Some(*p),
+                            mir::Operand::Constant(_) => None,
+                        })
+                        .collect(),
+                ))
             }
         }
-        _ => None,
-    }
-}
-
-fn extract_args<'tcx>(
-    t: &mir::Terminator<'tcx>,
-    _loc: mir::Location,
-) -> Option<Vec<Option<mir::Place<'tcx>>>> {
-    match &t.kind {
-        mir::TerminatorKind::Call { args, .. } => Some(
-            args.iter()
-                .map(|a| match a {
-                    mir::Operand::Move(p) | mir::Operand::Copy(p) => Some(*p),
-                    mir::Operand::Constant(_) => None,
-                })
-                .collect(),
-        ),
         _ => None,
     }
 }
@@ -246,18 +246,17 @@ impl<'tcx> Visitor<'tcx> {
             .unzip();
         let mut flows = Ctrl::with_input_types(types);
         let flow = infoflow::compute_flow(tcx, b, body_with_facts);
-        for (bb, t, p) in body
+        for (bb, t, p, args) in body
             .basic_blocks()
             .iter_enumerated()
             .filter_map(|(bb, bbdat)| {
                 let t = bbdat.terminator();
-                called_fn(t).map(|p| (bb, t, p))
+                fn_defid_and_args(t).map(|(did, args)| (bb, t, did, args))
             })
         {
             let loc = body.terminator_loc(bb);
             let matrix = flow.state_at(loc);
-            let ordered_mentioned_places = extract_args(t, loc).expect("Not a function call");
-            let mentioned_places = ordered_mentioned_places
+            let mentioned_places = args
                 .iter()
                 .filter_map(|a| *a)
                 .collect::<HashSet<_>>();
@@ -268,11 +267,10 @@ impl<'tcx> Visitor<'tcx> {
                         Cow::Borrowed(&source_locs[loc]),
                         DataSink {
                             function: Identifier::new(tcx.item_name(p)),
-                            arg_slot: ordered_mentioned_places
+                            arg_slot: args
                                 .iter()
                                 .enumerate()
-                                .filter(|(_, e)| **e == Some(*r))
-                                .next()
+                                .find(|(_, e)| **e == Some(*r))
                                 .unwrap()
                                 .0,
                         },
