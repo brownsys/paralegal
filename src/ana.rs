@@ -261,11 +261,9 @@ impl<'tcx> Visitor<'tcx> {
                 .iter()
                 .filter_map(|a| *a)
                 .collect::<HashSet<_>>();
-            let mut flow_added = false;
             for r in mentioned_places.iter() {
                 let deps = matrix.row(*r);
                 for loc in deps.filter(|l| source_locs.contains_key(l)) {
-                    flow_added = true;
                     flows.add(
                         Cow::Borrowed(&source_locs[loc]),
                         DataSink {
@@ -281,21 +279,19 @@ impl<'tcx> Visitor<'tcx> {
                     );
                 }
             }
-            if flow_added {
-                let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
-                source_locs.insert(loc, src_desc.clone());
-                let interesting_output_types: HashSet<_> =
-                    self.annotated_subtypes(tcx.fn_sig(p).skip_binder().output());
-                if !interesting_output_types.is_empty() {
-                    flows.types.insert(src_desc, interesting_output_types);
-                }
-                register_call_site(
-                    tcx,
-                    call_site_annotations,
-                    p,
-                    interesting_fn_defs.get(&p).map(|a| a.0.as_slice()),
-                );
+            let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
+            source_locs.insert(loc, src_desc.clone());
+            let interesting_output_types: HashSet<_> =
+                self.annotated_subtypes(tcx.fn_sig(p).skip_binder().output());
+            if !interesting_output_types.is_empty() {
+                flows.types.insert(src_desc, interesting_output_types);
             }
+            register_call_site(
+                tcx,
+                call_site_annotations,
+                p,
+                interesting_fn_defs.get(&p).map(|a| a.0.as_slice()),
+            );
             if let Some(anns) = self.statement_anns_by_loc(p, t) {
                 for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
                     hash_verifications.handle(ann, tcx, t, body, loc, &loc_dom, matrix);
