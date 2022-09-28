@@ -114,6 +114,7 @@ impl rustc_driver::Callbacks for Callbacks {
 
 lazy_static! {
     static ref ARG_SYM: Symbol = Symbol::intern("arguments");
+    static ref RETURN_SYM: Symbol = Symbol::intern("return");
     static ref VERIFICATION_HASH_SYM: Symbol = Symbol::intern("verification_hash");
 }
 

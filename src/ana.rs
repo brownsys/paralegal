@@ -365,10 +365,9 @@ fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
     *anns
         .iter()
         .flat_map(|a| match a {
-            Annotation::Label(LabelAnnotation {
-                refinement: AnnotationRefinement::Argument(nums),
-                ..
-            }) => Box::new(nums.iter()) as Box<dyn Iterator<Item = &u16>>,
+            Annotation::Label(LabelAnnotation { refinement, .. }) => {
+                Box::new(refinement.on_argument().iter()) as Box<dyn Iterator<Item = &u16>>
+            }
             Annotation::Exception(_) => Box::new(std::iter::once(&0)),
             _ => panic!("Unsupported annotation type for statement annotation"),
         })

@@ -6,8 +6,7 @@ use pretty::{DocAllocator, DocBuilder, Pretty};
 use std::borrow::Cow;
 
 use crate::desc::{
-    Annotation, AnnotationRefinement, DataSink, DataSource, Identifier, ObjectType,
-    ProgramDescription, Relation,
+    Annotation, DataSink, DataSource, Identifier, ObjectType, ProgramDescription, Relation,
 };
 
 trait DocLines<'a, A = ()>: DocAllocator<'a, A>
@@ -420,19 +419,27 @@ impl ToForge for ProgramDescription {
                                             anns.iter().filter_map(Annotation::as_label_ann).map(
                                                 |a| {
                                                     (
-                                                        match &a.refinement {
-                                                            AnnotationRefinement::None => Box::new(
-                                                                std::iter::once(id.as_forge(alloc)),
-                                                            )
-                                                                as Box<dyn Iterator<Item = _>>,
-                                                            AnnotationRefinement::Argument(
-                                                                args,
-                                                            ) => Box::new(args.iter().map(|i| {
+                                                        a.refinement
+                                                            .on_argument()
+                                                            .iter()
+                                                            .map(|i| {
                                                                 id.as_forge(alloc)
                                                                     .append("_")
                                                                     .append(alloc.as_string(*i))
-                                                            })),
-                                                        },
+                                                            })
+                                                            .chain(
+                                                                if a.refinement.on_return() {
+                                                                    Some(data_source_as_forge(
+                                                                        &DataSource::FunctionCall(
+                                                                            id.clone(),
+                                                                        ),
+                                                                        alloc,
+                                                                    ))
+                                                                } else {
+                                                                    None
+                                                                }
+                                                                .into_iter(),
+                                                            ),
                                                         std::iter::once(
                                                             alloc.text(a.label.as_str()),
                                                         ),

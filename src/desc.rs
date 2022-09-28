@@ -47,9 +47,56 @@ pub struct LabelAnnotation {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub enum AnnotationRefinement {
+pub struct AnnotationRefinement {
+    on_argument: Vec<u16>,
+    on_return: bool,
+}
+
+#[derive(Clone)]
+pub enum AnnotationRefinementKind {
     Argument(Vec<u16>),
-    None,
+    Return,
+}
+
+impl AnnotationRefinement {
+    pub fn empty() -> Self {
+        Self {
+            on_argument: vec![],
+            on_return: false,
+        }
+    }
+
+    pub fn merge_kind(mut self, k: AnnotationRefinementKind) -> Result<Self, String> {
+        match k {
+            AnnotationRefinementKind::Argument(a) => {
+                if self.on_argument.is_empty() {
+                    self.on_argument = a;
+                    Ok(self)
+                } else {
+                    Err(format!(
+                        "Double argument annotation {:?} and {a:?}",
+                        self.on_argument
+                    ))
+                }
+            }
+            AnnotationRefinementKind::Return => {
+                if !self.on_return {
+                    self.on_return = true;
+                    Ok(self)
+                } else {
+                    Err(format!("Double on-return annotation"))
+                }
+            }
+        }
+    }
+
+    pub fn on_argument(&self) -> &[u16] {
+        &self.on_argument
+    }
+
+    pub fn on_return(&self) -> bool {
+        self.on_return
+    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]

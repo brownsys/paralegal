@@ -3,7 +3,8 @@
 use crate::rust::*;
 
 use crate::desc::{
-    AnnotationRefinement, ExceptionAnnotation, Identifier, LabelAnnotation, TypeDescriptor,
+    AnnotationRefinement, AnnotationRefinementKind, ExceptionAnnotation, Identifier,
+    LabelAnnotation, TypeDescriptor,
 };
 use crate::Symbol;
 use ast::{token, tokenstream};
@@ -38,7 +39,11 @@ impl<'a> std::fmt::Debug for I<'a> {
     /// This only exists so we can use the standard `nom::Err`. A better
     /// solution would be to make our own error type that does not rely on this
     /// being printable.
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        for t in self.clone() {
+            write!(fmt, "{:?}", t)?;
+            write!(fmt, ",")?;
+        }
         Ok(())
     }
 }
@@ -54,8 +59,8 @@ impl<'a> nom::InputLength for I<'a> {
         slf.0.len() - slf.1
     }
 }
-fn one<'a>() -> impl FnMut(I<'a>) -> R<'a, &'a TokenTree> {
-    |mut tree: I<'a>| match tree.next() {
+fn one(mut tree: I) -> R<&TokenTree> {
+    match tree.next() {
         None => Result::Err(nom::Err::Error(Error::new(
             tree,
             nom::error::ErrorKind::IsNot,
@@ -64,18 +69,18 @@ fn one<'a>() -> impl FnMut(I<'a>) -> R<'a, &'a TokenTree> {
     }
 }
 
-pub fn one_token<'a>() -> impl FnMut(I<'a>) -> R<'a, &'a Token> {
-    nom::combinator::map_res(one(), |t| match t {
+pub fn one_token(i: I) -> R<&Token> {
+    nom::combinator::map_res(one, |t| match t {
         TokenTree::Token(t) => Ok(t),
         _ => Result::Err(()),
-    })
+    })(i)
 }
 
 pub fn lit<'a, A, F: Fn(&str) -> Result<A, String> + 'a>(
     k: LitKind,
     f: F,
 ) -> impl FnMut(I<'a>) -> R<'a, A> {
-    nom::combinator::map_res(one_token(), move |t| match t {
+    nom::combinator::map_res(one_token, move |t| match t {
         Token {
             kind: TokenKind::Literal(Lit {
                 kind: knd, symbol, ..
@@ -86,24 +91,24 @@ pub fn lit<'a, A, F: Fn(&str) -> Result<A, String> + 'a>(
     })
 }
 
-pub fn integer<'a>() -> impl FnMut(I<'a>) -> R<'a, u16> {
+pub fn integer(i: I) -> R<u16> {
     lit(LitKind::Integer, |symbol: &str| {
         symbol
             .parse()
             .map_err(|e: <u16 as std::str::FromStr>::Err| e.to_string())
-    })
+    })(i)
 }
 
-pub fn identifier<'a>() -> impl FnMut(I<'a>) -> R<'a, Symbol> {
-    nom::combinator::map_res(one_token(), |t| match t.ident() {
+pub fn identifier(i: I) -> R<Symbol> {
+    nom::combinator::map_res(one_token, |t| match t.ident() {
         Some((rustc_span::symbol::Ident { name, .. }, _)) => Ok(name),
         _ => Result::Err(()),
-    })
+    })(i)
 }
 
 pub fn assert_identifier<'a>(s: Symbol) -> impl FnMut(I<'a>) -> R<'a, ()> {
     nom::combinator::map_res(
-        identifier(),
+        identifier,
         move |i| if i == s { Ok(()) } else { Result::Err(()) },
     )
 }
@@ -113,7 +118,7 @@ pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>>>(
     delim: Delimiter,
 ) -> impl FnMut(I<'a>) -> R<'a, A> {
     move |i| {
-        one()(i).and_then(|(i, t)| match t {
+        one(i).and_then(|(i, t)| match t {
             TokenTree::Delimited(_, d, s) if *d == delim => {
                 p.parse(I::from_stream(s)).map(|(mut rest, r)| {
                     assert!(rest.next().is_none());
@@ -127,7 +132,7 @@ pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>>>(
 
 pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
     nom::combinator::map_res(
-        one_token(),
+        one_token,
         move |t| if *t == k { Ok(()) } else { Result::Err(()) },
     )
 }
@@ -145,11 +150,11 @@ pub fn dict<'a, K, V, P: Parser<I<'a>, K, Error<I<'a>>>, G: Parser<I<'a>, V, Err
     )
 }
 
-pub fn integer_list<'a>() -> impl FnMut(I<'a>) -> R<'a, Vec<u16>> {
+pub fn integer_list(i: I) -> R<Vec<u16>> {
     delimited(
-        nom::multi::separated_list0(assert_token(TokenKind::Comma), integer()),
+        nom::multi::separated_list0(assert_token(TokenKind::Comma), integer),
         Delimiter::Bracket,
-    )
+    )(i)
 }
 
 pub(crate) fn otype_ann_match(ann: &ast::MacArgs) -> Vec<TypeDescriptor> {
@@ -157,7 +162,7 @@ pub(crate) fn otype_ann_match(ann: &ast::MacArgs) -> Vec<TypeDescriptor> {
         ast::MacArgs::Delimited(_, _, stream) => {
             let mut p = nom::multi::separated_list0(
                 assert_token(TokenKind::Comma),
-                nom::combinator::map(identifier(), Identifier::new),
+                nom::combinator::map(identifier, Identifier::new),
             );
             p(I::from_stream(&stream))
                 .unwrap_or_else(|err: nom::Err<_>| {
@@ -187,12 +192,38 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
                 let _ = nom::combinator::eof(i)?;
                 Ok(ExceptionAnnotation { verification_hash })
             };
-            p(I::from_stream(&stream)).unwrap_or_else(|err: nom::Err<_>| {
-                panic!("parser failed on {ann:?} with error {err:?}")
-            })
+            p(I::from_stream(&stream))
+                .unwrap_or_else(|err: nom::Err<_>| panic!("parser failed with error {err:?}"))
         }
         _ => panic!(),
     }
+}
+
+fn refinements_parser(i: I) -> R<AnnotationRefinement> {
+    nom::combinator::map_res(
+        // nom::multi::separated_list0(
+        //     assert_token(TokenKind::Comma),
+        nom::branch::alt((
+            nom::sequence::preceded(
+                nom::sequence::tuple((
+                    assert_identifier(*crate::ARG_SYM),
+                    assert_token(TokenKind::Eq),
+                )),
+                nom::combinator::map(integer_list, |il| AnnotationRefinementKind::Argument(il)),
+            ),
+            nom::combinator::value(
+                AnnotationRefinementKind::Return,
+                assert_identifier(*crate::RETURN_SYM),
+            ),
+        )),
+        //),
+        |refinements| {
+            vec![refinements].into_iter().try_fold(
+                AnnotationRefinement::empty(),
+                AnnotationRefinement::merge_kind,
+            )
+        },
+    )(i)
 }
 
 pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> LabelAnnotation {
@@ -201,26 +232,17 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> LabelAnnotation {
     match ann {
         ast::MacArgs::Delimited(_, _, stream) => {
             let p = |i| {
-                let (i, label) = identifier()(i)?;
-                let (i, refinement) = nom::combinator::map(
-                    nom::combinator::opt(nom::sequence::preceded(
-                        nom::sequence::tuple((
-                            assert_token(TokenKind::Comma),
-                            assert_identifier(*crate::ARG_SYM),
-                            assert_token(TokenKind::Eq),
-                        )),
-                        nom::combinator::map(integer_list(), |il| {
-                            AnnotationRefinement::Argument(il)
-                        }),
-                    )),
-                    |o| o.unwrap_or(AnnotationRefinement::None),
-                )(i)?;
-                let _ = nom::combinator::eof(i)?;
-                Ok(LabelAnnotation { label, refinement })
+                let (i, label) = identifier(i)?;
+                let (i, cont) = nom::combinator::opt(assert_token(TokenKind::Comma))(i)?;
+                let (i, refinement) = nom::combinator::cond(cont.is_some(), refinements_parser)(i)?;
+                let (_, _) = nom::combinator::eof(i)?;
+                Ok(LabelAnnotation {
+                    label,
+                    refinement: refinement.unwrap_or_else(|| AnnotationRefinement::empty()),
+                })
             };
-            p(I::from_stream(&stream)).unwrap_or_else(|err: nom::Err<_>| {
-                panic!("parser failed on {ann:?} with error {err:?}")
-            })
+            p(I::from_stream(&stream))
+                .unwrap_or_else(|err: nom::Err<_>| panic!("parser failed with error {err:?}"))
         }
         _ => panic!(),
     }
