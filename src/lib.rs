@@ -63,6 +63,8 @@ pub struct Args {
     _progname: String,
     #[clap(short, long)]
     verbose: bool,
+    #[clap(long)]
+    debug: bool,
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
 }
@@ -141,7 +143,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
-        let lvl = if plugin_args.verbose {
+        let lvl = if plugin_args.debug {
+            log::Level::Debug
+        } else if plugin_args.verbose {
             log::Level::Info
         } else {
             log::Level::Warn
