@@ -144,13 +144,13 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
         let lvl = if plugin_args.debug {
-            log::Level::Debug
+            log::LevelFilter::Debug
         } else if plugin_args.verbose {
-            log::Level::Info
+            log::LevelFilter::Info
         } else {
-            log::Level::Warn
+            log::LevelFilter::Warn
         };
-        simple_logger::init_with_level(lvl).unwrap();
+        simple_logger::SimpleLogger::new().with_level(lvl).with_module_level("flowistry", log::LevelFilter::Error).init().unwrap();
         let res_p = plugin_args.result_path;
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { res_p }).run()
     }
