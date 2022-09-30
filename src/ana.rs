@@ -261,50 +261,49 @@ impl<'tcx> Visitor<'tcx> {
             let is_safe = is_safe_function(&bound_sig);
             let interesting_output_types: HashSet<_> =
                 self.annotated_subtypes(bound_sig.skip_binder().output());
-            if !is_safe || anns.is_some() || !interesting_output_types.is_empty() || stmt_anns.is_some() {
 
-                let mentioned_places = args.iter().filter_map(|a| *a).collect::<HashSet<_>>();
+            if is_safe
+                && anns.is_none()
+                && interesting_output_types.is_empty()
+                && stmt_anns.is_none()
+            {
+                continue;
+            }
 
-                let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
-                source_locs.insert(loc, src_desc.clone());
-                if !interesting_output_types.is_empty() {
-                    flows.types.insert(src_desc, interesting_output_types);
-                }
+            let mentioned_places = args.iter().filter_map(|a| *a).collect::<HashSet<_>>();
 
-                for r in mentioned_places.iter() {
-                    let deps = matrix.row(*r);
-                    for loc in deps.filter(|l| source_locs.contains_key(l)) {
-                        flows.add(
-                            Cow::Borrowed(&source_locs[loc]),
-                            DataSink {
-                                function: Identifier::new(tcx.item_name(p)),
-                                arg_slot: args
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, e)| **e == Some(*r))
-                                    .unwrap()
-                                    .0,
-                            },
-                        );
-                    }
+            let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
+            source_locs.insert(loc, src_desc.clone());
+            if !interesting_output_types.is_empty() {
+                flows.types.insert(src_desc, interesting_output_types);
+            }
+
+            for r in mentioned_places.iter() {
+                let deps = matrix.row(*r);
+                for loc in deps.filter(|l| source_locs.contains_key(l)) {
+                    flows.add(
+                        Cow::Borrowed(&source_locs[loc]),
+                        DataSink {
+                            function: Identifier::new(tcx.item_name(p)),
+                            arg_slot: args
+                                .iter()
+                                .enumerate()
+                                .find(|(_, e)| **e == Some(*r))
+                                .unwrap()
+                                .0,
+                        },
+                    );
                 }
-                register_call_site(
-                    tcx,
-                    call_site_annotations,
-                    p,
-                    anns,
-                );
-                if let Some(anns) = stmt_anns {
-                    for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
-                        hash_verifications.handle(ann, tcx, t, body, loc, &loc_dom, matrix);
-                    }
-                    // TODO this is attaching to functions instead of call
-                    // sites. Once we start actually tracking call sites
-                    // this needs to be adjusted
-                    register_call_site(tcx, call_site_annotations, p, Some(anns));
+            }
+            register_call_site(tcx, call_site_annotations, p, anns);
+            if let Some(anns) = stmt_anns {
+                for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
+                    hash_verifications.handle(ann, tcx, t, body, loc, &loc_dom, matrix);
                 }
-            } else {
-                debug!("Skipped call {:?}", t.kind);
+                // TODO this is attaching to functions instead of call
+                // sites. Once we start actually tracking call sites
+                // this needs to be adjusted
+                register_call_site(tcx, call_site_annotations, p, Some(anns));
             }
         }
         Ok((Identifier::new(id.name), flows))
@@ -367,7 +366,6 @@ impl<'tcx> Visitor<'tcx> {
 
 fn is_safe_function<'tcx>(bound_sig: &ty::Binder<'tcx, ty::FnSig<'tcx>>) -> bool {
     return false;
-
 }
 
 fn identifier_for_hid<'tcx>(tcx: TyCtxt<'tcx>, hid: HirId) -> Identifier {
