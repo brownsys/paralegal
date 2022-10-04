@@ -70,7 +70,7 @@ pub struct Args {
 }
 
 struct Callbacks {
-    res_p: std::path::PathBuf,
+    opts: &'static Args,
 }
 
 lazy_static! {
@@ -94,21 +94,21 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .take()
-            .enter(|tcx| ana::Visitor::new(tcx).run())
+            .enter(|tcx| ana::Visitor::new(tcx, self.opts).run())
             .unwrap();
         info!("All elems walked");
         let mut outf = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
-            .open(&self.res_p)
+            .open(&self.opts.result_path)
             .unwrap();
         let doc_alloc = pretty::BoxAllocator;
         let doc = desc.as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();
         info!(
             "Wrote analysis result to {}",
-            &self.res_p.canonicalize().unwrap().display()
+            &self.opts.result_path.canonicalize().unwrap().display()
         );
         rustc_driver::Compilation::Stop
     }
@@ -155,7 +155,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .with_module_level("flowistry", log::LevelFilter::Error)
             .init()
             .unwrap();
-        let res_p = plugin_args.result_path;
-        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { res_p }).run()
+        let opts = Box::leak(Box::new(plugin_args));
+        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }
 }

@@ -137,6 +137,7 @@ pub fn is_real_location(_loc_dom: &LocationDomain, body: &mir::Body, l: mir::Loc
 
 pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,
+    opts: &'static crate::Args,
     marked_objects: HashMap<HirId, (Vec<Annotation>, ObjectType)>,
     marked_stmts: HashMap<HirId, ((Vec<Annotation>, usize), Span, DefId)>,
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
@@ -145,9 +146,10 @@ pub struct Visitor<'tcx> {
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
 impl<'tcx> Visitor<'tcx> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         Self {
             tcx,
+            opts,
             marked_objects: HashMap::new(),
             marked_stmts: HashMap::new(),
             functions_to_analyze: vec![],
