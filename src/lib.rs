@@ -37,6 +37,7 @@ pub use std::collections::{HashMap, HashSet};
 
 pub use rustc_span::Symbol;
 
+mod dbg;
 mod ana;
 pub mod ann_parse;
 pub mod desc;
