@@ -40,10 +40,9 @@ impl HashVerifications {
         t: &mir::Terminator<'tcx>,
         body: &mir::Body<'tcx>,
         loc: mir::Location,
-        loc_dom: &LocationDomain,
         matrix: &Matrix<'tcx, '_>,
     ) {
-        let hash = compute_verification_hash_for_stmt_2(tcx, t, loc, body, &loc_dom, matrix);
+        let hash = compute_verification_hash_for_stmt_2(tcx, t, loc, body, matrix);
         if let Some(old_hash) = ann.verification_hash {
             if hash != old_hash {
                 self.0 += 1;
@@ -438,7 +437,6 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
     t: &mir::Terminator<'tcx>,
     loc: mir::Location,
     body: &mir::Body<'tcx>,
-    loc_dom: &LocationDomain,
     matrix: &Matrix<'tcx, '_>,
 ) -> VerificationHash {
     use mir::visit::Visitor;
@@ -452,7 +450,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                 loc_set.extend(
                     matrix
                         .row(*pl)
-                        .filter(|l| crate::ana::is_real_location(loc_dom, body, **l)),
+                        .filter(|l| crate::ana::is_real_location(body, **l)),
                 );
             })
             .visit_terminator(t, loc);
