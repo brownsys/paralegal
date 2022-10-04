@@ -1,5 +1,3 @@
-extern crate either;
-
 use std::borrow::Cow;
 
 use crate::{desc::*, rust::*, sah::HashVerifications, HashMap, HashSet};
@@ -263,6 +261,14 @@ impl<'tcx> Visitor<'tcx> {
             }
 
             let anns = interesting_fn_defs.get(&p).map(|a| a.0.as_slice());
+            if anns.iter().flat_map(|a| a.iter()).filter_map(Annotation::as_label_ann).any(|a| a.label == Symbol::intern("graph_dump")) {
+                let non_t_g = make_non_transitive_graph(&flow, loc, body);
+                crate::dbg::non_transitive_graph_as_dot(
+                    &mut std::fs::OpenOptions::new().truncate(true).create(true).write(true).open("non-trans-graph.gv").unwrap(),
+                    body,
+                    &non_t_g,
+                ).unwrap();
+            }
             let stmt_anns = self.statement_anns_by_loc(p, t);
             let bound_sig = tcx.fn_sig(p);
             let is_safe = is_safe_function(&bound_sig);
@@ -369,6 +375,55 @@ impl<'tcx> Visitor<'tcx> {
             .find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span))
             .map(|t| t.1 .0 .0.as_slice())
     }
+}
+
+fn extract_places<'tcx>(l: mir::Location, body: &mir::Body<'tcx>) -> HashSet<mir::Place<'tcx>> {
+    let mut places = HashSet::new();
+    let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| { places.insert(*p); });
+    body.basic_blocks()[l.block].visitable(l.statement_index).apply(l, &mut vis);
+    places
+}
+
+use flowistry::indexed::{IndexMatrix, IndexSet};
+
+pub type NonTransitiveGraph<'tcx> = HashMap<mir::Location, IndexMatrix<mir::Place<'tcx>, mir::Location>>;
+
+fn make_non_transitive_graph<'a, 'tcx>(flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>, start_from: mir::Location, body: &mir::Body<'tcx>) -> NonTransitiveGraph<'tcx> {
+    let loc_dom = flow_results.analysis.location_domain();
+    let loc_deps = loc_dom.as_vec().iter().filter(|l| is_real_location(loc_dom, body, **l)).map(|l| {
+        let places = extract_places(*l, body);
+        let my_flow = flow_results.state_at(*l);
+        let deps = places.iter().map(|p| my_flow.row_set(*p)).fold(IndexSet::new(&flow_results.analysis.location_domain()), |mut agg, s| { agg.union(&s); agg });
+        (l, (places, deps))
+    }).collect::<HashMap<_,_>>();
+    let mut queue = vec![start_from];
+
+    let mut graph = HashMap::new();
+
+    while let Some(n) = queue.pop() {
+        let mut matrix = IndexMatrix::new(flow_results.analysis.location_domain());
+        if graph.contains_key(&n) {
+            continue;
+        } 
+        let f = flow_results.state_at(n);
+        let mut just_self = IndexSet::new(&f.col_domain);
+        just_self.insert(n);
+        let (places, _) = &loc_deps[&n];
+        for p in places {
+            let mut deps = f.row_set(*p).to_owned();
+            deps.subtract(&just_self);
+            deps.iter().for_each(|l| {
+                if let Some((_, ldeps)) = loc_deps.get(l) {
+                    if !deps.iter().any(|l2| l2 != l && loc_deps.get(l2).map_or(false, |d| d.1.is_superset(&ldeps))) {
+                        queue.push(*l);
+                        matrix.insert(*p, l);
+                    }
+                }
+            })
+        }
+        graph.insert(n, matrix);
+    }
+    graph
 }
 
 fn is_safe_function<'tcx>(bound_sig: &ty::Binder<'tcx, ty::FnSig<'tcx>>) -> bool {
