@@ -124,7 +124,7 @@ impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisit
 /// refer to function arguments. Those locations are not recognized the rustc
 /// functions that operate on MIR and thus need to be filtered before doing
 /// things such as indexing into a `mir::Body`.
-pub fn is_real_location(_loc_dom: &LocationDomain, body: &mir::Body, l: mir::Location) -> bool {
+pub fn is_real_location(body: &mir::Body, l: mir::Location) -> bool {
     body.basic_blocks().get(l.block).map(|bb| 
             // Its `<=` because if len == statement_index it refers to the
             // terminator
@@ -262,7 +262,7 @@ impl<'tcx> Visitor<'tcx> {
 
             let anns = interesting_fn_defs.get(&p).map(|a| a.0.as_slice());
             if anns.iter().flat_map(|a| a.iter()).filter_map(Annotation::as_label_ann).any(|a| a.label == Symbol::intern("graph_dump")) {
-                let non_t_g = make_non_transitive_graph(&flow, loc, body);
+                let non_t_g = make_non_transitive_graph(&flow, loc, body, |l| is_real_location(body, l) && body.stmt_at(l).is_right());
                 crate::dbg::non_transitive_graph_as_dot(
                     &mut std::fs::OpenOptions::new().truncate(true).create(true).write(true).open("non-trans-graph.gv").unwrap(),
                     body,
@@ -311,7 +311,7 @@ impl<'tcx> Visitor<'tcx> {
             register_call_site(tcx, call_site_annotations, p, anns);
             if let Some(anns) = stmt_anns {
                 for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
-                    hash_verifications.handle(ann, tcx, t, body, loc, &loc_dom, matrix);
+                    hash_verifications.handle(ann, tcx, t, body, loc, matrix);
                 }
                 // TODO this is attaching to functions instead of call
                 // sites. Once we start actually tracking call sites
@@ -388,9 +388,9 @@ use flowistry::indexed::{IndexMatrix, IndexSet};
 
 pub type NonTransitiveGraph<'tcx> = HashMap<mir::Location, IndexMatrix<mir::Place<'tcx>, mir::Location>>;
 
-fn make_non_transitive_graph<'a, 'tcx>(flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>, start_from: mir::Location, body: &mir::Body<'tcx>) -> NonTransitiveGraph<'tcx> {
+fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>, start_from: mir::Location, body: &mir::Body<'tcx>, mut dependency_selector: P) -> NonTransitiveGraph<'tcx> {
     let loc_dom = flow_results.analysis.location_domain();
-    let loc_deps = loc_dom.as_vec().iter().filter(|l| is_real_location(loc_dom, body, **l)).map(|l| {
+    let loc_deps = loc_dom.as_vec().iter().filter(|l| is_real_location(body, **l)).map(|l| {
         let places = extract_places(*l, body);
         let my_flow = flow_results.state_at(*l);
         let deps = places.iter().map(|p| my_flow.row_set(*p)).fold(IndexSet::new(&flow_results.analysis.location_domain()), |mut agg, s| { agg.union(&s); agg });
@@ -399,19 +399,25 @@ fn make_non_transitive_graph<'a, 'tcx>(flow_results: &flowistry::infoflow::FlowR
     let mut queue = vec![start_from];
 
     let mut graph = HashMap::new();
+    let mut dependency_mask = IndexSet::new(loc_dom);
+    for i in loc_dom.as_vec().iter() {
+        if !dependency_selector(*i) {
+            dependency_mask.insert(i);
+        }
+    }
 
     while let Some(n) = queue.pop() {
-        let mut matrix = IndexMatrix::new(flow_results.analysis.location_domain());
+        let mut matrix = IndexMatrix::new(loc_dom);
         if graph.contains_key(&n) {
             continue;
         } 
         let f = flow_results.state_at(n);
-        let mut just_self = IndexSet::new(&f.col_domain);
-        just_self.insert(n);
+        let mut mask_and_self = dependency_mask.clone();
+        mask_and_self.insert(n);
         let (places, _) = &loc_deps[&n];
         for p in places {
             let mut deps = f.row_set(*p).to_owned();
-            deps.subtract(&just_self);
+            deps.subtract(&mask_and_self);
             deps.iter().for_each(|l| {
                 if let Some((_, ldeps)) = loc_deps.get(l) {
                     if !deps.iter().any(|l2| l2 != l && loc_deps.get(l2).map_or(false, |d| d.1.is_superset(&ldeps))) {
