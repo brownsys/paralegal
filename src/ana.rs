@@ -257,6 +257,11 @@ impl<'tcx> Visitor<'tcx> {
             let loc = body.terminator_loc(bb);
             let matrix = flow.state_at(loc);
 
+            if self.opts.dump_flowistry_matrix {
+                info!("Flowistry matrix for {:?}", loc);
+                crate::dbg::print_flowistry_matrix(&mut std::io::stdout(), matrix).unwrap();
+            }
+
             let anns = interesting_fn_defs.get(&p).map(|a| a.0.as_slice());
             let stmt_anns = self.statement_anns_by_loc(p, t);
             let bound_sig = tcx.fn_sig(p);

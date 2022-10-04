@@ -67,6 +67,8 @@ pub struct Args {
     debug: bool,
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
+    #[clap(long)]
+    dump_flowistry_matrix: bool,
 }
 
 struct Callbacks {
