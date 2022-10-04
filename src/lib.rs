@@ -35,6 +35,9 @@ use clap::Parser;
 use flowistry::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
 
+pub extern crate either;
+pub use either::Either;
+
 pub use rustc_span::Symbol;
 
 mod dbg;
