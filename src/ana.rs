@@ -245,7 +245,7 @@ impl<'tcx> Visitor<'tcx> {
         let mut flows = Ctrl::with_input_types(types);
         let flow = infoflow::compute_flow(tcx, b, body_with_facts);
         if self.opts.dump_non_transitive_graph {
-            let non_t_g = make_non_transitive_graph(&flow, body, |l| is_real_location(body, l) && body.stmt_at(l).is_right());
+            let non_t_g = make_non_transitive_graph(&flow, body, |l| !is_real_location(body, l) || body.stmt_at(l).is_right());
             crate::dbg::non_transitive_graph_as_dot(
                 &mut std::fs::OpenOptions::new().truncate(true).create(true).write(true).open(format!("{}.ntg.gv", id.name.as_str())).unwrap(),
                 body,
@@ -390,10 +390,13 @@ pub type NonTransitiveGraph<'tcx> = HashMap<mir::Location, IndexMatrix<mir::Plac
 
 fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>, body: &mir::Body<'tcx>, mut dependency_selector: P) -> NonTransitiveGraph<'tcx> {
     let loc_dom = flow_results.analysis.location_domain();
-    let loc_deps = loc_dom.as_vec().iter().filter(|l| is_real_location(body, **l)).map(|l| {
+    let loc_deps = loc_dom.as_vec().iter().map(|l| {
+        if !is_real_location(body, *l) {
+            return (l, (HashSet::new(), { let mut deps = IndexSet::new(&loc_dom); deps.insert(l); deps }))
+        }
         let places = extract_places(*l, body);
         let my_flow = flow_results.state_at(*l);
-        let deps = places.iter().map(|p| my_flow.row_set(*p)).fold(IndexSet::new(&flow_results.analysis.location_domain()), |mut agg, s| { agg.union(&s); agg });
+        let deps = places.iter().map(|p| my_flow.row_set(*p)).fold(IndexSet::new(&loc_dom), |mut agg, s| { agg.union(&s); agg });
         (l, (places, deps))
     }).collect::<HashMap<_,_>>();
 
@@ -410,6 +413,9 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_res
 
     interesting_locations.iter().map(|n| {
         let mut matrix = IndexMatrix::new(loc_dom);
+        if !is_real_location(body, *n) {
+            return (*n, matrix);
+        }
         let f = flow_results.state_at(*n);
         let mut mask_and_self = dependency_mask.clone();
         mask_and_self.insert(*n);
@@ -418,10 +424,9 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_res
             let mut deps = f.row_set(*p).to_owned();
             deps.subtract(&mask_and_self);
             deps.iter().for_each(|l| {
-                if let Some((_, ldeps)) = loc_deps.get(l) {
-                    if !deps.iter().any(|l2| l2 != l && loc_deps.get(l2).map_or(false, |d| d.1.is_superset(&ldeps))) {
-                        matrix.insert(*p, l);
-                    }
+                let ldeps = &loc_deps.get(l).unwrap_or_else(|| panic!("No dependencies for {l:?} known")).1;
+                if !deps.iter().any(|l2| l2 != l && loc_deps[l2].1.is_superset(&ldeps)) {
+                    matrix.insert(*p, l);
                 }
             })
         }

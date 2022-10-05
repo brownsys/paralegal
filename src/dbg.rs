@@ -67,9 +67,13 @@ impl<'tcx, 'b, 'a> dot::Labeller<'a, N, E<'tcx>> for DotGraph<'b, 'tcx> {
     fn node_label(&'a self, n: &N) -> dot::LabelText<'a> {
         use crate::Either;
         dot::LabelText::LabelStr(
-            match self.body.stmt_at(*n) {
-                Either::Left(stmt) => format!("{:?}", stmt.kind),
-                Either::Right(term) => format!("{:?}", term.kind),
+            if !crate::ana::is_real_location(self.body, *n) {
+                format!("Argument {}", flowistry::mir::utils::location_to_string(*n, self.body))
+            } else {
+                match self.body.stmt_at(*n) {
+                    Either::Left(stmt) => format!("{:?}", stmt.kind),
+                    Either::Right(term) => format!("{:?}", term.kind),
+                }
             }.into()
         )
     }
