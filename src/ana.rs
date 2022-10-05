@@ -244,6 +244,14 @@ impl<'tcx> Visitor<'tcx> {
             .unzip();
         let mut flows = Ctrl::with_input_types(types);
         let flow = infoflow::compute_flow(tcx, b, body_with_facts);
+        if self.opts.dump_non_transitive_graph {
+            let non_t_g = make_non_transitive_graph(&flow, body, |l| is_real_location(body, l) && body.stmt_at(l).is_right());
+            crate::dbg::non_transitive_graph_as_dot(
+                &mut std::fs::OpenOptions::new().truncate(true).create(true).write(true).open(format!("{}.ntg.gv", id.name.as_str())).unwrap(),
+                body,
+                &non_t_g,
+            ).unwrap();
+        }
         for (bb, t, p, args) in body
             .basic_blocks()
             .iter_enumerated()
@@ -261,14 +269,6 @@ impl<'tcx> Visitor<'tcx> {
             }
 
             let anns = interesting_fn_defs.get(&p).map(|a| a.0.as_slice());
-            if anns.iter().flat_map(|a| a.iter()).filter_map(Annotation::as_label_ann).any(|a| a.label == Symbol::intern("graph_dump")) {
-                let non_t_g = make_non_transitive_graph(&flow, loc, body, |l| is_real_location(body, l) && body.stmt_at(l).is_right());
-                crate::dbg::non_transitive_graph_as_dot(
-                    &mut std::fs::OpenOptions::new().truncate(true).create(true).write(true).open("non-trans-graph.gv").unwrap(),
-                    body,
-                    &non_t_g,
-                ).unwrap();
-            }
             let stmt_anns = self.statement_anns_by_loc(p, t);
             let bound_sig = tcx.fn_sig(p);
             let is_safe = is_safe_function(&bound_sig);
@@ -388,7 +388,7 @@ use flowistry::indexed::{IndexMatrix, IndexSet};
 
 pub type NonTransitiveGraph<'tcx> = HashMap<mir::Location, IndexMatrix<mir::Place<'tcx>, mir::Location>>;
 
-fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>, start_from: mir::Location, body: &mir::Body<'tcx>, mut dependency_selector: P) -> NonTransitiveGraph<'tcx> {
+fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>, body: &mir::Body<'tcx>, mut dependency_selector: P) -> NonTransitiveGraph<'tcx> {
     let loc_dom = flow_results.analysis.location_domain();
     let loc_deps = loc_dom.as_vec().iter().filter(|l| is_real_location(body, **l)).map(|l| {
         let places = extract_places(*l, body);
@@ -396,9 +396,7 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_res
         let deps = places.iter().map(|p| my_flow.row_set(*p)).fold(IndexSet::new(&flow_results.analysis.location_domain()), |mut agg, s| { agg.union(&s); agg });
         (l, (places, deps))
     }).collect::<HashMap<_,_>>();
-    let mut queue = vec![start_from];
 
-    let mut graph = HashMap::new();
     let mut dependency_mask = IndexSet::new(loc_dom);
     for i in loc_dom.as_vec().iter() {
         if !dependency_selector(*i) {
@@ -406,30 +404,29 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_res
         }
     }
 
-    while let Some(n) = queue.pop() {
+    let mut interesting_locations = IndexSet::new(loc_dom);
+    interesting_locations.insert_all();
+    interesting_locations.subtract(&dependency_mask);
+
+    interesting_locations.iter().map(|n| {
         let mut matrix = IndexMatrix::new(loc_dom);
-        if graph.contains_key(&n) {
-            continue;
-        } 
-        let f = flow_results.state_at(n);
+        let f = flow_results.state_at(*n);
         let mut mask_and_self = dependency_mask.clone();
-        mask_and_self.insert(n);
-        let (places, _) = &loc_deps[&n];
+        mask_and_self.insert(*n);
+        let (places, _) = &loc_deps[n];
         for p in places {
             let mut deps = f.row_set(*p).to_owned();
             deps.subtract(&mask_and_self);
             deps.iter().for_each(|l| {
                 if let Some((_, ldeps)) = loc_deps.get(l) {
                     if !deps.iter().any(|l2| l2 != l && loc_deps.get(l2).map_or(false, |d| d.1.is_superset(&ldeps))) {
-                        queue.push(*l);
                         matrix.insert(*p, l);
                     }
                 }
             })
         }
-        graph.insert(n, matrix);
-    }
-    graph
+        (*n, matrix)
+    }).collect()
 }
 
 fn is_safe_function<'tcx>(bound_sig: &ty::Binder<'tcx, ty::FnSig<'tcx>>) -> bool {

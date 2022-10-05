@@ -73,6 +73,8 @@ pub struct Args {
     result_path: std::path::PathBuf,
     #[clap(long)]
     dump_flowistry_matrix: bool,
+    #[clap(long)]
+    dump_non_transitive_graph: bool,
 }
 
 struct Callbacks {
