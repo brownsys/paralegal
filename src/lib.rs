@@ -40,9 +40,9 @@ pub use either::Either;
 
 pub use rustc_span::Symbol;
 
-mod dbg;
 mod ana;
 pub mod ann_parse;
+mod dbg;
 pub mod desc;
 mod frg;
 mod sah;

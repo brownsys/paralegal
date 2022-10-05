@@ -245,12 +245,20 @@ impl<'tcx> Visitor<'tcx> {
         let mut flows = Ctrl::with_input_types(types);
         let flow = infoflow::compute_flow(tcx, b, body_with_facts);
         if self.opts.dump_non_transitive_graph {
-            let non_t_g = make_non_transitive_graph(&flow, body, |l| !is_real_location(body, l) || body.stmt_at(l).is_right());
+            let non_t_g = make_non_transitive_graph(&flow, body, |l| {
+                !is_real_location(body, l) || body.stmt_at(l).is_right()
+            });
             crate::dbg::non_transitive_graph_as_dot(
-                &mut std::fs::OpenOptions::new().truncate(true).create(true).write(true).open(format!("{}.ntg.gv", id.name.as_str())).unwrap(),
+                &mut std::fs::OpenOptions::new()
+                    .truncate(true)
+                    .create(true)
+                    .write(true)
+                    .open(format!("{}.ntg.gv", id.name.as_str()))
+                    .unwrap(),
                 body,
                 &non_t_g,
-            ).unwrap();
+            )
+            .unwrap();
         }
         for (bb, t, p, args) in body
             .basic_blocks()
@@ -379,26 +387,52 @@ impl<'tcx> Visitor<'tcx> {
 
 fn extract_places<'tcx>(l: mir::Location, body: &mir::Body<'tcx>) -> HashSet<mir::Place<'tcx>> {
     let mut places = HashSet::new();
-    let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| { places.insert(*p); });
-    body.basic_blocks()[l.block].visitable(l.statement_index).apply(l, &mut vis);
+    let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| {
+        places.insert(*p);
+    });
+    body.basic_blocks()[l.block]
+        .visitable(l.statement_index)
+        .apply(l, &mut vis);
     places
 }
 
 use flowistry::indexed::{IndexMatrix, IndexSet};
 
-pub type NonTransitiveGraph<'tcx> = HashMap<mir::Location, IndexMatrix<mir::Place<'tcx>, mir::Location>>;
+pub type NonTransitiveGraph<'tcx> =
+    HashMap<mir::Location, IndexMatrix<mir::Place<'tcx>, mir::Location>>;
 
-fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>, body: &mir::Body<'tcx>, mut dependency_selector: P) -> NonTransitiveGraph<'tcx> {
+fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(
+    flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>,
+    body: &mir::Body<'tcx>,
+    mut dependency_selector: P,
+) -> NonTransitiveGraph<'tcx> {
     let loc_dom = flow_results.analysis.location_domain();
-    let loc_deps = loc_dom.as_vec().iter().map(|l| {
-        if !is_real_location(body, *l) {
-            return (l, (HashSet::new(), { let mut deps = IndexSet::new(&loc_dom); deps.insert(l); deps }))
-        }
-        let places = extract_places(*l, body);
-        let my_flow = flow_results.state_at(*l);
-        let deps = places.iter().map(|p| my_flow.row_set(*p)).fold(IndexSet::new(&loc_dom), |mut agg, s| { agg.union(&s); agg });
-        (l, (places, deps))
-    }).collect::<HashMap<_,_>>();
+    let loc_deps = loc_dom
+        .as_vec()
+        .iter()
+        .map(|l| {
+            if !is_real_location(body, *l) {
+                return (
+                    l,
+                    (HashSet::new(), {
+                        let mut deps = IndexSet::new(&loc_dom);
+                        deps.insert(l);
+                        deps
+                    }),
+                );
+            }
+            let places = extract_places(*l, body);
+            let my_flow = flow_results.state_at(*l);
+            let deps = places.iter().map(|p| my_flow.row_set(*p)).fold(
+                IndexSet::new(&loc_dom),
+                |mut agg, s| {
+                    agg.union(&s);
+                    agg
+                },
+            );
+            (l, (places, deps))
+        })
+        .collect::<HashMap<_, _>>();
 
     let mut dependency_mask = IndexSet::new(loc_dom);
     for i in loc_dom.as_vec().iter() {
@@ -411,27 +445,36 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(flow_res
     interesting_locations.insert_all();
     interesting_locations.subtract(&dependency_mask);
 
-    interesting_locations.iter().map(|n| {
-        let mut matrix = IndexMatrix::new(loc_dom);
-        if !is_real_location(body, *n) {
-            return (*n, matrix);
-        }
-        let f = flow_results.state_at(*n);
-        let mut mask_and_self = dependency_mask.clone();
-        mask_and_self.insert(*n);
-        let (places, _) = &loc_deps[n];
-        for p in places {
-            let mut deps = f.row_set(*p).to_owned();
-            deps.subtract(&mask_and_self);
-            deps.iter().for_each(|l| {
-                let ldeps = &loc_deps.get(l).unwrap_or_else(|| panic!("No dependencies for {l:?} known")).1;
-                if !deps.iter().any(|l2| l2 != l && loc_deps[l2].1.is_superset(&ldeps)) {
-                    matrix.insert(*p, l);
-                }
-            })
-        }
-        (*n, matrix)
-    }).collect()
+    interesting_locations
+        .iter()
+        .map(|n| {
+            let mut matrix = IndexMatrix::new(loc_dom);
+            if !is_real_location(body, *n) {
+                return (*n, matrix);
+            }
+            let f = flow_results.state_at(*n);
+            let mut mask_and_self = dependency_mask.clone();
+            mask_and_self.insert(*n);
+            let (places, _) = &loc_deps[n];
+            for p in places {
+                let mut deps = f.row_set(*p).to_owned();
+                deps.subtract(&mask_and_self);
+                deps.iter().for_each(|l| {
+                    let ldeps = &loc_deps
+                        .get(l)
+                        .unwrap_or_else(|| panic!("No dependencies for {l:?} known"))
+                        .1;
+                    if !deps
+                        .iter()
+                        .any(|l2| l2 != l && loc_deps[l2].1.is_superset(&ldeps))
+                    {
+                        matrix.insert(*p, l);
+                    }
+                })
+            }
+            (*n, matrix)
+        })
+        .collect()
 }
 
 fn is_safe_function<'tcx>(bound_sig: &ty::Binder<'tcx, ty::FnSig<'tcx>>) -> bool {
