@@ -88,7 +88,7 @@ fn fn_defid_and_args<'tcx>(
                 });
             match fn_id {
                 Err(e) => {
-                    error!("Could not extract root function from {func:?}. Reason: {e}");
+                    warn!("Could not extract root function from {func:?}. Reason: {e}");
                     None
                 }
                 Ok(defid) => Some((
