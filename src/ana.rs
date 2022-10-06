@@ -1,6 +1,9 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::format};
 
-use crate::{desc::*, rust::*, sah::HashVerifications, HashMap, HashSet, Either};
+use crate::{
+    desc::*, im_dirty_dont_look_at_me::SerializableNonTransitiveGraph, rust::*,
+    sah::HashVerifications, Either, HashMap, HashSet,
+};
 
 use hir::{
     def_id::DefId,
@@ -260,6 +263,33 @@ impl<'tcx> Visitor<'tcx> {
             )
             .unwrap();
         }
+        if self.opts.dump_serialized_non_transitive_graph {
+            let non_t_g = make_non_transitive_graph(&flow, body, |l| {
+                !is_real_location(body, l) || body.stmt_at(l).is_right()
+            });
+            serde_json::to_writer(
+                &mut std::fs::OpenOptions::new()
+                    .truncate(true)
+                    .create(true)
+                    .write(true)
+                    .open(format!("{}.ntg.json", id.name.as_str()))
+                    .unwrap(),
+                &SerializableNonTransitiveGraph(
+                    non_t_g
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let mut stringified_matrix = IndexMatrix::new(&v.col_domain);
+                            for (i, m) in v.rows() {
+                                stringified_matrix
+                                    .union_into_row(Symbol::intern(&format!("{:?}", i)), &m);
+                            }
+                            (k, stringified_matrix)
+                        })
+                        .collect(),
+                ),
+            )
+            .unwrap()
+        }
         for (bb, t, p, args) in body
             .basic_blocks()
             .iter_enumerated()
@@ -385,20 +415,26 @@ impl<'tcx> Visitor<'tcx> {
     }
 }
 
-fn extract_places<'tcx>(l: mir::Location, body: &mir::Body<'tcx>, exclude_return_places_from_call: bool) -> HashSet<mir::Place<'tcx>> {
+fn extract_places<'tcx>(
+    l: mir::Location,
+    body: &mir::Body<'tcx>,
+    exclude_return_places_from_call: bool,
+) -> HashSet<mir::Place<'tcx>> {
     use mir::visit::Visitor;
     let mut places = HashSet::new();
     let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| {
         places.insert(*p);
     });
     match body.stmt_at(l) {
-        Either::Right(mir::Terminator { kind: mir::TerminatorKind::Call {func, args, ..} , ..}) if exclude_return_places_from_call => {
-            std::iter::once(func).chain(args.iter()).for_each(|o| vis.visit_operand(o, l))
-        }
-        _ => 
-            body.basic_blocks()[l.block]
-                .visitable(l.statement_index)
-                .apply(l, &mut vis)
+        Either::Right(mir::Terminator {
+            kind: mir::TerminatorKind::Call { func, args, .. },
+            ..
+        }) if exclude_return_places_from_call => std::iter::once(func)
+            .chain(args.iter())
+            .for_each(|o| vis.visit_operand(o, l)),
+        _ => body.basic_blocks()[l.block]
+            .visitable(l.statement_index)
+            .apply(l, &mut vis),
     };
     places
 }
@@ -473,7 +509,19 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(
                         .1;
                     if !deps
                         .iter()
-                        .any(|l2| l2 != l && loc_deps[l2].1.is_superset(&ldeps))
+                        .any(|l2| {
+                            let l2_deps = &loc_deps[l2].1;
+                            l2 != l && 
+                                if l2_deps == ldeps {
+                                    warn!("Two locations have the same dependencies: \n\t{l:?}\t{:?}\n\t{l2:?}\t{:?}", body.stmt_at(*l), body.stmt_at(*l2));
+                                    false
+                                } else {
+                                    l2_deps.is_superset(&ldeps)
+                                }
+                           
+                            
+                             
+                })
                     {
                         matrix.insert(*p, l);
                     }

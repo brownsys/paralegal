@@ -139,6 +139,7 @@ dependencies = [
  "pretty",
  "rustc_plugin",
  "serde",
+ "serde_json",
  "simple_logger",
  "trait_enum",
 ]

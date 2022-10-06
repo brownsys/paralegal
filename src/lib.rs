@@ -45,7 +45,10 @@ pub mod ann_parse;
 mod dbg;
 pub mod desc;
 mod frg;
+mod im_dirty_dont_look_at_me;
 mod sah;
+
+pub use im_dirty_dont_look_at_me::{SerializableGraphImpl, SerializableNonTransitiveGraph};
 
 use ana::AttrMatchT;
 
@@ -75,6 +78,8 @@ pub struct Args {
     dump_flowistry_matrix: bool,
     #[clap(long)]
     dump_non_transitive_graph: bool,
+    #[clap(long)]
+    dump_serialized_non_transitive_graph: bool,
 }
 
 struct Callbacks {
