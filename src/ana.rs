@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{desc::*, rust::*, sah::HashVerifications, HashMap, HashSet};
+use crate::{desc::*, rust::*, sah::HashVerifications, HashMap, HashSet, Either};
 
 use hir::{
     def_id::DefId,
@@ -385,14 +385,21 @@ impl<'tcx> Visitor<'tcx> {
     }
 }
 
-fn extract_places<'tcx>(l: mir::Location, body: &mir::Body<'tcx>) -> HashSet<mir::Place<'tcx>> {
+fn extract_places<'tcx>(l: mir::Location, body: &mir::Body<'tcx>, exclude_return_places_from_call: bool) -> HashSet<mir::Place<'tcx>> {
+    use mir::visit::Visitor;
     let mut places = HashSet::new();
     let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| {
         places.insert(*p);
     });
-    body.basic_blocks()[l.block]
-        .visitable(l.statement_index)
-        .apply(l, &mut vis);
+    match body.stmt_at(l) {
+        Either::Right(mir::Terminator { kind: mir::TerminatorKind::Call {func, args, ..} , ..}) if exclude_return_places_from_call => {
+            std::iter::once(func).chain(args.iter()).for_each(|o| vis.visit_operand(o, l))
+        }
+        _ => 
+            body.basic_blocks()[l.block]
+                .visitable(l.statement_index)
+                .apply(l, &mut vis)
+    };
     places
 }
 
@@ -421,7 +428,7 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(
                     }),
                 );
             }
-            let places = extract_places(*l, body);
+            let places = extract_places(*l, body, true);
             let my_flow = flow_results.state_at(*l);
             let deps = places.iter().map(|p| my_flow.row_set(*p)).fold(
                 IndexSet::new(&loc_dom),
