@@ -41,14 +41,12 @@ pub use either::Either;
 pub use rustc_span::Symbol;
 
 mod ana;
+pub mod foreign_serializers;
 pub mod ann_parse;
-mod dbg;
+pub mod dbg;
 pub mod desc;
 mod frg;
-mod im_dirty_dont_look_at_me;
 mod sah;
-
-pub use im_dirty_dont_look_at_me::{SerializableGraphImpl, SerializableNonTransitiveGraph};
 
 use ana::AttrMatchT;
 

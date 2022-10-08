@@ -153,7 +153,6 @@ checksum = "a74b6c4d4a1cff5f454164363c16b72fa12463ca6b31f4b5f2035a65fa3d5906"
 [[package]]
 name = "flowistry"
 version = "0.5.24"
-source = "git+https://github.com/willcrichton/flowistry?rev=1f469a4cce9f2e240ad14b5145669a8011d4e6b2#1f469a4cce9f2e240ad14b5145669a8011d4e6b2"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -337,7 +336,6 @@ dependencies = [
 [[package]]
 name = "rustc_plugin"
 version = "0.5.24"
-source = "git+https://github.com/willcrichton/flowistry?rev=1f469a4cce9f2e240ad14b5145669a8011d4e6b2#1f469a4cce9f2e240ad14b5145669a8011d4e6b2"
 dependencies = [
  "cargo_metadata",
  "log",

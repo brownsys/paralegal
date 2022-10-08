@@ -35,7 +35,12 @@ pub fn print_flowistry_matrix<W: std::io::Write>(
     Ok(())
 }
 
-use crate::rust::mir;
+use flowistry::indexed::IndexMatrix;
+
+use crate::{
+    rust::{mir, rustc_span::symbol::Ident},
+    Either, Symbol, foreign_serializers::SerializableNonTransitiveGraph,
+};
 extern crate dot;
 use crate::ana::NonTransitiveGraph;
 
@@ -108,4 +113,33 @@ pub fn non_transitive_graph_as_dot<'tcx, W: std::io::Write>(
     g: &NonTransitiveGraph<'tcx>,
 ) -> std::io::Result<()> {
     dot::render(&DotGraph { body, g }, out)
+}
+
+use crate::foreign_serializers::{BodyProxy, NonTransitiveGraphProxy};
+
+pub fn dump_non_transitive_graph_and_body<'tcx>(
+    id: Ident,
+    body: &mir::Body<'tcx>,
+    g: &NonTransitiveGraph<'tcx>,
+) {
+    serde_json::to_writer(
+        &mut std::fs::OpenOptions::new()
+            .truncate(true)
+            .create(true)
+            .write(true)
+            .open(format!("{}.ntgb.json", id.name.as_str()))
+            .unwrap(),
+        &(BodyProxy::from(body), NonTransitiveGraphProxy::from(g))
+    )
+    .unwrap()
+}
+
+pub fn read_non_transitive_graph_and_body(
+    id: Symbol,
+) -> (Vec<(mir::Location, String)>, SerializableNonTransitiveGraph) {
+    let deser: (BodyProxy, NonTransitiveGraphProxy) = serde_json::from_reader(
+        &mut std::fs::File::open(format!("{}.ntgb.json", id.as_str())).unwrap(),
+    )
+    .unwrap();
+    (deser.0.0, deser.1.into())
 }

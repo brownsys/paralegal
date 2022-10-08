@@ -8,8 +8,10 @@ publish = false
 rustc_private = true
 
 [dependencies]
-flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "1f469a4cce9f2e240ad14b5145669a8011d4e6b2" }
-rustc_plugin = { git = "https://github.com/willcrichton/flowistry", rev = "1f469a4cce9f2e240ad14b5145669a8011d4e6b2" }
+#flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "1f469a4cce9f2e240ad14b5145669a8011d4e6b2" }
+#rustc_plugin = { git = "https://github.com/willcrichton/flowistry", rev = "1f469a4cce9f2e240ad14b5145669a8011d4e6b2" }
+flowistry = { path = "../flowistry/crates/flowistry" }
+rustc_plugin = { path = "../flowistry/crates/rustc_plugin" }
 clap = { version = "3", features = ["derive", "cargo"] }
 serde = { version = "1", features = ["derive"] }
 lazy_static = "1"

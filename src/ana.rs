@@ -1,8 +1,8 @@
-use std::{borrow::Cow, fmt::format};
+use std::borrow::Cow;
 
 use crate::{
-    desc::*, im_dirty_dont_look_at_me::SerializableNonTransitiveGraph, rust::*,
-    sah::HashVerifications, Either, HashMap, HashSet,
+    dbg::dump_non_transitive_graph_and_body, desc::*, rust::*, sah::HashVerifications, Either,
+    HashMap, HashSet,
 };
 
 use hir::{
@@ -267,28 +267,7 @@ impl<'tcx> Visitor<'tcx> {
             let non_t_g = make_non_transitive_graph(&flow, body, |l| {
                 !is_real_location(body, l) || body.stmt_at(l).is_right()
             });
-            serde_json::to_writer(
-                &mut std::fs::OpenOptions::new()
-                    .truncate(true)
-                    .create(true)
-                    .write(true)
-                    .open(format!("{}.ntg.json", id.name.as_str()))
-                    .unwrap(),
-                &SerializableNonTransitiveGraph(
-                    non_t_g
-                        .into_iter()
-                        .map(|(k, v)| {
-                            let mut stringified_matrix = IndexMatrix::new(&v.col_domain);
-                            for (i, m) in v.rows() {
-                                stringified_matrix
-                                    .union_into_row(Symbol::intern(&format!("{:?}", i)), &m);
-                            }
-                            (k, stringified_matrix)
-                        })
-                        .collect(),
-                ),
-            )
-            .unwrap()
+            dump_non_transitive_graph_and_body(id, body, &non_t_g);
         }
         for (bb, t, p, args) in body
             .basic_blocks()
