@@ -41,10 +41,10 @@ pub use either::Either;
 pub use rustc_span::Symbol;
 
 mod ana;
-pub mod foreign_serializers;
 pub mod ann_parse;
 pub mod dbg;
 pub mod desc;
+pub mod foreign_serializers;
 mod frg;
 mod sah;
 

@@ -1,10 +1,13 @@
-
 use std::{borrow::Cow, rc::Rc};
 
-use flowistry::indexed::{IndexMatrix, DefaultDomain, impls::LocationDomain, IndexSet, RefSet};
+use flowistry::indexed::{impls::LocationDomain, DefaultDomain, IndexMatrix, IndexSet, RefSet};
 use serde::Deserialize;
 
-use crate::{mir, serde::{Serialize, Serializer}, HashMap, Symbol, HashSet, Either};
+use crate::{
+    mir,
+    serde::{Serialize, Serializer},
+    Either, HashMap, HashSet, Symbol,
+};
 
 fn bbref_to_usize(r: &mir::BasicBlock) -> usize {
     r.as_usize()
@@ -41,7 +44,10 @@ impl From<mir::Location> for LocationProxy {
 
 impl Into<mir::Location> for LocationProxy {
     fn into(self) -> mir::Location {
-        let Self { block, statement_index } = self;
+        let Self {
+            block,
+            statement_index,
+        } = self;
         mir::Location {
             block,
             statement_index,
@@ -53,17 +59,25 @@ pub struct BodyProxy(pub Vec<(mir::Location, String)>);
 
 impl Serialize for BodyProxy {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer {
-        self.0.iter().map(|(l, s)| ((*l).into(), s)).collect::<Vec<(LocationProxy, _)>>().serialize(serializer)
+    where
+        S: Serializer,
+    {
+        self.0
+            .iter()
+            .map(|(l, s)| ((*l).into(), s))
+            .collect::<Vec<(LocationProxy, _)>>()
+            .serialize(serializer)
     }
 }
 
-impl <'de> Deserialize<'de> for BodyProxy {
+impl<'de> Deserialize<'de> for BodyProxy {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de> {
-        <Vec<(LocationProxy, String)> as Deserialize<'de>>::deserialize(deserializer).map(|v| v.into_iter().map(|(l, s)| (l.into(), s)).collect()).map(BodyProxy)
+    where
+        D: serde::Deserializer<'de>,
+    {
+        <Vec<(LocationProxy, String)> as Deserialize<'de>>::deserialize(deserializer)
+            .map(|v| v.into_iter().map(|(l, s)| (l.into(), s)).collect())
+            .map(BodyProxy)
     }
 }
 fn iter_stmts<'a, 'tcx>(
@@ -100,7 +114,7 @@ fn iter_stmts<'a, 'tcx>(
         })
 }
 
-impl <'tcx> From<&mir::Body<'tcx>> for BodyProxy {
+impl<'tcx> From<&mir::Body<'tcx>> for BodyProxy {
     fn from(body: &mir::Body<'tcx>) -> Self {
         Self(
             iter_stmts(body)
@@ -110,7 +124,7 @@ impl <'tcx> From<&mir::Body<'tcx>> for BodyProxy {
                         stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
                     )
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
         )
     }
 }
@@ -147,8 +161,6 @@ impl Into<Symbol> for SymbolProxy {
     }
 }
 
-
-
 #[derive(Serialize, Deserialize)]
 struct LocationDomainProxy {
     domain: Vec<LocationProxy>,
@@ -158,27 +170,43 @@ struct LocationDomainProxy {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct NonTransitiveGraphProxy{
+pub struct NonTransitiveGraphProxy {
     domain: LocationDomainProxy,
-    matrices: Vec<(LocationProxy, Vec<(SymbolProxy, HashSet<LocationProxy>)>)>
+    matrices: Vec<(LocationProxy, Vec<(SymbolProxy, HashSet<LocationProxy>)>)>,
 }
 
-impl <'tcx> From<&crate::ana::NonTransitiveGraph<'tcx>> for NonTransitiveGraphProxy {
+impl<'tcx> From<&crate::ana::NonTransitiveGraph<'tcx>> for NonTransitiveGraphProxy {
     fn from(g: &crate::ana::NonTransitiveGraph<'tcx>) -> Self {
         use flowistry::indexed::IndexedDomain;
         let a_domain = &g.values().next().expect("Empty graphs").col_domain;
-        let domain = LocationDomainProxy { domain: a_domain.as_vec().raw.iter().map(|l| LocationProxy::from(*l)).collect(), arg_block: a_domain.arg_block(), real_locations: a_domain.num_real_locations() };
+        let domain = LocationDomainProxy {
+            domain: a_domain
+                .as_vec()
+                .raw
+                .iter()
+                .map(|l| LocationProxy::from(*l))
+                .collect(),
+            arg_block: a_domain.arg_block(),
+            real_locations: a_domain.num_real_locations(),
+        };
         Self {
             domain,
-            matrices: 
-        g.iter()
-            .map(|(k, v)| {
-                ((*k).into(), 
-                v.rows().map(|(i, m)|
-                    (Symbol::intern(&format!("{:?}", i)).into(), m.iter().map(|l| (*l).into()).collect())).collect()
-                )
-            })
-            .collect()
+            matrices: g
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        (*k).into(),
+                        v.rows()
+                            .map(|(i, m)| {
+                                (
+                                    Symbol::intern(&format!("{:?}", i)).into(),
+                                    m.iter().map(|l| (*l).into()).collect(),
+                                )
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
         }
     }
 }
@@ -188,20 +216,31 @@ pub type SerializableNonTransitiveGraph =
 
 impl Into<SerializableNonTransitiveGraph> for NonTransitiveGraphProxy {
     fn into(self) -> SerializableNonTransitiveGraph {
-        let Self {domain, matrices} = self;
-        let LocationDomainProxy { domain, arg_block, real_locations } = domain;
-        let dom = Rc::new(LocationDomain::from_raw(DefaultDomain::new(
-            domain.into_iter().map(|l| l.into()).collect()
-        ), arg_block, real_locations));
-        matrices.into_iter()
-            .map(|(l, v)| (l.into(), { let mut m = IndexMatrix::new(&dom); 
-                for (s, idxes) in v.into_iter() {
-                    let sym = s.into();
-                    for idx in idxes.into_iter() {
-                        m.insert(sym, <LocationProxy as Into<mir::Location>>::into(idx));
+        let Self { domain, matrices } = self;
+        let LocationDomainProxy {
+            domain,
+            arg_block,
+            real_locations,
+        } = domain;
+        let dom = Rc::new(LocationDomain::from_raw(
+            DefaultDomain::new(domain.into_iter().map(|l| l.into()).collect()),
+            arg_block,
+            real_locations,
+        ));
+        matrices
+            .into_iter()
+            .map(|(l, v)| {
+                (l.into(), {
+                    let mut m = IndexMatrix::new(&dom);
+                    for (s, idxes) in v.into_iter() {
+                        let sym = s.into();
+                        for idx in idxes.into_iter() {
+                            m.insert(sym, <LocationProxy as Into<mir::Location>>::into(idx));
+                        }
                     }
-                }
-                m
-            })).collect()
+                    m
+                })
+            })
+            .collect()
     }
 }
