@@ -96,8 +96,8 @@ impl<'tcx, 'b, 'a> dot::Labeller<'a, N, E<'tcx>> for DotGraph<'b, 'tcx> {
                 )
             } else {
                 match self.body.stmt_at(*n) {
-                    Either::Left(stmt) => format!("{:?}", stmt.kind),
-                    Either::Right(term) => format!("{:?}", term.kind),
+                    Either::Left(stmt) => format!("[{:?}] {:?}", n.block, stmt.kind),
+                    Either::Right(term) => format!("[{:?}] {:?}", n.block, term.kind),
                 }
             }
             .into(),

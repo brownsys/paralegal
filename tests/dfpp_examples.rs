@@ -15,18 +15,25 @@ lazy_static! {
         .into();
 }
 
-fn with_current_directory<P: AsRef<std::path::Path>, A, F: FnOnce() -> A>(
+fn with_current_directory<
+    P: AsRef<std::path::Path>,
+    A,
+    F: std::panic::UnwindSafe + FnOnce() -> A,
+>(
     p: P,
     f: F,
 ) -> std::io::Result<A> {
     let current = std::env::current_dir()?;
     std::env::set_current_dir(p)?;
-    let res = f();
+    let res = std::panic::catch_unwind(f);
     std::env::set_current_dir(current)?;
-    Ok(res)
+    match res {
+        Ok(r) => Ok(r),
+        Err(e) => std::panic::resume_unwind(e),
+    }
 }
 
-fn cwd_and_use_rustc_in<P: AsRef<std::path::Path>, A, F: FnOnce() -> A>(
+fn cwd_and_use_rustc_in<P: AsRef<std::path::Path>, A, F: std::panic::UnwindSafe + FnOnce() -> A>(
     p: P,
     f: F,
 ) -> std::io::Result<A> {

@@ -17,8 +17,10 @@ use rustc_middle::{
 };
 use rustc_span::{symbol::Ident, Span, Symbol};
 
+use crate::rust::rustc_index::bit_set::BitSet;
+
 use flowistry::{
-    indexed::{impls::LocationDomain, IndexedDomain},
+    indexed::{impls::LocationDomain, IndexedDomain, IndexedValue},
     infoflow,
     mir::borrowck_facts,
 };
@@ -146,6 +148,13 @@ pub struct Visitor<'tcx> {
 
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
+fn terminator_is_call(t: &mir::Terminator) -> bool {
+    match t.kind {
+        mir::TerminatorKind::Call { .. } => true,
+        _ => false,
+    }
+}
+
 impl<'tcx> Visitor<'tcx> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         Self {
@@ -249,7 +258,9 @@ impl<'tcx> Visitor<'tcx> {
         let flow = infoflow::compute_flow(tcx, b, body_with_facts);
         if self.opts.dump_non_transitive_graph {
             let non_t_g = make_non_transitive_graph(&flow, body, |l| {
-                !is_real_location(body, l) || body.stmt_at(l).is_right()
+                !is_real_location(body, l) ||
+                //body.stmt_at(l).right().map_or(false, terminator_is_call)
+                body.stmt_at(l).is_right()
             });
             crate::dbg::non_transitive_graph_as_dot(
                 &mut std::fs::OpenOptions::new()
@@ -265,7 +276,9 @@ impl<'tcx> Visitor<'tcx> {
         }
         if self.opts.dump_serialized_non_transitive_graph {
             let non_t_g = make_non_transitive_graph(&flow, body, |l| {
-                !is_real_location(body, l) || body.stmt_at(l).is_right()
+                !is_real_location(body, l) || 
+                //body.stmt_at(l).right().map_or(false, terminator_is_call)
+                body.stmt_at(l).is_right()
             });
             dump_non_transitive_graph_and_body(id, body, &non_t_g);
         }
@@ -423,6 +436,17 @@ use flowistry::indexed::{IndexMatrix, IndexSet};
 pub type NonTransitiveGraph<'tcx> =
     HashMap<mir::Location, IndexMatrix<mir::Place<'tcx>, mir::Location>>;
 
+fn a_depends_on_b<R: IndexedValue, C: flowistry::indexed::ToSet<R>>(
+    a: &IndexSet<R, C>,
+    b: &IndexSet<R, C>,
+) -> bool {
+    if a == b {
+        false
+    } else {
+        a.is_superset(&b)
+    }
+}
+
 fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(
     flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>,
     body: &mir::Body<'tcx>,
@@ -481,6 +505,11 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(
             for p in places {
                 let mut deps = f.row_set(*p).to_owned();
                 deps.subtract(&mask_and_self);
+                let mut bbdeps = HashMap::new();
+                for d in deps.iter() {
+                    bbdeps.entry(d.block).or_insert_with(Vec::new).push(d)
+                }
+                assert!(!bbdeps.contains_key(&n.block));
                 deps.iter().for_each(|l| {
                     let ldeps = &loc_deps
                         .get(l)
@@ -490,17 +519,48 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(
                         .iter()
                         .any(|l2| {
                             let l2_deps = &loc_deps[l2].1;
-                            l2 != l && 
-                                if l2_deps == ldeps {
-                                    warn!("Two locations have the same dependencies: \n\t{l:?}\t{:?}\n\t{l2:?}\t{:?}", body.stmt_at(*l), body.stmt_at(*l2));
-                                    false
-                                } else {
-                                    l2_deps.is_superset(&ldeps)
+                            l2 != l && a_depends_on_b(l2_deps, ldeps)
+                        })
+                        // there's a question here whether this should be done
+                        // via `successors` or `dominators`. I think that would
+                        // toggle between "can reach" and "must reach"
+                        || (is_real_location(body, *l) // we must be defensive here, yikes
+                            && {
+                                // DFS to insert missing control flow edges.
+                                let mut reaches = false;
+                                let mut queue = vec![l.block];
+                                while let Some(bb) = queue.pop() {
+                                    if bb == n.block {
+                                        reaches = true;
+                                        break;
+                                    }
+                                    queue.extend(
+                                        body.basic_blocks()[bb]
+                                            .terminator()
+                                            .successors()
+                                            .filter(|suc| 
+                                                // This unreadable condition says: if 
+                                                //   a) I do not depend on any location in the 
+                                                //      basic block `suc` or
+                                                //   b) None of the locations I depend on in `suc`, 
+                                                //      depend on `l`
+                                                // then insert an edge from `l` to me.
+                                                bbdeps.get(suc)
+                                                    .map_or(
+                                                        true, 
+                                                        |locs| 
+                                                            !locs.iter()
+                                                                .any(|sucl| 
+                                                                    a_depends_on_b(
+                                                                        &loc_deps[sucl].1,
+                                                                        ldeps
+                                                                    )
+                                                                )
+                                                        )
+                                            ));
                                 }
-                           
-                            
-                             
-                })
+                                reaches
+                            })
                     {
                         matrix.insert(*p, l);
                     }
