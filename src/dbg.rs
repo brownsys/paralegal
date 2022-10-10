@@ -38,8 +38,9 @@ pub fn print_flowistry_matrix<W: std::io::Write>(
 use flowistry::indexed::IndexMatrix;
 
 use crate::{
+    foreign_serializers::SerializableNonTransitiveGraph,
     rust::{mir, rustc_span::symbol::Ident},
-    Either, Symbol, foreign_serializers::SerializableNonTransitiveGraph,
+    Either, Symbol,
 };
 extern crate dot;
 use crate::ana::NonTransitiveGraph;
@@ -129,7 +130,7 @@ pub fn dump_non_transitive_graph_and_body<'tcx>(
             .write(true)
             .open(format!("{}.ntgb.json", id.name.as_str()))
             .unwrap(),
-        &(BodyProxy::from(body), NonTransitiveGraphProxy::from(g))
+        &(BodyProxy::from(body), NonTransitiveGraphProxy::from(g)),
     )
     .unwrap()
 }
@@ -141,5 +142,5 @@ pub fn read_non_transitive_graph_and_body(
         &mut std::fs::File::open(format!("{}.ntgb.json", id.as_str())).unwrap(),
     )
     .unwrap();
-    (deser.0.0, deser.1.into())
+    (deser.0 .0, deser.1.into())
 }
