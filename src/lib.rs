@@ -72,11 +72,11 @@ pub struct Args {
     debug: bool,
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
-    #[clap(long)]
+    #[clap(long, env)]
     dump_flowistry_matrix: bool,
-    #[clap(long)]
+    #[clap(long, env)]
     dump_non_transitive_graph: bool,
-    #[clap(long)]
+    #[clap(long, env)]
     dump_serialized_non_transitive_graph: bool,
 }
 
