@@ -1,6 +1,6 @@
 [toolchain]
-#channel = ["nightly-2022-05-23"]
-#components = ["rustc-dev"]
+channel = "nightly-2022-05-23"
+components = ["rustc-dev"]
 
 # You are probably looking at this because you got an error that the toolchain
 # that was configured does not exist,
@@ -10,4 +10,4 @@
 # as a symlink to the patched stage2 compiler.
 # 
 # For detailed instructions see https://www.notion.so/justus-adam/Patched-Toolchain-Installation-bbd2098048ef4b08a1b6f3bbf03d4c8b
-path = "rust-dfpp-patch"
+#path = "rust-dfpp-patch"
