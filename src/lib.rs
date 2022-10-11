@@ -79,6 +79,8 @@ pub struct Args {
     dump_non_transitive_graph: bool,
     #[clap(long, env)]
     dump_serialized_non_transitive_graph: bool,
+    #[clap(long, env)]
+    use_non_transitive_graph: bool,
 }
 
 struct Callbacks {

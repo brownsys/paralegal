@@ -155,6 +155,15 @@ fn terminator_is_call(t: &mir::Terminator) -> bool {
     }
 }
 
+type Flow<'a, 'tcx> = Either<&'a flowistry::infoflow::FlowResults<'a, 'tcx>, NonTransitiveGraph<'tcx>>;
+
+fn flow_get_row<'b, 'a, 'tcx>(f: &'b Flow<'a, 'tcx>, l: mir::Location) -> &'b IndexMatrix<mir::Place<'tcx>, mir::Location> {
+    match f {
+        Either::Right(hm) => hm.get(&l).unwrap_or_else(|| panic!("Could not find location {:?} in flow", l)),
+        Either::Left(fa) => fa.state_at(l),
+    }
+}
+
 impl<'tcx> Visitor<'tcx> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         Self {
@@ -255,32 +264,41 @@ impl<'tcx> Visitor<'tcx> {
             })
             .unzip();
         let mut flows = Ctrl::with_input_types(types);
-        let flow = infoflow::compute_flow(tcx, b, body_with_facts);
-        if self.opts.dump_non_transitive_graph {
-            let non_t_g = make_non_transitive_graph(&flow, body, |l| {
+        let flowistry_analysis = infoflow::compute_flow(tcx, b, body_with_facts);
+        let flow = if self.opts.use_non_transitive_graph {
+            Either::Right(make_non_transitive_graph(&flowistry_analysis, body, |l| {
                 !is_real_location(body, l) ||
-                //body.stmt_at(l).right().map_or(false, terminator_is_call)
-                body.stmt_at(l).is_right()
-            });
-            crate::dbg::non_transitive_graph_as_dot(
-                &mut std::fs::OpenOptions::new()
-                    .truncate(true)
-                    .create(true)
-                    .write(true)
-                    .open(format!("{}.ntg.gv", id.name.as_str()))
-                    .unwrap(),
-                body,
-                &non_t_g,
-            )
-            .unwrap();
-        }
-        if self.opts.dump_serialized_non_transitive_graph {
-            let non_t_g = make_non_transitive_graph(&flow, body, |l| {
-                !is_real_location(body, l) || 
-                //body.stmt_at(l).right().map_or(false, terminator_is_call)
-                body.stmt_at(l).is_right()
-            });
-            dump_non_transitive_graph_and_body(id, body, &non_t_g);
+                body.stmt_at(l).right().map_or(false, terminator_is_call)
+                //body.stmt_at(l).is_right()
+            }))
+        } else {
+            Either::Left(&flowistry_analysis)
+        };
+        if self.opts.dump_non_transitive_graph || self.opts.dump_serialized_non_transitive_graph {
+            let non_t_g = match &flow {
+                Either::Right(ntg) => Cow::Borrowed(ntg),
+                _ => Cow::Owned(make_non_transitive_graph(&flowistry_analysis, body, |l| {
+                    !is_real_location(body, l) ||
+                    body.stmt_at(l).right().map_or(false, terminator_is_call)
+                    //body.stmt_at(l).is_right()
+                }))
+            };
+            if self.opts.dump_non_transitive_graph {
+                crate::dbg::non_transitive_graph_as_dot(
+                    &mut std::fs::OpenOptions::new()
+                        .truncate(true)
+                        .create(true)
+                        .write(true)
+                        .open(format!("{}.ntg.gv", id.name.as_str()))
+                        .unwrap(),
+                    body,
+                    &non_t_g,
+                )
+                .unwrap();
+            }
+            if self.opts.dump_serialized_non_transitive_graph {
+                dump_non_transitive_graph_and_body(id, body, &*non_t_g);
+            }
         }
         for (bb, t, p, args) in body
             .basic_blocks()
@@ -291,7 +309,7 @@ impl<'tcx> Visitor<'tcx> {
             })
         {
             let loc = body.terminator_loc(bb);
-            let matrix = flow.state_at(loc);
+            let matrix = flow_get_row(&flow, loc);
 
             if self.opts.dump_flowistry_matrix {
                 info!("Flowistry matrix for {:?}", loc);
