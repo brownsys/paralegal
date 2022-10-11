@@ -547,10 +547,16 @@ fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(
                                 // DFS to insert missing control flow edges.
                                 let mut reaches = false;
                                 let mut queue = vec![l.block];
+                                let mut seen: BitSet<mir::BasicBlock> = BitSet::new_empty(body.basic_blocks().len() + 1);
                                 while let Some(bb) = queue.pop() {
                                     if bb == n.block {
                                         reaches = true;
                                         break;
+                                    }
+                                    if seen.contains(bb) {
+                                        continue;
+                                    } else {
+                                        seen.insert(bb);
                                     }
                                     queue.extend(
                                         body.basic_blocks()[bb]

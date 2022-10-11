@@ -23,7 +23,7 @@ fn conditional_happens_before(cond: bool) {
 }
 
 fn data_contains_3(d: &UserData) -> bool {
-    d.data.iter().any(|i| i == 3)
+    d.data.iter().any(|i| *i == 3)
 }
 
 #[dfpp::analyze]
@@ -44,6 +44,16 @@ fn conditional_happens_before_with_two_parents_before_if(mut d: Vec<i64>, cond: 
     }
     send_user_data(&user_data);
 
+}
+
+#[dfpp::analyze]
+fn loops(mut x: i32) {
+    let mut user_data = get_user_data();
+    while x < 10 {
+        dp_user_data(&mut user_data);
+        x -= 1;
+    }
+    send_user_data(&user_data);
 }
 
 #[dfpp::label(source)]
