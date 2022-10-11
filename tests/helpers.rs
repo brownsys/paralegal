@@ -31,6 +31,19 @@ pub fn cwd_and_use_rustc_in<P: AsRef<std::path::Path>, A, F: std::panic::UnwindS
     })
 }
 
+pub fn install_dfpp() -> bool {
+    std::process::Command::new("cargo")
+        .arg("install")
+        .arg("--locked")
+        .arg("--offline")
+        .arg("--path")
+        .arg(".")
+        .arg("--debug")
+        .status()
+        .unwrap()
+        .success()
+}
+
 pub fn run_dfpp_with_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")

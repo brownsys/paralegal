@@ -17,6 +17,7 @@ fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::i
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = do_in_crate_dir(
         || {
+            install_dfpp() &&
             run_dfpp_with_graph_dump()
         }
     ).map_or_else(|e| { println!("io err {}", e); false }, |t| t);
@@ -91,4 +92,20 @@ fn conditional_happens_before_with_two_parents_before_if() {
     assert!(graph.connects(dp, send));
     assert!(graph.connects_direct(get, send));
     assert!(!graph.connects_direct(push, send));
+}
+
+#[test]
+fn loops() {
+    assert!(*TEST_CRATE_ANALYZED);
+    let graph = do_in_crate_dir(|| {
+        G::from_file(Symbol::intern("loops"))
+    })
+    .unwrap();
+
+    let get = graph.function_call("get_user_data");
+    let dp = graph.function_call("dp_user_data");
+    let send = graph.function_call("send_user_data");
+    assert!(graph.connects(get, dp,));
+    assert!(graph.connects(dp, send));
+    assert!(graph.connects_direct(get, send));
 }
