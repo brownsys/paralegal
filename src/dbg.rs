@@ -35,7 +35,10 @@ pub fn print_flowistry_matrix<W: std::io::Write>(
     Ok(())
 }
 
-use flowistry::indexed::IndexMatrix;
+use std::borrow::Cow;
+
+use flowistry::indexed::{IndexMatrix, IndexedDomain};
+use flowistry::indexed::impls::LocationDomain;
 
 use crate::{
     foreign_serializers::SerializableNonTransitiveGraph,
@@ -45,23 +48,26 @@ use crate::{
 extern crate dot;
 use crate::ana::NonTransitiveGraph;
 
-struct DotGraph<'a, 'tcx> {
+use crate::ana::{Flow, flow_get_row};
+
+struct DotGraph<'a, 'b, 'tcx> {
     body: &'a mir::Body<'tcx>,
-    g: &'a NonTransitiveGraph<'tcx>,
+    g: &'a Flow<'b, 'tcx>,
+    dom: &'a LocationDomain,
 }
 
 type N = mir::Location;
 type E<'tcx> = (mir::Location, mir::Location, mir::Place<'tcx>);
 
-impl<'a, 'b, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'tcx> {
+impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
     fn nodes(&'a self) -> dot::Nodes<'a, N> {
-        self.g.keys().cloned().collect::<Vec<_>>().into()
+        self.dom.as_vec().raw.clone().into()
     }
     fn edges(&'a self) -> dot::Edges<'a, E<'tcx>> {
-        self.g
+        self.nodes()
             .iter()
-            .flat_map(|(from, matrix)| {
-                matrix.rows().flat_map(move |(r, s)| {
+            .flat_map(|from| {
+                flow_get_row(self.g, *from).rows().flat_map(move |(r, s)| {
                     s.iter()
                         .map(move |to| (*from, *to, r))
                         .collect::<Vec<_>>()
@@ -79,7 +85,7 @@ impl<'a, 'b, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'tcx> {
     }
 }
 
-impl<'tcx, 'b, 'a> dot::Labeller<'a, N, E<'tcx>> for DotGraph<'b, 'tcx> {
+impl<'tcx, 'b, 'a, 'c> dot::Labeller<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
     fn graph_id(&'a self) -> dot::Id<'a> {
         dot::Id::new("g").unwrap()
     }
@@ -108,20 +114,22 @@ impl<'tcx, 'b, 'a> dot::Labeller<'a, N, E<'tcx>> for DotGraph<'b, 'tcx> {
     }
 }
 
-pub fn non_transitive_graph_as_dot<'tcx, W: std::io::Write>(
+pub fn non_transitive_graph_as_dot<'a, 'tcx, W: std::io::Write>(
     out: &mut W,
     body: &mir::Body<'tcx>,
-    g: &NonTransitiveGraph<'tcx>,
+    g: &Flow<'a, 'tcx>,
+    dom: &LocationDomain,
 ) -> std::io::Result<()> {
-    dot::render(&DotGraph { body, g }, out)
+    dot::render(&DotGraph { body, g, dom }, out)
 }
 
 use crate::foreign_serializers::{BodyProxy, NonTransitiveGraphProxy};
 
-pub fn dump_non_transitive_graph_and_body<'tcx>(
+pub fn dump_non_transitive_graph_and_body<'a, 'tcx>(
     id: Ident,
     body: &mir::Body<'tcx>,
-    g: &NonTransitiveGraph<'tcx>,
+    g: &Flow<'a, 'tcx>,
+    dom: &LocationDomain,
 ) {
     serde_json::to_writer(
         &mut std::fs::OpenOptions::new()
@@ -130,7 +138,10 @@ pub fn dump_non_transitive_graph_and_body<'tcx>(
             .write(true)
             .open(format!("{}.ntgb.json", id.name.as_str()))
             .unwrap(),
-        &(BodyProxy::from(body), NonTransitiveGraphProxy::from(g)),
+        &(BodyProxy::from(body), NonTransitiveGraphProxy::from(&*match g {
+            Either::Left(g) => Cow::Owned(dom.as_vec().iter().map(|l| (*l, g.state_at(*l).clone())).collect()),
+            Either::Right(f) => Cow::Borrowed(f)
+        })),
     )
     .unwrap()
 }

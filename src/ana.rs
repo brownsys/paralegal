@@ -155,9 +155,9 @@ fn terminator_is_call(t: &mir::Terminator) -> bool {
     }
 }
 
-type Flow<'a, 'tcx> = Either<&'a flowistry::infoflow::FlowResults<'a, 'tcx>, NonTransitiveGraph<'tcx>>;
+pub type Flow<'a, 'tcx> = Either<&'a flowistry::infoflow::FlowResults<'a, 'tcx>, NonTransitiveGraph<'tcx>>;
 
-fn flow_get_row<'b, 'a, 'tcx>(f: &'b Flow<'a, 'tcx>, l: mir::Location) -> &'b IndexMatrix<mir::Place<'tcx>, mir::Location> {
+pub fn flow_get_row<'b, 'a, 'tcx>(f: &'b Flow<'a, 'tcx>, l: mir::Location) -> &'b IndexMatrix<mir::Place<'tcx>, mir::Location> {
     match f {
         Either::Right(hm) => hm.get(&l).unwrap_or_else(|| panic!("Could not find location {:?} in flow", l)),
         Either::Left(fa) => fa.state_at(l),
@@ -275,13 +275,14 @@ impl<'tcx> Visitor<'tcx> {
             Either::Left(&flowistry_analysis)
         };
         if self.opts.dump_non_transitive_graph || self.opts.dump_serialized_non_transitive_graph {
-            let non_t_g = match &flow {
-                Either::Right(ntg) => Cow::Borrowed(ntg),
-                _ => Cow::Owned(make_non_transitive_graph(&flowistry_analysis, body, |l| {
+            let non_t_g = if self.opts.use_non_transitive_graph {
+                Cow::Borrowed(&flow)
+            } else {
+                Cow::Owned(Either::Right(make_non_transitive_graph(&flowistry_analysis, body, |l| {
                     !is_real_location(body, l) ||
                     body.stmt_at(l).right().map_or(false, terminator_is_call)
                     //body.stmt_at(l).is_right()
-                }))
+                })))
             };
             if self.opts.dump_non_transitive_graph {
                 crate::dbg::non_transitive_graph_as_dot(
@@ -293,11 +294,12 @@ impl<'tcx> Visitor<'tcx> {
                         .unwrap(),
                     body,
                     &non_t_g,
+                    &loc_dom,
                 )
                 .unwrap();
             }
             if self.opts.dump_serialized_non_transitive_graph {
-                dump_non_transitive_graph_and_body(id, body, &*non_t_g);
+                dump_non_transitive_graph_and_body(id, body, &*non_t_g, &loc_dom);
             }
         }
         for (bb, t, p, args) in body
