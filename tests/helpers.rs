@@ -47,6 +47,7 @@ pub fn install_dfpp() -> bool {
 pub fn run_dfpp_with_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")
+        .arg("--use-non-transitive-graph")
         .arg("--dump-serialized-non-transitive-graph")
         .status()
         .unwrap()
@@ -69,8 +70,9 @@ impl G {
             if n == from {
                 return true;
             }
-            self.graph[&n]
-                .rows()
+            self.graph.get(&n)
+                .iter()
+                .flat_map(|r| r.rows())
                 .map(|p| p.1)
                 .for_each(|s| queue.extend(s.iter()))
         }

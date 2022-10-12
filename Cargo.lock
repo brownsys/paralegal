@@ -153,7 +153,6 @@ checksum = "a74b6c4d4a1cff5f454164363c16b72fa12463ca6b31f4b5f2035a65fa3d5906"
 [[package]]
 name = "flowistry"
 version = "0.5.24"
-source = "git+https://github.com/brownsys/flowistry?rev=053d2d222b66a718baf3960ea2a3687948e9f16c#053d2d222b66a718baf3960ea2a3687948e9f16c"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -337,7 +336,6 @@ dependencies = [
 [[package]]
 name = "rustc_plugin"
 version = "0.5.24"
-source = "git+https://github.com/brownsys/flowistry?rev=053d2d222b66a718baf3960ea2a3687948e9f16c#053d2d222b66a718baf3960ea2a3687948e9f16c"
 dependencies = [
  "cargo_metadata",
  "log",

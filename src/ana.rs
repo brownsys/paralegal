@@ -21,7 +21,7 @@ use crate::rust::rustc_index::bit_set::BitSet;
 
 use flowistry::{
     indexed::{impls::LocationDomain, IndexedDomain, IndexedValue},
-    infoflow,
+    infoflow::{self, TransitiveFlowDomain, FlowDomain},
     mir::borrowck_facts,
 };
 
@@ -155,11 +155,11 @@ fn terminator_is_call(t: &mir::Terminator) -> bool {
     }
 }
 
-pub type Flow<'a, 'tcx> = Either<&'a flowistry::infoflow::FlowResults<'a, 'tcx>, NonTransitiveGraph<'tcx>>;
+pub type Flow<'a, 'tcx> = Either<flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>, flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::NonTransitiveFlowDomain<'tcx>>>;
 
 pub fn flow_get_row<'b, 'a, 'tcx>(f: &'b Flow<'a, 'tcx>, l: mir::Location) -> &'b IndexMatrix<mir::Place<'tcx>, mir::Location> {
     match f {
-        Either::Right(hm) => hm.get(&l).unwrap_or_else(|| panic!("Could not find location {:?} in flow", l)),
+        Either::Right(hm) => hm.state_at(l).matrix(),
         Either::Left(fa) => fa.state_at(l),
     }
 }
@@ -264,26 +264,19 @@ impl<'tcx> Visitor<'tcx> {
             })
             .unzip();
         let mut flows = Ctrl::with_input_types(types);
-        let flowistry_analysis = infoflow::compute_flow(tcx, b, body_with_facts);
         let flow = if self.opts.use_non_transitive_graph {
-            Either::Right(make_non_transitive_graph(&flowistry_analysis, body, |l| {
-                !is_real_location(body, l) ||
-                body.stmt_at(l).right().map_or(false, terminator_is_call)
-                //body.stmt_at(l).is_right()
-            }))
+            Either::Right(infoflow::compute_flow_nontransitive(tcx, b, body_with_facts))
         } else {
-            Either::Left(&flowistry_analysis)
+            Either::Left(infoflow::compute_flow(tcx, b, body_with_facts))
         };
         if self.opts.dump_non_transitive_graph || self.opts.dump_serialized_non_transitive_graph {
-            let non_t_g = if self.opts.use_non_transitive_graph {
-                Cow::Borrowed(&flow)
-            } else {
-                Cow::Owned(Either::Right(make_non_transitive_graph(&flowistry_analysis, body, |l| {
-                    !is_real_location(body, l) ||
-                    body.stmt_at(l).right().map_or(false, terminator_is_call)
-                    //body.stmt_at(l).is_right()
-                })))
-            };
+            let non_t_g = flow.as_ref().map_left(|flowistry_analysis| 
+make_non_transitive_graph(&flowistry_analysis, body, |l| {
+                        !is_real_location(body, l) ||
+                        body.stmt_at(l).right().map_or(false, terminator_is_call)
+                        //body.stmt_at(l).is_right()
+                    })
+            );
             if self.opts.dump_non_transitive_graph {
                 crate::dbg::non_transitive_graph_as_dot(
                     &mut std::fs::OpenOptions::new()
@@ -299,7 +292,7 @@ impl<'tcx> Visitor<'tcx> {
                 .unwrap();
             }
             if self.opts.dump_serialized_non_transitive_graph {
-                dump_non_transitive_graph_and_body(id, body, &*non_t_g, &loc_dom);
+                dump_non_transitive_graph_and_body(id, body, &non_t_g, &loc_dom);
             }
         }
         for (bb, t, p, args) in body
@@ -468,7 +461,7 @@ fn a_depends_on_b<R: IndexedValue, C: flowistry::indexed::ToSet<R>>(
 }
 
 fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(
-    flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx>,
+    flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx, TransitiveFlowDomain<'tcx>>,
     body: &mir::Body<'tcx>,
     mut dependency_selector: P,
 ) -> NonTransitiveGraph<'tcx> {

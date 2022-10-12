@@ -15,12 +15,11 @@ fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::i
 }
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = do_in_crate_dir(
-        || {
-            install_dfpp() &&
+    static ref TEST_CRATE_ANALYZED: bool = 
+        install_dfpp() &&
+        do_in_crate_dir(|| {
             run_dfpp_with_graph_dump()
-        }
-    ).map_or_else(|e| { println!("io err {}", e); false }, |t| t);
+        }).map_or_else(|e| { println!("io err {}", e); false }, |t| t);
 }
 
 

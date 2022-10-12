@@ -39,6 +39,7 @@ use std::borrow::Cow;
 
 use flowistry::indexed::{IndexMatrix, IndexedDomain};
 use flowistry::indexed::impls::LocationDomain;
+use flowistry::infoflow::FlowDomain;
 
 use crate::{
     foreign_serializers::SerializableNonTransitiveGraph,
@@ -48,16 +49,21 @@ use crate::{
 extern crate dot;
 use crate::ana::NonTransitiveGraph;
 
-use crate::ana::{Flow, flow_get_row};
-
 struct DotGraph<'a, 'b, 'tcx> {
     body: &'a mir::Body<'tcx>,
-    g: &'a Flow<'b, 'tcx>,
+    g: &'a SomeNoneTransitiveGraph<'tcx, 'b, 'a>,
     dom: &'a LocationDomain,
 }
 
 type N = mir::Location;
 type E<'tcx> = (mir::Location, mir::Location, mir::Place<'tcx>);
+
+fn flow_get_row<'b, 'tcx, 'a>(g: &'b SomeNoneTransitiveGraph<'tcx, 'a, 'b>, from: mir::Location) -> &'b flowistry::indexed::IndexMatrix<mir::Place<'tcx>, mir::Location> {
+    match g {
+        Either::Left(l) => l.get(&from).unwrap(),
+        Either::Right(f) => f.state_at(from).matrix(),
+    }   
+}
 
 impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
     fn nodes(&'a self) -> dot::Nodes<'a, N> {
@@ -84,6 +90,9 @@ impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx>
         edge.0
     }
 }
+
+type SomeNoneTransitiveGraph<'tcx, 'a, 'b> =
+    Either<NonTransitiveGraph<'tcx>, &'b flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::NonTransitiveFlowDomain<'tcx>>>;
 
 impl<'tcx, 'b, 'a, 'c> dot::Labeller<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
     fn graph_id(&'a self) -> dot::Id<'a> {
@@ -117,7 +126,7 @@ impl<'tcx, 'b, 'a, 'c> dot::Labeller<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> 
 pub fn non_transitive_graph_as_dot<'a, 'tcx, W: std::io::Write>(
     out: &mut W,
     body: &mir::Body<'tcx>,
-    g: &Flow<'a, 'tcx>,
+    g: &SomeNoneTransitiveGraph<'tcx, 'a, '_>,
     dom: &LocationDomain,
 ) -> std::io::Result<()> {
     dot::render(&DotGraph { body, g, dom }, out)
@@ -125,10 +134,14 @@ pub fn non_transitive_graph_as_dot<'a, 'tcx, W: std::io::Write>(
 
 use crate::foreign_serializers::{BodyProxy, NonTransitiveGraphProxy};
 
+fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item=mir::Location> + 'a {
+    body.basic_blocks().iter_enumerated().flat_map(|(block, dat)| (0..=dat.statements.len()).map(move |statement_index| mir::Location {block, statement_index}))
+}
+
 pub fn dump_non_transitive_graph_and_body<'a, 'tcx>(
     id: Ident,
     body: &mir::Body<'tcx>,
-    g: &Flow<'a, 'tcx>,
+    g: &SomeNoneTransitiveGraph<'tcx, 'a, '_>,
     dom: &LocationDomain,
 ) {
     serde_json::to_writer(
@@ -139,8 +152,8 @@ pub fn dump_non_transitive_graph_and_body<'a, 'tcx>(
             .open(format!("{}.ntgb.json", id.name.as_str()))
             .unwrap(),
         &(BodyProxy::from(body), NonTransitiveGraphProxy::from(&*match g {
-            Either::Left(g) => Cow::Owned(dom.as_vec().iter().map(|l| (*l, g.state_at(*l).clone())).collect()),
-            Either::Right(f) => Cow::Borrowed(f)
+            Either::Right(g) => Cow::Owned(locations_of_body(body).map(|l| (l, g.state_at(l).matrix().clone())).collect()),
+            Either::Left(f) => Cow::Borrowed(f)
         })),
     )
     .unwrap()
