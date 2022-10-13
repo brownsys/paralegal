@@ -47,7 +47,7 @@ use crate::{
     Either, Symbol,
 };
 extern crate dot;
-use crate::ana::NonTransitiveGraph;
+use crate::ana::{NonTransitiveGraph, is_real_location};
 
 struct DotGraph<'a, 'b, 'tcx> {
     body: &'a mir::Body<'tcx>,
@@ -72,6 +72,7 @@ impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx>
     fn edges(&'a self) -> dot::Edges<'a, E<'tcx>> {
         self.nodes()
             .iter()
+            .filter(|l| is_real_location(self.body, **l))
             .flat_map(|from| {
                 flow_get_row(self.g, *from).rows().flat_map(move |(r, s)| {
                     s.iter()
