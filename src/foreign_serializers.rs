@@ -4,6 +4,7 @@ use flowistry::indexed::{impls::LocationDomain, DefaultDomain, IndexMatrix, Inde
 use serde::Deserialize;
 
 use crate::{
+    ana::extract_places,
     mir,
     serde::{Serialize, Serializer},
     Either, HashMap, HashSet, Symbol,
@@ -55,7 +56,7 @@ impl Into<mir::Location> for LocationProxy {
     }
 }
 
-pub struct BodyProxy(pub Vec<(mir::Location, String)>);
+pub struct BodyProxy(pub Vec<(mir::Location, String, HashSet<Symbol>)>);
 
 impl Serialize for BodyProxy {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -64,8 +65,14 @@ impl Serialize for BodyProxy {
     {
         self.0
             .iter()
-            .map(|(l, s)| ((*l).into(), s))
-            .collect::<Vec<(LocationProxy, _)>>()
+            .map(|(l, s, h)| {
+                (
+                    (*l).into(),
+                    s,
+                    h.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<(LocationProxy, _, _)>>()
             .serialize(serializer)
     }
 }
@@ -75,9 +82,15 @@ impl<'de> Deserialize<'de> for BodyProxy {
     where
         D: serde::Deserializer<'de>,
     {
-        <Vec<(LocationProxy, String)> as Deserialize<'de>>::deserialize(deserializer)
-            .map(|v| v.into_iter().map(|(l, s)| (l.into(), s)).collect())
-            .map(BodyProxy)
+        <Vec<(LocationProxy, String, Vec<SymbolProxy>)> as Deserialize<'de>>::deserialize(
+            deserializer,
+        )
+        .map(|v| {
+            v.into_iter()
+                .map(|(l, s, vs)| (l.into(), s, vs.into_iter().map(|s| s.into()).collect()))
+                .collect()
+        })
+        .map(BodyProxy)
     }
 }
 fn iter_stmts<'a, 'tcx>(
@@ -122,6 +135,10 @@ impl<'tcx> From<&mir::Body<'tcx>> for BodyProxy {
                     (
                         loc,
                         stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
+                        extract_places(loc, body, false)
+                            .into_iter()
+                            .map(|p| Symbol::intern(&format!("{p:?}")))
+                            .collect(),
                     )
                 })
                 .collect::<Vec<_>>(),

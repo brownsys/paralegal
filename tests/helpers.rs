@@ -1,7 +1,7 @@
-#![feature(rustc_private)] 
+#![feature(rustc_private)]
 extern crate rustc_middle;
 extern crate rustc_span;
-use dfpp::Symbol;
+use dfpp::{HashSet, Symbol};
 use rustc_middle::mir;
 
 pub fn with_current_directory<
@@ -22,7 +22,11 @@ pub fn with_current_directory<
     }
 }
 
-pub fn cwd_and_use_rustc_in<P: AsRef<std::path::Path>, A, F: std::panic::UnwindSafe + FnOnce() -> A>(
+pub fn cwd_and_use_rustc_in<
+    P: AsRef<std::path::Path>,
+    A,
+    F: std::panic::UnwindSafe + FnOnce() -> A,
+>(
     p: P,
     f: F,
 ) -> std::io::Result<A> {
@@ -54,7 +58,7 @@ pub fn run_dfpp_with_graph_dump() -> bool {
         .success()
 }
 
-pub type SimpleMirBody = Vec<(mir::Location, String)>;
+pub type SimpleMirBody = Vec<(mir::Location, String, HashSet<Symbol>)>;
 
 use dfpp::foreign_serializers::SerializableNonTransitiveGraph;
 
@@ -70,11 +74,15 @@ impl G {
             if n == from {
                 return true;
             }
-            self.graph.get(&n)
-                .iter()
-                .flat_map(|r| r.rows())
-                .map(|p| p.1)
-                .for_each(|s| queue.extend(s.iter()))
+            queue.extend(self.graph.get(&n).iter().flat_map(|r| {
+                self.body
+                    .iter()
+                    .find(|t| t.0 == n)
+                    .unwrap()
+                    .2
+                    .iter()
+                    .flat_map(|p| r.row(*p))
+            }))
         }
         false
     }
@@ -87,7 +95,7 @@ impl G {
     pub fn function_call(&self, pattern: &str) -> mir::Location {
         self.body
             .iter()
-            .find(|(_, s)| s.contains(pattern))
+            .find(|(_, s, _)| s.contains(pattern))
             .unwrap_or_else(|| panic!("Pattern {pattern} not found in {:?}", self.body))
             .0
     }

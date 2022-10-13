@@ -7,29 +7,25 @@ mod helpers;
 use helpers::*;
 
 fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::io::Result<A> {
-    let crate_dir : std::path::PathBuf = "tests/non-transitive-graph-tests".to_string().into();
-    cwd_and_use_rustc_in(
-        &crate_dir,
-        f
-    )
+    let crate_dir: std::path::PathBuf = "tests/non-transitive-graph-tests".to_string().into();
+    cwd_and_use_rustc_in(&crate_dir, f)
 }
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = 
-        install_dfpp() &&
-        do_in_crate_dir(|| {
-            run_dfpp_with_graph_dump()
-        }).map_or_else(|e| { println!("io err {}", e); false }, |t| t);
+    static ref TEST_CRATE_ANALYZED: bool = install_dfpp()
+        && do_in_crate_dir(|| { run_dfpp_with_graph_dump() }).map_or_else(
+            |e| {
+                println!("io err {}", e);
+                false
+            },
+            |t| t
+        );
 }
-
 
 #[test]
 fn simple_happens_before_has_connections() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| {
-        G::from_file(Symbol::intern("basic_happens_before"))
-    })
-    .unwrap();
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("basic_happens_before"))).unwrap();
 
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");
@@ -44,10 +40,8 @@ fn simple_happens_before_has_connections() {
 #[test]
 fn happens_before_if_has_connections() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| {
-        G::from_file(Symbol::intern("conditional_happens_before"))
-    })
-    .unwrap();
+    let graph =
+        do_in_crate_dir(|| G::from_file(Symbol::intern("conditional_happens_before"))).unwrap();
 
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");
@@ -73,12 +67,13 @@ fn data_influenced_conditional_happens_before() {
     assert!(graph.connects_direct(get, send));
 }
 
-
 #[test]
 fn conditional_happens_before_with_two_parents_before_if() {
     assert!(*TEST_CRATE_ANALYZED);
     let graph = do_in_crate_dir(|| {
-        G::from_file(Symbol::intern("conditional_happens_before_with_two_parents_before_if"))
+        G::from_file(Symbol::intern(
+            "conditional_happens_before_with_two_parents_before_if",
+        ))
     })
     .unwrap();
 
@@ -97,10 +92,7 @@ fn conditional_happens_before_with_two_parents_before_if() {
 //#[test]
 fn loops() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| {
-        G::from_file(Symbol::intern("loops"))
-    })
-    .unwrap();
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("loops"))).unwrap();
 
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");

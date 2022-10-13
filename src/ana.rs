@@ -22,7 +22,7 @@ use crate::rust::rustc_index::bit_set::BitSet;
 
 use flowistry::{
     indexed::{impls::LocationDomain, IndexedDomain, IndexedValue},
-    infoflow::{self, TransitiveFlowDomain, FlowDomain},
+    infoflow::{self, FlowDomain, TransitiveFlowDomain},
     mir::borrowck_facts,
 };
 
@@ -156,43 +156,57 @@ fn terminator_is_call(t: &mir::Terminator) -> bool {
     }
 }
 
-pub type Flow<'a, 'tcx> = Either<flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>, flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::NonTransitiveFlowDomain<'tcx>>>;
+pub type Flow<'a, 'tcx> = Either<
+    flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>,
+    flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::NonTransitiveFlowDomain<'tcx>>,
+>;
 
-pub fn flow_get_row<'b, 'a, 'tcx>(f: &'b Flow<'a, 'tcx>, l: mir::Location) -> &'b IndexMatrix<mir::Place<'tcx>, mir::Location> {
+pub fn flow_get_row<'b, 'a, 'tcx>(
+    f: &'b Flow<'a, 'tcx>,
+    l: mir::Location,
+) -> &'b IndexMatrix<mir::Place<'tcx>, mir::Location> {
     match f {
         Either::Right(hm) => hm.state_at(l).matrix(),
         Either::Left(fa) => fa.state_at(l),
     }
 }
 
-fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(flow: &flowistry::infoflow::FlowResults<'a, 'tcx, D>, domain: &Rc<LocationDomain>, body: &mir::Body) -> NonTransitiveGraph<'tcx> {
+fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
+    flow: &flowistry::infoflow::FlowResults<'a, 'tcx, D>,
+    domain: &Rc<LocationDomain>,
+    body: &mir::Body,
+) -> NonTransitiveGraph<'tcx> {
     let some_result = flow.state_at(mir::Location::START);
     let old_domain = &some_result.matrix().col_domain;
-    domain.as_vec().iter().map(|l| {
-        let old_matrix = flow.state_at(*l);
-        let mut new_matrix = IndexMatrix::new(&domain);
-        old_matrix.matrix().rows().for_each(|(p, s)| {
-            let mut queue = s.iter().collect::<Vec<_>>();
-            let mut seen = IndexSet::new(old_domain);
-            while let Some(g) = queue.pop() {
-                if seen.contains(g) {
-                    continue;
-                } else {
-                    seen.insert(g)
-                };
-                if domain.contains(g) {
-                    new_matrix.insert(p, *g);
-                } else if is_real_location(body, *g) {
-                    queue.extend(
-                        extract_places(*g, body, false)
-                        .into_iter()
-                        .flat_map(|p| old_matrix.matrix().row(p))
-                    );
+    domain
+        .as_vec()
+        .iter()
+        .map(|l| {
+            let old_matrix = flow.state_at(*l);
+            let mut new_matrix = IndexMatrix::new(&domain);
+            old_matrix.matrix().rows().for_each(|(p, s)| {
+                let mut queue = s.iter().collect::<Vec<_>>();
+                let mut seen = IndexSet::new(old_domain);
+                while let Some(g) = queue.pop() {
+                    if seen.contains(g) {
+                        continue;
+                    } else {
+                        seen.insert(g)
+                    };
+                    if domain.contains(g) {
+                        new_matrix.insert(p, *g);
+                    } else if is_real_location(body, *g) {
+                        queue.extend(
+                            extract_places(*g, body, false)
+                                .into_iter()
+                                .flat_map(|p| old_matrix.matrix().row(p)),
+                        );
+                    }
                 }
-            }
-        });
-        (*l, new_matrix)
-    }).collect()
+            });
+            (*l, new_matrix)
+        })
+        .collect()
 }
 
 impl<'tcx> Visitor<'tcx> {
@@ -296,21 +310,42 @@ impl<'tcx> Visitor<'tcx> {
             .unzip();
         let mut flows = Ctrl::with_input_types(types);
         let flow = if self.opts.use_non_transitive_graph {
-            Either::Right(infoflow::compute_flow_nontransitive(tcx, b, body_with_facts))
+            Either::Right(infoflow::compute_flow_nontransitive(
+                tcx,
+                b,
+                body_with_facts,
+            ))
         } else {
             Either::Left(infoflow::compute_flow(tcx, b, body_with_facts))
         };
         if self.opts.dump_non_transitive_graph || self.opts.dump_serialized_non_transitive_graph {
-
-            let domain = Rc::new(LocationDomain::from_raw(flowistry::indexed::DefaultDomain::new(crate::dbg::locations_of_body(body).into_iter().filter(|l| !is_real_location(body, *l) || body.stmt_at(*l).is_right()).collect()), loc_dom.arg_block(), loc_dom.num_real_locations()));
-            let (dom, non_t_g) = flow.as_ref().either(|flowistry_analysis| 
-                (&loc_dom, Either::Left(
-make_non_transitive_graph(&flowistry_analysis, body, |l| {
-                        !is_real_location(body, l) ||
-                        body.stmt_at(l).right().map_or(false, terminator_is_call)
-                        //body.stmt_at(l).is_right()
-                    }))),
-                    |ana| (&domain, Either::Left(shrink_flow_domain(ana, &domain, body)))
+            let domain = Rc::new(LocationDomain::from_raw(
+                flowistry::indexed::DefaultDomain::new(
+                    crate::dbg::locations_of_body(body)
+                        .into_iter()
+                        .filter(|l| !is_real_location(body, *l) || body.stmt_at(*l).is_right())
+                        .collect(),
+                ),
+                loc_dom.arg_block(),
+                loc_dom.num_real_locations(),
+            ));
+            let (dom, non_t_g) = flow.as_ref().either(
+                |flowistry_analysis| {
+                    (
+                        &loc_dom,
+                        Either::Left(make_non_transitive_graph(&flowistry_analysis, body, |l| {
+                            !is_real_location(body, l)
+                                || body.stmt_at(l).right().map_or(false, terminator_is_call)
+                            //body.stmt_at(l).is_right()
+                        })),
+                    )
+                },
+                |ana| {
+                    (
+                        &domain,
+                        Either::Left(shrink_flow_domain(ana, &domain, body)),
+                    )
+                },
             );
             if self.opts.dump_non_transitive_graph {
                 crate::dbg::non_transitive_graph_as_dot(
@@ -455,7 +490,7 @@ make_non_transitive_graph(&flowistry_analysis, body, |l| {
     }
 }
 
-fn extract_places<'tcx>(
+pub fn extract_places<'tcx>(
     l: mir::Location,
     body: &mir::Body<'tcx>,
     exclude_return_places_from_call: bool,

@@ -37,8 +37,9 @@ pub fn print_flowistry_matrix<W: std::io::Write>(
 
 use std::borrow::Cow;
 
-use flowistry::indexed::{IndexMatrix, IndexedDomain};
+use crate::HashSet;
 use flowistry::indexed::impls::LocationDomain;
+use flowistry::indexed::{IndexMatrix, IndexedDomain};
 use flowistry::infoflow::FlowDomain;
 
 use crate::{
@@ -47,7 +48,7 @@ use crate::{
     Either, Symbol,
 };
 extern crate dot;
-use crate::ana::{NonTransitiveGraph, is_real_location};
+use crate::ana::{is_real_location, NonTransitiveGraph};
 
 struct DotGraph<'a, 'b, 'tcx> {
     body: &'a mir::Body<'tcx>,
@@ -58,11 +59,16 @@ struct DotGraph<'a, 'b, 'tcx> {
 type N = mir::Location;
 type E<'tcx> = (mir::Location, mir::Location, mir::Place<'tcx>);
 
-fn flow_get_row<'b, 'tcx, 'a>(g: &'b SomeNoneTransitiveGraph<'tcx, 'a, 'b>, from: mir::Location) -> &'b flowistry::indexed::IndexMatrix<mir::Place<'tcx>, mir::Location> {
+fn flow_get_row<'b, 'tcx, 'a>(
+    g: &'b SomeNoneTransitiveGraph<'tcx, 'a, 'b>,
+    from: mir::Location,
+) -> &'b flowistry::indexed::IndexMatrix<mir::Place<'tcx>, mir::Location> {
     match g {
-        Either::Left(l) => l.get(&from).unwrap_or_else(|| panic!("Could not find location {from:?}")),
+        Either::Left(l) => l
+            .get(&from)
+            .unwrap_or_else(|| panic!("Could not find location {from:?}")),
         Either::Right(f) => f.state_at(from).matrix(),
-    }   
+    }
 }
 
 impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
@@ -74,12 +80,15 @@ impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx>
             .iter()
             .filter(|l| is_real_location(self.body, **l))
             .flat_map(|from| {
-                flow_get_row(self.g, *from).rows().flat_map(move |(r, s)| {
-                    s.iter()
-                        .map(move |to| (*from, *to, r))
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                })
+                let row = flow_get_row(self.g, *from);
+                crate::ana::extract_places(*from, self.body, false)
+                    .into_iter()
+                    .flat_map(move |p| {
+                        row.row(p)
+                            .map(move |to| (*from, *to, p))
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                    })
             })
             .collect::<Vec<_>>()
             .into()
@@ -92,8 +101,14 @@ impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx>
     }
 }
 
-type SomeNoneTransitiveGraph<'tcx, 'a, 'b> =
-    Either<NonTransitiveGraph<'tcx>, &'b flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::NonTransitiveFlowDomain<'tcx>>>;
+type SomeNoneTransitiveGraph<'tcx, 'a, 'b> = Either<
+    NonTransitiveGraph<'tcx>,
+    &'b flowistry::infoflow::FlowResults<
+        'a,
+        'tcx,
+        flowistry::infoflow::NonTransitiveFlowDomain<'tcx>,
+    >,
+>;
 
 impl<'tcx, 'b, 'a, 'c> dot::Labeller<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
     fn graph_id(&'a self) -> dot::Id<'a> {
@@ -135,8 +150,15 @@ pub fn non_transitive_graph_as_dot<'a, 'tcx, W: std::io::Write>(
 
 use crate::foreign_serializers::{BodyProxy, NonTransitiveGraphProxy};
 
-pub fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item=mir::Location> + 'a {
-    body.basic_blocks().iter_enumerated().flat_map(|(block, dat)| (0..=dat.statements.len()).map(move |statement_index| mir::Location {block, statement_index}))
+pub fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item = mir::Location> + 'a {
+    body.basic_blocks()
+        .iter_enumerated()
+        .flat_map(|(block, dat)| {
+            (0..=dat.statements.len()).map(move |statement_index| mir::Location {
+                block,
+                statement_index,
+            })
+        })
 }
 
 pub fn dump_non_transitive_graph_and_body<'a, 'tcx>(
@@ -152,17 +174,27 @@ pub fn dump_non_transitive_graph_and_body<'a, 'tcx>(
             .write(true)
             .open(format!("{}.ntgb.json", id.name.as_str()))
             .unwrap(),
-        &(BodyProxy::from(body), NonTransitiveGraphProxy::from(&*match g {
-            Either::Right(g) => Cow::Owned(locations_of_body(body).map(|l| (l, g.state_at(l).matrix().clone())).collect()),
-            Either::Left(f) => Cow::Borrowed(f)
-        })),
+        &(
+            BodyProxy::from(body),
+            NonTransitiveGraphProxy::from(&*match g {
+                Either::Right(g) => Cow::Owned(
+                    locations_of_body(body)
+                        .map(|l| (l, g.state_at(l).matrix().clone()))
+                        .collect(),
+                ),
+                Either::Left(f) => Cow::Borrowed(f),
+            }),
+        ),
     )
     .unwrap()
 }
 
 pub fn read_non_transitive_graph_and_body(
     id: Symbol,
-) -> (Vec<(mir::Location, String)>, SerializableNonTransitiveGraph) {
+) -> (
+    Vec<(mir::Location, String, HashSet<Symbol>)>,
+    SerializableNonTransitiveGraph,
+) {
     let deser: (BodyProxy, NonTransitiveGraphProxy) = serde_json::from_reader(
         &mut std::fs::File::open(format!("{}.ntgb.json", id.as_str())).unwrap(),
     )
