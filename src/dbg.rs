@@ -60,7 +60,7 @@ type E<'tcx> = (mir::Location, mir::Location, mir::Place<'tcx>);
 
 fn flow_get_row<'b, 'tcx, 'a>(g: &'b SomeNoneTransitiveGraph<'tcx, 'a, 'b>, from: mir::Location) -> &'b flowistry::indexed::IndexMatrix<mir::Place<'tcx>, mir::Location> {
     match g {
-        Either::Left(l) => l.get(&from).unwrap(),
+        Either::Left(l) => l.get(&from).unwrap_or_else(|| panic!("Could not find location {from:?}")),
         Either::Right(f) => f.state_at(from).matrix(),
     }   
 }
@@ -135,7 +135,7 @@ pub fn non_transitive_graph_as_dot<'a, 'tcx, W: std::io::Write>(
 
 use crate::foreign_serializers::{BodyProxy, NonTransitiveGraphProxy};
 
-fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item=mir::Location> + 'a {
+pub fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item=mir::Location> + 'a {
     body.basic_blocks().iter_enumerated().flat_map(|(block, dat)| (0..=dat.statements.len()).map(move |statement_index| mir::Location {block, statement_index}))
 }
 

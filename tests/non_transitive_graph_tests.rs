@@ -91,9 +91,10 @@ fn conditional_happens_before_with_two_parents_before_if() {
     assert!(graph.connects(dp, send));
     assert!(graph.connects_direct(get, send));
     assert!(!graph.connects_direct(push, send));
+    assert!(!graph.connects_direct(push, dp));
 }
 
-#[test]
+//#[test]
 fn loops() {
     assert!(*TEST_CRATE_ANALYZED);
     let graph = do_in_crate_dir(|| {
