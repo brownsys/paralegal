@@ -76,13 +76,15 @@ pub struct Args {
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
     #[clap(long, env)]
+    use_non_transitive_graph: bool,
+    #[clap(long, env)]
+    shrink_flow_domains: bool,
+    #[clap(long, env)]
     dump_flowistry_matrix: bool,
     #[clap(long, env)]
     dump_non_transitive_graph: bool,
     #[clap(long, env)]
     dump_serialized_non_transitive_graph: bool,
-    #[clap(long, env)]
-    use_non_transitive_graph: bool,
 }
 
 struct Callbacks {

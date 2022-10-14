@@ -192,6 +192,22 @@ pub fn mentioned_places_with_provenance<'tcx>(
         })
 }
 
+/// The idea of this function is that you can give it Flowistry's analysis and a
+/// set of locations, basically a selection of "what you care about" and this
+/// function will take care of collapsing all the matrices down so that
+/// connections between locations that you care about are preserved, even if
+/// transitive hops via locations you **don't care about** are dropped.
+///
+/// Example if the original MIR had
+///
+/// ```
+/// Vec::push(_1, _2)
+/// _3 = &_1
+/// my_read(_3)
+/// ```
+///
+/// And you instructed this function to only preserve function calls, then the
+/// reduced graph would be guaranteed to still have an edge Vec::push -> my_read
 fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
     flow: &flowistry::infoflow::FlowResults<'a, 'tcx, D>,
     domain: &Rc<LocationDomain>,
@@ -363,13 +379,15 @@ impl<'tcx> Visitor<'tcx> {
                     )
                 },
                 |ana| {
-                    (
-                        // &loc_dom,
-                        // Either::Right(ana),
-                        &domain,
-                        Either::Left(shrink_flow_domain(ana, &domain, body, tcx)),
-                        Some(&ana.analysis.aliases),
-                    )
+                    if self.opts.shrink_flow_domains {
+                        (
+                            &domain,
+                            Either::Left(shrink_flow_domain(ana, &domain, body, tcx)),
+                            Some(&ana.analysis.aliases),
+                        )
+                    } else {
+                        (&loc_dom, Either::Right(ana), Some(&ana.analysis.aliases))
+                    }
                 },
             );
             if self.opts.dump_non_transitive_graph {
