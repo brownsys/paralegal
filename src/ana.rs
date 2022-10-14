@@ -346,7 +346,7 @@ impl<'tcx> Visitor<'tcx> {
             })
             .unzip();
         let mut flows = Ctrl::with_input_types(types);
-        let flow = if self.opts.use_non_transitive_graph {
+        let flow = if self.opts.anactrl.use_non_transitive_graph {
             Either::Right(infoflow::compute_flow_nontransitive(
                 tcx,
                 b,
@@ -355,7 +355,7 @@ impl<'tcx> Visitor<'tcx> {
         } else {
             Either::Left(infoflow::compute_flow(tcx, b, body_with_facts))
         };
-        if self.opts.dump_non_transitive_graph || self.opts.dump_serialized_non_transitive_graph {
+        if self.opts.dbg.dump_non_transitive_graph || self.opts.dbg.dump_serialized_non_transitive_graph {
             let domain = Rc::new(LocationDomain::from_raw(
                 flowistry::indexed::DefaultDomain::new(
                     crate::dbg::locations_of_body(body)
@@ -379,7 +379,7 @@ impl<'tcx> Visitor<'tcx> {
                     )
                 },
                 |ana| {
-                    if self.opts.shrink_flow_domains {
+                    if self.opts.anactrl.shrink_flow_domains {
                         (
                             &domain,
                             Either::Left(shrink_flow_domain(ana, &domain, body, tcx)),
@@ -390,7 +390,7 @@ impl<'tcx> Visitor<'tcx> {
                     }
                 },
             );
-            if self.opts.dump_non_transitive_graph {
+            if self.opts.dbg.dump_non_transitive_graph {
                 crate::dbg::non_transitive_graph_as_dot(
                     &mut std::fs::OpenOptions::new()
                         .truncate(true)
@@ -407,7 +407,7 @@ impl<'tcx> Visitor<'tcx> {
                 .unwrap();
                 info!("Non transitive graph for {} dumped", id.name.as_str());
             }
-            if self.opts.dump_serialized_non_transitive_graph {
+            if self.opts.dbg.dump_serialized_non_transitive_graph {
                 dump_non_transitive_graph_and_body(id, body, &non_t_g, &dom, tcx);
             }
         }
@@ -422,7 +422,7 @@ impl<'tcx> Visitor<'tcx> {
             let loc = body.terminator_loc(bb);
             let matrix = flow_get_row(&flow, loc);
 
-            if self.opts.dump_flowistry_matrix {
+            if self.opts.dbg.dump_flowistry_matrix {
                 info!("Flowistry matrix for {:?}", loc);
                 crate::dbg::print_flowistry_matrix(&mut std::io::stdout(), matrix).unwrap();
             }

@@ -34,7 +34,6 @@ pub mod rust {
 
 use rust::*;
 
-use clap::Parser;
 use flowistry::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
 
@@ -63,22 +62,36 @@ macro_rules! sym_vec {
 
 pub struct DfppPlugin;
 
-#[derive(serde::Serialize, serde::Deserialize, Parser)]
+#[derive(serde::Serialize, serde::Deserialize, clap::Parser)]
 pub struct Args {
     /// This argument doesn't do anything, but when cargo invokes `cargo-dfpp`
     /// it always provides "dfpp" as the first argument and since we parse with
     /// clap it otherwise complains about the superfluous argument.
     _progname: String,
+    /// Print additional logging output (up to the "info" level)
     #[clap(short, long)]
     verbose: bool,
+    /// Print additional logging output (up to the "debug" level)
     #[clap(long)]
     debug: bool,
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
+    #[clap(flatten, next_help_heading = "Flow Analysis Control")]
+    anactrl: AnalysisCtrl,
+    #[clap(flatten, next_help_heading = "Additional Debugging Output")]
+    dbg: DbgArgs,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
+struct AnalysisCtrl {
     #[clap(long, env)]
     use_non_transitive_graph: bool,
     #[clap(long, env)]
     shrink_flow_domains: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
+struct DbgArgs {
     #[clap(long, env)]
     dump_flowistry_matrix: bool,
     #[clap(long, env)]
@@ -149,6 +162,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         &self,
         _target_dir: &rustc_plugin::Utf8Path,
     ) -> rustc_plugin::RustcPluginArgs<Self::Args> {
+        use clap::Parser;
         rustc_plugin::RustcPluginArgs {
             args: Args::parse(),
             file: None,
