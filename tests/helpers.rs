@@ -53,6 +53,7 @@ pub fn run_dfpp_with_graph_dump() -> bool {
         .arg("dfpp")
         .arg("--use-non-transitive-graph")
         .arg("--dump-serialized-non-transitive-graph")
+        .arg("--verbose")
         .status()
         .unwrap()
         .success()
@@ -68,28 +69,29 @@ pub struct G {
 }
 
 impl G {
+    fn predecessors(&self, n: mir::Location) -> impl Iterator<Item = &mir::Location> {
+        self.graph.get(&n).into_iter().flat_map(move |r| {
+            self.body
+                .iter()
+                .find(|t| t.0 == n)
+                .unwrap()
+                .2
+                .iter()
+                .flat_map(|p| r.row(*p))
+        })
+    }
     pub fn connects(&self, from: mir::Location, to: mir::Location) -> bool {
         let mut queue = vec![to];
         while let Some(n) = queue.pop() {
             if n == from {
                 return true;
             }
-            queue.extend(self.graph.get(&n).iter().flat_map(|r| {
-                self.body
-                    .iter()
-                    .find(|t| t.0 == n)
-                    .unwrap()
-                    .2
-                    .iter()
-                    .flat_map(|p| r.row(*p))
-            }))
+            queue.extend(self.predecessors(n))
         }
         false
     }
     pub fn connects_direct(&self, from: mir::Location, to: mir::Location) -> bool {
-        self.graph[&to]
-            .rows()
-            .any(|(_, r)| r.iter().any(|i| i == &from))
+        self.predecessors(to).any(|l| *l == from)
     }
 
     pub fn function_call(&self, pattern: &str) -> mir::Location {
