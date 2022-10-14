@@ -329,7 +329,7 @@ impl<'tcx> Visitor<'tcx> {
                 loc_dom.arg_block(),
                 loc_dom.num_real_locations(),
             ));
-            let (dom, non_t_g) = flow.as_ref().either(
+            let (dom, non_t_g, aliases) = flow.as_ref().either(
                 |flowistry_analysis| {
                     (
                         &loc_dom,
@@ -338,12 +338,16 @@ impl<'tcx> Visitor<'tcx> {
                                 || body.stmt_at(l).right().map_or(false, terminator_is_call)
                             //body.stmt_at(l).is_right()
                         })),
+                        None,
                     )
                 },
                 |ana| {
                     (
-                        &domain,
-                        Either::Left(shrink_flow_domain(ana, &domain, body)),
+                        &loc_dom,
+                        Either::Right(ana),
+                        // &domain,
+                        // Either::Left(shrink_flow_domain(ana, &domain, body)),
+                        Some(&ana.analysis.aliases),
                     )
                 },
             );
@@ -358,11 +362,14 @@ impl<'tcx> Visitor<'tcx> {
                     body,
                     &non_t_g,
                     &dom,
+                    aliases,
+                    tcx,
                 )
                 .unwrap();
+                info!("Non transitive graph for {} dumped", id.name.as_str());
             }
             if self.opts.dump_serialized_non_transitive_graph {
-                dump_non_transitive_graph_and_body(id, body, &non_t_g, &dom);
+                dump_non_transitive_graph_and_body(id, body, &non_t_g, &dom, tcx);
             }
         }
         for (bb, t, p, args) in body

@@ -26,8 +26,10 @@ pub mod rust {
     pub use rustc_ast as ast;
     pub use rustc_hir as hir;
     pub use rustc_middle::mir;
+    pub use rustc_middle::ty;
 
     pub use rustc_middle::dep_graph::DepGraph;
+    pub use ty::TyCtxt;
 }
 
 use rust::*;

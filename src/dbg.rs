@@ -36,11 +36,14 @@ pub fn print_flowistry_matrix<W: std::io::Write>(
 }
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 
+use crate::rust::rustc_middle::ty::TyCtxt;
 use crate::HashSet;
 use flowistry::indexed::impls::LocationDomain;
 use flowistry::indexed::{IndexMatrix, IndexedDomain};
 use flowistry::infoflow::FlowDomain;
+use flowistry::mir::utils::PlaceExt;
 
 use crate::{
     foreign_serializers::SerializableNonTransitiveGraph,
@@ -54,6 +57,8 @@ struct DotGraph<'a, 'b, 'tcx> {
     body: &'a mir::Body<'tcx>,
     g: &'a SomeNoneTransitiveGraph<'tcx, 'b, 'a>,
     dom: &'a LocationDomain,
+    aliases: Option<&'a flowistry::mir::aliases::Aliases<'b, 'tcx>>,
+    tcx: TyCtxt<'tcx>,
 }
 
 type N = mir::Location;
@@ -73,7 +78,7 @@ fn flow_get_row<'b, 'tcx, 'a>(
 
 impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
     fn nodes(&'a self) -> dot::Nodes<'a, N> {
-        self.dom.as_vec().raw.clone().into()
+        self.dom.as_vec().raw.as_slice().into()
     }
     fn edges(&'a self) -> dot::Edges<'a, E<'tcx>> {
         self.nodes()
@@ -81,10 +86,21 @@ impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx>
             .filter(|l| is_real_location(self.body, **l))
             .flat_map(|from| {
                 let row = flow_get_row(self.g, *from);
-                crate::ana::extract_places(*from, self.body, false)
+                crate::ana::extract_places(*from, self.body, true)
                     .into_iter()
+                    .flat_map(|p|
+                        std::iter::once(p).chain(
+                        p.refs_in_projection().into_iter().map(|t| mir::Place::from_ref(t.0, self.tcx)).collect::<Vec<_>>().into_iter())
+                    )
                     .flat_map(move |p| {
-                        row.row(p)
+                        let r = row.try_row(p);
+                        if r.is_none() {
+                            warn!("No row found for place {p:?} at location {from:?}, instruction: {:?}", match self.body.stmt_at(*from) {
+                                Either::Left(s) => &s.kind as &dyn std::fmt::Debug,
+                                Either::Right(t) => &t.kind as &dyn std::fmt::Debug
+                            });
+                        }
+                        r.into_iter().flat_map(|i| i)
                             .map(move |to| (*from, *to, p))
                             .collect::<Vec<_>>()
                             .into_iter()
@@ -144,8 +160,19 @@ pub fn non_transitive_graph_as_dot<'a, 'tcx, W: std::io::Write>(
     body: &mir::Body<'tcx>,
     g: &SomeNoneTransitiveGraph<'tcx, 'a, '_>,
     dom: &LocationDomain,
+    aliases: Option<&flowistry::mir::aliases::Aliases<'a, 'tcx>>,
+    tcx: TyCtxt<'tcx>,
 ) -> std::io::Result<()> {
-    dot::render(&DotGraph { body, g, dom }, out)
+    dot::render(
+        &DotGraph {
+            body,
+            g,
+            dom,
+            aliases,
+            tcx,
+        },
+        out,
+    )
 }
 
 use crate::foreign_serializers::{BodyProxy, NonTransitiveGraphProxy};
@@ -166,6 +193,7 @@ pub fn dump_non_transitive_graph_and_body<'a, 'tcx>(
     body: &mir::Body<'tcx>,
     g: &SomeNoneTransitiveGraph<'tcx, 'a, '_>,
     dom: &LocationDomain,
+    tcx: TyCtxt<'tcx>,
 ) {
     serde_json::to_writer(
         &mut std::fs::OpenOptions::new()
@@ -174,17 +202,17 @@ pub fn dump_non_transitive_graph_and_body<'a, 'tcx>(
             .write(true)
             .open(format!("{}.ntgb.json", id.name.as_str()))
             .unwrap(),
-        &(
-            BodyProxy::from(body),
-            NonTransitiveGraphProxy::from(&*match g {
-                Either::Right(g) => Cow::Owned(
-                    locations_of_body(body)
+        &match g {
+            Either::Left(f) => (BodyProxy::from(body), NonTransitiveGraphProxy::from(f)),
+            Either::Right(g) => (
+                BodyProxy::from_body_with_normalize(body, &g.analysis.aliases, tcx),
+                NonTransitiveGraphProxy::from(
+                    &locations_of_body(body)
                         .map(|l| (l, g.state_at(l).matrix().clone()))
-                        .collect(),
+                        .collect::<HashMap<_, _>>(),
                 ),
-                Either::Left(f) => Cow::Borrowed(f),
-            }),
-        ),
+            ),
+        },
     )
     .unwrap()
 }

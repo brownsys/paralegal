@@ -1,11 +1,15 @@
 use std::{borrow::Cow, rc::Rc};
 
-use flowistry::indexed::{impls::LocationDomain, DefaultDomain, IndexMatrix, IndexSet, RefSet};
+use flowistry::{
+    indexed::{impls::LocationDomain, DefaultDomain, IndexMatrix, IndexSet, RefSet},
+    mir::utils::PlaceExt,
+};
 use serde::Deserialize;
 
 use crate::{
     ana::extract_places,
     mir,
+    rust::TyCtxt,
     serde::{Serialize, Serializer},
     Either, HashMap, HashSet, Symbol,
 };
@@ -137,6 +141,37 @@ impl<'tcx> From<&mir::Body<'tcx>> for BodyProxy {
                         stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
                         extract_places(loc, body, false)
                             .into_iter()
+                            .map(|p| Symbol::intern(&format!("{p:?}")))
+                            .collect(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
+impl BodyProxy {
+    pub fn from_body_with_normalize<'tcx>(
+        body: &mir::Body<'tcx>,
+        aliases: &flowistry::mir::aliases::Aliases<'_, 'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) -> Self {
+        Self(
+            iter_stmts(body)
+                .map(|(loc, stmt)| {
+                    (
+                        loc,
+                        stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
+                        extract_places(loc, body, false)
+                            .iter()
+                            .flat_map(|place| {
+                                std::iter::once(*place).chain(
+                                    place
+                                        .refs_in_projection()
+                                        .into_iter()
+                                        .map(|t| mir::Place::from_ref(t.0, tcx)),
+                                )
+                            })
                             .map(|p| Symbol::intern(&format!("{p:?}")))
                             .collect(),
                     )
