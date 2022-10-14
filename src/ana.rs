@@ -171,10 +171,32 @@ pub fn flow_get_row<'b, 'a, 'tcx>(
     }
 }
 
+pub fn mentioned_places_with_provenance<'tcx>(
+    l: mir::Location,
+    body: &mir::Body<'tcx>,
+    tcx: TyCtxt<'tcx>,
+) -> impl Iterator<Item = mir::Place<'tcx>> {
+    use flowistry::mir::utils::PlaceExt;
+    extract_places(l, body, false)
+        .into_iter()
+        .flat_map(move |place| {
+            std::iter::once(place)
+                .chain(
+                    place
+                        .refs_in_projection()
+                        .into_iter()
+                        .map(|t| mir::Place::from_ref(t.0, tcx)),
+                )
+                .collect::<Vec<_>>()
+                .into_iter()
+        })
+}
+
 fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
     flow: &flowistry::infoflow::FlowResults<'a, 'tcx, D>,
     domain: &Rc<LocationDomain>,
-    body: &mir::Body,
+    body: &mir::Body<'tcx>,
+    tcx: TyCtxt<'tcx>,
 ) -> NonTransitiveGraph<'tcx> {
     let some_result = flow.state_at(mir::Location::START);
     let old_domain = &some_result.matrix().col_domain;
@@ -190,16 +212,15 @@ fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
                 while let Some(g) = queue.pop() {
                     if seen.contains(g) {
                         continue;
-                    } else {
-                        seen.insert(g)
-                    };
+                    }
+                    seen.insert(g);
                     if domain.contains(g) {
                         new_matrix.insert(p, *g);
                     } else if is_real_location(body, *g) {
+                        let state_for_g = flow.state_at(*g).matrix();
                         queue.extend(
-                            extract_places(*g, body, false)
-                                .into_iter()
-                                .flat_map(|p| old_matrix.matrix().row(p)),
+                            mentioned_places_with_provenance(*g, body, tcx)
+                                .flat_map(|p| state_for_g.row(p)),
                         );
                     }
                 }
@@ -343,10 +364,10 @@ impl<'tcx> Visitor<'tcx> {
                 },
                 |ana| {
                     (
-                        &loc_dom,
-                        Either::Right(ana),
-                        // &domain,
-                        // Either::Left(shrink_flow_domain(ana, &domain, body)),
+                        // &loc_dom,
+                        // Either::Right(ana),
+                        &domain,
+                        Either::Left(shrink_flow_domain(ana, &domain, body, tcx)),
                         Some(&ana.analysis.aliases),
                     )
                 },
