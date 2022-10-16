@@ -43,7 +43,6 @@ fn conditional_happens_before_with_two_parents_before_if(mut d: Vec<i64>, cond: 
         dp_user_data(&mut user_data);
     }
     send_user_data(&user_data);
-
 }
 
 #[dfpp::analyze]
@@ -58,12 +57,14 @@ fn loops(mut x: i32) {
 
 #[dfpp::label(source)]
 fn get_user_data() -> UserData {
-    return UserData{data: vec![1, 2, 3]}
+    return UserData {
+        data: vec![1, 2, 3],
+    };
 }
 
 #[dfpp::label(source)]
 fn get_user_data_with(data: Vec<i64>) -> UserData {
-    return UserData{data}
+    return UserData { data };
 }
 
 fn dp_user_data(user_data: &mut UserData) {
@@ -73,8 +74,7 @@ fn dp_user_data(user_data: &mut UserData) {
 }
 
 #[dfpp::label{ sink, arguments = [0] }]
-fn send_user_data(user_data: &UserData) {
-}
+fn send_user_data(user_data: &UserData) {}
 
 fn main() {
     println!("Hello, world!");

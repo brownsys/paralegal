@@ -186,11 +186,13 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
         matches!(self.kind, FlowKind::Transitive(_))
     }
 
-    fn as_some_non_transitive_graph(&self) -> Option<crate::dbg::SomeNoneTransitiveGraph<'tcx, 'a, '_>> {
+    fn as_some_non_transitive_graph(
+        &self,
+    ) -> Option<crate::dbg::SomeNoneTransitiveGraph<'tcx, 'a, '_>> {
         match &self.kind {
             FlowKind::Transitive(_) => None,
             FlowKind::NonTransitive(t) => Some(Either::Right(&t)),
-            FlowKind::NonTransitiveShrunk { shrunk, ..} => Some(Either::Left(&shrunk)),
+            FlowKind::NonTransitiveShrunk { shrunk, .. } => Some(Either::Left(&shrunk)),
         }
     }
 
@@ -261,11 +263,10 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
         match &self.kind {
             FlowKind::NonTransitive(hm) => hm.state_at(l).matrix(),
             FlowKind::Transitive(fa) => fa.state_at(l),
-            FlowKind::NonTransitiveShrunk { shrunk , ..} => shrunk.get(&l).unwrap(),
+            FlowKind::NonTransitiveShrunk { shrunk, .. } => shrunk.get(&l).unwrap(),
         }
     }
 }
-
 
 pub fn mentioned_places_with_provenance<'tcx>(
     l: mir::Location,
@@ -424,7 +425,7 @@ impl<'tcx> Visitor<'tcx> {
         let tcx = self.tcx;
         let local_def_id = tcx.hir().body_owner_def_id(b);
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
-        
+
         let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts);
 
         let body = &body_with_facts.body;
@@ -469,7 +470,7 @@ impl<'tcx> Visitor<'tcx> {
             _ if self.opts.dbg.dump_non_transitive_graph || self.opts.dbg.dump_serialized_non_transitive_graph =>
                 error!("Told to dumping non-transitive graph, but analysis not instructed to make non-transitive graph!"),
             _ => ()
-        } 
+        }
         for (bb, t, p, args) in body
             .basic_blocks()
             .iter_enumerated()
