@@ -5,7 +5,6 @@ use crate::{
     HashMap, HashSet,
 };
 
-use ast::ptr::P;
 use hir::{
     def_id::DefId,
     hir_id::HirId,
@@ -156,20 +155,117 @@ fn terminator_is_call(t: &mir::Terminator) -> bool {
     }
 }
 
-pub type Flow<'a, 'tcx> = Either<
-    flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>,
-    flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::NonTransitiveFlowDomain<'tcx>>,
->;
+pub struct Flow<'a, 'tcx> {
+    pub kind: FlowKind<'a, 'tcx>,
+    pub domain: Rc<LocationDomain>,
+}
 
-pub fn flow_get_row<'b, 'a, 'tcx>(
-    f: &'b Flow<'a, 'tcx>,
-    l: mir::Location,
-) -> &'b IndexMatrix<mir::Place<'tcx>, mir::Location> {
-    match f {
-        Either::Right(hm) => hm.state_at(l).matrix(),
-        Either::Left(fa) => fa.state_at(l),
+pub enum FlowKind<'a, 'tcx> {
+    Transitive(
+        flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>,
+    ),
+    NonTransitive(
+        flowistry::infoflow::FlowResults<
+            'a,
+            'tcx,
+            flowistry::infoflow::NonTransitiveFlowDomain<'tcx>,
+        >,
+    ),
+    NonTransitiveShrunk {
+        original_flow: flowistry::infoflow::FlowResults<
+            'a,
+            'tcx,
+            flowistry::infoflow::NonTransitiveFlowDomain<'tcx>,
+        >,
+        shrunk: NonTransitiveGraph<'tcx>,
+    },
+}
+
+impl<'a, 'tcx> Flow<'a, 'tcx> {
+    fn is_transitive(&self) -> bool {
+        matches!(self.kind, FlowKind::Transitive(_))
+    }
+
+    fn as_some_non_transitive_graph(&self) -> Option<crate::dbg::SomeNoneTransitiveGraph<'tcx, 'a, '_>> {
+        match &self.kind {
+            FlowKind::Transitive(_) => None,
+            FlowKind::NonTransitive(t) => Some(Either::Right(&t)),
+            FlowKind::NonTransitiveShrunk { shrunk, ..} => Some(Either::Left(&shrunk)),
+        }
+    }
+
+    fn aliases(&self) -> &flowistry::mir::aliases::Aliases<'a, 'tcx> {
+        match &self.kind {
+            FlowKind::NonTransitive(a) => &a.analysis.aliases,
+            FlowKind::Transitive(a) => &a.analysis.aliases,
+            FlowKind::NonTransitiveShrunk { original_flow, .. } => &original_flow.analysis.aliases,
+        }
+    }
+
+    fn compute(
+        opts: &crate::AnalysisCtrl,
+        tcx: TyCtxt<'tcx>,
+        body_id: BodyId,
+        body_with_facts: &'a crate::rust::rustc_borrowck::BodyWithBorrowckFacts<'tcx>,
+    ) -> Self {
+        let body = &body_with_facts.body;
+        let domain = LocationDomain::new(body);
+        if opts.use_non_transitive_graph {
+            let original_flow = infoflow::compute_flow_nontransitive(tcx, body_id, body_with_facts);
+            if opts.shrink_flow_domains {
+                let mut num_real_location = 0;
+                let locations = crate::dbg::locations_of_body(body)
+                    .into_iter()
+                    .filter(|l| {
+                        if !is_real_location(body, *l) {
+                            true
+                        } else if body.stmt_at(*l).is_right() {
+                            num_real_location += 1;
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
+                let shrunk_domain = Rc::new(LocationDomain::from_raw(
+                    flowistry::indexed::DefaultDomain::new(locations),
+                    domain.arg_block(),
+                    num_real_location,
+                ));
+                let shrunk = shrink_flow_domain(&original_flow, &shrunk_domain, body, tcx);
+                Self {
+                    kind: FlowKind::NonTransitiveShrunk {
+                        original_flow,
+                        shrunk,
+                    },
+                    domain: shrunk_domain,
+                }
+            } else {
+                Self {
+                    kind: FlowKind::NonTransitive(original_flow),
+                    domain,
+                }
+            }
+        } else {
+            Self {
+                kind: FlowKind::Transitive(infoflow::compute_flow(tcx, body_id, body_with_facts)),
+                domain,
+            }
+        }
+    }
+
+    pub fn get_row<'b>(
+        &'b self,
+        l: mir::Location,
+    ) -> &'b IndexMatrix<mir::Place<'tcx>, mir::Location> {
+        match &self.kind {
+            FlowKind::NonTransitive(hm) => hm.state_at(l).matrix(),
+            FlowKind::Transitive(fa) => fa.state_at(l),
+            FlowKind::NonTransitiveShrunk { shrunk , ..} => shrunk.get(&l).unwrap(),
+        }
     }
 }
+
 
 pub fn mentioned_places_with_provenance<'tcx>(
     l: mir::Location,
@@ -328,8 +424,11 @@ impl<'tcx> Visitor<'tcx> {
         let tcx = self.tcx;
         let local_def_id = tcx.hir().body_owner_def_id(b);
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
+        
+        let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts);
+
         let body = &body_with_facts.body;
-        let loc_dom = LocationDomain::new(body);
+        let loc_dom = &flow.domain;
         let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
             .args_iter()
             .enumerate()
@@ -346,71 +445,31 @@ impl<'tcx> Visitor<'tcx> {
             })
             .unzip();
         let mut flows = Ctrl::with_input_types(types);
-        let flow = if self.opts.anactrl.use_non_transitive_graph {
-            Either::Right(infoflow::compute_flow_nontransitive(
-                tcx,
-                b,
-                body_with_facts,
-            ))
-        } else {
-            Either::Left(infoflow::compute_flow(tcx, b, body_with_facts))
-        };
-        if self.opts.dbg.dump_non_transitive_graph || self.opts.dbg.dump_serialized_non_transitive_graph {
-            let domain = Rc::new(LocationDomain::from_raw(
-                flowistry::indexed::DefaultDomain::new(
-                    crate::dbg::locations_of_body(body)
-                        .into_iter()
-                        .filter(|l| !is_real_location(body, *l) || body.stmt_at(*l).is_right())
-                        .collect(),
-                ),
-                loc_dom.arg_block(),
-                loc_dom.num_real_locations(),
-            ));
-            let (dom, non_t_g, aliases) = flow.as_ref().either(
-                |flowistry_analysis| {
-                    (
-                        &loc_dom,
-                        Either::Left(make_non_transitive_graph(&flowistry_analysis, body, |l| {
-                            !is_real_location(body, l)
-                                || body.stmt_at(l).right().map_or(false, terminator_is_call)
-                            //body.stmt_at(l).is_right()
-                        })),
-                        None,
+        match flow.as_some_non_transitive_graph() {
+            Some(non_t_g) =>
+                if self.opts.dbg.dump_non_transitive_graph {
+                    crate::dbg::non_transitive_graph_as_dot(
+                        &mut std::fs::OpenOptions::new()
+                            .truncate(true)
+                            .create(true)
+                            .write(true)
+                            .open(format!("{}.ntg.gv", id.name.as_str()))
+                            .unwrap(),
+                        body,
+                        &non_t_g,
+                        &flow.domain,
+                        Some(flow.aliases()),
+                        tcx,
                     )
-                },
-                |ana| {
-                    if self.opts.anactrl.shrink_flow_domains {
-                        (
-                            &domain,
-                            Either::Left(shrink_flow_domain(ana, &domain, body, tcx)),
-                            Some(&ana.analysis.aliases),
-                        )
-                    } else {
-                        (&loc_dom, Either::Right(ana), Some(&ana.analysis.aliases))
-                    }
-                },
-            );
-            if self.opts.dbg.dump_non_transitive_graph {
-                crate::dbg::non_transitive_graph_as_dot(
-                    &mut std::fs::OpenOptions::new()
-                        .truncate(true)
-                        .create(true)
-                        .write(true)
-                        .open(format!("{}.ntg.gv", id.name.as_str()))
-                        .unwrap(),
-                    body,
-                    &non_t_g,
-                    &dom,
-                    aliases,
-                    tcx,
-                )
-                .unwrap();
-                info!("Non transitive graph for {} dumped", id.name.as_str());
-            }
-            if self.opts.dbg.dump_serialized_non_transitive_graph {
-                dump_non_transitive_graph_and_body(id, body, &non_t_g, &dom, tcx);
-            }
-        }
+                    .unwrap();
+                    info!("Non transitive graph for {} dumped", id.name.as_str());
+                } else if self.opts.dbg.dump_serialized_non_transitive_graph {
+                    dump_non_transitive_graph_and_body(id, body, &non_t_g, &flow.domain, tcx);
+                }
+            _ if self.opts.dbg.dump_non_transitive_graph || self.opts.dbg.dump_serialized_non_transitive_graph =>
+                error!("Told to dumping non-transitive graph, but analysis not instructed to make non-transitive graph!"),
+            _ => ()
+        } 
         for (bb, t, p, args) in body
             .basic_blocks()
             .iter_enumerated()
@@ -420,7 +479,7 @@ impl<'tcx> Visitor<'tcx> {
             })
         {
             let loc = body.terminator_loc(bb);
-            let matrix = flow_get_row(&flow, loc);
+            let matrix = flow.get_row(loc);
 
             if self.opts.dbg.dump_flowistry_matrix {
                 info!("Flowistry matrix for {:?}", loc);

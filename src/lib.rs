@@ -13,6 +13,7 @@ extern crate log;
 
 pub mod rust {
     pub extern crate rustc_ast;
+    pub extern crate rustc_borrowck;
     pub extern crate rustc_data_structures;
     pub extern crate rustc_driver;
     pub extern crate rustc_hir;

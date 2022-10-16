@@ -115,8 +115,8 @@ impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx>
     }
 }
 
-type SomeNoneTransitiveGraph<'tcx, 'a, 'b> = Either<
-    NonTransitiveGraph<'tcx>,
+pub type SomeNoneTransitiveGraph<'tcx, 'a, 'b> = Either<
+    &'b NonTransitiveGraph<'tcx>,
     &'b flowistry::infoflow::FlowResults<
         'a,
         'tcx,
@@ -201,7 +201,7 @@ pub fn dump_non_transitive_graph_and_body<'a, 'tcx>(
             .open(format!("{}.ntgb.json", id.name.as_str()))
             .unwrap(),
         &match g {
-            Either::Left(f) => (BodyProxy::from(body), NonTransitiveGraphProxy::from(f)),
+            Either::Left(f) => (BodyProxy::from(body), NonTransitiveGraphProxy::from(*f)),
             Either::Right(g) => (
                 BodyProxy::from_body_with_normalize(body, &g.analysis.aliases, tcx),
                 NonTransitiveGraphProxy::from(
