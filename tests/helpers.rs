@@ -53,7 +53,7 @@ pub fn run_dfpp_with_graph_dump() -> bool {
         .arg("dfpp")
         .arg("--use-non-transitive-graph")
         .arg("--dump-serialized-non-transitive-graph")
-        .arg("--verbose")
+        .arg("--shrink-flow-domains")
         .status()
         .unwrap()
         .success()
@@ -82,7 +82,13 @@ impl G {
     }
     pub fn connects(&self, from: mir::Location, to: mir::Location) -> bool {
         let mut queue = vec![to];
+        let mut seen = HashSet::new();
         while let Some(n) = queue.pop() {
+            if seen.contains(&n) {
+                continue;
+            } else {
+                seen.insert(n);
+            }
             if n == from {
                 return true;
             }
@@ -104,5 +110,12 @@ impl G {
     pub fn from_file(s: Symbol) -> Self {
         let (body, graph) = dfpp::dbg::read_non_transitive_graph_and_body(s);
         Self { graph, body }
+    }
+    pub fn argument(&self, n: usize) -> mir::Location {
+        self.body
+            .iter()
+            .find(|(_, s, _)| s == format!("Argument _{n}").as_str())
+            .unwrap_or_else(|| panic!("Argument {n} not found in {:?}", self.body))
+            .0
     }
 }

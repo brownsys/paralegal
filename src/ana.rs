@@ -22,7 +22,7 @@ use crate::rust::rustc_index::bit_set::BitSet;
 use flowistry::{
     indexed::{impls::LocationDomain, IndexedDomain, IndexedValue},
     infoflow::{self, FlowDomain, TransitiveFlowDomain},
-    mir::borrowck_facts,
+    mir::{borrowck_facts, utils::BodyExt},
 };
 
 pub type AttrMatchT = Vec<Symbol>;
@@ -215,24 +215,17 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
         if opts.use_non_transitive_graph {
             let original_flow = infoflow::compute_flow_nontransitive(tcx, body_id, body_with_facts);
             if opts.shrink_flow_domains {
-                let mut num_real_location = 0;
-                let locations = crate::dbg::locations_of_body(body)
+                let mut locations = body
+                    .all_locations()
                     .into_iter()
-                    .filter(|l| {
-                        if !is_real_location(body, *l) {
-                            true
-                        } else if body.stmt_at(*l).is_right() {
-                            num_real_location += 1;
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .collect();
+                    .filter(|l| body.stmt_at(*l).is_right())
+                    .collect::<Vec<_>>();
+                locations.extend(flowistry::indexed::impls::arg_locations(body).1);
+                let num_real_locations = locations.len();
                 let shrunk_domain = Rc::new(LocationDomain::from_raw(
                     flowistry::indexed::DefaultDomain::new(locations),
                     domain.arg_block(),
-                    num_real_location,
+                    num_real_locations,
                 ));
                 let shrunk = shrink_flow_domain(&original_flow, &shrunk_domain, body, tcx);
                 Self {
@@ -297,7 +290,7 @@ pub fn mentioned_places_with_provenance<'tcx>(
 ///
 /// Example if the original MIR had
 ///
-/// ```
+/// ```plain
 /// Vec::push(_1, _2)
 /// _3 = &_1
 /// my_read(_3)
@@ -316,6 +309,7 @@ fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
     domain
         .as_vec()
         .iter()
+        .filter(|l| is_real_location(body, **l))
         .map(|l| {
             let old_matrix = flow.state_at(*l);
             let mut new_matrix = IndexMatrix::new(&domain);
