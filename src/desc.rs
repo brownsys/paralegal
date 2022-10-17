@@ -1,7 +1,8 @@
-use crate::{HashMap, HashSet, Symbol};
+use crate::{mir, HashMap, HashSet, Symbol};
 
 pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
+pub type Function = Identifier;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum Annotation {
@@ -148,6 +149,20 @@ impl ProgramDescription {
             .flat_map(|ctrl| ctrl.flow.0.values().flat_map(|v| v.iter()))
             .collect()
     }
+
+    pub fn all_functions(&self) -> HashSet<&Identifier> {
+        self.controllers
+            .values()
+            .flat_map(|ctrl| {
+                ctrl.flow
+                    .0
+                    .values()
+                    .flat_map(|v| v.iter().map(|s| &s.function))
+                    .chain(ctrl.flow.0.keys().filter_map(|src| src.as_function_call()))
+            })
+            .map(|cs| &cs.function)
+            .collect()
+    }
 }
 
 #[derive(Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone)]
@@ -180,13 +195,19 @@ impl<X, Y> Relation<X, Y> {
 }
 
 #[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone)]
+pub struct CallSite {
+    pub location: mir::Location,
+    pub function: Function,
+}
+
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone)]
 pub enum DataSource {
-    FunctionCall(Identifier),
+    FunctionCall(CallSite),
     Argument(usize),
 }
 
 impl DataSource {
-    pub fn as_function_call(&self) -> Option<&Identifier> {
+    pub fn as_function_call(&self) -> Option<&CallSite> {
         match self {
             DataSource::FunctionCall(i) => Some(i),
             _ => None,
@@ -196,7 +217,7 @@ impl DataSource {
 
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DataSink {
-    pub function: Identifier,
+    pub function: CallSite,
     pub arg_slot: usize,
 }
 

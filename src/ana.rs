@@ -498,7 +498,10 @@ impl<'tcx> Visitor<'tcx> {
 
             let mentioned_places = args.iter().filter_map(|a| *a).collect::<HashSet<_>>();
 
-            let src_desc = DataSource::FunctionCall(identifier_for_fn(tcx, p));
+            let src_desc = DataSource::FunctionCall(CallSite {
+                function: identifier_for_fn(tcx, p),
+                location: loc,
+            });
             source_locs.insert(loc, src_desc.clone());
             if !interesting_output_types.is_empty() {
                 flows.types.insert(src_desc, interesting_output_types);
@@ -510,7 +513,10 @@ impl<'tcx> Visitor<'tcx> {
                     flows.add(
                         Cow::Borrowed(&source_locs[loc]),
                         DataSink {
-                            function: Identifier::new(tcx.item_name(p)),
+                            function: CallSite {
+                                function: Identifier::new(tcx.item_name(p)),
+                                location: *loc,
+                            },
                             arg_slot: args
                                 .iter()
                                 .enumerate()
