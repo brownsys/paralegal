@@ -56,6 +56,18 @@ fn loops(mut x: i32) {
     send_user_data(&user_data);
 }
 
+#[dfpp::analyze]
+fn loop_retains_dependency(mut x: i32) {
+    let mut user_data = get_user_data();
+    let mut other_data = get_other_data();
+    while x < 10 {
+        dp_user_data_with(&mut user_data, &other_data);
+        modify_other_data(&mut other_data);
+        x -= 1;
+    }
+    send_user_data(&user_data);
+}
+
 #[dfpp::label(source)]
 fn get_user_data() -> UserData {
     return UserData{data: vec![1, 2, 3]}
@@ -66,10 +78,23 @@ fn get_user_data_with(data: Vec<i64>) -> UserData {
     return UserData{data}
 }
 
+fn get_other_data() -> Vec<i64> {
+    return vec![1, 2, 3]
+}
+
 fn dp_user_data(user_data: &mut UserData) {
     for i in &mut user_data.data {
         *i = 2;
     }
+}
+
+fn dp_user_data_with(user_data: &mut UserData, other_data: &Vec<i64>) {
+    for i in 0..user_data.data.len() {
+        user_data.data[i] = other_data[i];
+    }
+}
+
+fn modify_other_data(other_data: &mut Vec<i64>) {
 }
 
 #[dfpp::label{ sink, arguments = [0] }]

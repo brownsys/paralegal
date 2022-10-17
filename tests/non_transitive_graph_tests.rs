@@ -109,3 +109,24 @@ fn loops() {
     assert!(graph.connects(dp, send));
     assert!(graph.connects_direct(get, send));
 }
+
+#[test]
+fn loop_retains_dependency() {
+    assert!(*TEST_CRATE_ANALYZED);
+    let graph = do_in_crate_dir(|| {
+        G::from_file(Symbol::intern("loop_retains_dependency"))
+    })
+    .unwrap();
+
+    let get = graph.function_call("get_user_data");
+    let get_other = graph.function_call("get_other_data");
+    let dp = graph.function_call("dp_user_data");
+    let modify_other = graph.function_call("modify_other_data");
+    let send = graph.function_call("send_user_data");
+    assert!(graph.connects(get, dp));
+    assert!(graph.connects(get_other, dp));
+    assert!(graph.connects(modify_other, dp));
+    assert!(graph.connects(dp, send));
+    assert!(graph.connects(modify_other, send));
+    assert!(graph.connects_direct(get, send));
+}
