@@ -4,6 +4,10 @@ extern crate rustc_span;
 use dfpp::{HashSet, Symbol};
 use rustc_middle::mir;
 
+lazy_static! {
+    static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+}
+
 pub fn with_current_directory<
     P: AsRef<std::path::Path>,
     A,
@@ -12,6 +16,7 @@ pub fn with_current_directory<
     p: P,
     f: F,
 ) -> std::io::Result<A> {
+    let _guard = CWD_MUTEX.lock().unwrap();
     let current = std::env::current_dir()?;
     std::env::set_current_dir(p)?;
     let res = std::panic::catch_unwind(f);
