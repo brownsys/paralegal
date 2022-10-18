@@ -157,7 +157,7 @@ impl ProgramDescription {
             .collect()
     }
 
-    pub fn all_functions(&self) -> HashSet<&Identifier> {
+    pub fn all_call_sites(&self) -> HashSet<&CallSite> {
         self.controllers
             .values()
             .flat_map(|ctrl| {
@@ -167,6 +167,12 @@ impl ProgramDescription {
                     .flat_map(|v| v.iter().map(|s| &s.function))
                     .chain(ctrl.flow.0.keys().filter_map(|src| src.as_function_call()))
             })
+            .collect()
+    }
+
+    pub fn all_functions(&self) -> HashSet<&Identifier> {
+        self.all_call_sites()
+            .into_iter()
             .map(|cs| &cs.function)
             .collect()
     }

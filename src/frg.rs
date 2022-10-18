@@ -196,7 +196,7 @@ where
     A::Doc: Clone,
 {
     match src {
-        DataSource::FunctionCall(f) => alloc.text("call_").append(f.as_forge(alloc)),
+        DataSource::FunctionCall(f) => f.as_forge(alloc),
         DataSource::Argument(a) => alloc.text("arg_").append(alloc.as_string(a)),
     }
 }
@@ -218,7 +218,7 @@ mod name {
     /// Previously "Arg"
     pub const INPUT_ARGUMENT: &'static str = "InputArgument";
     /// Previously "Call"
-    pub const CALL_ARGUMENT_OUTPUT: &'static str = "FnOut";
+    //pub const CALL_ARGUMENT_OUTPUT: &'static str = "FnOut";
     /// Previously "Fn"
     pub const CALL_SITE: &'static str = "CallSite";
     /// Previously "CallSite"
@@ -234,7 +234,7 @@ mod name {
     pub const TYPES: &'static str = "types";
     pub const TYPE: &'static str = "Type";
     pub const ARG_CALL_SITE: &'static str = "arg_call_site";
-    pub const RETURN_CALL_SITE: &'static str = "ret_call_site";
+    //pub const RETURN_CALL_SITE: &'static str = "ret_call_site";
     pub const OTYPE_REL: &'static str = "otype";
     pub const EXCEPTIONS_LABEL: &'static str = "exception";
 
@@ -253,11 +253,12 @@ mod name {
                     (OBJ, None, vec![(LABELS_REL, set(LABEL))]),
                     (FUNCTION, Some(OBJ), vec![]),
                     (SRC, Some(OBJ), vec![]),
-                    (CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]),
+                    //(CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]),
                     (CALL_ARGUMENT, Some(OBJ), vec![(ARG_CALL_SITE, one(CALL_SITE))]),
                     (INPUT_ARGUMENT, Some(SRC), vec![]),
                     (TYPE, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
-                    (CALL_ARGUMENT_OUTPUT, Some(SRC), vec![(RETURN_CALL_SITE, one(CALL_SITE))]),
+                    //(CALL_ARGUMENT_OUTPUT, Some(SRC), vec![(RETURN_CALL_SITE, one(CALL_SITE))]),
+                    (CALL_SITE, Some(SRC), vec![(FUN_REL, one(FUNCTION))]),
                     (
                         CTRL,
                         None,
@@ -350,15 +351,12 @@ impl ProgramDescription {
                 .chain(self.controllers.values().flat_map(|c| c.types.keys()))
                 .collect::<HashSet<_>>()
                 .iter()
-                .map(|a| {
-                    make_one_sig(
-                        alloc,
-                        a.as_forge(alloc),
-                        match a {
-                            DataSource::Argument(_) => name::INPUT_ARGUMENT,
-                            DataSource::FunctionCall(_) => name::CALL_ARGUMENT_OUTPUT,
-                        },
-                    )
+                .filter_map(|a| {
+                    match a {
+                        DataSource::Argument(_) => Some(name::INPUT_ARGUMENT),
+                        DataSource::FunctionCall(_) => None, //  name::CALL_ARGUMENT_OUTPUT,
+                    }
+                    .map(|parent| make_one_sig(alloc, a.as_forge(alloc), parent))
                 }),
         )
     }
@@ -416,11 +414,7 @@ impl ProgramDescription {
         A::Doc: Clone,
     {
         alloc.lines(
-            self.all_sinks()
-                .into_iter()
-                .map(|c| &c.function)
-                .chain(self.all_sources().filter_map(|s| s.as_function_call()))
-                .collect::<HashSet<_>>()
+            self.all_call_sites()
                 .into_iter()
                 .map(|cs| make_one_sig(alloc, cs.as_forge(alloc), name::CALL_SITE)),
         )
@@ -521,12 +515,11 @@ impl ProgramDescription {
     where
         A::Doc: Clone,
     {
-        alloc.forge_relation(self.all_sources().into_iter().filter_map(|src| match src {
-            DataSource::FunctionCall(f) => Some((
+        alloc.forge_relation(self.all_call_sites().into_iter().map(|src| {
+            (
                 std::iter::once(src.as_forge(alloc)),
-                std::iter::once(f.as_forge(alloc)),
-            )),
-            _ => None,
+                std::iter::once(src.function.as_forge(alloc)),
+            )
         }))
     }
 
@@ -657,7 +650,8 @@ impl ToForge for ProgramDescription {
                                     )
                                     .parens(),
                             ),
-                            alloc.text(name::RETURN_CALL_SITE).append(" = ").append(
+                            alloc.text(name::FUN_REL).append(" = ").append(
+                                //alloc.text(name::RETURN_CALL_SITE).append(" = ").append(
                                 alloc
                                     .hardline()
                                     .append(
