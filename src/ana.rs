@@ -221,9 +221,19 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
     ) -> Self {
         let body = &body_with_facts.body;
         let domain = LocationDomain::new(body);
-        if opts.use_non_transitive_graph {
+        if opts.use_transitive_graph {
+            Self {
+                kind: FlowKind::Transitive(infoflow::compute_flow(tcx, body_id, body_with_facts)),
+                domain,
+            }
+        } else {
             let original_flow = infoflow::compute_flow_nontransitive(tcx, body_id, body_with_facts);
-            if opts.shrink_flow_domains {
+            if opts.no_shrink_flow_domains {
+                Self {
+                    kind: FlowKind::NonTransitive(original_flow),
+                    domain,
+                }
+            } else {
                 let mut locations = body
                     .all_locations()
                     .into_iter()
@@ -251,16 +261,6 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
                     },
                     domain: shrunk_domain,
                 }
-            } else {
-                Self {
-                    kind: FlowKind::NonTransitive(original_flow),
-                    domain,
-                }
-            }
-        } else {
-            Self {
-                kind: FlowKind::Transitive(infoflow::compute_flow(tcx, body_id, body_with_facts)),
-                domain,
             }
         }
     }

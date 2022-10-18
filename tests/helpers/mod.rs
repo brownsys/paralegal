@@ -56,9 +56,7 @@ pub fn install_dfpp() -> bool {
 pub fn run_dfpp_with_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")
-        .arg("--use-non-transitive-graph")
         .arg("--dump-serialized-non-transitive-graph")
-        .arg("--shrink-flow-domains")
         .status()
         .unwrap()
         .success()

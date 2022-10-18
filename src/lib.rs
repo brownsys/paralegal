@@ -86,9 +86,9 @@ pub struct Args {
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct AnalysisCtrl {
     #[clap(long, env)]
-    use_non_transitive_graph: bool,
+    use_transitive_graph: bool,
     #[clap(long, env)]
-    shrink_flow_domains: bool,
+    no_shrink_flow_domains: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
