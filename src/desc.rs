@@ -98,6 +98,10 @@ impl AnnotationRefinement {
     pub fn on_return(&self) -> bool {
         self.on_return
     }
+
+    pub fn on_self(&self) -> bool {
+        self.on_argument.is_empty() && !self.on_return
+    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -131,6 +135,9 @@ impl ObjectType {
                 }
             }
         }
+    }
+    pub fn is_type(&self) -> bool {
+        matches!(self, ObjectType::Type)
     }
 }
 

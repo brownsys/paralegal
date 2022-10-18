@@ -155,6 +155,15 @@ fn terminator_is_call(t: &mir::Terminator) -> bool {
     }
 }
 
+lazy_static! {
+    static ref FUNCTION_BLACKLIST: HashSet<Identifier> =
+        ["deref", "deref_mut", "unwrap", "expect", "into", "clone"]
+            .into_iter()
+            .map(Symbol::intern)
+            .map(Identifier::new)
+            .collect();
+}
+
 pub struct Flow<'a, 'tcx> {
     pub kind: FlowKind<'a, 'tcx>,
     pub domain: Rc<LocationDomain>,
@@ -218,7 +227,14 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
                 let mut locations = body
                     .all_locations()
                     .into_iter()
-                    .filter(|l| body.stmt_at(*l).is_right())
+                    .filter(|l| {
+                        body.stmt_at(*l)
+                            .right()
+                            .and_then(fn_defid_and_args)
+                            .map_or(false, |(did, _)| {
+                                !FUNCTION_BLACKLIST.contains(&identifier_for_fn(tcx, did))
+                            })
+                    })
                     .collect::<Vec<_>>();
                 locations.extend(flowistry::indexed::impls::arg_locations(body).1);
                 let num_real_locations = locations.len();
@@ -462,7 +478,7 @@ impl<'tcx> Visitor<'tcx> {
                     dump_non_transitive_graph_and_body(id, body, &non_t_g, &flow.domain, tcx);
                 }
             _ if self.opts.dbg.dump_non_transitive_graph || self.opts.dbg.dump_serialized_non_transitive_graph =>
-                error!("Told to dumping non-transitive graph, but analysis not instructed to make non-transitive graph!"),
+                error!("Told to dump non-transitive graph, but analysis not instructed to make non-transitive graph!"),
             _ => ()
         }
         for (bb, t, p, args) in body
@@ -470,7 +486,9 @@ impl<'tcx> Visitor<'tcx> {
             .iter_enumerated()
             .filter_map(|(bb, bbdat)| {
                 let t = bbdat.terminator();
-                fn_defid_and_args(t).map(|(did, args)| (bb, t, did, args))
+                fn_defid_and_args(t)
+                    .filter(|(did, _)| !FUNCTION_BLACKLIST.contains(&identifier_for_fn(tcx, *did)))
+                    .map(|(did, args)| (bb, t, did, args))
             })
         {
             let loc = body.terminator_loc(bb);
@@ -514,7 +532,7 @@ impl<'tcx> Visitor<'tcx> {
                         Cow::Borrowed(&source_locs[loc]),
                         DataSink {
                             function: CallSite {
-                                function: Identifier::new(tcx.item_name(p)),
+                                function: identifier_for_fn(tcx, p),
                                 location: *loc,
                             },
                             arg_slot: args

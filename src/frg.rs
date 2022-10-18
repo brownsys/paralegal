@@ -180,9 +180,10 @@ impl ToForge for CallSite {
         A::Doc: Clone,
     {
         alloc.text(format!(
-            "b{}_i{}",
+            "b{}_i{}_{}",
             self.location.block.as_usize(),
-            self.location.statement_index
+            self.location.statement_index,
+            self.function.as_str(),
         ))
     }
 }
@@ -407,6 +408,24 @@ impl ProgramDescription {
         )
     }
 
+    fn make_call_site_sigs<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
+        &'b self,
+        alloc: &'a A,
+    ) -> DocBuilder<'a, A, ()>
+    where
+        A::Doc: Clone,
+    {
+        alloc.lines(
+            self.all_sinks()
+                .into_iter()
+                .map(|c| &c.function)
+                .chain(self.all_sources().filter_map(|s| s.as_function_call()))
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .map(|cs| make_one_sig(alloc, cs.as_forge(alloc), name::CALL_SITE)),
+        )
+    }
+
     fn make_labels_relation<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
         &'b self,
         alloc: &'a A,
@@ -415,7 +434,7 @@ impl ProgramDescription {
         A::Doc: Clone,
     {
         alloc
-            .forge_relation(self.annotations.iter().flat_map(|(id, (anns, _))| {
+            .forge_relation(self.annotations.iter().flat_map(|(id, (anns, typ))| {
                 // I've decided to do the more
                 // complicated thing here which
                 // restores the old behavior. Is
@@ -448,6 +467,14 @@ impl ProgramDescription {
                                                 .contains(&(s.arg_slot as u16))
                                     })
                                     .map(|s| s.as_forge(alloc)),
+                            )
+                            .chain(
+                                if a.refinement.on_self() && typ.is_type() {
+                                    Some(id.as_forge(alloc))
+                                } else {
+                                    None
+                                }
+                                .into_iter(),
                             )
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
@@ -563,10 +590,14 @@ impl ToForge for ProgramDescription {
             alloc.nil(),
             self.make_label_sigs(alloc),
             alloc.nil(),
+            self.make_call_site_sigs(alloc),
+            alloc.nil(),
             self.make_source_sigs(alloc),
             alloc.nil(),
             self.make_sink_sigs(alloc),
+            alloc.nil(),
             self.make_type_sigs(alloc),
+            alloc.nil(),
             self.make_function_sigs(alloc),
             alloc.nil(),
             alloc.lines(
