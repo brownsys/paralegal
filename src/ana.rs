@@ -156,12 +156,23 @@ fn terminator_is_call(t: &mir::Terminator) -> bool {
 }
 
 lazy_static! {
-    static ref FUNCTION_BLACKLIST: HashSet<Identifier> =
-        ["deref", "deref_mut", "unwrap", "expect", "into", "clone", "format", "iter", "into_iter", "collect", "next"]
-            .into_iter()
-            .map(Symbol::intern)
-            .map(Identifier::new)
-            .collect();
+    static ref FUNCTION_BLACKLIST: HashSet<Identifier> = [
+        "deref",
+        "deref_mut",
+        "unwrap",
+        "expect",
+        "into",
+        "clone",
+        "format",
+        "iter",
+        "into_iter",
+        "collect",
+        "next"
+    ]
+    .into_iter()
+    .map(Symbol::intern)
+    .map(Identifier::new)
+    .collect();
 }
 
 pub struct Flow<'a, 'tcx> {
