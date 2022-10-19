@@ -33,6 +33,7 @@ pub mod rust {
     pub use ty::TyCtxt;
 }
 
+use pretty::{BoxAllocator, DocBuilder};
 use rust::*;
 
 use flowistry::mir::borrowck_facts;
@@ -146,7 +147,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .open(&self.opts.result_path)
             .unwrap();
         let doc_alloc = pretty::BoxAllocator;
-        let doc = desc.as_forge(&doc_alloc);
+        let doc: DocBuilder<_, ()> = desc.as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();
         info!(
             "Wrote analysis result to {}",

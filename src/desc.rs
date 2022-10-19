@@ -226,6 +226,12 @@ impl DataSource {
             _ => None,
         }
     }
+    pub fn as_argument(&self) -> Option<usize> {
+        match self {
+            DataSource::Argument(a) => Some(*a),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]

@@ -3,7 +3,7 @@ extern crate pretty;
 use crate::{desc::CallSite, HashSet};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
-use std::borrow::Cow;
+use std::{borrow::Cow, hash::Hash};
 
 use crate::desc::{
     Annotation, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription, Relation,
@@ -77,13 +77,12 @@ where
 {
 }
 
-pub trait ToForge {
-    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
-        &'a self,
-        alloc: &'b A,
-    ) -> DocBuilder<'b, A, ()>
-    where
-        A::Doc: Clone;
+pub trait ToForge<'a, A, D>
+where
+    A: 'a,
+    D: ?std::marker::Sized + DocAllocator<'a, A>,
+{
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A>;
 }
 
 lazy_static! {
@@ -96,30 +95,31 @@ lazy_static! {
     .collect();
 }
 
-impl ToForge for Identifier {
-    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
-        &'a self,
-        alloc: &'b A,
-    ) -> DocBuilder<'b, A, ()>
-    where
-        A::Doc: Clone,
-    {
-        alloc.text(if FORGE_RESERVED_SYMBOLS.contains(self) {
-            Cow::Owned("s__".to_string() + self.as_str())
-        } else {
-            Cow::Borrowed(self.as_str())
-        })
+impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for Identifier {
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+        alloc
+            .text("`")
+            .append(alloc.text(if FORGE_RESERVED_SYMBOLS.contains(&self) {
+                "s__".to_string() + self.as_str()
+            } else {
+                self.as_str().to_owned()
+            }))
     }
 }
 
-impl<X: ToForge, Y: ToForge> ToForge for Relation<X, Y> {
-    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
-        &'a self,
-        alloc: &'b A,
-    ) -> DocBuilder<'b, A, ()>
-    where
-        A::Doc: Clone,
-    {
+impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a Identifier {
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+        self.clone().as_forge(alloc)
+    }
+}
+
+impl<'a, A: 'a + Clone, D: DocAllocator<'a, A>, X, Y> ToForge<'a, A, D> for &'a Relation<X, Y>
+where
+    D::Doc: Clone,
+    &'a X: ToForge<'a, A, D>,
+    &'a Y: ToForge<'a, A, D>,
+{
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.forge_relation(self.0.iter().map(|(src, sinks)| {
             (
                 std::iter::once(src.as_forge(alloc)),
@@ -129,40 +129,34 @@ impl<X: ToForge, Y: ToForge> ToForge for Relation<X, Y> {
     }
 }
 
-fn data_sink_as_forge<'b, A: DocAllocator<'b, ()>>(
-    alloc: &'b A,
+impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a str {
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+        alloc.text(self)
+    }
+}
+
+fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
+    alloc: &'b D,
     function: &'b CallSite,
     arg_slot: usize,
-) -> DocBuilder<'b, A, ()>
-where
-    A::Doc: Clone,
-{
+) -> DocBuilder<'b, D, A> {
     function
         .as_forge(alloc)
         .append(alloc.text("_"))
         .append(alloc.as_string(arg_slot))
 }
 
-impl ToForge for DataSink {
-    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
-        &'a self,
-        alloc: &'b A,
-    ) -> DocBuilder<'b, A, ()>
-    where
-        A::Doc: Clone,
-    {
+impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         data_sink_as_forge(alloc, &self.function, self.arg_slot)
     }
 }
 
-impl<T: ToForge> ToForge for HashSet<T> {
-    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
-        &'a self,
-        alloc: &'b A,
-    ) -> DocBuilder<'b, A, ()>
-    where
-        A::Doc: Clone,
-    {
+impl<'a, A: 'a, D: DocAllocator<'a, A>, T> ToForge<'a, A, D> for &'a HashSet<T>
+where
+    &'a T: ToForge<'a, A, D>,
+{
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         if self.is_empty() {
             alloc.text("none")
         } else {
@@ -171,16 +165,10 @@ impl<T: ToForge> ToForge for HashSet<T> {
     }
 }
 
-impl ToForge for CallSite {
-    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
-        &'a self,
-        alloc: &'b A,
-    ) -> DocBuilder<'b, A, ()>
-    where
-        A::Doc: Clone,
-    {
+impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.text(format!(
-            "b{}_i{}_{}",
+            "`b{}_i{}_{}",
             self.location.block.as_usize(),
             self.location.statement_index,
             self.function.as_str(),
@@ -188,27 +176,18 @@ impl ToForge for CallSite {
     }
 }
 
-fn data_source_as_forge<'b, A: DocAllocator<'b, ()>>(
+fn data_source_as_forge<'b, A, D: DocAllocator<'b, A>>(
     src: &'b DataSource,
-    alloc: &'b A,
-) -> DocBuilder<'b, A, ()>
-where
-    A::Doc: Clone,
-{
+    alloc: &'b D,
+) -> DocBuilder<'b, D, A> {
     match src {
         DataSource::FunctionCall(f) => f.as_forge(alloc),
-        DataSource::Argument(a) => alloc.text("arg_").append(alloc.as_string(a)),
+        DataSource::Argument(a) => alloc.text("`arg_").append(alloc.as_string(a)),
     }
 }
 
-impl ToForge for DataSource {
-    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
-        &'a self,
-        alloc: &'b A,
-    ) -> DocBuilder<'b, A, ()>
-    where
-        A::Doc: Clone,
-    {
+impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSource {
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         data_source_as_forge(self, alloc)
     }
 }
@@ -288,9 +267,20 @@ where
         .append(" {}")
 }
 
-fn make_forge_sigs<'a, A: DocAllocator<'a, ()>>(alloc: &'a A) -> DocBuilder<'a, A, ()>
+fn hash_set_into_forge<'a, A: 'a, D: DocAllocator<'a, A>, T: ToForge<'a, A, D>>(
+    h: HashSet<T>,
+    alloc: &'a D,
+) -> DocBuilder<'a, D, A> {
+    if h.is_empty() {
+        alloc.text("none")
+    } else {
+        alloc.intersperse(h.into_iter().map(|w| w.as_forge(alloc)), "+")
+    }
+}
+
+fn make_forge_sigs<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(alloc: &'a D) -> DocBuilder<'a, D, A>
 where
-    A::Doc: Clone,
+    D::Doc: Clone,
 {
     alloc.lines(name::SIGS.iter().map(|(name, parent, fields)| {
         alloc
@@ -320,22 +310,26 @@ where
 }
 
 impl ProgramDescription {
+    fn used_labels(&self) -> HashSet<Identifier> {
+        self.annotations
+            .values()
+            .flat_map(|v| v.0.iter())
+            .filter_map(Annotation::as_label_ann)
+            .map(|a| a.label)
+            .chain(std::iter::once(crate::Symbol::intern(
+                name::EXCEPTIONS_LABEL,
+            )))
+            .map(Identifier::new)
+            .collect()
+    }
     fn make_label_sigs<'a, A: DocAllocator<'a, ()>>(&self, alloc: &'a A) -> DocBuilder<'a, A, ()>
     where
         A::Doc: Clone,
     {
         alloc.lines(
-            self.annotations
-                .values()
-                .flat_map(|v| v.0.iter())
-                .filter_map(Annotation::as_label_ann)
-                .map(|a| a.label)
-                .chain(std::iter::once(crate::Symbol::intern(
-                    name::EXCEPTIONS_LABEL,
-                )))
-                .collect::<HashSet<_>>()
+            self.used_labels()
                 .into_iter()
-                .map(|s| make_one_sig(alloc, alloc.text(s.as_str().to_string()), name::LABEL)),
+                .map(|s| make_one_sig(alloc, s.as_forge(alloc), name::LABEL)),
         )
     }
 
@@ -377,6 +371,14 @@ impl ProgramDescription {
         }))
     }
 
+    fn all_types(&self) -> HashSet<&Identifier> {
+        self.annotations
+            .iter()
+            .filter(|t| t.1 .1 == ObjectType::Type)
+            .map(|t| t.0)
+            .collect()
+    }
+
     fn make_type_sigs<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
         &'b self,
         alloc: &'a A,
@@ -385,10 +387,9 @@ impl ProgramDescription {
         A::Doc: Clone,
     {
         alloc.lines(
-            self.annotations
-                .iter()
-                .filter(|t| t.1 .1 == ObjectType::Type)
-                .map(|(name, _)| make_one_sig(alloc, name.as_forge(alloc), name::TYPE)),
+            self.all_types()
+                .into_iter()
+                .map(|name| make_one_sig(alloc, name.as_forge(alloc), name::TYPE)),
         )
     }
 
@@ -420,12 +421,12 @@ impl ProgramDescription {
         )
     }
 
-    fn make_labels_relation<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
+    fn make_labels_relation<'a, A: Clone + 'a, D: DocAllocator<'a, A>>(
+        &'a self,
+        alloc: &'a D,
+    ) -> DocBuilder<'a, D, A>
     where
-        A::Doc: Clone,
+        D::Doc: Clone,
     {
         alloc
             .forge_relation(self.annotations.iter().flat_map(|(id, (anns, typ))| {
@@ -473,7 +474,7 @@ impl ProgramDescription {
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
                             .into_iter(),
-                            std::iter::once(alloc.text(a.label.as_str())),
+                            std::iter::once(Identifier::new(a.label).as_forge(alloc)),
                         )
                     })
             }))
@@ -493,12 +494,12 @@ impl ProgramDescription {
             )
     }
 
-    fn make_callsite_argument_relation<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
+    fn make_callsite_argument_relation<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
+        &'a self,
+        alloc: &'a D,
+    ) -> DocBuilder<'a, D, A>
     where
-        A::Doc: Clone,
+        D::Doc: Clone,
     {
         alloc.forge_relation(self.all_sinks().into_iter().map(|src| {
             (
@@ -508,27 +509,27 @@ impl ProgramDescription {
         }))
     }
 
-    fn make_return_func_relation<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
+    fn make_return_func_relation<'a, A: Clone + 'a, D: DocAllocator<'a, A>>(
+        &'a self,
+        alloc: &'a D,
+    ) -> DocBuilder<'a, D, A>
     where
-        A::Doc: Clone,
+        D::Doc: Clone,
     {
         alloc.forge_relation(self.all_call_sites().into_iter().map(|src| {
             (
                 std::iter::once(src.as_forge(alloc)),
-                std::iter::once(src.function.as_forge(alloc)),
+                std::iter::once((&src.function).as_forge(alloc)),
             )
         }))
     }
 
-    fn make_otype_relation<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
+    fn make_otype_relation<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
+        &'a self,
+        alloc: &'a D,
+    ) -> DocBuilder<'a, D, A>
     where
-        A::Doc: Clone,
+        D::Doc: Clone,
     {
         alloc.forge_relation(self.annotations.iter().map(|(o, (anns, _))| {
             (
@@ -543,32 +544,30 @@ impl ProgramDescription {
 }
 
 impl Ctrl {
-    fn make_types_relation<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
+    fn make_types_relation<'a, A: 'a, D: DocAllocator<'a, A>>(
+        &'a self,
+        alloc: &'a D,
+    ) -> DocBuilder<'a, D, A>
     where
-        A::Doc: Clone,
+        D::Doc: Clone,
+        A: Clone,
     {
         alloc
             .hardline()
             .append(alloc.forge_relation(self.types.iter().map(|(i, desc)| {
                 (
                     std::iter::once(data_source_as_forge(i, alloc)),
-                    desc.iter().map(|t| alloc.text(t.as_str())),
+                    desc.iter().map(|t| t.as_forge(alloc)),
                 )
             })))
     }
 }
 
-impl ToForge for ProgramDescription {
-    fn as_forge<'b, 'a: 'b, A: DocAllocator<'b, ()>>(
-        &'a self,
-        alloc: &'b A,
-    ) -> DocBuilder<'b, A, ()>
-    where
-        A::Doc: Clone,
-    {
+impl<'a, A: 'a + Clone, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a ProgramDescription
+where
+    D::Doc: Clone,
+{
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.lines([
             alloc.text("#lang forge"),
             alloc.nil(),
@@ -581,31 +580,84 @@ impl ToForge for ProgramDescription {
             alloc.nil(),
             make_forge_sigs(alloc),
             alloc.nil(),
-            self.make_label_sigs(alloc),
-            alloc.nil(),
-            self.make_call_site_sigs(alloc),
-            alloc.nil(),
-            self.make_source_sigs(alloc),
-            alloc.nil(),
-            self.make_sink_sigs(alloc),
-            alloc.nil(),
-            self.make_type_sigs(alloc),
-            alloc.nil(),
-            self.make_function_sigs(alloc),
-            alloc.nil(),
-            alloc.lines(
-                self.controllers
-                    .keys()
-                    .map(|e| make_one_sig(alloc, e.as_forge(alloc), name::CTRL)),
-            ),
+            // self.make_label_sigs(alloc),
+            // alloc.nil(),
+            // self.make_call_site_sigs(alloc),
+            // alloc.nil(),
+            // self.make_source_sigs(alloc),
+            // alloc.nil(),
+            // self.make_sink_sigs(alloc),
+            // alloc.nil(),
+            // self.make_type_sigs(alloc),
+            // alloc.nil(),
+            // self.make_function_sigs(alloc),
+            // alloc.nil(),
+            // alloc.lines(
+            //     self.controllers
+            //         .keys()
+            //         .map(|e| make_one_sig(alloc, e.as_forge(alloc), name::CTRL)),
+            // ),
             alloc.nil(),
             alloc
-                .text("pred ")
+                .text("inst ")
                 .append(name::FLOWS_PREDICATE)
                 .append(" ")
                 .append(
                     alloc
                         .lines([
+                            alloc.nil(),
+                            alloc
+                                .text(name::LABEL)
+                                .append(" = ")
+                                .append(hash_set_into_forge(self.used_labels(), alloc)),
+                            alloc
+                                .text(name::CALL_SITE)
+                                .append(" = ")
+                                .append(hash_set_into_forge(self.all_call_sites(), alloc)),
+                            alloc.text(name::INPUT_ARGUMENT).append(" = ").append(
+                                hash_set_into_forge(
+                                    self.all_sources()
+                                        .filter(|s| s.as_argument().is_some())
+                                        .collect::<HashSet<_>>(),
+                                    alloc,
+                                ),
+                            ),
+                            alloc.text(name::SRC).append(" = ").append(
+                                hash_set_into_forge(
+                                    [name::INPUT_ARGUMENT, name::CALL_SITE]
+                                        .into_iter()
+                                        .collect::<HashSet<_>>(),
+                                    alloc,
+                                ),
+                            ),
+                            alloc
+                                .text(name::CALL_ARGUMENT)
+                                .append(" = ")
+                                .append(hash_set_into_forge(self.all_sinks(), alloc)),
+                            alloc
+                                .text(name::TYPE)
+                                .append(" = ")
+                                .append(hash_set_into_forge(self.all_types(), alloc)),
+                            alloc
+                                .text(name::FUNCTION)
+                                .append(" = ")
+                                .append(hash_set_into_forge(self.all_functions(), alloc)),
+                            alloc
+                                .text(name::OBJ)
+                                .append(" = ")
+                                .append(hash_set_into_forge(
+                                    [name::FUNCTION, name::SRC, name::CALL_ARGUMENT, name::TYPE]
+                                        .into_iter()
+                                        .collect::<HashSet<_>>(),
+                                    alloc,
+                                )),
+                            alloc
+                                .text(name::CTRL)
+                                .append(" = ")
+                                .append(hash_set_into_forge(
+                                    self.controllers.keys().collect::<HashSet<_>>(),
+                                    alloc,
+                                )),
                             alloc.nil(),
                             alloc.lines(self.controllers.iter().map(|(e, ctrl)| {
                                 alloc.lines([
@@ -616,7 +668,7 @@ impl ToForge for ProgramDescription {
                                         .append(
                                             alloc
                                                 .hardline()
-                                                .append(ctrl.flow.as_forge(alloc).indent(4))
+                                                .append((&ctrl.flow).as_forge(alloc).indent(4))
                                                 .append(alloc.hardline())
                                                 .parens(),
                                         ),
