@@ -155,26 +155,6 @@ fn terminator_is_call(t: &mir::Terminator) -> bool {
     }
 }
 
-lazy_static! {
-    static ref FUNCTION_BLACKLIST: HashSet<Identifier> = [
-        "deref",
-        "deref_mut",
-        "unwrap",
-        "expect",
-        "into",
-        "clone",
-        "format",
-        "iter",
-        "into_iter",
-        "collect",
-        "next"
-    ]
-    .into_iter()
-    .map(Symbol::intern)
-    .map(Identifier::new)
-    .collect();
-}
-
 pub struct Flow<'a, 'tcx> {
     pub kind: FlowKind<'a, 'tcx>,
     pub domain: Rc<LocationDomain>,
@@ -248,14 +228,7 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
                 let mut locations = body
                     .all_locations()
                     .into_iter()
-                    .filter(|l| {
-                        body.stmt_at(*l)
-                            .right()
-                            .and_then(fn_defid_and_args)
-                            .map_or(false, |(did, _)| {
-                                !FUNCTION_BLACKLIST.contains(&identifier_for_fn(tcx, did))
-                            })
-                    })
+                    .filter(|l| body.stmt_at(*l).is_right())
                     .collect::<Vec<_>>();
                 locations.extend(flowistry::indexed::impls::arg_locations(body).1);
                 let num_real_locations = locations.len();
@@ -497,9 +470,7 @@ impl<'tcx> Visitor<'tcx> {
             .iter_enumerated()
             .filter_map(|(bb, bbdat)| {
                 let t = bbdat.terminator();
-                fn_defid_and_args(t)
-                    .filter(|(did, _)| !FUNCTION_BLACKLIST.contains(&identifier_for_fn(tcx, *did)))
-                    .map(|(did, args)| (bb, t, did, args))
+                fn_defid_and_args(t).map(|(did, args)| (bb, t, did, args))
             })
         {
             let loc = body.terminator_loc(bb);
@@ -538,13 +509,13 @@ impl<'tcx> Visitor<'tcx> {
 
             for r in mentioned_places.iter() {
                 let deps = matrix.row(*r);
-                for loc in deps.filter(|l| source_locs.contains_key(l)) {
+                for dloc in deps.filter(|l| source_locs.contains_key(l)) {
                     flows.add(
-                        Cow::Borrowed(&source_locs[loc]),
+                        Cow::Borrowed(&source_locs[dloc]),
                         DataSink {
                             function: CallSite {
                                 function: identifier_for_fn(tcx, p),
-                                location: *loc,
+                                location: loc,
                             },
                             arg_slot: args
                                 .iter()

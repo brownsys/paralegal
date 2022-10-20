@@ -344,7 +344,6 @@ impl ProgramDescription {
             .collect()
     }
 
-
     fn make_labels_relation<'a, A: Clone + 'a, D: DocAllocator<'a, A>>(
         &'a self,
         alloc: &'a D,
