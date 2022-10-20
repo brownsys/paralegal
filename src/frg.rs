@@ -3,8 +3,6 @@ extern crate pretty;
 use crate::{desc::CallSite, HashSet};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
-use std::{borrow::Cow, hash::Hash};
-
 use crate::desc::{
     Annotation, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription, Relation,
 };
@@ -221,6 +219,7 @@ mod name {
         /// For now the order here *must* be topological as the code gen does not reorder this automatically
         pub static ref SIGS: Vec<(
                 &'static str,
+                bool,
                 Option<&'static str>,
                 Vec<(&'static str, String)>,
             )> = {
@@ -228,18 +227,19 @@ mod name {
                 let one = |i| "one ".to_string() + i;
                 let arr = |from: &str, to| from.to_string() + "->" + to;
                 vec![
-                    (LABEL, None, vec![]),
-                    (OBJ, None, vec![(LABELS_REL, set(LABEL))]),
-                    (FUNCTION, Some(OBJ), vec![]),
-                    (SRC, Some(OBJ), vec![]),
+                    (LABEL, true, None, vec![]),
+                    (OBJ, true, None, vec![(LABELS_REL, set(LABEL))]),
+                    (FUNCTION, false, Some(OBJ), vec![]),
+                    (SRC, true, Some(OBJ), vec![]),
                     //(CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]),
-                    (CALL_ARGUMENT, Some(OBJ), vec![(ARG_CALL_SITE, one(CALL_SITE))]),
-                    (INPUT_ARGUMENT, Some(SRC), vec![]),
-                    (TYPE, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
+                    (CALL_ARGUMENT, false, Some(OBJ), vec![(ARG_CALL_SITE, one(CALL_SITE))]),
+                    (INPUT_ARGUMENT, false, Some(SRC), vec![]),
+                    (TYPE, false, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
                     //(CALL_ARGUMENT_OUTPUT, Some(SRC), vec![(RETURN_CALL_SITE, one(CALL_SITE))]),
-                    (CALL_SITE, Some(SRC), vec![(FUN_REL, one(FUNCTION))]),
+                    (CALL_SITE, false, Some(SRC), vec![(FUN_REL, one(FUNCTION))]),
                     (
                         CTRL,
+                        false,
                         None,
                         vec![
                             (FLOW, set(&arr(SRC, CALL_ARGUMENT))),
@@ -251,13 +251,13 @@ mod name {
     }
 }
 
-fn make_one_sig<'b, A: DocAllocator<'b, ()>, I: Pretty<'b, A, ()>>(
-    alloc: &'b A,
+fn make_one_sig<'a, A: Clone + 'a, D: DocAllocator<'a, A>, I: Pretty<'a, D, A>>(
+    alloc: &'a D,
     inner: I,
     parent: &'static str,
-) -> DocBuilder<'b, A, ()>
+) -> DocBuilder<'a, D, A>
 where
-    A::Doc: Clone,
+    D::Doc: Clone,
 {
     alloc
         .text("one sig ")
@@ -282,9 +282,9 @@ fn make_forge_sigs<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(alloc: &'a D) -> D
 where
     D::Doc: Clone,
 {
-    alloc.lines(name::SIGS.iter().map(|(name, parent, fields)| {
+    alloc.lines(name::SIGS.iter().map(|(name, abstract_, parent, fields)| {
         alloc
-            .text("abstract sig ")
+            .text(if *abstract_ { "abstract sig " } else { "sig " })
             .append(*name)
             .append(parent.map_or(alloc.nil(), |p| alloc.text(" extends ").append(p)))
             .append(alloc.space())
@@ -322,53 +322,18 @@ impl ProgramDescription {
             .map(Identifier::new)
             .collect()
     }
-    fn make_label_sigs<'a, A: DocAllocator<'a, ()>>(&self, alloc: &'a A) -> DocBuilder<'a, A, ()>
+    fn make_label_sigs<'a, A: Clone + 'a, D: DocAllocator<'a, A>>(
+        &self,
+        alloc: &'a D,
+    ) -> DocBuilder<'a, D, A>
     where
-        A::Doc: Clone,
+        D::Doc: Clone,
     {
         alloc.lines(
             self.used_labels()
                 .into_iter()
-                .map(|s| make_one_sig(alloc, s.as_forge(alloc), name::LABEL)),
+                .map(|s| make_one_sig(alloc, alloc.text(s.as_str().to_string()), name::LABEL)),
         )
-    }
-
-    fn make_source_sigs<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
-    where
-        A::Doc: Clone,
-    {
-        alloc.lines(
-            self.all_sources()
-                .chain(self.controllers.values().flat_map(|c| c.types.keys()))
-                .collect::<HashSet<_>>()
-                .iter()
-                .filter_map(|a| {
-                    match a {
-                        DataSource::Argument(_) => Some(name::INPUT_ARGUMENT),
-                        DataSource::FunctionCall(_) => None, //  name::CALL_ARGUMENT_OUTPUT,
-                    }
-                    .map(|parent| make_one_sig(alloc, a.as_forge(alloc), parent))
-                }),
-        )
-    }
-
-    fn make_sink_sigs<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
-    where
-        A::Doc: Clone,
-    {
-        alloc.lines(self.all_sinks().into_iter().map(|sink| {
-            make_one_sig(
-                alloc,
-                data_sink_as_forge(alloc, &sink.function, sink.arg_slot),
-                name::CALL_ARGUMENT,
-            )
-        }))
     }
 
     fn all_types(&self) -> HashSet<&Identifier> {
@@ -379,47 +344,6 @@ impl ProgramDescription {
             .collect()
     }
 
-    fn make_type_sigs<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
-    where
-        A::Doc: Clone,
-    {
-        alloc.lines(
-            self.all_types()
-                .into_iter()
-                .map(|name| make_one_sig(alloc, name.as_forge(alloc), name::TYPE)),
-        )
-    }
-
-    fn make_function_sigs<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
-    where
-        A::Doc: Clone,
-    {
-        alloc.lines(
-            self.all_functions()
-                .into_iter()
-                .map(|f| make_one_sig(alloc, f.as_forge(alloc), name::FUNCTION)),
-        )
-    }
-
-    fn make_call_site_sigs<'a, 'b: 'a, A: DocAllocator<'a, ()>>(
-        &'b self,
-        alloc: &'a A,
-    ) -> DocBuilder<'a, A, ()>
-    where
-        A::Doc: Clone,
-    {
-        alloc.lines(
-            self.all_call_sites()
-                .into_iter()
-                .map(|cs| make_one_sig(alloc, cs.as_forge(alloc), name::CALL_SITE)),
-        )
-    }
 
     fn make_labels_relation<'a, A: Clone + 'a, D: DocAllocator<'a, A>>(
         &'a self,
@@ -552,14 +476,16 @@ impl Ctrl {
         D::Doc: Clone,
         A: Clone,
     {
-        alloc
-            .hardline()
-            .append(alloc.forge_relation(self.types.iter().map(|(i, desc)| {
-                (
-                    std::iter::once(data_source_as_forge(i, alloc)),
-                    desc.iter().map(|t| t.as_forge(alloc)),
-                )
-            })))
+        alloc.hardline().append(
+            alloc
+                .forge_relation(self.types.iter().map(|(i, desc)| {
+                    (
+                        std::iter::once(data_source_as_forge(i, alloc)),
+                        desc.iter().map(|t| t.as_forge(alloc)),
+                    )
+                }))
+                .indent(4),
+        )
     }
 }
 
@@ -580,23 +506,7 @@ where
             alloc.nil(),
             make_forge_sigs(alloc),
             alloc.nil(),
-            // self.make_label_sigs(alloc),
-            // alloc.nil(),
-            // self.make_call_site_sigs(alloc),
-            // alloc.nil(),
-            // self.make_source_sigs(alloc),
-            // alloc.nil(),
-            // self.make_sink_sigs(alloc),
-            // alloc.nil(),
-            // self.make_type_sigs(alloc),
-            // alloc.nil(),
-            // self.make_function_sigs(alloc),
-            // alloc.nil(),
-            // alloc.lines(
-            //     self.controllers
-            //         .keys()
-            //         .map(|e| make_one_sig(alloc, e.as_forge(alloc), name::CTRL)),
-            // ),
+            self.make_label_sigs(alloc),
             alloc.nil(),
             alloc
                 .text("inst ")
@@ -610,6 +520,12 @@ where
                                 .text(name::LABEL)
                                 .append(" = ")
                                 .append(hash_set_into_forge(self.used_labels(), alloc)),
+                            alloc.lines(self.used_labels().into_iter().map(|l| {
+                                alloc
+                                    .text(l.as_str().to_owned())
+                                    .append(" = ")
+                                    .append(l.as_forge(alloc))
+                            })),
                             alloc
                                 .text(name::CALL_SITE)
                                 .append(" = ")
@@ -622,14 +538,15 @@ where
                                     alloc,
                                 ),
                             ),
-                            alloc.text(name::SRC).append(" = ").append(
-                                hash_set_into_forge(
+                            alloc
+                                .text(name::SRC)
+                                .append(" = ")
+                                .append(hash_set_into_forge(
                                     [name::INPUT_ARGUMENT, name::CALL_SITE]
                                         .into_iter()
                                         .collect::<HashSet<_>>(),
                                     alloc,
-                                ),
-                            ),
+                                )),
                             alloc
                                 .text(name::CALL_ARGUMENT)
                                 .append(" = ")
@@ -659,31 +576,32 @@ where
                                     alloc,
                                 )),
                             alloc.nil(),
-                            alloc.lines(self.controllers.iter().map(|(e, ctrl)| {
-                                alloc.lines([
-                                    e.as_forge(alloc)
-                                        .append(".")
-                                        .append(name::FLOW)
-                                        .append(" = ")
-                                        .append(
-                                            alloc
-                                                .hardline()
-                                                .append((&ctrl.flow).as_forge(alloc).indent(4))
-                                                .append(alloc.hardline())
-                                                .parens(),
-                                        ),
-                                    e.as_forge(alloc)
-                                        .append(".")
-                                        .append(name::TYPES)
-                                        .append(" = ")
-                                        .append(
-                                            ctrl.make_types_relation(alloc)
-                                                .nest(4)
-                                                .append(alloc.hardline())
-                                                .parens(),
-                                        ),
-                                ])
-                            })),
+                            alloc.text(name::FLOW).append(" = ").append(
+                                alloc.hardline().append(
+                                    alloc
+                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                            (
+                                                std::iter::once(e.as_forge(alloc)),
+                                                std::iter::once(alloc.hardline().append(
+                                                    (&ctrl.flow).as_forge(alloc).indent(4),
+                                                )),
+                                            )
+                                        }))
+                                        .indent(4),
+                                ),
+                            ),
+                            alloc.text(name::TYPES).append(" = ").append(
+                                alloc.hardline().append(
+                                    alloc
+                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                            (
+                                                std::iter::once(e.as_forge(alloc)),
+                                                std::iter::once(ctrl.make_types_relation(alloc)),
+                                            )
+                                        }))
+                                        .indent(4),
+                                ),
+                            ),
                             alloc.text(name::LABELS_REL).append(" = ").append(
                                 alloc
                                     .hardline()
