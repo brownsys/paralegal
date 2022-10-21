@@ -33,7 +33,7 @@ pub mod rust {
     pub use ty::TyCtxt;
 }
 
-use pretty::{BoxAllocator, DocBuilder};
+use pretty::DocBuilder;
 use rust::*;
 
 use flowistry::mir::borrowck_facts;

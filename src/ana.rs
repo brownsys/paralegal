@@ -17,11 +17,9 @@ use rustc_middle::{
 };
 use rustc_span::{symbol::Ident, Span, Symbol};
 
-use crate::rust::rustc_index::bit_set::BitSet;
-
 use flowistry::{
-    indexed::{impls::LocationDomain, IndexedDomain, IndexedValue},
-    infoflow::{self, FlowDomain, TransitiveFlowDomain},
+    indexed::{impls::LocationDomain, IndexedDomain},
+    infoflow::{self, FlowDomain},
     mir::{borrowck_facts, utils::BodyExt},
 };
 
@@ -71,15 +69,15 @@ fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
     }
 }
 
-fn fn_defid_and_args<'tcx>(
-    t: &mir::Terminator<'tcx>,
-) -> Option<(DefId, Vec<Option<mir::Place<'tcx>>>)> {
-    match &t.kind {
-        mir::TerminatorKind::Call { func, args, .. } => {
-            let fn_id = func
-                .constant()
-                .ok_or("Not a constant")
-                .and_then(|c| match c {
+trait TerminatorExt<'tcx> {
+    fn as_fn_and_args(&self) -> Result<(DefId, Vec<Option<mir::Place<'tcx>>>), &'static str>;
+}
+
+impl<'tcx> TerminatorExt<'tcx> for mir::Terminator<'tcx> {
+    fn as_fn_and_args(&self) -> Result<(DefId, Vec<Option<mir::Place<'tcx>>>), &'static str> {
+        match &self.kind {
+            mir::TerminatorKind::Call { func, args, .. } => {
+                let defid = match func.constant().ok_or("Not a constant")? {
                     mir::Constant {
                         literal: mir::ConstantKind::Val(_, ty),
                         ..
@@ -88,13 +86,8 @@ fn fn_defid_and_args<'tcx>(
                         _ => Err("Not function type"),
                     },
                     _ => Err("Not value level constant"),
-                });
-            match fn_id {
-                Err(e) => {
-                    warn!("Could not extract root function from {func:?}. Reason: {e}");
-                    None
-                }
-                Ok(defid) => Some((
+                }?;
+                Ok((
                     defid,
                     args.iter()
                         .map(|a| match a {
@@ -102,13 +95,12 @@ fn fn_defid_and_args<'tcx>(
                             mir::Operand::Constant(_) => None,
                         })
                         .collect(),
-                )),
+                ))
             }
+            _ => Err("Not a function call".into()),
         }
-        _ => None,
     }
 }
-
 /// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
 /// object via the visit::Visitor` trait. Usually used to accumulate information
 /// about the places.
@@ -148,13 +140,6 @@ pub struct Visitor<'tcx> {
 
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
-fn terminator_is_call(t: &mir::Terminator) -> bool {
-    match t.kind {
-        mir::TerminatorKind::Call { .. } => true,
-        _ => false,
-    }
-}
-
 pub struct Flow<'a, 'tcx> {
     pub kind: FlowKind<'a, 'tcx>,
     pub domain: Rc<LocationDomain>,
@@ -182,6 +167,7 @@ pub enum FlowKind<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> Flow<'a, 'tcx> {
+    #[allow(dead_code)]
     fn is_transitive(&self) -> bool {
         matches!(self.kind, FlowKind::Transitive(_))
     }
@@ -196,6 +182,7 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
         }
     }
 
+    #[allow(dead_code)]
     fn aliases(&self) -> &flowistry::mir::aliases::Aliases<'a, 'tcx> {
         match &self.kind {
             FlowKind::NonTransitive(a) => &a.analysis.aliases,
@@ -337,6 +324,32 @@ fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
         .collect()
 }
 
+impl DataSource {
+    fn try_from_body<'tcx>(
+        body: &mir::Body<'tcx>,
+        l: mir::Location,
+        domain: &LocationDomain,
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<Self, &'static str> {
+        let r = if let Some(arg) = domain.location_to_local(l) {
+            DataSource::Argument(arg.as_usize())
+        } else {
+            DataSource::FunctionCall(CallSite {
+                function: identifier_for_fn(
+                    tcx,
+                    body.stmt_at(l)
+                        .right()
+                        .ok_or("Not a terminator")?
+                        .as_fn_and_args()?
+                        .0,
+                ),
+                location: l,
+            })
+        };
+        Ok(r)
+    }
+}
+
 impl<'tcx> Visitor<'tcx> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         Self {
@@ -424,21 +437,14 @@ impl<'tcx> Visitor<'tcx> {
 
         let body = &body_with_facts.body;
         let loc_dom = &flow.domain;
-        let (mut source_locs, types): (HashMap<_, DataSource>, CtrlTypes) = body
+        let types: CtrlTypes = body
             .args_iter()
-            .enumerate()
-            .map(|(i, l)| {
+            .map(|l| {
                 let ty = body.local_decls[l].ty;
                 let subtypes = self.annotated_subtypes(ty);
-                (
-                    (
-                        *loc_dom.value(loc_dom.arg_to_location(l)),
-                        DataSource::Argument(i),
-                    ),
-                    (DataSource::Argument(i), subtypes),
-                )
+                (DataSource::Argument(l.as_usize()), subtypes)
             })
-            .unzip();
+            .collect();
         let mut flows = Ctrl::with_input_types(types);
         match flow.as_some_non_transitive_graph() {
             Some(non_t_g) =>
@@ -453,13 +459,12 @@ impl<'tcx> Visitor<'tcx> {
                         body,
                         &non_t_g,
                         &flow.domain,
-                        Some(flow.aliases()),
                         tcx,
                     )
                     .unwrap();
                     info!("Non transitive graph for {} dumped", id.name.as_str());
                 } else if self.opts.dbg.dump_serialized_non_transitive_graph {
-                    dump_non_transitive_graph_and_body(id, body, &non_t_g, &flow.domain, tcx);
+                    dump_non_transitive_graph_and_body(id, body, &non_t_g, tcx);
                 }
             _ if self.opts.dbg.dump_non_transitive_graph || self.opts.dbg.dump_serialized_non_transitive_graph =>
                 error!("Told to dump non-transitive graph, but analysis not instructed to make non-transitive graph!"),
@@ -470,7 +475,9 @@ impl<'tcx> Visitor<'tcx> {
             .iter_enumerated()
             .filter_map(|(bb, bbdat)| {
                 let t = bbdat.terminator();
-                fn_defid_and_args(t).map(|(did, args)| (bb, t, did, args))
+                t.as_fn_and_args()
+                    .map(|(did, args)| (bb, t, did, args))
+                    .ok()
             })
         {
             let loc = body.terminator_loc(bb);
@@ -502,16 +509,17 @@ impl<'tcx> Visitor<'tcx> {
                 function: identifier_for_fn(tcx, p),
                 location: loc,
             });
-            source_locs.insert(loc, src_desc.clone());
             if !interesting_output_types.is_empty() {
                 flows.types.insert(src_desc, interesting_output_types);
             }
 
             for r in mentioned_places.iter() {
                 let deps = matrix.row(*r);
-                for dloc in deps.filter(|l| source_locs.contains_key(l)) {
+                for from in
+                    deps.filter_map(|l| DataSource::try_from_body(body, *l, loc_dom, tcx).ok())
+                {
                     flows.add(
-                        Cow::Borrowed(&source_locs[dloc]),
+                        Cow::Owned(from),
                         DataSink {
                             function: CallSite {
                                 function: identifier_for_fn(tcx, p),
@@ -625,148 +633,7 @@ use flowistry::indexed::{IndexMatrix, IndexSet};
 pub type NonTransitiveGraph<'tcx> =
     HashMap<mir::Location, IndexMatrix<mir::Place<'tcx>, mir::Location>>;
 
-fn a_depends_on_b<R: IndexedValue, C: flowistry::indexed::ToSet<R>>(
-    a: &IndexSet<R, C>,
-    b: &IndexSet<R, C>,
-) -> bool {
-    if a == b {
-        false
-    } else {
-        a.is_superset(&b)
-    }
-}
-
-fn make_non_transitive_graph<'a, 'tcx, P: FnMut(mir::Location) -> bool>(
-    flow_results: &flowistry::infoflow::FlowResults<'a, 'tcx, TransitiveFlowDomain<'tcx>>,
-    body: &mir::Body<'tcx>,
-    mut dependency_selector: P,
-) -> NonTransitiveGraph<'tcx> {
-    let loc_dom = flow_results.analysis.location_domain();
-    let loc_deps = loc_dom
-        .as_vec()
-        .iter()
-        .map(|l| {
-            if !is_real_location(body, *l) {
-                return (
-                    l,
-                    (HashSet::new(), {
-                        let mut deps = IndexSet::new(&loc_dom);
-                        deps.insert(l);
-                        deps
-                    }),
-                );
-            }
-            let places = extract_places(*l, body, false);
-            let my_flow = flow_results.state_at(*l);
-            let deps = places.iter().map(|p| my_flow.row_set(*p)).fold(
-                IndexSet::new(&loc_dom),
-                |mut agg, s| {
-                    agg.union(&s);
-                    agg
-                },
-            );
-            (l, (places, deps))
-        })
-        .collect::<HashMap<_, _>>();
-
-    let mut dependency_mask = IndexSet::new(loc_dom);
-    for i in loc_dom.as_vec().iter() {
-        if !dependency_selector(*i) {
-            dependency_mask.insert(i);
-        }
-    }
-
-    let mut interesting_locations = IndexSet::new(loc_dom);
-    interesting_locations.insert_all();
-    interesting_locations.subtract(&dependency_mask);
-
-    interesting_locations
-        .iter()
-        .map(|n| {
-            let mut matrix = IndexMatrix::new(loc_dom);
-            if !is_real_location(body, *n) {
-                return (*n, matrix);
-            }
-            let f = flow_results.state_at(*n);
-            let mut mask_and_self = dependency_mask.clone();
-            mask_and_self.insert(*n);
-            let (places, _) = &loc_deps[n];
-            for p in places {
-                let mut deps = f.row_set(*p).to_owned();
-                deps.subtract(&mask_and_self);
-                let mut bbdeps = HashMap::new();
-                for d in deps.iter() {
-                    bbdeps.entry(d.block).or_insert_with(Vec::new).push(d)
-                }
-                assert!(!bbdeps.contains_key(&n.block));
-                deps.iter().for_each(|l| {
-                    let ldeps = &loc_deps
-                        .get(l)
-                        .unwrap_or_else(|| panic!("No dependencies for {l:?} known"))
-                        .1;
-                    if !deps
-                        .iter()
-                        .any(|l2| {
-                            let l2_deps = &loc_deps[l2].1;
-                            l2 != l && a_depends_on_b(l2_deps, ldeps)
-                        })
-                        // there's a question here whether this should be done
-                        // via `successors` or `dominators`. I think that would
-                        // toggle between "can reach" and "must reach"
-                        || (is_real_location(body, *l) // we must be defensive here, yikes
-                            && {
-                                // DFS to insert missing control flow edges.
-                                let mut reaches = false;
-                                let mut queue = vec![l.block];
-                                let mut seen: BitSet<mir::BasicBlock> = BitSet::new_empty(body.basic_blocks().len() + 1);
-                                while let Some(bb) = queue.pop() {
-                                    if bb == n.block {
-                                        reaches = true;
-                                        break;
-                                    }
-                                    if seen.contains(bb) {
-                                        continue;
-                                    } else {
-                                        seen.insert(bb);
-                                    }
-                                    queue.extend(
-                                        body.basic_blocks()[bb]
-                                            .terminator()
-                                            .successors()
-                                            .filter(|suc| 
-                                                // This unreadable condition says: if 
-                                                //   a) I do not depend on any location in the 
-                                                //      basic block `suc` or
-                                                //   b) None of the locations I depend on in `suc`, 
-                                                //      depend on `l`
-                                                // then insert an edge from `l` to me.
-                                                bbdeps.get(suc)
-                                                    .map_or(
-                                                        true, 
-                                                        |locs| 
-                                                            !locs.iter()
-                                                                .any(|sucl| 
-                                                                    a_depends_on_b(
-                                                                        &loc_deps[sucl].1,
-                                                                        ldeps
-                                                                    )
-                                                                )
-                                                        )
-                                            ));
-                                }
-                                reaches
-                            })
-                    {
-                        matrix.insert(*p, l);
-                    }
-                })
-            }
-            (*n, matrix)
-        })
-        .collect()
-}
-
-fn is_safe_function<'tcx>(bound_sig: &ty::Binder<'tcx, ty::FnSig<'tcx>>) -> bool {
+fn is_safe_function<'tcx>(_bound_sig: &ty::Binder<'tcx, ty::FnSig<'tcx>>) -> bool {
     return false;
 }
 

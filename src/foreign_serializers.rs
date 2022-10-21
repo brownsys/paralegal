@@ -1,9 +1,6 @@
-use std::{borrow::Cow, rc::Rc};
+use std::rc::Rc;
 
-use flowistry::{
-    indexed::{impls::LocationDomain, DefaultDomain, IndexMatrix, IndexSet, RefSet},
-    mir::utils::PlaceExt,
-};
+use flowistry::indexed::{impls::LocationDomain, DefaultDomain, IndexMatrix};
 use serde::Deserialize;
 
 use crate::{
@@ -151,11 +148,7 @@ impl<'tcx> From<&mir::Body<'tcx>> for BodyProxy {
 }
 
 impl BodyProxy {
-    pub fn from_body_with_normalize<'tcx>(
-        body: &mir::Body<'tcx>,
-        aliases: &flowistry::mir::aliases::Aliases<'_, 'tcx>,
-        tcx: TyCtxt<'tcx>,
-    ) -> Self {
+    pub fn from_body_with_normalize<'tcx>(body: &mir::Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         Self(
             iter_stmts(body)
                 .map(|(loc, stmt)| {

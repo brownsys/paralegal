@@ -9,8 +9,6 @@ use crate::{HashMap, HashSet};
 use rustc_middle::ty::{self, TyCtxt};
 use std::cell::RefCell;
 
-use flowistry::indexed::impls::LocationDomain;
-
 pub struct HashVerifications(usize);
 
 impl HashVerifications {

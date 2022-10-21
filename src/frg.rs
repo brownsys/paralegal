@@ -366,7 +366,7 @@ impl ProgramDescription {
                     .map(move |a| {
                         (
                             if a.refinement.on_return() {
-                                Some(self.all_sources().filter(|s| {
+                                Some(self.all_sources().into_iter().filter(|s| {
                                     s.as_function_call().map_or(false, |c| &c.function == id)
                                 }))
                             } else {
@@ -532,6 +532,7 @@ where
                             alloc.text(name::INPUT_ARGUMENT).append(" = ").append(
                                 hash_set_into_forge(
                                     self.all_sources()
+                                        .into_iter()
                                         .filter(|s| s.as_argument().is_some())
                                         .collect::<HashSet<_>>(),
                                     alloc,

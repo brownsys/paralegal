@@ -1,4 +1,3 @@
-#![feature(rustc_private)]
 extern crate rustc_middle;
 extern crate rustc_span;
 use dfpp::{HashSet, Symbol};
@@ -20,9 +19,9 @@ pub fn with_current_directory<
     let current = std::env::current_dir()?;
     std::env::set_current_dir(p)?;
     let res = std::panic::catch_unwind(f);
-    std::env::set_current_dir(current)?;
+    let set_dir = std::env::set_current_dir(current);
     match res {
-        Ok(r) => Ok(r),
+        Ok(r) => set_dir.map(|()| r),
         Err(e) => std::panic::resume_unwind(e),
     }
 }

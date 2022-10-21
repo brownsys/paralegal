@@ -102,10 +102,15 @@ fn loops() {
     assert!(graph.connects_direct(get, send));
 }
 
+#[allow(dead_code)]
 fn arguments() {
     assert!(*TEST_CRATE_ANALYZED);
 
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("arguments"))).unwrap();
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("args"))).unwrap();
 
     let a1 = graph.argument(0);
+
+    let dp = graph.function_call("dp_user_data");
+
+    assert!(graph.connects(a1, dp));
 }

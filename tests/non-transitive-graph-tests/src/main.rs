@@ -55,6 +55,16 @@ fn loops(mut x: i32) {
     send_user_data(&user_data);
 }
 
+#[dfpp::analyze]
+fn args(mut x: i32) {
+    let mut user_data = get_user_data();
+    while x < 10 {
+        dp_user_data(&mut user_data);
+        x -= 1;
+    }
+    send_user_data(&user_data);
+}
+
 #[dfpp::label(source)]
 fn get_user_data() -> UserData {
     return UserData {
