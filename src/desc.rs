@@ -1,7 +1,8 @@
-use crate::{HashMap, HashSet, Symbol};
+use crate::{mir, HashMap, HashSet, Symbol};
 
 pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
+pub type Function = Identifier;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum Annotation {
@@ -97,6 +98,10 @@ impl AnnotationRefinement {
     pub fn on_return(&self) -> bool {
         self.on_return
     }
+
+    pub fn on_self(&self) -> bool {
+        self.on_argument.is_empty() && !self.on_return
+    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -131,6 +136,9 @@ impl ObjectType {
             }
         }
     }
+    pub fn is_type(&self) -> bool {
+        matches!(self, ObjectType::Type)
+    }
 }
 
 pub struct ProgramDescription {
@@ -139,13 +147,36 @@ pub struct ProgramDescription {
 }
 
 impl ProgramDescription {
-    pub fn all_sources(&self) -> impl Iterator<Item = &DataSource> {
-        self.controllers.values().flat_map(|c| c.flow.0.keys())
+    pub fn all_sources(&self) -> HashSet<&DataSource> {
+        self.controllers
+            .values()
+            .flat_map(|c| c.flow.0.keys().chain(c.types.keys()))
+            .collect()
     }
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
         self.controllers
             .values()
             .flat_map(|ctrl| ctrl.flow.0.values().flat_map(|v| v.iter()))
+            .collect()
+    }
+
+    pub fn all_call_sites(&self) -> HashSet<&CallSite> {
+        self.controllers
+            .values()
+            .flat_map(|ctrl| {
+                ctrl.flow
+                    .0
+                    .values()
+                    .flat_map(|v| v.iter().map(|s| &s.function))
+                    .chain(ctrl.flow.0.keys().filter_map(|src| src.as_function_call()))
+            })
+            .collect()
+    }
+
+    pub fn all_functions(&self) -> HashSet<&Identifier> {
+        self.all_call_sites()
+            .into_iter()
+            .map(|cs| &cs.function)
             .collect()
     }
 }
@@ -180,15 +211,27 @@ impl<X, Y> Relation<X, Y> {
 }
 
 #[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone)]
+pub struct CallSite {
+    pub location: mir::Location,
+    pub function: Function,
+}
+
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone)]
 pub enum DataSource {
-    FunctionCall(Identifier),
+    FunctionCall(CallSite),
     Argument(usize),
 }
 
 impl DataSource {
-    pub fn as_function_call(&self) -> Option<&Identifier> {
+    pub fn as_function_call(&self) -> Option<&CallSite> {
         match self {
             DataSource::FunctionCall(i) => Some(i),
+            _ => None,
+        }
+    }
+    pub fn as_argument(&self) -> Option<usize> {
+        match self {
+            DataSource::Argument(a) => Some(*a),
             _ => None,
         }
     }
@@ -196,7 +239,7 @@ impl DataSource {
 
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DataSink {
-    pub function: Identifier,
+    pub function: CallSite,
     pub arg_slot: usize,
 }
 

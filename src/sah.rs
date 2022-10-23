@@ -9,8 +9,6 @@ use crate::{HashMap, HashSet};
 use rustc_middle::ty::{self, TyCtxt};
 use std::cell::RefCell;
 
-use flowistry::indexed::impls::LocationDomain;
-
 pub struct HashVerifications(usize);
 
 impl HashVerifications {
@@ -40,7 +38,7 @@ impl HashVerifications {
         t: &mir::Terminator<'tcx>,
         body: &mir::Body<'tcx>,
         loc: mir::Location,
-        matrix: &Matrix<'tcx, '_>,
+        matrix: &Matrix<'tcx>,
     ) {
         let hash = compute_verification_hash_for_stmt_2(tcx, t, loc, body, matrix);
         if let Some(old_hash) = ann.verification_hash {
@@ -430,14 +428,14 @@ mod graphviz_out {
     }
 }
 
-pub type Matrix<'tcx, 'a> = <flowistry::infoflow::FlowAnalysis<'a, 'tcx> as rustc_mir_dataflow::AnalysisDomain<'tcx>>::Domain;
+pub type Matrix<'tcx> = flowistry::infoflow::FlowDomainMatrix<'tcx>;
 
 pub fn compute_verification_hash_for_stmt_2<'tcx>(
     tcx: TyCtxt<'tcx>,
     t: &mir::Terminator<'tcx>,
     loc: mir::Location,
     body: &mir::Body<'tcx>,
-    matrix: &Matrix<'tcx, '_>,
+    matrix: &Matrix<'tcx>,
 ) -> VerificationHash {
     use mir::visit::Visitor;
 
