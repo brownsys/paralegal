@@ -110,7 +110,12 @@ struct DbgArgs {
     /// For each controller dumps the calculated dataflow graphs as well as information about the MIR to <name of controller>.ntgb.json. Can be deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
     #[clap(long, env)]
     dump_serialized_non_transitive_graph: bool,
+    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json) format to "flow-graph.json". Used for testing.
+    #[clap(long, env)]
+    dump_serialized_flow_graph: bool,
 }
+
+pub const FLOW_GRAPH_OUT_NAME: &'static str = "flow-graph.json";
 
 struct Callbacks {
     opts: &'static Args,
@@ -139,6 +144,18 @@ impl rustc_driver::Callbacks for Callbacks {
             .take()
             .enter(|tcx| ana::Visitor::new(tcx, self.opts).run())
             .unwrap();
+        if self.opts.dbg.dump_serialized_flow_graph {
+            serde_json::to_writer(
+                &mut std::fs::OpenOptions::new()
+                    .truncate(true)
+                    .create(true)
+                    .write(true)
+                    .open(FLOW_GRAPH_OUT_NAME)
+                    .unwrap(),
+                &desc,
+            )
+            .unwrap();
+        }
         info!("All elems walked");
         let mut outf = std::fs::OpenOptions::new()
             .create(true)

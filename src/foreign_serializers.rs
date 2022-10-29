@@ -36,8 +36,8 @@ pub struct LocationProxy {
 }
 
 pub mod ser_loc {
-    use serde::{Serialize, Deserialize};
-    use crate::{mir};
+    use crate::mir;
+    use serde::{Deserialize, Serialize};
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<mir::Location, D::Error>
     where
@@ -187,8 +187,8 @@ impl BodyProxy {
 pub struct SymbolProxy(Symbol);
 
 pub mod ser_sym {
-    use serde::{Serialize, Deserialize};
     use crate::Symbol;
+    use serde::{Deserialize, Serialize};
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Symbol, D::Error>
     where

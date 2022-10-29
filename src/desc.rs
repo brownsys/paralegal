@@ -1,4 +1,4 @@
-use crate::{mir, HashMap, HashSet, Symbol, serde};
+use crate::{mir, serde, HashMap, HashSet, Symbol};
 
 pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
@@ -183,11 +183,10 @@ impl ProgramDescription {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Identifier(
-    #[serde(with = "crate::foreign_serializers::ser_sym")]
-    Symbol
-);
+#[derive(
+    Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, serde::Serialize, serde::Deserialize,
+)]
+pub struct Identifier(#[serde(with = "crate::foreign_serializers::ser_sym")] Symbol);
 
 impl Identifier {
     pub fn new(s: Symbol) -> Self {
@@ -207,12 +206,33 @@ impl std::fmt::Display for Identifier {
     }
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(bound(serialize = "Y: std::hash::Hash + std::cmp::Eq + serde::Serialize, 
-                           X: std::hash::Hash + std::cmp::Eq + serde::Serialize",
-        deserialize = "Y: std::hash::Hash + std::cmp::Eq + serde::Deserialize<'de>, 
-                       X: std::hash::Hash + std::cmp::Eq + serde::Deserialize<'de>"))]
 pub struct Relation<X, Y>(pub HashMap<X, HashSet<Y>>);
+
+impl<X: serde::Serialize, Y: serde::Serialize + std::hash::Hash + std::cmp::Eq> serde::Serialize
+    for Relation<X, Y>
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+}
+
+impl<
+        'de,
+        X: serde::Deserialize<'de> + std::hash::Hash + std::cmp::Eq,
+        Y: serde::Deserialize<'de> + std::hash::Hash + std::cmp::Eq,
+    > serde::Deserialize<'de> for Relation<X, Y>
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        <Vec<_> as serde::Deserialize<'de>>::deserialize(deserializer)
+            .map(|v| Self(v.into_iter().collect()))
+    }
+}
 
 impl<X, Y> Relation<X, Y> {
     pub fn empty() -> Self {
@@ -222,7 +242,7 @@ impl<X, Y> Relation<X, Y> {
 
 #[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CallSite {
-    #[serde(with="crate::foreign_serializers::ser_loc")]
+    #[serde(with = "crate::foreign_serializers::ser_loc")]
     pub location: mir::Location,
     pub function: Function,
 }
