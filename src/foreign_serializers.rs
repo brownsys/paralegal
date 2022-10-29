@@ -29,10 +29,29 @@ impl Into<mir::BasicBlock> for BasicBlockProxy {
 }
 
 #[derive(serde::Serialize, Eq, PartialEq, Hash, serde::Deserialize)]
-struct LocationProxy {
+pub struct LocationProxy {
     #[serde(with = "BasicBlockProxy")]
     pub block: mir::BasicBlock,
     pub statement_index: usize,
+}
+
+pub mod ser_loc {
+    use serde::{Serialize, Deserialize};
+    use crate::{mir};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<mir::Location, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        super::LocationProxy::deserialize(deserializer).map(|s| s.into())
+    }
+
+    pub fn serialize<S>(s: &mir::Location, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        super::LocationProxy::from(*s).serialize(serializer)
+    }
 }
 
 impl From<mir::Location> for LocationProxy {
@@ -165,7 +184,26 @@ impl BodyProxy {
     }
 }
 
-struct SymbolProxy(Symbol);
+pub struct SymbolProxy(Symbol);
+
+pub mod ser_sym {
+    use serde::{Serialize, Deserialize};
+    use crate::Symbol;
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Symbol, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        super::SymbolProxy::deserialize(deserializer).map(|s| s.into())
+    }
+
+    pub fn serialize<S>(s: &Symbol, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        super::SymbolProxy::from(*s).serialize(serializer)
+    }
+}
 
 impl<'de> serde::Deserialize<'de> for SymbolProxy {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>

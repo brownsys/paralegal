@@ -1,10 +1,10 @@
-use crate::{mir, HashMap, HashSet, Symbol};
+use crate::{mir, HashMap, HashSet, Symbol, serde};
 
 pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
 pub type Function = Identifier;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub enum Annotation {
     Label(LabelAnnotation),
     OType(Vec<TypeDescriptor>),
@@ -36,24 +36,25 @@ impl Annotation {
 
 pub type VerificationHash = u128;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExceptionAnnotation {
     pub verification_hash: Option<VerificationHash>,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LabelAnnotation {
+    #[serde(with = "crate::foreign_serializers::ser_sym")]
     pub label: Symbol,
     pub refinement: AnnotationRefinement,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct AnnotationRefinement {
     on_argument: Vec<u16>,
     on_return: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub enum AnnotationRefinementKind {
     Argument(Vec<u16>),
     Return,
@@ -104,7 +105,7 @@ impl AnnotationRefinement {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ObjectType {
     Function(usize),
     Type,
@@ -141,6 +142,7 @@ impl ObjectType {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ProgramDescription {
     pub controllers: HashMap<Endpoint, Ctrl>,
     pub annotations: HashMap<Identifier, (Vec<Annotation>, ObjectType)>,
@@ -181,8 +183,11 @@ impl ProgramDescription {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone)]
-pub struct Identifier(Symbol);
+#[derive(Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Identifier(
+    #[serde(with = "crate::foreign_serializers::ser_sym")]
+    Symbol
+);
 
 impl Identifier {
     pub fn new(s: Symbol) -> Self {
@@ -202,6 +207,11 @@ impl std::fmt::Display for Identifier {
     }
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(bound(serialize = "Y: std::hash::Hash + std::cmp::Eq + serde::Serialize, 
+                           X: std::hash::Hash + std::cmp::Eq + serde::Serialize",
+        deserialize = "Y: std::hash::Hash + std::cmp::Eq + serde::Deserialize<'de>, 
+                       X: std::hash::Hash + std::cmp::Eq + serde::Deserialize<'de>"))]
 pub struct Relation<X, Y>(pub HashMap<X, HashSet<Y>>);
 
 impl<X, Y> Relation<X, Y> {
@@ -210,13 +220,14 @@ impl<X, Y> Relation<X, Y> {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone)]
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CallSite {
+    #[serde(with="crate::foreign_serializers::ser_loc")]
     pub location: mir::Location,
     pub function: Function,
 }
 
-#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone)]
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DataSource {
     FunctionCall(CallSite),
     Argument(usize),
@@ -237,7 +248,7 @@ impl DataSource {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct DataSink {
     pub function: CallSite,
     pub arg_slot: usize,
@@ -245,6 +256,7 @@ pub struct DataSink {
 
 pub type CtrlTypes = HashMap<DataSource, HashSet<TypeDescriptor>>;
 
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct Ctrl {
     pub flow: Relation<DataSource, DataSink>,
     pub types: CtrlTypes,
