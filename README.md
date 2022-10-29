@@ -2,19 +2,5 @@
 
 A Rust compiler plugin for extracting Forge model code via dataflow analysis powered by Flowistry.
 
-### Requirements
-
-* A patched Rust compiler (`rustc`)
-* A patched version of `cargo`
-
-XXX TODO: what patches to apply and where to find them?
-
-### Getting Started
-
-Within the root of your local checkout of this repo, create a symlink to the patched stage 2
-Rust compiler:
-```shell
-$ ln -s PATH_TO_PATCHED_RUSTC rust-dfpp-patch
-```
-
-XXX TODO: and then? cargo run?
+See our [Notion pages](https://www.notion.so/justus-adam/Dataflow-973fca6c36ca42a3ac8bc6be58edb909)
+for details on [getting started](https://www.notion.so/justus-adam/Getting-Started-40541156c25d48f8b6ad79a0e1b09b91)
