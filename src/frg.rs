@@ -477,7 +477,7 @@ impl Ctrl {
     {
         alloc.hardline().append(
             alloc
-                .forge_relation(self.types.iter().map(|(i, desc)| {
+                .forge_relation(self.types.0.iter().map(|(i, desc)| {
                     (
                         std::iter::once(data_source_as_forge(i, alloc)),
                         desc.iter().map(|t| t.as_forge(alloc)),

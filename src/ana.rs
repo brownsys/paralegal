@@ -343,7 +343,7 @@ impl <'tcx, 'a> ArgumentResolver<'tcx, 'a> {
             ArgumentResolver::Root => Box::new(std::iter::once(DataSource::Argument(i))) as Box<dyn Iterator<Item=DataSource>>,
             ArgumentResolver::Nested{args, matrix, inner, id, body, loc_dom, tcx} => 
                 Box::new(
-                    args.get(i).into_iter().flat_map(|o: &Option<_>| o.iter()).flat_map(|p| {
+                    args.get(i - 1 /* I think there's an off-by-one error in how flowistry calculates these argument locations */).unwrap_or_else(|| panic!("Index {i} not found in {args:?}")).into_iter().flat_map(|p| {
                         matrix.row(*p).filter_map(|l| {
                             DataSource::try_from_body(
                                 id.name,
@@ -370,7 +370,9 @@ impl DataSource {
         mk_arg: & ArgumentResolver<'tcx, '_>,
     ) -> Result<Vec<Self>, &'static str> {
         let r = if let Some(arg) = domain.location_to_local(l) {
-            mk_arg.resolve(arg.as_usize()).collect()
+            let v : Vec<_> = mk_arg.resolve(arg.as_usize()).collect();
+            debug!("Determined the source is an argument, found {} dependencies", v.len());
+            v
         } else {
             vec![DataSource::FunctionCall(CallSite {
                 called_from: Identifier::new(ident),
@@ -473,17 +475,17 @@ impl<'tcx> Visitor<'tcx> {
         let tcx = self.tcx;
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
 
+        debug!("{}", id.name);
         let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts);
 
         let body = &body_with_facts.body;
-        let types: CtrlTypes = body
+        let types = body
             .args_iter()
             .flat_map(|l| {
                 let ty = body.local_decls[l].ty;
                 let subtypes = self.annotated_subtypes(ty);
                 arg_resolver.resolve(l.as_usize()).map(move |a| (a, subtypes.clone()))
-            })
-            .collect();
+            });
         flows.add_types(types);
         let loc_dom = &flow.domain;
         match flow.as_some_non_transitive_graph() {
@@ -529,6 +531,7 @@ impl<'tcx> Visitor<'tcx> {
             }
 
             let anns = interesting_fn_defs.get(&p).map(|a| a.0.as_slice());
+            debug!("{:?} {} annotations", t.kind, if anns.is_none() { "doesn't have"} else { "has"});
             let stmt_anns = self.statement_anns_by_loc(p, t);
             let bound_sig = tcx.fn_sig(p);
             let interesting_output_types: HashSet<_> =
@@ -542,7 +545,7 @@ impl<'tcx> Visitor<'tcx> {
                 location: loc,
             });
             if !interesting_output_types.is_empty() {
-                flows.types.insert(src_desc, interesting_output_types);
+                flows.types.0.insert(src_desc, interesting_output_types);
             }
 
             if let Some((callee_ident, callee_def_id, callee_body_id)) = 
@@ -553,7 +556,7 @@ impl<'tcx> Visitor<'tcx> {
                         kind: hir::ItemKind::Fn(_, _, body_id),
                         ..
                     }) = node {
-                        if seen.contains(def_id) {
+                        if seen.contains(def_id) || anns.is_some() {
                             None
                         } else {
                             seen.insert(*def_id);
@@ -564,6 +567,7 @@ impl<'tcx> Visitor<'tcx> {
                     }
                 })
             {
+                debug!("Recursing into callee");
                 self.handle_function(
                     hash_verifications,
                     call_site_annotations,
@@ -584,6 +588,8 @@ impl<'tcx> Visitor<'tcx> {
                     }
                 );
             } else {
+                debug!("Abstracting callee");
+                let mut i = 0;
                 for r in mentioned_places.iter() {
                     let deps = matrix.row(*r);
                     for from in deps
@@ -600,6 +606,7 @@ impl<'tcx> Visitor<'tcx> {
                         })
                         .flat_map(|v| v.into_iter())
                     {
+                        i+=1;
                         flows.add(
                             Cow::Owned(from),
                             DataSink {
@@ -618,6 +625,7 @@ impl<'tcx> Visitor<'tcx> {
                         );
                     }
                 }
+                debug!("Found {i} flows into target.");
                 register_call_site(tcx, call_site_annotations, p, anns);
             }
             if let Some(anns) = stmt_anns {

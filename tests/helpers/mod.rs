@@ -3,6 +3,8 @@ extern crate rustc_span;
 use dfpp::{desc::Identifier, HashSet, Symbol};
 use rustc_middle::mir;
 
+use std::borrow::Cow;
+
 lazy_static! {
     static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
     pub static ref DFPP_INSTALLED: bool = install_dfpp();
@@ -70,6 +72,7 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")
         .arg("--dump-serialized-flow-graph")
+        .arg("--debug")
         .status()
         .unwrap()
         .success()
@@ -169,6 +172,61 @@ impl PreFrg {
             ident: Identifier::from_str(name),
         }
     }
+
+    pub fn ctrl(&self, name: &str) -> CtrlRef {
+        let ident = Identifier::from_str(name);
+        CtrlRef { graph: self, ident, ctrl: &self.0.controllers[&ident] }
+    }
+}
+
+#[derive(Clone)]
+pub struct CtrlRef<'g> {
+    graph: &'g PreFrg,
+    ident: Identifier,
+    ctrl: &'g dfpp::desc::Ctrl,
+}
+
+impl <'g> PartialEq for CtrlRef<'g> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ident == other.ident
+    }
+}
+
+impl <'g> HasGraph<'g> for &CtrlRef<'g> {
+    fn graph(self) -> &'g ProgramDescription {
+        self.graph.graph()
+    }
+}
+
+impl <'g> CtrlRef<'g> {
+    pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallSiteRef<'g>> {
+        let mut all: Vec<CallSiteRef<'g>> = self.ctrl
+            .flow
+            .0
+            .values()
+            .flat_map(|v| {
+                v.iter().map(|sink| CallSiteRef {
+                    function: fun,
+                    call_site: &sink.function,
+                    ctrl: Cow::Borrowed(self),
+                })
+            })
+            .chain(
+                self.ctrl.flow
+                    .0
+                    .keys()
+                    .filter_map(dfpp::desc::DataSource::as_function_call)
+                    .map(|f| CallSiteRef {
+                        function: fun,
+                        call_site: f,
+                        ctrl: Cow::Borrowed(self),
+                    }),
+            )
+            .filter(|ref_| ref_.function.ident == ref_.call_site.function)
+            .collect();
+        all.dedup_by_key(|r| r.call_site);
+        all
+    }
 }
 
 impl<'g> HasGraph<'g> for &FnRef<'g> {
@@ -187,46 +245,12 @@ impl<'g> FnRef<'g> {
         self.graph.graph()
     }
 
-    pub fn call_sites(&'g self) -> Vec<CallSiteRef<'g>> {
-        self.graph()
-            .controllers
-            .iter()
-            .flat_map(|(ident, ctrl)| {
-                let mut all: Vec<CallSiteRef<'g>> = ctrl
-                    .flow
-                    .0
-                    .values()
-                    .flat_map(|v| {
-                        v.iter().map(|sink| CallSiteRef {
-                            function: self,
-                            call_site: &sink.function,
-                            ctrl,
-                        })
-                    })
-                    .chain(
-                        ctrl.flow
-                            .0
-                            .keys()
-                            .filter_map(dfpp::desc::DataSource::as_function_call)
-                            .map(|f| CallSiteRef {
-                                function: self,
-                                call_site: f,
-                                ctrl,
-                            }),
-                    )
-                    .filter(|ref_| ref_.function.ident == ref_.call_site.function)
-                    .collect();
-                all.dedup_by_key(|r| r.call_site);
-                all.into_iter()
-            })
-            .collect()
-    }
 }
 
 pub struct CallSiteRef<'g> {
     function: &'g FnRef<'g>,
     call_site: &'g dfpp::desc::CallSite,
-    ctrl: &'g dfpp::desc::Ctrl,
+    ctrl: Cow<'g, CtrlRef<'g>>,
 }
 
 impl<'g> PartialEq<dfpp::desc::CallSite> for CallSiteRef<'g> {
@@ -238,6 +262,7 @@ impl<'g> PartialEq<dfpp::desc::CallSite> for CallSiteRef<'g> {
 impl<'g> CallSiteRef<'g> {
     pub fn input(&'g self) -> Vec<DataSinkRef<'g>> {
         let mut all: Vec<_> = self
+            .ctrl
             .ctrl
             .flow
             .0
@@ -257,6 +282,7 @@ impl<'g> CallSiteRef<'g> {
         let mut seen = HashSet::new();
         let mut queue: Vec<_> = self
             .ctrl
+            .ctrl
             .flow
             .0
             .get(&dfpp::desc::DataSource::FunctionCall(
@@ -272,7 +298,7 @@ impl<'g> CallSiteRef<'g> {
             if !seen.contains(n) {
                 seen.insert(n);
                 queue.extend(
-                    self.ctrl
+                    self.ctrl.ctrl
                         .flow
                         .0
                         .get(&dfpp::desc::DataSource::FunctionCall(n.function.clone()))

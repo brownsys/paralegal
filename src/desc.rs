@@ -154,7 +154,7 @@ impl ProgramDescription {
     pub fn all_sources(&self) -> HashSet<&DataSource> {
         self.controllers
             .values()
-            .flat_map(|c| c.flow.0.keys().chain(c.types.keys()))
+            .flat_map(|c| c.flow.0.keys().chain(c.types.0.keys()))
             .collect()
     }
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
@@ -186,7 +186,7 @@ impl ProgramDescription {
 }
 
 #[derive(
-    Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, serde::Serialize, serde::Deserialize,
+    Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, serde::Serialize, serde::Deserialize, Copy
 )]
 pub struct Identifier(#[serde(with = "crate::foreign_serializers::ser_sym")] Symbol);
 
@@ -277,7 +277,7 @@ pub struct DataSink {
     pub arg_slot: usize,
 }
 
-pub type CtrlTypes = HashMap<DataSource, HashSet<TypeDescriptor>>;
+pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct Ctrl {
@@ -289,7 +289,7 @@ impl Ctrl {
     pub fn new() -> Self {
         Ctrl {
             flow: Relation::empty(),
-            types: HashMap::new(),
+            types: Relation::empty(),
         }
     }
 
@@ -299,7 +299,7 @@ impl Ctrl {
     ) {
         i.into_iter().for_each(|(ident, set)| {
             self.types
-                .entry(ident)
+                .0.entry(ident)
                 .or_insert_with(|| HashSet::new())
                 .extend(set.into_iter())
         })
