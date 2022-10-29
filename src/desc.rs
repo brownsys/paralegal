@@ -1,3 +1,5 @@
+use std::hash::Hash;
+
 use crate::{mir, serde, HashMap, HashSet, Symbol};
 
 pub type Endpoint = Identifier;
@@ -244,6 +246,7 @@ impl<X, Y> Relation<X, Y> {
 pub struct CallSite {
     #[serde(with = "crate::foreign_serializers::ser_loc")]
     pub location: mir::Location,
+    pub called_from: Function,
     pub function: Function,
 }
 
@@ -283,6 +286,25 @@ pub struct Ctrl {
 }
 
 impl Ctrl {
+    pub fn new() -> Self {
+        Ctrl {
+            flow: Relation::empty(),
+            types: HashMap::new(),
+        }
+    }
+
+    pub fn add_types<I: IntoIterator<Item = (DataSource, HashSet<TypeDescriptor>)>>(
+        &mut self,
+        i: I,
+    ) {
+        i.into_iter().for_each(|(ident, set)| {
+            self.types
+                .entry(ident)
+                .or_insert_with(|| HashSet::new())
+                .extend(set.into_iter())
+        })
+    }
+
     pub fn with_input_types(types: CtrlTypes) -> Self {
         Ctrl {
             flow: Relation::empty(),

@@ -325,16 +325,19 @@ fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
 }
 
 impl DataSource {
-    fn try_from_body<'tcx>(
+    fn try_from_body<'tcx, I: Iterator<Item = DataSource>, MkArg: FnMut(usize) -> I>(
+        ident: Symbol,
         body: &mir::Body<'tcx>,
         l: mir::Location,
         domain: &LocationDomain,
         tcx: TyCtxt<'tcx>,
-    ) -> Result<Self, &'static str> {
+        mut mk_arg: MkArg,
+    ) -> Result<Vec<Self>, &'static str> {
         let r = if let Some(arg) = domain.location_to_local(l) {
-            DataSource::Argument(arg.as_usize())
+            mk_arg(arg.as_usize()).collect()
         } else {
-            DataSource::FunctionCall(CallSite {
+            vec![DataSource::FunctionCall(CallSite {
+                called_from: Identifier::new(ident),
                 function: identifier_for_fn(
                     tcx,
                     body.stmt_at(l)
@@ -344,7 +347,7 @@ impl DataSource {
                         .0,
                 ),
                 location: l,
-            })
+            })]
         };
         Ok(r)
     }
@@ -397,15 +400,17 @@ impl<'tcx> Visitor<'tcx> {
             .collect()
     }
 
-    /// Handles a single target function
-    fn handle_target(
+    fn handle_function<I: Iterator<Item = DataSource>, MkArg: FnMut(usize) -> I>(
         &self,
         hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
+        flows: &mut Ctrl,
         id: Ident,
         b: BodyId,
-    ) -> std::io::Result<(Endpoint, Ctrl)> {
+        local_def_id: hir::def_id::LocalDefId,
+        mut arg_resolver: MkArg,
+    ) {
         fn register_call_site<'tcx>(
             tcx: TyCtxt<'tcx>,
             map: &mut CallSiteAnnotations,
@@ -428,24 +433,22 @@ impl<'tcx> Visitor<'tcx> {
                     )
                 });
         }
-
         let tcx = self.tcx;
-        let local_def_id = tcx.hir().body_owner_def_id(b);
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
 
         let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts);
 
         let body = &body_with_facts.body;
-        let loc_dom = &flow.domain;
         let types: CtrlTypes = body
             .args_iter()
-            .map(|l| {
+            .flat_map(|l| {
                 let ty = body.local_decls[l].ty;
                 let subtypes = self.annotated_subtypes(ty);
-                (DataSource::Argument(l.as_usize()), subtypes)
+                arg_resolver(l.as_usize()).map(move |a| (a, subtypes.clone()))
             })
             .collect();
-        let mut flows = Ctrl::with_input_types(types);
+        flows.add_types(types);
+        let loc_dom = &flow.domain;
         match flow.as_some_non_transitive_graph() {
             Some(non_t_g) =>
                 if self.opts.dbg.dump_non_transitive_graph {
@@ -507,6 +510,7 @@ impl<'tcx> Visitor<'tcx> {
 
             let src_desc = DataSource::FunctionCall(CallSite {
                 function: identifier_for_fn(tcx, p),
+                called_from: Identifier::new(id.name),
                 location: loc,
             });
             if !interesting_output_types.is_empty() {
@@ -515,14 +519,26 @@ impl<'tcx> Visitor<'tcx> {
 
             for r in mentioned_places.iter() {
                 let deps = matrix.row(*r);
-                for from in
-                    deps.filter_map(|l| DataSource::try_from_body(body, *l, loc_dom, tcx).ok())
+                for from in deps
+                    .filter_map(|l| {
+                        DataSource::try_from_body(
+                            id.name,
+                            body,
+                            *l,
+                            loc_dom,
+                            tcx,
+                            &mut arg_resolver,
+                        )
+                        .ok()
+                    })
+                    .flat_map(|v| v.into_iter())
                 {
                     flows.add(
                         Cow::Owned(from),
                         DataSink {
                             function: CallSite {
                                 function: identifier_for_fn(tcx, p),
+                                called_from: Identifier::new(id.name),
                                 location: loc,
                             },
                             arg_slot: args
@@ -546,6 +562,29 @@ impl<'tcx> Visitor<'tcx> {
                 register_call_site(tcx, call_site_annotations, p, Some(anns));
             }
         }
+    }
+
+    /// Handles a single target function
+    fn handle_target(
+        &self,
+        hash_verifications: &mut HashVerifications,
+        call_site_annotations: &mut CallSiteAnnotations,
+        interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
+        id: Ident,
+        b: BodyId,
+    ) -> std::io::Result<(Endpoint, Ctrl)> {
+        let mut flows = Ctrl::new();
+        let local_def_id = self.tcx.hir().body_owner_def_id(b);
+        self.handle_function(
+            hash_verifications,
+            call_site_annotations,
+            interesting_fn_defs,
+            &mut flows,
+            id,
+            b,
+            local_def_id,
+            |u| std::iter::once(DataSource::Argument(u)),
+        );
         Ok((Identifier::new(id.name), flows))
     }
 
