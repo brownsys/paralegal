@@ -324,17 +324,53 @@ fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
         .collect()
 }
 
+enum ArgumentResolver<'tcx, 'a> {
+    Root,
+    Nested{ 
+        inner: &'a ArgumentResolver<'tcx, 'a>,
+        args: &'a [Option<mir::Place<'tcx>>],
+        matrix: &'a IndexMatrix<mir::Place<'tcx>, mir::Location>,
+        id: &'a Ident,
+        body: &'a mir::Body<'tcx>,
+        loc_dom: &'a LocationDomain,
+        tcx: TyCtxt<'tcx>,
+    },
+}
+
+impl <'tcx, 'a> ArgumentResolver<'tcx, 'a> {
+    fn resolve(&'a self, i: usize) -> impl Iterator<Item=DataSource> + 'a {
+        match self {
+            ArgumentResolver::Root => Box::new(std::iter::once(DataSource::Argument(i))) as Box<dyn Iterator<Item=DataSource>>,
+            ArgumentResolver::Nested{args, matrix, inner, id, body, loc_dom, tcx} => 
+                Box::new(
+                    args.get(i).into_iter().flat_map(|o: &Option<_>| o.iter()).flat_map(|p| {
+                        matrix.row(*p).filter_map(|l| {
+                            DataSource::try_from_body(
+                                id.name,
+                                body,
+                                *l,
+                                loc_dom,
+                                *tcx,
+                                inner,
+                            ).ok()
+                        }).flat_map(|v| v.into_iter())
+                    })
+                ) as Box<_>
+        }
+    }
+}
+
 impl DataSource {
-    fn try_from_body<'tcx, I: Iterator<Item = DataSource>, MkArg: FnMut(usize) -> I>(
+    fn try_from_body<'tcx>(
         ident: Symbol,
         body: &mir::Body<'tcx>,
         l: mir::Location,
         domain: &LocationDomain,
         tcx: TyCtxt<'tcx>,
-        mut mk_arg: MkArg,
+        mk_arg: & ArgumentResolver<'tcx, '_>,
     ) -> Result<Vec<Self>, &'static str> {
         let r = if let Some(arg) = domain.location_to_local(l) {
-            mk_arg(arg.as_usize()).collect()
+            mk_arg.resolve(arg.as_usize()).collect()
         } else {
             vec![DataSource::FunctionCall(CallSite {
                 called_from: Identifier::new(ident),
@@ -400,16 +436,17 @@ impl<'tcx> Visitor<'tcx> {
             .collect()
     }
 
-    fn handle_function<I: Iterator<Item = DataSource>, MkArg: FnMut(usize) -> I>(
+    fn handle_function(
         &self,
         hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
         flows: &mut Ctrl,
+        seen: &mut HashSet<hir::def_id::LocalDefId>,
         id: Ident,
         b: BodyId,
         local_def_id: hir::def_id::LocalDefId,
-        mut arg_resolver: MkArg,
+        arg_resolver: &ArgumentResolver<'tcx, '_>,
     ) {
         fn register_call_site<'tcx>(
             tcx: TyCtxt<'tcx>,
@@ -444,7 +481,7 @@ impl<'tcx> Visitor<'tcx> {
             .flat_map(|l| {
                 let ty = body.local_decls[l].ty;
                 let subtypes = self.annotated_subtypes(ty);
-                arg_resolver(l.as_usize()).map(move |a| (a, subtypes.clone()))
+                arg_resolver.resolve(l.as_usize()).map(move |a| (a, subtypes.clone()))
             })
             .collect();
         flows.add_types(types);
@@ -494,17 +531,8 @@ impl<'tcx> Visitor<'tcx> {
             let anns = interesting_fn_defs.get(&p).map(|a| a.0.as_slice());
             let stmt_anns = self.statement_anns_by_loc(p, t);
             let bound_sig = tcx.fn_sig(p);
-            let is_safe = is_safe_function(&bound_sig);
             let interesting_output_types: HashSet<_> =
                 self.annotated_subtypes(bound_sig.skip_binder().output());
-
-            if is_safe
-                && anns.is_none()
-                && interesting_output_types.is_empty()
-                && stmt_anns.is_none()
-            {
-                continue;
-            }
 
             let mentioned_places = args.iter().filter_map(|a| *a).collect::<HashSet<_>>();
 
@@ -517,41 +545,81 @@ impl<'tcx> Visitor<'tcx> {
                 flows.types.insert(src_desc, interesting_output_types);
             }
 
-            for r in mentioned_places.iter() {
-                let deps = matrix.row(*r);
-                for from in deps
-                    .filter_map(|l| {
-                        DataSource::try_from_body(
-                            id.name,
-                            body,
-                            *l,
-                            loc_dom,
-                            tcx,
-                            &mut arg_resolver,
-                        )
-                        .ok()
-                    })
-                    .flat_map(|v| v.into_iter())
-                {
-                    flows.add(
-                        Cow::Owned(from),
-                        DataSink {
-                            function: CallSite {
-                                function: identifier_for_fn(tcx, p),
-                                called_from: Identifier::new(id.name),
-                                location: loc,
+            if let Some((callee_ident, callee_def_id, callee_body_id)) = 
+                tcx.hir().get_if_local(p).and_then(|node| {
+                    if let hir::Node::Item(hir::Item {
+                        ident,
+                        def_id,
+                        kind: hir::ItemKind::Fn(_, _, body_id),
+                        ..
+                    }) = node {
+                        if seen.contains(def_id) {
+                            None
+                        } else {
+                            seen.insert(*def_id);
+                            Some((ident, def_id, body_id))
+                        }
+                    } else {
+                        panic!("Expected local function node, found {node:?}");
+                    }
+                })
+            {
+                self.handle_function(
+                    hash_verifications,
+                    call_site_annotations,
+                    interesting_fn_defs,
+                    flows,
+                    seen,
+                    *callee_ident,
+                    *callee_body_id,
+                    *callee_def_id,
+                    &ArgumentResolver::Nested{ 
+                        inner: arg_resolver, 
+                        args: &args,
+                        matrix: &matrix,
+                        id: &id,
+                        body: &body,
+                        loc_dom: &loc_dom,
+                        tcx,
+                    }
+                );
+            } else {
+                for r in mentioned_places.iter() {
+                    let deps = matrix.row(*r);
+                    for from in deps
+                        .filter_map(|l| {
+                            DataSource::try_from_body(
+                                id.name,
+                                body,
+                                *l,
+                                loc_dom,
+                                tcx,
+                                &arg_resolver,
+                            )
+                            .ok()
+                        })
+                        .flat_map(|v| v.into_iter())
+                    {
+                        flows.add(
+                            Cow::Owned(from),
+                            DataSink {
+                                function: CallSite {
+                                    function: identifier_for_fn(tcx, p),
+                                    called_from: Identifier::new(id.name),
+                                    location: loc,
+                                },
+                                arg_slot: args
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, e)| **e == Some(*r))
+                                    .unwrap()
+                                    .0,
                             },
-                            arg_slot: args
-                                .iter()
-                                .enumerate()
-                                .find(|(_, e)| **e == Some(*r))
-                                .unwrap()
-                                .0,
-                        },
-                    );
+                        );
+                    }
                 }
+                register_call_site(tcx, call_site_annotations, p, anns);
             }
-            register_call_site(tcx, call_site_annotations, p, anns);
             if let Some(anns) = stmt_anns {
                 for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
                     hash_verifications.handle(ann, tcx, t, body, loc, matrix);
@@ -575,15 +643,17 @@ impl<'tcx> Visitor<'tcx> {
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::new();
         let local_def_id = self.tcx.hir().body_owner_def_id(b);
+        let mut seen = HashSet::new();
         self.handle_function(
             hash_verifications,
             call_site_annotations,
             interesting_fn_defs,
             &mut flows,
+            &mut seen,
             id,
             b,
             local_def_id,
-            |u| std::iter::once(DataSource::Argument(u)),
+            &ArgumentResolver::Root,
         );
         Ok((Identifier::new(id.name), flows))
     }
