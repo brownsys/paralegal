@@ -242,7 +242,7 @@ impl<X, Y> Relation<X, Y> {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CallSite {
     #[serde(with = "crate::foreign_serializers::ser_loc")]
     pub location: mir::Location,
@@ -250,7 +250,7 @@ pub struct CallSite {
     pub function: Function,
 }
 
-#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub enum DataSource {
     FunctionCall(CallSite),
     Argument(usize),

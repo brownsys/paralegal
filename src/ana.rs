@@ -334,6 +334,7 @@ fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
         .collect()
 }
 
+type ReturnModifications<'tcx> = HashMap<Option<mir::Place<'tcx>>, Vec<DataSource>>;
 enum ArgumentResolver<'tcx, 'a> {
     Root,
     Nested {
@@ -344,7 +345,7 @@ enum ArgumentResolver<'tcx, 'a> {
         body: &'a mir::Body<'tcx>,
         loc_dom: &'a LocationDomain,
         tcx: TyCtxt<'tcx>,
-        accrued_returns: Vec<DataSource>,
+        accrued_returns: ReturnModifications<'tcx>,
     },
 }
 
@@ -366,43 +367,61 @@ impl<'tcx, 'a> ArgumentResolver<'tcx, 'a> {
             body,
             loc_dom,
             tcx,
-            accrued_returns: vec![],
+            accrued_returns: HashMap::new(),
         }
     }
-    fn into_returns(self) -> Vec<DataSource> {
+    fn into_returns(self) -> ReturnModifications<'tcx> {
         match self {
             ArgumentResolver::Nested {
                 accrued_returns, ..
             } => accrued_returns,
-            _ => vec![],
+            _ => HashMap::new(),
+        }
+    }
+    fn get_arg_place(&self, i: usize) -> Option<Option<mir::Place<'tcx>>> {
+        match self {
+            ArgumentResolver::Nested { args, .. } => 
+Some(args.get(i - 1 /* I think there's an off-by-one error in how flowistry calculates these argument locations */).unwrap_or_else(|| panic!("Index {i} not found in {args:?}")).clone()),
+            _ => None,
         }
     }
     fn resolve(&'a self, i: usize) -> impl Iterator<Item = DataSource> + 'a {
         match self {
-            ArgumentResolver::Root => Box::new(std::iter::once(DataSource::Argument(i))) as Box<dyn Iterator<Item=DataSource>>,
-            ArgumentResolver::Nested{args, matrix, inner, id, body, loc_dom, tcx, .. } => 
-                Box::new(
-                    args.get(i - 1 /* I think there's an off-by-one error in how flowistry calculates these argument locations */).unwrap_or_else(|| panic!("Index {i} not found in {args:?}")).into_iter().flat_map(|p| {
-                        matrix.row(*p).filter_map(|l| {
-                            DataSource::try_from_body(
-                                id.name,
-                                body,
-                                *l,
-                                loc_dom,
-                                *tcx,
-                                inner,
-                            ).ok()
-                        }).flat_map(|v| v.into_iter())
+            ArgumentResolver::Root => Box::new(std::iter::once(DataSource::Argument(i)))
+                as Box<dyn Iterator<Item = DataSource>>,
+            ArgumentResolver::Nested {
+                args,
+                matrix,
+                inner,
+                id,
+                body,
+                loc_dom,
+                tcx,
+                ..
+            } => Box::new(self.get_arg_place(i).and_then(|a| a).into_iter().flat_map(|p| {
+                matrix
+                    .row(p)
+                    .filter_map(|l| {
+                        DataSource::try_from_body(id.name, body, *l, loc_dom, *tcx, inner).ok()
                     })
-                ) as Box<_>
+                    .flat_map(|v| v.into_iter())
+            })) as Box<_>,
         }
     }
-    fn register_return(&mut self, from: DataSource, flows: &mut Ctrl) {
+    fn register_return(
+        &mut self,
+        from: DataSource,
+        to: Option<mir::Place<'tcx>>,
+        flows: &mut Ctrl,
+    ) {
         match self {
             ArgumentResolver::Root => flows.add(Cow::Owned(from), DataSink::Return),
             ArgumentResolver::Nested {
                 accrued_returns, ..
-            } => accrued_returns.push(from),
+            } => accrued_returns
+                .entry(to)
+                .or_insert_with(Vec::new)
+                .push(from),
         }
     }
 }
@@ -659,7 +678,14 @@ impl<'tcx> Visitor<'tcx> {
                         *callee_def_id,
                         &mut subresolver,
                     );
-                    returns_from_recursed.insert((dest, loc), subresolver.into_returns());
+                    subresolver
+                        .into_returns()
+                        .into_iter()
+                        .for_each(|(p, mods)| {
+                            if let Some(old) = returns_from_recursed.insert((p.unwrap_or(dest), loc), mods) {
+                                warn!("Duplicate function mutability override for {p:?} with prior value {old:?}");
+                            }
+                        });
                     None
                 } else {
                     debug!("Abstracting callee");
@@ -670,7 +696,7 @@ impl<'tcx> Visitor<'tcx> {
                             .map(|r| {
                                 (
                                     r,
-                                    Some(DataSink::Argument {
+                                    Either::Right(DataSink::Argument {
                                         function: CallSite {
                                             function: identifier_for_fn(tcx, p),
                                             called_from: Identifier::new(id.name),
@@ -689,7 +715,30 @@ impl<'tcx> Visitor<'tcx> {
                     )
                 }
             } else if matches!(t.kind, mir::TerminatorKind::Return) {
-                Some(vec![(mir::Place::return_place(), None)])
+                Some(
+                    std::iter::once((mir::Place::return_place(), Either::Left(None))).chain(
+                        body.args_iter()
+                            .enumerate()
+                            .filter(|(_, a)| body.local_decls[*a].ty.is_mutable_ptr())
+                            .map(|(i, local)| {
+                                (
+                                    i,
+                                    mir::Place {
+                                        local,
+                                        projection: tcx.mk_place_elems(std::iter::empty()),
+                                    },
+                                )
+                            })
+                            .filter_map(|(i, p)| {
+                                arg_resolver
+                                    .borrow()
+                                    .get_arg_place(i)
+                                    .and_then(|a| a)
+                                    .map(|a| (p, either::Left(Some(a))))
+                            })
+                            
+                    ).collect(),
+                )
             } else {
                 None
             };
@@ -715,10 +764,11 @@ impl<'tcx> Visitor<'tcx> {
                         .flat_map(|v| v.into_owned().into_iter())
                     {
                         i += 1;
-                        if let Some(sink) = sink.clone() {
-                            flows.add(Cow::Owned(from), sink);
-                        } else {
-                            arg_resolver.borrow_mut().register_return(from, flows);
+                        match sink.clone() {
+                            Either::Right(sink) => flows.add(Cow::Owned(from), sink),
+                            Either::Left(to) => {
+                                arg_resolver.borrow_mut().register_return(from, to, flows)
+                            }
                         }
                     }
                 }
