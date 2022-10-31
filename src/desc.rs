@@ -186,7 +186,7 @@ impl ProgramDescription {
 }
 
 #[derive(
-    Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, serde::Serialize, serde::Deserialize, Copy
+    Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, serde::Serialize, serde::Deserialize, Copy,
 )]
 pub struct Identifier(#[serde(with = "crate::foreign_serializers::ser_sym")] Symbol);
 
@@ -271,10 +271,13 @@ impl DataSource {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DataSink {
+    //Argument {
     pub function: CallSite,
     pub arg_slot: usize,
+    //},
+    //Return
 }
 
 pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
@@ -299,7 +302,8 @@ impl Ctrl {
     ) {
         i.into_iter().for_each(|(ident, set)| {
             self.types
-                .0.entry(ident)
+                .0
+                .entry(ident)
                 .or_insert_with(|| HashSet::new())
                 .extend(set.into_iter())
         })

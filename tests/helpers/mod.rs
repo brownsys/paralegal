@@ -175,7 +175,11 @@ impl PreFrg {
 
     pub fn ctrl(&self, name: &str) -> CtrlRef {
         let ident = Identifier::from_str(name);
-        CtrlRef { graph: self, ident, ctrl: &self.0.controllers[&ident] }
+        CtrlRef {
+            graph: self,
+            ident,
+            ctrl: &self.0.controllers[&ident],
+        }
     }
 }
 
@@ -186,21 +190,22 @@ pub struct CtrlRef<'g> {
     ctrl: &'g dfpp::desc::Ctrl,
 }
 
-impl <'g> PartialEq for CtrlRef<'g> {
+impl<'g> PartialEq for CtrlRef<'g> {
     fn eq(&self, other: &Self) -> bool {
         self.ident == other.ident
     }
 }
 
-impl <'g> HasGraph<'g> for &CtrlRef<'g> {
+impl<'g> HasGraph<'g> for &CtrlRef<'g> {
     fn graph(self) -> &'g ProgramDescription {
         self.graph.graph()
     }
 }
 
-impl <'g> CtrlRef<'g> {
+impl<'g> CtrlRef<'g> {
     pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallSiteRef<'g>> {
-        let mut all: Vec<CallSiteRef<'g>> = self.ctrl
+        let mut all: Vec<CallSiteRef<'g>> = self
+            .ctrl
             .flow
             .0
             .values()
@@ -212,7 +217,8 @@ impl <'g> CtrlRef<'g> {
                 })
             })
             .chain(
-                self.ctrl.flow
+                self.ctrl
+                    .flow
                     .0
                     .keys()
                     .filter_map(dfpp::desc::DataSource::as_function_call)
@@ -244,7 +250,6 @@ impl<'g> FnRef<'g> {
     fn graph(&self) -> &'g ProgramDescription {
         self.graph.graph()
     }
-
 }
 
 pub struct CallSiteRef<'g> {
@@ -298,7 +303,8 @@ impl<'g> CallSiteRef<'g> {
             if !seen.contains(n) {
                 seen.insert(n);
                 queue.extend(
-                    self.ctrl.ctrl
+                    self.ctrl
+                        .ctrl
                         .flow
                         .0
                         .get(&dfpp::desc::DataSource::FunctionCall(n.function.clone()))

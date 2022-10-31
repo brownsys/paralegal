@@ -27,7 +27,7 @@ lazy_static! {
 fn without_return() {
     assert!(*TEST_CRATE_ANALYZED);
     use_rustc(|| {
-    let graph = PreFrg::from_file_at(TEST_CRATE_NAME);
+        let graph = PreFrg::from_file_at(TEST_CRATE_NAME);
         let src_fn = graph.function("source");
         let ctrl = graph.ctrl("without_return");
         let src = ctrl.call_sites(&src_fn).pop().unwrap();
@@ -43,7 +43,7 @@ fn without_return() {
 fn with_return() {
     assert!(*TEST_CRATE_ANALYZED);
     use_rustc(|| {
-    let graph = PreFrg::from_file_at(TEST_CRATE_NAME);
+        let graph = PreFrg::from_file_at(TEST_CRATE_NAME);
         let src_fn = graph.function("source");
         let ctrl = graph.ctrl("with_return");
         let src = ctrl.call_sites(&src_fn).pop().unwrap();
