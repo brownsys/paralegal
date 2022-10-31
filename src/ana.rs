@@ -399,7 +399,7 @@ impl<'tcx, 'a> ArgumentResolver<'tcx, 'a> {
     }
     fn register_return(&mut self, from: DataSource, flows: &mut Ctrl) {
         match self {
-            ArgumentResolver::Root => (), //  flows.add(from.into(), DataSink::Return),
+            ArgumentResolver::Root => flows.add(Cow::Owned(from), DataSink::Return),
             ArgumentResolver::Nested {
                 accrued_returns, ..
             } => accrued_returns.push(from),
@@ -670,7 +670,7 @@ impl<'tcx> Visitor<'tcx> {
                             .map(|r| {
                                 (
                                     r,
-                                    Some(DataSink {
+                                    Some(DataSink::Argument {
                                         function: CallSite {
                                             function: identifier_for_fn(tcx, p),
                                             called_from: Identifier::new(id.name),

@@ -1,7 +1,13 @@
+extern crate either;
 extern crate rustc_middle;
 extern crate rustc_span;
-use dfpp::{desc::Identifier, HashSet, Symbol};
+use dfpp::{
+    desc::{DataSink, Identifier, ProgramDescription},
+    HashSet, Symbol,
+};
 use rustc_middle::mir;
+
+use either::Either;
 
 use std::borrow::Cow;
 
@@ -139,8 +145,6 @@ impl G {
     }
 }
 
-use dfpp::desc::ProgramDescription;
-
 pub trait HasGraph<'g> {
     fn graph(self) -> &'g ProgramDescription;
 }
@@ -210,11 +214,13 @@ impl<'g> CtrlRef<'g> {
             .0
             .values()
             .flat_map(|v| {
-                v.iter().map(|sink| CallSiteRef {
-                    function: fun,
-                    call_site: &sink.function,
-                    ctrl: Cow::Borrowed(self),
-                })
+                v.iter()
+                    .filter_map(DataSink::as_argument)
+                    .map(|sink| CallSiteRef {
+                        function: fun,
+                        call_site: &sink.0,
+                        ctrl: Cow::Borrowed(self),
+                    })
             })
             .chain(
                 self.ctrl
@@ -273,13 +279,13 @@ impl<'g> CallSiteRef<'g> {
             .0
             .values()
             .flat_map(|s| s.iter())
-            .filter(|s| self == &s.function)
+            .filter(|s| matches!(s, DataSink::Argument {function, ..} if self == function))
             .map(|s| DataSinkRef {
-                call_site: self,
+                call_site: Either::Left(self),
                 sink: s,
             })
             .collect();
-        all.sort_by_key(|s| s.sink.arg_slot);
+        all.sort_by_key(|s| s.sink.as_argument().unwrap().1);
         all
     }
 
@@ -302,15 +308,17 @@ impl<'g> CallSiteRef<'g> {
             }
             if !seen.contains(n) {
                 seen.insert(n);
-                queue.extend(
-                    self.ctrl
-                        .ctrl
-                        .flow
-                        .0
-                        .get(&dfpp::desc::DataSource::FunctionCall(n.function.clone()))
-                        .iter()
-                        .flat_map(|s| s.iter()),
-                );
+                if let Some((fun, _)) = n.as_argument() {
+                    queue.extend(
+                        self.ctrl
+                            .ctrl
+                            .flow
+                            .0
+                            .get(&dfpp::desc::DataSource::FunctionCall(fun.clone()))
+                            .iter()
+                            .flat_map(|s| s.iter()),
+                    );
+                }
             }
         }
         false
@@ -324,13 +332,16 @@ impl<'g> HasGraph<'g> for &CallSiteRef<'g> {
 }
 
 pub struct DataSinkRef<'g> {
-    call_site: &'g CallSiteRef<'g>,
+    call_site: Either<&'g CallSiteRef<'g>, &'g PreFrg>,
     sink: &'g dfpp::desc::DataSink,
 }
 
 impl<'g> HasGraph<'g> for &DataSinkRef<'g> {
     fn graph(self) -> &'g ProgramDescription {
-        self.call_site.graph()
+        match self.call_site {
+            Either::Left(l) => l.graph(),
+            Either::Right(r) => r.graph(),
+        }
     }
 }
 

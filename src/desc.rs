@@ -171,7 +171,7 @@ impl ProgramDescription {
                 ctrl.flow
                     .0
                     .values()
-                    .flat_map(|v| v.iter().map(|s| &s.function))
+                    .flat_map(|v| v.iter().filter_map(DataSink::as_argument).map(|s| s.0))
                     .chain(ctrl.flow.0.keys().filter_map(|src| src.as_function_call()))
             })
             .collect()
@@ -272,12 +272,18 @@ impl DataSource {
 }
 
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DataSink {
-    //Argument {
-    pub function: CallSite,
-    pub arg_slot: usize,
-    //},
-    //Return
+pub enum DataSink {
+    Argument { function: CallSite, arg_slot: usize },
+    Return,
+}
+
+impl DataSink {
+    pub fn as_argument(&self) -> Option<(&CallSite, usize)> {
+        match self {
+            DataSink::Argument { function, arg_slot } => Some((function, *arg_slot)),
+            _ => None,
+        }
+    }
 }
 
 pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;

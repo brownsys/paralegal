@@ -146,7 +146,12 @@ fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
-        data_sink_as_forge(alloc, &self.function, self.arg_slot)
+        match self {
+            DataSink::Return => alloc.text("`return"),
+            DataSink::Argument { function, arg_slot } => {
+                data_sink_as_forge(alloc, function, *arg_slot)
+            }
+        }
     }
 }
 
@@ -379,10 +384,14 @@ impl ProgramDescription {
                                 self.all_sinks()
                                     .into_iter()
                                     .filter(|s| {
-                                        &s.function.function == id
-                                            && a.refinement
-                                                .on_argument()
-                                                .contains(&(s.arg_slot as u16))
+                                        matches!(
+                                            s,
+                                            DataSink::Argument{function, arg_slot} if
+                                            &function.function == id
+                                                && a.refinement
+                                                    .on_argument()
+                                                    .contains(&(*arg_slot as u16))
+                                        )
                                     })
                                     .map(|s| s.as_forge(alloc)),
                             )
@@ -424,11 +433,15 @@ impl ProgramDescription {
     where
         D::Doc: Clone,
     {
-        alloc.forge_relation(self.all_sinks().into_iter().map(|src| {
-            (
-                std::iter::once(src.as_forge(alloc)),
-                std::iter::once(src.function.as_forge(alloc)),
-            )
+        alloc.forge_relation(self.all_sinks().into_iter().flat_map(|src| {
+            src.as_argument()
+                .map(|(function, _)| {
+                    (
+                        std::iter::once(src.as_forge(alloc)),
+                        std::iter::once(function.as_forge(alloc)),
+                    )
+                })
+                .into_iter()
         }))
     }
 
