@@ -1,4 +1,4 @@
-use std::{borrow::Cow, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
     dbg::dump_non_transitive_graph_and_body, desc::*, rust::*, sah::HashVerifications, Either,
@@ -70,13 +70,22 @@ fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
 }
 
 trait TerminatorExt<'tcx> {
-    fn as_fn_and_args(&self) -> Result<(DefId, Vec<Option<mir::Place<'tcx>>>), &'static str>;
+    fn as_fn_and_args(
+        &self,
+    ) -> Result<(DefId, Vec<Option<mir::Place<'tcx>>>, mir::Place<'tcx>), &'static str>;
 }
 
 impl<'tcx> TerminatorExt<'tcx> for mir::Terminator<'tcx> {
-    fn as_fn_and_args(&self) -> Result<(DefId, Vec<Option<mir::Place<'tcx>>>), &'static str> {
+    fn as_fn_and_args(
+        &self,
+    ) -> Result<(DefId, Vec<Option<mir::Place<'tcx>>>, mir::Place<'tcx>), &'static str> {
         match &self.kind {
-            mir::TerminatorKind::Call { func, args, .. } => {
+            mir::TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                ..
+            } => {
                 let defid = match func.constant().ok_or("Not a constant")? {
                     mir::Constant {
                         literal: mir::ConstantKind::Val(_, ty),
@@ -95,6 +104,7 @@ impl<'tcx> TerminatorExt<'tcx> for mir::Terminator<'tcx> {
                             mir::Operand::Constant(_) => None,
                         })
                         .collect(),
+                    destination.ok_or("missing return place")?.0,
                 ))
             }
             _ => Err("Not a function call".into()),
@@ -326,7 +336,7 @@ fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
 
 enum ArgumentResolver<'tcx, 'a> {
     Root,
-    Nested{ 
+    Nested {
         inner: &'a ArgumentResolver<'tcx, 'a>,
         args: &'a [Option<mir::Place<'tcx>>],
         matrix: &'a IndexMatrix<mir::Place<'tcx>, mir::Location>,
@@ -334,14 +344,43 @@ enum ArgumentResolver<'tcx, 'a> {
         body: &'a mir::Body<'tcx>,
         loc_dom: &'a LocationDomain,
         tcx: TyCtxt<'tcx>,
+        accrued_returns: Vec<DataSource>,
     },
 }
 
-impl <'tcx, 'a> ArgumentResolver<'tcx, 'a> {
-    fn resolve(&'a self, i: usize) -> impl Iterator<Item=DataSource> + 'a {
+impl<'tcx, 'a> ArgumentResolver<'tcx, 'a> {
+    fn nested(
+        inner: &'a ArgumentResolver<'tcx, 'a>,
+        args: &'a [Option<mir::Place<'tcx>>],
+        matrix: &'a IndexMatrix<mir::Place<'tcx>, mir::Location>,
+        id: &'a Ident,
+        body: &'a mir::Body<'tcx>,
+        loc_dom: &'a LocationDomain,
+        tcx: TyCtxt<'tcx>,
+    ) -> Self {
+        Self::Nested {
+            inner,
+            args,
+            matrix,
+            id,
+            body,
+            loc_dom,
+            tcx,
+            accrued_returns: vec![],
+        }
+    }
+    fn into_returns(self) -> Vec<DataSource> {
+        match self {
+            ArgumentResolver::Nested {
+                accrued_returns, ..
+            } => accrued_returns,
+            _ => vec![],
+        }
+    }
+    fn resolve(&'a self, i: usize) -> impl Iterator<Item = DataSource> + 'a {
         match self {
             ArgumentResolver::Root => Box::new(std::iter::once(DataSource::Argument(i))) as Box<dyn Iterator<Item=DataSource>>,
-            ArgumentResolver::Nested{args, matrix, inner, id, body, loc_dom, tcx} => 
+            ArgumentResolver::Nested{args, matrix, inner, id, body, loc_dom, tcx, .. } => 
                 Box::new(
                     args.get(i - 1 /* I think there's an off-by-one error in how flowistry calculates these argument locations */).unwrap_or_else(|| panic!("Index {i} not found in {args:?}")).into_iter().flat_map(|p| {
                         matrix.row(*p).filter_map(|l| {
@@ -358,6 +397,14 @@ impl <'tcx, 'a> ArgumentResolver<'tcx, 'a> {
                 ) as Box<_>
         }
     }
+    fn register_return(&mut self, from: DataSource, flows: &mut Ctrl) {
+        match self {
+            ArgumentResolver::Root => (), //  flows.add(from.into(), DataSink::Return),
+            ArgumentResolver::Nested {
+                accrued_returns, ..
+            } => accrued_returns.push(from),
+        }
+    }
 }
 
 impl DataSource {
@@ -367,11 +414,14 @@ impl DataSource {
         l: mir::Location,
         domain: &LocationDomain,
         tcx: TyCtxt<'tcx>,
-        mk_arg: & ArgumentResolver<'tcx, '_>,
+        mk_arg: &ArgumentResolver<'tcx, '_>,
     ) -> Result<Vec<Self>, &'static str> {
         let r = if let Some(arg) = domain.location_to_local(l) {
-            let v : Vec<_> = mk_arg.resolve(arg.as_usize()).collect();
-            debug!("Determined the source is an argument, found {} dependencies", v.len());
+            let v: Vec<_> = mk_arg.resolve(arg.as_usize()).collect();
+            debug!(
+                "Determined the source is an argument, found {} dependencies",
+                v.len()
+            );
             v
         } else {
             vec![DataSource::FunctionCall(CallSite {
@@ -448,8 +498,9 @@ impl<'tcx> Visitor<'tcx> {
         id: Ident,
         b: BodyId,
         local_def_id: hir::def_id::LocalDefId,
-        arg_resolver: &ArgumentResolver<'tcx, '_>,
+        arg_resolver: &mut ArgumentResolver<'tcx, '_>,
     ) {
+        let arg_resolver = RefCell::new(arg_resolver);
         fn register_call_site<'tcx>(
             tcx: TyCtxt<'tcx>,
             map: &mut CallSiteAnnotations,
@@ -479,14 +530,17 @@ impl<'tcx> Visitor<'tcx> {
         let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts);
 
         let body = &body_with_facts.body;
-        let types = body
-            .args_iter()
-            .flat_map(|l| {
+        {
+            let resolver_borrow = arg_resolver.borrow();
+            let types = body.args_iter().flat_map(|l| {
                 let ty = body.local_decls[l].ty;
                 let subtypes = self.annotated_subtypes(ty);
-                arg_resolver.resolve(l.as_usize()).map(move |a| (a, subtypes.clone()))
+                resolver_borrow
+                    .resolve(l.as_usize())
+                    .map(move |a| (a, subtypes.clone()))
             });
-        flows.add_types(types);
+            flows.add_types(types);
+        }
         let loc_dom = &flow.domain;
         match flow.as_some_non_transitive_graph() {
             Some(non_t_g) =>
@@ -512,15 +566,11 @@ impl<'tcx> Visitor<'tcx> {
                 error!("Told to dump non-transitive graph, but analysis not instructed to make non-transitive graph!"),
             _ => ()
         }
-        for (bb, t, p, args) in body
+        let mut returns_from_recursed = HashMap::new();
+        for (bb, t) in body
             .basic_blocks()
             .iter_enumerated()
-            .filter_map(|(bb, bbdat)| {
-                let t = bbdat.terminator();
-                t.as_fn_and_args()
-                    .map(|(did, args)| (bb, t, did, args))
-                    .ok()
-            })
+            .map(|(bb, bbdat)| (bb, bbdat.terminator()))
         {
             let loc = body.terminator_loc(bb);
             let matrix = flow.get_row(loc);
@@ -530,112 +580,149 @@ impl<'tcx> Visitor<'tcx> {
                 crate::dbg::print_flowistry_matrix(&mut std::io::stdout(), matrix).unwrap();
             }
 
-            let anns = interesting_fn_defs.get(&p).map(|a| a.0.as_slice());
-            debug!("{:?} {} annotations", t.kind, if anns.is_none() { "doesn't have"} else { "has"});
-            let stmt_anns = self.statement_anns_by_loc(p, t);
-            let bound_sig = tcx.fn_sig(p);
-            let interesting_output_types: HashSet<_> =
-                self.annotated_subtypes(bound_sig.skip_binder().output());
-
-            let mentioned_places = args.iter().filter_map(|a| *a).collect::<HashSet<_>>();
-
-            let src_desc = DataSource::FunctionCall(CallSite {
-                function: identifier_for_fn(tcx, p),
-                called_from: Identifier::new(id.name),
-                location: loc,
-            });
-            if !interesting_output_types.is_empty() {
-                flows.types.0.insert(src_desc, interesting_output_types);
-            }
-
-            if let Some((callee_ident, callee_def_id, callee_body_id)) = 
-                tcx.hir().get_if_local(p).and_then(|node| {
-                    if let hir::Node::Item(hir::Item {
-                        ident,
-                        def_id,
-                        kind: hir::ItemKind::Fn(_, _, body_id),
-                        ..
-                    }) = node {
-                        if seen.contains(def_id) || anns.is_some() {
-                            None
-                        } else {
-                            seen.insert(*def_id);
-                            Some((ident, def_id, body_id))
-                        }
+            let abstraction_info = if let Some((p, args, dest)) = t.as_fn_and_args().ok() {
+                let anns = interesting_fn_defs.get(&p).map(|a| a.0.as_slice());
+                debug!(
+                    "{:?} {} annotations",
+                    t.kind,
+                    if anns.is_none() {
+                        "doesn't have"
                     } else {
-                        panic!("Expected local function node, found {node:?}");
-                    }
-                })
-            {
-                debug!("Recursing into callee");
-                self.handle_function(
-                    hash_verifications,
-                    call_site_annotations,
-                    interesting_fn_defs,
-                    flows,
-                    seen,
-                    *callee_ident,
-                    *callee_body_id,
-                    *callee_def_id,
-                    &ArgumentResolver::Nested{ 
-                        inner: arg_resolver, 
-                        args: &args,
-                        matrix: &matrix,
-                        id: &id,
-                        body: &body,
-                        loc_dom: &loc_dom,
-                        tcx,
+                        "has"
                     }
                 );
+                let stmt_anns = self.statement_anns_by_loc(p, t);
+                let bound_sig = tcx.fn_sig(p);
+                let interesting_output_types: HashSet<_> =
+                    self.annotated_subtypes(bound_sig.skip_binder().output());
+
+                let mentioned_places = args.iter().filter_map(|a| *a).collect::<HashSet<_>>();
+
+                let src_desc = DataSource::FunctionCall(CallSite {
+                    function: identifier_for_fn(tcx, p),
+                    called_from: Identifier::new(id.name),
+                    location: loc,
+                });
+                if !interesting_output_types.is_empty() {
+                    flows.types.0.insert(src_desc, interesting_output_types);
+                }
+
+                if let Some(anns) = stmt_anns {
+                    for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
+                        hash_verifications.handle(ann, tcx, t, body, loc, matrix);
+                    }
+                    // TODO this is attaching to functions instead of call
+                    // sites. Once we start actually tracking call sites
+                    // this needs to be adjusted
+                    register_call_site(tcx, call_site_annotations, p, Some(anns));
+                }
+
+                if let Some((callee_ident, callee_def_id, callee_body_id)) =
+                    tcx.hir().get_if_local(p).and_then(|node| {
+                        if let hir::Node::Item(hir::Item {
+                            ident,
+                            def_id,
+                            kind: hir::ItemKind::Fn(_, _, body_id),
+                            ..
+                        }) = node
+                        {
+                            if seen.contains(def_id) || anns.is_some() {
+                                None
+                            } else {
+                                seen.insert(*def_id);
+                                Some((ident, def_id, body_id))
+                            }
+                        } else {
+                            panic!("Expected local function node, found {node:?}");
+                        }
+                    })
+                {
+                    debug!("Recursing into callee");
+                    let resolver_borrow = arg_resolver.borrow();
+                    let mut subresolver = ArgumentResolver::nested(
+                        *resolver_borrow,
+                        &args,
+                        &matrix,
+                        &id,
+                        &body,
+                        &loc_dom,
+                        tcx,
+                    );
+                    self.handle_function(
+                        hash_verifications,
+                        call_site_annotations,
+                        interesting_fn_defs,
+                        flows,
+                        seen,
+                        *callee_ident,
+                        *callee_body_id,
+                        *callee_def_id,
+                        &mut subresolver,
+                    );
+                    returns_from_recursed.insert((dest, loc), subresolver.into_returns());
+                    None
+                } else {
+                    debug!("Abstracting callee");
+                    register_call_site(tcx, call_site_annotations, p, anns);
+                    Some(
+                        mentioned_places
+                            .into_iter()
+                            .map(|r| {
+                                (
+                                    r,
+                                    Some(DataSink {
+                                        function: CallSite {
+                                            function: identifier_for_fn(tcx, p),
+                                            called_from: Identifier::new(id.name),
+                                            location: loc,
+                                        },
+                                        arg_slot: args
+                                            .iter()
+                                            .enumerate()
+                                            .find(|(_, e)| **e == Some(r))
+                                            .unwrap()
+                                            .0,
+                                    }),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                }
+            } else if matches!(t.kind, mir::TerminatorKind::Return) {
+                Some(vec![(mir::Place::return_place(), None)])
             } else {
-                debug!("Abstracting callee");
+                None
+            };
+            if let Some(mentioned_places) = abstraction_info {
                 let mut i = 0;
-                for r in mentioned_places.iter() {
-                    let deps = matrix.row(*r);
+                for (r, sink) in mentioned_places {
+                    let deps = matrix.row(r);
                     for from in deps
                         .filter_map(|l| {
-                            DataSource::try_from_body(
-                                id.name,
-                                body,
-                                *l,
-                                loc_dom,
-                                tcx,
-                                &arg_resolver,
+                            returns_from_recursed.get(&(r, *l)).map(Cow::Borrowed).or(
+                                DataSource::try_from_body(
+                                    id.name,
+                                    body,
+                                    *l,
+                                    loc_dom,
+                                    tcx,
+                                    &arg_resolver.borrow(),
+                                )
+                                .ok()
+                                .map(Cow::Owned),
                             )
-                            .ok()
                         })
-                        .flat_map(|v| v.into_iter())
+                        .flat_map(|v| v.into_owned().into_iter())
                     {
-                        i+=1;
-                        flows.add(
-                            Cow::Owned(from),
-                            DataSink {
-                                function: CallSite {
-                                    function: identifier_for_fn(tcx, p),
-                                    called_from: Identifier::new(id.name),
-                                    location: loc,
-                                },
-                                arg_slot: args
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, e)| **e == Some(*r))
-                                    .unwrap()
-                                    .0,
-                            },
-                        );
+                        i += 1;
+                        if let Some(sink) = sink.clone() {
+                            flows.add(Cow::Owned(from), sink);
+                        } else {
+                            arg_resolver.borrow_mut().register_return(from, flows);
+                        }
                     }
                 }
                 debug!("Found {i} flows into target.");
-                register_call_site(tcx, call_site_annotations, p, anns);
-            }
-            if let Some(anns) = stmt_anns {
-                for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
-                    hash_verifications.handle(ann, tcx, t, body, loc, matrix);
-                }
-                // TODO this is attaching to functions instead of call
-                // sites. Once we start actually tracking call sites
-                // this needs to be adjusted
-                register_call_site(tcx, call_site_annotations, p, Some(anns));
             }
         }
     }
@@ -661,7 +748,7 @@ impl<'tcx> Visitor<'tcx> {
             id,
             b,
             local_def_id,
-            &ArgumentResolver::Root,
+            &mut ArgumentResolver::Root,
         );
         Ok((Identifier::new(id.name), flows))
     }
