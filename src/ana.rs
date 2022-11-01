@@ -401,7 +401,7 @@ impl<'tcx, 'a> ArgumentResolver<'tcx, 'a> {
                 tcx,
                 ..
             } => Box::new(
-                self.get_arg_place(i - 1 /* I think there's an off-by-one error in how flowistry calculates these argument locations */)
+                self.get_arg_place(i - 1 /* There's an off-by-one here because place _0 is always the return place */)
                     .and_then(|a| a)
                     .into_iter()
                     .flat_map(|p| {
@@ -723,6 +723,7 @@ impl<'tcx> Visitor<'tcx> {
                             .map(|r| {
                                 (
                                     r,
+                                    Box::new(matrix.row(r).into_iter().cloned()) as Box<dyn Iterator<Item=mir::Location>>,
                                     Either::Right(DataSink::Argument {
                                         function: CallSite {
                                             function: identifier_for_fn(tcx, p),
@@ -749,18 +750,28 @@ impl<'tcx> Visitor<'tcx> {
                 };
                 
                 Some(
-                    std::iter::once((mir::Place::return_place(), Either::Left(None)))
+                    std::iter::once((mir::Place::return_place(), Box::new(matrix.row(mir::Place::return_place()).into_iter().cloned()) as Box<_>, Either::Left(None)))
                         .chain(
                             body.args_iter()
                                 .enumerate()
                                 .filter(|(_, a)| body.local_decls[*a].ty.is_mutable_ptr())
                                 .filter_map(|(i, local)| {
-                                    debug!("Found mutable argument {:?} at index {i} with arg place {:?}", local, arg_resolver.borrow().get_arg_place(i));
+                                    let lplace = local.into();
+                                    let arg_place = 
                                     arg_resolver
                                         .borrow()
-                                        .get_arg_place(i)
+                                        .get_arg_place(i);
+                                    let reachable = flow.aliases().reachable_values(lplace, mir::Mutability::Not);
+                                    debug!("Found mutable argument {:?} at index {i} with arg place {:?} and aliases {:?}", local, arg_resolver.borrow().get_arg_place(i), reachable);
+                                    arg_place
                                         .and_then(|a| a)
-                                        .map(|a| (local.into(), Either::Left(Some(a))))
+                                        .map(|a| {
+                                            let p = local.into();
+                                            (lplace,
+                                            Box::new(std::iter::once(p).chain(reachable.into_iter().cloned()).flat_map(|p| matrix.row(p)).cloned()) as Box<_>,
+                                            Either::Left(Some(a)))
+                                        }
+                                        )
                                 }),
                         )
                         .collect(),
@@ -770,16 +781,13 @@ impl<'tcx> Visitor<'tcx> {
             };
             if let Some(mentioned_places) = abstraction_info {
                 let mut i = 0;
-                for (r, sink) in mentioned_places {
-                    let deps = matrix.row(r);
-                    if sink.is_left() {
-                        debug!("Found dependencies {:?}", matrix.row_set(r));
-                    }
+                for (r, deps, sink) in mentioned_places {
+                    //let deps = matrix.row(r);
                     for from in deps
                         .filter_map(|l| {
                             let from_recursed = {
                                 let mut all_results = flow.aliases().aliases(r).into_iter().chain(std::iter::once(&r))
-                                .filter_map(|p| returns_from_recursed.get(&(*p, *l))).collect::<Vec<_>>();
+                                .filter_map(|p| returns_from_recursed.get(&(*p, l))).collect::<Vec<_>>();
                                 all_results.iter().reduce(|v1, v2| {
                                     assert!(v1 == v2);
                                     v2
@@ -788,14 +796,14 @@ impl<'tcx> Visitor<'tcx> {
                             };
 
                             // Check that if we expect this function to have been recursed into that that actually happened
-                            if is_real_location(body, *l) {
-                                body.stmt_at(*l).right().map(|t| {
+                            if is_real_location(body, l) {
+                                body.stmt_at(l).right().map(|t| {
                                     t.as_fn_and_args().ok().map(|fninfo| {
                                         let is_local_function = tcx.hir().get_if_local(fninfo.0).and_then(|n| node_as_fn(&n)).is_some();
                                         let has_annotations = !interesting_fn_defs.get(&fninfo.0).map_or(true, |anns| anns.0.is_empty());
 
                                         if !(from_recursed.is_some() || !is_local_function || has_annotations) { 
-                                            error!("Expected a handled subfunction '{:?}' in '{}', but was not handled yet. Info:\n\thas_recursed:{}\n\tis_local:{is_local_function}\n\thas_annotations:{has_annotations}\n\tsearched_place:{:?}\n\taliases:{:?}\n\treachable_places:{:?}\n\treturns_map{:?}", t.kind, id.name, from_recursed.is_some(), r, flow.aliases().aliases(r), flow.aliases().reachable_values(r, mir::Mutability::Not), returns_from_recursed);
+                                            error!("Expected a handled subfunction '{:?}' in '{}' (place:{r:?}), but was not handled yet. Info:\n\thas_recursed:{}\n\tis_local:{is_local_function}\n\thas_annotations:{has_annotations}\n\tsearched_place:{:?}\n\taliases:{:?}\n\treachable_places:{:?}\n\treturns_map{:?}", t.kind, id.name, from_recursed.is_some(), r, flow.aliases().aliases(r), flow.aliases().reachable_values(r, mir::Mutability::Not), returns_from_recursed);
                                         }
                                     })
                                 });
@@ -805,7 +813,7 @@ impl<'tcx> Visitor<'tcx> {
                                 DataSource::try_from_body(
                                     id.name,
                                     body,
-                                    *l,
+                                    l,
                                     loc_dom,
                                     tcx,
                                     &arg_resolver.borrow(),
