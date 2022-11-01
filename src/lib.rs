@@ -71,10 +71,10 @@ pub struct Args {
     /// clap it otherwise complains about the superfluous argument.
     _progname: String,
     /// Print additional logging output (up to the "info" level)
-    #[clap(short, long)]
+    #[clap(short, long, env="DFPP_VERBOSE")]
     verbose: bool,
     /// Print additional logging output (up to the "debug" level)
-    #[clap(long)]
+    #[clap(long, env="DFPP_DEBUG")]
     debug: bool,
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
@@ -113,6 +113,8 @@ struct DbgArgs {
     /// Dump a complete `crate::desc::ProgramDescription` in serialized (json) format to "flow-graph.json". Used for testing.
     #[clap(long, env)]
     dump_serialized_flow_graph: bool,
+    #[clap(long, env)]
+    dump_ctrl_mir: bool,
 }
 
 pub const FLOW_GRAPH_OUT_NAME: &'static str = "flow-graph.json";

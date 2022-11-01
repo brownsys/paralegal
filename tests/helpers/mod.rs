@@ -78,7 +78,6 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")
         .arg("--dump-serialized-flow-graph")
-        .arg("--debug")
         .status()
         .unwrap()
         .success()

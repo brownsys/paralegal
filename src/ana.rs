@@ -1,7 +1,7 @@
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
-    dbg::dump_non_transitive_graph_and_body, desc::*, rust::*, sah::HashVerifications, Either,
+    dbg::{dump_non_transitive_graph_and_body, self}, desc::*, rust::*, sah::HashVerifications, Either,
     HashMap, HashSet,
 };
 
@@ -569,8 +569,13 @@ impl<'tcx> Visitor<'tcx> {
         let tcx = self.tcx;
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
 
+        if self.opts.dbg.dump_ctrl_mir {
+            mir::graphviz::write_mir_fn_graphviz(tcx, &body_with_facts.body, false, &mut std::fs::OpenOptions::new().create(true).truncate(true).write(true).open(format!("{}.mir.gv", id.name)).unwrap()).unwrap()
+        }
+
         debug!("{}", id.name);
         let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts);
+        let transitive_flow = infoflow::compute_flow(tcx, b, body_with_facts);
 
         let body = &body_with_facts.body;
         {
@@ -695,12 +700,17 @@ impl<'tcx> Visitor<'tcx> {
                         *callee_def_id,
                         &mut subresolver,
                     );
-                    subresolver
-                        .into_returns()
+                    let returns = subresolver
+                        .into_returns();
+                    debug!("return modification map {returns:?}");
+                    returns
                         .into_iter()
                         .for_each(|(p, mods)| {
-                            if let Some(old) = returns_from_recursed.insert((p.unwrap_or(dest), loc), mods) {
-                                warn!("Duplicate function mutability override for {p:?} with prior value {old:?}");
+                            let the_place = p.unwrap_or(dest);
+                            for reachable in flow.aliases().reachable_values(the_place, mir::Mutability::Mut).iter().chain(std::iter::once(&the_place)) {
+                                if let Some(old) = returns_from_recursed.insert((*reachable, loc), mods.clone()) {
+                                    warn!("Duplicate function mutability override for {the_place:?} \n\twith new value \t{mods:?} \n\tand prior value\t{old:?}");
+                                }
                             }
                         });
                     None
@@ -732,19 +742,25 @@ impl<'tcx> Visitor<'tcx> {
                     )
                 }
             } else if matches!(t.kind, mir::TerminatorKind::Return) {
+                match &flow.kind {
+                    FlowKind::NonTransitiveShrunk { original_flow, shrunk } =>
+                        debug!("Handling return for {}\n\nPre shrink matrix\n{}\n\nPost shrink matrix\n{}\n\nTransitive matrix\n{}\n", id.name, dbg::PrintableMatrix(original_flow.state_at(loc).matrix()), dbg::PrintableMatrix(&shrunk[&loc]), dbg::PrintableMatrix(transitive_flow.state_at(loc))),
+                    _ => (),
+                };
+                
                 Some(
                     std::iter::once((mir::Place::return_place(), Either::Left(None)))
                         .chain(
                             body.args_iter()
                                 .enumerate()
                                 .filter(|(_, a)| body.local_decls[*a].ty.is_mutable_ptr())
-                                .map(|(i, local)| (i, local.into()))
-                                .filter_map(|(i, p)| {
+                                .filter_map(|(i, local)| {
+                                    debug!("Found mutable argument {:?} at index {i} with arg place {:?}", local, arg_resolver.borrow().get_arg_place(i));
                                     arg_resolver
                                         .borrow()
                                         .get_arg_place(i)
                                         .and_then(|a| a)
-                                        .map(|a| (p, either::Left(Some(a))))
+                                        .map(|a| (local.into(), Either::Left(Some(a))))
                                 }),
                         )
                         .collect(),
@@ -756,23 +772,34 @@ impl<'tcx> Visitor<'tcx> {
                 let mut i = 0;
                 for (r, sink) in mentioned_places {
                     let deps = matrix.row(r);
+                    if sink.is_left() {
+                        debug!("Found dependencies {:?}", matrix.row_set(r));
+                    }
                     for from in deps
                         .filter_map(|l| {
-                            let from_recursed = returns_from_recursed.get(&(r, *l));
+                            let from_recursed = {
+                                let mut all_results = flow.aliases().aliases(r).into_iter().chain(std::iter::once(&r))
+                                .filter_map(|p| returns_from_recursed.get(&(*p, *l))).collect::<Vec<_>>();
+                                all_results.iter().reduce(|v1, v2| {
+                                    assert!(v1 == v2);
+                                    v2
+                                });
+                                all_results.pop()
+                            };
 
                             // Check that if we expect this function to have been recursed into that that actually happened
                             if is_real_location(body, *l) {
-                            body.stmt_at(*l).right().map(|t| {
-                                t.as_fn_and_args().ok().map(|fninfo| {
-                                    let is_local_function = tcx.hir().get_if_local(fninfo.0).and_then(|n| node_as_fn(&n)).is_some();
-                                    let has_annotations = !interesting_fn_defs.get(&fninfo.0).map_or(true, |anns| anns.0.is_empty());
+                                body.stmt_at(*l).right().map(|t| {
+                                    t.as_fn_and_args().ok().map(|fninfo| {
+                                        let is_local_function = tcx.hir().get_if_local(fninfo.0).and_then(|n| node_as_fn(&n)).is_some();
+                                        let has_annotations = !interesting_fn_defs.get(&fninfo.0).map_or(true, |anns| anns.0.is_empty());
 
-                                    if !(from_recursed.is_some() || !is_local_function || has_annotations) { 
-                                        error!("Expected a handled subfunction '{:?}' in '{}', but was not handled yet. Info:\n\thas_recursed:{}\n\tis_local:{is_local_function}\n\thas_annotations:{has_annotations}", t.kind, id.name, from_recursed.is_some());
-                                    }
-                                })
-                            });
-                        }
+                                        if !(from_recursed.is_some() || !is_local_function || has_annotations) { 
+                                            error!("Expected a handled subfunction '{:?}' in '{}', but was not handled yet. Info:\n\thas_recursed:{}\n\tis_local:{is_local_function}\n\thas_annotations:{has_annotations}\n\tsearched_place:{:?}\n\taliases:{:?}\n\treachable_places:{:?}\n\treturns_map{:?}", t.kind, id.name, from_recursed.is_some(), r, flow.aliases().aliases(r), flow.aliases().reachable_values(r, mir::Mutability::Not), returns_from_recursed);
+                                        }
+                                    })
+                                });
+                            }
 
                             from_recursed.map(Cow::Borrowed).or(
                                 DataSource::try_from_body(

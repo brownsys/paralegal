@@ -50,4 +50,7 @@ fn on_mut_var_no_modify() {
 }
 
 
-fn main() {}
+fn main() {
+
+
+}
