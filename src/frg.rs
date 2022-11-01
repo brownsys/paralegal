@@ -138,10 +138,11 @@ fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
     function: &'b CallSite,
     arg_slot: usize,
 ) -> DocBuilder<'b, D, A> {
-    function
-        .as_forge(alloc)
-        .append(alloc.text("_"))
+    alloc
+        .text("`arg")
         .append(alloc.as_string(arg_slot))
+        .append(alloc.text("_"))
+        .append(function.as_forge(alloc))
 }
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
@@ -163,13 +164,20 @@ where
     }
 }
 
+fn call_site_as_forge<'b, A, D: DocAllocator<'b, A>>(
+    alloc: &'b D,
+    function: &'b CallSite,
+) -> DocBuilder<'b, D, A> {
+    alloc.text("`cs_").append(function.as_forge(alloc))
+}
+
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.text(format!(
-            "`b{}_i{}_{}",
+            "{}_b{}_i{}",
+            self.function.as_str(),
             self.location.block.as_usize(),
             self.location.statement_index,
-            self.function.as_str(),
         ))
     }
 }
@@ -179,7 +187,7 @@ fn data_source_as_forge<'b, A, D: DocAllocator<'b, A>>(
     alloc: &'b D,
 ) -> DocBuilder<'b, D, A> {
     match src {
-        DataSource::FunctionCall(f) => f.as_forge(alloc),
+        DataSource::FunctionCall(f) => call_site_as_forge(alloc, f),
         DataSource::Argument(a) => alloc.text("`arg_").append(alloc.as_string(a)),
     }
 }
@@ -275,6 +283,17 @@ fn hash_set_into_forge<'a, A: 'a, D: DocAllocator<'a, A>, T: ToForge<'a, A, D>>(
         alloc.text("none")
     } else {
         alloc.intersperse(h.into_iter().map(|w| w.as_forge(alloc)), "+")
+    }
+}
+
+fn hash_set_into_call_site_forge<'a, A: 'a, D: DocAllocator<'a, A>>(
+    h: HashSet<&'a CallSite>,
+    alloc: &'a D,
+) -> DocBuilder<'a, D, A> {
+    if h.is_empty() {
+        alloc.text("none")
+    } else {
+        alloc.intersperse(h.into_iter().map(|w| call_site_as_forge(alloc, w)), "+")
     }
 }
 
@@ -427,7 +446,7 @@ impl ProgramDescription {
         alloc.forge_relation(self.all_sinks().into_iter().map(|src| {
             (
                 std::iter::once(src.as_forge(alloc)),
-                std::iter::once(src.function.as_forge(alloc)),
+                std::iter::once(call_site_as_forge(alloc, &src.function)),
             )
         }))
     }
@@ -441,7 +460,7 @@ impl ProgramDescription {
     {
         alloc.forge_relation(self.all_call_sites().into_iter().map(|src| {
             (
-                std::iter::once(src.as_forge(alloc)),
+                std::iter::once(call_site_as_forge(alloc, src)),
                 std::iter::once((&src.function).as_forge(alloc)),
             )
         }))
@@ -525,10 +544,9 @@ where
                                     .append(" = ")
                                     .append(l.as_forge(alloc))
                             })),
-                            alloc
-                                .text(name::CALL_SITE)
-                                .append(" = ")
-                                .append(hash_set_into_forge(self.all_call_sites(), alloc)),
+                            alloc.text(name::CALL_SITE).append(" = ").append(
+                                hash_set_into_call_site_forge(self.all_call_sites(), alloc),
+                            ),
                             alloc.text(name::INPUT_ARGUMENT).append(" = ").append(
                                 hash_set_into_forge(
                                     self.all_sources()
