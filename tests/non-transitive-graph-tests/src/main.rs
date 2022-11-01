@@ -77,6 +77,7 @@ fn get_user_data_with(data: Vec<i64>) -> UserData {
     return UserData { data };
 }
 
+#[dfpp::label(yey_dfpp_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
 fn dp_user_data(user_data: &mut UserData) {
     for i in &mut user_data.data {
         *i = 2;

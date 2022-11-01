@@ -380,8 +380,11 @@ impl<'tcx, 'a> ArgumentResolver<'tcx, 'a> {
     }
     fn get_arg_place(&self, i: usize) -> Option<Option<mir::Place<'tcx>>> {
         match self {
-            ArgumentResolver::Nested { args, .. } => 
-Some(args.get(i - 1 /* I think there's an off-by-one error in how flowistry calculates these argument locations */).unwrap_or_else(|| panic!("Index {i} not found in {args:?}")).clone()),
+            ArgumentResolver::Nested { args, .. } => Some(
+                args.get(i)
+                    .unwrap_or_else(|| panic!("Index {i} not found in {args:?}"))
+                    .clone(),
+            ),
             _ => None,
         }
     }
@@ -390,7 +393,6 @@ Some(args.get(i - 1 /* I think there's an off-by-one error in how flowistry calc
             ArgumentResolver::Root => Box::new(std::iter::once(DataSource::Argument(i)))
                 as Box<dyn Iterator<Item = DataSource>>,
             ArgumentResolver::Nested {
-                args,
                 matrix,
                 inner,
                 id,
@@ -398,14 +400,20 @@ Some(args.get(i - 1 /* I think there's an off-by-one error in how flowistry calc
                 loc_dom,
                 tcx,
                 ..
-            } => Box::new(self.get_arg_place(i).and_then(|a| a).into_iter().flat_map(|p| {
-                matrix
-                    .row(p)
-                    .filter_map(|l| {
-                        DataSource::try_from_body(id.name, body, *l, loc_dom, *tcx, inner).ok()
-                    })
-                    .flat_map(|v| v.into_iter())
-            })) as Box<_>,
+            } => Box::new(
+                self.get_arg_place(i - 1 /* I think there's an off-by-one error in how flowistry calculates these argument locations */)
+                    .and_then(|a| a)
+                    .into_iter()
+                    .flat_map(|p| {
+                        matrix
+                            .row(p)
+                            .filter_map(|l| {
+                                DataSource::try_from_body(id.name, body, *l, loc_dom, *tcx, inner)
+                                    .ok()
+                            })
+                            .flat_map(|v| v.into_iter())
+                    }),
+            ) as Box<_>,
         }
     }
     fn register_return(
@@ -457,6 +465,22 @@ impl DataSource {
             })]
         };
         Ok(r)
+    }
+}
+
+fn node_as_fn<'hir>(
+    node: &hir::Node<'hir>,
+) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
+    if let hir::Node::Item(hir::Item {
+        ident,
+        def_id,
+        kind: hir::ItemKind::Fn(_, _, body_id),
+        ..
+    }) = node
+    {
+        Some((ident, def_id, body_id))
+    } else {
+        None
     }
 }
 
@@ -638,21 +662,14 @@ impl<'tcx> Visitor<'tcx> {
 
                 if let Some((callee_ident, callee_def_id, callee_body_id)) =
                     tcx.hir().get_if_local(p).and_then(|node| {
-                        if let hir::Node::Item(hir::Item {
-                            ident,
-                            def_id,
-                            kind: hir::ItemKind::Fn(_, _, body_id),
-                            ..
-                        }) = node
-                        {
-                            if seen.contains(def_id) || anns.is_some() {
-                                None
-                            } else {
-                                seen.insert(*def_id);
-                                Some((ident, def_id, body_id))
-                            }
+                        let nodeinfo = node_as_fn(&node).unwrap_or_else(|| {
+                            panic!("Expected local function node, got {node:?}")
+                        });
+                        if seen.contains(nodeinfo.1) || anns.is_some() {
+                            None
                         } else {
-                            panic!("Expected local function node, found {node:?}");
+                            seen.insert(*nodeinfo.1);
+                            Some(nodeinfo)
                         }
                     })
                 {
@@ -716,28 +733,21 @@ impl<'tcx> Visitor<'tcx> {
                 }
             } else if matches!(t.kind, mir::TerminatorKind::Return) {
                 Some(
-                    std::iter::once((mir::Place::return_place(), Either::Left(None))).chain(
-                        body.args_iter()
-                            .enumerate()
-                            .filter(|(_, a)| body.local_decls[*a].ty.is_mutable_ptr())
-                            .map(|(i, local)| {
-                                (
-                                    i,
-                                    mir::Place {
-                                        local,
-                                        projection: tcx.mk_place_elems(std::iter::empty()),
-                                    },
-                                )
-                            })
-                            .filter_map(|(i, p)| {
-                                arg_resolver
-                                    .borrow()
-                                    .get_arg_place(i)
-                                    .and_then(|a| a)
-                                    .map(|a| (p, either::Left(Some(a))))
-                            })
-                            
-                    ).collect(),
+                    std::iter::once((mir::Place::return_place(), Either::Left(None)))
+                        .chain(
+                            body.args_iter()
+                                .enumerate()
+                                .filter(|(_, a)| body.local_decls[*a].ty.is_mutable_ptr())
+                                .map(|(i, local)| (i, local.into()))
+                                .filter_map(|(i, p)| {
+                                    arg_resolver
+                                        .borrow()
+                                        .get_arg_place(i)
+                                        .and_then(|a| a)
+                                        .map(|a| (p, either::Left(Some(a))))
+                                }),
+                        )
+                        .collect(),
                 )
             } else {
                 None
@@ -748,7 +758,21 @@ impl<'tcx> Visitor<'tcx> {
                     let deps = matrix.row(r);
                     for from in deps
                         .filter_map(|l| {
-                            returns_from_recursed.get(&(r, *l)).map(Cow::Borrowed).or(
+                            let from_recursed = returns_from_recursed.get(&(r, *l));
+
+                            // Check that if we expect this function to have been recursed into that that actually happened
+                            if is_real_location(body, *l) {
+                            body.stmt_at(*l).right().map(|t| {
+                                t.as_fn_and_args().ok().map(|fninfo| {
+                                    let is_local_function = tcx.hir().get_if_local(fninfo.0).and_then(|n| node_as_fn(&n)).is_some();
+                                    let has_annotations = !interesting_fn_defs.get(&fninfo.0).map_or(true, |anns| anns.0.is_empty());
+
+                                    assert!(from_recursed.is_some() || !is_local_function || has_annotations, "Expected a handled subfunction '{:?}' in '{}', but was not handled yet. Info:\n\thas_recursed:{}\n\tis_local:{is_local_function}\n\thas_annotations:{has_annotations}", t.kind, id.name, from_recursed.is_some());
+                                })
+                            });
+                        }
+
+                            from_recursed.map(Cow::Borrowed).or(
                                 DataSource::try_from_body(
                                     id.name,
                                     body,
