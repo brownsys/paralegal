@@ -54,3 +54,37 @@ fn with_return() {
         assert!(src.flows_to(&dest));
     })
 }
+
+#[test]
+fn on_mut_var() {
+    assert!(*TEST_CRATE_ANALYZED);
+    use_rustc(|| {
+        let graph = PreFrg::from_file_at(TEST_CRATE_NAME);
+        let src_fn = graph.function("source");
+        let ctrl = graph.ctrl("on_mut_var");
+        let src = ctrl.call_sites(&src_fn).pop().unwrap();
+        let dest_fn = graph.function("receiver");
+        let dest_sink = ctrl.call_sites(&dest_fn).pop().unwrap();
+        let dest = dest_sink.input().pop().unwrap();
+
+        assert!(src.flows_to(&dest));
+    })
+}
+
+#[test]
+fn on_mut_var_no_modify() {
+    assert!(*TEST_CRATE_ANALYZED);
+    use_rustc(|| {
+        let graph = PreFrg::from_file_at(TEST_CRATE_NAME);
+        let src_fn = graph.function("source");
+        let ctrl = graph.ctrl("on_mut_var");
+        if let Some(src) = ctrl.call_sites(&src_fn).pop() {
+            let dest_fn = graph.function("receiver");
+            if let Some(dest_sink) = ctrl.call_sites(&dest_fn).pop() {
+                if let Some(dest) = dest_sink.input().pop() {
+                    assert!(!src.flows_to(&dest));
+                }
+            }
+        }
+    })
+}

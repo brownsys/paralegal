@@ -767,7 +767,9 @@ impl<'tcx> Visitor<'tcx> {
                                     let is_local_function = tcx.hir().get_if_local(fninfo.0).and_then(|n| node_as_fn(&n)).is_some();
                                     let has_annotations = !interesting_fn_defs.get(&fninfo.0).map_or(true, |anns| anns.0.is_empty());
 
-                                    assert!(from_recursed.is_some() || !is_local_function || has_annotations, "Expected a handled subfunction '{:?}' in '{}', but was not handled yet. Info:\n\thas_recursed:{}\n\tis_local:{is_local_function}\n\thas_annotations:{has_annotations}", t.kind, id.name, from_recursed.is_some());
+                                    if !(from_recursed.is_some() || !is_local_function || has_annotations) { 
+                                        error!("Expected a handled subfunction '{:?}' in '{}', but was not handled yet. Info:\n\thas_recursed:{}\n\tis_local:{is_local_function}\n\thas_annotations:{has_annotations}", t.kind, id.name, from_recursed.is_some());
+                                    }
                                 })
                             });
                         }
