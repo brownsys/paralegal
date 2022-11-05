@@ -433,6 +433,10 @@ impl<'tcx> Visitor<'tcx> {
         let local_def_id = tcx.hir().body_owner_def_id(b);
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
 
+        if self.opts.dbg.dump_analyzed_mir_graph {
+            mir::graphviz::write_mir_fn_graphviz(tcx, &body_with_facts.body, false, &mut std::fs::OpenOptions::new().create(true).truncate(true).write(true).open(format!("{}.mir.gv", id.name)).unwrap()).unwrap()
+        }
+
         let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts);
 
         let body = &body_with_facts.body;

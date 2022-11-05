@@ -110,6 +110,10 @@ struct DbgArgs {
     /// For each controller dumps the calculated dataflow graphs as well as information about the MIR to <name of controller>.ntgb.json. Can be deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
     #[clap(long, env)]
     dump_serialized_non_transitive_graph: bool,
+    /// Outputs a dot graph for each function that is analyzed. Graphs are
+    /// dumped to <name of function>.mir.gv
+    #[clap(long, env)]
+    dump_analyzed_mir_graph: bool,
 }
 
 struct Callbacks {
