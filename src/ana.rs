@@ -1,8 +1,11 @@
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
-    dbg::{dump_non_transitive_graph_and_body, self}, desc::*, rust::*, sah::HashVerifications, Either,
-    HashMap, HashSet,
+    dbg::{self, dump_non_transitive_graph_and_body},
+    desc::*,
+    rust::*,
+    sah::HashVerifications,
+    Either, HashMap, HashSet,
 };
 
 use hir::{
@@ -11,16 +14,20 @@ use hir::{
     intravisit::{self, FnKind},
     BodyId,
 };
+use rustc_data_structures::{intern::Interned, sharded::ShardedHashMap};
+use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
     hir::nested_filter::OnlyBodies,
+    mir::TerminatorKind,
     ty::{self, TyCtxt},
 };
 use rustc_span::{symbol::Ident, Span, Symbol};
 
+use crate::rust::rustc_arena;
 use flowistry::{
     indexed::{impls::LocationDomain, IndexedDomain},
-    infoflow::{self, FlowDomain},
-    mir::{borrowck_facts, utils::BodyExt},
+    infoflow::{self, FlowAnalysis, FlowDomain, NonTransitiveFlowDomain},
+    mir::{borrowck_facts, engine::AnalysisResults, utils::BodyExt},
 };
 
 pub type AttrMatchT = Vec<Symbol>;
@@ -72,13 +79,27 @@ fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
 trait TerminatorExt<'tcx> {
     fn as_fn_and_args(
         &self,
-    ) -> Result<(DefId, Vec<Option<mir::Place<'tcx>>>, mir::Place<'tcx>), &'static str>;
+    ) -> Result<
+        (
+            DefId,
+            Vec<Option<mir::Place<'tcx>>>,
+            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+        ),
+        &'static str,
+    >;
 }
 
 impl<'tcx> TerminatorExt<'tcx> for mir::Terminator<'tcx> {
     fn as_fn_and_args(
         &self,
-    ) -> Result<(DefId, Vec<Option<mir::Place<'tcx>>>, mir::Place<'tcx>), &'static str> {
+    ) -> Result<
+        (
+            DefId,
+            Vec<Option<mir::Place<'tcx>>>,
+            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+        ),
+        &'static str,
+    > {
         match &self.kind {
             mir::TerminatorKind::Call {
                 func,
@@ -104,7 +125,7 @@ impl<'tcx> TerminatorExt<'tcx> for mir::Terminator<'tcx> {
                             mir::Operand::Constant(_) => None,
                         })
                         .collect(),
-                    destination.ok_or("missing return place")?.0,
+                    *destination,
                 ))
             }
             _ => Err("Not a function call".into()),
@@ -150,12 +171,148 @@ pub struct Visitor<'tcx> {
 
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
-pub struct Flow<'a, 'tcx> {
-    pub kind: FlowKind<'a, 'tcx>,
+pub struct Flow<'a, 'tcx, 'g> {
+    pub kind: FlowKind<'a, 'tcx, 'g>,
     pub domain: Rc<LocationDomain>,
 }
 
-pub enum FlowKind<'a, 'tcx> {
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
+pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<'g>>);
+
+impl<'g> GlobalLocation<'g> {
+    pub fn function(self) -> BodyId {
+        self.0 .0.function
+    }
+    pub fn location(self) -> mir::Location {
+        self.0 .0.location
+    }
+    pub fn next(self) -> Option<Self> {
+        self.0 .0.next
+    }
+    pub fn innermost_location_and_body(self) -> (mir::Location, BodyId) {
+        self.next().map_or_else(
+            || (self.location(), self.function()),
+            |other| other.innermost_location_and_body(),
+        )
+    }
+    pub fn as_local(self) -> Option<mir::Location> {
+        if self.next().is_none() {
+            Some(self.location())
+        } else {
+            None
+        }
+    }
+    pub fn is_at_root(self) -> bool {
+        self.next().is_none()
+    }
+}
+
+impl<'g> std::borrow::Borrow<GlobalLocationS<'g>> for GlobalLocation<'g> {
+    fn borrow(&self) -> &GlobalLocationS<'g> {
+        &self.0 .0
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct GlobalLocationS<'g> {
+    pub function: BodyId,
+    pub location: mir::Location,
+    pub next: Option<GlobalLocation<'g>>,
+}
+
+pub struct GlobalLocationInterner<'g> {
+    arena: &'g rustc_arena::TypedArena<GlobalLocationS<'g>>,
+    known_locations: ShardedHashMap<GlobalLocation<'g>, ()>,
+}
+
+impl<'g> GlobalLocationInterner<'g> {
+    pub fn intern_location(&'g self, loc: GlobalLocationS<'g>) -> GlobalLocation<'g> {
+        self.known_locations.intern(loc, |loc| {
+            GlobalLocation(Interned::new_unchecked(self.arena.alloc(loc)))
+        })
+    }
+    pub fn new(arena: &'g rustc_arena::TypedArena<GlobalLocationS<'g>>) -> Self {
+        GlobalLocationInterner {
+            arena,
+            known_locations: ShardedHashMap::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct GLI<'g>(&'g GlobalLocationInterner<'g>);
+
+impl<'g> GLI<'g> {
+    pub fn make_global_location(
+        self,
+        function: BodyId,
+        location: mir::Location,
+        next: Option<GlobalLocation<'g>>,
+    ) -> GlobalLocation<'g> {
+        self.0.intern_location(GlobalLocationS {
+            function,
+            location,
+            next,
+        })
+    }
+    pub fn globalize_location(
+        self,
+        location: mir::Location,
+        function: BodyId,
+    ) -> GlobalLocation<'g> {
+        self.make_global_location(function, location, None)
+    }
+    pub fn global_location_from_relative(
+        self,
+        relative_location: GlobalLocation<'g>,
+        root_location: mir::Location,
+        root_function: BodyId,
+    ) -> GlobalLocation<'g> {
+        self.make_global_location(root_function, root_location, Some(relative_location))
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
+pub struct GlobalPlace<'tcx, 'g> {
+    place: mir::Place<'tcx>,
+    function: Option<GlobalLocation<'g>>,
+}
+
+impl<'tcx, 'g> GlobalPlace<'tcx, 'g> {
+    pub fn relative_to(
+        mut self,
+        gli: GLI<'g>,
+        root_location: mir::Location,
+        root_function: BodyId,
+    ) -> Self {
+        self.function = Some(gli.make_global_location(root_function, root_location, self.function));
+        self
+    }
+}
+
+impl<'tcx, 'g> From<mir::Place<'tcx>> for GlobalPlace<'tcx, 'g> {
+    fn from(place: mir::Place<'tcx>) -> Self {
+        Self {
+            place,
+            function: None,
+        }
+    }
+}
+
+type GlobalDepMatrix<'tcx, 'g> = HashMap<GlobalPlace<'tcx, 'g>, HashSet<GlobalLocation<'g>>>;
+struct GlobalFlowGraph<'tcx, 'g> {
+    location_states: HashMap<GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>>,
+    return_state: GlobalDepMatrix<'tcx, 'g>,
+}
+type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<GlobalFlowGraph<'tcx, 'g>>>>>;
+type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<'g>>;
+
+struct CallDeps<'g> {
+    ctrl_deps: HashSet<GlobalLocation<'g>>,
+    input_deps: Vec<HashSet<GlobalLocation<'g>>>,
+}
+
+pub enum FlowKind<'a, 'tcx, 'g> {
     Transitive(
         flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>,
     ),
@@ -174,9 +331,420 @@ pub enum FlowKind<'a, 'tcx> {
         >,
         shrunk: NonTransitiveGraph<'tcx>,
     },
+    NonTransitiveRecursive {
+        root_function: BodyId,
+        function_flows: FunctionFlows<'tcx, 'g>,
+        reduced_flow: CallOnlyFlow<'g>,
+    },
 }
 
-impl<'a, 'tcx> Flow<'a, 'tcx> {
+fn inner_flow_for_terminator<'tcx, 'g>(
+    tcx: TyCtxt<'tcx>,
+    gli: GLI<'g>,
+    function_flows: &FunctionFlows<'tcx, 'g>,
+    t: &mir::Terminator<'tcx>,
+) -> Result<
+    (
+        Rc<GlobalFlowGraph<'tcx, 'g>>,
+        BodyId,
+        &'tcx mir::Body<'tcx>,
+        Vec<Option<mir::Place<'tcx>>>,
+        Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+    ),
+    &'static str,
+> {
+    t.as_fn_and_args().and_then(|(p, args, dest)| {
+        let node = tcx.hir().get_if_local(p).ok_or("non-local node")?;
+        let (callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
+            .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
+        let inner_flow = compute_granular_global_flows(tcx, gli, *callee_body_id, function_flows)
+            .ok_or("is recursive")?;
+        let body = &borrowck_facts::get_body_with_borrowck_facts(tcx, *callee_local_id).body;
+        Ok((inner_flow, *callee_body_id, body, args, dest))
+    })
+}
+
+fn compute_granular_global_flows<'tcx, 'g>(
+    tcx: TyCtxt<'tcx>,
+    gli: GLI<'g>,
+    root_function: BodyId,
+    function_flows: &FunctionFlows<'tcx, 'g>,
+) -> Option<Rc<GlobalFlowGraph<'tcx, 'g>>> {
+    if let Some(inner) = function_flows.borrow()[&root_function].as_ref() {
+        return Some(inner.clone());
+    };
+    let local_def_id = tcx.hir().body_owner_def_id(root_function);
+
+    let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
+    let body = &body_with_facts.body;
+    let ref from_flowistry =
+        flowistry::infoflow::compute_flow_nontransitive(tcx, root_function, body_with_facts);
+
+    // Make sure we terminate on recursion
+    function_flows.borrow_mut().insert(root_function, None);
+
+    let translate_child_to_parent = |args: &[Option<mir::Place<'tcx>>],
+                                     destination: Option<(mir::Place<'tcx>, _)>,
+                                     child: mir::Place<'tcx>,
+                                     mutated: bool|
+     -> Option<mir::Place<'tcx>> {
+        use flowistry::mir::utils::PlaceExt;
+        use mir::HasLocalDecls;
+        use mir::{Place, ProjectionElem};
+        if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
+            if child.ty(body.local_decls(), tcx).ty.is_unit() {
+                return None;
+            }
+
+            if let Some((dst, _)) = destination {
+                return Some(dst);
+            }
+        }
+
+        if !child.is_arg(body) || (mutated && !child.is_indirect()) {
+            return None;
+        }
+
+        // For example, say we're calling f(_5.0) and child = (*_1).1 where
+        // .1 is private to parent. Then:
+        //    parent_toplevel_arg = _5.0
+        //    parent_arg_projected = (*_5.0).1
+        //    parent_arg_accessible = (*_5.0)
+
+        let parent_toplevel_arg = args[child.local.as_usize() - 1]?;
+
+        let mut projection = parent_toplevel_arg.projection.to_vec();
+        let mut ty = parent_toplevel_arg.ty(body.local_decls(), tcx);
+        let parent_param_env = tcx.param_env(local_def_id);
+        for elem in child.projection.iter() {
+            ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
+                ty.field_ty(tcx, field)
+            });
+            let elem = match elem {
+                ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
+                elem => elem,
+            };
+            projection.push(elem);
+        }
+
+        let parent_arg_projected = Place::make(parent_toplevel_arg.local, &projection, tcx);
+        Some(parent_arg_projected)
+    };
+
+    let mut translated_return_states: RefCell<
+        HashMap<mir::Location, HashMap<mir::Place<'tcx>, HashSet<GlobalLocation<'g>>>>,
+    > = RefCell::new(HashMap::new());
+    let make_row_global = |place, dep_set: IndexSet<_, _>| -> HashSet<GlobalLocation<'g>> {
+        dep_set
+            .iter()
+            .flat_map(|l| {
+                if let Some((inner_flow, _, inner_body, args, dest)) = body
+                    .stmt_at(*l)
+                    .right()
+                    .and_then(|t| inner_flow_for_terminator(tcx, gli, function_flows, t).ok())
+                {
+                    let mut translated_return_states_borrow = translated_return_states.borrow_mut();
+                    let translated_return_state = translated_return_states_borrow
+                        .entry(*l)
+                        .or_insert_with(|| {
+                            inner_flow
+                                .return_state
+                                .iter()
+                                .filter_map(|(p, deps)| {
+                                    if p.function.is_none() {
+                                        translate_child_to_parent(&args, dest, p.place, true)
+                                    } else {
+                                        None
+                                    }
+                                    .map(|parent| {
+                                        (
+                                            parent,
+                                            deps.iter()
+                                                .map(|d| {
+                                                    gli.global_location_from_relative(
+                                                        *d,
+                                                        *l,
+                                                        root_function,
+                                                    )
+                                                })
+                                                .collect(),
+                                        )
+                                    })
+                                })
+                                .collect()
+                        });
+                    translated_return_state[&place]
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![gli.make_global_location(root_function, *l, None)]
+                }
+                .into_iter()
+            })
+            .collect()
+    };
+    // What to do for locations that are non-inlineable calls
+    let handle_regular_location = |loc| {
+        from_flowistry
+            .state_at(loc)
+            .matrix()
+            .rows()
+            .map(|(place, dep_set)| {
+                (
+                    GlobalPlace {
+                        place,
+                        function: None,
+                    },
+                    make_row_global(place, dep_set),
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    };
+    let mut return_state: HashMap<GlobalPlace<'tcx, 'g>, HashSet<GlobalLocation<'g>>> =
+        HashMap::new();
+    let location_states = body_with_facts
+        .body
+        .basic_blocks()
+        .iter_enumerated()
+        .flat_map(|(bb, bbdat)| {
+            bbdat
+                .statements
+                .iter()
+                .enumerate()
+                .map(move |(idx, stmt)| {
+                    let loc = mir::Location {
+                        block: bb,
+                        statement_index: idx,
+                    };
+                    let global_loc = gli.make_global_location(root_function, loc, None);
+                    (global_loc, handle_regular_location(loc))
+                })
+                .chain({
+                    let loc = body.terminator_loc(bb);
+                    if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
+                        inner_flow_for_terminator(tcx, gli, function_flows, bbdat.terminator())
+                    {
+                        inner_flow
+                            .location_states
+                            .iter()
+                            .map(move |(inner_loc, map)| {
+                                (
+                                    gli.global_location_from_relative(
+                                        *inner_loc,
+                                        loc,
+                                        root_function,
+                                    ),
+                                    map.iter()
+                                        .map(|(place, deps)| {
+                                            (
+                                                place.relative_to(gli, loc, root_function),
+                                                deps.iter()
+                                                    .map(|dep| {
+                                                        gli.global_location_from_relative(
+                                                            *dep,
+                                                            loc,
+                                                            root_function,
+                                                        )
+                                                    })
+                                                    .collect::<HashSet<_>>(),
+                                            )
+                                        })
+                                        .collect::<HashMap<_, _>>(),
+                                )
+                            })
+                            .chain((1..=args.len()).into_iter().map(move |a| {
+                                let global_call_site = gli.globalize_location(
+                                    mir::Location {
+                                        block: mir::BasicBlock::from_usize(
+                                            inner_body.basic_blocks().len(),
+                                        ),
+                                        statement_index: a,
+                                    },
+                                    inner_body_id,
+                                );
+                                let global_arg_loc = gli.global_location_from_relative(
+                                    global_call_site,
+                                    loc,
+                                    root_function,
+                                );
+                                (
+                                    global_arg_loc,
+                                    from_flowistry
+                                        .state_at(loc)
+                                        .matrix()
+                                        .rows()
+                                        .flat_map(|(place, dep_set)| {
+                                            let global_terminator_loc =
+                                                gli.globalize_location(loc, inner_body_id);
+                                            let this_place_as_global = GlobalPlace {
+                                                place,
+                                                function: Some(global_terminator_loc),
+                                            };
+                                            let parent = translate_child_to_parent(
+                                                &args, dest, place, false,
+                                            );
+                                            let row = make_row_global(place, dep_set);
+                                            parent
+                                                .map(|parent| {
+                                                    (
+                                                        GlobalPlace {
+                                                            place: parent,
+                                                            function: Some(global_call_site),
+                                                        },
+                                                        row.clone(),
+                                                    )
+                                                })
+                                                .into_iter()
+                                                .chain(std::iter::once((
+                                                    GlobalPlace {
+                                                        place,
+                                                        function: None,
+                                                    },
+                                                    row,
+                                                )))
+                                        })
+                                        .collect(),
+                                )
+                            }))
+                            .collect()
+                    } else {
+                        let state_at_term = handle_regular_location(loc);
+                        if let TerminatorKind::Return = bbdat.terminator().kind {
+                            for (p, deps) in state_at_term.iter() {
+                                return_state
+                                    .entry(*p)
+                                    .or_insert_with(|| HashSet::new())
+                                    .extend(deps.iter().cloned());
+                            }
+                        };
+                        vec![(gli.globalize_location(loc, root_function), state_at_term)]
+                    }
+                    .into_iter()
+                })
+        })
+        .collect();
+    function_flows.borrow_mut().insert(
+        root_function,
+        Some(Rc::new(GlobalFlowGraph {
+            location_states,
+            return_state,
+        })),
+    );
+    Some(
+        function_flows.borrow()[&root_function]
+            .as_ref()
+            .unwrap()
+            .clone(),
+    )
+}
+
+fn compute_call_only_flow<'tcx, 'g>(
+    tcx: TyCtxt<'tcx>,
+    g: &GlobalFlowGraph<'tcx, 'g>,
+) -> CallOnlyFlow<'g> {
+    // I'm making these generic so I don't have to update the types inside all the time and can use inference instead.
+    enum Keep<OnKeep, OnReject> {
+        Keep(OnKeep),
+        Argument(usize),
+        Reject(OnReject),
+    }
+    let as_location_to_keep = |loc: GlobalLocation| {
+        let (inner_location, inner_body_id) = loc.innermost_location_and_body();
+        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(
+            tcx,
+            tcx.hir().body_owner_def_id(inner_body_id),
+        );
+        if !is_real_location(&body_with_facts.body, inner_location) || loc.next().is_none() {
+            Keep::Argument(inner_location.statement_index - 1)
+        } else {
+            let stmt_at_loc = body_with_facts.body.stmt_at(inner_location);
+            match stmt_at_loc {
+                Either::Right(t) => t
+                    .as_fn_and_args()
+                    .ok()
+                    .map_or(Keep::Reject(stmt_at_loc), |(_, args, dest)| {
+                        Keep::Keep((args, dest))
+                    }),
+                _ => Keep::Reject(stmt_at_loc),
+            }
+        }
+    };
+    g.location_states
+        .iter()
+        .filter_map(|(loc, place_deps)| {
+            let (args, dest) = match as_location_to_keep(*loc) {
+                Keep::Keep(k) => Some(k),
+                _ => None,
+            }?;
+            let deps_for = |p: mir::Place| {
+                let mut queue = place_deps[&GlobalPlace {
+                    place: p,
+                    function: loc.next(),
+                }]
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let mut seen = HashSet::new();
+                let mut deps = HashSet::new();
+                while let Some(p) = queue.pop() {
+                    match as_location_to_keep(p) {
+                        Keep::Keep(_) | Keep::Argument(_) => {
+                            deps.insert(p);
+                        }
+                        Keep::Reject(stmt_at_loc) if !seen.contains(&p) => {
+                            seen.insert(p);
+                            queue.extend(places_read(loc.location(), &stmt_at_loc).flat_map(|pl| {
+                                place_deps[&GlobalPlace {
+                                    place: pl,
+                                    function: p.next(),
+                                }]
+                                    .iter()
+                                    .cloned()
+                            }))
+                        }
+                        _ => (),
+                    }
+                }
+                deps
+            };
+            dest.map(|(dest, _)| {
+                (
+                    *loc,
+                    CallDeps {
+                        input_deps: args
+                            .into_iter()
+                            .map(|p| p.map_or_else(|| HashSet::new(), deps_for))
+                            .collect(),
+                        ctrl_deps: deps_for(dest),
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
+fn places_read<'tcx>(
+    location: mir::Location,
+    stmt: &Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>,
+) -> impl Iterator<Item = mir::Place<'tcx>> {
+    use mir::visit::Visitor;
+    let mut places = HashSet::new();
+    let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| {
+        places.insert(*p);
+    });
+    match stmt {
+        Either::Left(mir::Statement {
+            kind: mir::StatementKind::Assign(a),
+            ..
+        }) => vis.visit_rvalue(&a.1, location),
+        Either::Right(term) => vis.visit_terminator(term, location), // TODO this is not correct
+        _ => (),
+    };
+    places.into_iter()
+}
+
+impl<'a, 'tcx, 'g> Flow<'a, 'tcx, 'g> {
     #[allow(dead_code)]
     fn is_transitive(&self) -> bool {
         matches!(self.kind, FlowKind::Transitive(_))
@@ -189,6 +757,7 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
             FlowKind::Transitive(_) => None,
             FlowKind::NonTransitive(t) => Some(Either::Right(&t)),
             FlowKind::NonTransitiveShrunk { shrunk, .. } => Some(Either::Left(&shrunk)),
+            FlowKind::NonTransitiveRecursive { .. } => unimplemented!(),
         }
     }
 
@@ -198,6 +767,7 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
             FlowKind::NonTransitive(a) => &a.analysis.aliases,
             FlowKind::Transitive(a) => &a.analysis.aliases,
             FlowKind::NonTransitiveShrunk { original_flow, .. } => &original_flow.analysis.aliases,
+            FlowKind::NonTransitiveRecursive { .. } => unimplemented!(),
         }
     }
 
@@ -206,10 +776,29 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
         tcx: TyCtxt<'tcx>,
         body_id: BodyId,
         body_with_facts: &'a crate::rust::rustc_borrowck::BodyWithBorrowckFacts<'tcx>,
+        gli: GLI<'g>,
     ) -> Self {
         let body = &body_with_facts.body;
         let domain = LocationDomain::new(body);
-        if opts.use_transitive_graph {
+        if opts.recursive_analysis {
+            let mut eval_mode = flowistry::extensions::EvalMode::default();
+            let mut function_flows = RefCell::new(HashMap::new());
+            eval_mode.context_mode = flowistry::extensions::ContextMode::Recurse;
+            let reduced_flow = flowistry::extensions::EVAL_MODE.set(&eval_mode, || {
+                compute_call_only_flow(
+                    tcx,
+                    &compute_granular_global_flows(tcx, gli, body_id, &function_flows).unwrap(),
+                )
+            });
+            Self {
+                domain: LocationDomain::new(body),
+                kind: FlowKind::NonTransitiveRecursive {
+                    root_function: body_id,
+                    function_flows: function_flows,
+                    reduced_flow,
+                },
+            }
+        } else if opts.use_transitive_graph {
             Self {
                 kind: FlowKind::Transitive(infoflow::compute_flow(tcx, body_id, body_with_facts)),
                 domain,
@@ -254,6 +843,7 @@ impl<'a, 'tcx> Flow<'a, 'tcx> {
             FlowKind::NonTransitive(hm) => hm.state_at(l).matrix(),
             FlowKind::Transitive(fa) => fa.state_at(l),
             FlowKind::NonTransitiveShrunk { shrunk, .. } => shrunk.get(&l).unwrap(),
+            _ => unimplemented!(),
         }
     }
 }
@@ -531,7 +1121,7 @@ impl<'tcx> Visitor<'tcx> {
             .collect()
     }
 
-    fn handle_function(
+    fn handle_function<'g>(
         &self,
         hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
@@ -542,6 +1132,7 @@ impl<'tcx> Visitor<'tcx> {
         b: BodyId,
         local_def_id: hir::def_id::LocalDefId,
         arg_resolver: &mut ArgumentResolver<'tcx, '_>,
+        gli: GLI<'g>,
     ) {
         let arg_resolver = RefCell::new(arg_resolver);
         fn register_call_site<'tcx>(
@@ -570,11 +1161,22 @@ impl<'tcx> Visitor<'tcx> {
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
 
         if self.opts.dbg.dump_ctrl_mir {
-            mir::graphviz::write_mir_fn_graphviz(tcx, &body_with_facts.body, false, &mut std::fs::OpenOptions::new().create(true).truncate(true).write(true).open(format!("{}.mir.gv", id.name)).unwrap()).unwrap()
+            mir::graphviz::write_mir_fn_graphviz(
+                tcx,
+                &body_with_facts.body,
+                false,
+                &mut std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(true)
+                    .write(true)
+                    .open(format!("{}.mir.gv", id.name))
+                    .unwrap(),
+            )
+            .unwrap()
         }
 
         debug!("{}", id.name);
-        let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts);
+        let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts, gli);
         let transitive_flow = infoflow::compute_flow(tcx, b, body_with_facts);
 
         let body = &body_with_facts.body;
@@ -699,14 +1301,14 @@ impl<'tcx> Visitor<'tcx> {
                         *callee_body_id,
                         *callee_def_id,
                         &mut subresolver,
+                        gli,
                     );
-                    let returns = subresolver
-                        .into_returns();
+                    let returns = subresolver.into_returns();
                     debug!("return modification map {returns:?}");
                     returns
                         .into_iter()
                         .for_each(|(p, mods)| {
-                            let the_place = p.unwrap_or(dest);
+                            let the_place = p.unwrap_or(dest.unwrap().0);
                             for reachable in flow.aliases().reachable_values(the_place, mir::Mutability::Mut).iter().chain(std::iter::once(&the_place)) {
                                 if let Some(old) = returns_from_recursed.insert((*reachable, loc), mods.clone()) {
                                     warn!("Duplicate function mutability override for {the_place:?} \n\twith new value \t{mods:?} \n\tand prior value\t{old:?}");
@@ -723,7 +1325,8 @@ impl<'tcx> Visitor<'tcx> {
                             .map(|r| {
                                 (
                                     r,
-                                    Box::new(matrix.row(r).into_iter().cloned()) as Box<dyn Iterator<Item=mir::Location>>,
+                                    Box::new(matrix.row(r).into_iter().cloned())
+                                        as Box<dyn Iterator<Item = mir::Location>>,
                                     Either::Right(DataSink::Argument {
                                         function: CallSite {
                                             function: identifier_for_fn(tcx, p),
@@ -748,7 +1351,7 @@ impl<'tcx> Visitor<'tcx> {
                         debug!("Handling return for {}\n\nPre shrink matrix\n{}\n\nPost shrink matrix\n{}\n\nTransitive matrix\n{}\n", id.name, dbg::PrintableMatrix(original_flow.state_at(loc).matrix()), dbg::PrintableMatrix(&shrunk[&loc]), dbg::PrintableMatrix(transitive_flow.state_at(loc))),
                     _ => (),
                 };
-                
+
                 Some(
                     std::iter::once((mir::Place::return_place(), Box::new(matrix.row(mir::Place::return_place()).into_iter().cloned()) as Box<_>, Either::Left(None)))
                         .chain(
@@ -839,13 +1442,14 @@ impl<'tcx> Visitor<'tcx> {
     }
 
     /// Handles a single target function
-    fn handle_target(
+    fn handle_target<'g>(
         &self,
         hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
         id: Ident,
         b: BodyId,
+        gli: GLI<'g>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::new();
         let local_def_id = self.tcx.hir().body_owner_def_id(b);
@@ -860,12 +1464,16 @@ impl<'tcx> Visitor<'tcx> {
             b,
             local_def_id,
             &mut ArgumentResolver::Root,
+            gli,
         );
         Ok((Identifier::new(id.name), flows))
     }
 
     /// Main analysis driver
     fn analyze(mut self) -> std::io::Result<ProgramDescription> {
+        let arena = rustc_arena::TypedArena::default();
+        let interner = GlobalLocationInterner::new(&arena);
+        let gli = GLI(&interner);
         let tcx = self.tcx;
         let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
         let interesting_fn_defs = self
@@ -889,6 +1497,7 @@ impl<'tcx> Visitor<'tcx> {
                         &interesting_fn_defs,
                         id,
                         b,
+                        gli,
                     )
                 })
                 .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()

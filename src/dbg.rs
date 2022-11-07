@@ -7,7 +7,7 @@ pub fn print_flowistry_matrix<W: std::io::Write>(
 
 pub struct PrintableMatrix<'a>(pub &'a crate::sah::Matrix<'a>);
 
-impl <'a> std::fmt::Display for PrintableMatrix<'a> {
+impl<'a> std::fmt::Display for PrintableMatrix<'a> {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fn shortened(mut s: String, i: usize) -> String {
             s.truncate(i);

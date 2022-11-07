@@ -12,6 +12,7 @@ extern crate simple_logger;
 extern crate log;
 
 pub mod rust {
+    pub extern crate rustc_arena;
     pub extern crate rustc_ast;
     pub extern crate rustc_borrowck;
     pub extern crate rustc_data_structures;
@@ -71,10 +72,10 @@ pub struct Args {
     /// clap it otherwise complains about the superfluous argument.
     _progname: String,
     /// Print additional logging output (up to the "info" level)
-    #[clap(short, long, env="DFPP_VERBOSE")]
+    #[clap(short, long, env = "DFPP_VERBOSE")]
     verbose: bool,
     /// Print additional logging output (up to the "debug" level)
-    #[clap(long, env="DFPP_DEBUG")]
+    #[clap(long, env = "DFPP_DEBUG")]
     debug: bool,
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
@@ -97,6 +98,8 @@ struct AnalysisCtrl {
     /// from the FUNCTION_BLACKLIST.
     #[clap(long, env)]
     no_shrink_flow_domains: bool,
+    #[clap(long, env)]
+    recursive_analysis: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
