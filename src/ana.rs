@@ -313,11 +313,12 @@ struct CallDeps<'g> {
     input_deps: Vec<HashSet<GlobalLocation<'g>>>,
 }
 
-fn inner_flow_for_terminator<'tcx, 'g>(
+fn inner_flow_for_terminator<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     function_flows: &FunctionFlows<'tcx, 'g>,
     t: &mir::Terminator<'tcx>,
+    inline_selector: P,
 ) -> Result<
     (
         Rc<GlobalFlowGraph<'tcx, 'g>>,
@@ -328,25 +329,41 @@ fn inner_flow_for_terminator<'tcx, 'g>(
     ),
     &'static str,
 > {
+    debug!("Considering {:?}", t);
     t.as_fn_and_args().and_then(|(p, args, dest)| {
         let node = tcx.hir().get_if_local(p).ok_or("non-local node")?;
         let (callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
             .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
-        let inner_flow = compute_granular_global_flows(tcx, gli, *callee_body_id, function_flows)
-            .ok_or("is recursive")?;
+        let () = if inline_selector(*callee_local_id) {
+            debug!("Selector succeeded.");
+            Ok(())
+        } else {
+            debug!("Selector failed");
+            Err("Inline selector was false")
+        }?;
+        let inner_flow = compute_granular_global_flows(
+            tcx,
+            gli,
+            *callee_body_id,
+            function_flows,
+            inline_selector,
+        )
+        .ok_or("is recursive")?;
         let body = &borrowck_facts::get_body_with_borrowck_facts(tcx, *callee_local_id).body;
+        debug!("Inner flow computed");
         Ok((inner_flow, *callee_body_id, body, args, dest))
     })
 }
 
-fn compute_granular_global_flows<'tcx, 'g>(
+fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     root_function: BodyId,
     function_flows: &FunctionFlows<'tcx, 'g>,
+    inline_selector: P,
 ) -> Option<Rc<GlobalFlowGraph<'tcx, 'g>>> {
-    if let Some(inner) = function_flows.borrow()[&root_function].as_ref() {
-        return Some(inner.clone());
+    if let Some(inner) = function_flows.borrow().get(&root_function) {
+        return inner.clone();
     };
     let local_def_id = tcx.hir().body_owner_def_id(root_function);
 
@@ -413,11 +430,26 @@ fn compute_granular_global_flows<'tcx, 'g>(
         dep_set
             .iter()
             .flat_map(|l| {
-                if let Some((inner_flow, _, inner_body, args, dest)) = body
-                    .stmt_at(*l)
-                    .right()
-                    .and_then(|t| inner_flow_for_terminator(tcx, gli, function_flows, t).ok())
+                if let Some((t, (inner_flow, _, inner_body, args, dest))) =
+                    if !is_real_location(body, *l) {
+                        None
+                    } else {
+                        body.stmt_at(*l).right().and_then(|t| {
+                            Some((
+                                t,
+                                inner_flow_for_terminator(
+                                    tcx,
+                                    gli,
+                                    function_flows,
+                                    t,
+                                    inline_selector,
+                                )
+                                .ok()?,
+                            ))
+                        })
+                    }
                 {
+                    debug!("Inspecting inner flow for {:?}", t.kind);
                     let mut translated_return_states_borrow = translated_return_states.borrow_mut();
                     let translated_return_state = translated_return_states_borrow
                         .entry(*l)
@@ -448,10 +480,15 @@ fn compute_granular_global_flows<'tcx, 'g>(
                                 })
                                 .collect()
                         });
-                    translated_return_state[&place]
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
+                    if let Some(deps) = translated_return_state.get(&place) {
+                        deps.iter().cloned().collect::<Vec<_>>()
+                    } else {
+                        warn!(
+                            "Dependent place {:?} not found in translated return states {:?}",
+                            place, translated_return_state
+                        );
+                        vec![]
+                    }
                 } else {
                     vec![gli.make_global_location(root_function, *l, None)]
                 }
@@ -498,7 +535,13 @@ fn compute_granular_global_flows<'tcx, 'g>(
                 .chain({
                     let loc = body.terminator_loc(bb);
                     if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
-                        inner_flow_for_terminator(tcx, gli, function_flows, bbdat.terminator())
+                        inner_flow_for_terminator(
+                            tcx,
+                            gli,
+                            function_flows,
+                            bbdat.terminator(),
+                            inline_selector,
+                        )
                     {
                         inner_flow
                             .location_states
@@ -631,7 +674,7 @@ fn compute_call_only_flow<'tcx, 'g>(
             tcx.hir().body_owner_def_id(inner_body_id),
         );
         if !is_real_location(&body_with_facts.body, inner_location) || loc.next().is_none() {
-            Keep::Argument(inner_location.statement_index - 1)
+            Keep::Argument(inner_location.statement_index)
         } else {
             let stmt_at_loc = body_with_facts.body.stmt_at(inner_location);
             match stmt_at_loc {
@@ -723,11 +766,12 @@ fn places_read<'tcx>(
 }
 
 impl<'tcx, 'g> Flow<'tcx, 'g> {
-    fn compute(
+    fn compute<P: Fn(LocalDefId) -> bool + Copy>(
         opts: &crate::AnalysisCtrl,
         tcx: TyCtxt<'tcx>,
         body_id: BodyId,
         gli: GLI<'g>,
+        inline_selector: P,
     ) -> Self {
         let mut eval_mode = flowistry::extensions::EvalMode::default();
         let mut function_flows = RefCell::new(HashMap::new());
@@ -735,7 +779,8 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
         let reduced_flow = flowistry::extensions::EVAL_MODE.set(&eval_mode, || {
             compute_call_only_flow(
                 tcx,
-                &compute_granular_global_flows(tcx, gli, body_id, &function_flows).unwrap(),
+                &compute_granular_global_flows(tcx, gli, body_id, &function_flows, inline_selector)
+                    .unwrap(),
             )
         });
         Self {
@@ -879,7 +924,11 @@ impl<'tcx> Visitor<'tcx> {
         }
 
         debug!("{}", id.name);
-        let flow = Flow::compute(&self.opts.anactrl, tcx, b, gli);
+        let flow = Flow::compute(&self.opts.anactrl, tcx, b, gli, |did| {
+            self.marked_objects
+                .get(&tcx.hir().local_def_id_to_hir_id(did))
+                .map_or(true, |anns| anns.0.is_empty())
+        });
 
         let body = &body_with_facts.body;
         {

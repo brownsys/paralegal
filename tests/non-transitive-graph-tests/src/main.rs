@@ -22,6 +22,7 @@ fn conditional_happens_before(cond: bool) {
     send_user_data(&user_data);
 }
 
+#[dfpp::label(dont_recurse, arguments=[0])]
 fn data_contains_3(d: &UserData) -> bool {
     d.data.iter().any(|i| *i == 3)
 }
