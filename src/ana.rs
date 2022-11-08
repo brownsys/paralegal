@@ -171,9 +171,10 @@ pub struct Visitor<'tcx> {
 
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
-pub struct Flow<'a, 'tcx, 'g> {
-    pub kind: FlowKind<'a, 'tcx, 'g>,
-    pub domain: Rc<LocationDomain>,
+pub struct Flow<'tcx, 'g> {
+    pub root_function: BodyId,
+    pub function_flows: FunctionFlows<'tcx, 'g>,
+    pub reduced_flow: CallOnlyFlow<'g>,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
@@ -300,42 +301,16 @@ impl<'tcx, 'g> From<mir::Place<'tcx>> for GlobalPlace<'tcx, 'g> {
 }
 
 type GlobalDepMatrix<'tcx, 'g> = HashMap<GlobalPlace<'tcx, 'g>, HashSet<GlobalLocation<'g>>>;
-struct GlobalFlowGraph<'tcx, 'g> {
+pub struct GlobalFlowGraph<'tcx, 'g> {
     location_states: HashMap<GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>>,
     return_state: GlobalDepMatrix<'tcx, 'g>,
 }
 type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<GlobalFlowGraph<'tcx, 'g>>>>>;
-type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<'g>>;
+pub type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<'g>>;
 
 struct CallDeps<'g> {
     ctrl_deps: HashSet<GlobalLocation<'g>>,
     input_deps: Vec<HashSet<GlobalLocation<'g>>>,
-}
-
-pub enum FlowKind<'a, 'tcx, 'g> {
-    Transitive(
-        flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>,
-    ),
-    NonTransitive(
-        flowistry::infoflow::FlowResults<
-            'a,
-            'tcx,
-            flowistry::infoflow::NonTransitiveFlowDomain<'tcx>,
-        >,
-    ),
-    NonTransitiveShrunk {
-        original_flow: flowistry::infoflow::FlowResults<
-            'a,
-            'tcx,
-            flowistry::infoflow::NonTransitiveFlowDomain<'tcx>,
-        >,
-        shrunk: NonTransitiveGraph<'tcx>,
-    },
-    NonTransitiveRecursive {
-        root_function: BodyId,
-        function_flows: FunctionFlows<'tcx, 'g>,
-        reduced_flow: CallOnlyFlow<'g>,
-    },
 }
 
 fn inner_flow_for_terminator<'tcx, 'g>(
@@ -694,14 +669,17 @@ fn compute_call_only_flow<'tcx, 'g>(
                         }
                         Keep::Reject(stmt_at_loc) if !seen.contains(&p) => {
                             seen.insert(p);
-                            queue.extend(places_read(loc.location(), &stmt_at_loc).flat_map(|pl| {
-                                place_deps[&GlobalPlace {
-                                    place: pl,
-                                    function: p.next(),
-                                }]
-                                    .iter()
-                                    .cloned()
-                            }))
+                            queue.extend(
+                                read_places_with_provenance(loc.location(), &stmt_at_loc, tcx)
+                                    .flat_map(|pl| {
+                                        place_deps[&GlobalPlace {
+                                            place: pl,
+                                            function: p.next(),
+                                        }]
+                                            .iter()
+                                            .cloned()
+                                    }),
+                            )
                         }
                         _ => (),
                     }
@@ -744,318 +722,47 @@ fn places_read<'tcx>(
     places.into_iter()
 }
 
-impl<'a, 'tcx, 'g> Flow<'a, 'tcx, 'g> {
-    #[allow(dead_code)]
-    fn is_transitive(&self) -> bool {
-        matches!(self.kind, FlowKind::Transitive(_))
-    }
-
-    fn as_some_non_transitive_graph(
-        &self,
-    ) -> Option<crate::dbg::SomeNoneTransitiveGraph<'tcx, 'a, '_>> {
-        match &self.kind {
-            FlowKind::Transitive(_) => None,
-            FlowKind::NonTransitive(t) => Some(Either::Right(&t)),
-            FlowKind::NonTransitiveShrunk { shrunk, .. } => Some(Either::Left(&shrunk)),
-            FlowKind::NonTransitiveRecursive { .. } => unimplemented!(),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn aliases(&self) -> &flowistry::mir::aliases::Aliases<'a, 'tcx> {
-        match &self.kind {
-            FlowKind::NonTransitive(a) => &a.analysis.aliases,
-            FlowKind::Transitive(a) => &a.analysis.aliases,
-            FlowKind::NonTransitiveShrunk { original_flow, .. } => &original_flow.analysis.aliases,
-            FlowKind::NonTransitiveRecursive { .. } => unimplemented!(),
-        }
-    }
-
+impl<'tcx, 'g> Flow<'tcx, 'g> {
     fn compute(
         opts: &crate::AnalysisCtrl,
         tcx: TyCtxt<'tcx>,
         body_id: BodyId,
-        body_with_facts: &'a crate::rust::rustc_borrowck::BodyWithBorrowckFacts<'tcx>,
         gli: GLI<'g>,
     ) -> Self {
-        let body = &body_with_facts.body;
-        let domain = LocationDomain::new(body);
-        if opts.recursive_analysis {
-            let mut eval_mode = flowistry::extensions::EvalMode::default();
-            let mut function_flows = RefCell::new(HashMap::new());
-            eval_mode.context_mode = flowistry::extensions::ContextMode::Recurse;
-            let reduced_flow = flowistry::extensions::EVAL_MODE.set(&eval_mode, || {
-                compute_call_only_flow(
-                    tcx,
-                    &compute_granular_global_flows(tcx, gli, body_id, &function_flows).unwrap(),
-                )
-            });
-            Self {
-                domain: LocationDomain::new(body),
-                kind: FlowKind::NonTransitiveRecursive {
-                    root_function: body_id,
-                    function_flows: function_flows,
-                    reduced_flow,
-                },
-            }
-        } else if opts.use_transitive_graph {
-            Self {
-                kind: FlowKind::Transitive(infoflow::compute_flow(tcx, body_id, body_with_facts)),
-                domain,
-            }
-        } else {
-            let original_flow = infoflow::compute_flow_nontransitive(tcx, body_id, body_with_facts);
-            if opts.no_shrink_flow_domains {
-                Self {
-                    kind: FlowKind::NonTransitive(original_flow),
-                    domain,
-                }
-            } else {
-                let mut locations = body
-                    .all_locations()
-                    .into_iter()
-                    .filter(|l| body.stmt_at(*l).is_right())
-                    .collect::<Vec<_>>();
-                locations.extend(flowistry::indexed::impls::arg_locations(body).1);
-                let num_real_locations = locations.len();
-                let shrunk_domain = Rc::new(LocationDomain::from_raw(
-                    flowistry::indexed::DefaultDomain::new(locations),
-                    domain.arg_block(),
-                    num_real_locations,
-                ));
-                let shrunk = shrink_flow_domain(&original_flow, &shrunk_domain, body, tcx);
-                Self {
-                    kind: FlowKind::NonTransitiveShrunk {
-                        original_flow,
-                        shrunk,
-                    },
-                    domain: shrunk_domain,
-                }
-            }
-        }
-    }
-
-    pub fn get_row<'b>(
-        &'b self,
-        l: mir::Location,
-    ) -> &'b IndexMatrix<mir::Place<'tcx>, mir::Location> {
-        match &self.kind {
-            FlowKind::NonTransitive(hm) => hm.state_at(l).matrix(),
-            FlowKind::Transitive(fa) => fa.state_at(l),
-            FlowKind::NonTransitiveShrunk { shrunk, .. } => shrunk.get(&l).unwrap(),
-            _ => unimplemented!(),
+        let mut eval_mode = flowistry::extensions::EvalMode::default();
+        let mut function_flows = RefCell::new(HashMap::new());
+        eval_mode.context_mode = flowistry::extensions::ContextMode::Recurse;
+        let reduced_flow = flowistry::extensions::EVAL_MODE.set(&eval_mode, || {
+            compute_call_only_flow(
+                tcx,
+                &compute_granular_global_flows(tcx, gli, body_id, &function_flows).unwrap(),
+            )
+        });
+        Self {
+            root_function: body_id,
+            function_flows: function_flows,
+            reduced_flow,
         }
     }
 }
 
-pub fn mentioned_places_with_provenance<'tcx>(
+pub fn read_places_with_provenance<'tcx>(
     l: mir::Location,
-    body: &mir::Body<'tcx>,
+    stmt: &Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>,
     tcx: TyCtxt<'tcx>,
 ) -> impl Iterator<Item = mir::Place<'tcx>> {
     use flowistry::mir::utils::PlaceExt;
-    extract_places(l, body, false)
-        .into_iter()
-        .flat_map(move |place| {
-            std::iter::once(place)
-                .chain(
-                    place
-                        .refs_in_projection()
-                        .into_iter()
-                        .map(|t| mir::Place::from_ref(t.0, tcx)),
-                )
-                .collect::<Vec<_>>()
-                .into_iter()
-        })
-}
-
-/// The idea of this function is that you can give it Flowistry's analysis and a
-/// set of locations, basically a selection of "what you care about" and this
-/// function will take care of collapsing all the matrices down so that
-/// connections between locations that you care about are preserved, even if
-/// transitive hops via locations you **don't care about** are dropped.
-///
-/// Example if the original MIR had
-///
-/// ```plain
-/// Vec::push(_1, _2)
-/// _3 = &_1
-/// my_read(_3)
-/// ```
-///
-/// And you instructed this function to only preserve function calls, then the
-/// reduced graph would be guaranteed to still have an edge Vec::push -> my_read
-fn shrink_flow_domain<'a, 'tcx, D: flowistry::infoflow::FlowDomain<'tcx>>(
-    flow: &flowistry::infoflow::FlowResults<'a, 'tcx, D>,
-    domain: &Rc<LocationDomain>,
-    body: &mir::Body<'tcx>,
-    tcx: TyCtxt<'tcx>,
-) -> NonTransitiveGraph<'tcx> {
-    let some_result = flow.state_at(mir::Location::START);
-    let old_domain = &some_result.matrix().col_domain;
-    domain
-        .as_vec()
-        .iter()
-        .filter(|l| is_real_location(body, **l))
-        .map(|l| {
-            let old_matrix = flow.state_at(*l);
-            let mut new_matrix = IndexMatrix::new(&domain);
-            old_matrix.matrix().rows().for_each(|(p, s)| {
-                let mut queue = s.iter().collect::<Vec<_>>();
-                let mut seen = IndexSet::new(old_domain);
-                while let Some(g) = queue.pop() {
-                    if seen.contains(g) {
-                        continue;
-                    }
-                    seen.insert(g);
-                    if domain.contains(g) {
-                        new_matrix.insert(p, *g);
-                    } else if is_real_location(body, *g) {
-                        let state_for_g = flow.state_at(*g).matrix();
-                        queue.extend(
-                            mentioned_places_with_provenance(*g, body, tcx)
-                                .flat_map(|p| state_for_g.row(p)),
-                        );
-                    }
-                }
-            });
-            (*l, new_matrix)
-        })
-        .collect()
-}
-
-type ReturnModifications<'tcx> = HashMap<Option<mir::Place<'tcx>>, Vec<DataSource>>;
-enum ArgumentResolver<'tcx, 'a> {
-    Root,
-    Nested {
-        inner: &'a ArgumentResolver<'tcx, 'a>,
-        args: &'a [Option<mir::Place<'tcx>>],
-        matrix: &'a IndexMatrix<mir::Place<'tcx>, mir::Location>,
-        id: &'a Ident,
-        body: &'a mir::Body<'tcx>,
-        loc_dom: &'a LocationDomain,
-        tcx: TyCtxt<'tcx>,
-        accrued_returns: ReturnModifications<'tcx>,
-    },
-}
-
-impl<'tcx, 'a> ArgumentResolver<'tcx, 'a> {
-    fn nested(
-        inner: &'a ArgumentResolver<'tcx, 'a>,
-        args: &'a [Option<mir::Place<'tcx>>],
-        matrix: &'a IndexMatrix<mir::Place<'tcx>, mir::Location>,
-        id: &'a Ident,
-        body: &'a mir::Body<'tcx>,
-        loc_dom: &'a LocationDomain,
-        tcx: TyCtxt<'tcx>,
-    ) -> Self {
-        Self::Nested {
-            inner,
-            args,
-            matrix,
-            id,
-            body,
-            loc_dom,
-            tcx,
-            accrued_returns: HashMap::new(),
-        }
-    }
-    fn into_returns(self) -> ReturnModifications<'tcx> {
-        match self {
-            ArgumentResolver::Nested {
-                accrued_returns, ..
-            } => accrued_returns,
-            _ => HashMap::new(),
-        }
-    }
-    fn get_arg_place(&self, i: usize) -> Option<Option<mir::Place<'tcx>>> {
-        match self {
-            ArgumentResolver::Nested { args, .. } => Some(
-                args.get(i)
-                    .unwrap_or_else(|| panic!("Index {i} not found in {args:?}"))
-                    .clone(),
-            ),
-            _ => None,
-        }
-    }
-    fn resolve(&'a self, i: usize) -> impl Iterator<Item = DataSource> + 'a {
-        match self {
-            ArgumentResolver::Root => Box::new(std::iter::once(DataSource::Argument(i)))
-                as Box<dyn Iterator<Item = DataSource>>,
-            ArgumentResolver::Nested {
-                matrix,
-                inner,
-                id,
-                body,
-                loc_dom,
-                tcx,
-                ..
-            } => Box::new(
-                self.get_arg_place(i - 1 /* There's an off-by-one here because place _0 is always the return place */)
-                    .and_then(|a| a)
+    places_read(l, stmt).into_iter().flat_map(move |place| {
+        std::iter::once(place)
+            .chain(
+                place
+                    .refs_in_projection()
                     .into_iter()
-                    .flat_map(|p| {
-                        matrix
-                            .row(p)
-                            .filter_map(|l| {
-                                DataSource::try_from_body(id.name, body, *l, loc_dom, *tcx, inner)
-                                    .ok()
-                            })
-                            .flat_map(|v| v.into_iter())
-                    }),
-            ) as Box<_>,
-        }
-    }
-    fn register_return(
-        &mut self,
-        from: DataSource,
-        to: Option<mir::Place<'tcx>>,
-        flows: &mut Ctrl,
-    ) {
-        match self {
-            ArgumentResolver::Root => flows.add(Cow::Owned(from), DataSink::Return),
-            ArgumentResolver::Nested {
-                accrued_returns, ..
-            } => accrued_returns
-                .entry(to)
-                .or_insert_with(Vec::new)
-                .push(from),
-        }
-    }
-}
-
-impl DataSource {
-    fn try_from_body<'tcx>(
-        ident: Symbol,
-        body: &mir::Body<'tcx>,
-        l: mir::Location,
-        domain: &LocationDomain,
-        tcx: TyCtxt<'tcx>,
-        mk_arg: &ArgumentResolver<'tcx, '_>,
-    ) -> Result<Vec<Self>, &'static str> {
-        let r = if let Some(arg) = domain.location_to_local(l) {
-            let v: Vec<_> = mk_arg.resolve(arg.as_usize()).collect();
-            debug!(
-                "Determined the source is an argument, found {} dependencies",
-                v.len()
-            );
-            v
-        } else {
-            vec![DataSource::FunctionCall(CallSite {
-                called_from: Identifier::new(ident),
-                function: identifier_for_fn(
-                    tcx,
-                    body.stmt_at(l)
-                        .right()
-                        .ok_or("Not a terminator")?
-                        .as_fn_and_args()?
-                        .0,
-                ),
-                location: l,
-            })]
-        };
-        Ok(r)
-    }
+                    .map(|t| mir::Place::from_ref(t.0, tcx)),
+            )
+            .collect::<Vec<_>>()
+            .into_iter()
+    })
 }
 
 fn node_as_fn<'hir>(
@@ -1120,21 +827,17 @@ impl<'tcx> Visitor<'tcx> {
             })
             .collect()
     }
-
-    fn handle_function<'g>(
+    fn handle_target<'g>(
         &self,
         hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
-        flows: &mut Ctrl,
-        seen: &mut HashSet<hir::def_id::LocalDefId>,
         id: Ident,
         b: BodyId,
-        local_def_id: hir::def_id::LocalDefId,
-        arg_resolver: &mut ArgumentResolver<'tcx, '_>,
         gli: GLI<'g>,
-    ) {
-        let arg_resolver = RefCell::new(arg_resolver);
+    ) -> std::io::Result<(Endpoint, Ctrl)> {
+        let mut flows = Ctrl::new();
+        let local_def_id = self.tcx.hir().body_owner_def_id(b);
         fn register_call_site<'tcx>(
             tcx: TyCtxt<'tcx>,
             map: &mut CallSiteAnnotations,
@@ -1176,296 +879,135 @@ impl<'tcx> Visitor<'tcx> {
         }
 
         debug!("{}", id.name);
-        let flow = Flow::compute(&self.opts.anactrl, tcx, b, body_with_facts, gli);
-        let transitive_flow = infoflow::compute_flow(tcx, b, body_with_facts);
+        let flow = Flow::compute(&self.opts.anactrl, tcx, b, gli);
 
         let body = &body_with_facts.body;
         {
-            let resolver_borrow = arg_resolver.borrow();
-            let types = body.args_iter().flat_map(|l| {
+            let types = body.args_iter().map(|l| {
                 let ty = body.local_decls[l].ty;
                 let subtypes = self.annotated_subtypes(ty);
-                resolver_borrow
-                    .resolve(l.as_usize())
-                    .map(move |a| (a, subtypes.clone()))
+                (DataSource::Argument(l.as_usize() - 1), subtypes)
             });
             flows.add_types(types);
         }
-        let loc_dom = &flow.domain;
-        match flow.as_some_non_transitive_graph() {
-            Some(non_t_g) =>
-                if self.opts.dbg.dump_non_transitive_graph {
-                    crate::dbg::non_transitive_graph_as_dot(
-                        &mut std::fs::OpenOptions::new()
-                            .truncate(true)
-                            .create(true)
-                            .write(true)
-                            .open(format!("{}.ntg.gv", id.name.as_str()))
-                            .unwrap(),
-                        body,
-                        &non_t_g,
-                        &flow.domain,
-                        tcx,
-                    )
-                    .unwrap();
-                    info!("Non transitive graph for {} dumped", id.name.as_str());
-                } else if self.opts.dbg.dump_serialized_non_transitive_graph {
-                    dump_non_transitive_graph_and_body(id, body, &non_t_g, tcx);
-                }
-            _ if self.opts.dbg.dump_non_transitive_graph || self.opts.dbg.dump_serialized_non_transitive_graph =>
-                error!("Told to dump non-transitive graph, but analysis not instructed to make non-transitive graph!"),
-            _ => ()
+
+        if self.opts.dbg.dump_flowistry_matrix {
+            unimplemented!();
         }
-        let mut returns_from_recursed = HashMap::new();
-        for (bb, t) in body
-            .basic_blocks()
-            .iter_enumerated()
-            .map(|(bb, bbdat)| (bb, bbdat.terminator()))
-        {
-            let loc = body.terminator_loc(bb);
-            let matrix = flow.get_row(loc);
 
-            if self.opts.dbg.dump_flowistry_matrix {
-                info!("Flowistry matrix for {:?}", loc);
-                crate::dbg::print_flowistry_matrix(&mut std::io::stdout(), matrix).unwrap();
+        let body_for_body_id =
+            |b| borrowck_facts::get_body_with_borrowck_facts(tcx, tcx.hir().body_owner_def_id(b));
+        let body_with_facts = body_for_body_id(b);
+        let ref body = body_with_facts.body;
+
+        for (loc, deps) in flow.reduced_flow.iter() {
+            if !is_real_location(&body, loc.location()) {
+                // These can only be (controller) arguments and they cannot have dependencies (and thus not receive any data)
+                continue;
             }
+            let (terminator, (defid, _, _)) = match body
+                .stmt_at(loc.location())
+                .right()
+                .ok_or("not a terminator")
+                .and_then(|t| Ok((t, t.as_fn_and_args()?)))
+            {
+                Ok(term) => term,
+                Err(err) => {
+                    warn!("Odd location in graph creation '{}'", err);
+                    continue;
+                }
+            };
+            let call_site = CallSite {
+                called_from: Identifier::new(
+                    tcx.hir()
+                        .find_by_def_id(
+                            tcx.hir()
+                                .body_owner_def_id(loc.next().map_or(b, |f| f.function())),
+                        )
+                        .unwrap()
+                        .ident()
+                        .expect("no def id?")
+                        .name,
+                ),
+                location: loc.location(),
+                function: identifier_for_fn(tcx, defid),
+            };
+            let anns = interesting_fn_defs.get(&defid).map(|a| a.0.as_slice());
 
-            let abstraction_info = if let Some((p, args, dest)) = t.as_fn_and_args().ok() {
-                let anns = interesting_fn_defs.get(&p).map(|a| a.0.as_slice());
-                debug!(
-                    "{:?} {} annotations",
-                    t.kind,
-                    if anns.is_none() {
-                        "doesn't have"
-                    } else {
-                        "has"
-                    }
+            let stmt_anns = self.statement_anns_by_loc(defid, terminator);
+            let bound_sig = tcx.fn_sig(defid);
+            let interesting_output_types: HashSet<_> =
+                self.annotated_subtypes(bound_sig.skip_binder().output());
+            if !interesting_output_types.is_empty() {
+                flows.types.0.insert(
+                    DataSource::FunctionCall(call_site.clone()),
+                    interesting_output_types,
                 );
-                let stmt_anns = self.statement_anns_by_loc(p, t);
-                let bound_sig = tcx.fn_sig(p);
-                let interesting_output_types: HashSet<_> =
-                    self.annotated_subtypes(bound_sig.skip_binder().output());
-
-                let mentioned_places = args.iter().filter_map(|a| *a).collect::<HashSet<_>>();
-
-                let src_desc = DataSource::FunctionCall(CallSite {
-                    function: identifier_for_fn(tcx, p),
-                    called_from: Identifier::new(id.name),
-                    location: loc,
-                });
-                if !interesting_output_types.is_empty() {
-                    flows.types.0.insert(src_desc, interesting_output_types);
+            }
+            if let Some(anns) = stmt_anns {
+                unimplemented!();
+                for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
+                    //hash_verifications.handle(ann, tcx, terminator, &body, loc, matrix);
                 }
-
-                if let Some(anns) = stmt_anns {
-                    for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
-                        hash_verifications.handle(ann, tcx, t, body, loc, matrix);
-                    }
-                    // TODO this is attaching to functions instead of call
-                    // sites. Once we start actually tracking call sites
-                    // this needs to be adjusted
-                    register_call_site(tcx, call_site_annotations, p, Some(anns));
-                }
-
-                if let Some((callee_ident, callee_def_id, callee_body_id)) =
-                    tcx.hir().get_if_local(p).and_then(|node| {
-                        let nodeinfo = node_as_fn(&node).unwrap_or_else(|| {
-                            panic!("Expected local function node, got {node:?}")
-                        });
-                        if seen.contains(nodeinfo.1) || anns.is_some() {
-                            None
-                        } else {
-                            seen.insert(*nodeinfo.1);
-                            Some(nodeinfo)
-                        }
-                    })
-                {
-                    debug!("Recursing into callee");
-                    let resolver_borrow = arg_resolver.borrow();
-                    let mut subresolver = ArgumentResolver::nested(
-                        *resolver_borrow,
-                        &args,
-                        &matrix,
-                        &id,
-                        &body,
-                        &loc_dom,
-                        tcx,
-                    );
-                    self.handle_function(
-                        hash_verifications,
-                        call_site_annotations,
-                        interesting_fn_defs,
-                        flows,
-                        seen,
-                        *callee_ident,
-                        *callee_body_id,
-                        *callee_def_id,
-                        &mut subresolver,
-                        gli,
-                    );
-                    let returns = subresolver.into_returns();
-                    debug!("return modification map {returns:?}");
-                    returns
-                        .into_iter()
-                        .for_each(|(p, mods)| {
-                            let the_place = p.unwrap_or(dest.unwrap().0);
-                            for reachable in flow.aliases().reachable_values(the_place, mir::Mutability::Mut).iter().chain(std::iter::once(&the_place)) {
-                                if let Some(old) = returns_from_recursed.insert((*reachable, loc), mods.clone()) {
-                                    warn!("Duplicate function mutability override for {the_place:?} \n\twith new value \t{mods:?} \n\tand prior value\t{old:?}");
-                                }
-                            }
-                        });
-                    None
-                } else {
-                    debug!("Abstracting callee");
-                    register_call_site(tcx, call_site_annotations, p, anns);
-                    Some(
-                        mentioned_places
-                            .into_iter()
-                            .map(|r| {
-                                (
-                                    r,
-                                    Box::new(matrix.row(r).into_iter().cloned())
-                                        as Box<dyn Iterator<Item = mir::Location>>,
-                                    Either::Right(DataSink::Argument {
-                                        function: CallSite {
-                                            function: identifier_for_fn(tcx, p),
-                                            called_from: Identifier::new(id.name),
-                                            location: loc,
-                                        },
-                                        arg_slot: args
-                                            .iter()
-                                            .enumerate()
-                                            .find(|(_, e)| **e == Some(r))
+                // TODO this is attaching to functions instead of call
+                // sites. Once we start actually tracking call sites
+                // this needs to be adjusted
+                register_call_site(tcx, call_site_annotations, defid, Some(anns));
+            }
+            register_call_site(tcx, call_site_annotations, defid, anns);
+            for (arg_slot, arg_deps) in deps.input_deps.iter().enumerate() {
+                for dep in arg_deps.iter() {
+                    flows.add(
+                        Cow::Owned({
+                            if loc.is_at_root() && !is_real_location(&body, dep.location()) {
+                                DataSource::Argument(dep.location().statement_index - 1)
+                            } else {
+                                DataSource::FunctionCall(CallSite {
+                                    called_from: Identifier::new(
+                                        tcx.hir()
+                                            .find_by_def_id(
+                                                tcx.hir().body_owner_def_id(dep.function()),
+                                            )
+                                            .unwrap()
+                                            .ident()
+                                            .expect("no def id?")
+                                            .name,
+                                    ),
+                                    location: dep.location(),
+                                    function: identifier_for_fn(
+                                        tcx,
+                                        body_for_body_id(dep.function())
+                                            .body
+                                            .stmt_at(dep.location())
+                                            .right()
+                                            .expect("not a terminator")
+                                            .as_fn_and_args()
                                             .unwrap()
                                             .0,
-                                    }),
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                }
-            } else if matches!(t.kind, mir::TerminatorKind::Return) {
-                match &flow.kind {
-                    FlowKind::NonTransitiveShrunk { original_flow, shrunk } =>
-                        debug!("Handling return for {}\n\nPre shrink matrix\n{}\n\nPost shrink matrix\n{}\n\nTransitive matrix\n{}\n", id.name, dbg::PrintableMatrix(original_flow.state_at(loc).matrix()), dbg::PrintableMatrix(&shrunk[&loc]), dbg::PrintableMatrix(transitive_flow.state_at(loc))),
-                    _ => (),
-                };
-
-                Some(
-                    std::iter::once((mir::Place::return_place(), Box::new(matrix.row(mir::Place::return_place()).into_iter().cloned()) as Box<_>, Either::Left(None)))
-                        .chain(
-                            body.args_iter()
-                                .enumerate()
-                                .filter(|(_, a)| body.local_decls[*a].ty.is_mutable_ptr())
-                                .filter_map(|(i, local)| {
-                                    let lplace = local.into();
-                                    let arg_place = 
-                                    arg_resolver
-                                        .borrow()
-                                        .get_arg_place(i);
-                                    let reachable = flow.aliases().reachable_values(lplace, mir::Mutability::Not);
-                                    debug!("Found mutable argument {:?} at index {i} with arg place {:?} and aliases {:?}", local, arg_resolver.borrow().get_arg_place(i), reachable);
-                                    arg_place
-                                        .and_then(|a| a)
-                                        .map(|a| {
-                                            let p = local.into();
-                                            (lplace,
-                                            Box::new(std::iter::once(p).chain(reachable.into_iter().cloned()).flat_map(|p| matrix.row(p)).cloned()) as Box<_>,
-                                            Either::Left(Some(a)))
-                                        }
-                                        )
-                                }),
-                        )
-                        .collect(),
-                )
-            } else {
-                None
-            };
-            if let Some(mentioned_places) = abstraction_info {
-                let mut i = 0;
-                for (r, deps, sink) in mentioned_places {
-                    //let deps = matrix.row(r);
-                    for from in deps
-                        .filter_map(|l| {
-                            let from_recursed = {
-                                let mut all_results = flow.aliases().aliases(r).into_iter().chain(std::iter::once(&r))
-                                .filter_map(|p| returns_from_recursed.get(&(*p, l))).collect::<Vec<_>>();
-                                all_results.iter().reduce(|v1, v2| {
-                                    assert!(v1 == v2);
-                                    v2
-                                });
-                                all_results.pop()
-                            };
-
-                            // Check that if we expect this function to have been recursed into that that actually happened
-                            if is_real_location(body, l) {
-                                body.stmt_at(l).right().map(|t| {
-                                    t.as_fn_and_args().ok().map(|fninfo| {
-                                        let is_local_function = tcx.hir().get_if_local(fninfo.0).and_then(|n| node_as_fn(&n)).is_some();
-                                        let has_annotations = !interesting_fn_defs.get(&fninfo.0).map_or(true, |anns| anns.0.is_empty());
-
-                                        if !(from_recursed.is_some() || !is_local_function || has_annotations) { 
-                                            error!("Expected a handled subfunction '{:?}' in '{}' (place:{r:?}), but was not handled yet. Info:\n\thas_recursed:{}\n\tis_local:{is_local_function}\n\thas_annotations:{has_annotations}\n\tsearched_place:{:?}\n\taliases:{:?}\n\treachable_places:{:?}\n\treturns_map{:?}", t.kind, id.name, from_recursed.is_some(), r, flow.aliases().aliases(r), flow.aliases().reachable_values(r, mir::Mutability::Not), returns_from_recursed);
-                                        }
-                                    })
-                                });
+                                    ),
+                                })
                             }
-
-                            from_recursed.map(Cow::Borrowed).or(
-                                DataSource::try_from_body(
-                                    id.name,
-                                    body,
-                                    l,
-                                    loc_dom,
-                                    tcx,
-                                    &arg_resolver.borrow(),
-                                )
-                                .ok()
-                                .map(Cow::Owned),
+                        }),
+                        if loc.is_at_root()
+                            && matches!(
+                                body.stmt_at(loc.location()),
+                                Either::Right(mir::Terminator {
+                                    kind: mir::TerminatorKind::Return,
+                                    ..
+                                })
                             )
-                        })
-                        .flat_map(|v| v.into_owned().into_iter())
-                    {
-                        i += 1;
-                        match sink.clone() {
-                            Either::Right(sink) => flows.add(Cow::Owned(from), sink),
-                            Either::Left(to) => {
-                                arg_resolver.borrow_mut().register_return(from, to, flows)
+                        {
+                            DataSink::Return
+                        } else {
+                            DataSink::Argument {
+                                function: call_site.clone(),
+                                arg_slot,
                             }
-                        }
-                    }
+                        },
+                    );
                 }
-                debug!("Found {i} flows into target.");
             }
         }
-    }
-
-    /// Handles a single target function
-    fn handle_target<'g>(
-        &self,
-        hash_verifications: &mut HashVerifications,
-        call_site_annotations: &mut CallSiteAnnotations,
-        interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
-        id: Ident,
-        b: BodyId,
-        gli: GLI<'g>,
-    ) -> std::io::Result<(Endpoint, Ctrl)> {
-        let mut flows = Ctrl::new();
-        let local_def_id = self.tcx.hir().body_owner_def_id(b);
-        let mut seen = HashSet::new();
-        self.handle_function(
-            hash_verifications,
-            call_site_annotations,
-            interesting_fn_defs,
-            &mut flows,
-            &mut seen,
-            id,
-            b,
-            local_def_id,
-            &mut ArgumentResolver::Root,
-            gli,
-        );
         Ok((Identifier::new(id.name), flows))
     }
 

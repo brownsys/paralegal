@@ -56,7 +56,7 @@ use crate::{
     Either, Symbol,
 };
 extern crate dot;
-use crate::ana::{is_real_location, mentioned_places_with_provenance, NonTransitiveGraph};
+use crate::ana::{is_real_location, read_places_with_provenance, NonTransitiveGraph};
 
 struct DotGraph<'a, 'b, 'tcx> {
     body: &'a mir::Body<'tcx>,
@@ -90,23 +90,25 @@ impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx>
             .filter(|l| is_real_location(self.body, **l))
             .flat_map(|from| {
                 let row = flow_get_row(self.g, *from);
-                mentioned_places_with_provenance(*from, self.body, self.tcx).flat_map(move |p| {
-                    let r = row.try_row(p);
-                    if r.is_none() {
-                        warn!(
+                read_places_with_provenance(*from, &self.body.stmt_at(*from), self.tcx).flat_map(
+                    move |p| {
+                        let r = row.try_row(p);
+                        if r.is_none() {
+                            warn!(
                             "No row found for place {p:?} at location {from:?}, instruction: {:?}",
                             match self.body.stmt_at(*from) {
                                 Either::Left(s) => &s.kind as &dyn std::fmt::Debug,
                                 Either::Right(t) => &t.kind as &dyn std::fmt::Debug,
                             }
                         );
-                    }
-                    r.into_iter()
-                        .flat_map(|i| i)
-                        .map(move |to| (*from, *to, p))
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                })
+                        }
+                        r.into_iter()
+                            .flat_map(|i| i)
+                            .map(move |to| (*from, *to, p))
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                    },
+                )
             })
             .collect::<Vec<_>>()
             .into()

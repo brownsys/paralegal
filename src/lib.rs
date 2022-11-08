@@ -86,21 +86,7 @@ pub struct Args {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
-struct AnalysisCtrl {
-    /// Use the vanilla Flowistry algorithm. Creates the transitive Θ tensor. By
-    /// default we use the augmented Flowistry algorithm that calculates the
-    /// non-transitive Ω tensor.
-    #[clap(long, env)]
-    use_transitive_graph: bool,
-    /// Disable shrinking of the location domain for the non-transitive Ω
-    /// tensor. By default the domain will be shrunk to only include function
-    /// calls, arguments to the analyzed controller. Also removes the functions
-    /// from the FUNCTION_BLACKLIST.
-    #[clap(long, env)]
-    no_shrink_flow_domains: bool,
-    #[clap(long, env)]
-    recursive_analysis: bool,
-}
+struct AnalysisCtrl {}
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct DbgArgs {

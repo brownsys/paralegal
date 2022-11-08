@@ -4,7 +4,7 @@ use flowistry::indexed::{impls::LocationDomain, DefaultDomain, IndexMatrix};
 use serde::Deserialize;
 
 use crate::{
-    ana::{extract_places, mentioned_places_with_provenance},
+    ana::{extract_places, read_places_with_provenance},
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
@@ -174,7 +174,7 @@ impl BodyProxy {
                     (
                         loc,
                         stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
-                        mentioned_places_with_provenance(loc, body, tcx)
+                        read_places_with_provenance(loc, &body.stmt_at(loc), tcx)
                             .map(|p| Symbol::intern(&format!("{p:?}")))
                             .collect(),
                     )
