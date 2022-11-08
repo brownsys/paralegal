@@ -355,6 +355,61 @@ fn inner_flow_for_terminator<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
     })
 }
 
+fn translate_child_to_parent<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    parent_local_def_id: LocalDefId,
+    args: &[Option<mir::Place<'tcx>>],
+    destination: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+    child: mir::Place<'tcx>,
+    mutated: bool,
+    body: &mir::Body<'tcx>,
+    parent_body: &mir::Body<'tcx>,
+) -> Option<mir::Place<'tcx>> {
+    use flowistry::mir::utils::PlaceExt;
+    use mir::HasLocalDecls;
+    use mir::{Place, ProjectionElem};
+    if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
+        debug!("Child is return place");
+        if child.ty(body.local_decls(), tcx).ty.is_unit() {
+            return None;
+        }
+
+        if let Some((dst, _)) = destination {
+            debug!("Returning destination");
+            return Some(dst);
+        }
+    }
+
+    if !child.is_arg(body) || (mutated && !child.is_indirect()) {
+        return None;
+    }
+
+    // For example, say we're calling f(_5.0) and child = (*_1).1 where
+    // .1 is private to parent. Then:
+    //    parent_toplevel_arg = _5.0
+    //    parent_arg_projected = (*_5.0).1
+    //    parent_arg_accessible = (*_5.0)
+
+    let parent_toplevel_arg = args[child.local.as_usize() - 1]?;
+
+    let mut projection = parent_toplevel_arg.projection.to_vec();
+    let mut ty = parent_toplevel_arg.ty(parent_body.local_decls(), tcx);
+    let parent_param_env = tcx.param_env(parent_local_def_id);
+    for elem in child.projection.iter() {
+        ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
+            ty.field_ty(tcx, field)
+        });
+        let elem = match elem {
+            ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
+            elem => elem,
+        };
+        projection.push(elem);
+    }
+
+    let parent_arg_projected = Place::make(parent_toplevel_arg.local, &projection, tcx);
+    Some(parent_arg_projected)
+}
+
 fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
@@ -374,54 +429,6 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
 
     // Make sure we terminate on recursion
     function_flows.borrow_mut().insert(root_function, None);
-
-    let translate_child_to_parent = |args: &[Option<mir::Place<'tcx>>],
-                                     destination: Option<(mir::Place<'tcx>, _)>,
-                                     child: mir::Place<'tcx>,
-                                     mutated: bool|
-     -> Option<mir::Place<'tcx>> {
-        use flowistry::mir::utils::PlaceExt;
-        use mir::HasLocalDecls;
-        use mir::{Place, ProjectionElem};
-        if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
-            if child.ty(body.local_decls(), tcx).ty.is_unit() {
-                return None;
-            }
-
-            if let Some((dst, _)) = destination {
-                return Some(dst);
-            }
-        }
-
-        if !child.is_arg(body) || (mutated && !child.is_indirect()) {
-            return None;
-        }
-
-        // For example, say we're calling f(_5.0) and child = (*_1).1 where
-        // .1 is private to parent. Then:
-        //    parent_toplevel_arg = _5.0
-        //    parent_arg_projected = (*_5.0).1
-        //    parent_arg_accessible = (*_5.0)
-
-        let parent_toplevel_arg = args[child.local.as_usize() - 1]?;
-
-        let mut projection = parent_toplevel_arg.projection.to_vec();
-        let mut ty = parent_toplevel_arg.ty(body.local_decls(), tcx);
-        let parent_param_env = tcx.param_env(local_def_id);
-        for elem in child.projection.iter() {
-            ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
-                ty.field_ty(tcx, field)
-            });
-            let elem = match elem {
-                ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
-                elem => elem,
-            };
-            projection.push(elem);
-        }
-
-        let parent_arg_projected = Place::make(parent_toplevel_arg.local, &projection, tcx);
-        Some(parent_arg_projected)
-    };
 
     let mut translated_return_states: RefCell<
         HashMap<mir::Location, HashMap<mir::Place<'tcx>, HashSet<GlobalLocation<'g>>>>,
@@ -454,12 +461,33 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
                     let translated_return_state = translated_return_states_borrow
                         .entry(*l)
                         .or_insert_with(|| {
+                            debug!(
+                                "Translating return state with dependency set of size {}",
+                                inner_flow.return_state.len()
+                            );
                             inner_flow
                                 .return_state
                                 .iter()
                                 .filter_map(|(p, deps)| {
                                     if p.function.is_none() {
-                                        translate_child_to_parent(&args, dest, p.place, true)
+                                        let parent = translate_child_to_parent(
+                                            tcx,
+                                            local_def_id,
+                                            &args,
+                                            dest,
+                                            p.place,
+                                            true,
+                                            inner_body,
+                                            body,
+                                        );
+                                        if parent.is_none() {
+                                            debug!(
+                                                "No parent found for {:?} (dest is {}present)",
+                                                p.place,
+                                                if dest.is_none() { "not " } else { "" }
+                                            );
+                                        }
+                                        parent
                                     } else {
                                         None
                                     }
@@ -543,6 +571,42 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
                             inline_selector,
                         )
                     {
+                        let global_terminator_loc = gli.globalize_location(loc, inner_body_id);
+                        let caller_state = from_flowistry.state_at(loc).matrix();
+                        let as_parent_dep_matrix: GlobalDepMatrix<'tcx, 'g> = inner_flow
+                            .location_states
+                            .values()
+                            .flat_map(|s| s.keys())
+                            .filter(|gp| gp.function.is_none())
+                            .map(|gp| gp.place)
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .filter_map(|p| {
+                                Some((
+                                    p,
+                                    translate_child_to_parent(
+                                        tcx,
+                                        local_def_id,
+                                        &args,
+                                        dest,
+                                        p,
+                                        false,
+                                        inner_body,
+                                        body,
+                                    )?,
+                                ))
+                            })
+                            .map(|(child, parent)| {
+                                (
+                                    GlobalPlace {
+                                        place: child,
+                                        function: Some(global_terminator_loc),
+                                    },
+                                    make_row_global(parent, caller_state.row_set(parent)),
+                                )
+                            })
+                            .collect();
+
                         inner_flow
                             .location_states
                             .iter()
@@ -586,44 +650,7 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
                                     loc,
                                     root_function,
                                 );
-                                (
-                                    global_arg_loc,
-                                    from_flowistry
-                                        .state_at(loc)
-                                        .matrix()
-                                        .rows()
-                                        .flat_map(|(place, dep_set)| {
-                                            let global_terminator_loc =
-                                                gli.globalize_location(loc, inner_body_id);
-                                            let this_place_as_global = GlobalPlace {
-                                                place,
-                                                function: Some(global_terminator_loc),
-                                            };
-                                            let parent = translate_child_to_parent(
-                                                &args, dest, place, false,
-                                            );
-                                            let row = make_row_global(place, dep_set);
-                                            parent
-                                                .map(|parent| {
-                                                    (
-                                                        GlobalPlace {
-                                                            place: parent,
-                                                            function: Some(global_call_site),
-                                                        },
-                                                        row.clone(),
-                                                    )
-                                                })
-                                                .into_iter()
-                                                .chain(std::iter::once((
-                                                    GlobalPlace {
-                                                        place,
-                                                        function: None,
-                                                    },
-                                                    row,
-                                                )))
-                                        })
-                                        .collect(),
-                                )
+                                (global_arg_loc, as_parent_dep_matrix.clone())
                             }))
                             .collect()
                     } else {
@@ -696,11 +723,18 @@ fn compute_call_only_flow<'tcx, 'g>(
                 _ => None,
             }?;
             let deps_for = |p: mir::Place| {
-                let mut queue = place_deps[&GlobalPlace {
+                let place_as_global = GlobalPlace {
                     place: p,
                     function: loc.next(),
-                }]
-                    .iter()
+                };
+                let place_dep_row = place_deps.get(&place_as_global);
+                if place_dep_row.is_none() {
+                    warn!("No dependencies found for place {:?}", place_as_global);
+                }
+
+                let mut queue = place_dep_row
+                    .into_iter()
+                    .flat_map(|f| f.iter())
                     .cloned()
                     .collect::<Vec<_>>();
                 let mut seen = HashSet::new();

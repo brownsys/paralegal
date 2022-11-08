@@ -11,8 +11,8 @@ fn callee(x: i32) -> i32 {
 }
 
 #[dfpp::analyze]
-fn with_return() {
-    receiver(callee(9));
+fn with_return(x: i32) {
+    receiver(callee(x));
 }
 
 #[dfpp::label(there, arguments = [0])]
