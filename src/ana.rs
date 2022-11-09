@@ -206,6 +206,9 @@ impl<'g> GlobalLocation<'g> {
     pub fn is_at_root(self) -> bool {
         self.next().is_none()
     }
+    pub fn stable_id(self) -> usize {
+        self.0.0 as *const GlobalLocationS<'g> as usize
+    }
 }
 
 impl<'g> std::borrow::Borrow<GlobalLocationS<'g>> for GlobalLocation<'g> {
@@ -308,9 +311,9 @@ pub struct GlobalFlowGraph<'tcx, 'g> {
 type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<GlobalFlowGraph<'tcx, 'g>>>>>;
 pub type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<'g>>;
 
-struct CallDeps<'g> {
-    ctrl_deps: HashSet<GlobalLocation<'g>>,
-    input_deps: Vec<HashSet<GlobalLocation<'g>>>,
+pub struct CallDeps<'g> {
+    pub ctrl_deps: HashSet<GlobalLocation<'g>>,
+    pub input_deps: Vec<HashSet<GlobalLocation<'g>>>,
 }
 
 fn inner_flow_for_terminator<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
@@ -976,6 +979,16 @@ impl<'tcx> Visitor<'tcx> {
 
         if self.opts.dbg.dump_flowistry_matrix {
             unimplemented!();
+        }
+
+        if self.opts.dbg.dump_non_transitive_graph {
+            std::fs::OpenOptions::new().truncate(true).write(true).create(true).open(format!("{}.call-only-flow.gv", id.name)).and_then(|mut file|
+                dbg::call_only_flow_dot::dump(
+                    tcx, &flow.reduced_flow, &mut file
+                )
+            ).unwrap_or_else(|err| 
+                error!("Could not write transitive graph dump, reason: {err}")
+            )
         }
 
         let body_for_body_id =
