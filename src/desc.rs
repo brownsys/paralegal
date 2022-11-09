@@ -45,7 +45,7 @@ pub struct ExceptionAnnotation {
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LabelAnnotation {
-    #[serde(with = "crate::foreign_serializers::ser_sym")]
+    #[serde(with = "crate::serializers::ser_sym")]
     pub label: Symbol,
     pub refinement: AnnotationRefinement,
 }
@@ -188,7 +188,7 @@ impl ProgramDescription {
 #[derive(
     Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, serde::Serialize, serde::Deserialize, Copy,
 )]
-pub struct Identifier(#[serde(with = "crate::foreign_serializers::ser_sym")] Symbol);
+pub struct Identifier(#[serde(with = "crate::serializers::ser_sym")] Symbol);
 
 impl Identifier {
     pub fn new(s: Symbol) -> Self {
@@ -246,7 +246,7 @@ impl<X, Y> Relation<X, Y> {
     Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Debug, serde::Serialize, serde::Deserialize,
 )]
 pub struct CallSite {
-    #[serde(with = "crate::foreign_serializers::ser_loc")]
+    #[serde(with = "crate::serializers::ser_loc")]
     pub location: mir::Location,
     pub called_from: Function,
     pub function: Function,

@@ -49,11 +49,13 @@ mod ana;
 pub mod ann_parse;
 pub mod dbg;
 pub mod desc;
-pub mod foreign_serializers;
 mod frg;
 mod sah;
+pub mod serializers;
 
 use ana::AttrMatchT;
+
+pub use ana::{outfile_pls, IsGlobalLocation};
 
 use frg::ToForge;
 

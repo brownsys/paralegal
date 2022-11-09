@@ -44,14 +44,13 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 
 use std::collections::HashMap;
 
-use crate::rust::rustc_middle::ty::TyCtxt;
 use crate::HashSet;
+use crate::{ana::CallOnlyFlow, rust::rustc_middle::ty::TyCtxt};
 use flowistry::indexed::impls::LocationDomain;
 use flowistry::indexed::IndexedDomain;
 use flowistry::infoflow::FlowDomain;
 
 use crate::{
-    foreign_serializers::SerializableNonTransitiveGraph,
     rust::{mir, rustc_span::symbol::Ident},
     Either, Symbol,
 };
@@ -81,12 +80,12 @@ fn flow_get_row<'b, 'tcx, 'a>(
 }
 
 pub mod call_only_flow_dot {
-    use std::{hash::Hash, collections::HashSet};
+    use std::{collections::HashSet, hash::Hash};
 
     use crate::rust::ty::TyCtxt;
-    use crate::{Either};
+    use crate::Either;
 
-    use crate::ana::{GlobalLocation, CallOnlyFlow};
+    use crate::ana::{CallOnlyFlow, GlobalLocation, IsGlobalLocation};
 
     type N<'g> = GlobalLocation<'g>;
     type E<'g> = (N<'g>, N<'g>, String);
@@ -95,28 +94,34 @@ pub mod call_only_flow_dot {
         tcx: TyCtxt<'tcx>,
     }
 
-    impl <'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>> for G<'tcx, 'g> {
+    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>> for G<'tcx, 'g> {
         fn nodes(&'a self) -> dot::Nodes<'a, N<'g>> {
-            self.graph.iter().flat_map(|(to, v)|
-                std::iter::once(*to).chain(
-                    v.ctrl_deps.iter().cloned()
-                ).chain(
-                    v.input_deps.iter().flat_map(|deps|
-                        deps.iter().cloned()
-                    )
-                )
-            ).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>().into()
+            self.graph
+                .iter()
+                .flat_map(|(to, v)| {
+                    std::iter::once(*to)
+                        .chain(v.ctrl_deps.iter().cloned())
+                        .chain(v.input_deps.iter().flat_map(|deps| deps.iter().cloned()))
+                })
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .into()
         }
         fn edges(&'a self) -> dot::Edges<'a, E<'g>> {
-            self.graph.iter().flat_map(|(&to, v)|
-                v.ctrl_deps.iter().map(move |&from| (from,to, "ctrl".to_string()))
-                .chain(
-                    v.input_deps.iter().enumerate().flat_map(move |(i, deps)|
-                        deps.iter().map(move |&from| (from, to, i.to_string()))
-                    )
-                )
-            ).collect::<Vec<_>>().into()
-        }    
+            self.graph
+                .iter()
+                .flat_map(|(&to, v)| {
+                    v.ctrl_deps
+                        .iter()
+                        .map(move |&from| (from, to, "ctrl".to_string()))
+                        .chain(v.input_deps.iter().enumerate().flat_map(move |(i, deps)| {
+                            deps.iter().map(move |&from| (from, to, i.to_string()))
+                        }))
+                })
+                .collect::<Vec<_>>()
+                .into()
+        }
         fn source(&'a self, edge: &E<'g>) -> N<'g> {
             edge.0
         }
@@ -125,43 +130,48 @@ pub mod call_only_flow_dot {
         }
     }
 
-    impl <'a, 'g, 'tcx> dot::Labeller<'a, N<'g>, E<'g>> for G<'tcx, 'g> {
+    impl<'a, 'g, 'tcx> dot::Labeller<'a, N<'g>, E<'g>> for G<'tcx, 'g> {
         fn graph_id(&'a self) -> dot::Id<'a> {
             dot::Id::new("g").unwrap()
-        }    
+        }
         fn node_id(&'a self, n: &N<'g>) -> dot::Id<'a> {
             dot::Id::new(format!("n{}", n.stable_id())).unwrap()
         }
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
-            let body_with_facts = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(self.tcx, self.tcx.hir().body_owner_def_id(n.function()));
+            let body_with_facts = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
+                self.tcx,
+                self.tcx.hir().body_owner_def_id(n.function()),
+            );
             let body = &body_with_facts.body;
             dot::LabelText::LabelStr(
-            if !crate::ana::is_real_location(&body, n.location()) {
-                format!(
-                    "Argument {}",
-                    flowistry::mir::utils::location_to_string(n.location(), body)
-                )
-            } else {
-                match body.stmt_at(n.location()) {
-                    Either::Left(stmt) => format!("[{:?}] {:?}", n.location().block, stmt.kind),
-                    Either::Right(term) => format!("[{:?}] {:?}", n.location().block, term.kind),
+                if !crate::ana::is_real_location(&body, n.location()) {
+                    format!(
+                        "Argument {}",
+                        flowistry::mir::utils::location_to_string(n.location(), body)
+                    )
+                } else {
+                    match body.stmt_at(n.location()) {
+                        Either::Left(stmt) => format!("[{:?}] {:?}", n.location().block, stmt.kind),
+                        Either::Right(term) => {
+                            format!("[{:?}] {:?}", n.location().block, term.kind)
+                        }
+                    }
                 }
-            }
-            .into(),
+                .into(),
             )
         }
-    fn edge_label(&'a self, e: &E<'g>) -> dot::LabelText<'a> {
-        dot::LabelText::LabelStr(format!("{:?}", e.2).into())
-    }
+        fn edge_label(&'a self, e: &E<'g>) -> dot::LabelText<'a> {
+            dot::LabelText::LabelStr(format!("{:?}", e.2).into())
+        }
     }
 
-    pub fn dump<W: std::io::Write>(tcx: TyCtxt, graph: &CallOnlyFlow, mut out: W) -> std::io::Result<()> {
-        dot::render(
-            &G { graph, tcx },
-            &mut out
-        )
+    pub fn dump<W: std::io::Write>(
+        tcx: TyCtxt,
+        graph: &CallOnlyFlow,
+        mut out: W,
+    ) -> std::io::Result<()> {
+        dot::render(&G { graph, tcx }, &mut out)
     }
-    
 }
 
 impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
@@ -252,7 +262,7 @@ pub fn non_transitive_graph_as_dot<'a, 'tcx, W: std::io::Write>(
     dot::render(&DotGraph { body, g, dom, tcx }, out)
 }
 
-use crate::foreign_serializers::{BodyProxy, NonTransitiveGraphProxy};
+use crate::serializers::{Bodies, BodyProxy, SerializableCallOnlyFlow};
 
 pub fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item = mir::Location> + 'a {
     body.basic_blocks()
@@ -265,43 +275,51 @@ pub fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item = mir::L
         })
 }
 
-pub fn dump_non_transitive_graph_and_body<'a, 'tcx>(
-    id: Ident,
-    body: &mir::Body<'tcx>,
-    g: &SomeNoneTransitiveGraph<'tcx, 'a, '_>,
-    tcx: TyCtxt<'tcx>,
+pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
+    tcx: TyCtxt,
+    flow: &CallOnlyFlow,
+    mut out: W,
 ) {
+    use crate::ana::IsGlobalLocation;
+    let bodies = Bodies(
+        flow.iter()
+            .flat_map(|(l, deps)| {
+                std::iter::once(*l).chain(
+                    std::iter::once(&deps.ctrl_deps)
+                        .chain(deps.input_deps.iter())
+                        .flat_map(|s| s.iter().cloned()),
+                )
+            })
+            .map(|l| l.function())
+            .collect::<HashSet<crate::rust::hir::BodyId>>()
+            .into_iter()
+            .map(|bid| {
+                (
+                    bid,
+                    BodyProxy::from_body_with_normalize(
+                        &flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
+                            tcx,
+                            tcx.hir().body_owner_def_id(bid),
+                        )
+                        .body,
+                        tcx,
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>(),
+    );
     serde_json::to_writer(
-        &mut std::fs::OpenOptions::new()
-            .truncate(true)
-            .create(true)
-            .write(true)
-            .open(format!("{}.ntgb.json", id.name.as_str()))
-            .unwrap(),
-        &match g {
-            Either::Left(f) => (BodyProxy::from(body), NonTransitiveGraphProxy::from(*f)),
-            Either::Right(g) => (
-                BodyProxy::from_body_with_normalize(body, tcx),
-                NonTransitiveGraphProxy::from(
-                    &locations_of_body(body)
-                        .map(|l| (l, g.state_at(l).matrix().clone()))
-                        .collect::<HashMap<_, _>>(),
-                ),
-            ),
-        },
+        &mut out,
+        &(
+            crate::serializers::SerializableCallOnlyFlow::from(flow),
+            bodies,
+        ),
     )
     .unwrap()
 }
 
-pub fn read_non_transitive_graph_and_body(
-    id: Symbol,
-) -> (
-    Vec<(mir::Location, String, HashSet<Symbol>)>,
-    SerializableNonTransitiveGraph,
-) {
-    let deser: (BodyProxy, NonTransitiveGraphProxy) = serde_json::from_reader(
-        &mut std::fs::File::open(format!("{}.ntgb.json", id.as_str())).unwrap(),
-    )
-    .unwrap();
-    (deser.0 .0, deser.1.into())
+pub fn read_non_transitive_graph_and_body<R: std::io::Read>(
+    read: R,
+) -> (SerializableCallOnlyFlow, Bodies) {
+    serde_json::from_reader(read).unwrap()
 }

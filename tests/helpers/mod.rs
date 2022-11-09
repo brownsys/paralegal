@@ -1,10 +1,13 @@
 extern crate either;
+extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
 use dfpp::{
     desc::{DataSink, Identifier, ProgramDescription},
-    HashSet, Symbol,
+    serializers::{Bodies, RawGlobalLocation},
+    HashMap, HashSet, IsGlobalLocation, Symbol,
 };
+use hir::BodyId;
 use rustc_middle::mir;
 
 use either::Either;
@@ -83,29 +86,69 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
         .success()
 }
 
-pub type SimpleMirBody = Vec<(mir::Location, String, HashSet<Symbol>)>;
-
-use dfpp::foreign_serializers::SerializableNonTransitiveGraph;
+use dfpp::serializers::SerializableCallOnlyFlow;
 
 pub struct G {
-    pub graph: SerializableNonTransitiveGraph,
-    pub body: SimpleMirBody,
+    pub graph: SerializableCallOnlyFlow,
+    pub body: Bodies,
+}
+
+pub trait GetCallSites {
+    fn get_call_sites<'a>(
+        &'a self,
+        g: &'a SerializableCallOnlyFlow,
+    ) -> HashSet<&'a RawGlobalLocation>;
+}
+
+impl GetCallSites for RawGlobalLocation {
+    fn get_call_sites<'a>(
+        &'a self,
+        _: &'a SerializableCallOnlyFlow,
+    ) -> HashSet<&'a RawGlobalLocation> {
+        [self].into_iter().collect()
+    }
+}
+
+impl GetCallSites for (mir::Location, hir::BodyId) {
+    fn get_call_sites<'a>(
+        &'a self,
+        g: &'a SerializableCallOnlyFlow,
+    ) -> HashSet<&'a RawGlobalLocation> {
+        g.all_locations_iter()
+            .filter(move |l| l.innermost_location_and_body() == *self)
+            .collect()
+    }
+}
+
+pub trait MatchCallSite {
+    fn match_(&self, call_site: &RawGlobalLocation) -> bool;
+}
+
+impl MatchCallSite for RawGlobalLocation {
+    fn match_(&self, call_site: &RawGlobalLocation) -> bool {
+        self == call_site
+    }
+}
+
+impl MatchCallSite for (mir::Location, hir::BodyId) {
+    fn match_(&self, call_site: &RawGlobalLocation) -> bool {
+        *self == call_site.innermost_location_and_body()
+    }
 }
 
 impl G {
-    fn predecessors(&self, n: mir::Location) -> impl Iterator<Item = &mir::Location> {
-        self.graph.get(&n).into_iter().flat_map(move |r| {
-            self.body
-                .iter()
-                .find(|t| t.0 == n)
-                .unwrap()
-                .2
-                .iter()
-                .flat_map(|p| r.row(*p))
+    fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
+        self.graph.0.get(&n).into_iter().flat_map(|deps| {
+            std::iter::once(&deps.ctrl_deps)
+                .chain(deps.input_deps.iter())
+                .flat_map(|s| s.iter())
         })
     }
-    pub fn connects(&self, from: mir::Location, to: mir::Location) -> bool {
-        let mut queue = vec![to];
+    pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
+        let mut queue = to
+            .get_call_sites(&self.graph)
+            .into_iter()
+            .collect::<Vec<_>>();
         let mut seen = HashSet::new();
         while let Some(n) = queue.pop() {
             if seen.contains(&n) {
@@ -113,33 +156,58 @@ impl G {
             } else {
                 seen.insert(n);
             }
-            if n == from {
+            if from.match_(n) {
                 return true;
             }
             queue.extend(self.predecessors(n))
         }
         false
     }
-    pub fn connects_direct(&self, from: mir::Location, to: mir::Location) -> bool {
-        self.predecessors(to).any(|l| *l == from)
+
+    pub fn connects_direct<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+    ) -> bool {
+        for to in to.get_call_sites(&self.graph).iter() {
+            if self.predecessors(to).any(|l| from.match_(l)) {
+                return true;
+            }
+        }
+        false
     }
 
-    pub fn function_call(&self, pattern: &str) -> mir::Location {
+    pub fn function_calls(&self, pattern: &str) -> HashSet<(mir::Location, hir::BodyId)> {
         self.body
-            .iter()
-            .find(|(_, s, _)| s.contains(pattern))
-            .unwrap_or_else(|| panic!("Pattern {pattern} not found in {:?}", self.body))
             .0
+            .iter()
+            .flat_map(|(bid, body)| {
+                body.0
+                    .iter()
+                    .filter(|s| s.1.contains(pattern))
+                    .map(|s| (s.0, *bid))
+            })
+            .collect()
     }
+
+    pub fn function_call(&self, pattern: &str) -> (mir::Location, hir::BodyId) {
+        let v = self.function_calls(pattern);
+        assert!(v.len() == 1, "{pattern} should only occur once in {v:?}");
+        v.into_iter().next().unwrap()
+    }
+
     pub fn from_file(s: Symbol) -> Self {
-        let (body, graph) = dfpp::dbg::read_non_transitive_graph_and_body(s);
+        let (graph, body) = dfpp::dbg::read_non_transitive_graph_and_body(
+            std::fs::File::open(format!("{}.ntgb.json", s.as_str())).unwrap(),
+        );
         Self { graph, body }
     }
-    pub fn argument(&self, n: usize) -> mir::Location {
-        self.body
+    pub fn argument(&self, bid: BodyId, n: usize) -> mir::Location {
+        self.body.0[&bid]
+            .0
             .iter()
             .find(|(_, s, _)| s == format!("Argument _{n}").as_str())
-            .unwrap_or_else(|| panic!("Argument {n} not found in {:?}", self.body))
+            .unwrap_or_else(|| panic!("Argument {n} not found in {:?}", self.body.0[&bid]))
             .0
     }
 }

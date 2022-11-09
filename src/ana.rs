@@ -1,11 +1,11 @@
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
-    dbg::{self, dump_non_transitive_graph_and_body},
+    dbg::{self},
     desc::*,
     rust::*,
     sah::HashVerifications,
-    Either, HashMap, HashSet,
+    serializers, Either, HashMap, HashSet,
 };
 
 use hir::{
@@ -177,65 +177,99 @@ pub struct Flow<'tcx, 'g> {
     pub reduced_flow: CallOnlyFlow<'g>,
 }
 
+/// The idea of a global location is to capture the call chain up to a specific
+/// location. The type is organized from the outside in i.e. the top-level
+/// function call is the outermost location which calls `next` at `location`
+/// going one level deeper and so forth. You may access the innermost location
+/// using `GlobalLocation::innermost_location_and_body`.
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
-pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<'g>>);
+pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>);
 
-impl<'g> GlobalLocation<'g> {
-    pub fn function(self) -> BodyId {
-        self.0 .0.function
+pub trait IsGlobalLocation: Sized {
+    fn as_global_location_s(&self) -> &GlobalLocationS<Self>;
+    fn function(&self) -> BodyId {
+        self.as_global_location_s().function
     }
-    pub fn location(self) -> mir::Location {
-        self.0 .0.location
+    fn location(&self) -> mir::Location {
+        self.as_global_location_s().location
     }
-    pub fn next(self) -> Option<Self> {
-        self.0 .0.next
+    fn next(&self) -> Option<&Self> {
+        self.as_global_location_s().next.as_ref()
     }
-    pub fn innermost_location_and_body(self) -> (mir::Location, BodyId) {
+    fn innermost_location_and_body(&self) -> (mir::Location, BodyId) {
         self.next().map_or_else(
             || (self.location(), self.function()),
             |other| other.innermost_location_and_body(),
         )
     }
-    pub fn as_local(self) -> Option<mir::Location> {
+    fn as_local(self) -> Option<mir::Location> {
         if self.next().is_none() {
             Some(self.location())
         } else {
             None
         }
     }
-    pub fn is_at_root(self) -> bool {
+    fn is_at_root(self) -> bool {
         self.next().is_none()
-    }
-    pub fn stable_id(self) -> usize {
-        self.0.0 as *const GlobalLocationS<'g> as usize
     }
 }
 
-impl<'g> std::borrow::Borrow<GlobalLocationS<'g>> for GlobalLocation<'g> {
-    fn borrow(&self) -> &GlobalLocationS<'g> {
+impl<'g> IsGlobalLocation for GlobalLocation<'g> {
+    fn as_global_location_s(&self) -> &GlobalLocationS<Self> {
+        self.0 .0
+    }
+}
+
+impl<'g> GlobalLocation<'g> {
+    pub fn stable_id(self) -> usize {
+        self.0 .0 as *const GlobalLocationS<GlobalLocation<'g>> as usize
+    }
+}
+
+impl<'g> std::borrow::Borrow<GlobalLocationS<GlobalLocation<'g>>> for GlobalLocation<'g> {
+    fn borrow(&self) -> &GlobalLocationS<GlobalLocation<'g>> {
         &self.0 .0
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Debug, Clone)]
-pub struct GlobalLocationS<'g> {
+/// The payload type of a global location. You will probably want to operate on
+/// the interned wrapper type `GlobalLocation<'g>, which gives access to the
+/// same fields with methods such as `function()`, `location()` and `next()`.
+///
+/// Other methods and general information for global locations is documented on
+/// the `GlobalLocation<'g>`.
+///
+/// The generic parameter `Inner` is typically instantiated recursively with the
+/// interned wrapper type `GlobalLocation<'g>`, forming an interned linked list.
+/// We use a generic parameter so that deserializers can instead instantiate
+/// them as `GlobalLocationS`, i.e. a non-interned version of the same struct.
+/// This is necessary because in the derived deserializers we do not have access
+/// to the interner.
+#[derive(PartialEq, Eq, Hash, Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct GlobalLocationS<Inner> {
+    #[serde(with = "crate::serializers::BodyIdProxy")]
     pub function: BodyId,
+    #[serde(with = "crate::serializers::ser_loc")]
     pub location: mir::Location,
-    pub next: Option<GlobalLocation<'g>>,
+    pub next: Option<Inner>,
 }
 
 pub struct GlobalLocationInterner<'g> {
-    arena: &'g rustc_arena::TypedArena<GlobalLocationS<'g>>,
-    known_locations: ShardedHashMap<GlobalLocation<'g>, ()>,
+    arena: &'g rustc_arena::TypedArena<GlobalLocationS<GlobalLocation<'g>>>,
+    known_locations: ShardedHashMap<&'g GlobalLocationS<GlobalLocation<'g>>, ()>,
 }
 
 impl<'g> GlobalLocationInterner<'g> {
-    pub fn intern_location(&'g self, loc: GlobalLocationS<'g>) -> GlobalLocation<'g> {
-        self.known_locations.intern(loc, |loc| {
-            GlobalLocation(Interned::new_unchecked(self.arena.alloc(loc)))
-        })
+    pub fn intern_location(
+        &'g self,
+        loc: GlobalLocationS<GlobalLocation<'g>>,
+    ) -> GlobalLocation<'g> {
+        GlobalLocation(Interned::new_unchecked(
+            self.known_locations
+                .intern(loc, |loc| self.arena.alloc(loc)),
+        ))
     }
-    pub fn new(arena: &'g rustc_arena::TypedArena<GlobalLocationS<'g>>) -> Self {
+    pub fn new(arena: &'g rustc_arena::TypedArena<GlobalLocationS<GlobalLocation<'g>>>) -> Self {
         GlobalLocationInterner {
             arena,
             known_locations: ShardedHashMap::default(),
@@ -247,7 +281,7 @@ impl<'g> GlobalLocationInterner<'g> {
 pub struct GLI<'g>(&'g GlobalLocationInterner<'g>);
 
 impl<'g> GLI<'g> {
-    pub fn make_global_location(
+    fn make_global_location(
         self,
         function: BodyId,
         location: mir::Location,
@@ -277,12 +311,12 @@ impl<'g> GLI<'g> {
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
-pub struct GlobalPlace<'tcx, 'g> {
-    place: mir::Place<'tcx>,
-    function: Option<GlobalLocation<'g>>,
+pub struct GlobalPlace<'tcx, Location> {
+    pub place: mir::Place<'tcx>,
+    pub function: Option<Location>,
 }
 
-impl<'tcx, 'g> GlobalPlace<'tcx, 'g> {
+impl<'tcx, 'g> GlobalPlace<'tcx, GlobalLocation<'g>> {
     pub fn relative_to(
         mut self,
         gli: GLI<'g>,
@@ -294,7 +328,7 @@ impl<'tcx, 'g> GlobalPlace<'tcx, 'g> {
     }
 }
 
-impl<'tcx, 'g> From<mir::Place<'tcx>> for GlobalPlace<'tcx, 'g> {
+impl<'tcx, 'g, Location> From<mir::Place<'tcx>> for GlobalPlace<'tcx, Location> {
     fn from(place: mir::Place<'tcx>) -> Self {
         Self {
             place,
@@ -303,17 +337,23 @@ impl<'tcx, 'g> From<mir::Place<'tcx>> for GlobalPlace<'tcx, 'g> {
     }
 }
 
-type GlobalDepMatrix<'tcx, 'g> = HashMap<GlobalPlace<'tcx, 'g>, HashSet<GlobalLocation<'g>>>;
+type GlobalDepMatrix<'tcx, 'g> =
+    HashMap<GlobalPlace<'tcx, GlobalLocation<'g>>, HashSet<GlobalLocation<'g>>>;
 pub struct GlobalFlowGraph<'tcx, 'g> {
     location_states: HashMap<GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>>,
     return_state: GlobalDepMatrix<'tcx, 'g>,
 }
 type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<GlobalFlowGraph<'tcx, 'g>>>>>;
-pub type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<'g>>;
+pub type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<GlobalLocation<'g>>>;
 
-pub struct CallDeps<'g> {
-    pub ctrl_deps: HashSet<GlobalLocation<'g>>,
-    pub input_deps: Vec<HashSet<GlobalLocation<'g>>>,
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(bound(
+    serialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Serialize",
+    deserialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Deserialize<'de>"
+))]
+pub struct CallDeps<Location> {
+    pub ctrl_deps: HashSet<Location>,
+    pub input_deps: Vec<HashSet<Location>>,
 }
 
 fn inner_flow_for_terminator<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
@@ -544,7 +584,7 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
             })
             .collect::<HashMap<_, _>>()
     };
-    let mut return_state: HashMap<GlobalPlace<'tcx, 'g>, HashSet<GlobalLocation<'g>>> =
+    let mut return_state: HashMap<GlobalPlace<'tcx, _>, HashSet<GlobalLocation<'g>>> =
         HashMap::new();
     let location_states = body_with_facts
         .body
@@ -728,7 +768,7 @@ fn compute_call_only_flow<'tcx, 'g>(
             let deps_for = |p: mir::Place| {
                 let place_as_global = GlobalPlace {
                     place: p,
-                    function: loc.next(),
+                    function: loc.next().cloned(),
                 };
                 let place_dep_row = place_deps.get(&place_as_global);
                 if place_dep_row.is_none() {
@@ -754,7 +794,7 @@ fn compute_call_only_flow<'tcx, 'g>(
                                     .flat_map(|pl| {
                                         place_deps[&GlobalPlace {
                                             place: pl,
-                                            function: p.next(),
+                                            function: p.next().cloned(),
                                         }]
                                             .iter()
                                             .cloned()
@@ -863,6 +903,14 @@ fn node_as_fn<'hir>(
     }
 }
 
+pub fn outfile_pls<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+}
+
 impl<'tcx> Visitor<'tcx> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         Self {
@@ -950,12 +998,7 @@ impl<'tcx> Visitor<'tcx> {
                 tcx,
                 &body_with_facts.body,
                 false,
-                &mut std::fs::OpenOptions::new()
-                    .create(true)
-                    .truncate(true)
-                    .write(true)
-                    .open(format!("{}.mir.gv", id.name))
-                    .unwrap(),
+                &mut outfile_pls(format!("{}.mir.gv", id.name)).unwrap(),
             )
             .unwrap()
         }
@@ -981,14 +1024,22 @@ impl<'tcx> Visitor<'tcx> {
             unimplemented!();
         }
 
+        if self.opts.dbg.dump_serialized_non_transitive_graph {
+            dbg::write_non_transitive_graph_and_body(
+                tcx,
+                &flow.reduced_flow,
+                outfile_pls(format!("{}.ntgb.json", id.name)).unwrap(),
+            );
+        }
+
         if self.opts.dbg.dump_non_transitive_graph {
-            std::fs::OpenOptions::new().truncate(true).write(true).create(true).open(format!("{}.call-only-flow.gv", id.name)).and_then(|mut file|
-                dbg::call_only_flow_dot::dump(
-                    tcx, &flow.reduced_flow, &mut file
-                )
-            ).unwrap_or_else(|err| 
-                error!("Could not write transitive graph dump, reason: {err}")
-            )
+            outfile_pls(format!("{}.call-only-flow.gv", id.name))
+                .and_then(|mut file| {
+                    dbg::call_only_flow_dot::dump(tcx, &flow.reduced_flow, &mut file)
+                })
+                .unwrap_or_else(|err| {
+                    error!("Could not write transitive graph dump, reason: {err}")
+                })
         }
 
         let body_for_body_id =

@@ -31,10 +31,10 @@ fn simple_happens_before_has_connections() {
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
 
-    assert!(graph.connects(get, dp));
-    assert!(graph.connects(dp, send));
-    assert!(graph.connects(get, send));
-    assert!(!graph.connects_direct(get, send))
+    assert!(graph.connects(&get, &dp));
+    assert!(graph.connects(&dp, &send));
+    assert!(graph.connects(&get, &send));
+    assert!(!graph.connects_direct(&get, &send))
 }
 
 #[test]
@@ -46,9 +46,9 @@ fn happens_before_if_has_connections() {
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
-    assert!(graph.connects(get, dp,));
-    assert!(graph.connects(dp, send));
-    assert!(graph.connects_direct(get, send));
+    assert!(graph.connects(&get, &dp,));
+    assert!(graph.connects(&dp, &send));
+    assert!(graph.connects_direct(&get, &send));
 }
 
 #[test]
@@ -62,9 +62,9 @@ fn data_influenced_conditional_happens_before() {
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
-    assert!(graph.connects(get, dp,));
-    assert!(graph.connects(dp, send));
-    assert!(graph.connects_direct(get, send));
+    assert!(graph.connects(&get, &dp,));
+    assert!(graph.connects(&dp, &send));
+    assert!(graph.connects_direct(&get, &send));
 }
 
 #[test]
@@ -81,12 +81,12 @@ fn conditional_happens_before_with_two_parents_before_if() {
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
     let push = graph.function_call("push");
-    assert!(graph.connects(push, get));
-    assert!(graph.connects(get, dp));
-    assert!(graph.connects(dp, send));
-    assert!(graph.connects_direct(get, send));
-    assert!(!graph.connects_direct(push, send));
-    assert!(!graph.connects_direct(push, dp));
+    assert!(graph.connects(&push, &get));
+    assert!(graph.connects(&get, &dp));
+    assert!(graph.connects(&dp, &send));
+    assert!(graph.connects_direct(&get, &send));
+    assert!(!graph.connects_direct(&push, &send));
+    assert!(!graph.connects_direct(&push, &dp));
 }
 
 #[test]
@@ -97,9 +97,9 @@ fn loops() {
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
-    assert!(graph.connects(get, dp,));
-    assert!(graph.connects(dp, send));
-    assert!(graph.connects_direct(get, send));
+    assert!(graph.connects(&get, &dp,));
+    assert!(graph.connects(&dp, &send));
+    assert!(graph.connects_direct(&get, &send));
 }
 
 #[allow(dead_code)]
@@ -107,10 +107,10 @@ fn arguments() {
     assert!(*TEST_CRATE_ANALYZED);
 
     let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("args"))).unwrap();
-
-    let a1 = graph.argument(0);
+    let body_id = *graph.body.0.keys().next().unwrap();
+    let a1 = graph.argument(body_id, 0);
 
     let dp = graph.function_call("dp_user_data");
 
-    assert!(graph.connects(a1, dp));
+    assert!(graph.connects(&(a1, body_id), &dp));
 }

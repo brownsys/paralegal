@@ -1,10 +1,10 @@
-use std::rc::Rc;
-
-use flowistry::indexed::{impls::LocationDomain, DefaultDomain, IndexMatrix};
 use serde::Deserialize;
 
 use crate::{
-    ana::{extract_places, read_places_with_provenance},
+    ana::{
+        extract_places, read_places_with_provenance, CallDeps, GlobalLocation, GlobalLocationS,
+        IsGlobalLocation,
+    },
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
@@ -76,6 +76,7 @@ impl Into<mir::Location> for LocationProxy {
     }
 }
 
+#[derive(Debug)]
 pub struct BodyProxy(pub Vec<(mir::Location, String, HashSet<Symbol>)>);
 
 impl Serialize for BodyProxy {
@@ -235,6 +236,8 @@ impl Into<Symbol> for SymbolProxy {
     }
 }
 
+use crate::rust::hir::{self, def_id};
+
 #[derive(Serialize, Deserialize)]
 struct LocationDomainProxy {
     domain: Vec<LocationProxy>,
@@ -243,78 +246,164 @@ struct LocationDomainProxy {
     real_locations: usize,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct NonTransitiveGraphProxy {
-    domain: LocationDomainProxy,
-    matrices: Vec<(LocationProxy, Vec<(SymbolProxy, HashSet<LocationProxy>)>)>,
+fn item_local_id_as_u32(i: &hir::ItemLocalId) -> u32 {
+    i.as_u32()
 }
 
-impl<'tcx> From<&crate::ana::NonTransitiveGraph<'tcx>> for NonTransitiveGraphProxy {
-    fn from(g: &crate::ana::NonTransitiveGraph<'tcx>) -> Self {
-        use flowistry::indexed::IndexedDomain;
-        let a_domain = &g.values().next().expect("Empty graphs").col_domain;
-        let domain = LocationDomainProxy {
-            domain: a_domain
-                .as_vec()
-                .raw
-                .iter()
-                .map(|l| LocationProxy::from(*l))
-                .collect(),
-            arg_block: a_domain.arg_block(),
-            real_locations: a_domain.num_real_locations(),
-        };
-        Self {
-            domain,
-            matrices: g
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        (*k).into(),
-                        v.rows()
-                            .map(|(i, m)| {
-                                (
-                                    Symbol::intern(&format!("{:?}", i)).into(),
-                                    m.iter().map(|l| (*l).into()).collect(),
-                                )
-                            })
-                            .collect(),
-                    )
-                })
-                .collect(),
-        }
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "hir::ItemLocalId")]
+struct ItemLocalIdProxy {
+    #[serde(getter = "item_local_id_as_u32")]
+    private: u32,
+}
+
+impl Into<hir::ItemLocalId> for ItemLocalIdProxy {
+    fn into(self) -> hir::ItemLocalId {
+        hir::ItemLocalId::from_u32(self.private)
     }
 }
 
-pub type SerializableNonTransitiveGraph =
-    HashMap<mir::Location, IndexMatrix<Symbol, mir::Location>>;
+fn def_index_as_u32(i: &def_id::DefIndex) -> u32 {
+    i.as_u32()
+}
 
-impl Into<SerializableNonTransitiveGraph> for NonTransitiveGraphProxy {
-    fn into(self) -> SerializableNonTransitiveGraph {
-        let Self { domain, matrices } = self;
-        let LocationDomainProxy {
-            domain,
-            arg_block,
-            real_locations,
-        } = domain;
-        let dom = Rc::new(LocationDomain::from_raw(
-            DefaultDomain::new(domain.into_iter().map(|l| l.into()).collect()),
-            arg_block,
-            real_locations,
-        ));
-        matrices
-            .into_iter()
-            .map(|(l, v)| {
-                (l.into(), {
-                    let mut m = IndexMatrix::new(&dom);
-                    for (s, idxes) in v.into_iter() {
-                        let sym = s.into();
-                        for idx in idxes.into_iter() {
-                            m.insert(sym, <LocationProxy as Into<mir::Location>>::into(idx));
-                        }
-                    }
-                    m
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "def_id::DefIndex")]
+struct DefIndexProxy {
+    #[serde(getter = "def_index_as_u32")]
+    private: u32,
+}
+
+impl Into<def_id::DefIndex> for DefIndexProxy {
+    fn into(self) -> def_id::DefIndex {
+        def_id::DefIndex::from_u32(self.private)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "def_id::LocalDefId")]
+struct LocalDefIdProxy {
+    #[serde(with = "DefIndexProxy")]
+    local_def_index: def_id::DefIndex,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "hir::HirId")]
+struct HirIdProxy {
+    #[serde(with = "LocalDefIdProxy")]
+    owner: def_id::LocalDefId,
+    #[serde(with = "ItemLocalIdProxy")]
+    local_id: hir::ItemLocalId,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(remote = "hir::BodyId")]
+pub struct BodyIdProxy {
+    #[serde(with = "HirIdProxy")]
+    hir_id: hir::HirId,
+}
+
+/// This exists because of serde's restrictions on how you derive serializers.
+/// `BodyIdProxy` can be used to serialize a `BodyId` but if the `BodyId` is
+/// used as e.g. a key in a map or in a vector it does not dispatch to the
+/// remote impl on `BodyIdProxy`. Implementing the serializers for the map or
+/// vector by hand is annoying so instead you can map over the datastructure,
+/// wrap each `BodyId` in this proxy type and then dispatch to the `serialize`
+/// impl for the reconstructed data structure.
+#[derive(Serialize, Deserialize)]
+pub struct BodyIdProxy2(#[serde(with = "BodyIdProxy")] pub hir::BodyId);
+
+#[derive(Deserialize, Serialize, PartialEq, Eq, Hash)]
+pub struct RawGlobalLocation(Box<GlobalLocationS<RawGlobalLocation>>);
+
+impl<'g> From<&'_ GlobalLocation<'g>> for RawGlobalLocation {
+    fn from(other: &GlobalLocation<'g>) -> Self {
+        RawGlobalLocation(Box::new(GlobalLocationS {
+            function: other.function(),
+            next: other.next().map(|o| o.into()),
+            location: other.location(),
+        }))
+    }
+}
+
+impl crate::ana::IsGlobalLocation for RawGlobalLocation {
+    fn as_global_location_s(&self) -> &GlobalLocationS<RawGlobalLocation> {
+        &self.0
+    }
+}
+
+impl<'g> Serialize for crate::ana::GlobalLocation<'g> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        RawGlobalLocation::from(self).serialize(serializer)
+    }
+}
+#[derive(Serialize, Deserialize)]
+pub struct SerializableCallOnlyFlow(pub HashMap<RawGlobalLocation, CallDeps<RawGlobalLocation>>);
+
+impl SerializableCallOnlyFlow {
+    pub fn all_locations_iter(&self) -> impl Iterator<Item = &RawGlobalLocation> {
+        self.0.iter().flat_map(|(from, deps)| {
+            std::iter::once(from).chain(
+                std::iter::once(&deps.ctrl_deps)
+                    .chain(deps.input_deps.iter())
+                    .flat_map(|d| d.iter()),
+            )
+        })
+    }
+}
+
+impl From<&crate::ana::CallOnlyFlow<'_>> for SerializableCallOnlyFlow {
+    fn from(other: &crate::ana::CallOnlyFlow<'_>) -> Self {
+        SerializableCallOnlyFlow(
+            other
+                .iter()
+                .map(|(g, v)| {
+                    (
+                        g.into(),
+                        CallDeps {
+                            ctrl_deps: v.ctrl_deps.iter().map(|l| l.into()).collect(),
+                            input_deps: v
+                                .input_deps
+                                .iter()
+                                .map(|hs| hs.iter().map(|d| d.into()).collect())
+                                .collect(),
+                        },
+                    )
                 })
-            })
-            .collect()
+                .collect(),
+        )
+    }
+}
+
+pub struct Bodies(pub HashMap<hir::BodyId, BodyProxy>);
+
+impl Serialize for Bodies {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0
+            .iter()
+            .map(|(bid, b)| (BodyIdProxy2(*bid), b))
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Bodies {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Vec::deserialize(deserializer).map(|v| {
+            Bodies(
+                v.into_iter()
+                    .map(|(BodyIdProxy2(bid), v)| (bid, v))
+                    .collect(),
+            )
+        })
     }
 }
