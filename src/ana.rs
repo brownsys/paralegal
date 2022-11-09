@@ -461,6 +461,12 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
     inline_selector: P,
 ) -> Option<Rc<GlobalFlowGraph<'tcx, 'g>>> {
     if let Some(inner) = function_flows.borrow().get(&root_function) {
+        // `inner` is `Option<...>` here which is deliberate. Not only does this
+        // mean that we memoize this expensive inlining computation, but also we
+        // avoid recursion. Before we start computing we insert `None` for our
+        // own id, and so if a recursion (even a mutual one) occurs it will
+        // encounter the `None` and abstract the function instead of inlining
+        // it. This might not be the best way to handel recursion though.
         return inner.clone();
     };
     let local_def_id = tcx.hir().body_owner_def_id(root_function);
@@ -473,6 +479,9 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
     // Make sure we terminate on recursion
     function_flows.borrow_mut().insert(root_function, None);
 
+    // The return of an inlined function call can be used by several locations.
+    // This map stores the results of translating the callees `Place`s to our
+    // `Place`s for each call site so that we only do that translation once.
     let mut translated_return_states: RefCell<
         HashMap<mir::Location, HashMap<mir::Place<'tcx>, HashSet<GlobalLocation<'g>>>>,
     > = RefCell::new(HashMap::new());
@@ -732,6 +741,7 @@ fn compute_call_only_flow<'tcx, 'g>(
     g: &GlobalFlowGraph<'tcx, 'g>,
 ) -> CallOnlyFlow<'g> {
     // I'm making these generic so I don't have to update the types inside all the time and can use inference instead.
+    debug!("Shrinking global flow graph with {} states", g.location_states.len());
     enum Keep<OnKeep, OnReject> {
         Keep(OnKeep),
         Argument(usize),
@@ -743,17 +753,19 @@ fn compute_call_only_flow<'tcx, 'g>(
             tcx,
             tcx.hir().body_owner_def_id(inner_body_id),
         );
-        if !is_real_location(&body_with_facts.body, inner_location) || loc.next().is_none() {
+        if !is_real_location(&body_with_facts.body, inner_location) && loc.next().is_none() {
             Keep::Argument(inner_location.statement_index)
         } else {
             let stmt_at_loc = body_with_facts.body.stmt_at(inner_location);
             match stmt_at_loc {
-                Either::Right(t) => t
+                Either::Right(t) => {
+                    debug!("Found terminator {t:?}");
+                    t
                     .as_fn_and_args()
                     .ok()
                     .map_or(Keep::Reject(stmt_at_loc), |(_, args, dest)| {
                         Keep::Keep((args, dest))
-                    }),
+                    })},
                 _ => Keep::Reject(stmt_at_loc),
             }
         }
@@ -792,11 +804,13 @@ fn compute_call_only_flow<'tcx, 'g>(
                             queue.extend(
                                 read_places_with_provenance(loc.location(), &stmt_at_loc, tcx)
                                     .flat_map(|pl| {
-                                        place_deps[&GlobalPlace {
+                                        let place_as_global = GlobalPlace {
                                             place: pl,
                                             function: p.next().cloned(),
-                                        }]
-                                            .iter()
+                                        };
+                                        place_deps.get(&place_as_global)
+                                            .into_iter()
+                                            .flat_map(|s| s.iter())
                                             .cloned()
                                     }),
                             )
@@ -860,6 +874,7 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
                     .unwrap(),
             )
         });
+        debug!("Constructed reduced flow of {} locations", reduced_flow.len());
         Self {
             root_function: body_id,
             function_flows: function_flows,
