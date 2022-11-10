@@ -1,4 +1,8 @@
-use std::{borrow::Cow, cell::RefCell, rc::Rc};
+use std::{
+    borrow::{BorrowMut, Cow},
+    cell::RefCell,
+    rc::Rc,
+};
 
 use crate::{
     dbg::{self},
@@ -80,7 +84,7 @@ fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
     }
 }
 
-trait TerminatorExt<'tcx> {
+trait AsFnAndArgs<'tcx> {
     fn as_fn_and_args(
         &self,
     ) -> Result<
@@ -93,7 +97,7 @@ trait TerminatorExt<'tcx> {
     >;
 }
 
-impl<'tcx> TerminatorExt<'tcx> for mir::Terminator<'tcx> {
+impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
     fn as_fn_and_args(
         &self,
     ) -> Result<
@@ -104,7 +108,22 @@ impl<'tcx> TerminatorExt<'tcx> for mir::Terminator<'tcx> {
         ),
         &'static str,
     > {
-        match &self.kind {
+        self.kind.as_fn_and_args()
+    }
+}
+
+impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
+    fn as_fn_and_args(
+        &self,
+    ) -> Result<
+        (
+            DefId,
+            Vec<Option<mir::Place<'tcx>>>,
+            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+        ),
+        &'static str,
+    > {
+        match self {
             mir::TerminatorKind::Call {
                 func,
                 args,
@@ -136,6 +155,7 @@ impl<'tcx> TerminatorExt<'tcx> for mir::Terminator<'tcx> {
         }
     }
 }
+
 /// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
 /// object via the visit::Visitor` trait. Usually used to accumulate information
 /// about the places.
@@ -163,14 +183,6 @@ pub fn is_real_location(body: &mir::Body, l: mir::Location) -> bool {
             // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
             l.statement_index <= bb.statements.len())
         == Some(true)
-}
-
-pub struct Visitor<'tcx> {
-    tcx: TyCtxt<'tcx>,
-    opts: &'static crate::Args,
-    marked_objects: HashMap<HirId, (Vec<Annotation>, ObjectType)>,
-    marked_stmts: HashMap<HirId, ((Vec<Annotation>, usize), Span, DefId)>,
-    functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
 }
 
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
@@ -360,49 +372,6 @@ pub struct CallDeps<Location> {
     pub input_deps: Vec<HashSet<Location>>,
 }
 
-fn inner_flow_for_terminator<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
-    dbg_opts: &crate::DbgArgs,
-    tcx: TyCtxt<'tcx>,
-    gli: GLI<'g>,
-    function_flows: &FunctionFlows<'tcx, 'g>,
-    t: &mir::Terminator<'tcx>,
-    inline_selector: P,
-) -> Result<
-    (
-        Rc<GlobalFlowGraph<'tcx, 'g>>,
-        BodyId,
-        &'tcx mir::Body<'tcx>,
-        Vec<Option<mir::Place<'tcx>>>,
-        Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-    ),
-    &'static str,
-> {
-    t.as_fn_and_args().and_then(|(p, args, dest)| {
-        let node = tcx.hir().get_if_local(p).ok_or("non-local node")?;
-        let (callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
-            .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
-        let () = if inline_selector(*callee_local_id) {
-            debug!("Selector succeeded.");
-            Ok(())
-        } else {
-            debug!("Selector failed");
-            Err("Inline selector was false")
-        }?;
-        let inner_flow = compute_granular_global_flows(
-            dbg_opts,
-            tcx,
-            gli,
-            *callee_body_id,
-            function_flows,
-            inline_selector,
-        )
-        .ok_or("is recursive")?;
-        let body = &borrowck_facts::get_body_with_borrowck_facts(tcx, *callee_local_id).body;
-        debug!("Inner flow computed");
-        Ok((inner_flow, *callee_body_id, body, args, dest))
-    })
-}
-
 fn translate_child_to_parent<'tcx>(
     tcx: TyCtxt<'tcx>,
     parent_local_def_id: LocalDefId,
@@ -457,296 +426,396 @@ fn translate_child_to_parent<'tcx>(
     let parent_arg_projected = Place::make(parent_toplevel_arg.local, &projection, tcx);
     Some(parent_arg_projected)
 }
-
-fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
-    dbg_opts: &crate::DbgArgs,
+struct GlobalFlowConstructor<'tcx, 'g, 'a, P> {
+    analysis_opts: &'a crate::AnalysisCtrl,
+    dbg_opts: &'a crate::DbgArgs,
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
-    root_function: BodyId,
-    function_flows: &FunctionFlows<'tcx, 'g>,
+    function_flows: FunctionFlows<'tcx, 'g>,
     inline_selector: P,
-) -> Option<Rc<GlobalFlowGraph<'tcx, 'g>>> {
-    if let Some(inner) = function_flows.borrow().get(&root_function) {
-        // `inner` is `Option<...>` here which is deliberate. Not only does this
-        // mean that we memoize this expensive inlining computation, but also we
-        // avoid recursion. Before we start computing we insert `None` for our
-        // own id, and so if a recursion (even a mutual one) occurs it will
-        // encounter the `None` and abstract the function instead of inlining
-        // it. This might not be the best way to handel recursion though.
-        return inner.clone();
-    };
-    let local_def_id = tcx.hir().body_owner_def_id(root_function);
+}
 
-    let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
-    let body = &body_with_facts.body;
-    let ref from_flowistry =
-        flowistry::infoflow::compute_flow_nontransitive(tcx, root_function, body_with_facts);
+pub trait InlineSelector {
+    fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool;
+}
 
-    // Make sure we terminate on recursion
-    function_flows.borrow_mut().insert(root_function, None);
+impl<T: InlineSelector> InlineSelector for Rc<T> {
+    fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool {
+        self.as_ref().should_inline(tcx, did)
+    }
+}
 
-    // The return of an inlined function call can be used by several locations.
-    // This map stores the results of translating the callees `Place`s to our
-    // `Place`s for each call site so that we only do that translation once.
-    let mut translated_return_states: RefCell<
-        HashMap<mir::Location, HashMap<mir::Place<'tcx>, HashSet<GlobalLocation<'g>>>>,
-    > = RefCell::new(HashMap::new());
-    let make_row_global = |place, dep_set: IndexSet<_, _>| -> HashSet<GlobalLocation<'g>> {
-        dep_set
-            .iter()
-            .flat_map(|l| {
-                if let Some((t, (inner_flow, _, inner_body, args, dest))) =
-                    if !is_real_location(body, *l) {
-                        None
-                    } else {
-                        body.stmt_at(*l).right().and_then(|t| {
-                            Some((
-                                t,
-                                inner_flow_for_terminator(
-                                    dbg_opts,
-                                    tcx,
-                                    gli,
-                                    function_flows,
-                                    t,
-                                    inline_selector,
-                                )
-                                .ok()?,
-                            ))
-                        })
-                    }
-                {
-                    debug!("Inspecting inner flow for {:?}", t.kind);
-                    let mut translated_return_states_borrow = translated_return_states.borrow_mut();
-                    let translated_return_state = translated_return_states_borrow
-                        .entry(*l)
-                        .or_insert_with(|| {
-                            debug!(
-                                "Translating return state with dependency set of size {}",
-                                inner_flow.return_state.len()
-                            );
-                            inner_flow
-                                .return_state
-                                .iter()
-                                .filter_map(|(p, deps)| {
-                                    if p.function.is_none() {
-                                        let parent = translate_child_to_parent(
-                                            tcx,
-                                            local_def_id,
-                                            &args,
-                                            dest,
-                                            p.place,
-                                            true,
-                                            inner_body,
-                                            body,
-                                        );
-                                        if parent.is_none() {
-                                            debug!(
-                                                "No parent found for {:?} (dest is {}present)",
-                                                p.place,
-                                                if dest.is_none() { "not " } else { "" }
-                                            );
-                                        }
-                                        parent
-                                    } else {
-                                        None
-                                    }
-                                    .map(|parent| {
-                                        (
-                                            parent,
-                                            deps.iter()
-                                                .map(|d| {
-                                                    gli.global_location_from_relative(
-                                                        *d,
-                                                        *l,
-                                                        root_function,
-                                                    )
-                                                })
-                                                .collect(),
-                                        )
-                                    })
-                                })
-                                .collect()
-                        });
-                    if let Some(deps) = translated_return_state.get(&place) {
-                        deps.iter().cloned().collect::<Vec<_>>()
-                    } else {
-                        warn!(
-                            "Dependent place {:?} not found in translated return states {:?}",
-                            place, translated_return_state
-                        );
-                        vec![]
-                    }
-                } else {
-                    vec![gli.make_global_location(root_function, *l, None)]
-                }
-                .into_iter()
-            })
-            .collect()
-    };
-    // What to do for locations that are non-inlineable calls
-    let handle_regular_location = |loc| {
-        let matrix = 
-        from_flowistry
-            .state_at(loc)
-            .matrix();
-        if dbg_opts.dump_flowistry_matrix {
-            debug!("Flowistry matrix at {loc:?}\n{}", dbg::PrintableMatrix(matrix));
+struct RecurseSelector {
+    inline_disabled: bool,
+    inline_selector: Box<dyn InlineSelector>,
+}
+
+impl flowistry::extensions::RecurseSelector for RecurseSelector {
+    fn is_selected<'tcx>(&self, tcx: TyCtxt<'tcx>, tk: &TerminatorKind<'tcx>) -> bool {
+        if self.inline_disabled {
+            return false;
         }
-        matrix
-            .rows()
-            .map(|(place, dep_set)| {
-                (
-                    GlobalPlace {
-                        place,
-                        function: None,
-                    },
-                    make_row_global(place, dep_set),
-                )
-            })
-            .collect::<HashMap<_, _>>()
-    };
-    let mut return_state: HashMap<GlobalPlace<'tcx, _>, HashSet<GlobalLocation<'g>>> =
-        HashMap::new();
-    let location_states = body_with_facts
-        .body
-        .basic_blocks()
-        .iter_enumerated()
-        .flat_map(|(bb, bbdat)| {
-            bbdat
-                .statements
-                .iter()
-                .enumerate()
-                .map(move |(idx, stmt)| {
-                    let loc = mir::Location {
-                        block: bb,
-                        statement_index: idx,
-                    };
-                    let global_loc = gli.make_global_location(root_function, loc, None);
-                    (global_loc, handle_regular_location(loc))
-                })
-                .chain({
-                    let loc = body.terminator_loc(bb);
-                    if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
-                        inner_flow_for_terminator(
-                            dbg_opts,
-                            tcx,
-                            gli,
-                            function_flows,
-                            bbdat.terminator(),
-                            inline_selector,
-                        )
-                    {
-                        let global_terminator_loc = gli.globalize_location(loc, inner_body_id);
-                        let caller_state = from_flowistry.state_at(loc).matrix();
-                        let as_parent_dep_matrix: GlobalDepMatrix<'tcx, 'g> = inner_flow
-                            .location_states
-                            .values()
-                            .flat_map(|s| s.keys())
-                            .filter(|gp| gp.function.is_none())
-                            .map(|gp| gp.place)
-                            .collect::<HashSet<_>>()
-                            .into_iter()
-                            .filter_map(|p| {
-                                Some((
-                                    p,
-                                    translate_child_to_parent(
-                                        tcx,
-                                        local_def_id,
-                                        &args,
-                                        dest,
-                                        p,
-                                        false,
-                                        inner_body,
-                                        body,
-                                    )?,
-                                ))
-                            })
-                            .map(|(child, parent)| {
-                                (
-                                    GlobalPlace {
-                                        place: child,
-                                        function: Some(global_terminator_loc),
-                                    },
-                                    make_row_global(parent, caller_state.row_set(parent)),
-                                )
-                            })
-                            .collect();
+        if let Ok(fn_and_args) = tk.as_fn_and_args() {
+            if let Some(hir::Node::Item(hir::Item { def_id, .. })) =
+                tcx.hir().get_if_local(fn_and_args.0)
+            {
+                return self.inline_selector.should_inline(tcx, *def_id);
+            }
+        }
+        false
+    }
+}
 
-                        inner_flow
-                            .location_states
-                            .iter()
-                            .map(move |(inner_loc, map)| {
-                                (
-                                    gli.global_location_from_relative(
-                                        *inner_loc,
-                                        loc,
-                                        root_function,
-                                    ),
-                                    map.iter()
-                                        .map(|(place, deps)| {
+impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'tcx, 'g, 'a, P> {
+    fn new(
+        analysis_opts: &'a crate::AnalysisCtrl,
+        dbg_opts: &'a crate::DbgArgs,
+        tcx: TyCtxt<'tcx>,
+        gli: GLI<'g>,
+        function_flows: FunctionFlows<'tcx, 'g>,
+        inline_selector: P,
+    ) -> Self {
+        Self {
+            analysis_opts,
+            dbg_opts,
+            tcx,
+            gli,
+            function_flows,
+            inline_selector,
+        }
+    }
+
+    fn should_inline(&self, did: LocalDefId) -> bool {
+        !self.analysis_opts.no_recursive_analysis
+            && self.inline_selector.should_inline(self.tcx, did)
+    }
+
+    fn inner_flow_for_terminator(
+        &self,
+        t: &mir::Terminator<'tcx>,
+    ) -> Result<
+        (
+            Rc<GlobalFlowGraph<'tcx, 'g>>,
+            BodyId,
+            &'tcx mir::Body<'tcx>,
+            Vec<Option<mir::Place<'tcx>>>,
+            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+        ),
+        &'static str,
+    > {
+        t.as_fn_and_args().and_then(|(p, args, dest)| {
+            let node = self.tcx.hir().get_if_local(p).ok_or("non-local node")?;
+            let (callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
+                .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
+            let () = if self.should_inline(*callee_local_id) {
+                debug!("Selector succeeded.");
+                Ok(())
+            } else {
+                debug!("Selector failed");
+                Err("Inline selector was false")
+            }?;
+            let inner_flow = self
+                .compute_granular_global_flows(*callee_body_id)
+                .ok_or("is recursive")?;
+            let body =
+                &borrowck_facts::get_body_with_borrowck_facts(self.tcx, *callee_local_id).body;
+            debug!("Inner flow computed");
+            Ok((inner_flow, *callee_body_id, body, args, dest))
+        })
+    }
+
+    fn compute_granular_global_flows(
+        &self,
+        root_function: BodyId,
+    ) -> Option<Rc<GlobalFlowGraph<'tcx, 'g>>> {
+        if let Some(inner) = self.function_flows.borrow().get(&root_function) {
+            // `inner` is `Option<...>` here which is deliberate. Not only does this
+            // mean that we memoize this expensive inlining computation, but also we
+            // avoid recursion. Before we start computing we insert `None` for our
+            // own id, and so if a recursion (even a mutual one) occurs it will
+            // encounter the `None` and abstract the function instead of inlining
+            // it. This might not be the best way to handel recursion though.
+            return inner.clone();
+        };
+        let local_def_id = self.tcx.hir().body_owner_def_id(root_function);
+
+        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
+        let body = &body_with_facts.body;
+        let ref from_flowistry = {
+            use flowistry::extensions::{
+                fluid_set, ContextMode, EvalMode, EVAL_MODE, RECURSE_SELECTOR,
+            };
+            let mut eval_mode = EvalMode::default();
+            if !self.analysis_opts.no_recursive_analysis {
+                eval_mode.context_mode = ContextMode::Recurse;
+            }
+            fluid_set!(EVAL_MODE, eval_mode);
+            let recurse_selector = Box::new(RecurseSelector {
+                inline_disabled: self.analysis_opts.no_recursive_analysis,
+                inline_selector: Box::new(self.inline_selector.clone()) as Box<dyn InlineSelector>,
+            })
+                as Box<dyn flowistry::extensions::RecurseSelector>;
+            fluid_set!(RECURSE_SELECTOR, recurse_selector);
+            flowistry::infoflow::compute_flow_nontransitive(
+                self.tcx,
+                root_function,
+                body_with_facts,
+            )
+        };
+
+        // Make sure we terminate on recursion
+        self.function_flows.borrow_mut().insert(root_function, None);
+
+        // The return of an inlined function call can be used by several locations.
+        // This map stores the results of translating the callees `Place`s to our
+        // `Place`s for each call site so that we only do that translation once.
+        let mut translated_return_states: RefCell<
+            HashMap<mir::Location, HashMap<mir::Place<'tcx>, HashSet<GlobalLocation<'g>>>>,
+        > = RefCell::new(HashMap::new());
+        let make_row_global = |place, dep_set: IndexSet<_, _>| -> HashSet<GlobalLocation<'g>> {
+            dep_set
+                .iter()
+                .flat_map(|l| {
+                    if let Some((t, (inner_flow, _, inner_body, args, dest))) =
+                        if !is_real_location(body, *l) {
+                            None
+                        } else {
+                            body.stmt_at(*l)
+                                .right()
+                                .and_then(|t| Some((t, self.inner_flow_for_terminator(t).ok()?)))
+                        }
+                    {
+                        debug!("Inspecting inner flow for {:?}", t.kind);
+                        let mut translated_return_states_borrow =
+                            translated_return_states.borrow_mut();
+                        let translated_return_state = translated_return_states_borrow
+                            .entry(*l)
+                            .or_insert_with(|| {
+                                debug!(
+                                    "Translating return state with dependency set of size {}",
+                                    inner_flow.return_state.len()
+                                );
+                                inner_flow
+                                    .return_state
+                                    .iter()
+                                    .filter_map(|(p, deps)| {
+                                        if p.function.is_none() {
+                                            let parent = translate_child_to_parent(
+                                                self.tcx,
+                                                local_def_id,
+                                                &args,
+                                                dest,
+                                                p.place,
+                                                true,
+                                                inner_body,
+                                                body,
+                                            );
+                                            if parent.is_none() {
+                                                debug!(
+                                                    "No parent found for {:?} (dest is {}present)",
+                                                    p.place,
+                                                    if dest.is_none() { "not " } else { "" }
+                                                );
+                                            }
+                                            parent
+                                        } else {
+                                            None
+                                        }
+                                        .map(|parent| {
                                             (
-                                                place.relative_to(gli, loc, root_function),
+                                                parent,
                                                 deps.iter()
-                                                    .map(|dep| {
-                                                        gli.global_location_from_relative(
-                                                            *dep,
-                                                            loc,
+                                                    .map(|d| {
+                                                        self.gli.global_location_from_relative(
+                                                            *d,
+                                                            *l,
                                                             root_function,
                                                         )
                                                     })
-                                                    .collect::<HashSet<_>>(),
+                                                    .collect(),
                                             )
                                         })
-                                        .collect::<HashMap<_, _>>(),
-                                )
-                            })
-                            .chain((1..=args.len()).into_iter().map(move |a| {
-                                let global_call_site = gli.globalize_location(
-                                    mir::Location {
-                                        block: mir::BasicBlock::from_usize(
-                                            inner_body.basic_blocks().len(),
-                                        ),
-                                        statement_index: a,
-                                    },
-                                    inner_body_id,
-                                );
-                                let global_arg_loc = gli.global_location_from_relative(
-                                    global_call_site,
-                                    loc,
-                                    root_function,
-                                );
-                                (global_arg_loc, as_parent_dep_matrix.clone())
-                            }))
-                            .collect()
+                                    })
+                                    .collect()
+                            });
+                        if let Some(deps) = translated_return_state.get(&place) {
+                            deps.iter().cloned().collect::<Vec<_>>()
+                        } else {
+                            warn!(
+                                "Dependent place {:?} not found in translated return states {:?}",
+                                place, translated_return_state
+                            );
+                            vec![]
+                        }
                     } else {
-                        let state_at_term = handle_regular_location(loc);
-                        if let TerminatorKind::Return = bbdat.terminator().kind {
-                            for (p, deps) in state_at_term.iter() {
-                                return_state
-                                    .entry(*p)
-                                    .or_insert_with(|| HashSet::new())
-                                    .extend(deps.iter().cloned());
-                            }
-                        };
-                        vec![(gli.globalize_location(loc, root_function), state_at_term)]
+                        vec![self.gli.make_global_location(root_function, *l, None)]
                     }
                     .into_iter()
                 })
-        })
-        .collect();
-    function_flows.borrow_mut().insert(
-        root_function,
-        Some(Rc::new(GlobalFlowGraph {
-            location_states,
-            return_state,
-        })),
-    );
-    Some(
-        function_flows.borrow()[&root_function]
-            .as_ref()
-            .unwrap()
-            .clone(),
-    )
+                .collect()
+        };
+        // What to do for locations that are non-inlineable calls
+        let handle_regular_location = |loc| {
+            let matrix = from_flowistry.state_at(loc).matrix();
+            if self.dbg_opts.dump_flowistry_matrix {
+                debug!(
+                    "Flowistry matrix at {loc:?}\n{}",
+                    dbg::PrintableMatrix(matrix)
+                );
+            }
+            matrix
+                .rows()
+                .map(|(place, dep_set)| {
+                    (
+                        GlobalPlace {
+                            place,
+                            function: None,
+                        },
+                        make_row_global(place, dep_set),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        };
+        let mut return_state: HashMap<GlobalPlace<'tcx, _>, HashSet<GlobalLocation<'g>>> =
+            HashMap::new();
+        let location_states = body_with_facts
+            .body
+            .basic_blocks()
+            .iter_enumerated()
+            .flat_map(|(bb, bbdat)| {
+                bbdat
+                    .statements
+                    .iter()
+                    .enumerate()
+                    .map(move |(idx, stmt)| {
+                        let loc = mir::Location {
+                            block: bb,
+                            statement_index: idx,
+                        };
+                        let global_loc = self.gli.make_global_location(root_function, loc, None);
+                        (global_loc, handle_regular_location(loc))
+                    })
+                    .chain({
+                        let loc = body.terminator_loc(bb);
+                        if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
+                            self.inner_flow_for_terminator(bbdat.terminator())
+                        {
+                            let global_terminator_loc =
+                                self.gli.globalize_location(loc, inner_body_id);
+                            let caller_state = from_flowistry.state_at(loc).matrix();
+                            let as_parent_dep_matrix: GlobalDepMatrix<'tcx, 'g> = inner_flow
+                                .location_states
+                                .values()
+                                .flat_map(|s| s.keys())
+                                .filter(|gp| gp.function.is_none())
+                                .map(|gp| gp.place)
+                                .collect::<HashSet<_>>()
+                                .into_iter()
+                                .filter_map(|p| {
+                                    Some((
+                                        p,
+                                        translate_child_to_parent(
+                                            self.tcx,
+                                            local_def_id,
+                                            &args,
+                                            dest,
+                                            p,
+                                            false,
+                                            inner_body,
+                                            body,
+                                        )?,
+                                    ))
+                                })
+                                .map(|(child, parent)| {
+                                    (
+                                        GlobalPlace {
+                                            place: child,
+                                            function: Some(global_terminator_loc),
+                                        },
+                                        make_row_global(parent, caller_state.row_set(parent)),
+                                    )
+                                })
+                                .collect();
+
+                            inner_flow
+                                .location_states
+                                .iter()
+                                .map(move |(inner_loc, map)| {
+                                    (
+                                        self.gli.global_location_from_relative(
+                                            *inner_loc,
+                                            loc,
+                                            root_function,
+                                        ),
+                                        map.iter()
+                                            .map(|(place, deps)| {
+                                                (
+                                                    place.relative_to(self.gli, loc, root_function),
+                                                    deps.iter()
+                                                        .map(|dep| {
+                                                            self.gli.global_location_from_relative(
+                                                                *dep,
+                                                                loc,
+                                                                root_function,
+                                                            )
+                                                        })
+                                                        .collect::<HashSet<_>>(),
+                                                )
+                                            })
+                                            .collect::<HashMap<_, _>>(),
+                                    )
+                                })
+                                .chain((1..=args.len()).into_iter().map(move |a| {
+                                    let global_call_site = self.gli.globalize_location(
+                                        mir::Location {
+                                            block: mir::BasicBlock::from_usize(
+                                                inner_body.basic_blocks().len(),
+                                            ),
+                                            statement_index: a,
+                                        },
+                                        inner_body_id,
+                                    );
+                                    let global_arg_loc = self.gli.global_location_from_relative(
+                                        global_call_site,
+                                        loc,
+                                        root_function,
+                                    );
+                                    (global_arg_loc, as_parent_dep_matrix.clone())
+                                }))
+                                .collect()
+                        } else {
+                            let state_at_term = handle_regular_location(loc);
+                            if let TerminatorKind::Return = bbdat.terminator().kind {
+                                for (p, deps) in state_at_term.iter() {
+                                    return_state
+                                        .entry(*p)
+                                        .or_insert_with(|| HashSet::new())
+                                        .extend(deps.iter().cloned());
+                                }
+                            };
+                            vec![(
+                                self.gli.globalize_location(loc, root_function),
+                                state_at_term,
+                            )]
+                        }
+                        .into_iter()
+                    })
+            })
+            .collect();
+        self.function_flows.borrow_mut().insert(
+            root_function,
+            Some(Rc::new(GlobalFlowGraph {
+                location_states,
+                return_state,
+            })),
+        );
+        Some(
+            self.function_flows.borrow()[&root_function]
+                .as_ref()
+                .unwrap()
+                .clone(),
+        )
+    }
 }
 
 fn compute_call_only_flow<'tcx, 'g>(
@@ -774,13 +843,12 @@ fn compute_call_only_flow<'tcx, 'g>(
         } else {
             let stmt_at_loc = body_with_facts.body.stmt_at(inner_location);
             match stmt_at_loc {
-                Either::Right(t) => {
-                    t.as_fn_and_args()
-                        .ok()
-                        .map_or(Keep::Reject(stmt_at_loc), |(_, args, dest)| {
-                            Keep::Keep((args, dest))
-                        })
-                }
+                Either::Right(t) => t
+                    .as_fn_and_args()
+                    .ok()
+                    .map_or(Keep::Reject(stmt_at_loc), |(_, args, dest)| {
+                        Keep::Keep((args, dest))
+                    }),
                 _ => Keep::Reject(stmt_at_loc),
             }
         }
@@ -829,15 +897,15 @@ fn compute_call_only_flow<'tcx, 'g>(
                 deps
             };
             Some((
-                    *loc,
-                    CallDeps {
-                        input_deps: args
-                            .into_iter()
-                            .map(|p| p.map_or_else(|| HashSet::new(), deps_for))
-                            .collect(),
-                        ctrl_deps: HashSet::new(),
-                    },
-                ))
+                *loc,
+                CallDeps {
+                    input_deps: args
+                        .into_iter()
+                        .map(|p| p.map_or_else(|| HashSet::new(), deps_for))
+                        .collect(),
+                    ctrl_deps: HashSet::new(),
+                },
+            ))
         })
         .collect()
 }
@@ -863,7 +931,7 @@ fn places_read<'tcx>(
 }
 
 impl<'tcx, 'g> Flow<'tcx, 'g> {
-    fn compute<P: Fn(LocalDefId) -> bool + Copy>(
+    fn compute<P: InlineSelector + Clone + 'static>(
         opts: &crate::AnalysisCtrl,
         dbg_opts: &crate::DbgArgs,
         tcx: TyCtxt<'tcx>,
@@ -876,20 +944,19 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
         if !opts.no_recursive_analysis {
             eval_mode.context_mode = flowistry::extensions::ContextMode::Recurse;
         }
-        let reduced_flow = flowistry::extensions::EVAL_MODE.set(&eval_mode, || {
-            compute_call_only_flow(
-                tcx,
-                &compute_granular_global_flows(dbg_opts, tcx, gli, body_id, &function_flows, |f| !opts.no_recursive_analysis && inline_selector(f))
-                    .unwrap(),
-            )
-        });
+        let constructor =
+            GlobalFlowConstructor::new(opts, dbg_opts, tcx, gli, function_flows, inline_selector);
+        let reduced_flow = compute_call_only_flow(
+            tcx,
+            &constructor.compute_granular_global_flows(body_id).unwrap(),
+        );
         debug!(
             "Constructed reduced flow of {} locations",
             reduced_flow.len()
         );
         Self {
             root_function: body_id,
-            function_flows: function_flows,
+            function_flows: constructor.function_flows,
             reduced_flow,
         }
     }
@@ -905,17 +972,16 @@ pub fn read_places_with_provenance<'tcx>(
         .flat_map(move |place| provenance_of(tcx, place).into_iter())
 }
 
-pub fn provenance_of<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    place: Place<'tcx>,
-) -> Vec<Place<'tcx>> {
+pub fn provenance_of<'tcx>(tcx: TyCtxt<'tcx>, place: Place<'tcx>) -> Vec<Place<'tcx>> {
     use flowistry::mir::utils::PlaceExt;
-    std::iter::once(place).chain(
-        place
-            .refs_in_projection()
-            .into_iter()
-            .map(|t| mir::Place::from_ref(t.0, tcx)),
-    ).collect()
+    std::iter::once(place)
+        .chain(
+            place
+                .refs_in_projection()
+                .into_iter()
+                .map(|t| mir::Place::from_ref(t.0, tcx)),
+        )
+        .collect()
 }
 
 fn node_as_fn<'hir>(
@@ -942,12 +1008,36 @@ pub fn outfile_pls<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<std::f
         .open(path)
 }
 
+#[derive(Clone)]
+struct SkipAnnotatedFunctionSelector {
+    marked_objects: MarkedObjects,
+}
+
+impl InlineSelector for SkipAnnotatedFunctionSelector {
+    fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool {
+        self.marked_objects
+            .borrow()
+            .get(&tcx.hir().local_def_id_to_hir_id(did))
+            .map_or(true, |anns| anns.0.is_empty())
+    }
+}
+
+type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
+
+pub struct Visitor<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    opts: &'static crate::Args,
+    marked_objects: MarkedObjects,
+    marked_stmts: HashMap<HirId, ((Vec<Annotation>, usize), Span, DefId)>,
+    functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
+}
+
 impl<'tcx> Visitor<'tcx> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         Self {
             tcx,
             opts,
-            marked_objects: HashMap::new(),
+            marked_objects: Rc::new(RefCell::new(HashMap::new())),
             marked_stmts: HashMap::new(),
             functions_to_analyze: vec![],
         }
@@ -976,7 +1066,7 @@ impl<'tcx> Visitor<'tcx> {
                     .and_then(DefId::as_local)
                     .and_then(|def| {
                         let hid = self.tcx.hir().local_def_id_to_hir_id(def);
-                        if self.marked_objects.contains_key(&hid) {
+                        if self.marked_objects.borrow().contains_key(&hid) {
                             Some(Identifier::new(
                                 self.tcx
                                     .item_name(self.tcx.hir().local_def_id(hid).to_def_id()),
@@ -1035,11 +1125,16 @@ impl<'tcx> Visitor<'tcx> {
         }
 
         debug!("{}", id.name);
-        let flow = Flow::compute(&self.opts.anactrl, &self.opts.dbg, tcx, b, gli, |did| {
-            self.marked_objects
-                .get(&tcx.hir().local_def_id_to_hir_id(did))
-                .map_or(true, |anns| anns.0.is_empty())
-        });
+        let flow = Flow::compute(
+            &self.opts.anactrl,
+            &self.opts.dbg,
+            tcx,
+            b,
+            gli,
+            SkipAnnotatedFunctionSelector {
+                marked_objects: self.marked_objects.clone(),
+            },
+        );
 
         let body = &body_with_facts.body;
         {
@@ -1194,6 +1289,7 @@ impl<'tcx> Visitor<'tcx> {
         let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
         let interesting_fn_defs = self
             .marked_objects
+            .borrow()
             .iter()
             .filter_map(|(s, v)| match v.1 {
                 ObjectType::Function(i) => {
@@ -1224,6 +1320,7 @@ impl<'tcx> Visitor<'tcx> {
                         .map(|(k, v)| (identifier_for_fn(tcx, k), (v.0, ObjectType::Function(v.1))))
                         .chain(
                             self.marked_objects
+                                .borrow()
                                 .iter()
                                 .filter(|kv| kv.1 .1 == ObjectType::Type)
                                 .map(|(k, v)| (identifier_for_hid(tcx, *k), v.clone())),
@@ -1334,6 +1431,8 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
             let node = self.tcx.hir().find(id).unwrap();
             assert!(if let Some(decl) = node.fn_decl() {
                 self.marked_objects
+                    .as_ref()
+                    .borrow_mut()
                     .insert(id, (sink_matches, ObjectType::Function(decl.inputs.len())))
                     .is_none()
             } else {
@@ -1344,6 +1443,8 @@ impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
                         ..
                     }) => self
                         .marked_objects
+                        .as_ref()
+                        .borrow_mut()
                         .insert(id, (sink_matches, ObjectType::Type))
                         .is_none(),
                     _ => {
