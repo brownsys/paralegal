@@ -88,7 +88,10 @@ pub struct Args {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
-struct AnalysisCtrl {}
+struct AnalysisCtrl {
+    #[clap(long, env)]
+    no_recursive_analysis: bool,
+}
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct DbgArgs {

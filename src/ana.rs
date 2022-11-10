@@ -14,6 +14,7 @@ use hir::{
     intravisit::{self, FnKind},
     BodyId,
 };
+use mir::{Location, Place, Statement, Terminator};
 use rustc_data_structures::{intern::Interned, sharded::ShardedHashMap};
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
@@ -25,7 +26,10 @@ use rustc_span::{symbol::Ident, Span, Symbol};
 
 use crate::rust::rustc_arena;
 use flowistry::{
-    indexed::{impls::LocationDomain, IndexedDomain},
+    indexed::{
+        impls::{LocationDomain, PlaceSet},
+        IndexedDomain,
+    },
     infoflow::{self, FlowAnalysis, FlowDomain, NonTransitiveFlowDomain},
     mir::{borrowck_facts, engine::AnalysisResults, utils::BodyExt},
 };
@@ -357,6 +361,7 @@ pub struct CallDeps<Location> {
 }
 
 fn inner_flow_for_terminator<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
+    dbg_opts: &crate::DbgArgs,
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     function_flows: &FunctionFlows<'tcx, 'g>,
@@ -372,7 +377,6 @@ fn inner_flow_for_terminator<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
     ),
     &'static str,
 > {
-    debug!("Considering {:?}", t);
     t.as_fn_and_args().and_then(|(p, args, dest)| {
         let node = tcx.hir().get_if_local(p).ok_or("non-local node")?;
         let (callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
@@ -385,6 +389,7 @@ fn inner_flow_for_terminator<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
             Err("Inline selector was false")
         }?;
         let inner_flow = compute_granular_global_flows(
+            dbg_opts,
             tcx,
             gli,
             *callee_body_id,
@@ -454,6 +459,7 @@ fn translate_child_to_parent<'tcx>(
 }
 
 fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
+    dbg_opts: &crate::DbgArgs,
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     root_function: BodyId,
@@ -497,6 +503,7 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
                             Some((
                                 t,
                                 inner_flow_for_terminator(
+                                    dbg_opts,
                                     tcx,
                                     gli,
                                     function_flows,
@@ -578,9 +585,14 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
     };
     // What to do for locations that are non-inlineable calls
     let handle_regular_location = |loc| {
+        let matrix = 
         from_flowistry
             .state_at(loc)
-            .matrix()
+            .matrix();
+        if dbg_opts.dump_flowistry_matrix {
+            debug!("Flowistry matrix at {loc:?}\n{}", dbg::PrintableMatrix(matrix));
+        }
+        matrix
             .rows()
             .map(|(place, dep_set)| {
                 (
@@ -616,6 +628,7 @@ fn compute_granular_global_flows<'tcx, 'g, P: Fn(LocalDefId) -> bool + Copy>(
                     let loc = body.terminator_loc(bb);
                     if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
                         inner_flow_for_terminator(
+                            dbg_opts,
                             tcx,
                             gli,
                             function_flows,
@@ -740,8 +753,11 @@ fn compute_call_only_flow<'tcx, 'g>(
     tcx: TyCtxt<'tcx>,
     g: &GlobalFlowGraph<'tcx, 'g>,
 ) -> CallOnlyFlow<'g> {
+    debug!(
+        "Shrinking global flow graph with {} states",
+        g.location_states.len()
+    );
     // I'm making these generic so I don't have to update the types inside all the time and can use inference instead.
-    debug!("Shrinking global flow graph with {} states", g.location_states.len());
     enum Keep<OnKeep, OnReject> {
         Keep(OnKeep),
         Argument(usize),
@@ -759,39 +775,39 @@ fn compute_call_only_flow<'tcx, 'g>(
             let stmt_at_loc = body_with_facts.body.stmt_at(inner_location);
             match stmt_at_loc {
                 Either::Right(t) => {
-                    debug!("Found terminator {t:?}");
-                    t
-                    .as_fn_and_args()
-                    .ok()
-                    .map_or(Keep::Reject(stmt_at_loc), |(_, args, dest)| {
-                        Keep::Keep((args, dest))
-                    })},
+                    t.as_fn_and_args()
+                        .ok()
+                        .map_or(Keep::Reject(stmt_at_loc), |(_, args, dest)| {
+                            Keep::Keep((args, dest))
+                        })
+                }
                 _ => Keep::Reject(stmt_at_loc),
             }
         }
     };
     g.location_states
         .iter()
-        .filter_map(|(loc, place_deps)| {
-            let (args, dest) = match as_location_to_keep(*loc) {
+        .filter_map(|(loc, _)| {
+            let (args, _) = match as_location_to_keep(*loc) {
                 Keep::Keep(k) => Some(k),
                 _ => None,
             }?;
-            let deps_for = |p: mir::Place| {
-                let place_as_global = GlobalPlace {
-                    place: p,
-                    function: loc.next().cloned(),
+            let deps_for = |p: mir::Place<'tcx>| {
+                let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]| {
+                    places
+                        .iter()
+                        .flat_map(|place| provenance_of(tcx, *place).into_iter())
+                        .filter_map(|place| {
+                            g.location_states.get(&loc)?.get(&GlobalPlace {
+                                place,
+                                function: loc.next().cloned(),
+                            })
+                        })
+                        .flat_map(|s| s.iter())
+                        .cloned()
+                        .collect::<Vec<_>>()
                 };
-                let place_dep_row = place_deps.get(&place_as_global);
-                if place_dep_row.is_none() {
-                    warn!("No dependencies found for place {:?}", place_as_global);
-                }
-
-                let mut queue = place_dep_row
-                    .into_iter()
-                    .flat_map(|f| f.iter())
-                    .cloned()
-                    .collect::<Vec<_>>();
+                let mut queue = deps_for_places(*loc, &[p]);
                 let mut seen = HashSet::new();
                 let mut deps = HashSet::new();
                 while let Some(p) = queue.pop() {
@@ -801,37 +817,27 @@ fn compute_call_only_flow<'tcx, 'g>(
                         }
                         Keep::Reject(stmt_at_loc) if !seen.contains(&p) => {
                             seen.insert(p);
-                            queue.extend(
-                                read_places_with_provenance(loc.location(), &stmt_at_loc, tcx)
-                                    .flat_map(|pl| {
-                                        let place_as_global = GlobalPlace {
-                                            place: pl,
-                                            function: p.next().cloned(),
-                                        };
-                                        place_deps.get(&place_as_global)
-                                            .into_iter()
-                                            .flat_map(|s| s.iter())
-                                            .cloned()
-                                    }),
-                            )
+                            queue.extend(deps_for_places(
+                                p,
+                                &places_read(p.innermost_location_and_body().0, &stmt_at_loc)
+                                    .collect::<Vec<_>>(),
+                            ))
                         }
                         _ => (),
                     }
                 }
                 deps
             };
-            dest.map(|(dest, _)| {
-                (
+            Some((
                     *loc,
                     CallDeps {
                         input_deps: args
                             .into_iter()
                             .map(|p| p.map_or_else(|| HashSet::new(), deps_for))
                             .collect(),
-                        ctrl_deps: deps_for(dest),
+                        ctrl_deps: HashSet::new(),
                     },
-                )
-            })
+                ))
         })
         .collect()
 }
@@ -859,6 +865,7 @@ fn places_read<'tcx>(
 impl<'tcx, 'g> Flow<'tcx, 'g> {
     fn compute<P: Fn(LocalDefId) -> bool + Copy>(
         opts: &crate::AnalysisCtrl,
+        dbg_opts: &crate::DbgArgs,
         tcx: TyCtxt<'tcx>,
         body_id: BodyId,
         gli: GLI<'g>,
@@ -866,15 +873,20 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
     ) -> Self {
         let mut eval_mode = flowistry::extensions::EvalMode::default();
         let mut function_flows = RefCell::new(HashMap::new());
-        eval_mode.context_mode = flowistry::extensions::ContextMode::Recurse;
+        if !opts.no_recursive_analysis {
+            eval_mode.context_mode = flowistry::extensions::ContextMode::Recurse;
+        }
         let reduced_flow = flowistry::extensions::EVAL_MODE.set(&eval_mode, || {
             compute_call_only_flow(
                 tcx,
-                &compute_granular_global_flows(tcx, gli, body_id, &function_flows, inline_selector)
+                &compute_granular_global_flows(dbg_opts, tcx, gli, body_id, &function_flows, |f| !opts.no_recursive_analysis && inline_selector(f))
                     .unwrap(),
             )
         });
-        debug!("Constructed reduced flow of {} locations", reduced_flow.len());
+        debug!(
+            "Constructed reduced flow of {} locations",
+            reduced_flow.len()
+        );
         Self {
             root_function: body_id,
             function_flows: function_flows,
@@ -884,22 +896,26 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
 }
 
 pub fn read_places_with_provenance<'tcx>(
-    l: mir::Location,
-    stmt: &Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>,
+    l: Location,
+    stmt: &Either<&Statement<'tcx>, &Terminator<'tcx>>,
     tcx: TyCtxt<'tcx>,
-) -> impl Iterator<Item = mir::Place<'tcx>> {
+) -> impl Iterator<Item = Place<'tcx>> {
+    places_read(l, stmt)
+        .into_iter()
+        .flat_map(move |place| provenance_of(tcx, place).into_iter())
+}
+
+pub fn provenance_of<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    place: Place<'tcx>,
+) -> Vec<Place<'tcx>> {
     use flowistry::mir::utils::PlaceExt;
-    places_read(l, stmt).into_iter().flat_map(move |place| {
-        std::iter::once(place)
-            .chain(
-                place
-                    .refs_in_projection()
-                    .into_iter()
-                    .map(|t| mir::Place::from_ref(t.0, tcx)),
-            )
-            .collect::<Vec<_>>()
+    std::iter::once(place).chain(
+        place
+            .refs_in_projection()
             .into_iter()
-    })
+            .map(|t| mir::Place::from_ref(t.0, tcx)),
+    ).collect()
 }
 
 fn node_as_fn<'hir>(
@@ -1019,7 +1035,7 @@ impl<'tcx> Visitor<'tcx> {
         }
 
         debug!("{}", id.name);
-        let flow = Flow::compute(&self.opts.anactrl, tcx, b, gli, |did| {
+        let flow = Flow::compute(&self.opts.anactrl, &self.opts.dbg, tcx, b, gli, |did| {
             self.marked_objects
                 .get(&tcx.hir().local_def_id_to_hir_id(did))
                 .map_or(true, |anns| anns.0.is_empty())
@@ -1033,10 +1049,6 @@ impl<'tcx> Visitor<'tcx> {
                 (DataSource::Argument(l.as_usize() - 1), subtypes)
             });
             flows.add_types(types);
-        }
-
-        if self.opts.dbg.dump_flowistry_matrix {
-            unimplemented!();
         }
 
         if self.opts.dbg.dump_serialized_non_transitive_graph {
@@ -1059,10 +1071,10 @@ impl<'tcx> Visitor<'tcx> {
 
         let body_for_body_id =
             |b| borrowck_facts::get_body_with_borrowck_facts(tcx, tcx.hir().body_owner_def_id(b));
-        let body_with_facts = body_for_body_id(b);
-        let ref body = body_with_facts.body;
 
         for (loc, deps) in flow.reduced_flow.iter() {
+            let body_with_facts = body_for_body_id(loc.innermost_location_and_body().1);
+            let ref body = body_with_facts.body;
             if !is_real_location(&body, loc.location()) {
                 // These can only be (controller) arguments and they cannot have dependencies (and thus not receive any data)
                 continue;

@@ -344,25 +344,37 @@ pub struct SerializableCallOnlyFlow(pub HashMap<RawGlobalLocation, CallDeps<RawG
 
 impl Serialize for SerializableCallOnlyFlow {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer {
+    where
+        S: Serializer,
+    {
         serialize_map_via_vec(&self.0, serializer)
     }
 }
 
-impl <'de> Deserialize<'de> for SerializableCallOnlyFlow {
+impl<'de> Deserialize<'de> for SerializableCallOnlyFlow {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de> {
+    where
+        D: serde::Deserializer<'de>,
+    {
         Ok(Self(deserialize_map_via_vec(deserializer)?))
     }
 }
 
-fn serialize_map_via_vec<S: Serializer, K: Serialize, V:Serialize>(map: &HashMap<K, V>, serializer: S) -> Result<S::Ok, S::Error> {
+fn serialize_map_via_vec<S: Serializer, K: Serialize, V: Serialize>(
+    map: &HashMap<K, V>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
     map.iter().collect::<Vec<_>>().serialize(serializer)
 }
 
-fn deserialize_map_via_vec<'de, D: serde::Deserializer<'de>, K: Deserialize<'de> + std::cmp::Eq + std::hash::Hash, V: Deserialize<'de>>(deserializer: D) -> Result<HashMap<K, V>, D::Error> {
+fn deserialize_map_via_vec<
+    'de,
+    D: serde::Deserializer<'de>,
+    K: Deserialize<'de> + std::cmp::Eq + std::hash::Hash,
+    V: Deserialize<'de>,
+>(
+    deserializer: D,
+) -> Result<HashMap<K, V>, D::Error> {
     Ok(Vec::deserialize(deserializer)?.into_iter().collect())
 }
 
