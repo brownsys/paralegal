@@ -44,7 +44,7 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 
 use std::collections::HashMap;
 
-use crate::HashSet;
+use crate::{HashSet, IsGlobalLocation, ana};
 use crate::{ana::CallOnlyFlow, rust::rustc_middle::ty::TyCtxt};
 use flowistry::indexed::impls::LocationDomain;
 use flowistry::indexed::IndexedDomain;
@@ -55,7 +55,7 @@ use crate::{
     Either, Symbol,
 };
 extern crate dot;
-use crate::ana::{is_real_location, read_places_with_provenance, NonTransitiveGraph};
+use crate::ana::{is_real_location, read_places_with_provenance, NonTransitiveGraph, GlobalFlowGraph};
 
 struct DotGraph<'a, 'b, 'tcx> {
     body: &'a mir::Body<'tcx>,
@@ -138,22 +138,24 @@ pub mod call_only_flow_dot {
             dot::Id::new(format!("n{}", n.stable_id())).unwrap()
         }
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
+            let (loc, body_id) = n.innermost_location_and_body();
             let body_with_facts = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
                 self.tcx,
-                self.tcx.hir().body_owner_def_id(n.function()),
+                self.tcx.hir().body_owner_def_id(body_id),
             );
             let body = &body_with_facts.body;
             dot::LabelText::LabelStr(
-                if !crate::ana::is_real_location(&body, n.location()) {
+                if !crate::ana::is_real_location(&body, loc) {
+                    assert!(n.is_at_root());
                     format!(
                         "Argument {}",
-                        flowistry::mir::utils::location_to_string(n.location(), body)
+                        flowistry::mir::utils::location_to_string(loc, body)
                     )
                 } else {
-                    match body.stmt_at(n.location()) {
-                        Either::Left(stmt) => format!("[{:?}] {:?}", n.location().block, stmt.kind),
+                    match body.stmt_at(loc) {
+                        Either::Left(stmt) => format!("[{:?}] {:?}", loc.block, stmt.kind),
                         Either::Right(term) => {
-                            format!("[{:?}] {:?}", n.location().block, term.kind)
+                            format!("[{:?}] {:?}", loc.block, term.kind)
                         }
                     }
                 }
@@ -171,6 +173,41 @@ pub mod call_only_flow_dot {
         mut out: W,
     ) -> std::io::Result<()> {
         dot::render(&G { graph, tcx }, &mut out)
+    }
+}
+
+struct PrintableGranularFlow<'a, 'g, 'tcx> {
+    flow: &'a GlobalFlowGraph<'tcx, 'g>,
+    tcx: TyCtxt<'tcx>
+}
+
+impl <'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (loc, deps) in self.flow.location_states.iter() {
+            write!(f, "  {}", loc)?;
+            let (inner_location, inner_body) = loc.innermost_location_and_body();
+            let body = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(self.tcx, self.tcx.hir().body_owner_def_id(inner_body));
+            if !is_real_location(&body.body, inner_location) {
+                write!(f, " is argument {}", inner_location.statement_index - 1)?;
+            } else {
+                writeln!(f, "")?;
+                for place in ana::places_read(inner_location, &body.body.stmt_at(inner_location)) {
+                    write!(f, "    {:?} -> {{", place)?;
+                    let mut is_first = true;
+                    for dep in deps.get(&place).into_iter().flat_map(|s| s.iter()).cloned() {
+                        if !is_first {
+                            write!(f, ", ")?;
+                        } else {
+                            is_first = true;
+                        }
+                        write!(f, "{dep}")?;
+                    }
+                    writeln!(f,"}}")?;
+
+                }
+            }
+        }
+        Ok(())
     }
 }
 

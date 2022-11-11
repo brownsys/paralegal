@@ -198,6 +198,9 @@ pub struct Flow<'tcx, 'g> {
 /// function call is the outermost location which calls `next` at `location`
 /// going one level deeper and so forth. You may access the innermost location
 /// using `GlobalLocation::innermost_location_and_body`.
+///
+/// The innermost location is what you'd want to look up if you are wanting to
+/// see the actual statement or terminator that this location refers to.
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>);
 
@@ -211,6 +214,17 @@ pub trait IsGlobalLocation: Sized {
     }
     fn next(&self) -> Option<&Self> {
         self.as_global_location_s().next.as_ref()
+    }
+    fn parent(&self) -> Option<&Self> {
+        if let Some(n) = self.next() {
+            if n.next().is_none() {
+                Some(self)
+            } else {
+                n.parent()
+            }
+        } else {
+            None
+        }
     }
     fn innermost_location_and_body(&self) -> (mir::Location, BodyId) {
         self.next().map_or_else(
@@ -356,7 +370,7 @@ impl<'tcx, 'g, Location> From<mir::Place<'tcx>> for GlobalPlace<'tcx, Location> 
 type GlobalDepMatrix<'tcx, 'g> =
     HashMap<GlobalPlace<'tcx, GlobalLocation<'g>>, HashSet<GlobalLocation<'g>>>;
 pub struct GlobalFlowGraph<'tcx, 'g> {
-    location_states: HashMap<GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>>,
+    pub location_states: HashMap<GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>>,
     return_state: GlobalDepMatrix<'tcx, 'g>,
 }
 type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<GlobalFlowGraph<'tcx, 'g>>>>>;
@@ -508,10 +522,10 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
             let (callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
                 .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
             let () = if self.should_inline(*callee_local_id) {
-                debug!("Selector succeeded.");
+                debug!("Selector succeeded for {}.", callee_id.name);
                 Ok(())
             } else {
-                debug!("Selector failed");
+                debug!("Selector failed for {}", callee_id.name);
                 Err("Inline selector was false")
             }?;
             let inner_flow = self
@@ -519,7 +533,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                 .ok_or("is recursive")?;
             let body =
                 &borrowck_facts::get_body_with_borrowck_facts(self.tcx, *callee_local_id).body;
-            debug!("Inner flow computed");
+            debug!("Inner flow for {} computed", callee_id.name);
             Ok((inner_flow, *callee_body_id, body, args, dest))
         })
     }
@@ -569,7 +583,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
         // The return of an inlined function call can be used by several locations.
         // This map stores the results of translating the callees `Place`s to our
         // `Place`s for each call site so that we only do that translation once.
-        let mut translated_return_states: RefCell<
+        let translated_return_states: RefCell<
             HashMap<mir::Location, HashMap<mir::Place<'tcx>, HashSet<GlobalLocation<'g>>>>,
         > = RefCell::new(HashMap::new());
         let make_row_global = |place, dep_set: IndexSet<_, _>| -> HashSet<GlobalLocation<'g>> {
@@ -838,18 +852,22 @@ fn compute_call_only_flow<'tcx, 'g>(
             tcx,
             tcx.hir().body_owner_def_id(inner_body_id),
         );
-        if !is_real_location(&body_with_facts.body, inner_location) && loc.next().is_none() {
-            Keep::Argument(inner_location.statement_index)
+        if !is_real_location(&body_with_facts.body, inner_location) {
+            if loc.next().is_none() {
+                Keep::Argument(inner_location.statement_index)
+            } else {
+                Keep::Reject(None)
+            }
         } else {
             let stmt_at_loc = body_with_facts.body.stmt_at(inner_location);
             match stmt_at_loc {
                 Either::Right(t) => t
                     .as_fn_and_args()
                     .ok()
-                    .map_or(Keep::Reject(stmt_at_loc), |(_, args, dest)| {
+                    .map_or(Keep::Reject(Some(stmt_at_loc)), |(_, args, dest)| {
                         Keep::Keep((args, dest))
                     }),
-                _ => Keep::Reject(stmt_at_loc),
+                _ => Keep::Reject(Some(stmt_at_loc)),
             }
         }
     };
@@ -866,29 +884,35 @@ fn compute_call_only_flow<'tcx, 'g>(
                         .iter()
                         .flat_map(|place| provenance_of(tcx, *place).into_iter())
                         .filter_map(|place| {
-                            g.location_states.get(&loc)?.get(&GlobalPlace {
+                            Some((
                                 place,
-                                function: loc.next().cloned(),
-                            })
+                                g.location_states.get(&loc)?.get(&GlobalPlace {
+                                    place,
+                                    function: loc.next().cloned(),
+                                })?,
+                            ))
                         })
-                        .flat_map(|s| s.iter())
-                        .cloned()
-                        .collect::<Vec<_>>()
+                        .flat_map(|(p, s)| s.iter().map(move |l| (p, *l)))
+                        .collect::<Vec<(mir::Place<'tcx>, GlobalLocation<'g>)>>()
                 };
                 let mut queue = deps_for_places(*loc, &[p]);
                 let mut seen = HashSet::new();
                 let mut deps = HashSet::new();
-                while let Some(p) = queue.pop() {
-                    match as_location_to_keep(p) {
+                while let Some((place, location)) = queue.pop() {
+                    match as_location_to_keep(location) {
                         Keep::Keep(_) | Keep::Argument(_) => {
-                            deps.insert(p);
+                            deps.insert(location);
                         }
-                        Keep::Reject(stmt_at_loc) if !seen.contains(&p) => {
-                            seen.insert(p);
+                        Keep::Reject(stmt_at_loc) if !seen.contains(&location) => {
+                            seen.insert(location);
                             queue.extend(deps_for_places(
-                                p,
-                                &places_read(p.innermost_location_and_body().0, &stmt_at_loc)
-                                    .collect::<Vec<_>>(),
+                                location,
+                                &if let Some(stmt) = stmt_at_loc {
+                                    places_read(location.innermost_location_and_body().0, &stmt)
+                                        .collect::<Vec<_>>()
+                                } else {
+                                    vec![place]
+                                },
                             ))
                         }
                         _ => (),
@@ -910,7 +934,7 @@ fn compute_call_only_flow<'tcx, 'g>(
         .collect()
 }
 
-fn places_read<'tcx>(
+pub fn places_read<'tcx>(
     location: mir::Location,
     stmt: &Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>,
 ) -> impl Iterator<Item = mir::Place<'tcx>> {
@@ -951,8 +975,9 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
             &constructor.compute_granular_global_flows(body_id).unwrap(),
         );
         debug!(
-            "Constructed reduced flow of {} locations",
-            reduced_flow.len()
+            "Constructed reduced flow of {} locations\n{:?}",
+            reduced_flow.len(),
+            reduced_flow.keys()
         );
         Self {
             root_function: body_id,
@@ -1020,6 +1045,14 @@ impl InlineSelector for SkipAnnotatedFunctionSelector {
             .get(&tcx.hir().local_def_id_to_hir_id(did))
             .map_or(true, |anns| anns.0.is_empty())
     }
+}
+
+fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
+    tcx.hir()
+        .find_by_def_id(tcx.hir().body_owner_def_id(body_id))
+        .unwrap()
+        .ident()
+        .expect("no def id?")
 }
 
 type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
@@ -1168,37 +1201,38 @@ impl<'tcx> Visitor<'tcx> {
             |b| borrowck_facts::get_body_with_borrowck_facts(tcx, tcx.hir().body_owner_def_id(b));
 
         for (loc, deps) in flow.reduced_flow.iter() {
-            let body_with_facts = body_for_body_id(loc.innermost_location_and_body().1);
+            let (inner_location, inner_body) = loc.innermost_location_and_body();
+            debug!(
+                "Adding dependencies for {:?} in {}",
+                inner_location,
+                body_name_pls(tcx, inner_body).name
+            );
+            let body_with_facts = body_for_body_id(inner_body);
             let ref body = body_with_facts.body;
-            if !is_real_location(&body, loc.location()) {
+            if !is_real_location(&body, inner_location) {
+                assert!(loc.is_at_root());
                 // These can only be (controller) arguments and they cannot have dependencies (and thus not receive any data)
                 continue;
             }
             let (terminator, (defid, _, _)) = match body
-                .stmt_at(loc.location())
+                .stmt_at(inner_location)
                 .right()
                 .ok_or("not a terminator")
                 .and_then(|t| Ok((t, t.as_fn_and_args()?)))
             {
                 Ok(term) => term,
                 Err(err) => {
-                    warn!("Odd location in graph creation '{}'", err);
+                    warn!(
+                        "Odd location in graph creation '{}' for {:?}",
+                        err,
+                        body.stmt_at(inner_location)
+                    );
                     continue;
                 }
             };
             let call_site = CallSite {
-                called_from: Identifier::new(
-                    tcx.hir()
-                        .find_by_def_id(
-                            tcx.hir()
-                                .body_owner_def_id(loc.next().map_or(b, |f| f.function())),
-                        )
-                        .unwrap()
-                        .ident()
-                        .expect("no def id?")
-                        .name,
-                ),
-                location: loc.location(),
+                called_from: Identifier::new(body_name_pls(tcx, inner_body).name),
+                location: inner_location,
                 function: identifier_for_fn(tcx, defid),
             };
             let anns = interesting_fn_defs.get(&defid).map(|a| a.0.as_slice());
@@ -1226,28 +1260,20 @@ impl<'tcx> Visitor<'tcx> {
             register_call_site(tcx, call_site_annotations, defid, anns);
             for (arg_slot, arg_deps) in deps.input_deps.iter().enumerate() {
                 for dep in arg_deps.iter() {
+                    let (dep_loc, dep_fun) = dep.innermost_location_and_body();
                     flows.add(
                         Cow::Owned({
-                            if loc.is_at_root() && !is_real_location(&body, dep.location()) {
+                            if loc.is_at_root() && !is_real_location(&body, dep_loc) {
                                 DataSource::Argument(dep.location().statement_index - 1)
                             } else {
                                 DataSource::FunctionCall(CallSite {
-                                    called_from: Identifier::new(
-                                        tcx.hir()
-                                            .find_by_def_id(
-                                                tcx.hir().body_owner_def_id(dep.function()),
-                                            )
-                                            .unwrap()
-                                            .ident()
-                                            .expect("no def id?")
-                                            .name,
-                                    ),
-                                    location: dep.location(),
+                                    called_from: Identifier::new(body_name_pls(tcx, dep_fun).name),
+                                    location: dep_loc,
                                     function: identifier_for_fn(
                                         tcx,
-                                        body_for_body_id(dep.function())
+                                        body_for_body_id(dep_fun)
                                             .body
-                                            .stmt_at(dep.location())
+                                            .stmt_at(dep_loc)
                                             .right()
                                             .expect("not a terminator")
                                             .as_fn_and_args()
