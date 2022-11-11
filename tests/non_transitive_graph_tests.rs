@@ -119,9 +119,7 @@ fn arguments() {
 fn modify_pointer() {
     assert!(*TEST_CRATE_ANALYZED);
 
-    let graph = do_in_crate_dir(||
-        G::from_file(Symbol::intern("modify_pointer"))
-    ).unwrap();
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("modify_pointer"))).unwrap();
 
     let get = graph.function_call("get_user_data");
     let create = graph.function_call("modify_vec");
@@ -134,12 +132,9 @@ fn modify_pointer() {
 
 #[test]
 fn on_mut_var() {
-
     assert!(*TEST_CRATE_ANALYZED);
 
-    let graph = do_in_crate_dir(||
-        G::from_file(Symbol::intern("modify_pointer"))
-    ).unwrap();
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("modify_pointer"))).unwrap();
 
     let source = graph.function_call("source");
     let modify = graph.function_call("modify_it");

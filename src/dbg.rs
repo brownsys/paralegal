@@ -45,7 +45,7 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 use std::collections::HashMap;
 use std::fmt::write;
 
-use crate::{HashSet, IsGlobalLocation, ana};
+use crate::{ana, HashSet, IsGlobalLocation};
 use crate::{ana::CallOnlyFlow, rust::rustc_middle::ty::TyCtxt};
 use flowistry::indexed::impls::LocationDomain;
 use flowistry::indexed::IndexedDomain;
@@ -56,7 +56,10 @@ use crate::{
     Either, Symbol,
 };
 extern crate dot;
-use crate::ana::{is_real_location, read_places_with_provenance, NonTransitiveGraph, GlobalFlowGraph, GlobalLocation};
+use crate::ana::{
+    is_real_location, read_places_with_provenance, GlobalFlowGraph, GlobalLocation,
+    NonTransitiveGraph,
+};
 
 struct DotGraph<'a, 'b, 'tcx> {
     body: &'a mir::Body<'tcx>,
@@ -179,10 +182,13 @@ pub mod call_only_flow_dot {
 
 pub struct PrintableGranularFlow<'a, 'g, 'tcx> {
     pub flow: &'a GlobalFlowGraph<'tcx, 'g>,
-    pub tcx: TyCtxt<'tcx>
+    pub tcx: TyCtxt<'tcx>,
 }
 
-fn format_global_location<T: IsGlobalLocation>(t: &T, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+fn format_global_location<T: IsGlobalLocation>(
+    t: &T,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
     let mut v = std::iter::successors(Some(t), |l| l.next()).collect::<Vec<_>>();
     let mut is_first = true;
     while let Some(next) = v.pop() {
@@ -191,23 +197,31 @@ fn format_global_location<T: IsGlobalLocation>(t: &T, f: &mut std::fmt::Formatte
         } else {
             write!(f, "@")?;
         }
-        write!(f, "{:?}[{}]", next.location().block, next.location().statement_index)?;
+        write!(
+            f,
+            "{:?}[{}]",
+            next.location().block,
+            next.location().statement_index
+        )?;
     }
     Ok(())
 }
 
-impl <'g> std::fmt::Display for GlobalLocation<'g> {
+impl<'g> std::fmt::Display for GlobalLocation<'g> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         format_global_location(self, f)
     }
 }
 
-impl <'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
+impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (loc, deps) in self.flow.location_states.iter() {
             write!(f, "  {}", loc)?;
             let (inner_location, inner_body) = loc.innermost_location_and_body();
-            let body = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(self.tcx, self.tcx.hir().body_owner_def_id(inner_body));
+            let body = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
+                self.tcx,
+                self.tcx.hir().body_owner_def_id(inner_body),
+            );
             let places_read = if !is_real_location(&body.body, inner_location) {
                 write!(f, " is argument {}", inner_location.statement_index - 1)?;
                 HashSet::new()
@@ -216,7 +230,10 @@ impl <'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
             };
             writeln!(f, "")?;
             for (place, read) in places_read.iter().cloned().map(|p| (p, true)).chain(
-                deps.keys().cloned().filter(|k| !places_read.contains(k)).map(|p| (p, false))
+                deps.keys()
+                    .cloned()
+                    .filter(|k| !places_read.contains(k))
+                    .map(|p| (p, false)),
             ) {
                 write!(f, "    {}{:?} -> ", if read { "> " } else { "" }, place)?;
                 let mut is_first = true;

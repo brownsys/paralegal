@@ -18,7 +18,7 @@ use hir::{
     intravisit::{self, FnKind},
     BodyId,
 };
-use mir::{Location, Place, Statement, Terminator};
+use mir::{Body, Location, Place, Statement, Terminator};
 use rustc_data_structures::{intern::Interned, sharded::ShardedHashMap};
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
@@ -189,7 +189,7 @@ type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
 pub struct Flow<'tcx, 'g> {
     pub root_function: BodyId,
-    pub function_flows: FunctionFlows<'tcx, 'g>,
+    function_flows: FunctionFlows<'tcx, 'g>,
     pub reduced_flow: CallOnlyFlow<'g>,
 }
 
@@ -367,13 +367,16 @@ impl<'tcx, 'g, Location> From<mir::Place<'tcx>> for GlobalPlace<'tcx, Location> 
     }
 }
 
-type GlobalDepMatrix<'tcx, 'g> =
-    HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
+type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
 pub struct GlobalFlowGraph<'tcx, 'g> {
     pub location_states: HashMap<GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>>,
     return_state: GlobalDepMatrix<'tcx, 'g>,
 }
-type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<GlobalFlowGraph<'tcx, 'g>>>>>;
+struct FunctionFlow<'tcx, 'g> {
+    flow: GlobalFlowGraph<'tcx, 'g>,
+    analysis: AnalysisResults<'tcx, FlowAnalysis<'tcx, 'tcx, NonTransitiveFlowDomain<'tcx>>>,
+}
+type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<FunctionFlow<'tcx, 'g>>>>>;
 pub type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<GlobalLocation<'g>>>;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -398,7 +401,7 @@ fn translate_child_to_parent<'tcx>(
 ) -> Option<mir::Place<'tcx>> {
     use flowistry::mir::utils::PlaceExt;
     use mir::HasLocalDecls;
-    use mir::{Place, ProjectionElem};
+    use mir::ProjectionElem;
     if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
         debug!("Child is return place");
         if child.ty(body.local_decls(), tcx).ty.is_unit() {
@@ -509,7 +512,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
         t: &mir::Terminator<'tcx>,
     ) -> Result<
         (
-            Rc<GlobalFlowGraph<'tcx, 'g>>,
+            Rc<FunctionFlow<'tcx, 'g>>,
             BodyId,
             &'tcx mir::Body<'tcx>,
             Vec<Option<mir::Place<'tcx>>>,
@@ -541,7 +544,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
     fn compute_granular_global_flows(
         &self,
         root_function: BodyId,
-    ) -> Option<Rc<GlobalFlowGraph<'tcx, 'g>>> {
+    ) -> Option<Rc<FunctionFlow<'tcx, 'g>>> {
         if let Some(inner) = self.function_flows.borrow().get(&root_function) {
             // `inner` is `Option<...>` here which is deliberate. Not only does this
             // mean that we memoize this expensive inlining computation, but also we
@@ -555,7 +558,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
 
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
         let body = &body_with_facts.body;
-        let ref from_flowistry = {
+        let from_flowistry = {
             use flowistry::extensions::{
                 fluid_set, ContextMode, EvalMode, EVAL_MODE, RECURSE_SELECTOR,
             };
@@ -607,31 +610,31 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                             .or_insert_with(|| {
                                 debug!(
                                     "Translating return state with dependency set of size {}",
-                                    inner_flow.return_state.len()
+                                    inner_flow.flow.return_state.len()
                                 );
                                 inner_flow
+                                    .flow
                                     .return_state
                                     .iter()
                                     .filter_map(|(&p, deps)| {
-                                            let parent = translate_child_to_parent(
-                                                self.tcx,
-                                                local_def_id,
-                                                &args,
-                                                dest,
+                                        let parent = translate_child_to_parent(
+                                            self.tcx,
+                                            local_def_id,
+                                            &args,
+                                            dest,
+                                            p,
+                                            true,
+                                            inner_body,
+                                            body,
+                                        );
+                                        if parent.is_none() {
+                                            debug!(
+                                                "No parent found for {:?} (dest is {}present)",
                                                 p,
-                                                true,
-                                                inner_body,
-                                                body,
+                                                if dest.is_none() { "not " } else { "" }
                                             );
-                                            if parent.is_none() {
-                                                debug!(
-                                                    "No parent found for {:?} (dest is {}present)",
-                                                    p,
-                                                    if dest.is_none() { "not " } else { "" }
-                                                );
-                                            }
-                                            parent
-                                        .map(|parent| {
+                                        }
+                                        parent.map(|parent| {
                                             (
                                                 parent,
                                                 deps.iter()
@@ -675,16 +678,10 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
             }
             matrix
                 .rows()
-                .map(|(place, dep_set)| {
-                    (
-                        place,
-                        make_row_global(place, dep_set),
-                    )
-                })
+                .map(|(place, dep_set)| (place, make_row_global(place, dep_set)))
                 .collect::<HashMap<_, _>>()
         };
-        let mut return_state: HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>> =
-            HashMap::new();
+        let mut return_state: HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>> = HashMap::new();
         let location_states = body_with_facts
             .body
             .basic_blocks()
@@ -711,6 +708,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                 self.gli.globalize_location(loc, inner_body_id);
                             let caller_state = from_flowistry.state_at(loc).matrix();
                             let as_parent_dep_matrix: GlobalDepMatrix<'tcx, 'g> = inner_flow
+                                .flow
                                 .location_states
                                 .values()
                                 .flat_map(|s| s.keys())
@@ -732,14 +730,12 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                     ))
                                 })
                                 .map(|(child, parent)| {
-                                    (
-                                            child,
-                                        make_row_global(parent, caller_state.row_set(parent)),
-                                    )
+                                    (child, make_row_global(parent, caller_state.row_set(parent)))
                                 })
                                 .collect();
 
                             inner_flow
+                                .flow
                                 .location_states
                                 .iter()
                                 .map(move |(inner_loc, map)| {
@@ -806,9 +802,12 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
             .collect();
         self.function_flows.borrow_mut().insert(
             root_function,
-            Some(Rc::new(GlobalFlowGraph {
-                location_states,
-                return_state,
+            Some(Rc::new(FunctionFlow {
+                flow: GlobalFlowGraph {
+                    location_states,
+                    return_state,
+                },
+                analysis: from_flowistry,
             })),
         );
         Some(
@@ -818,107 +817,121 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                 .clone(),
         )
     }
-}
 
-fn compute_call_only_flow<'tcx, 'g>(
-    tcx: TyCtxt<'tcx>,
-    g: &GlobalFlowGraph<'tcx, 'g>,
-) -> CallOnlyFlow<'g> {
-    debug!(
-        "Shrinking global flow graph with {} states",
-        g.location_states.len()
-    );
-    // I'm making these generic so I don't have to update the types inside all the time and can use inference instead.
-    enum Keep<OnKeep, OnReject> {
-        Keep(OnKeep),
-        Argument(usize),
-        Reject(OnReject),
-    }
-    let as_location_to_keep = |loc: GlobalLocation| {
-        let (inner_location, inner_body_id) = loc.innermost_location_and_body();
-        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(
-            tcx,
-            tcx.hir().body_owner_def_id(inner_body_id),
+    fn compute_call_only_flow(&self, g: &GlobalFlowGraph<'tcx, 'g>) -> CallOnlyFlow<'g> {
+        debug!(
+            "Shrinking global flow graph with {} states",
+            g.location_states.len()
         );
-        if !is_real_location(&body_with_facts.body, inner_location) {
-            if loc.next().is_none() {
-                Keep::Argument(inner_location.statement_index)
-            } else {
-                Keep::Reject(None)
-            }
-        } else {
-            let stmt_at_loc = body_with_facts.body.stmt_at(inner_location);
-            match stmt_at_loc {
-                Either::Right(t) => t
-                    .as_fn_and_args()
-                    .ok()
-                    .map_or(Keep::Reject(Some(stmt_at_loc)), |(_, args, dest)| {
-                        Keep::Keep((args, dest))
-                    }),
-                _ => Keep::Reject(Some(stmt_at_loc)),
-            }
+        // I'm making these generic so I don't have to update the types inside all the time and can use inference instead.
+        enum Keep<OnKeep, OnReject> {
+            Keep(OnKeep),
+            Argument(usize),
+            Reject(OnReject),
         }
-    };
-    g.location_states
-        .iter()
-        .filter_map(|(loc, _)| {
-            let (args, _) = match as_location_to_keep(*loc) {
-                Keep::Keep(k) => Some(k),
-                _ => None,
-            }?;
-            let deps_for = |p: mir::Place<'tcx>| {
-                let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]| {
-                    places
-                        .iter()
-                        .flat_map(|place| provenance_of(tcx, *place).into_iter())
-                        .filter_map(|place| {
-                            Some((
-                                place,
-                                g.location_states.get(&loc)?.get(&
-                                    place,
-                                )?,
-                            ))
-                        })
-                        .flat_map(|(p, s)| s.iter().map(move |l| (p, *l)))
-                        .collect::<Vec<(mir::Place<'tcx>, GlobalLocation<'g>)>>()
-                };
-                let mut queue = deps_for_places(*loc, &[p]);
-                let mut seen = HashSet::new();
-                let mut deps = HashSet::new();
-                while let Some((place, location)) = queue.pop() {
-                    match as_location_to_keep(location) {
-                        Keep::Keep(_) | Keep::Argument(_) => {
-                            deps.insert(location);
-                        }
-                        Keep::Reject(stmt_at_loc) if !seen.contains(&location) => {
-                            seen.insert(location);
-                            queue.extend(deps_for_places(
-                                location,
-                                &if let Some(stmt) = stmt_at_loc {
-                                    places_read(location.innermost_location_and_body().0, &stmt)
-                                        .collect::<Vec<_>>()
-                                } else {
-                                    vec![place]
-                                },
-                            ))
-                        }
-                        _ => (),
-                    }
+        let tcx = self.tcx;
+        let as_location_to_keep = |body_id: BodyId, location: Location, loc_is_top_level: bool| {
+            let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(
+                tcx,
+                tcx.hir().body_owner_def_id(body_id),
+            );
+            if !is_real_location(&body_with_facts.body, location) {
+                if loc_is_top_level {
+                    Keep::Argument(location.statement_index)
+                } else {
+                    Keep::Reject(None)
                 }
-                deps
-            };
-            Some((
-                *loc,
-                CallDeps {
-                    input_deps: args
+            } else {
+                let stmt_at_loc = body_with_facts.body.stmt_at(location);
+                match stmt_at_loc {
+                    Either::Right(t) => t
+                        .as_fn_and_args()
+                        .ok()
+                        .map_or(Keep::Reject(Some(stmt_at_loc)), |(_, args, dest)| {
+                            Keep::Keep((args, dest))
+                        }),
+                    _ => Keep::Reject(Some(stmt_at_loc)),
+                }
+            }
+        };
+        g.location_states
+            .iter()
+            .filter_map(|(loc, _)| {
+                let (inner_location, inner_body) = loc.innermost_location_and_body();
+                let (args, _) =
+                    match as_location_to_keep(inner_body, inner_location, loc.is_at_root()) {
+                        Keep::Keep(k) => Some(k),
+                        _ => None,
+                    }?;
+                let deep_deps_for = |p: mir::Place<'tcx>| {
+                    let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]| {
+                        places
+                            .iter()
+                            .flat_map(|place| provenance_of(tcx, *place).into_iter())
+                            .filter_map(|place| {
+                                Some((place, g.location_states.get(&loc)?.get(&place)?))
+                            })
+                            .flat_map(|(p, s)| s.iter().map(move |l| (p, *l)))
+                            .collect::<Vec<(mir::Place<'tcx>, GlobalLocation<'g>)>>()
+                    };
+                    let reachable_places = self
+                        .function_flows
+                        .borrow()
+                        .get(&inner_body)
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .analysis
+                        .analysis
+                        .aliases
+                        .reachable_values(p, ast::Mutability::Not)
                         .into_iter()
-                        .map(|p| p.map_or_else(|| HashSet::new(), deps_for))
-                        .collect(),
-                    ctrl_deps: HashSet::new(),
-                },
-            ))
-        })
-        .collect()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let mut queue = deps_for_places(*loc, &reachable_places);
+                    let mut seen = HashSet::new();
+                    let mut deps = HashSet::new();
+                    while let Some((place, location)) = queue.pop() {
+                        let (local_inner_loc, local_inner_body) =
+                            location.innermost_location_and_body();
+                        match as_location_to_keep(
+                            local_inner_body,
+                            local_inner_loc,
+                            location.is_at_root(),
+                        ) {
+                            Keep::Keep(_) | Keep::Argument(_) => {
+                                deps.insert(location);
+                            }
+                            Keep::Reject(stmt_at_loc) if !seen.contains(&location) => {
+                                seen.insert(location);
+                                queue.extend(deps_for_places(
+                                    location,
+                                    &if let Some(stmt) = stmt_at_loc {
+                                        places_read(location.innermost_location_and_body().0, &stmt)
+                                            .collect::<Vec<_>>()
+                                    } else {
+                                        vec![place]
+                                    },
+                                ))
+                            }
+                            _ => (),
+                        }
+                    }
+                    deps
+                };
+                Some((
+                    *loc,
+                    CallDeps {
+                        input_deps: args
+                            .into_iter()
+                            .map(|p| p.map_or_else(|| HashSet::new(), deep_deps_for))
+                            .collect(),
+                        ctrl_deps: HashSet::new(),
+                    },
+                ))
+            })
+            .collect()
+    }
 }
 
 pub fn places_read<'tcx>(
@@ -958,11 +971,15 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
         let constructor =
             GlobalFlowConstructor::new(opts, dbg_opts, tcx, gli, function_flows, inline_selector);
         let granular_flow = constructor.compute_granular_global_flows(body_id).unwrap();
-        debug!("Granular flow for {}\n{:?}", body_name_pls(tcx, body_id).name, dbg::PrintableGranularFlow { flow: &granular_flow, tcx });
-        let reduced_flow = compute_call_only_flow(
-            tcx,
-            &granular_flow
+        debug!(
+            "Granular flow for {}\n{:?}",
+            body_name_pls(tcx, body_id).name,
+            dbg::PrintableGranularFlow {
+                flow: &granular_flow.flow,
+                tcx
+            }
         );
+        let reduced_flow = constructor.compute_call_only_flow(&granular_flow.flow);
         debug!(
             "Constructed reduced flow of {} locations\n{:?}",
             reduced_flow.len(),
