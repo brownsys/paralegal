@@ -368,7 +368,7 @@ impl<'tcx, 'g, Location> From<mir::Place<'tcx>> for GlobalPlace<'tcx, Location> 
 }
 
 type GlobalDepMatrix<'tcx, 'g> =
-    HashMap<GlobalPlace<'tcx, GlobalLocation<'g>>, HashSet<GlobalLocation<'g>>>;
+    HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
 pub struct GlobalFlowGraph<'tcx, 'g> {
     pub location_states: HashMap<GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>>,
     return_state: GlobalDepMatrix<'tcx, 'g>,
@@ -612,14 +612,13 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                 inner_flow
                                     .return_state
                                     .iter()
-                                    .filter_map(|(p, deps)| {
-                                        if p.function.is_none() {
+                                    .filter_map(|(&p, deps)| {
                                             let parent = translate_child_to_parent(
                                                 self.tcx,
                                                 local_def_id,
                                                 &args,
                                                 dest,
-                                                p.place,
+                                                p,
                                                 true,
                                                 inner_body,
                                                 body,
@@ -627,14 +626,11 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                             if parent.is_none() {
                                                 debug!(
                                                     "No parent found for {:?} (dest is {}present)",
-                                                    p.place,
+                                                    p,
                                                     if dest.is_none() { "not " } else { "" }
                                                 );
                                             }
                                             parent
-                                        } else {
-                                            None
-                                        }
                                         .map(|parent| {
                                             (
                                                 parent,
@@ -681,16 +677,13 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                 .rows()
                 .map(|(place, dep_set)| {
                     (
-                        GlobalPlace {
-                            place,
-                            function: None,
-                        },
+                        place,
                         make_row_global(place, dep_set),
                     )
                 })
                 .collect::<HashMap<_, _>>()
         };
-        let mut return_state: HashMap<GlobalPlace<'tcx, _>, HashSet<GlobalLocation<'g>>> =
+        let mut return_state: HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>> =
             HashMap::new();
         let location_states = body_with_facts
             .body
@@ -721,11 +714,9 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                 .location_states
                                 .values()
                                 .flat_map(|s| s.keys())
-                                .filter(|gp| gp.function.is_none())
-                                .map(|gp| gp.place)
                                 .collect::<HashSet<_>>()
                                 .into_iter()
-                                .filter_map(|p| {
+                                .filter_map(|&p| {
                                     Some((
                                         p,
                                         translate_child_to_parent(
@@ -742,10 +733,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                 })
                                 .map(|(child, parent)| {
                                     (
-                                        GlobalPlace {
-                                            place: child,
-                                            function: Some(global_terminator_loc),
-                                        },
+                                            child,
                                         make_row_global(parent, caller_state.row_set(parent)),
                                     )
                                 })
@@ -762,9 +750,9 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                             root_function,
                                         ),
                                         map.iter()
-                                            .map(|(place, deps)| {
+                                            .map(|(&place, deps)| {
                                                 (
-                                                    place.relative_to(self.gli, loc, root_function),
+                                                    place,
                                                     deps.iter()
                                                         .map(|dep| {
                                                             self.gli.global_location_from_relative(
@@ -886,10 +874,9 @@ fn compute_call_only_flow<'tcx, 'g>(
                         .filter_map(|place| {
                             Some((
                                 place,
-                                g.location_states.get(&loc)?.get(&GlobalPlace {
+                                g.location_states.get(&loc)?.get(&
                                     place,
-                                    function: loc.next().cloned(),
-                                })?,
+                                )?,
                             ))
                         })
                         .flat_map(|(p, s)| s.iter().map(move |l| (p, *l)))
@@ -970,9 +957,11 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
         }
         let constructor =
             GlobalFlowConstructor::new(opts, dbg_opts, tcx, gli, function_flows, inline_selector);
+        let granular_flow = constructor.compute_granular_global_flows(body_id).unwrap();
+        debug!("Granular flow for {}\n{:?}", body_name_pls(tcx, body_id).name, dbg::PrintableGranularFlow { flow: &granular_flow, tcx });
         let reduced_flow = compute_call_only_flow(
             tcx,
-            &constructor.compute_granular_global_flows(body_id).unwrap(),
+            &granular_flow
         );
         debug!(
             "Constructed reduced flow of {} locations\n{:?}",
