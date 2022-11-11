@@ -77,7 +77,7 @@ fn on_mut_var_no_modify() {
     use_rustc(|| {
         let graph = PreFrg::from_file_at(TEST_CRATE_NAME);
         let src_fn = graph.function("source");
-        let ctrl = graph.ctrl("on_mut_var");
+        let ctrl = graph.ctrl("on_mut_var_no_modify");
         if let Some(src) = ctrl.call_sites(&src_fn).pop() {
             let dest_fn = graph.function("receiver");
             if let Some(dest_sink) = ctrl.call_sites(&dest_fn).pop() {

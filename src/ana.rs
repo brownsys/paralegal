@@ -654,7 +654,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                 return_state
                             });
                         //let aliases = from_flowistry.analysis.aliases.aliases(place);
-                        if let Some(deps) = translated_return_state.get(place) {
+                        if let Some(deps) = translated_return_state.get(&place) {
                             deps.iter().cloned().collect::<Vec<_>>()
                         } else {
                             warn!(
