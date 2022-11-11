@@ -192,7 +192,10 @@ impl G {
 
     pub fn function_call(&self, pattern: &str) -> (mir::Location, hir::BodyId) {
         let v = self.function_calls(pattern);
-        assert!(v.len() == 1, "{pattern} should only occur once in {v:?}");
+        assert!(
+            v.len() == 1,
+            "function '{pattern}' should only occur once in {v:?}"
+        );
         v.into_iter().next().unwrap()
     }
 

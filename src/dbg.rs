@@ -43,7 +43,6 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 }
 
 use std::collections::HashMap;
-use std::fmt::write;
 
 use crate::{ana, HashSet, IsGlobalLocation};
 use crate::{ana::CallOnlyFlow, rust::rustc_middle::ty::TyCtxt};
@@ -52,7 +51,7 @@ use flowistry::indexed::IndexedDomain;
 use flowistry::infoflow::FlowDomain;
 
 use crate::{
-    rust::{mir, rustc_span::symbol::Ident},
+    rust::{mir::{Place, self}, rustc_span::symbol::Ident},
     Either, Symbol,
 };
 extern crate dot;
@@ -213,6 +212,39 @@ impl<'g> std::fmt::Display for GlobalLocation<'g> {
     }
 }
 
+pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(&'a HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>, usize);
+
+impl <'a, 'g, 'tcx> PrintableDependencyMatrix<'a, 'g, 'tcx> {
+    pub fn new(map: &'a HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>, indent: usize) -> Self {
+        Self (map, indent)
+    }
+}
+
+impl <'a, 'g, 'tcx> std::fmt::Display for PrintableDependencyMatrix<'a, 'g, 'tcx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        format_dependency_matrix(f, self.0.iter().map(|(k,v)| (*k, false, v)), self.1)
+    }
+}
+
+pub fn format_dependency_matrix<'tcx, 'g, I: IntoIterator<Item=(Place<'tcx>, bool, &'g HashSet<GlobalLocation<'g>>)>>(f: &mut std::fmt::Formatter<'_>, it: I, indent: usize) -> std::fmt::Result {
+    for (place, read, deps) in it
+    {
+        write!(f, "{:indent$}{}{:?} -> ", "", if read { "> " } else { "" }, place)?;
+        let mut is_first = true;
+        write!(f, "{{")?;
+        for dep in deps.iter().cloned() {
+            if !is_first {
+                write!(f, ", ")?;
+            } else {
+                is_first = true;
+            }
+            write!(f, "{dep}")?;
+        }
+        writeln!(f, "}}")?;
+    }
+    Ok(())
+}
+
 impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (loc, deps) in self.flow.location_states.iter() {
@@ -229,28 +261,14 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                 ana::places_read(inner_location, &body.body.stmt_at(inner_location)).collect()
             };
             writeln!(f, "")?;
-            for (place, read) in places_read.iter().cloned().map(|p| (p, true)).chain(
-                deps.keys()
-                    .cloned()
-                    .filter(|k| !places_read.contains(k))
-                    .map(|p| (p, false)),
-            ) {
-                write!(f, "    {}{:?} -> ", if read { "> " } else { "" }, place)?;
-                let mut is_first = true;
-                write!(f, "{{")?;
-                if let Some(d) = deps.get(&place) {
-                    for dep in d.iter().cloned() {
-                        if !is_first {
-                            write!(f, ", ")?;
-                        } else {
-                            is_first = true;
-                        }
-                        write!(f, "{dep}")?;
-                    }
-                } else {
-                }
-                writeln!(f, "}}")?;
-            }
+            let empty_set = HashSet::new();
+            format_dependency_matrix(f, 
+                places_read.iter().cloned().map(|p| (p, true, deps.get(&p).unwrap_or(&empty_set))).chain(
+                deps.iter()
+                    .filter(|k| !places_read.contains(k.0))
+                    .map(|(p, deps)| (*p, false, deps)),
+            )
+                , 4)?;
         }
         Ok(())
     }

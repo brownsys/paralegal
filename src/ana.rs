@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    dbg::{self},
+    dbg::{self, PrintableDependencyMatrix},
     desc::*,
     rust::*,
     sah::HashVerifications,
@@ -593,7 +593,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
             dep_set
                 .iter()
                 .flat_map(|l| {
-                    if let Some((t, (inner_flow, _, inner_body, args, dest))) =
+                    if let Some((t, (inner_flow, body_id, inner_body, args, dest))) =
                         if !is_real_location(body, *l) {
                             None
                         } else {
@@ -609,14 +609,16 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                             .entry(*l)
                             .or_insert_with(|| {
                                 debug!(
-                                    "Translating return state with dependency set of size {}",
-                                    inner_flow.flow.return_state.len()
+                                    "Translating return state at location {l:?} in {} with dependency set of size {}, dest is {}",
+                                    body_name_pls(self.tcx, body_id).name,
+                                    inner_flow.flow.return_state.len(),
+                                    if dest.is_none() { "not " } else { "" }
                                 );
-                                inner_flow
+                                let return_state = inner_flow
                                     .flow
                                     .return_state
                                     .iter()
-                                    .filter_map(|(&p, deps)| {
+                                    .flat_map(|(&p, deps)| {
                                         let parent = translate_child_to_parent(
                                             self.tcx,
                                             local_def_id,
@@ -627,14 +629,9 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                             inner_body,
                                             body,
                                         );
-                                        if parent.is_none() {
-                                            debug!(
-                                                "No parent found for {:?} (dest is {}present)",
-                                                p,
-                                                if dest.is_none() { "not " } else { "" }
-                                            );
-                                        }
-                                        parent.map(|parent| {
+                                        let aliases = parent.into_iter().flat_map(|p| from_flowistry.analysis.aliases.aliases(p).iter()).collect::<Vec<_>>();
+                                        debug!("  {p:?} -> {aliases:?}");
+                                        aliases.into_iter().map(|&parent| {
                                             (
                                                 parent,
                                                 deps.iter()
@@ -649,14 +646,19 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                                             )
                                         })
                                     })
-                                    .collect()
+                                    .collect();
+                                debug!(
+                                    "  Final state\n{}",
+                                    PrintableDependencyMatrix::new(&return_state, 4)
+                                );
+                                return_state
                             });
-                        if let Some(deps) = translated_return_state.get(&place) {
+                        //let aliases = from_flowistry.analysis.aliases.aliases(place);
+                        if let Some(deps) = translated_return_state.get(place) {
                             deps.iter().cloned().collect::<Vec<_>>()
                         } else {
                             warn!(
-                                "Dependent place {:?} not found in translated return states {:?}",
-                                place, translated_return_state
+                                "Dependent place {place:?} not found in translated return states {translated_return_state:?}",
                             );
                             vec![]
                         }
@@ -704,8 +706,6 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                         if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
                             self.inner_flow_for_terminator(bbdat.terminator())
                         {
-                            let global_terminator_loc =
-                                self.gli.globalize_location(loc, inner_body_id);
                             let caller_state = from_flowistry.state_at(loc).matrix();
                             let as_parent_dep_matrix: GlobalDepMatrix<'tcx, 'g> = inner_flow
                                 .flow
@@ -964,7 +964,7 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
         inline_selector: P,
     ) -> Self {
         let mut eval_mode = flowistry::extensions::EvalMode::default();
-        let mut function_flows = RefCell::new(HashMap::new());
+        let function_flows = RefCell::new(HashMap::new());
         if !opts.no_recursive_analysis {
             eval_mode.context_mode = flowistry::extensions::ContextMode::Recurse;
         }
