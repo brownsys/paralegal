@@ -114,3 +114,37 @@ fn arguments() {
 
     assert!(graph.connects(&(a1, body_id), &dp));
 }
+
+#[test]
+fn modify_pointer() {
+    assert!(*TEST_CRATE_ANALYZED);
+
+    let graph = do_in_crate_dir(||
+        G::from_file(Symbol::intern("modify_pointer"))
+    ).unwrap();
+
+    let get = graph.function_call("get_user_data");
+    let create = graph.function_call("modify_vec");
+    let send = graph.function_call("send_user_data");
+
+    assert!(graph.connects(&get, &create));
+    assert!(graph.connects(&create, &send));
+    assert!(graph.connects(&get, &send));
+}
+
+#[test]
+fn on_mut_var() {
+
+    assert!(*TEST_CRATE_ANALYZED);
+
+    let graph = do_in_crate_dir(||
+        G::from_file(Symbol::intern("modify_pointer"))
+    ).unwrap();
+
+    let source = graph.function_call("source");
+    let modify = graph.function_call("modify_it");
+    let receive = graph.function_call("receiver");
+
+    assert!(graph.connects(&source, &modify));
+    assert!(graph.connects(&modify, &receive));
+}

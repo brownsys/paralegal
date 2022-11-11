@@ -561,7 +561,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
             };
             let mut eval_mode = EvalMode::default();
             if !self.analysis_opts.no_recursive_analysis {
-                eval_mode.context_mode = ContextMode::Recurse;
+                //eval_mode.context_mode = ContextMode::Recurse;
             }
             fluid_set!(EVAL_MODE, eval_mode);
             let recurse_selector = Box::new(RecurseSelector {

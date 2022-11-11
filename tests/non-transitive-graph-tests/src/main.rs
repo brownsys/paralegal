@@ -85,6 +85,37 @@ fn dp_user_data(user_data: &mut UserData) {
     }
 }
 
+#[dfpp::label(noinline, return)]
+fn modify_vec(v: &mut [i64]) {
+}
+
+#[dfpp::analyze]
+fn modify_pointer() {
+    let ref mut p = get_user_data();
+    modify_vec(&mut p.data);
+    send_user_data(p);
+}
+
+#[dfpp::label(noinline, return)]
+fn modify_it(x: &mut i32) {}
+
+#[dfpp::analyze]
+fn on_mut_var() {
+    let mut x = source();
+    modify_it(&mut x);
+    receiver(x)
+}
+
+#[dfpp::label(hello, return)]
+fn source() -> i32 {
+    0
+}
+
+
+
+#[dfpp::label(there, arguments = [0])]
+fn receiver(x: i32) {}
+
 #[dfpp::label{ sink, arguments = [0] }]
 fn send_user_data(user_data: &UserData) {}
 
