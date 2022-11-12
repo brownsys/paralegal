@@ -88,13 +88,24 @@ pub mod call_only_flow_dot {
     use crate::rust::ty::TyCtxt;
     use crate::Either;
 
-    use crate::ana::{CallOnlyFlow, GlobalLocation, IsGlobalLocation};
+    use crate::ana::{CallOnlyFlow, GlobalLocation, IsGlobalLocation, AsFnAndArgs};
 
     type N<'g> = GlobalLocation<'g>;
-    type E<'g> = (N<'g>, N<'g>, String);
+    #[derive(Clone)]
+    struct E<'g> {
+        from: N<'g>, 
+        to: N<'g>,
+        into: To,
+    }
+    #[derive(Clone)]
+    enum To {
+        Ctrl,
+        Arg(usize),
+    }
     struct G<'tcx, 'g> {
         graph: &'g CallOnlyFlow<'g>,
         tcx: TyCtxt<'tcx>,
+        detailed: bool,
     }
 
     impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>> for G<'tcx, 'g> {
@@ -117,19 +128,19 @@ pub mod call_only_flow_dot {
                 .flat_map(|(&to, v)| {
                     v.ctrl_deps
                         .iter()
-                        .map(move |&from| (from, to, "ctrl".to_string()))
+                        .map(move |&from| E {from, to, into:To::Ctrl})
                         .chain(v.input_deps.iter().enumerate().flat_map(move |(i, deps)| {
-                            deps.iter().map(move |&from| (from, to, i.to_string()))
+                            deps.iter().map(move |&from| E { from,to, into:To::Arg(i)})
                         }))
                 })
                 .collect::<Vec<_>>()
                 .into()
         }
         fn source(&'a self, edge: &E<'g>) -> N<'g> {
-            edge.0
+            edge.from
         }
         fn target(&'a self, edge: &E<'g>) -> N<'g> {
-            edge.1
+            edge.to
         }
     }
 
@@ -140,33 +151,88 @@ pub mod call_only_flow_dot {
         fn node_id(&'a self, n: &N<'g>) -> dot::Id<'a> {
             dot::Id::new(format!("n{}", n.stable_id())).unwrap()
         }
+        fn node_shape(&'a self, _node: &N<'g>) -> Option<dot::LabelText<'a>> {
+            Some(
+                dot::LabelText::LabelStr("record".into())
+            )
+        }
+
+        fn source_port_position(&'a self, _e: &E<'g>) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
+            (Some(dot::Id::new("ret").unwrap()), None)
+        }
+
+        fn target_port_position(&'a self, e: &E<'g>) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
+            (Some(
+                match e.into {
+                    To::Ctrl => dot::Id::new("ctrl"),
+                    To::Arg(i) => dot::Id::new(format!("a{}", i))
+                }.unwrap()
+            ), None)
+        }
+
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
+            use std::fmt::Write;
             let (loc, body_id) = n.innermost_location_and_body();
             let body_with_facts = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
                 self.tcx,
                 self.tcx.hir().body_owner_def_id(body_id),
             );
             let body = &body_with_facts.body;
-            dot::LabelText::LabelStr(
-                if !crate::ana::is_real_location(&body, loc) {
-                    assert!(n.is_at_root());
-                    format!(
-                        "Argument {}",
-                        flowistry::mir::utils::location_to_string(loc, body)
-                    )
+            let write_label = |s : &mut String| -> std::fmt::Result {
+                write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
+                if self.detailed {
+                    let mut locs = n.iter().collect::<Vec<_>>();
+                    locs.pop();
+                    locs.reverse();
+                    for l in locs.into_iter() {
+                        write!(s, "@{:?}:{}", l.location().block, l.location().statement_index)?;
+                    }
+                };
+                let stmt = if !crate::ana::is_real_location(&body, loc) {
+                    None
                 } else {
-                    match body.stmt_at(loc) {
-                        Either::Left(stmt) => format!("[{:?}] {:?}", loc.block, stmt.kind),
+                    Some(body.stmt_at(loc))
+                };
+                let typ = if let Some(ref stmt) = stmt {
+                    if stmt.is_left() {
+                        "S"
+                    } else {
+                        "T"
+                    }
+                } else {
+                    "A"
+                };
+                write!(s, "|{typ}}}|")?;
+                if let Some(stmt) = stmt {
+                    match stmt {
+                        Either::Left(_stmt) => {
+                            unimplemented!()
+                        }
                         Either::Right(term) => {
-                            format!("[{:?}] {:?}", loc.block, term.kind)
+                            let (fun, args, _) = term.as_fn_and_args().unwrap();
+                            let fun_name = self.tcx.item_name(fun);
+                            write!(s, "{{{{")?;
+                            for (i, arg) in args.iter().enumerate() {
+                                write!(s, "<a{}>", i)?;
+                                match arg {
+                                    Some(a) if self.detailed => 
+                                        write!(s, "{:?}", a),
+                                    _ => 
+                                        write!(s, "{}", i)
+                                }?;
+                                write!(s, "|")?;
+                            }
+                            write!(s, "C}}|<ret>{fun_name}}}")?;
                         }
                     }
+                } else {
+                    write!(s, "<ret>{}", flowistry::mir::utils::location_to_string(loc, body))?;
                 }
-                .into(),
-            )
-        }
-        fn edge_label(&'a self, e: &E<'g>) -> dot::LabelText<'a> {
-            dot::LabelText::LabelStr(format!("{:?}", e.2).into())
+                Ok(())
+            };
+            let mut s = String::new();
+            write_label(&mut s).unwrap();
+            dot::LabelText::LabelStr(s.into())
         }
     }
 
@@ -175,13 +241,19 @@ pub mod call_only_flow_dot {
         graph: &CallOnlyFlow,
         mut out: W,
     ) -> std::io::Result<()> {
-        dot::render(&G { graph, tcx }, &mut out)
+        dot::render(&G { graph, tcx, detailed: false }, &mut out)
     }
 }
 
 pub struct PrintableGranularFlow<'a, 'g, 'tcx> {
     pub flow: &'a GlobalFlowGraph<'tcx, 'g>,
     pub tcx: TyCtxt<'tcx>,
+}
+
+impl <'g> GlobalLocation<'g> {
+    pub fn iter(self) -> impl Iterator<Item=GlobalLocation<'g>> {
+        std::iter::successors(Some(self), |l| l.next().cloned())
+    }
 }
 
 fn format_global_location<T: IsGlobalLocation>(
@@ -380,7 +452,6 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
     flow: &CallOnlyFlow,
     mut out: W,
 ) {
-    use crate::ana::IsGlobalLocation;
     let bodies = Bodies(
         flow.iter()
             .flat_map(|(l, deps)| {

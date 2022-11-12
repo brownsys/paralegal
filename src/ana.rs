@@ -84,7 +84,7 @@ fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
     }
 }
 
-trait AsFnAndArgs<'tcx> {
+pub trait AsFnAndArgs<'tcx> {
     fn as_fn_and_args(
         &self,
     ) -> Result<
@@ -1023,7 +1023,14 @@ fn node_as_fn<'hir>(
         def_id,
         kind: hir::ItemKind::Fn(_, _, body_id),
         ..
-    }) = node
+    }) | hir::Node::ImplItem(
+        hir::ImplItem {
+            ident,
+            def_id,
+            kind: hir::ImplItemKind::Fn(_, body_id),
+            ..
+        }
+    ) = node
     {
         Some((ident, def_id, body_id))
     } else {
@@ -1410,7 +1417,7 @@ fn identifier_for_hid<'tcx>(tcx: TyCtxt<'tcx>, hid: HirId) -> Identifier {
     Identifier::new(tcx.item_name(tcx.hir().local_def_id(hid).to_def_id()))
 }
 
-fn identifier_for_fn<'tcx>(tcx: TyCtxt<'tcx>, p: DefId) -> Identifier {
+pub fn identifier_for_fn<'tcx>(tcx: TyCtxt<'tcx>, p: DefId) -> Identifier {
     Identifier::new(tcx.item_name(p))
 }
 
