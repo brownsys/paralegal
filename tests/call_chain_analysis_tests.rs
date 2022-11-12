@@ -88,3 +88,24 @@ fn on_mut_var_no_modify() {
         }
     })
 }
+
+#[test]
+fn field_sensitivity() {
+    assert!(*TEST_CRATE_ANALYZED);
+
+    use_rustc(|| {
+        let graph = PreFrg::from_file_at(TEST_CRATE_NAME);
+        let produce_usize_fn = graph.function("produce_usize");
+        let produce_string_fn = graph.function("produce_string");
+        let consume_usize_fn = graph.function("read_usize");
+        let consume_string_fn = graph.function("read_string");
+        let ctrl = graph.ctrl("field_sensitivity");
+        let produce_usize = ctrl.call_site(&produce_usize_fn);
+        let produce_string = ctrl.call_site(&produce_string_fn);
+        let read_string = ctrl.call_site(&consume_string_fn);
+        let read_usize = ctrl.call_site(&consume_usize_fn);
+        assert!(produce_usize.flows_to(&read_usize.input()[0]));
+        assert!(!produce_usize.flows_to(&read_string.input()[0]));
+        assert!(produce_string.flows_to(&read_string.input()[0]));
+    })
+}

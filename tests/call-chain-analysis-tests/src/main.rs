@@ -49,4 +49,40 @@ fn on_mut_var_no_modify() {
     receiver(x)
 }
 
+struct S {
+    usize_field: usize,
+    string_field: String,
+}
+
+#[dfpp::label(noinline, return)]
+fn read_usize(u: usize) {}
+
+#[dfpp::label(noinline ,return)]
+fn read_string(s: String) {}
+
+fn modify_a_field(s: &mut S) {
+    s.usize_field = produce_usize();
+}
+
+#[dfpp::label(noinline ,return)]
+fn produce_usize() -> usize {
+    0
+}
+
+#[dfpp::label(noinline ,return)]
+fn produce_string() -> String {
+    "".to_string()
+}
+
+#[dfpp::analyze]
+fn field_sensitivity() {
+    let mut s = S {
+        usize_field: 0,
+        string_field: produce_string(),
+    };
+    modify_a_field(&mut s);
+    read_usize(s.usize_field);
+    read_string(s.string_field);
+}
+
 fn main() {}

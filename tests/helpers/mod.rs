@@ -309,6 +309,12 @@ impl<'g> CtrlRef<'g> {
         all.dedup_by_key(|r| r.call_site);
         all
     }
+
+    pub fn call_site(&'g self, fun: &'g FnRef<'g>) -> CallSiteRef<'g> {
+        let mut cs = self.call_sites(fun);
+        assert!(cs.len() == 1, "expected only one call site for {}, found {}", fun.ident, cs.len());
+        cs.pop().unwrap()
+    }
 }
 
 impl<'g> HasGraph<'g> for &FnRef<'g> {
