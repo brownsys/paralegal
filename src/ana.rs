@@ -1,15 +1,12 @@
-use std::{
-    borrow::{BorrowMut, Cow},
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
     dbg::{self, PrintableDependencyMatrix},
     desc::*,
     rust::*,
     sah::HashVerifications,
-    serializers, Either, HashMap, HashSet,
+    utils::*,
+    Either, HashMap, HashSet,
 };
 
 use hir::{
@@ -18,7 +15,7 @@ use hir::{
     intravisit::{self, FnKind},
     BodyId,
 };
-use mir::{Body, Location, Place, Statement, Terminator};
+use mir::{Location, Place};
 use rustc_data_structures::{intern::Interned, sharded::ShardedHashMap};
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
@@ -30,166 +27,34 @@ use rustc_span::{symbol::Ident, Span, Symbol};
 
 use crate::rust::rustc_arena;
 use flowistry::{
-    indexed::{
-        impls::{LocationDomain, PlaceSet},
-        IndexedDomain,
-    },
-    infoflow::{self, FlowAnalysis, FlowDomain, NonTransitiveFlowDomain},
-    mir::{borrowck_facts, engine::AnalysisResults, utils::BodyExt},
+    indexed::IndexSet,
+    infoflow::{FlowAnalysis, FlowDomain, NonTransitiveFlowDomain},
+    mir::{borrowck_facts, engine::AnalysisResults},
 };
 
+/// Values of this type can be matched against Rust attributes
 pub type AttrMatchT = Vec<Symbol>;
 
-trait MetaItemMatch {
-    fn match_extract<A, F: Fn(&ast::MacArgs) -> A>(&self, p: &[Symbol], f: F) -> Option<A>;
-    fn matches_path(&self, p: &[Symbol]) -> bool {
-        self.match_extract(p, |_| ()).is_some()
-    }
-}
-
-impl MetaItemMatch for ast::Attribute {
-    fn match_extract<A, F: Fn(&ast::MacArgs) -> A>(&self, p: &[Symbol], f: F) -> Option<A> {
-        match &self.kind {
-            rustc_ast::ast::AttrKind::Normal(ast::AttrItem { path, args, .. }, _)
-                if path.segments.len() == p.len()
-                    && path
-                        .segments
-                        .iter()
-                        .zip(p)
-                        .all(|(seg, i)| seg.ident.name == *i) =>
-            {
-                Some(f(args))
-            }
-            _ => None,
-        }
-    }
-}
-
-fn ty_def(ty: ty::Ty) -> Option<DefId> {
-    match ty.kind() {
-        ty::TyKind::Adt(def, _) => Some(def.did()),
-        ty::TyKind::Foreign(did)
-        | ty::TyKind::FnDef(did, _)
-        | ty::TyKind::Closure(did, _)
-        | ty::TyKind::Generator(did, _, _)
-        | ty::TyKind::Opaque(did, _) => Some(*did),
-        _ => None,
-    }
-}
-
-fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
-    match a.unpack() {
-        ty::subst::GenericArgKind::Type(t) => Some(t),
-        _ => None,
-    }
-}
-
-pub trait AsFnAndArgs<'tcx> {
-    fn as_fn_and_args(
-        &self,
-    ) -> Result<
-        (
-            DefId,
-            Vec<Option<mir::Place<'tcx>>>,
-            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        ),
-        &'static str,
-    >;
-}
-
-impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
-    fn as_fn_and_args(
-        &self,
-    ) -> Result<
-        (
-            DefId,
-            Vec<Option<mir::Place<'tcx>>>,
-            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        ),
-        &'static str,
-    > {
-        self.kind.as_fn_and_args()
-    }
-}
-
-impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
-    fn as_fn_and_args(
-        &self,
-    ) -> Result<
-        (
-            DefId,
-            Vec<Option<mir::Place<'tcx>>>,
-            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        ),
-        &'static str,
-    > {
-        match self {
-            mir::TerminatorKind::Call {
-                func,
-                args,
-                destination,
-                ..
-            } => {
-                let defid = match func.constant().ok_or("Not a constant")? {
-                    mir::Constant {
-                        literal: mir::ConstantKind::Val(_, ty),
-                        ..
-                    } => match ty.kind() {
-                        ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),
-                        _ => Err("Not function type"),
-                    },
-                    _ => Err("Not value level constant"),
-                }?;
-                Ok((
-                    defid,
-                    args.iter()
-                        .map(|a| match a {
-                            mir::Operand::Move(p) | mir::Operand::Copy(p) => Some(*p),
-                            mir::Operand::Constant(_) => None,
-                        })
-                        .collect(),
-                    *destination,
-                ))
-            }
-            _ => Err("Not a function call".into()),
-        }
-    }
-}
-
-/// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
-/// object via the visit::Visitor` trait. Usually used to accumulate information
-/// about the places.
-pub struct PlaceVisitor<F>(pub F);
-
-impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisitor<F> {
-    fn visit_place(
-        &mut self,
-        place: &mir::Place<'tcx>,
-        _context: mir::visit::PlaceContext,
-        _location: mir::Location,
-    ) {
-        self.0(place)
-    }
-}
-
-/// This function deals with the fact that flowistry uses special locations to
-/// refer to function arguments. Those locations are not recognized the rustc
-/// functions that operate on MIR and thus need to be filtered before doing
-/// things such as indexing into a `mir::Body`.
-pub fn is_real_location(body: &mir::Body, l: mir::Location) -> bool {
-    body.basic_blocks().get(l.block).map(|bb| 
-            // Its `<=` because if len == statement_index it refers to the
-            // terminator
-            // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
-            l.statement_index <= bb.statements.len())
-        == Some(true)
-}
-
+/// A mapping of annotations that are attached to a specific function
+/// definition. The name here actually refers to the fact that these annotations
+/// are later related to the call sites of the functions.
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
+/// The result of the data flow analysis for a function.
 pub struct Flow<'tcx, 'g> {
+    /// The id of the body for which this analysis was requested. The finely
+    /// granular (includes statements and non-call terminators), inlined
+    /// dataflow analysis for this body can actually be retrieved using
+    /// `self.function_flows[self.root_function].unwrap()`
     pub root_function: BodyId,
+    /// Memoization of inlined, finely granular (includes statements and
+    /// non-call terminators) dataflow analysis result graphs for each function
+    /// called directly or indirectly from `self.root_function`.
     function_flows: FunctionFlows<'tcx, 'g>,
+    /// The result of removing statements and terminators from the inlined graph
+    /// of `self.root_function`. Also uses a representation (input dependencies
+    /// vector) that abstracts away the concrete `Place`s the call is performed
+    /// with.
     pub reduced_flow: CallOnlyFlow<'g>,
 }
 
@@ -204,17 +69,36 @@ pub struct Flow<'tcx, 'g> {
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>);
 
+/// We intern global locations to make the fact that they are linked lists more
+/// efficient. However this makes serialization harder. Since we only use
+/// serialization for testing I am doing the lazy thing where I just serialize
+/// copies of the linked list. But this also means there's two ways to represent
+/// global location, one being the one that recurses with interned pointers, the
+/// other uses an owned (e.g. copied) `Box`. This trait lets you treat both of
+/// them the same for convenience. This is the reason this trait uses `&self`
+/// instead of `self`. For interned values using `self` would be fine, but the
+/// serializable version is an owned `Box` and as such would be moved with these
+/// function calls.
 pub trait IsGlobalLocation: Sized {
+    /// Every kind of a global location works as a newtype wrapper that feeds
+    /// itself as the generic argument to `GlobalLocationS`, the actual payload,
+    /// thus closing the type-level recursion. This method takes away that
+    /// wrapper layer and lets us operate on the payload.
     fn as_global_location_s(&self) -> &GlobalLocationS<Self>;
+    /// Get the `function` field of the underlying location.
     fn function(&self) -> BodyId {
         self.as_global_location_s().function
     }
+    /// Get the `location` field of the underlying location.
     fn location(&self) -> mir::Location {
         self.as_global_location_s().location
     }
+    /// Get the `next` field of the underlying location.
     fn next(&self) -> Option<&Self> {
         self.as_global_location_s().next.as_ref()
     }
+    /// Return the second-to-last location in the chain of `next()` locations.
+    /// Returns `None` if this location has no `next()` location.
     fn parent(&self) -> Option<&Self> {
         if let Some(n) = self.next() {
             if n.next().is_none() {
@@ -226,12 +110,16 @@ pub trait IsGlobalLocation: Sized {
             None
         }
     }
+    /// Get the `location` and `function` field of the last location in the
+    /// chain of `next()` locations.
     fn innermost_location_and_body(&self) -> (mir::Location, BodyId) {
         self.next().map_or_else(
             || (self.location(), self.function()),
             |other| other.innermost_location_and_body(),
         )
     }
+    /// It this location is top-level (i.e. `self.next() == None`), then return
+    /// the `location` field.
     fn as_local(self) -> Option<mir::Location> {
         if self.next().is_none() {
             Some(self.location())
@@ -239,6 +127,8 @@ pub trait IsGlobalLocation: Sized {
             None
         }
     }
+    /// This location is at the top level (e.g. not-nested e.g. `self.next() ==
+    /// None`).
     fn is_at_root(self) -> bool {
         self.next().is_none()
     }
@@ -250,6 +140,9 @@ impl<'g> IsGlobalLocation for GlobalLocation<'g> {
     }
 }
 
+/// the naming here might be misleading, this id is *not stable across tool
+/// runs*, but because of the interner it is guaranteed that for any two
+/// locations `g1` and `g2`, `g1.stable_id() == g2.stable_id()` iff `g1 == g2`.
 impl<'g> GlobalLocation<'g> {
     pub fn stable_id(self) -> usize {
         self.0 .0 as *const GlobalLocationS<GlobalLocation<'g>> as usize
@@ -275,15 +168,42 @@ impl<'g> std::borrow::Borrow<GlobalLocationS<GlobalLocation<'g>>> for GlobalLoca
 /// them as `GlobalLocationS`, i.e. a non-interned version of the same struct.
 /// This is necessary because in the derived deserializers we do not have access
 /// to the interner.
+///
+/// For convenience the trait `IsGlobalLocation` is provided which lets you
+/// operate directly on the wrapper types and also na way that works with any
+/// global location type (both `GlobalLocation` as well as the serializable
+/// `crate::serializers::RawGlobaLocation`)
 #[derive(PartialEq, Eq, Hash, Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct GlobalLocationS<Inner> {
+    /// The id of the body in which this location is located.
     #[serde(with = "crate::serializers::BodyIdProxy")]
     pub function: BodyId,
+    /// The location itself
     #[serde(with = "crate::serializers::ser_loc")]
     pub location: mir::Location,
+    /// If `next.is_some()` then this contains the next link in the call chain.
+    /// This means that `self.location` refers to a `mir::Terminator` and that
+    /// this terminator is `mir::TerminatorKind::Call`. The next link in the
+    /// chain (the payload of the `Some`) is a location in called function.
     pub next: Option<Inner>,
 }
 
+/// The interner for `GlobalLocation`s. You should never have to use this
+/// directly, use the convenience wrapper type `GLI` instead.
+///
+/// Be aware that the lifetime of locations is tied to `'g`, meaning you need to
+/// allocate the arena before you create the interner. And also the arena must
+/// outlive the interner (rustc will make sure to remind you of this).
+///
+/// Also be aware that interning *will no longer work correctly if you discard
+/// the interner*. This is because the decision whether or not to intern a new
+/// copy of the location is made using the `known_location` map. If you discard
+/// the interner and create a new one its map will be empty. This means it
+/// *doesn't know about any previously interned locations* and as a result it
+/// will reintern locations, which in turn creates interned values that have the
+/// same payload as previously interned locations *and even the same lifetime
+/// `'g`*, but have a different pointer value and thus do not compare equal with
+/// later interned locations or have the same hash.
 pub struct GlobalLocationInterner<'g> {
     arena: &'g rustc_arena::TypedArena<GlobalLocationS<GlobalLocation<'g>>>,
     known_locations: ShardedHashMap<&'g GlobalLocationS<GlobalLocation<'g>>, ()>,
@@ -307,6 +227,10 @@ impl<'g> GlobalLocationInterner<'g> {
     }
 }
 
+/// Convenience struct, similar to `ty::TyCtxt`. Everything you could ever want
+/// from the interner can be done on this struct and it's `Copy` so you don't
+/// have to worry about accidentally moving it (as you would when using
+/// `&GlobalLocationInterner`).
 #[derive(Clone, Copy)]
 pub struct GLI<'g>(&'g GlobalLocationInterner<'g>);
 
@@ -323,6 +247,7 @@ impl<'g> GLI<'g> {
             next,
         })
     }
+    /// Create a top-level `GlobalLocation` (e.g. no nested calls).
     pub fn globalize_location(
         self,
         location: mir::Location,
@@ -330,6 +255,8 @@ impl<'g> GLI<'g> {
     ) -> GlobalLocation<'g> {
         self.make_global_location(function, location, None)
     }
+    /// Make `relative_location` a location in a nested call in `root_function`
+    /// at `root_location`
     pub fn global_location_from_relative(
         self,
         relative_location: GlobalLocation<'g>,
@@ -340,55 +267,93 @@ impl<'g> GLI<'g> {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
-pub struct GlobalPlace<'tcx, Location> {
-    pub place: mir::Place<'tcx>,
-    pub function: Option<Location>,
-}
-
-impl<'tcx, 'g> GlobalPlace<'tcx, GlobalLocation<'g>> {
-    pub fn relative_to(
-        mut self,
-        gli: GLI<'g>,
-        root_location: mir::Location,
-        root_function: BodyId,
-    ) -> Self {
-        self.function = Some(gli.make_global_location(root_function, root_location, self.function));
-        self
-    }
-}
-
-impl<'tcx, 'g, Location> From<mir::Place<'tcx>> for GlobalPlace<'tcx, Location> {
-    fn from(place: mir::Place<'tcx>) -> Self {
-        Self {
-            place,
-            function: None,
-        }
-    }
-}
-
+/// A flowistry-like dependency matrix at a specific location. Describes for
+/// each place the most recent global locations (these could be locations in a
+/// callee) that influenced the values at this place.
 type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
+/// A flowistry-like 3-dimensional tensor describing the `Place` dependencies of
+/// all locations (including of inlined callees).
+///
+/// It is guaranteed that for each place the most recent location that modified
+/// it is either
+///
+/// 1. in the same function (call)
+/// 2. one of the argument locations
+/// 3. the return or input place of a function call
+///
+/// In short even with global locations any given place never crosses a function
+/// boundary directly but always wither via an argument location or the call
+/// site. This is what allow us to use a plain `Place`, because we can perform
+/// translation at these special locations (see also `translate_child_to_parent`).
+///
+/// The special matrix `return_state` is the union of all dependency matrices at
+/// each call to `return`.
 pub struct GlobalFlowGraph<'tcx, 'g> {
     pub location_states: HashMap<GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>>,
     return_state: GlobalDepMatrix<'tcx, 'g>,
 }
+
+/// The analysis result for one function. See `GlobalFlowGraph` for
+/// explanations, this struct just also bundles in the `AnalysisResult` we got
+/// from flowistry for the `self.flow.root_function`. Currently the sole purpose
+/// of doing this is so that we can later query
+/// `self.analysis.analysis.aliases()` to resolve `reachable_values` and `Place`
+/// `aliases()`.
 struct FunctionFlow<'tcx, 'g> {
     flow: GlobalFlowGraph<'tcx, 'g>,
     analysis: AnalysisResults<'tcx, FlowAnalysis<'tcx, 'tcx, NonTransitiveFlowDomain<'tcx>>>,
 }
+/// A memoization structure used to memoize and coordinate the recursion in
+/// `GlobalFlowConstructor::compute_granular_global_flows`.
 type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<FunctionFlow<'tcx, 'g>>>>>;
+/// Coarse grained, `Place` abstracted version of a `GlobalFlowGraph`.
 pub type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<GlobalLocation<'g>>>;
 
+/// Dependencies of a function call with the `Place`s abstracted away. Instead
+/// each location in the `input_deps` vector corresponds to the dependencies for
+/// the positional argument at that index. For methods the 0th index is `self`.
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(bound(
     serialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Serialize",
     deserialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Deserialize<'de>"
 ))]
 pub struct CallDeps<Location> {
+    /// Additional dependencies that arise from the control flow, e.g. the scope
+    /// this function call is located in.
     pub ctrl_deps: HashSet<Location>,
+    /// Dependencies of each argument in the same order as the parameters
+    /// provided to the function call.
     pub input_deps: Vec<HashSet<Location>>,
 }
 
+/// This function is wholesale lifted from flowistry's recursive analysis. Edits
+/// that have been made are just to lift it from a lambda to a top-level
+/// function.
+///
+/// What this function does is relate `Place` from the body of a callee to a
+/// `Place` in the body of the caller. The most simple example would be one
+/// where it relates the formal parameter of a function to the actual call
+/// argument as follows. (Shown as MIR)
+///
+/// ```plain
+/// fn callee(_1) {
+///   let _2 = ...;
+///   ...
+/// }
+/// fn caller() {
+///   ...
+///   let _3 = ...;
+///   callee(_3)
+/// }
+/// ```
+///
+/// Here `translate_child_to_parent(_1) == Some(_3)`. This only works for places
+/// that are actually related to the parent, e.g. `translate_child_to_parent(_2)
+/// == None` in the example.
+///
+/// This function does more sophisticated mapping as well through references,
+/// derefs and fields. However in all honesty I haven't bothered (yet) to
+/// understand its precise capabilities, which should be documented here.
 fn translate_child_to_parent<'tcx>(
     tcx: TyCtxt<'tcx>,
     parent_local_def_id: LocalDefId,
@@ -403,13 +368,11 @@ fn translate_child_to_parent<'tcx>(
     use mir::HasLocalDecls;
     use mir::ProjectionElem;
     if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
-        debug!("Child is return place");
         if child.ty(body.local_decls(), tcx).ty.is_unit() {
             return None;
         }
 
         if let Some((dst, _)) = destination {
-            debug!("Returning destination");
             return Some(dst);
         }
     }
@@ -443,16 +406,52 @@ fn translate_child_to_parent<'tcx>(
     let parent_arg_projected = Place::make(parent_toplevel_arg.local, &projection, tcx);
     Some(parent_arg_projected)
 }
-struct GlobalFlowConstructor<'tcx, 'g, 'a, P> {
+
+/// Bundles together shared structs needed for the global flow construction. The
+/// idea is you construct this with `new` then call
+/// `compute_granular_global_flows` and then `compute_call_only_flow` on the
+/// result, then discard this struct.
+struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
+    /// Command line and environment options that control analysis behavior (for
+    /// us and for flowistry).
     analysis_opts: &'a crate::AnalysisCtrl,
+    /// Command line and environment options that control debug output.
     dbg_opts: &'a crate::DbgArgs,
+    /// Rustc query interface
     tcx: TyCtxt<'tcx>,
+    /// Global location interner
     gli: GLI<'g>,
+    /// Memoization of intermediate analyses (see `FunctionFlows` documentation for more)
     function_flows: FunctionFlows<'tcx, 'g>,
+    /// A selector that controls which functions are inlined, both in our code
+    /// as well as which functions are recursed into in flowistry. See
+    /// `InlineSelector` for more information.
     inline_selector: P,
 }
 
-pub trait InlineSelector {
+/// This essentially describes a closure that determines for a given
+/// `LocalDefId` if it should be inlined. Originally this was in fact done by
+/// passing a closure, but it couldn't properly satisfy the type checker,
+/// because the selector has to be stored in `fluid_let` variable, which is a
+/// dynamically scoped variable. This means that the type needs to be valid for
+/// a static lifetime, which I believe closures are not.
+///
+/// In particular the way that this works is that values of this interface are
+/// then wrapped with `RecurseSelector`, which is a flowistry interface that
+/// satisfies `flowistry::extensions::RecurseSelector`. The wrapper then simply
+/// dispatches to the `InlineSelector`.
+///
+/// The reason for the two tiers of selectors is that
+///
+/// - Flowsitry is a separate crate and so I wanted a way to control it that
+///   decouples from the specifics of dfpp
+/// - We use the selectors to skip functions with annotations, but I wanted to
+///   keep the construction of inlined flow graphs agnostic to any notion of
+///   annotations. Those are handled by the `Visitor`
+///
+/// The only implementation currently in use for this is
+/// `SkipAnnotatedFunctionSelector`.
+pub trait InlineSelector: 'static {
     fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool;
 }
 
@@ -462,6 +461,14 @@ impl<T: InlineSelector> InlineSelector for Rc<T> {
     }
 }
 
+/// A `flowistry::extensions::RecurseSelector` that disables recursion if either
+///
+/// 1. `inline_disabled` has been set (this is usually coming from `crate::AnalysisCtrl::no_recursive_analysis`)
+/// 2. The wrapped `InlineSelector` returns `false` for the `LocalDefId` of the called function.
+/// 3. The terminator is not a function call
+/// 4. The function being called cannot be statically determined
+///
+/// The last two are incidental and also simultaneously enforced by flowistry.
 struct RecurseSelector {
     inline_disabled: bool,
     inline_selector: Box<dyn InlineSelector>,
@@ -483,13 +490,12 @@ impl flowistry::extensions::RecurseSelector for RecurseSelector {
     }
 }
 
-impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'tcx, 'g, 'a, P> {
+impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a, P> {
     fn new(
         analysis_opts: &'a crate::AnalysisCtrl,
         dbg_opts: &'a crate::DbgArgs,
         tcx: TyCtxt<'tcx>,
         gli: GLI<'g>,
-        function_flows: FunctionFlows<'tcx, 'g>,
         inline_selector: P,
     ) -> Self {
         Self {
@@ -497,16 +503,42 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
             dbg_opts,
             tcx,
             gli,
-            function_flows,
+            function_flows: RefCell::new(HashMap::new()),
             inline_selector,
         }
     }
 
+    /// This does the same as `RecurseSelector`. It's kind of difficult to reuse
+    /// the recurse selector (because it gets moved into a `fluid_let` to
+    /// control flowistry recursion), hence this reimplementation here.
     fn should_inline(&self, did: LocalDefId) -> bool {
         !self.analysis_opts.no_recursive_analysis
             && self.inline_selector.should_inline(self.tcx, did)
     }
 
+    /// Find or compute the finely granular flow for the function that this
+    /// terminator calls. If successful returns
+    ///
+    /// 1. The computed flow
+    /// 2. The id of the body of the called function
+    /// 3. The body of the called function
+    /// 4. The arguments to the called function (like `AsFnAndArgs` does).
+    /// 5. The return place mentioned in the terminator (like `AsFnAndArgs`
+    ///    does)
+    ///
+    /// This function fails if
+    ///
+    /// - The terminator is not a function call
+    /// - The called function cannot be statically determined (see
+    ///   `AsFnAndArgs`)
+    /// - The called function is not from the local crate
+    /// - `self.should_inline` returned `false` for the defid of the called
+    ///   function
+    /// - This is a recursive call. Note that this does not only apply for
+    ///   direct recursive calls, e.g. `foo` calls `foo`, but also mutual
+    ///   recursion e.g. `foo` calls `bar` which calls `foo`.
+    ///
+    /// The error message will indicate which of these cases occurred.
     fn inner_flow_for_terminator(
         &self,
         t: &mir::Terminator<'tcx>,
@@ -541,6 +573,23 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
         })
     }
 
+    /// Computes a granular, inlined flow for the body of the `root_function` id
+    /// provided. The granular flow contains all locations in this body,
+    /// including those that reference statements and non-call terminators. See
+    /// also the documentation for `FunctionFlow`.
+    ///
+    /// The computation is memoized in `self.function_flows` and calling this
+    /// function will immediately return a previous result, if such a result
+    /// exists.
+    ///
+    /// This function returns `None` if this is a recursive call, e.g. if
+    /// `root_function` calls itself somewhere in its call chain. Note that this
+    /// means that even if this function is recursive a granular flow *will be
+    /// computed*, but only for the outermost call, the recursive call on the
+    /// inside will be approximated by its type.
+    ///
+    /// XXX(Justus): I am actually not sure what the implications of that
+    /// approximation are for labels.
     fn compute_granular_global_flows(
         &self,
         root_function: BodyId,
@@ -564,7 +613,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
             };
             let mut eval_mode = EvalMode::default();
             if !self.analysis_opts.no_recursive_analysis {
-                //eval_mode.context_mode = ContextMode::Recurse;
+                eval_mode.context_mode = ContextMode::Recurse;
             }
             fluid_set!(EVAL_MODE, eval_mode);
             let recurse_selector = Box::new(RecurseSelector {
@@ -605,6 +654,13 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                         debug!("Inspecting inner flow for {:?}", t.kind);
                         let mut translated_return_states_borrow =
                             translated_return_states.borrow_mut();
+                        // This is ugly but `translate_child_to_parent` only
+                        // works from the callee to the caller (and I don't want
+                        // to reimplement/change it right now) so instead I try
+                        // to translate every possible place in the callee and
+                        // materialize the result of that in this map, which I
+                        // memoize in `translated_return_states` so that I only
+                        // do it once.
                         let translated_return_state = translated_return_states_borrow
                             .entry(*l)
                             .or_insert_with(|| {
@@ -693,7 +749,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                     .statements
                     .iter()
                     .enumerate()
-                    .map(move |(idx, stmt)| {
+                    .map(move |(idx, _stmt)| {
                         let loc = mir::Location {
                             block: bb,
                             statement_index: idx,
@@ -707,6 +763,12 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
                             self.inner_flow_for_terminator(bbdat.terminator())
                         {
                             let caller_state = from_flowistry.state_at(loc).matrix();
+                            // Translate every place in the child optimistically
+                            // to a parent place. This allows us to uphold the
+                            // invariant that when tracing dependencies a local
+                            // place does not immediately cross into a parent,
+                            // but first into such an argument location where it
+                            // can get translated.
                             let as_parent_dep_matrix: GlobalDepMatrix<'tcx, 'g> = inner_flow
                                 .flow
                                 .location_states
@@ -818,6 +880,12 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
         )
     }
 
+    /// Filters the graph `g` for only locations that are function calls while
+    /// preserving connections between those locations by flattening transitive
+    /// connections via statements between them.
+    ///
+    /// This is the canonical way for computing a `CallOnlyFlow` and supposed to
+    /// be called after/on the result of `compute_granular_global_flows`.
     fn compute_call_only_flow(&self, g: &GlobalFlowGraph<'tcx, 'g>) -> CallOnlyFlow<'g> {
         debug!(
             "Shrinking global flow graph with {} states",
@@ -934,26 +1002,6 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone + 'static> GlobalFlowConstructor<'t
     }
 }
 
-pub fn places_read<'tcx>(
-    location: mir::Location,
-    stmt: &Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>,
-) -> impl Iterator<Item = mir::Place<'tcx>> {
-    use mir::visit::Visitor;
-    let mut places = HashSet::new();
-    let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| {
-        places.insert(*p);
-    });
-    match stmt {
-        Either::Left(mir::Statement {
-            kind: mir::StatementKind::Assign(a),
-            ..
-        }) => vis.visit_rvalue(&a.1, location),
-        Either::Right(term) => vis.visit_terminator(term, location), // TODO this is not correct
-        _ => (),
-    };
-    places.into_iter()
-}
-
 impl<'tcx, 'g> Flow<'tcx, 'g> {
     fn compute<P: InlineSelector + Clone + 'static>(
         opts: &crate::AnalysisCtrl,
@@ -964,12 +1012,10 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
         inline_selector: P,
     ) -> Self {
         let mut eval_mode = flowistry::extensions::EvalMode::default();
-        let function_flows = RefCell::new(HashMap::new());
         if !opts.no_recursive_analysis {
             eval_mode.context_mode = flowistry::extensions::ContextMode::Recurse;
         }
-        let constructor =
-            GlobalFlowConstructor::new(opts, dbg_opts, tcx, gli, function_flows, inline_selector);
+        let constructor = GlobalFlowConstructor::new(opts, dbg_opts, tcx, gli, inline_selector);
         let granular_flow = constructor.compute_granular_global_flows(body_id).unwrap();
         debug!(
             "Granular flow for {}\n{:?}",
@@ -993,59 +1039,9 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
     }
 }
 
-pub fn read_places_with_provenance<'tcx>(
-    l: Location,
-    stmt: &Either<&Statement<'tcx>, &Terminator<'tcx>>,
-    tcx: TyCtxt<'tcx>,
-) -> impl Iterator<Item = Place<'tcx>> {
-    places_read(l, stmt)
-        .into_iter()
-        .flat_map(move |place| provenance_of(tcx, place).into_iter())
-}
-
-pub fn provenance_of<'tcx>(tcx: TyCtxt<'tcx>, place: Place<'tcx>) -> Vec<Place<'tcx>> {
-    use flowistry::mir::utils::PlaceExt;
-    std::iter::once(place)
-        .chain(
-            place
-                .refs_in_projection()
-                .into_iter()
-                .map(|t| mir::Place::from_ref(t.0, tcx)),
-        )
-        .collect()
-}
-
-fn node_as_fn<'hir>(
-    node: &hir::Node<'hir>,
-) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
-    if let hir::Node::Item(hir::Item {
-        ident,
-        def_id,
-        kind: hir::ItemKind::Fn(_, _, body_id),
-        ..
-    }) | hir::Node::ImplItem(
-        hir::ImplItem {
-            ident,
-            def_id,
-            kind: hir::ImplItemKind::Fn(_, body_id),
-            ..
-        }
-    ) = node
-    {
-        Some((ident, def_id, body_id))
-    } else {
-        None
-    }
-}
-
-pub fn outfile_pls<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<std::fs::File> {
-    std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(path)
-}
-
+/// The only implementation of `InlineSelector` currently in use. This skips
+/// inlining for all `LocalDefId` values that are found in the map of
+/// `self.marked_objects` i.e. all those functions that have annotations.
 #[derive(Clone)]
 struct SkipAnnotatedFunctionSelector {
     marked_objects: MarkedObjects,
@@ -1060,16 +1056,15 @@ impl InlineSelector for SkipAnnotatedFunctionSelector {
     }
 }
 
-fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
-    tcx.hir()
-        .find_by_def_id(tcx.hir().body_owner_def_id(body_id))
-        .unwrap()
-        .ident()
-        .expect("no def id?")
-}
-
+/// A map of objects for which we have found annotations. This is sharable so we
+/// can stick it into the `SkipAnnotatedFunctionSelector`. Technically at that
+/// point this map is read-only.
 type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 
+/// This visitor traverses the items in the analyzed crate to discover
+/// annotations and analysis targets and store them in this struct. After the
+/// discovery phase `self.analyze()` is used to drive the actual analysis. All
+/// of this is conveniently encapsulated in the `self.run()` method.
 pub struct Visitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     opts: &'static crate::Args,
@@ -1104,6 +1099,7 @@ impl<'tcx> Visitor<'tcx> {
         self.analyze()
     }
 
+    /// Extract all types mentioned in this type for which we have annotations.
     fn annotated_subtypes(&self, ty: ty::Ty) -> HashSet<TypeDescriptor> {
         ty.walk()
             .filter_map(|ty| {
@@ -1124,9 +1120,12 @@ impl<'tcx> Visitor<'tcx> {
             })
             .collect()
     }
+
+    /// Perform the analysis for one `#[dfpp::analyze]` annotated function and
+    /// return the representation suitable for emitting into Forge.
     fn handle_target<'g>(
         &self,
-        hash_verifications: &mut HashVerifications,
+        _hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
         id: Ident,
@@ -1319,7 +1318,9 @@ impl<'tcx> Visitor<'tcx> {
         Ok((Identifier::new(id.name), flows))
     }
 
-    /// Main analysis driver
+    /// Main analysis driver. Essentially just calls `handle_target` once for
+    /// every function in `self.functions_to_analyze` after doing some other
+    /// setup necessary for the flow graph creation.
     fn analyze(mut self) -> std::io::Result<ProgramDescription> {
         let arena = rustc_arena::TypedArena::default();
         let interner = GlobalLocationInterner::new(&arena);
@@ -1378,47 +1379,6 @@ impl<'tcx> Visitor<'tcx> {
             .find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span))
             .map(|t| t.1 .0 .0.as_slice())
     }
-}
-
-pub fn extract_places<'tcx>(
-    l: mir::Location,
-    body: &mir::Body<'tcx>,
-    exclude_return_places_from_call: bool,
-) -> HashSet<mir::Place<'tcx>> {
-    use mir::visit::Visitor;
-    let mut places = HashSet::new();
-    let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| {
-        places.insert(*p);
-    });
-    match body.stmt_at(l) {
-        Either::Right(mir::Terminator {
-            kind: mir::TerminatorKind::Call { func, args, .. },
-            ..
-        }) if exclude_return_places_from_call => std::iter::once(func)
-            .chain(args.iter())
-            .for_each(|o| vis.visit_operand(o, l)),
-        _ => body.basic_blocks()[l.block]
-            .visitable(l.statement_index)
-            .apply(l, &mut vis),
-    };
-    places
-}
-
-use flowistry::indexed::{IndexMatrix, IndexSet};
-
-pub type NonTransitiveGraph<'tcx> =
-    HashMap<mir::Location, IndexMatrix<mir::Place<'tcx>, mir::Location>>;
-
-fn is_safe_function<'tcx>(_bound_sig: &ty::Binder<'tcx, ty::FnSig<'tcx>>) -> bool {
-    return false;
-}
-
-fn identifier_for_hid<'tcx>(tcx: TyCtxt<'tcx>, hid: HirId) -> Identifier {
-    Identifier::new(tcx.item_name(tcx.hir().local_def_id(hid).to_def_id()))
-}
-
-pub fn identifier_for_fn<'tcx>(tcx: TyCtxt<'tcx>, p: DefId) -> Identifier {
-    Identifier::new(tcx.item_name(p))
 }
 
 fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {

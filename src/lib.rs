@@ -52,10 +52,12 @@ pub mod desc;
 mod frg;
 mod sah;
 pub mod serializers;
+pub mod utils;
 
 use ana::AttrMatchT;
 
-pub use ana::{outfile_pls, IsGlobalLocation};
+pub use ana::IsGlobalLocation;
+pub use utils::outfile_pls;
 
 use frg::ToForge;
 

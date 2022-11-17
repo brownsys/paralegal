@@ -134,9 +134,7 @@ fn modify_pointer() {
 fn on_mut_var() {
     assert!(*TEST_CRATE_ANALYZED);
 
-    let graph = do_in_crate_dir(||
-        G::from_file(Symbol::intern("on_mut_var"))
-    ).unwrap();
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("on_mut_var"))).unwrap();
 
     let source = graph.function_call("source");
     let modify = graph.function_call("modify_it");

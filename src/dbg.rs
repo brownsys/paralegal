@@ -1,3 +1,16 @@
+use flowistry::indexed::IndexedDomain;
+
+use crate::{
+    ana::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation},
+    rust::{
+        mir::{self, Place},
+        TyCtxt,
+    },
+    utils::{self, is_real_location},
+    HashMap, HashSet, IsGlobalLocation,
+};
+extern crate dot;
+
 pub fn print_flowistry_matrix<W: std::io::Write>(
     mut out: W,
     matrix: &crate::sah::Matrix,
@@ -42,58 +55,20 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
     }
 }
 
-use std::collections::HashMap;
-
-use crate::{ana, HashSet, IsGlobalLocation};
-use crate::{ana::CallOnlyFlow, rust::rustc_middle::ty::TyCtxt};
-use flowistry::indexed::impls::LocationDomain;
-use flowistry::indexed::IndexedDomain;
-use flowistry::infoflow::FlowDomain;
-
-use crate::{
-    rust::{mir::{Place, self}, rustc_span::symbol::Ident},
-    Either, Symbol,
-};
-extern crate dot;
-use crate::ana::{
-    is_real_location, read_places_with_provenance, GlobalFlowGraph, GlobalLocation,
-    NonTransitiveGraph,
-};
-
-struct DotGraph<'a, 'b, 'tcx> {
-    body: &'a mir::Body<'tcx>,
-    g: &'a SomeNoneTransitiveGraph<'tcx, 'b, 'a>,
-    dom: &'a LocationDomain,
-    tcx: TyCtxt<'tcx>,
-}
-
-type N = mir::Location;
-type E<'tcx> = (mir::Location, mir::Location, mir::Place<'tcx>);
-
-fn flow_get_row<'b, 'tcx, 'a>(
-    g: &'b SomeNoneTransitiveGraph<'tcx, 'a, 'b>,
-    from: mir::Location,
-) -> &'b flowistry::indexed::IndexMatrix<mir::Place<'tcx>, mir::Location> {
-    match g {
-        Either::Left(l) => l
-            .get(&from)
-            .unwrap_or_else(|| panic!("Could not find location {from:?}")),
-        Either::Right(f) => f.state_at(from).matrix(),
-    }
-}
-
 pub mod call_only_flow_dot {
-    use std::{collections::HashSet, hash::Hash};
+    use std::collections::HashSet;
 
-    use crate::rust::ty::TyCtxt;
-    use crate::Either;
-
-    use crate::ana::{CallOnlyFlow, GlobalLocation, IsGlobalLocation, AsFnAndArgs};
+    use crate::{
+        ana::{CallOnlyFlow, GlobalLocation, IsGlobalLocation},
+        rust::ty::TyCtxt,
+        utils::AsFnAndArgs,
+        Either,
+    };
 
     type N<'g> = GlobalLocation<'g>;
     #[derive(Clone)]
     struct E<'g> {
-        from: N<'g>, 
+        from: N<'g>,
         to: N<'g>,
         into: To,
     }
@@ -128,9 +103,17 @@ pub mod call_only_flow_dot {
                 .flat_map(|(&to, v)| {
                     v.ctrl_deps
                         .iter()
-                        .map(move |&from| E {from, to, into:To::Ctrl})
+                        .map(move |&from| E {
+                            from,
+                            to,
+                            into: To::Ctrl,
+                        })
                         .chain(v.input_deps.iter().enumerate().flat_map(move |(i, deps)| {
-                            deps.iter().map(move |&from| E { from,to, into:To::Arg(i)})
+                            deps.iter().map(move |&from| E {
+                                from,
+                                to,
+                                into: To::Arg(i),
+                            })
                         }))
                 })
                 .collect::<Vec<_>>()
@@ -152,22 +135,30 @@ pub mod call_only_flow_dot {
             dot::Id::new(format!("n{}", n.stable_id())).unwrap()
         }
         fn node_shape(&'a self, _node: &N<'g>) -> Option<dot::LabelText<'a>> {
-            Some(
-                dot::LabelText::LabelStr("record".into())
-            )
+            Some(dot::LabelText::LabelStr("record".into()))
         }
 
-        fn source_port_position(&'a self, _e: &E<'g>) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
+        fn source_port_position(
+            &'a self,
+            _e: &E<'g>,
+        ) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
             (Some(dot::Id::new("ret").unwrap()), None)
         }
 
-        fn target_port_position(&'a self, e: &E<'g>) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
-            (Some(
-                match e.into {
-                    To::Ctrl => dot::Id::new("ctrl"),
-                    To::Arg(i) => dot::Id::new(format!("a{}", i))
-                }.unwrap()
-            ), None)
+        fn target_port_position(
+            &'a self,
+            e: &E<'g>,
+        ) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
+            (
+                Some(
+                    match e.into {
+                        To::Ctrl => dot::Id::new("ctrl"),
+                        To::Arg(i) => dot::Id::new(format!("a{}", i)),
+                    }
+                    .unwrap(),
+                ),
+                None,
+            )
         }
 
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
@@ -178,17 +169,22 @@ pub mod call_only_flow_dot {
                 self.tcx.hir().body_owner_def_id(body_id),
             );
             let body = &body_with_facts.body;
-            let write_label = |s : &mut String| -> std::fmt::Result {
+            let write_label = |s: &mut String| -> std::fmt::Result {
                 write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
                 if self.detailed {
                     let mut locs = n.iter().collect::<Vec<_>>();
                     locs.pop();
                     locs.reverse();
                     for l in locs.into_iter() {
-                        write!(s, "@{:?}:{}", l.location().block, l.location().statement_index)?;
+                        write!(
+                            s,
+                            "@{:?}:{}",
+                            l.location().block,
+                            l.location().statement_index
+                        )?;
                     }
                 };
-                let stmt = if !crate::ana::is_real_location(&body, loc) {
+                let stmt = if !crate::utils::is_real_location(&body, loc) {
                     None
                 } else {
                     Some(body.stmt_at(loc))
@@ -215,10 +211,8 @@ pub mod call_only_flow_dot {
                             for (i, arg) in args.iter().enumerate() {
                                 write!(s, "<a{}>", i)?;
                                 match arg {
-                                    Some(a) if self.detailed => 
-                                        write!(s, "{:?}", a),
-                                    _ => 
-                                        write!(s, "{}", i)
+                                    Some(a) if self.detailed => write!(s, "{:?}", a),
+                                    _ => write!(s, "{}", i),
                                 }?;
                                 write!(s, "|")?;
                             }
@@ -226,7 +220,11 @@ pub mod call_only_flow_dot {
                         }
                     }
                 } else {
-                    write!(s, "<ret>{}", flowistry::mir::utils::location_to_string(loc, body))?;
+                    write!(
+                        s,
+                        "<ret>{}",
+                        flowistry::mir::utils::location_to_string(loc, body)
+                    )?;
                 }
                 Ok(())
             };
@@ -241,7 +239,14 @@ pub mod call_only_flow_dot {
         graph: &CallOnlyFlow,
         mut out: W,
     ) -> std::io::Result<()> {
-        dot::render(&G { graph, tcx, detailed: false }, &mut out)
+        dot::render(
+            &G {
+                graph,
+                tcx,
+                detailed: false,
+            },
+            &mut out,
+        )
     }
 }
 
@@ -250,8 +255,8 @@ pub struct PrintableGranularFlow<'a, 'g, 'tcx> {
     pub tcx: TyCtxt<'tcx>,
 }
 
-impl <'g> GlobalLocation<'g> {
-    pub fn iter(self) -> impl Iterator<Item=GlobalLocation<'g>> {
+impl<'g> GlobalLocation<'g> {
+    pub fn iter(self) -> impl Iterator<Item = GlobalLocation<'g>> {
         std::iter::successors(Some(self), |l| l.next().cloned())
     }
 }
@@ -284,24 +289,40 @@ impl<'g> std::fmt::Display for GlobalLocation<'g> {
     }
 }
 
-pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(&'a HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>, usize);
+pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(
+    &'a HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>,
+    usize,
+);
 
-impl <'a, 'g, 'tcx> PrintableDependencyMatrix<'a, 'g, 'tcx> {
+impl<'a, 'g, 'tcx> PrintableDependencyMatrix<'a, 'g, 'tcx> {
     pub fn new(map: &'a HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>, indent: usize) -> Self {
-        Self (map, indent)
+        Self(map, indent)
     }
 }
 
-impl <'a, 'g, 'tcx> std::fmt::Display for PrintableDependencyMatrix<'a, 'g, 'tcx> {
+impl<'a, 'g, 'tcx> std::fmt::Display for PrintableDependencyMatrix<'a, 'g, 'tcx> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        format_dependency_matrix(f, self.0.iter().map(|(k,v)| (*k, false, v)), self.1)
+        format_dependency_matrix(f, self.0.iter().map(|(k, v)| (*k, false, v)), self.1)
     }
 }
 
-pub fn format_dependency_matrix<'tcx, 'g, I: IntoIterator<Item=(Place<'tcx>, bool, &'g HashSet<GlobalLocation<'g>>)>>(f: &mut std::fmt::Formatter<'_>, it: I, indent: usize) -> std::fmt::Result {
-    for (place, read, deps) in it
-    {
-        write!(f, "{:indent$}{}{:?} -> ", "", if read { "> " } else { "" }, place)?;
+pub fn format_dependency_matrix<
+    'tcx,
+    'g,
+    I: IntoIterator<Item = (Place<'tcx>, bool, &'g HashSet<GlobalLocation<'g>>)>,
+>(
+    f: &mut std::fmt::Formatter<'_>,
+    it: I,
+    indent: usize,
+) -> std::fmt::Result {
+    for (place, read, deps) in it {
+        write!(
+            f,
+            "{:indent$}{}{:?} -> ",
+            "",
+            if read { "> " } else { "" },
+            place
+        )?;
         let mut is_first = true;
         write!(f, "{{")?;
         for dep in deps.iter().cloned() {
@@ -330,108 +351,26 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                 write!(f, " is argument {}", inner_location.statement_index - 1)?;
                 HashSet::new()
             } else {
-                ana::places_read(inner_location, &body.body.stmt_at(inner_location)).collect()
+                utils::places_read(inner_location, &body.body.stmt_at(inner_location)).collect()
             };
             writeln!(f, "")?;
             let empty_set = HashSet::new();
-            format_dependency_matrix(f, 
-                places_read.iter().cloned().map(|p| (p, true, deps.get(&p).unwrap_or(&empty_set))).chain(
-                deps.iter()
-                    .filter(|k| !places_read.contains(k.0))
-                    .map(|(p, deps)| (*p, false, deps)),
-            )
-                , 4)?;
+            format_dependency_matrix(
+                f,
+                places_read
+                    .iter()
+                    .cloned()
+                    .map(|p| (p, true, deps.get(&p).unwrap_or(&empty_set)))
+                    .chain(
+                        deps.iter()
+                            .filter(|k| !places_read.contains(k.0))
+                            .map(|(p, deps)| (*p, false, deps)),
+                    ),
+                4,
+            )?;
         }
         Ok(())
     }
-}
-
-impl<'a, 'b, 'c, 'tcx> dot::GraphWalk<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
-    fn nodes(&'a self) -> dot::Nodes<'a, N> {
-        self.dom.as_vec().raw.as_slice().into()
-    }
-    fn edges(&'a self) -> dot::Edges<'a, E<'tcx>> {
-        self.nodes()
-            .iter()
-            .filter(|l| is_real_location(self.body, **l))
-            .flat_map(|from| {
-                let row = flow_get_row(self.g, *from);
-                read_places_with_provenance(*from, &self.body.stmt_at(*from), self.tcx).flat_map(
-                    move |p| {
-                        let r = row.try_row(p);
-                        if r.is_none() {
-                            warn!(
-                            "No row found for place {p:?} at location {from:?}, instruction: {:?}",
-                            match self.body.stmt_at(*from) {
-                                Either::Left(s) => &s.kind as &dyn std::fmt::Debug,
-                                Either::Right(t) => &t.kind as &dyn std::fmt::Debug,
-                            }
-                        );
-                        }
-                        r.into_iter()
-                            .flat_map(|i| i)
-                            .map(move |to| (*from, *to, p))
-                            .collect::<Vec<_>>()
-                            .into_iter()
-                    },
-                )
-            })
-            .collect::<Vec<_>>()
-            .into()
-    }
-    fn source(&'a self, edge: &E<'tcx>) -> N {
-        edge.1
-    }
-    fn target(&'a self, edge: &E<'tcx>) -> N {
-        edge.0
-    }
-}
-
-pub type SomeNoneTransitiveGraph<'tcx, 'a, 'b> = Either<
-    &'b NonTransitiveGraph<'tcx>,
-    &'b flowistry::infoflow::FlowResults<
-        'a,
-        'tcx,
-        flowistry::infoflow::NonTransitiveFlowDomain<'tcx>,
-    >,
->;
-
-impl<'tcx, 'b, 'a, 'c> dot::Labeller<'a, N, E<'tcx>> for DotGraph<'b, 'c, 'tcx> {
-    fn graph_id(&'a self) -> dot::Id<'a> {
-        dot::Id::new("g").unwrap()
-    }
-    fn node_id(&'a self, n: &N) -> dot::Id<'a> {
-        dot::Id::new(format!("{n:?}").replace(['[', ']'], "_").to_string()).unwrap()
-    }
-    fn node_label(&'a self, n: &N) -> dot::LabelText<'a> {
-        dot::LabelText::LabelStr(
-            if !crate::ana::is_real_location(self.body, *n) {
-                format!(
-                    "Argument {}",
-                    flowistry::mir::utils::location_to_string(*n, self.body)
-                )
-            } else {
-                match self.body.stmt_at(*n) {
-                    Either::Left(stmt) => format!("[{:?}] {:?}", n.block, stmt.kind),
-                    Either::Right(term) => format!("[{:?}] {:?}", n.block, term.kind),
-                }
-            }
-            .into(),
-        )
-    }
-    fn edge_label(&'a self, e: &E<'tcx>) -> dot::LabelText<'a> {
-        dot::LabelText::LabelStr(format!("{:?}", e.2).into())
-    }
-}
-
-pub fn non_transitive_graph_as_dot<'a, 'tcx, W: std::io::Write>(
-    out: &mut W,
-    body: &mir::Body<'tcx>,
-    g: &SomeNoneTransitiveGraph<'tcx, 'a, '_>,
-    dom: &LocationDomain,
-    tcx: TyCtxt<'tcx>,
-) -> std::io::Result<()> {
-    dot::render(&DotGraph { body, g, dom, tcx }, out)
 }
 
 use crate::serializers::{Bodies, BodyProxy, SerializableCallOnlyFlow};

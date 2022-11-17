@@ -1,13 +1,11 @@
 use serde::Deserialize;
 
 use crate::{
-    ana::{
-        extract_places, read_places_with_provenance, CallDeps, GlobalLocation, GlobalLocationS,
-        IsGlobalLocation,
-    },
+    ana::{CallDeps, GlobalLocation, GlobalLocationS, IsGlobalLocation},
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
+    utils::{extract_places, read_places_with_provenance},
     Either, HashMap, HashSet, Symbol,
 };
 

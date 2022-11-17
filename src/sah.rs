@@ -31,6 +31,7 @@ impl HashVerifications {
         r
     }
 
+    #[allow(dead_code)]
     pub fn handle<'tcx>(
         &mut self,
         ann: &ExceptionAnnotation,
@@ -430,6 +431,7 @@ mod graphviz_out {
 
 pub type Matrix<'tcx> = flowistry::infoflow::FlowDomainMatrix<'tcx>;
 
+#[allow(dead_code)]
 pub fn compute_verification_hash_for_stmt_2<'tcx>(
     tcx: TyCtxt<'tcx>,
     t: &mir::Terminator<'tcx>,
@@ -444,11 +446,11 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
         .while_hashing_spans(false, |hctx| {
             use mir::visit::MutVisitor;
             let mut loc_set = HashSet::<mir::Location>::new();
-            crate::ana::PlaceVisitor(|pl: &mir::Place<'tcx>| {
+            crate::utils::PlaceVisitor(|pl: &mir::Place<'tcx>| {
                 loc_set.extend(
                     matrix
                         .row(*pl)
-                        .filter(|l| crate::ana::is_real_location(body, **l)),
+                        .filter(|l| crate::utils::is_real_location(body, **l)),
                 );
             })
             .visit_terminator(t, loc);
