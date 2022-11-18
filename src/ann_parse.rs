@@ -1,5 +1,5 @@
-/// Nom-based parser-combinators for parsing the token stream in HIR
-/// annotations.
+//! Nom-based parser-combinators for parsing the token stream in HIR
+//! annotations.
 use crate::rust::*;
 
 use crate::desc::{
@@ -18,6 +18,7 @@ use nom::{
     Parser,
 };
 
+/// Just a newtype-wrapper for `CursorRef` so we can implement traits on it (specifically `nom::InputLength`).
 #[derive(Clone)]
 pub struct I<'a>(CursorRef<'a>);
 type R<'a, T> = nom::IResult<I<'a>, T>;

@@ -1,4 +1,7 @@
-/// Semantics aware hashing for MIR slices.
+//! Semantics aware hashing for MIR slices.
+//! 
+//! There are several weaknesses with this at the moment so it is actually not
+//! used at the moment. 
 extern crate either;
 
 use either::Either;
@@ -51,25 +54,6 @@ impl HashVerifications {
             self.0 += 1;
             error!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `{} = \"{hash:032x}\"` into the annotation.", crate::VERIFICATION_HASH_SYM.as_str());
         }
-    }
-}
-
-/// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
-/// object via the `visit::MutVisitor` trait. Crucial difference to
-/// `PlaceVisitor` is that this function can alter the place itself.
-struct RePlacer<'tcx, F>(TyCtxt<'tcx>, F);
-
-impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for RePlacer<'tcx, F> {
-    fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
-        self.0
-    }
-    fn visit_place(
-        &mut self,
-        place: &mut mir::Place<'tcx>,
-        _context: mir::visit::PlaceContext,
-        _location: mir::Location,
-    ) {
-        self.1(place)
     }
 }
 

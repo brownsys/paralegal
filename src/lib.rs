@@ -1,3 +1,4 @@
+//! Ties together the crate and defines command line options.
 #![feature(rustc_private)]
 
 #[macro_use]
@@ -67,8 +68,10 @@ macro_rules! sym_vec {
     };
 }
 
+/// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
 
+/// Top level command line arguments
 #[derive(serde::Serialize, serde::Deserialize, clap::Parser)]
 pub struct Args {
     /// This argument doesn't do anything, but when cargo invokes `cargo-dfpp`
@@ -81,34 +84,46 @@ pub struct Args {
     /// Print additional logging output (up to the "debug" level)
     #[clap(long, env = "DFPP_DEBUG")]
     debug: bool,
+    /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
+    /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis Control")]
     anactrl: AnalysisCtrl,
+    /// Additional arguments that control debug args specifically
     #[clap(flatten, next_help_heading = "Additional Debugging Output")]
     dbg: DbgArgs,
 }
 
+/// Arguments that control the flow analysis
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct AnalysisCtrl {
     #[clap(long, env)]
     no_recursive_analysis: bool,
 }
 
+/// Arguments that control the output of debug information or output to be
+/// consumed for testing.
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct DbgArgs {
     /// Dumps a table representing retrieved Flowistry matrices to stdout.
     #[clap(long, env)]
     dump_flowistry_matrix: bool,
-    /// Dumps a dot graph representation of the dataflow calculated for each controller to <name of controller>.ntg.gv
+    /// Dumps a dot graph representation of the dataflow calculated for each
+    /// controller to <name of controller>.ntg.gv
     #[clap(long, env)]
     dump_non_transitive_graph: bool,
-    /// For each controller dumps the calculated dataflow graphs as well as information about the MIR to <name of controller>.ntgb.json. Can be deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
+    /// For each controller dumps the calculated dataflow graphs as well as
+    /// information about the MIR to <name of controller>.ntgb.json. Can be
+    /// deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
     #[clap(long, env)]
     dump_serialized_non_transitive_graph: bool,
-    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json) format to "flow-graph.json". Used for testing.
+    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json)
+    /// format to "flow-graph.json". Used for testing.
     #[clap(long, env)]
     dump_serialized_flow_graph: bool,
+    /// For each controller dump a dot representation for each [`mir::Body`] as
+    /// provided by rustc
     #[clap(long, env)]
     dump_ctrl_mir: bool,
 }

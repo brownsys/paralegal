@@ -1,3 +1,7 @@
+/// JSON serializers, most used for debugging output in [`crate::dbg`].
+/// 
+/// The proxy structs are foreign serializers for their non-proxy counterparts,
+/// see https://serde.rs/remote-derive.html for more information.
 use serde::Deserialize;
 
 use crate::{

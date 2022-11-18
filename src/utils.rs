@@ -1,3 +1,5 @@
+//! Utility functions, general purpose structs and extension traits
+
 use crate::{
     desc::Identifier,
     rust::{
@@ -11,13 +13,16 @@ use crate::{
 };
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
-/// interest is `match_extract`, `matches_path` is interesting if you want to
-/// check if this attribute has the pat of interest but you do not care about
-/// its payload.
+/// interest is [`match_extract`](#tymethod.match_extract),
+/// [`matches_path`](#method.matches_path) is interesting if you want to check
+/// if this attribute has the pat of interest but you do not care about its
+/// payload.
 pub trait MetaItemMatch {
     /// If the provided symbol path matches the path segments in the attribute
     /// *exactly* then this method applies the parse function and returns the
     /// results of parsing. Otherwise returns `None`.
+    /// 
+    /// For constructing parsers for `F` consider the [`ann_parse`](../ann_parse/index.html) module.
     fn match_extract<A, F: Fn(&ast::MacArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A>;
     /// Check that this attribute matches the provided path. All attribute
     /// payload is ignored (i.e. no error if there is a payload).
@@ -50,7 +55,10 @@ impl MetaItemMatch for ast::Attribute {
     }
 }
 
-/// Extract a `DefId` if this type references an object that has one. This is true for most user defined types, including types form the standard library, but not builtin types, such as `u32`, arrays or ad-hoc types such as function pointers.
+/// Extract a `DefId` if this type references an object that has one. This is
+/// true for most user defined types, including types form the standard library,
+/// but not builtin types, such as `u32`, arrays or ad-hoc types such as
+/// function pointers.
 ///
 /// Use with caution, this function might not be exhaustive (yet).
 pub fn ty_def(ty: ty::Ty) -> Option<DefId> {
@@ -170,7 +178,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
 }
 
 /// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
-/// object via the visit::Visitor` trait. Usually used to accumulate information
+/// object via the `visit::Visitor` trait. Usually used to accumulate information
 /// about the places.
 pub struct PlaceVisitor<F>(pub F);
 
@@ -248,8 +256,9 @@ pub fn node_as_fn<'hir>(
     }
 }
 
-/// Old version of `places_read` and `places_read_with_provenance`. Should be
-/// considered deprecated.
+/// Old version of [`places_read`](../fn.places_read.html) and
+/// [`places_read_with_provenance`](../fn.places_read_with_provenance.html).
+/// Should be considered deprecated.
 pub fn extract_places<'tcx>(
     l: mir::Location,
     body: &mir::Body<'tcx>,
@@ -346,25 +355,42 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
 /// on it separately while being assured that as soon as the `Split` goes out of
 /// scope the separate part is merged back onto the main struct.
 ///
-/// The `Splittable` trait governs which part is the main one and which is the
-/// split. `split()` is called on construction and `merge()` when this struct
-/// goes out of scope.
+/// The [`Splittable`](./trait.Splittable.html) trait governs which part is the
+/// main one and which is the split.
+/// [`split()`](./trait.Splittable.html#method.split) is called on construction
+/// and [`merge()`](./trait.Splittable.html#method.merge) when this struct goes
+/// out of scope.
 ///
 /// You can construct a `Split` easily using `into()`.
+/// 
+/// ## Usage
+/// 
+/// Usually you would construct the `Split` using `into()`, then obtain the two
+/// contained parts with [`as_components`](#method.as_components). At the end of
+/// the scope the split-off component is merged back automatically into the main
+/// type in the `Drop` implementation for `Split`.
 pub struct Split<'a, T: Splittable> {
     main: &'a mut T,
     inner: std::mem::MaybeUninit<T::Splitted>,
 }
 
 impl <'a, T:Splittable> Split<'a, T> {
+    /// Obtain a mutable reference to both the main type and it's split-off part
     pub fn as_components(&mut self) -> (&mut T, &mut T::Splitted) {
         (self.main, unsafe { self.inner.assume_init_mut() })
     }
 }
 
+/// A type where a part of it can be moved out and merged back in. Usually this
+/// would be implemented by having a field on `Self` that is
+/// `Option<Self::Splitted>` or `MaybeUninit<Self::Splitted>`. For an example
+/// see
+/// [`FunctionInliner`](../ana/struct.FunctionInliner.html#structfield.under_construction)
 pub trait Splittable: Sized {
     type Splitted;
+    /// Move a part of this type out so it can be accessed independently.
     fn split(&mut self) -> Self::Splitted;
+    /// Merge the moved-out part back into `self`
     fn merge(&mut self, inner: Self::Splitted);
 }
 
@@ -381,3 +407,24 @@ impl<'a, T: Splittable> Drop for Split<'a, T> {
         self.main.merge(unsafe { inner_moved.assume_init() });
     }
 }
+
+/// A struct that can be used to apply a [`FnMut`] to every [`Place`] in a MIR
+/// object via the [`MutVisitor`](mir::visit::MutVisitor) trait. Crucial
+/// difference to [`PlaceVisitor`] is that this function can alter the place
+/// itself.
+pub struct RePlacer<'tcx, F>(TyCtxt<'tcx>, F);
+
+impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for RePlacer<'tcx, F> {
+    fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
+        self.0
+    }
+    fn visit_place(
+        &mut self,
+        place: &mut mir::Place<'tcx>,
+        _context: mir::visit::PlaceContext,
+        _location: mir::Location,
+    ) {
+        self.1(place)
+    }
+}
+

@@ -1,3 +1,31 @@
+//! Main analysis pass which proceeds as follows:
+//! 
+//! 1. The HIR visitor [`CollectingVisitor`](./struct.CollectingVisitor.html)
+//!    traverses the HIR and collects annotated entities.
+//! 2. [`CollectingVisitor::analyze`](./struct.CollectingVisitor.html#method.analyze)
+//!    is called, which initiates a dataflow analysis on every `mir::Body` that
+//!    was annotated with `#[dfpp::analyze]` and performs the following steps
+//! 
+//!    1. Create a
+//!       [`GlobalFlowConstructor`](./struct.GlobalFlowConstructor.html)
+//!    2. The constructor recursively creates finely granular flow graphs
+//!       ([`GlobalFlowGraph`](./struct.GlobalFlowGraph.html)) for callees using
+//!       information it gets by running flowistry's dataflow analysis on each
+//!       Body. Then it inlines them into the caller using a
+//!       [`FunctionInliner`](./struct.FunctionInliner.html) (in
+//!       [`compute_granular_global_flow`](./struct.GlobalFlowConstructor.html#method.compute_granular_global_flow))
+//!    3. Reduce the inlined, granular graph for the target function to a
+//!       `CallOnlyGraph` (on
+//!       [`compute_call_only_flow`](./struct.GlobalFlowConstructor.html#method.compute_call_only_flow))
+//!    4. Transform the call-only-flow into a
+//!       [`desc::Ctrl`](../desc/struct.Ctrl.html) description by adding
+//!       information about annotated entities (in
+//!       [`CollectingVisitor::handle_target`](./struct.CollectingVisitor.html#method.handle_target))
+//! 
+//! 3. Combine the [`Ctrl`](../desc/struct.Ctrl.html) graphs into one
+//!    [`desc::ProgramDescription`](../desc/struct.ProgramDescription.html)
+
+
 use std::{
     borrow::{Borrow, Cow},
     cell::RefCell,
@@ -187,23 +215,25 @@ impl<'g> std::borrow::Borrow<GlobalLocationS<GlobalLocation<'g>>> for GlobalLoca
 }
 
 /// The payload type of a global location. You will probably want to operate on
-/// the interned wrapper type `GlobalLocation<'g>, which gives access to the
-/// same fields with methods such as `function()`, `location()` and `next()`.
+/// the interned wrapper type [`GlobalLocation`], which gives access to the same
+/// fields with methods such as [`function`](IsGlobalLocation::function),
+/// [`location`](IsGlobalLocation::location) and
+/// [`next`](IsGlobalLocation::next).
 ///
 /// Other methods and general information for global locations is documented on
-/// the `GlobalLocation<'g>`.
+/// [`GlobalLocation`].
 ///
 /// The generic parameter `Inner` is typically instantiated recursively with the
 /// interned wrapper type `GlobalLocation<'g>`, forming an interned linked list.
 /// We use a generic parameter so that deserializers can instead instantiate
-/// them as `GlobalLocationS`, i.e. a non-interned version of the same struct.
+/// them as [`GlobalLocationS`], i.e. a non-interned version of the same struct.
 /// This is necessary because in the derived deserializers we do not have access
 /// to the interner.
 ///
-/// For convenience the trait `IsGlobalLocation` is provided which lets you
+/// For convenience the trait [`IsGlobalLocation`] is provided which lets you
 /// operate directly on the wrapper types and also na way that works with any
-/// global location type (both `GlobalLocation` as well as the serializable
-/// `crate::serializers::RawGlobaLocation`)
+/// global location type (both [`GlobalLocation`] as well as the serializable
+/// [`crate::serializers::RawGlobalLocation`])
 #[derive(PartialEq, Eq, Hash, Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct GlobalLocationS<Inner> {
     /// The id of the body in which this location is located.
@@ -213,8 +243,8 @@ pub struct GlobalLocationS<Inner> {
     #[serde(with = "crate::serializers::ser_loc")]
     pub location: mir::Location,
     /// If `next.is_some()` then this contains the next link in the call chain.
-    /// This means that `self.location` refers to a `mir::Terminator` and that
-    /// this terminator is `mir::TerminatorKind::Call`. The next link in the
+    /// This means that [`self.location`] refers to a [`mir::Terminator`] and that
+    /// this terminator is [`mir::TerminatorKind::Call`]. The next link in the
     /// chain (the payload of the `Some`) is a location in called function.
     pub next: Option<Inner>,
 }
@@ -258,7 +288,7 @@ impl<'g> GlobalLocationInterner<'g> {
     }
 }
 
-/// Convenience struct, similar to `ty::TyCtxt`. Everything you could ever want
+/// Convenience struct, similar to [`ty::TyCtxt`]. Everything you could ever want
 /// from the interner can be done on this struct and it's `Copy` so you don't
 /// have to worry about accidentally moving it (as you would when using
 /// `&GlobalLocationInterner`).
@@ -278,7 +308,7 @@ impl<'g> GLI<'g> {
             next,
         })
     }
-    /// Create a top-level `GlobalLocation` (e.g. no nested calls).
+    /// Create a top-level [`GlobalLocation`] (e.g. no nested calls).
     pub fn globalize_location(
         self,
         location: mir::Location,
@@ -301,8 +331,9 @@ impl<'g> GLI<'g> {
 /// A flowistry-like dependency matrix at a specific location. Describes for
 /// each place the most recent global locations (these could be locations in a
 /// callee) that influenced the values at this place.
-type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
-/// A flowistry-like 3-dimensional tensor describing the `Place` dependencies of
+pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
+
+/// A flowistry-like 3-dimensional tensor describing the [`Place`] dependencies of
 /// all locations (including of inlined callees).
 ///
 /// It is guaranteed that for each place the most recent location that modified
@@ -314,8 +345,8 @@ type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>
 ///
 /// In short even with global locations any given place never crosses a function
 /// boundary directly but always wither via an argument location or the call
-/// site. This is what allow us to use a plain `Place`, because we can perform
-/// translation at these special locations (see also `translate_child_to_parent`).
+/// site. This is what allow us to use a plain [`Place`], because we can perform
+/// translation at these special locations (see also [`translate_child_to_parent`]).
 ///
 /// The special matrix `return_state` is the union of all dependency matrices at
 /// each call to `return`.
@@ -333,12 +364,12 @@ impl<'tcx, 'g> GlobalFlowGraph<'tcx, 'g> {
     }
 }
 
-/// The analysis result for one function. See `GlobalFlowGraph` for
-/// explanations, this struct just also bundles in the `AnalysisResult` we got
-/// from flowistry for the `self.flow.root_function`. Currently the sole purpose
-/// of doing this is so that we can later query
-/// `self.analysis.analysis.aliases()` to resolve `reachable_values` and `Place`
-/// `aliases()`.
+/// The analysis result for one function. See [`GlobalFlowGraph`] for
+/// explanations, this struct just also bundles in the [`AnalysisResults`] we
+/// got from flowistry for the `self.flow.root_function`. Currently the sole
+/// purpose of doing this is so that we can later query
+/// `self.analysis.analysis.aliases()` to resolve `reachable_values` and
+/// [`Place`] [`aliases()`](flowistry::mir::aliases::Aliases::aliases).
 struct FunctionFlow<'tcx, 'g> {
     flow: GlobalFlowGraph<'tcx, 'g>,
     analysis: AnalysisResults<'tcx, FlowAnalysis<'tcx, 'tcx, NonTransitiveFlowDomain<'tcx>>>,
@@ -370,7 +401,7 @@ pub struct CallDeps<Location> {
 /// that have been made are just to lift it from a lambda to a top-level
 /// function.
 ///
-/// What this function does is relate `Place` from the body of a callee to a
+/// What this function does is relate [`Place`] from the body of a callee to a
 /// `Place` in the body of the caller. The most simple example would be one
 /// where it relates the formal parameter of a function to the actual call
 /// argument as follows. (Shown as MIR)

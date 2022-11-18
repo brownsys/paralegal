@@ -1,3 +1,13 @@
+//! Helpers for debugging
+//! 
+//! Defines pretty printers and dot graph output. 
+//! 
+//! Often times the pretty printers wrappers around references to graph structs,
+//! like [PrintableMatrix]. These wrappers have
+//! `Debug` and/or `Display` implementations so that you can flexibly print them
+//! to stdout, a file or a log statement. Some take additional information (such
+//! as [TyCtxt]) to get contextual information that is used to make the output
+//! more useful.
 use flowistry::indexed::IndexedDomain;
 
 use crate::{
@@ -18,6 +28,7 @@ pub fn print_flowistry_matrix<W: std::io::Write>(
     write!(out, "{}", PrintableMatrix(matrix))
 }
 
+/// Pretty printing struct for a flowistry result.
 pub struct PrintableMatrix<'a>(pub &'a crate::sah::Matrix<'a>);
 
 impl<'a> std::fmt::Display for PrintableMatrix<'a> {
@@ -56,6 +67,7 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 }
 
 pub mod call_only_flow_dot {
+    //! Dot graph representation for [`CallOnlyFlow`].
     use std::collections::HashSet;
 
     use crate::{
@@ -234,6 +246,7 @@ pub mod call_only_flow_dot {
         }
     }
 
+    /// Write a dot representation for this `graph` to `out`.
     pub fn dump<W: std::io::Write>(
         tcx: TyCtxt,
         graph: &CallOnlyFlow,
@@ -261,6 +274,8 @@ impl<'g> GlobalLocation<'g> {
     }
 }
 
+/// Formatting for global locations that works independent of whether it is an
+/// interned or inlined location.
 fn format_global_location<T: IsGlobalLocation>(
     t: &T,
     f: &mut std::fmt::Formatter<'_>,
@@ -289,8 +304,10 @@ impl<'g> std::fmt::Display for GlobalLocation<'g> {
     }
 }
 
+/// A [`crate::ana::GlobalDepMatrix`] that can be `Display`ed with
+/// an indent.
 pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(
-    &'a HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>,
+    &'a crate::ana::GlobalDepMatrix<'tcx, 'g>,
     usize,
 );
 
@@ -306,6 +323,8 @@ impl<'a, 'g, 'tcx> std::fmt::Display for PrintableDependencyMatrix<'a, 'g, 'tcx>
     }
 }
 
+/// Helper function for the `Display` implementation on
+/// [`PrintableDependencyMatrix`](./struct.PrintableDependencyMatrix.html)
 pub fn format_dependency_matrix<
     'tcx,
     'g,
@@ -375,6 +394,7 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
 
 use crate::serializers::{Bodies, BodyProxy, SerializableCallOnlyFlow};
 
+/// All locations that a body has (helper)
 pub fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item = mir::Location> + 'a {
     body.basic_blocks()
         .iter_enumerated()
@@ -386,6 +406,9 @@ pub fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item = mir::L
         })
 }
 
+/// Write this `flow` to `out` using a JSON serializer. The companion function
+/// for reading the graph back in is
+/// [read_non_transitive_graph_and_body].
 pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
     tcx: TyCtxt,
     flow: &CallOnlyFlow,
@@ -428,6 +451,11 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
     .unwrap()
 }
 
+/// Read a flow and a set of mentioned `mir::Body`s from the file. Is expected
+/// to use JSON serialization.
+/// 
+/// The companion function [write_non_transitive_graph_and_body] can be used to
+/// create such a file.
 pub fn read_non_transitive_graph_and_body<R: std::io::Read>(
     read: R,
 ) -> (SerializableCallOnlyFlow, Bodies) {
