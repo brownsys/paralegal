@@ -352,8 +352,14 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
 ///
 /// You can construct a `Split` easily using `into()`.
 pub struct Split<'a, T: Splittable> {
-    pub main: &'a mut T,
-    pub inner: T::Splitted,
+    main: &'a mut T,
+    inner: std::mem::MaybeUninit<T::Splitted>,
+}
+
+impl <'a, T:Splittable> Split<'a, T> {
+    pub fn as_components(&mut self) -> (&mut T, &mut T::Splitted) {
+        (self.main, unsafe { self.inner.assume_init_mut() })
+    }
 }
 
 pub trait Splittable: Sized {
@@ -364,14 +370,14 @@ pub trait Splittable: Sized {
 
 impl<'a, T: Splittable> From<&'a mut T> for Split<'a, T> {
     fn from(main: &'a mut T) -> Self {
-        let inner = main.split();
+        let inner = std::mem::MaybeUninit::new(main.split());
         Split { main, inner }
     }
 }
 
 impl<'a, T: Splittable> Drop for Split<'a, T> {
     fn drop(&mut self) {
-        let inner_moved = unsafe { std::mem::replace(&mut self.inner, std::mem::zeroed()) };
-        self.main.merge(inner_moved);
+        let inner_moved = std::mem::replace(&mut self.inner, std::mem::MaybeUninit::uninit());
+        self.main.merge(unsafe { inner_moved.assume_init() });
     }
 }

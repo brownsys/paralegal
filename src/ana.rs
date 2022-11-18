@@ -693,7 +693,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
         use mir::visit::Visitor;
 
-        inliner.visit_body(&body_with_facts.body);
+        inliner.visit_body(&body);
 
         self.function_flows.borrow_mut().insert(
             root_function,
@@ -819,6 +819,22 @@ fn deep_dependencies_of<'tcx, 'g>(
 /// idea to `GlobalFlowConstructor` (in fact it wraps one) that bundles together
 /// all information needed to inline into one `mir::Body` so that we can split
 /// it into helper functions which all have access to this information.
+/// 
+/// ## Usage
+/// 
+/// The function inliner implements `mir::visit::Visitor` that should be applied
+/// to only the same `Body` this struct was initialized with.
+/// 
+/// The methods are currently split into the visit methods that actually modify
+/// `self.under_construction` and helper methods such as
+/// `self.handle_regular_location` that take an immutable `&self` and return
+/// their computed results instead of appending them directly to
+/// `under_construction`. This is so that we can use these functions
+/// agnostically and later make a determination about where to insert their
+/// results. For instance the result of `handle_regular_location` is both
+/// inserted into `location_states` but also added to `return_state` when we are
+/// handling a terminator. However `handle_regular_location` itself does not
+/// know in which context it is being used (to make its implementation simpler).
 struct FunctionInliner<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> {
     // Read-only information
     /// The parent constructor struct. For the function we will be inlining we
@@ -870,7 +886,8 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             .collect::<HashMap<_, _>>()
     }
 
-    /// Makes `callee` relative to `call_site` in the function we operate on, i.e. `self.root_function`
+    /// Makes `callee` relative to `call_site` in the function we operate on,
+    /// i.e. `self.root_function`
     fn relative_global_location(
         &self,
         call_site: mir::Location,
@@ -929,6 +946,9 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             .collect()
     }
 
+    /// Either transforms the location into a global one or, if it names the
+    /// boundary of a function call to an inlined function, returns the
+    /// translated dependencies of `place`.
     fn globalize_or_inline_call(
         &self,
         place: Place<'tcx>,
@@ -1017,8 +1037,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
         // and `Split` will make sure that `under_construction` gets moved back
         // into `self` at the end.
         let mut splitted: Split<_> = self.into();
-        let slf = &splitted.main;
-        let under_construction = &mut splitted.inner;
+        let (ref slf, under_construction) = splitted.as_components();
         if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
             slf.flow_constructor.inner_flow_for_terminator(terminator)
         {
@@ -1095,9 +1114,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                     let global_arg_loc = slf.relative_global_location(location, global_call_site);
                     (global_arg_loc, as_parent_dep_matrix.clone())
                 }));
-            for (key, val) in locs_to_add {
-                under_construction.location_states.insert(key, val);
-            }
+            under_construction.location_states.extend(locs_to_add);
         } else {
             // First we handle this as the default case. This
             // also recurses as necessary
