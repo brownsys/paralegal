@@ -324,6 +324,15 @@ pub struct GlobalFlowGraph<'tcx, 'g> {
     return_state: GlobalDepMatrix<'tcx, 'g>,
 }
 
+impl<'tcx, 'g> GlobalFlowGraph<'tcx, 'g> {
+    fn new() -> Self {
+        GlobalFlowGraph {
+            location_states: HashMap::new(),
+            return_state: HashMap::new(),
+        }
+    }
+}
+
 /// The analysis result for one function. See `GlobalFlowGraph` for
 /// explanations, this struct just also bundles in the `AnalysisResult` we got
 /// from flowistry for the `self.flow.root_function`. Currently the sole purpose
@@ -671,32 +680,25 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
         // Make sure we terminate on recursion
         self.function_flows.borrow_mut().insert(root_function, None);
-        let mut return_state = HashMap::new();
 
-        let inliner = FunctionInliner {
+        let mut inliner = FunctionInliner {
             from_flowistry: &from_flowistry,
             body,
             local_def_id,
             root_function,
             translated_return_states: RefCell::new(HashMap::new()),
             flow_constructor: self,
+            under_construction: Some(GlobalFlowGraph::new()),
         };
 
-        let location_states = body_with_facts
-            .body
-            .basic_blocks()
-            .iter_enumerated()
-            .flat_map(|(bb, bbdat)| {
-                inliner.location_states_for_basic_block(bb, bbdat, &mut return_state)
-            })
-            .collect();
+        use mir::visit::Visitor;
+
+        inliner.visit_body(&body_with_facts.body);
+
         self.function_flows.borrow_mut().insert(
             root_function,
             Some(Rc::new(FunctionFlow {
-                flow: GlobalFlowGraph {
-                    location_states,
-                    return_state,
-                },
+                flow: inliner.under_construction.unwrap(),
                 analysis: from_flowistry,
             })),
         );
@@ -837,6 +839,8 @@ struct FunctionInliner<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> {
     /// This map stores the results of translating the callees `Place`s to our
     /// `Place`s for each call site so that we only do that translation once.
     translated_return_states: RefCell<HashMap<mir::Location, GlobalDepMatrix<'tcx, 'g>>>,
+
+    under_construction: Option<GlobalFlowGraph<'tcx, 'g>>,
 }
 
 impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g, 'opts, 'refs, I> {
@@ -990,20 +994,35 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             .flat_map(|l| self.globalize_or_inline_call(place, *l))
             .collect()
     }
+}
 
-    /// One of the work horses of the inliner. This specifically handles a
-    fn states_for_terminator<'a>(
-        &'a self,
-        bb: mir::BasicBlock,
-        bbdat: &'a mir::BasicBlockData<'tcx>,
-        return_state: &mut HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>,
-    ) -> impl Iterator<Item = (GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>)> + 'a {
-        let loc = self.body.terminator_loc(bb);
-        if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) = self
-            .flow_constructor
-            .inner_flow_for_terminator(bbdat.terminator())
+impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx>
+    for FunctionInliner<'tcx, 'g, 'opts, 'refs, I>
+{
+    fn visit_statement(&mut self, _statement: &mir::Statement<'tcx>, location: Location) {
+        let regular_result = self.handle_regular_location(location);
+        let global_loc = self
+            .gli()
+            .make_global_location(self.root_function, location, None);
+        self.under_construction
+            .as_mut()
+            .unwrap()
+            .location_states
+            .insert(global_loc, regular_result);
+    }
+
+    fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: Location) {
+        // This lets me use the immutable parts of `self` (as `slf`) when
+        // creating the iterators but also mutably modify `under_construction`
+        // and `Split` will make sure that `under_construction` gets moved back
+        // into `self` at the end.
+        let mut splitted: Split<_> = self.into();
+        let slf = &splitted.main;
+        let under_construction = &mut splitted.inner;
+        if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
+            slf.flow_constructor.inner_flow_for_terminator(terminator)
         {
-            let caller_state = self.from_flowistry.state_at(loc).matrix();
+            let caller_state = slf.from_flowistry.state_at(location).matrix();
             // Translate every place in the child optimistically
             // to a parent place. This allows us to uphold the
             // invariant that when tracing dependencies a local
@@ -1021,42 +1040,42 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     Some((
                         p,
                         translate_child_to_parent(
-                            self.tcx(),
-                            self.local_def_id,
+                            slf.tcx(),
+                            slf.local_def_id,
                             &args,
                             dest,
                             p,
                             false,
                             inner_body,
-                            self.body,
+                            slf.body,
                         )?,
                     ))
                 })
                 .map(|(child, parent)| {
                     (
                         child,
-                        self.make_row_global(parent, caller_state.row_set(parent)),
+                        slf.make_row_global(parent, caller_state.row_set(parent)),
                     )
                 })
                 .collect();
 
-            inner_flow
+            let locs_to_add = inner_flow
                 .flow
                 .location_states
                 .iter()
                 .map(move |(inner_loc, map)| {
                     (
-                        self.relative_global_location(loc, *inner_loc),
+                        slf.relative_global_location(location, *inner_loc),
                         map.iter()
                             .map(|(&place, deps)| {
                                 (
                                     place,
                                     deps.iter()
                                         .map(|dep| {
-                                            self.gli().global_location_from_relative(
+                                            slf.gli().global_location_from_relative(
                                                 *dep,
-                                                loc,
-                                                self.root_function,
+                                                location,
+                                                slf.root_function,
                                             )
                                         })
                                         .collect::<HashSet<_>>(),
@@ -1066,62 +1085,53 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     )
                 })
                 .chain((1..=args.len()).into_iter().map(move |a| {
-                    let global_call_site = self.gli().globalize_location(
+                    let global_call_site = slf.gli().globalize_location(
                         mir::Location {
                             block: mir::BasicBlock::from_usize(inner_body.basic_blocks().len()),
                             statement_index: a,
                         },
                         inner_body_id,
                     );
-                    let global_arg_loc = self.relative_global_location(loc, global_call_site);
+                    let global_arg_loc = slf.relative_global_location(location, global_call_site);
                     (global_arg_loc, as_parent_dep_matrix.clone())
-                }))
-                .collect()
+                }));
+            for (key, val) in locs_to_add {
+                under_construction.location_states.insert(key, val);
+            }
         } else {
             // First we handle this as the default case. This
             // also recurses as necessary
-            let state_at_term = self.handle_regular_location(loc);
+            let state_at_term = slf.handle_regular_location(location);
             // In the special case of a `return` terminator we
             // merge its state onto any prior state for the
             // return
-            if let TerminatorKind::Return = bbdat.terminator().kind {
+            if let TerminatorKind::Return = terminator.kind {
                 for (p, deps) in state_at_term.iter() {
-                    return_state
+                    under_construction
+                        .return_state
                         .entry(*p)
                         .or_insert_with(|| HashSet::new())
                         .extend(deps.iter().cloned());
                 }
             };
-            vec![(
-                self.gli().globalize_location(loc, self.root_function),
+            under_construction.location_states.insert(
+                slf.gli().globalize_location(location, slf.root_function),
                 state_at_term,
-            )]
+            );
         }
-        .into_iter()
     }
+}
 
-    /// Create the global dependency matrix for all locations in one basic block.
-    fn location_states_for_basic_block<'a>(
-        &'a self,
-        bb: mir::BasicBlock,
-        bbdat: &'a mir::BasicBlockData<'tcx>,
-        return_state: &mut HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>,
-    ) -> impl Iterator<Item = (GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>)> + 'a {
-        bbdat
-            .statements
-            .iter()
-            .enumerate()
-            .map(move |(idx, _stmt)| {
-                let loc = mir::Location {
-                    block: bb,
-                    statement_index: idx,
-                };
-                let global_loc = self
-                    .gli()
-                    .make_global_location(self.root_function, loc, None);
-                (global_loc, self.handle_regular_location(loc))
-            })
-            .chain(self.states_for_terminator(bb, bbdat, return_state))
+impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> Splittable
+    for FunctionInliner<'tcx, 'g, 'opts, 'refs, I>
+{
+    type Splitted = GlobalFlowGraph<'tcx, 'g>;
+    fn split(&mut self) -> Self::Splitted {
+        std::mem::replace(&mut self.under_construction, None).unwrap()
+    }
+    fn merge(&mut self, inner: Self::Splitted) {
+        assert!(self.under_construction.is_none());
+        self.under_construction = Some(inner)
     }
 }
 
@@ -1251,7 +1261,7 @@ type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 /// annotations and analysis targets and store them in this struct. After the
 /// discovery phase `self.analyze()` is used to drive the actual analysis. All
 /// of this is conveniently encapsulated in the `self.run()` method.
-pub struct Visitor<'tcx> {
+pub struct CollectingVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     opts: &'static crate::Args,
     marked_objects: MarkedObjects,
@@ -1259,7 +1269,7 @@ pub struct Visitor<'tcx> {
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
 }
 
-impl<'tcx> Visitor<'tcx> {
+impl<'tcx> CollectingVisitor<'tcx> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         Self {
             tcx,
@@ -1581,7 +1591,7 @@ fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
         .unwrap() as usize
 }
 
-impl<'tcx> intravisit::Visitor<'tcx> for Visitor<'tcx> {
+impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
 
     fn nested_visit_map(&mut self) -> Self::Map {

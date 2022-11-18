@@ -140,7 +140,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .take()
-            .enter(|tcx| ana::Visitor::new(tcx, self.opts).run())
+            .enter(|tcx| ana::CollectingVisitor::new(tcx, self.opts).run())
             .unwrap();
         if self.opts.dbg.dump_serialized_flow_graph {
             serde_json::to_writer(

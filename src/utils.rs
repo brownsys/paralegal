@@ -341,3 +341,37 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
         )
     }
 }
+
+/// A simple utility type that lets you split off a part of a struct and operate
+/// on it separately while being assured that as soon as the `Split` goes out of
+/// scope the separate part is merged back onto the main struct.
+///
+/// The `Splittable` trait governs which part is the main one and which is the
+/// split. `split()` is called on construction and `merge()` when this struct
+/// goes out of scope.
+///
+/// You can construct a `Split` easily using `into()`.
+pub struct Split<'a, T: Splittable> {
+    pub main: &'a mut T,
+    pub inner: T::Splitted,
+}
+
+pub trait Splittable: Sized {
+    type Splitted;
+    fn split(&mut self) -> Self::Splitted;
+    fn merge(&mut self, inner: Self::Splitted);
+}
+
+impl<'a, T: Splittable> From<&'a mut T> for Split<'a, T> {
+    fn from(main: &'a mut T) -> Self {
+        let inner = main.split();
+        Split { main, inner }
+    }
+}
+
+impl<'a, T: Splittable> Drop for Split<'a, T> {
+    fn drop(&mut self) {
+        let inner_moved = unsafe { std::mem::replace(&mut self.inner, std::mem::zeroed()) };
+        self.main.merge(inner_moved);
+    }
+}
