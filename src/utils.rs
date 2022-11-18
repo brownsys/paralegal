@@ -74,6 +74,15 @@ pub fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
     }
 }
 
+/// A simplified version of the argument list that is stored in a
+/// `TerminatorKind::Call`.
+///
+/// The vector contains `None` in those places where the function is called with
+/// a constant. This means it is guaranteed to be as long as the list of formal
+/// parameters of this function, which in turn means it can be zipped up with
+/// e.g. the types of the arguments of the function definition
+pub type SimplifiedArguments<'tcx> = Vec<Option<Place<'tcx>>>;
+
 /// Extension trait for function calls (e.g. `mir::TerminatorKind` and
 /// `mir::Terminator`) that lets you decompose the call into a convenient
 /// (function definition, arguments, return place) tuple *in such cases when*
@@ -94,7 +103,7 @@ pub trait AsFnAndArgs<'tcx> {
     ) -> Result<
         (
             DefId,
-            Vec<Option<mir::Place<'tcx>>>,
+            SimplifiedArguments<'tcx>,
             Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         ),
         &'static str,
@@ -107,7 +116,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
     ) -> Result<
         (
             DefId,
-            Vec<Option<mir::Place<'tcx>>>,
+            SimplifiedArguments<'tcx>,
             Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         ),
         &'static str,
@@ -122,7 +131,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
     ) -> Result<
         (
             DefId,
-            Vec<Option<mir::Place<'tcx>>>,
+            SimplifiedArguments<'tcx>,
             Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         ),
         &'static str,
@@ -312,4 +321,23 @@ pub fn identifier_for_hid<'tcx>(tcx: TyCtxt<'tcx>, hid: HirId) -> Identifier {
 
 pub fn identifier_for_fn<'tcx>(tcx: TyCtxt<'tcx>, p: DefId) -> Identifier {
     Identifier::new(tcx.item_name(p))
+}
+
+pub trait TyCtxtExt<'tcx> {
+    fn body_for_body_id(
+        self,
+        b: BodyId,
+    ) -> &'tcx crate::rust::rustc_borrowck::BodyWithBorrowckFacts<'tcx>;
+}
+
+impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
+    fn body_for_body_id(
+        self,
+        b: BodyId,
+    ) -> &'tcx crate::rust::rustc_borrowck::BodyWithBorrowckFacts<'tcx> {
+        flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
+            self,
+            self.hir().body_owner_def_id(b),
+        )
+    }
 }
