@@ -1,5 +1,8 @@
 //! Forge serializers for data structures from [`desc`](crate::desc) based on
 //! the [`pretty`] crate.
+//! 
+//! A description of the Forge entities we emit and what they mean can be found
+//! [here](https://www.notion.so/justus-adam/Using-Dataflow-0fb0b2bef50c40b1ba888d623c447e80#2a405f54559741ae9d17ec746a3c14f1)
 
 extern crate pretty;
 
@@ -215,6 +218,10 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSource {
 }
 
 mod name {
+    //! Constants for the names of the Forge entities (`sig`s and relations) we
+    //! emit.
+
+
     pub const SRC: &'static str = "Src";
     /// Previously "Arg"
     pub const INPUT_ARGUMENT: &'static str = "InputArgument";
@@ -240,7 +247,12 @@ mod name {
     pub const EXCEPTIONS_LABEL: &'static str = "exception";
 
     lazy_static! {
-        /// For now the order here *must* be topological as the code gen does not reorder this automatically
+        /// A description of the preamble of Forge `sig`s we always emit.
+        /// 
+        /// These are in topological order, because the code generation just
+        /// iterates over this vector and emits them in the same order as in
+        /// this vector and Forge requires everything (e.g. an inherited `sig`)
+        /// to be defined before being referenced.
         pub static ref SIGS: Vec<(
                 &'static str,
                 bool,

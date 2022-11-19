@@ -15,14 +15,25 @@ use crate::{
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
 /// [`matches_path`](#method.matches_path) is interesting if you want to check
-/// if this attribute has the pat of interest but you do not care about its
+/// if this attribute has the path of interest but you do not care about its
 /// payload.
 pub trait MetaItemMatch {
     /// If the provided symbol path matches the path segments in the attribute
     /// *exactly* then this method applies the parse function and returns the
-    /// results of parsing. Otherwise returns `None`.
+    /// results of parsing. Otherwise returns `None`. 
     /// 
-    /// For constructing parsers for `F` consider the [`ann_parse`](../ann_parse/index.html) module.
+    /// In pseudo-rust terms this would mean
+    /// ```plain
+    /// (#[foo::bar(baz)]   ).match_extract(&sym_vec!["foo", "bar"], |a| a) == Some(baz)
+    /// (#[foo(bar)]        ).match_extract(&sym_vec!["foo", "bar"], |a| a) == None
+    /// (#[foo::bar::baz(x)]).match_extract(&sym_vec!["foo", "bar"], |a| a) == None
+    /// ```
+    /// 
+    /// The [`crate::ann_parse`] module contains a parser combinator framework
+    /// suitable for implementing `parse`. For examples on how to run the
+    /// functions see the source for
+    /// [`match_exception`](crate::ann_parse::match_exception) or
+    /// [`ann_match_fn`](crate::ann_parse::ann_match_fn).
     fn match_extract<A, F: Fn(&ast::MacArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A>;
     /// Check that this attribute matches the provided path. All attribute
     /// payload is ignored (i.e. no error if there is a payload).
@@ -221,7 +232,11 @@ pub fn read_places_with_provenance<'tcx>(
         .flat_map(move |place| provenance_of(tcx, place).into_iter())
 }
 
-/// Constructs a set of places that are ref/deref/field un-layerings of the input place.
+/// Constructs a set of places that are ref/deref/field un-layerings of the
+/// input place.
+/// 
+/// TODO: This needs more elaboration, but tbh this is lifted straight from
+/// Flowistry and I haven't yet bothered to figure out what exactly it does.
 pub fn provenance_of<'tcx>(tcx: TyCtxt<'tcx>, place: Place<'tcx>) -> Vec<Place<'tcx>> {
     use flowistry::mir::utils::PlaceExt;
     std::iter::once(place)
@@ -234,6 +249,12 @@ pub fn provenance_of<'tcx>(tcx: TyCtxt<'tcx>, place: Place<'tcx>) -> Vec<Place<'
         .collect()
 }
 
+/// Try and unwrap this `node` as some sort of function.
+/// 
+/// [HIR](hir) has two different kinds of items that are types of function, one
+/// is top-level `fn`s the other is an `impl` item of function type. This
+/// function lets you extract common information from either. Returns [`None`]
+/// if the node is not of a function-like type.
 pub fn node_as_fn<'hir>(
     node: &hir::Node<'hir>,
 ) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
@@ -292,7 +313,18 @@ pub fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
         .expect("no def id?")
 }
 
-/// Just give me a file that I can write to. (and overwrite)
+/// Give me this file as writable (possibly creating or overwriting it).
+/// 
+/// This is just a common pattern of how we want to open files we're writing
+/// output to. Literally just implemented as
+/// 
+/// ```
+/// std::fs::OpenOptions::new()
+///     .create(true)
+///     .truncate(true)
+///     .write(true)
+///     .open(path)
+/// ```
 pub fn outfile_pls<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<std::fs::File> {
     std::fs::OpenOptions::new()
         .create(true)
@@ -324,15 +356,23 @@ pub fn places_read<'tcx>(
     places.into_iter()
 }
 
+/// Creates an `Identifier` for this `HirId`
 pub fn identifier_for_hid<'tcx>(tcx: TyCtxt<'tcx>, hid: HirId) -> Identifier {
     Identifier::new(tcx.item_name(tcx.hir().local_def_id(hid).to_def_id()))
 }
 
+/// Creates an `Identifier` for this `DefId`
 pub fn identifier_for_fn<'tcx>(tcx: TyCtxt<'tcx>, p: DefId) -> Identifier {
     Identifier::new(tcx.item_name(p))
 }
 
+/// Extension trait for [`TyCtxt`]
 pub trait TyCtxtExt<'tcx> {
+    /// Resolve this [`BodyId`] to its actual body. Returns
+    /// [`BodyWithBorrowckFacts`](crate::rust::rustc_borrowck::BodyWithBorrowckFacts),
+    /// because it internally uses flowistry's body resolution
+    /// ([`flowistry::mir::borrowck_facts::get_body_with_borrowck_facts`]) which
+    /// memoizes its results so this is actually a cheap query.
     fn body_for_body_id(
         self,
         b: BodyId,
@@ -395,6 +435,7 @@ pub trait Splittable: Sized {
 }
 
 impl<'a, T: Splittable> From<&'a mut T> for Split<'a, T> {
+    //! The canonical way to construct a [`Split`]
     fn from(main: &'a mut T) -> Self {
         let inner = std::mem::MaybeUninit::new(main.split());
         Split { main, inner }
@@ -402,6 +443,9 @@ impl<'a, T: Splittable> From<&'a mut T> for Split<'a, T> {
 }
 
 impl<'a, T: Splittable> Drop for Split<'a, T> {
+    //! Merges `self.inner` back onto `self.main`.
+    //! 
+    //! Essentially does `<T as Splittable>::merge(self.main, self.inner)`
     fn drop(&mut self) {
         let inner_moved = std::mem::replace(&mut self.inner, std::mem::MaybeUninit::uninit());
         self.main.merge(unsafe { inner_moved.assume_init() });

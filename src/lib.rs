@@ -13,6 +13,7 @@ extern crate simple_logger;
 extern crate log;
 
 pub mod rust {
+    //! Exposes the rustc external crates (this mod is just to tidy things up).
     pub extern crate rustc_arena;
     pub extern crate rustc_ast;
     pub extern crate rustc_borrowck;
@@ -41,6 +42,8 @@ use rust::*;
 use flowistry::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
 
+// This import is sort of special because it comes from the private rustc
+// dependencies and not from our `Cargo.toml`.
 pub extern crate either;
 pub use either::Either;
 
@@ -62,6 +65,9 @@ pub use utils::outfile_pls;
 
 use frg::ToForge;
 
+/// Conveniently create a vector of [`Symbol`]s. This way you can just write
+/// `sym_vec!["s1", "s2", ...]` and this macro will make sure to call
+/// [`Symbol::intern`]
 macro_rules! sym_vec {
     ($($e:expr),*) => {
         vec![$(Symbol::intern($e)),*]
@@ -98,6 +104,8 @@ pub struct Args {
 /// Arguments that control the flow analysis
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct AnalysisCtrl {
+    /// Disables all recursive analysis (both dfpps inlining as well as
+    /// Flowistry's recursive analysis)
     #[clap(long, env)]
     no_recursive_analysis: bool,
 }
@@ -128,6 +136,8 @@ struct DbgArgs {
     dump_ctrl_mir: bool,
 }
 
+/// Name of the file used for emitting the JSON serialized
+/// [`desc::ProgramDescription`].
 pub const FLOW_GRAPH_OUT_NAME: &'static str = "flow-graph.json";
 
 struct Callbacks {
@@ -135,9 +145,17 @@ struct Callbacks {
 }
 
 lazy_static! {
+    /// This will match the annotation `#[dfpp::label(...)]` when using
+    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
     static ref LABEL_MARKER: AttrMatchT = sym_vec!["dfpp", "label"];
+    /// This will match the annotation `#[dfpp::analyze]` when using
+    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
     static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
+    /// This will match the annotation `#[dfpp::output_types(...)]` when using
+    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
     static ref OTYPE_MARKER: AttrMatchT = sym_vec!["dfpp", "output_types"];
+    /// This will match the annotation `#[dfpp::exception(...)]` when using
+    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
     static ref EXCEPTION_MARKER: AttrMatchT = sym_vec!["dfpp", "exception"];
 }
 
@@ -188,8 +206,14 @@ impl rustc_driver::Callbacks for Callbacks {
 }
 
 lazy_static! {
+    /// The symbol `arguments` which we use for refinement in a `#[dfpp::label(...)]`
+    /// annotation.
     static ref ARG_SYM: Symbol = Symbol::intern("arguments");
+    /// The symbol `return` which we use for refinement in a `#[dfpp::label(...)]`
+    /// annotation.
     static ref RETURN_SYM: Symbol = Symbol::intern("return");
+    /// The symbol `verification_hash` which we use for refinement in a
+    /// `#[dfpp::exception(...)]` annotation.
     static ref VERIFICATION_HASH_SYM: Symbol = Symbol::intern("verification_hash");
 }
 
