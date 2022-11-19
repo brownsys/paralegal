@@ -1,3 +1,11 @@
+//! Type definitions and helper functions for a Forge-friendly representation of
+//! flow analysis results and annotations we discovered.
+//! 
+//! Analyses that create these types are in [`ana`](crate::ana) and serializers for
+//! emitting forge from them in [`crate::frg`]. 
+//! 
+//! The top-level type is [`ProgramDescription`]
+
 use std::hash::Hash;
 
 use crate::{mir, serde, HashMap, HashSet, Symbol};
@@ -6,6 +14,11 @@ pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
 pub type Function = Identifier;
 
+/// Types of annotations we support.
+/// 
+/// Usually you'd expect one of those annotation types in any given situation.
+/// For convenience the match methods [`Self::as_label_ann`],
+/// [`Self::as_otype_ann`] and [`Self::as_exception_annotation`] are provided. These are particularly useful in conjunction with e.g. [`Iterator::filter_map`]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub enum Annotation {
     Label(LabelAnnotation),
@@ -40,29 +53,41 @@ pub type VerificationHash = u128;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExceptionAnnotation {
+    /// The value of the verification hash we found in the annotation. Is `None`
+    /// if there was no verification hash in the annotation.
     pub verification_hash: Option<VerificationHash>,
 }
 
+/// A label annotation and its refinements.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LabelAnnotation {
+    /// The (unchanged) name of the label as provided by the user
     #[serde(with = "crate::serializers::ser_sym")]
     pub label: Symbol,
     pub refinement: AnnotationRefinement,
 }
 
+/// Refinements in the label targeting. The default (no refinement provided) is
+/// `on_argument == vec![]` and `on_return == false`, which is also what is
+/// returned from [`Self::empty`].
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct AnnotationRefinement {
     on_argument: Vec<u16>,
     on_return: bool,
 }
 
+/// Refinements as the parser discovers them. Are then merged onto the aggregate [`AnnotationRefinement`] with [`AnnotationRefinement::merge_kind`].
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub enum AnnotationRefinementKind {
+    /// Corresponds to [`AnnotationRefinement::on_argument`]
     Argument(Vec<u16>),
+    /// Corresponds to [`AnnotationRefinement::on_return`]
     Return,
 }
 
 impl AnnotationRefinement {
+    /// The default, empty aggregate refinement `Self { on_argument: vec![],
+    /// on_return: false }`
     pub fn empty() -> Self {
         Self {
             on_argument: vec![],
@@ -70,6 +95,8 @@ impl AnnotationRefinement {
         }
     }
 
+    /// Merge the aggregate refinement with another discovered refinement and
+    /// check that they do not overwrite each other.
     pub fn merge_kind(mut self, k: AnnotationRefinementKind) -> Result<Self, String> {
         match k {
             AnnotationRefinementKind::Argument(a) => {
@@ -102,6 +129,8 @@ impl AnnotationRefinement {
         self.on_return
     }
 
+    /// True if this refinement is empty, i.e. the annotation is targeting the
+    /// item itself.
     pub fn on_self(&self) -> bool {
         self.on_argument.is_empty() && !self.on_return
     }
@@ -144,6 +173,8 @@ impl ObjectType {
     }
 }
 
+/// A Forge friendly representation of the dataflow graphs we calculated and the
+/// annotations we found.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ProgramDescription {
     pub controllers: HashMap<Endpoint, Ctrl>,
@@ -151,12 +182,18 @@ pub struct ProgramDescription {
 }
 
 impl ProgramDescription {
+    /// Gather all [`DataSource`]s that are mentioned in this program description.
+    /// 
+    /// Essentially just `self.controllers.flat_map(|c| c.keys())`
     pub fn all_sources(&self) -> HashSet<&DataSource> {
         self.controllers
             .values()
             .flat_map(|c| c.flow.0.keys().chain(c.types.0.keys()))
             .collect()
     }
+    /// Gather all [`DataSink`]s mentioned in this program description
+    /// 
+    /// Essentially just `self.controllers.flat_map(|c| c.values())`
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
         self.controllers
             .values()
@@ -164,6 +201,12 @@ impl ProgramDescription {
             .collect()
     }
 
+    /// Gather all [`CallSite`]s that are mentioned in this program description. 
+    /// 
+    /// This function is a bit more subtle than [`Self::all_sinks`] and
+    /// [`Self::all_sources`] (which are simple maps), because call sites occur
+    /// in more places. So this extracts the call sites from sources as well as
+    /// sinks.
     pub fn all_call_sites(&self) -> HashSet<&CallSite> {
         self.controllers
             .values()
@@ -177,6 +220,9 @@ impl ProgramDescription {
             .collect()
     }
 
+    /// Gather all function identifiers that are mentioned in this program description.
+    /// 
+    /// Essentially just `self.all_call_sites().map(|cs| cs.function)`
     pub fn all_functions(&self) -> HashSet<&Identifier> {
         self.all_call_sites()
             .into_iter()
@@ -208,6 +254,8 @@ impl std::fmt::Display for Identifier {
     }
 }
 
+/// Because we need these kinds of associations so often I made a separate type
+/// for it. Also allows us to serialize it more conveniently.
 pub struct Relation<X, Y>(pub HashMap<X, HashSet<Y>>);
 
 impl<X: serde::Serialize, Y: serde::Serialize + std::hash::Hash + std::cmp::Eq> serde::Serialize
@@ -242,6 +290,9 @@ impl<X, Y> Relation<X, Y> {
     }
 }
 
+/// XXX This representation is outdated and can lead to collisions. We need
+/// something that is closer to a
+/// [`GlobalLocation`](crate::ana::GlobalLocation).
 #[derive(
     Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Debug, serde::Serialize, serde::Deserialize,
 )]
@@ -252,11 +303,18 @@ pub struct CallSite {
     pub function: Function,
 }
 
+/// A representation of something that can emit data into the flow.
+/// 
+/// Convenience match functions are provided (for use e.g. in
+/// [`Iterator::filter_map`]) with [`Self::as_function_call`] and [`Self::as_argument`].
 #[derive(
     Hash, Eq, PartialEq, Ord, PartialOrd, Clone, serde::Serialize, serde::Deserialize, Debug,
 )]
 pub enum DataSource {
+    /// The result of a function call in the controller body. Can be the return
+    /// value or a mutable argument that was passed to the call.
     FunctionCall(CallSite),
+    /// An argument to the controller function.
     Argument(usize),
 }
 
@@ -275,6 +333,9 @@ impl DataSource {
     }
 }
 
+/// A representation of something that can receive data from the flow.
+/// 
+/// [`Self::as_argument`] is provided for convenience of matching.
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DataSink {
     Argument { function: CallSite, arg_slot: usize },
@@ -290,6 +351,9 @@ impl DataSink {
     }
 }
 
+/// Annotations on types in a controller. Only types that have annotations are
+/// present in this map, meaning that it is guaranteed that for any key `k`
+/// `map.get(k).is_empty() == false`.
 pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -306,6 +370,7 @@ impl Ctrl {
         }
     }
 
+    /// Extend the type annotations
     pub fn add_types<I: IntoIterator<Item = (DataSource, HashSet<TypeDescriptor>)>>(
         &mut self,
         i: I,

@@ -312,7 +312,12 @@ impl<'g> CtrlRef<'g> {
 
     pub fn call_site(&'g self, fun: &'g FnRef<'g>) -> CallSiteRef<'g> {
         let mut cs = self.call_sites(fun);
-        assert!(cs.len() == 1, "expected only one call site for {}, found {}", fun.ident, cs.len());
+        assert!(
+            cs.len() == 1,
+            "expected only one call site for {}, found {}",
+            fun.ident,
+            cs.len()
+        );
         cs.pop().unwrap()
     }
 }

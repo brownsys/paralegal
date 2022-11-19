@@ -1,3 +1,4 @@
+//! Ties together the crate and defines command line options.
 #![feature(rustc_private)]
 
 #[macro_use]
@@ -12,6 +13,7 @@ extern crate simple_logger;
 extern crate log;
 
 pub mod rust {
+    //! Exposes the rustc external crates (this mod is just to tidy things up).
     pub extern crate rustc_arena;
     pub extern crate rustc_ast;
     pub extern crate rustc_borrowck;
@@ -40,6 +42,8 @@ use rust::*;
 use flowistry::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
 
+// This import is sort of special because it comes from the private rustc
+// dependencies and not from our `Cargo.toml`.
 pub extern crate either;
 pub use either::Either;
 
@@ -52,21 +56,28 @@ pub mod desc;
 mod frg;
 mod sah;
 pub mod serializers;
+pub mod utils;
 
 use ana::AttrMatchT;
 
-pub use ana::{outfile_pls, IsGlobalLocation};
+pub use ana::IsGlobalLocation;
+pub use utils::outfile_pls;
 
 use frg::ToForge;
 
+/// Conveniently create a vector of [`Symbol`]s. This way you can just write
+/// `sym_vec!["s1", "s2", ...]` and this macro will make sure to call
+/// [`Symbol::intern`]
 macro_rules! sym_vec {
     ($($e:expr),*) => {
         vec![$(Symbol::intern($e)),*]
     };
 }
 
+/// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
 
+/// Top level command line arguments
 #[derive(serde::Serialize, serde::Deserialize, clap::Parser)]
 pub struct Args {
     /// This argument doesn't do anything, but when cargo invokes `cargo-dfpp`
@@ -79,38 +90,54 @@ pub struct Args {
     /// Print additional logging output (up to the "debug" level)
     #[clap(long, env = "DFPP_DEBUG")]
     debug: bool,
+    /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
+    /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis Control")]
     anactrl: AnalysisCtrl,
+    /// Additional arguments that control debug args specifically
     #[clap(flatten, next_help_heading = "Additional Debugging Output")]
     dbg: DbgArgs,
 }
 
+/// Arguments that control the flow analysis
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct AnalysisCtrl {
+    /// Disables all recursive analysis (both dfpps inlining as well as
+    /// Flowistry's recursive analysis)
     #[clap(long, env)]
     no_recursive_analysis: bool,
 }
 
+/// Arguments that control the output of debug information or output to be
+/// consumed for testing.
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct DbgArgs {
     /// Dumps a table representing retrieved Flowistry matrices to stdout.
     #[clap(long, env)]
     dump_flowistry_matrix: bool,
-    /// Dumps a dot graph representation of the dataflow calculated for each controller to <name of controller>.ntg.gv
+    /// Dumps a dot graph representation of the dataflow calculated for each
+    /// controller to <name of controller>.ntg.gv
     #[clap(long, env)]
     dump_non_transitive_graph: bool,
-    /// For each controller dumps the calculated dataflow graphs as well as information about the MIR to <name of controller>.ntgb.json. Can be deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
+    /// For each controller dumps the calculated dataflow graphs as well as
+    /// information about the MIR to <name of controller>.ntgb.json. Can be
+    /// deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
     #[clap(long, env)]
     dump_serialized_non_transitive_graph: bool,
-    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json) format to "flow-graph.json". Used for testing.
+    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json)
+    /// format to "flow-graph.json". Used for testing.
     #[clap(long, env)]
     dump_serialized_flow_graph: bool,
+    /// For each controller dump a dot representation for each [`mir::Body`] as
+    /// provided by rustc
     #[clap(long, env)]
     dump_ctrl_mir: bool,
 }
 
+/// Name of the file used for emitting the JSON serialized
+/// [`desc::ProgramDescription`].
 pub const FLOW_GRAPH_OUT_NAME: &'static str = "flow-graph.json";
 
 struct Callbacks {
@@ -118,9 +145,17 @@ struct Callbacks {
 }
 
 lazy_static! {
+    /// This will match the annotation `#[dfpp::label(...)]` when using
+    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
     static ref LABEL_MARKER: AttrMatchT = sym_vec!["dfpp", "label"];
+    /// This will match the annotation `#[dfpp::analyze]` when using
+    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
     static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
+    /// This will match the annotation `#[dfpp::output_types(...)]` when using
+    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
     static ref OTYPE_MARKER: AttrMatchT = sym_vec!["dfpp", "output_types"];
+    /// This will match the annotation `#[dfpp::exception(...)]` when using
+    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
     static ref EXCEPTION_MARKER: AttrMatchT = sym_vec!["dfpp", "exception"];
 }
 
@@ -138,7 +173,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .take()
-            .enter(|tcx| ana::Visitor::new(tcx, self.opts).run())
+            .enter(|tcx| ana::CollectingVisitor::new(tcx, self.opts).run())
             .unwrap();
         if self.opts.dbg.dump_serialized_flow_graph {
             serde_json::to_writer(
@@ -171,8 +206,14 @@ impl rustc_driver::Callbacks for Callbacks {
 }
 
 lazy_static! {
+    /// The symbol `arguments` which we use for refinement in a `#[dfpp::label(...)]`
+    /// annotation.
     static ref ARG_SYM: Symbol = Symbol::intern("arguments");
+    /// The symbol `return` which we use for refinement in a `#[dfpp::label(...)]`
+    /// annotation.
     static ref RETURN_SYM: Symbol = Symbol::intern("return");
+    /// The symbol `verification_hash` which we use for refinement in a
+    /// `#[dfpp::exception(...)]` annotation.
     static ref VERIFICATION_HASH_SYM: Symbol = Symbol::intern("verification_hash");
 }
 
