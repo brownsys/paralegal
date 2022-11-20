@@ -280,7 +280,7 @@ impl<'g> CtrlRef<'g> {
     pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallSiteRef<'g>> {
         let mut all: Vec<CallSiteRef<'g>> = self
             .ctrl
-            .flow
+            .data_flow
             .0
             .values()
             .flat_map(|v| {
@@ -294,7 +294,7 @@ impl<'g> CtrlRef<'g> {
             })
             .chain(
                 self.ctrl
-                    .flow
+                    .data_flow
                     .0
                     .keys()
                     .filter_map(dfpp::desc::DataSource::as_function_call)
@@ -356,7 +356,7 @@ impl<'g> CallSiteRef<'g> {
         let mut all: Vec<_> = self
             .ctrl
             .ctrl
-            .flow
+            .data_flow
             .0
             .values()
             .flat_map(|s| s.iter())
@@ -375,7 +375,7 @@ impl<'g> CallSiteRef<'g> {
         let mut queue: Vec<_> = self
             .ctrl
             .ctrl
-            .flow
+            .data_flow
             .0
             .get(&dfpp::desc::DataSource::FunctionCall(
                 self.call_site.clone(),
@@ -393,7 +393,7 @@ impl<'g> CallSiteRef<'g> {
                     queue.extend(
                         self.ctrl
                             .ctrl
-                            .flow
+                            .data_flow
                             .0
                             .get(&dfpp::desc::DataSource::FunctionCall(fun.clone()))
                             .iter()

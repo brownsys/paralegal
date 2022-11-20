@@ -188,7 +188,7 @@ impl ProgramDescription {
     pub fn all_sources(&self) -> HashSet<&DataSource> {
         self.controllers
             .values()
-            .flat_map(|c| c.flow.0.keys().chain(c.types.0.keys()))
+            .flat_map(|c| c.data_flow.0.keys().chain(c.types.0.keys()))
             .collect()
     }
     /// Gather all [`DataSink`]s mentioned in this program description
@@ -197,7 +197,7 @@ impl ProgramDescription {
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
         self.controllers
             .values()
-            .flat_map(|ctrl| ctrl.flow.0.values().flat_map(|v| v.iter()))
+            .flat_map(|ctrl| ctrl.data_flow.0.values().flat_map(|v| v.iter()))
             .collect()
     }
 
@@ -211,11 +211,11 @@ impl ProgramDescription {
         self.controllers
             .values()
             .flat_map(|ctrl| {
-                ctrl.flow
+                ctrl.data_flow
                     .0
                     .values()
                     .flat_map(|v| v.iter().filter_map(DataSink::as_argument).map(|s| s.0))
-                    .chain(ctrl.flow.0.keys().filter_map(|src| src.as_function_call()))
+                    .chain(ctrl.data_flow.0.keys().filter_map(|src| src.as_function_call()))
             })
             .collect()
     }
@@ -358,14 +358,16 @@ pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct Ctrl {
-    pub flow: Relation<DataSource, DataSink>,
+    pub data_flow: Relation<DataSource, DataSink>,
+    pub ctrl_flow: Relation<DataSource, DataSink>,
     pub types: CtrlTypes,
 }
 
 impl Ctrl {
     pub fn new() -> Self {
         Ctrl {
-            flow: Relation::empty(),
+            data_flow: Relation::empty(),
+            ctrl_flow: Relation::empty(),
             types: Relation::empty(),
         }
     }
@@ -386,12 +388,21 @@ impl Ctrl {
 
     pub fn with_input_types(types: CtrlTypes) -> Self {
         Ctrl {
-            flow: Relation::empty(),
+            data_flow: Relation::empty(),
+            ctrl_flow: Relation::empty(),
             types,
         }
     }
-    pub fn add(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {
-        let m = &mut self.flow.0;
+    pub fn add_data_flow(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {
+        let m = &mut self.data_flow.0;
+        if let Some(e) = m.get_mut(&from) {
+            e.insert(to);
+        } else {
+            m.insert(from.into_owned(), std::iter::once(to).collect());
+        }
+    }
+    pub fn add_ctrl_flow(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {
+        let m = &mut self.ctrl_flow.0;
         if let Some(e) = m.get_mut(&from) {
             e.insert(to);
         } else {

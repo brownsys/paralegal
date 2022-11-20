@@ -235,6 +235,7 @@ mod name {
     pub const FUN_REL: &'static str = "function";
     pub const CTRL: &'static str = "Ctrl";
     pub const FLOW: &'static str = "flow";
+    pub const CTRL_FLOW: &'static str = "ctrl_flow";
     pub const FLOWS_PREDICATE: &'static str = "Flows";
     pub const OBJ: &'static str = "Object";
     pub const LABEL: &'static str = "Label";
@@ -636,7 +637,21 @@ where
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(alloc.hardline().append(
-                                                    (&ctrl.flow).as_forge(alloc).indent(4),
+                                                    (&ctrl.data_flow).as_forge(alloc).indent(4),
+                                                )),
+                                            )
+                                        }))
+                                        .indent(4),
+                                ),
+                            ),
+                            alloc.text(name::CTRL_FLOW).append(" = ").append(
+                                alloc.hardline().append(
+                                    alloc
+                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                            (
+                                                std::iter::once(e.as_forge(alloc)),
+                                                std::iter::once(alloc.hardline().append(
+                                                    (&ctrl.ctrl_flow).as_forge(alloc).indent(4),
                                                 )),
                                             )
                                         }))

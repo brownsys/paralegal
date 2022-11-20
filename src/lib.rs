@@ -108,6 +108,9 @@ struct AnalysisCtrl {
     /// Flowistry's recursive analysis)
     #[clap(long, env)]
     no_recursive_analysis: bool,
+    /// Outputs control dependencies separately in Forge
+    #[clap(long, env)]
+    separate_control_deps: bool,
 }
 
 /// Arguments that control the output of debug information or output to be

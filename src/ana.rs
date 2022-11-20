@@ -774,6 +774,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                     .aliases;
                 let deep_deps_for =
                     |p: mir::Place<'tcx>| deep_dependencies_of(tcx, aliases, *loc, g, p);
+                // TODO: Add ctrl_deps by getting AnalysisResults.control_dependencies.dependent_on(location.block)
                 Some((
                     *loc,
                     CallDeps {
@@ -1550,10 +1551,21 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     }
                 };
                 for dep in arg_deps.iter() {
-                    flows.add(
+                    flows.add_data_flow(
                         Cow::Owned(dep.as_data_source(tcx, |l| is_real_location(&inner_body, l))),
                         to.clone(),
                     );
+                }
+                if self.opts.anactrl.separate_control_deps {
+                    for dep in deps.ctrl_deps.iter() {
+                        flows.add_ctrl_flow(Cow::Owned(dep.as_data_source(tcx, |l| is_real_location(&inner_body, l))),
+                        to.clone(),)
+                    }
+                } else {
+                    for dep in deps.ctrl_deps.iter() {
+                        flows.add_data_flow(Cow::Owned(dep.as_data_source(tcx, |l| is_real_location(&inner_body, l))),
+                        to.clone(),)
+                    }
                 }
             }
         }
