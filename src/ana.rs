@@ -1379,10 +1379,19 @@ type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 /// discovery phase `self.analyze()` is used to drive the actual analysis. All
 /// of this is conveniently encapsulated in the `self.run()` method.
 pub struct CollectingVisitor<'tcx> {
+    /// Reference to rust compiler queries.
     tcx: TyCtxt<'tcx>,
+    /// Command line arguments.
     opts: &'static crate::Args,
+    /// In this map we will be accumulating the definitions we found annotations
+    /// for (except `analyze` annotations, those are in `function_to_analyze`),
+    /// which annotations they are and what type of item it is.
     marked_objects: MarkedObjects,
+    /// Expressions and statements we found annotations on. At the moment those
+    /// should only be [`desc::ExceptionAnnotation`]s.
     marked_stmts: HashMap<HirId, ((Vec<Annotation>, usize), Span, DefId)>,
+    /// Functions that are annotated with `#[dfpp::analyze]`. For these we will
+    /// later perform the analysis
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
 }
 
@@ -1632,6 +1641,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// Main analysis driver. Essentially just calls `handle_target` once for
     /// every function in `self.functions_to_analyze` after doing some other
     /// setup necessary for the flow graph creation.
+    /// 
+    /// Should only be called after the visit.
     fn analyze(mut self) -> std::io::Result<ProgramDescription> {
         let arena = rustc_arena::TypedArena::default();
         let interner = GlobalLocationInterner::new(&arena);
@@ -1694,6 +1705,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
     }
 }
 
+/// Confusingly named this function actually computed the highest index
+/// mentioned in any `on_argument` refinement in the provided annotation slice.
 fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
     *anns
         .iter()
