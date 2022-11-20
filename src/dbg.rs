@@ -281,6 +281,7 @@ fn format_global_location<T: IsGlobalLocation>(
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result {
     let mut v = std::iter::successors(Some(t), |l| l.next()).collect::<Vec<_>>();
+    v.reverse();
     let mut is_first = true;
     while let Some(next) = v.pop() {
         if is_first {

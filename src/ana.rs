@@ -90,17 +90,78 @@ pub struct Flow<'tcx, 'g> {
     pub reduced_flow: CallOnlyFlow<'g>,
 }
 
-/// The idea of a global location is to capture the call chain up to a specific
-/// location. The type is organized from the outside in i.e. the top-level
-/// function call is the outermost location which calls `next` at `location`
-/// going one level deeper and so forth. You may access the innermost location
-/// using `GlobalLocation::innermost_location_and_body`.
-///
-/// The innermost location is what you'd want to look up if you are wanting to
-/// see the actual statement or terminator that this location refers to.
+/// The interned version of a global location. See [`IsGlobalLocation`] for more
+/// information on usage and rational.
+/// 
+/// To construct these values use [`GLI::globalize_location`] and
+/// [`GLI::global_location_from_relative`].
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>);
 
+/// The idea of a global location is to capture the call chain up to a specific
+/// location. 
+/// 
+/// ## Example
+/// 
+/// Consider the following code:
+/// 
+/// ```
+/// fn bar() {
+///     let x = 1;
+/// }
+/// 
+/// @[dfpp::analyze]
+/// fn foo {
+///     bar();
+///     bar();
+/// }
+/// ```
+///
+/// The MIR location of `let x = 1` would likely be something like `bb0[0]` i.e.
+/// the 0th statement in basic block 0. However if we construct a flow graph of
+/// `foo` that traverses into the called functions (e.g. `bar`), this location
+/// is no longer unique. In fact the location of the call to `bar` in `foo`
+/// probably also has the MIR location `bb0[0]`. In addition the same function
+/// can occur twice so we need to be able to disambiguate a location based on
+/// the call chain of getting to the location.
+/// 
+/// So in this example when we inline the first call of `bar` at `bb0[0]` the
+/// global location for `let x = 1` for that call is `bb0[0]@bb0[0]` (This is
+/// what the `impl Display for GlobalLocation` shows). When the second call is
+/// inlined the second `let x = 1` would be `bb0[0]@bb1[0]`.
+/// 
+/// In addition we also capture for every location the `BodyId` of the body the
+/// location occurs in, so we can later find the body and the code at that
+/// location.
+/// 
+/// ## Construction
+/// 
+/// [`GLI::globalize_location`] is used to construct global locations that are
+/// not nested in a call chain (such as the location of `let x = 1` within
+/// `bar`). A nested location (such as nesting this one behind the call to `bar`
+/// in `foo`) is done using [`GLI::global_location_from_relative`].
+/// 
+/// In the example we would first construct global locations for all locations
+/// in `bar` with (pseudocode) `bar_bb0[0] = `[`gli.globalize_location(bb0[0],
+/// bar_id)`](GLI::globalize_location) and then make the relative locations to
+/// foo with [`gli.global_location_from_relative(bar_bb0[0], bb0[0],
+/// foo_id)`](GLI::global_location_from_relative) and
+/// [`gli.global_location_from_relative(bar_bb0[0], bb1[0],
+/// foo_id)`](GLI::global_location_from_relative) for the first and second
+/// inlining respectively.
+/// 
+/// ## Representation
+/// 
+/// It is organized from the outside in i.e. the top-level function call is the
+/// outermost location which calls `next` at `location` going one level deeper
+/// and so forth. You may access the innermost location using
+/// `GlobalLocation::innermost_location_and_body`.
+///
+/// The innermost location is what you'd want to look up if you are wanting to
+/// see the actual statement or terminator that this location refers to.
+/// 
+/// ## Why we need a trait
+/// 
 /// We intern global locations to make the fact that they are linked lists more
 /// efficient. However this makes serialization harder. Since we only use
 /// serialization for testing I am doing the lazy thing where I just serialize
@@ -308,7 +369,12 @@ impl<'g> GLI<'g> {
             next,
         })
     }
-    /// Create a top-level [`GlobalLocation`] (e.g. no nested calls).
+    /// Create a top-level [`GlobalLocation`] (e.g. a non-nested call)
+    /// 
+    /// `function` is the id of the [`mir::Body`] that the [`Location`] is from.
+    /// 
+    /// See the [`IsGlobalLocation`](./trait.IsGlobalLocation.html#construction)
+    /// trait for more information.
     pub fn globalize_location(
         self,
         location: mir::Location,
@@ -318,6 +384,9 @@ impl<'g> GLI<'g> {
     }
     /// Make `relative_location` a location in a nested call in `root_function`
     /// at `root_location`
+    /// 
+    /// See the [`IsGlobalLocation`](./trait.IsGlobalLocation.html#construction)
+    /// trait for more information.
     pub fn global_location_from_relative(
         self,
         relative_location: GlobalLocation<'g>,
