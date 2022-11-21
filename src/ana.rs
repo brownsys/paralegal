@@ -776,14 +776,14 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 let ref aliases = flow_analysis.aliases;
                 let deep_deps_for =
                     |p: mir::Place<'tcx>| deep_dependencies_of(tcx, aliases, *loc, g, p);
-                // Add ctrl_deps by getting converting AnalysisResults.control_dependencies.
+
                 let ref controlled_by = flow_analysis
                     .control_dependencies
                     .dependent_on(inner_location.block);
                 let mut ctrl_deps = HashSet::new();
                 for block in controlled_by.into_iter().flat_map(|set| set.iter()) {
                     let mir_location = flow_analysis.body.terminator_loc(block);
-                    // Get the terminator location and find all the places that it references, then call deep_deps to find the corresponding locations.
+                    // Get the terminator location and find all the places that it references, then call deep_deps to find the corresponding dependency locations.
                     let referenced_places = places_read(mir_location, &flow_analysis.body.stmt_at(mir_location));
                     for deps in referenced_places.map(deep_deps_for) {
                         ctrl_deps.extend(deps);
