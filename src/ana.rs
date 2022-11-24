@@ -788,7 +788,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             root_function,
             translated_return_states: RefCell::new(HashMap::new()),
             flow_constructor: self,
-            under_construction: Some(GlobalFlowGraph::new()),
+            //under_construction: RefCell::new(GlobalFlowGraph::new()),
+            under_construction: GlobalFlowGraph::new(),
         };
 
         use mir::visit::Visitor;
@@ -798,7 +799,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
         self.function_flows.borrow_mut().insert(
             root_function,
             Some(Rc::new(FunctionFlow {
-                flow: inliner.under_construction.unwrap(),
+                flow: inliner.under_construction,//.into_inner(),
                 analysis: from_flowistry,
             })),
         );
@@ -956,7 +957,8 @@ struct FunctionInliner<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> {
     /// `Place`s for each call site so that we only do that translation once.
     translated_return_states: RefCell<HashMap<mir::Location, GlobalDepMatrix<'tcx, 'g>>>,
 
-    under_construction: Option<GlobalFlowGraph<'tcx, 'g>>,
+    /// The graph we are currently constructing.
+    under_construction: GlobalFlowGraph<'tcx, 'g>,
 }
 
 impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g, 'opts, 'refs, I> {
@@ -988,13 +990,26 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
 
     /// Makes `callee` relative to `call_site` in the function we operate on,
     /// i.e. `self.root_function`
-    fn relative_global_location(
-        &self,
-        call_site: mir::Location,
-        callee: GlobalLocation<'g>,
-    ) -> GlobalLocation<'g> {
-        self.gli()
-            .global_location_from_relative(callee, call_site, self.root_function)
+    /// 
+    /// This returns a closure so that we can detach from `self`. This is
+    /// possible because this function only needs read only/copy data. This
+    /// allows you to do something like
+    /// 
+    /// ```
+    /// let make_relative_location = self.relative_location_maker();
+    /// let it = some_vec
+    ///     .iter()
+    ///     .map(|elem| make_relative_location(..., elem));
+    /// self.under_construction.extend(it);
+    /// ```
+    /// 
+    /// E.g. you can borrow the closure in an iterator and still mutably modify
+    /// `self`.
+    fn relative_global_location_maker(&self) -> impl Fn(mir::Location, GlobalLocation<'g>) -> GlobalLocation<'g> {
+        let gli = self.gli();
+        let root_function = self.root_function;
+        move |call_site, callee|
+        gli.global_location_from_relative(callee, call_site, root_function)
     }
 
     /// Create the state after a callee returns. The main job of this function
@@ -1125,23 +1140,17 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             .gli()
             .make_global_location(self.root_function, location, None);
         self.under_construction
-            .as_mut()
-            .unwrap()
+            //.borrow_mut()
             .location_states
             .insert(global_loc, regular_result);
     }
 
     fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: Location) {
-        // This lets me use the immutable parts of `self` (as `slf`) when
-        // creating the iterators but also mutably modify `under_construction`
-        // and `Split` will make sure that `under_construction` gets moved back
-        // into `self` at the end.
-        let mut splitted: Split<_> = self.into();
-        let (ref slf, under_construction) = splitted.as_components();
+        //let mut under_construction = self.under_construction; //.borrow_mut();
         if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
-            slf.flow_constructor.inner_flow_for_terminator(terminator)
+            self.flow_constructor.inner_flow_for_terminator(terminator)
         {
-            let caller_state = slf.from_flowistry.state_at(location).matrix();
+            let caller_state = self.from_flowistry.state_at(location).matrix();
             // Translate every place in the child optimistically
             // to a parent place. This allows us to uphold the
             // invariant that when tracing dependencies a local
@@ -1159,43 +1168,42 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                     Some((
                         p,
                         translate_child_to_parent(
-                            slf.tcx(),
-                            slf.local_def_id,
+                            self.tcx(),
+                            self.local_def_id,
                             &args,
                             dest,
                             p,
                             false,
                             inner_body,
-                            slf.body,
+                            self.body,
                         )?,
                     ))
                 })
                 .map(|(child, parent)| {
                     (
                         child,
-                        slf.make_row_global(parent, caller_state.row_set(parent)),
+                        self.make_row_global(parent, caller_state.row_set(parent)),
                     )
                 })
                 .collect();
+
+            let gli = self.gli();
+            let make_relative_location = self.relative_global_location_maker();
 
             let locs_to_add = inner_flow
                 .flow
                 .location_states
                 .iter()
-                .map(move |(inner_loc, map)| {
+                .map(|(inner_loc, map)| {
                     (
-                        slf.relative_global_location(location, *inner_loc),
+                        make_relative_location(location, *inner_loc),
                         map.iter()
                             .map(|(&place, deps)| {
                                 (
                                     place,
                                     deps.iter()
                                         .map(|dep| {
-                                            slf.gli().global_location_from_relative(
-                                                *dep,
-                                                location,
-                                                slf.root_function,
-                                            )
+                                            make_relative_location(location, *dep)
                                         })
                                         .collect::<HashSet<_>>(),
                                 )
@@ -1203,52 +1211,39 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                             .collect::<HashMap<_, _>>(),
                     )
                 })
-                .chain((1..=args.len()).into_iter().map(move |a| {
-                    let global_call_site = slf.gli().globalize_location(
+                .chain((1..=args.len()).into_iter().map(|a| {
+                    let global_call_site = gli.globalize_location(
                         mir::Location {
                             block: mir::BasicBlock::from_usize(inner_body.basic_blocks().len()),
                             statement_index: a,
                         },
                         inner_body_id,
                     );
-                    let global_arg_loc = slf.relative_global_location(location, global_call_site);
+                    let global_arg_loc = make_relative_location(location, global_call_site);
                     (global_arg_loc, as_parent_dep_matrix.clone())
                 }));
-            under_construction.location_states.extend(locs_to_add);
+            self.under_construction.location_states.extend(locs_to_add);
         } else {
             // First we handle this as the default case. This
             // also recurses as necessary
-            let state_at_term = slf.handle_regular_location(location);
+            let state_at_term = self.handle_regular_location(location);
             // In the special case of a `return` terminator we
             // merge its state onto any prior state for the
             // return
             if let TerminatorKind::Return = terminator.kind {
                 for (p, deps) in state_at_term.iter() {
-                    under_construction
+                    self.under_construction
                         .return_state
                         .entry(*p)
                         .or_insert_with(|| HashSet::new())
                         .extend(deps.iter().cloned());
                 }
             };
-            under_construction.location_states.insert(
-                slf.gli().globalize_location(location, slf.root_function),
+            self.under_construction.location_states.insert(
+                self.gli().globalize_location(location, self.root_function),
                 state_at_term,
             );
         }
-    }
-}
-
-impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> Splittable
-    for FunctionInliner<'tcx, 'g, 'opts, 'refs, I>
-{
-    type Splitted = GlobalFlowGraph<'tcx, 'g>;
-    fn split(&mut self) -> Self::Splitted {
-        std::mem::replace(&mut self.under_construction, None).unwrap()
-    }
-    fn merge(&mut self, inner: Self::Splitted) {
-        assert!(self.under_construction.is_none());
-        self.under_construction = Some(inner)
     }
 }
 
