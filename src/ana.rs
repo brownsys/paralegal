@@ -1,11 +1,11 @@
 //! Main analysis pass which proceeds as follows:
-//! 
+//!
 //! 1. The HIR visitor [`CollectingVisitor`](./struct.CollectingVisitor.html)
 //!    traverses the HIR and collects annotated entities.
 //! 2. [`CollectingVisitor::analyze`](./struct.CollectingVisitor.html#method.analyze)
 //!    is called, which initiates a dataflow analysis on every `mir::Body` that
 //!    was annotated with `#[dfpp::analyze]` and performs the following steps
-//! 
+//!
 //!    1. Create a
 //!       [`GlobalFlowConstructor`](./struct.GlobalFlowConstructor.html)
 //!    2. The constructor recursively creates finely granular flow graphs
@@ -21,10 +21,9 @@
 //!       [`desc::Ctrl`](../desc/struct.Ctrl.html) description by adding
 //!       information about annotated entities (in
 //!       [`CollectingVisitor::handle_target`](./struct.CollectingVisitor.html#method.handle_target))
-//! 
+//!
 //! 3. Combine the [`Ctrl`](../desc/struct.Ctrl.html) graphs into one
 //!    [`desc::ProgramDescription`](../desc/struct.ProgramDescription.html)
-
 
 use std::{
     borrow::{Borrow, Cow},
@@ -47,7 +46,7 @@ use hir::{
     intravisit::{self, FnKind},
     BodyId,
 };
-use mir::{Location, Place, TerminatorKind};
+use mir::{Location, Place, Terminator, TerminatorKind};
 use rustc_data_structures::{intern::Interned, sharded::ShardedHashMap};
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
@@ -73,6 +72,10 @@ pub type AttrMatchT = Vec<Symbol>;
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
 /// The result of the data flow analysis for a function.
+///
+/// This gets constructed using [`Flow::compute`] in
+/// [`CollectingVisitor::handle_target`] and is then queried to build a
+/// [`Ctrl`].
 pub struct Flow<'tcx, 'g> {
     /// The id of the body for which this analysis was requested. The finely
     /// granular (includes statements and non-call terminators), inlined
@@ -92,24 +95,24 @@ pub struct Flow<'tcx, 'g> {
 
 /// The interned version of a global location. See [`IsGlobalLocation`] for more
 /// information on usage and rational.
-/// 
+///
 /// To construct these values use [`GLI::globalize_location`] and
 /// [`GLI::global_location_from_relative`].
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>);
 
 /// The idea of a global location is to capture the call chain up to a specific
-/// location. 
-/// 
+/// location.
+///
 /// ## Example
-/// 
+///
 /// Consider the following code:
-/// 
+///
 /// ```
 /// fn bar() {
 ///     let x = 1;
 /// }
-/// 
+///
 /// @[dfpp::analyze]
 /// fn foo {
 ///     bar();
@@ -124,23 +127,23 @@ pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>)
 /// probably also has the MIR location `bb0[0]`. In addition the same function
 /// can occur twice so we need to be able to disambiguate a location based on
 /// the call chain of getting to the location.
-/// 
+///
 /// So in this example when we inline the first call of `bar` at `bb0[0]` the
 /// global location for `let x = 1` for that call is `bb0[0]@bb0[0]` (This is
 /// what the `impl Display for GlobalLocation` shows). When the second call is
 /// inlined the second `let x = 1` would be `bb0[0]@bb1[0]`.
-/// 
+///
 /// In addition we also capture for every location the `BodyId` of the body the
 /// location occurs in, so we can later find the body and the code at that
 /// location.
-/// 
+///
 /// ## Construction
-/// 
+///
 /// [`GLI::globalize_location`] is used to construct global locations that are
 /// not nested in a call chain (such as the location of `let x = 1` within
 /// `bar`). A nested location (such as nesting this one behind the call to `bar`
 /// in `foo`) is done using [`GLI::global_location_from_relative`].
-/// 
+///
 /// In the example we would first construct global locations for all locations
 /// in `bar` with (pseudocode) `bar_bb0[0] = `[`gli.globalize_location(bb0[0],
 /// bar_id)`](GLI::globalize_location) and then make the relative locations to
@@ -149,9 +152,9 @@ pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>)
 /// [`gli.global_location_from_relative(bar_bb0[0], bb1[0],
 /// foo_id)`](GLI::global_location_from_relative) for the first and second
 /// inlining respectively.
-/// 
+///
 /// ## Representation
-/// 
+///
 /// It is organized from the outside in i.e. the top-level function call is the
 /// outermost location which calls `next` at `location` going one level deeper
 /// and so forth. You may access the innermost location using
@@ -159,9 +162,9 @@ pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>)
 ///
 /// The innermost location is what you'd want to look up if you are wanting to
 /// see the actual statement or terminator that this location refers to.
-/// 
+///
 /// ## Why we need a trait
-/// 
+///
 /// We intern global locations to make the fact that they are linked lists more
 /// efficient. However this makes serialization harder. Since we only use
 /// serialization for testing I am doing the lazy thing where I just serialize
@@ -226,6 +229,8 @@ pub trait IsGlobalLocation: Sized {
         self.next().is_none()
     }
 
+    /// Create a Forge friendly descriptor for this location as a source of data
+    /// in a model flow.
     fn as_data_source<F: FnOnce(mir::Location) -> bool>(
         &self,
         tcx: TyCtxt,
@@ -260,10 +265,11 @@ impl<'g> IsGlobalLocation for GlobalLocation<'g> {
     }
 }
 
-/// the naming here might be misleading, this id is *not stable across tool
-/// runs*, but because of the interner it is guaranteed that for any two
-/// locations `g1` and `g2`, `g1.stable_id() == g2.stable_id()` iff `g1 == g2`.
 impl<'g> GlobalLocation<'g> {
+    /// The naming here might be misleading, this id is *not stable across tool
+    /// runs*, but because of the interner it is guaranteed that for any two
+    /// locations `g1` and `g2`, `g1.stable_id() == g2.stable_id()` iff `g1 ==
+    /// g2`.
     pub fn stable_id(self) -> usize {
         self.0 .0 as *const GlobalLocationS<GlobalLocation<'g>> as usize
     }
@@ -370,9 +376,9 @@ impl<'g> GLI<'g> {
         })
     }
     /// Create a top-level [`GlobalLocation`] (e.g. a non-nested call)
-    /// 
+    ///
     /// `function` is the id of the [`mir::Body`] that the [`Location`] is from.
-    /// 
+    ///
     /// See the [`IsGlobalLocation`](./trait.IsGlobalLocation.html#construction)
     /// trait for more information.
     pub fn globalize_location(
@@ -384,7 +390,7 @@ impl<'g> GLI<'g> {
     }
     /// Make `relative_location` a location in a nested call in `root_function`
     /// at `root_location`
-    /// 
+    ///
     /// See the [`IsGlobalLocation`](./trait.IsGlobalLocation.html#construction)
     /// trait for more information.
     pub fn global_location_from_relative(
@@ -439,7 +445,7 @@ impl<'tcx, 'g> GlobalFlowGraph<'tcx, 'g> {
 /// purpose of doing this is so that we can later query
 /// `self.analysis.analysis.aliases()` to resolve `reachable_values` and
 /// [`Place`] [`aliases()`](flowistry::mir::aliases::Aliases::aliases).
-struct FunctionFlow<'tcx, 'g> {
+pub struct FunctionFlow<'tcx, 'g> {
     flow: GlobalFlowGraph<'tcx, 'g>,
     analysis: AnalysisResults<'tcx, FlowAnalysis<'tcx, 'tcx, NonTransitiveFlowDomain<'tcx>>>,
 }
@@ -799,7 +805,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
         self.function_flows.borrow_mut().insert(
             root_function,
             Some(Rc::new(FunctionFlow {
-                flow: inliner.under_construction,//.into_inner(),
+                flow: inliner.under_construction, //.into_inner(),
                 analysis: from_flowistry,
             })),
         );
@@ -859,6 +865,18 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     }
 }
 
+/// Perform a depth-first search up the dependency tree formed from looking up
+/// the [`places_read`] at a location in `g`, starting from `loc`.
+///
+/// Terminates on each branch when a location `l` is encountered that does not
+/// satisfy `matches!(Keep::from_global_location(tcx, l), Keep::Reject(_))`.
+///
+/// In addition the set of places that is considered "read" for `loc` (the
+/// initial location) is
+/// [`Aliases::reachable_values(p)`](flowistry::mir::Aliases::reachable_values).
+/// This means we consider all subplaces as also read. This only makes sense for
+/// function calls, hence this should only be called on locations that represent
+/// function calls.
 fn deep_dependencies_of<'tcx, 'g>(
     tcx: TyCtxt<'tcx>,
     aliases: &flowistry::mir::aliases::Aliases<'_, 'tcx>,
@@ -866,6 +884,20 @@ fn deep_dependencies_of<'tcx, 'g>(
     g: &GlobalFlowGraph<'tcx, 'g>,
     p: mir::Place<'tcx>,
 ) -> HashSet<GlobalLocation<'g>> {
+    let (inner_loc, inner_body) = loc.innermost_location_and_body();
+    let stmt =
+        borrowck_facts::get_body_with_borrowck_facts(tcx, tcx.hir().body_owner_def_id(inner_body))
+            .body
+            .stmt_at(inner_loc);
+    if !matches!(
+        stmt,
+        Either::Right(Terminator {
+            kind: TerminatorKind::Call { .. },
+            ..
+        })
+    ) {
+        warn!("`deep_dependencies_of` was called on non-function-call location {} with statement {:?}", loc, stmt);
+    }
     // Get the combined dependencies for `places` at the
     // location `loc` also taking into account provenance.
     let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]| {
@@ -887,13 +919,7 @@ fn deep_dependencies_of<'tcx, 'g>(
 
     // A reverse dfs traversing the flowistry tensor which terminates every time we find a function call.
     while let Some((place, location)) = queue.pop() {
-        let (local_inner_loc, local_inner_body) = location.innermost_location_and_body();
-        match Keep::from_location(
-            tcx,
-            local_inner_body,
-            local_inner_loc,
-            location.is_at_root(),
-        ) {
+        match Keep::from_global_location(tcx, location) {
             Keep::Keep(..) | Keep::Argument(_) => {
                 deps.insert(location);
             }
@@ -920,12 +946,12 @@ fn deep_dependencies_of<'tcx, 'g>(
 /// idea to `GlobalFlowConstructor` (in fact it wraps one) that bundles together
 /// all information needed to inline into one `mir::Body` so that we can split
 /// it into helper functions which all have access to this information.
-/// 
+///
 /// ## Usage
-/// 
+///
 /// The function inliner implements `mir::visit::Visitor` that should be applied
 /// to only the same `Body` this struct was initialized with.
-/// 
+///
 /// The methods are currently split into the visit methods that actually modify
 /// `self.under_construction` and helper methods such as
 /// `self.handle_regular_location` that take an immutable `&self` and return
@@ -990,11 +1016,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
 
     /// Makes `callee` relative to `call_site` in the function we operate on,
     /// i.e. `self.root_function`
-    /// 
+    ///
     /// This returns a closure so that we can detach from `self`. This is
     /// possible because this function only needs read only/copy data. This
     /// allows you to do something like
-    /// 
+    ///
     /// ```
     /// let make_relative_location = self.relative_location_maker();
     /// let it = some_vec
@@ -1002,14 +1028,15 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     ///     .map(|elem| make_relative_location(..., elem));
     /// self.under_construction.extend(it);
     /// ```
-    /// 
+    ///
     /// E.g. you can borrow the closure in an iterator and still mutably modify
     /// `self`.
-    fn relative_global_location_maker(&self) -> impl Fn(mir::Location, GlobalLocation<'g>) -> GlobalLocation<'g> {
+    fn relative_global_location_maker(
+        &self,
+    ) -> impl Fn(mir::Location, GlobalLocation<'g>) -> GlobalLocation<'g> {
         let gli = self.gli();
         let root_function = self.root_function;
-        move |call_site, callee|
-        gli.global_location_from_relative(callee, call_site, root_function)
+        move |call_site, callee| gli.global_location_from_relative(callee, call_site, root_function)
     }
 
     /// Create the state after a callee returns. The main job of this function
@@ -1062,8 +1089,9 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     }
 
     /// Either transforms the location into a global one or, if it names the
-    /// boundary of a function call to an inlined function, returns the
-    /// translated dependencies of `place`.
+    /// boundary of a function call to a function we want to inline, returns the
+    /// translated dependencies of `place` in the return state of the
+    /// function-call-to-be-inlined.
     fn globalize_or_inline_call(
         &self,
         place: Place<'tcx>,
@@ -1119,6 +1147,13 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         .into_iter()
     }
 
+    /// Transform the dependencies ([`Location`]s as calculated by flowistry)
+    /// into global locations.
+    ///
+    /// Either simply calls [`GLI::globalize_location`] or, for [`Location`]s
+    /// that name calls to functions which are to be inlined, query the return
+    /// state of that call, translate `place` to a place in that return state
+    /// and merge in the dependencies for the translated place.
     fn make_row_global(
         &self,
         place: Place<'tcx>,
@@ -1202,9 +1237,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                                 (
                                     place,
                                     deps.iter()
-                                        .map(|dep| {
-                                            make_relative_location(location, *dep)
-                                        })
+                                        .map(|dep| make_relative_location(location, *dep))
                                         .collect::<HashSet<_>>(),
                                 )
                             })
@@ -1260,9 +1293,25 @@ enum Keep<'tcx> {
 }
 
 impl<'tcx> Keep<'tcx> {
+    /// Same as [`from_location`](Self::from_location) but operating on
+    /// [`GlobalLocation`]s.
+    ///
+    /// Global locations are easily used wrong in subtle ways (see also [its
+    /// documentation](IsGlobalLocation)) and this method ensures the correct
+    /// information from the global locations are used to construct a [`Keep`]
+    /// value (i.e. the innermost location is queried).
+    fn from_global_location(tcx: TyCtxt<'tcx>, location: GlobalLocation) -> Self {
+        let (local_inner_loc, local_inner_body) = location.innermost_location_and_body();
+        Self::from_location(
+            tcx,
+            local_inner_body,
+            local_inner_loc,
+            location.is_at_root(),
+        )
+    }
     /// This is an important function that is used multiple times throughout the
     /// dfs later. It is a selector for which locations to keep in the reduced
-    /// graph but in addition its variants `Keeps` also transport necessary
+    /// graph but in addition its variants also transport necessary
     /// information for the search algorithm. This design was chosen because it
     /// allows the use of the same function when we try to figure out whether to
     /// use the location as a sink or a source and also transport some data we
@@ -1310,6 +1359,10 @@ impl<'tcx> Keep<'tcx> {
 }
 
 impl<'tcx, 'g> Flow<'tcx, 'g> {
+    /// Canonical way to construct a [`Flow`].
+    ///
+    /// Takes care of constructing in accordance with the configuration in
+    /// `opts`.
     fn compute<P: InlineSelector + Clone + 'static>(
         opts: &crate::AnalysisCtrl,
         dbg_opts: &crate::DbgArgs,
@@ -1332,6 +1385,12 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
                 tcx
             }
         );
+        if dbg_opts.dump_inlined_function_flow {
+            outfile_pls(format!("{}.inlined-flow.gv", body_name_pls(tcx, body_id)))
+                .and_then(|mut f| dbg::call_only_flow_dot::dump(tcx, &granular_flow.flow, &mut f))
+                .unwrap();
+        }
+
         let reduced_flow = constructor.compute_call_only_flow(&granular_flow.flow);
         debug!(
             "Constructed reduced flow of {} locations\n{:?}",
@@ -1364,9 +1423,11 @@ impl InlineSelector for SkipAnnotatedFunctionSelector {
     }
 }
 
-/// A map of objects for which we have found annotations. This is sharable so we
-/// can stick it into the `SkipAnnotatedFunctionSelector`. Technically at that
-/// point this map is read-only.
+/// A map of objects for which we have found annotations.
+///
+/// This is sharable so we can stick it into the
+/// `SkipAnnotatedFunctionSelector`. Technically at that point this map is
+/// read-only.
 type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 
 /// This visitor traverses the items in the analyzed crate to discover
@@ -1636,7 +1697,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// Main analysis driver. Essentially just calls `handle_target` once for
     /// every function in `self.functions_to_analyze` after doing some other
     /// setup necessary for the flow graph creation.
-    /// 
+    ///
     /// Should only be called after the visit.
     fn analyze(mut self) -> std::io::Result<ProgramDescription> {
         let arena = rustc_arena::TypedArena::default();
