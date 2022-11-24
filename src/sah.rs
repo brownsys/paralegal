@@ -1,7 +1,7 @@
 //! Semantics aware hashing for MIR slices.
-//! 
+//!
 //! There are several weaknesses with this at the moment so it is actually not
-//! used at the moment. 
+//! used at the moment.
 extern crate either;
 
 use either::Either;

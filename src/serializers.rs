@@ -1,15 +1,15 @@
 //! JSON serializers, most used for debugging output in [`crate::dbg`].
-//! 
+//!
 //! The proxy structs are foreign serializers for their non-proxy counterparts,
 //! see <https://serde.rs/remote-derive.html> for more information. As a naming
 //! convention `<name>Proxy` is used to (de)serialize `<name>` e.g.
 //! `BasicBlockProxy` (de)serializes a `mir::BasicBlock`.
-//! 
+//!
 //! Be aware that in some cases serialization is not bidirectional (usually if
 //! there is a lifetime parameter in the serialized type). For instance
 //! [`GlobalLocation`] can be serialized, but only a [`RawGlobalLocation`] can
 //! be deserialized.
-//! 
+//!
 //! Some types (such as `mir::Body`) first have to be explicitly transformed
 //! into the respective proxy type. In the case of `mir::Body` this can be done
 //! with [`BodyProxy::from_body_with_normalize`]
@@ -93,13 +93,13 @@ impl Into<mir::Location> for LocationProxy {
 }
 
 /// A serializable version of a `mir::Body`.
-/// 
+///
 /// Be aware that this transports less information than the actual `mir::Body`.
 /// It records for each [`mir::Location`] a string representation of the
 /// statement or terminator at that location and a set of [`mir::Place`]s that
 /// are mentioned in the statement/terminator, also represented as strings
 /// (though using the efficient, interned [`Symbol`]s).
-/// 
+///
 /// Construct one with [`Self::from_body_with_normalize`].
 #[derive(Debug)]
 pub struct BodyProxy(pub Vec<(mir::Location, String, HashSet<Symbol>)>);
@@ -195,7 +195,7 @@ impl<'tcx> From<&mir::Body<'tcx>> for BodyProxy {
 impl BodyProxy {
     /// Create a serializable version of a `mir::Body` by stringifying
     /// everything.
-    /// 
+    ///
     /// Includes, as the set of places for each statements the read places with
     /// provenance as calculated by [`read_places_with_provenance`].
     pub fn from_body_with_normalize<'tcx>(body: &mir::Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
@@ -346,13 +346,13 @@ pub struct BodyIdProxy {
 #[derive(Serialize, Deserialize)]
 pub struct BodyIdProxy2(#[serde(with = "BodyIdProxy")] pub hir::BodyId);
 
-/// A serializable non-interned version of [`GlobalLocation`]. 
-/// 
+/// A serializable non-interned version of [`GlobalLocation`].
+///
 /// Thanks to the [`IsGlobalLocation`] trait you can use this the same way as a
 /// `GlobalLocation`. Though be aware that this struct is significantly larger
 /// in memory as it contains a singly-linked list of call chains that is not
 /// interned.
-/// 
+///
 /// For information on the meaning of this struct see [`GlobalLocation`]
 #[derive(Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct RawGlobalLocation(Box<GlobalLocationS<RawGlobalLocation>>);
@@ -404,7 +404,7 @@ impl<'de> Deserialize<'de> for SerializableCallOnlyFlow {
 mod serde_map_via_vec {
     //! Serialize a [`HashMap`] by converting it to a [`Vec`], lifting
     //! restrictions on the types of permissible keys.
-    //! 
+    //!
     //! The JSON serializer for [`HashMap`] needs the keys to serialize to a
     //! JSON string object, but sometimes that is not the case. Since the
     //! [`HashMap`] struct only requires its keys be [`Eq`] and [`Hash`] other
@@ -412,21 +412,21 @@ mod serde_map_via_vec {
     //! [`Bodies`](super::Bodies)). Unfortunately you can still use the [`Serialize`] trait on
     //! [`HashMap`], even if the keys do not serialize to strings. Instead a
     //! runtime error will be thrown when a non-string key is encountered.
-    //! 
+    //!
     //! This module converts the [`HashMap`] into a [`Vec`] of tuples and
     //! (de)serializes that, which permits arbitrary types to be used for the
     //! keys.
-    //! 
+    //!
     //! You are meant to use both [`serialize`] and [`deserialize`], because the
     //! [`Serialize`] and [`Deserialize`] instances of [`HashMap`] do not work
     //! together with these functions.
-    
-    use serde::{Serialize, Deserialize, Serializer, Deserializer};
+
     use crate::HashMap;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     /// Serialize a [`HashMap`] by first converting to a [`Vec`] of tuples and
     /// then serializing the vector.
-    /// 
+    ///
     /// See module level documentation for usage information.
     pub fn serialize<S: Serializer, K: Serialize, V: Serialize>(
         map: &HashMap<K, V>,
@@ -437,7 +437,7 @@ mod serde_map_via_vec {
 
     /// Deserialize a [`HashMap`] by first deserializing a [`Vec`] of tuples and
     /// then converting.
-    /// 
+    ///
     /// See module level documentation for usage information.
     pub fn deserialize<
         'de,

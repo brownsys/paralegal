@@ -20,15 +20,15 @@ use crate::{
 pub trait MetaItemMatch {
     /// If the provided symbol path matches the path segments in the attribute
     /// *exactly* then this method applies the parse function and returns the
-    /// results of parsing. Otherwise returns `None`. 
-    /// 
+    /// results of parsing. Otherwise returns `None`.
+    ///
     /// In pseudo-rust terms this would mean
     /// ```plain
     /// (#[foo::bar(baz)]   ).match_extract(&sym_vec!["foo", "bar"], |a| a) == Some(baz)
     /// (#[foo(bar)]        ).match_extract(&sym_vec!["foo", "bar"], |a| a) == None
     /// (#[foo::bar::baz(x)]).match_extract(&sym_vec!["foo", "bar"], |a| a) == None
     /// ```
-    /// 
+    ///
     /// The [`crate::ann_parse`] module contains a parser combinator framework
     /// suitable for implementing `parse`. For examples on how to run the
     /// functions see the source for
@@ -234,7 +234,7 @@ pub fn read_places_with_provenance<'tcx>(
 
 /// Constructs a set of places that are ref/deref/field un-layerings of the
 /// input place.
-/// 
+///
 /// TODO: This needs more elaboration, but tbh this is lifted straight from
 /// Flowistry and I haven't yet bothered to figure out what exactly it does.
 pub fn provenance_of<'tcx>(tcx: TyCtxt<'tcx>, place: Place<'tcx>) -> Vec<Place<'tcx>> {
@@ -250,7 +250,7 @@ pub fn provenance_of<'tcx>(tcx: TyCtxt<'tcx>, place: Place<'tcx>) -> Vec<Place<'
 }
 
 /// Try and unwrap this `node` as some sort of function.
-/// 
+///
 /// [HIR](hir) has two different kinds of items that are types of function, one
 /// is top-level `fn`s the other is an `impl` item of function type. This
 /// function lets you extract common information from either. Returns [`None`]
@@ -314,10 +314,10 @@ pub fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
 }
 
 /// Give me this file as writable (possibly creating or overwriting it).
-/// 
+///
 /// This is just a common pattern of how we want to open files we're writing
 /// output to. Literally just implemented as
-/// 
+///
 /// ```
 /// std::fs::OpenOptions::new()
 ///     .create(true)
@@ -402,9 +402,9 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
 /// out of scope.
 ///
 /// You can construct a `Split` easily using `into()`.
-/// 
+///
 /// ## Usage
-/// 
+///
 /// Usually you would construct the `Split` using `into()`, then obtain the two
 /// contained parts with [`as_components`](#method.as_components). At the end of
 /// the scope the split-off component is merged back automatically into the main
@@ -414,7 +414,7 @@ pub struct Split<'a, T: Splittable> {
     inner: std::mem::MaybeUninit<T::Splitted>,
 }
 
-impl <'a, T:Splittable> Split<'a, T> {
+impl<'a, T: Splittable> Split<'a, T> {
     /// Obtain a mutable reference to both the main type and it's split-off part
     pub fn as_components(&mut self) -> (&mut T, &mut T::Splitted) {
         (self.main, unsafe { self.inner.assume_init_mut() })
@@ -444,7 +444,7 @@ impl<'a, T: Splittable> From<&'a mut T> for Split<'a, T> {
 
 impl<'a, T: Splittable> Drop for Split<'a, T> {
     //! Merges `self.inner` back onto `self.main`.
-    //! 
+    //!
     //! Essentially does `<T as Splittable>::merge(self.main, self.inner)`
     fn drop(&mut self) {
         let inner_moved = std::mem::replace(&mut self.inner, std::mem::MaybeUninit::uninit());
@@ -471,4 +471,3 @@ impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for ReP
         self.1(place)
     }
 }
-

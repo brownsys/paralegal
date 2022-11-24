@@ -1,9 +1,9 @@
 //! Type definitions and helper functions for a Forge-friendly representation of
 //! flow analysis results and annotations we discovered.
-//! 
+//!
 //! Analyses that create these types are in [`ana`](crate::ana) and serializers for
-//! emitting forge from them in [`crate::frg`]. 
-//! 
+//! emitting forge from them in [`crate::frg`].
+//!
 //! The top-level type is [`ProgramDescription`]
 
 use std::hash::Hash;
@@ -15,7 +15,7 @@ pub type TypeDescriptor = Identifier;
 pub type Function = Identifier;
 
 /// Types of annotations we support.
-/// 
+///
 /// Usually you'd expect one of those annotation types in any given situation.
 /// For convenience the match methods [`Self::as_label_ann`],
 /// [`Self::as_otype_ann`] and [`Self::as_exception_annotation`] are provided. These are particularly useful in conjunction with e.g. [`Iterator::filter_map`]
@@ -183,7 +183,7 @@ pub struct ProgramDescription {
 
 impl ProgramDescription {
     /// Gather all [`DataSource`]s that are mentioned in this program description.
-    /// 
+    ///
     /// Essentially just `self.controllers.flat_map(|c| c.keys())`
     pub fn all_sources(&self) -> HashSet<&DataSource> {
         self.controllers
@@ -192,7 +192,7 @@ impl ProgramDescription {
             .collect()
     }
     /// Gather all [`DataSink`]s mentioned in this program description
-    /// 
+    ///
     /// Essentially just `self.controllers.flat_map(|c| c.values())`
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
         self.controllers
@@ -201,8 +201,8 @@ impl ProgramDescription {
             .collect()
     }
 
-    /// Gather all [`CallSite`]s that are mentioned in this program description. 
-    /// 
+    /// Gather all [`CallSite`]s that are mentioned in this program description.
+    ///
     /// This function is a bit more subtle than [`Self::all_sinks`] and
     /// [`Self::all_sources`] (which are simple maps), because call sites occur
     /// in more places. So this extracts the call sites from sources as well as
@@ -221,7 +221,7 @@ impl ProgramDescription {
     }
 
     /// Gather all function identifiers that are mentioned in this program description.
-    /// 
+    ///
     /// Essentially just `self.all_call_sites().map(|cs| cs.function)`
     pub fn all_functions(&self) -> HashSet<&Identifier> {
         self.all_call_sites()
@@ -304,7 +304,7 @@ pub struct CallSite {
 }
 
 /// A representation of something that can emit data into the flow.
-/// 
+///
 /// Convenience match functions are provided (for use e.g. in
 /// [`Iterator::filter_map`]) with [`Self::as_function_call`] and [`Self::as_argument`].
 #[derive(
@@ -334,7 +334,7 @@ impl DataSource {
 }
 
 /// A representation of something that can receive data from the flow.
-/// 
+///
 /// [`Self::as_argument`] is provided for convenience of matching.
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DataSink {

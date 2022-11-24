@@ -1,9 +1,9 @@
 //! [`nom`]-based parser-combinators for parsing the token stream in Rust
 //! [`Attribute`](crate::rust::ast::Attribute)s.
-//! 
+//!
 //! Usually used in a closure handed to
 //! [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract).
-//! 
+//!
 //! The benefit of using a combinator library such as [`nom`] is not just that
 //! it gives us boundaries for parsers that lets us (re)combine them, but also
 //! that we get features that are annoying to implement (such as backtracking)
@@ -28,7 +28,7 @@ use nom::{
 
 /// Just a newtype-wrapper for `CursorRef` so we can implement traits on it
 /// (specifically [`nom::InputLength`]).
-/// 
+///
 /// Construct if from a [`TokenStream`] with [`Self::from_stream`].
 #[derive(Clone)]
 pub struct I<'a>(CursorRef<'a>);
@@ -73,8 +73,8 @@ impl<'a> nom::InputLength for I<'a> {
     }
 }
 
-/// Parse any one token, returning the token. 
-/// 
+/// Parse any one token, returning the token.
+///
 /// This is the basic primitive that all other parsers are built from.
 fn one(mut tree: I) -> R<&TokenTree> {
     match tree.next() {
@@ -87,7 +87,7 @@ fn one(mut tree: I) -> R<&TokenTree> {
 }
 
 /// Parse a single token that is not a subtree and return the token.
-/// 
+///
 /// The difference between this and [`one`] is that this function expects the
 /// token to be a [`TokenTree::Token`] and does not permit
 /// [`TokenTree::Delimited`] subtrees.
@@ -99,8 +99,8 @@ pub fn one_token(i: I) -> R<&Token> {
 }
 
 /// Parse a [`TokenKind::Literal`] if it has a specific [`LitKind`] and return
-/// the payload of the literal. 
-/// 
+/// the payload of the literal.
+///
 /// This can parse all types of literals since the literal payloads in these
 /// token treed are uniformly represented as strings and need to be parsed to
 /// extract the actual type of the literal. So you will likely want to call
@@ -175,7 +175,7 @@ pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
 }
 
 /// Parse something dictionnary-like.
-/// 
+///
 /// Expects the next token to be a braces delimited subtree containing pairs of
 /// `keys` and `values` that are comme separated and where each key and value is
 /// separated with an `=`. E.g. something of the form `{ k1 = v1, k2 = v2, ...}`
@@ -245,7 +245,7 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
 }
 
 /// A parser for annotation refinements.
-/// 
+///
 /// Is not guaranteed to consume the entire input if does not match. You may
 /// want to call [`nom::combinator::eof`] afterwards to guarantee all input has
 /// been consumed.
