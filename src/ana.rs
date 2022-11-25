@@ -708,10 +708,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             let (callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
                 .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
             let () = if self.should_inline(*callee_local_id) {
-                debug!("Selector succeeded for {}.", callee_id.name);
                 Ok(())
             } else {
-                debug!("Selector failed for {}", callee_id.name);
                 Err("Inline selector was false")
             }?;
             let inner_flow = self
@@ -719,7 +717,6 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 .ok_or("is recursive")?;
             let body =
                 &borrowck_facts::get_body_with_borrowck_facts(self.tcx, *callee_local_id).body;
-            debug!("Inner flow for {} computed", callee_id.name);
             Ok((inner_flow, *callee_body_id, body, args, dest))
         })
     }
@@ -908,11 +905,15 @@ fn deep_dependencies_of<'tcx, 'g>(
             .flat_map(|(p, s)| s.iter().map(move |l| (p, *l)))
             .collect::<Vec<(mir::Place<'tcx>, GlobalLocation<'g>)>>()
     };
-    let reachable_places = aliases
-        .reachable_values(p, ast::Mutability::Not)
-        .into_iter()
-        .cloned()
-        .collect::<Vec<_>>();
+    // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
+    //
+    // let reachable_places = aliases
+    //     .reachable_values(p, ast::Mutability::Not)
+    //     .into_iter()
+    //     .cloned()
+    //     .collect::<Vec<_>>();
+    let reachable_places = vec![p];
+    debug!("Determined the reachable places for {p:?} @ {loc} are {reachable_places:?}");
     let mut queue = deps_for_places(loc, &reachable_places);
     let mut seen = HashSet::new();
     let mut deps = HashSet::new();
@@ -921,6 +922,7 @@ fn deep_dependencies_of<'tcx, 'g>(
     while let Some((place, location)) = queue.pop() {
         match Keep::from_global_location(tcx, location) {
             Keep::Keep(..) | Keep::Argument(_) => {
+                debug!("Found dependency from {p:?} on {location} via the last place {place:?}");
                 deps.insert(location);
             }
             Keep::Reject(stmt_at_loc) if !seen.contains(&location) => {
@@ -1072,7 +1074,6 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     .into_iter()
                     .flat_map(|p| alias_info.aliases(p).iter())
                     .collect::<Vec<_>>();
-                debug!("  {p:?} -> {aliases:?}");
                 aliases.into_iter().map(|&parent| {
                     (
                         parent,
@@ -1106,7 +1107,6 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     .and_then(|t| Some((t, self.flow_constructor.inner_flow_for_terminator(t).ok()?)))
             }
         {
-            debug!("Inspecting inner flow for {:?}", t.kind);
             let mut translated_return_states_borrow =
                 self.translated_return_states.borrow_mut();
             // This is ugly but `translate_child_to_parent` only
@@ -1119,12 +1119,6 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             let translated_return_state = translated_return_states_borrow
                 .entry(l)
                 .or_insert_with(|| {
-                    debug!(
-                        "Translating return state at location {l:?} in {} with dependency set of size {}, dest is {}",
-                        body_name_pls(self.tcx(), body_id).name,
-                        inner_flow.flow.return_state.len(),
-                        if dest.is_none() { "not " } else { "" }
-                    );
                     let return_state = self.create_return_state(l,args.as_slice(), dest, inner_body, inner_flow.borrow());
                     debug!(
                         "  Final state\n{}",
@@ -1547,7 +1541,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             .unwrap()
         }
 
-        debug!("{}", id.name);
+        debug!("Handling target {}", id.name);
         let flow = Flow::compute(
             &self.opts.anactrl,
             &self.opts.dbg,
@@ -1593,11 +1587,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
             // use `location()` and `function()` on a global location instead
             // but that is the outermost call site, not the location for the actual call.
             let (inner_location, inner_body_id) = loc.innermost_location_and_body();
-            debug!(
-                "Adding dependencies for {:?} in {}",
-                inner_location,
-                body_name_pls(tcx, inner_body_id).name
-            );
             // We need to make sure to fetch the body again here, because we
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.

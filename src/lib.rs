@@ -117,8 +117,7 @@ struct DbgArgs {
     /// Dumps a table representing retrieved Flowistry matrices to stdout.
     #[clap(long, env)]
     dump_flowistry_matrix: bool,
-    /// Dumps a dot graph representation of the finely granular, inlined flow of
-    /// each controller.
+    /// Dumps a dot graph representation of the finely granular, inlined flow of each controller.
     #[clap(long, env)]
     dump_inlined_function_flow: bool,
     /// Dumps a dot graph representation of the dataflow calculated for each
