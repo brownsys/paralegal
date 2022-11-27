@@ -1,7 +1,7 @@
 //! Helpers for debugging
-//! 
-//! Defines pretty printers and dot graph output. 
-//! 
+//!
+//! Defines pretty printers and dot graph output.
+//!
 //! Often times the pretty printers wrappers around references to graph structs,
 //! like [PrintableMatrix]. These wrappers have
 //! `Debug` and/or `Display` implementations so that you can flexibly print them
@@ -68,18 +68,19 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 
 pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
-    use std::collections::HashSet;
+    use std::{collections::HashSet, hash::Hash};
 
     use crate::{
-        ana::{CallOnlyFlow, GlobalLocation, IsGlobalLocation},
+        ana::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
+        rust::mir::{Statement, StatementKind, TerminatorKind},
         rust::ty::TyCtxt,
-        utils::AsFnAndArgs,
+        utils::{places_read, read_places_with_provenance, AsFnAndArgs, TyCtxtExt},
         Either,
     };
 
-    type N<'g> = GlobalLocation<'g>;
+    pub type N<'g> = GlobalLocation<'g>;
     #[derive(Clone)]
-    struct E<'g> {
+    pub struct E<'g> {
         from: N<'g>,
         to: N<'g>,
         into: To,
@@ -88,14 +89,62 @@ pub mod call_only_flow_dot {
     enum To {
         Ctrl,
         Arg(usize),
+        None,
     }
-    struct G<'tcx, 'g> {
-        graph: &'g CallOnlyFlow<'g>,
+    pub struct G<'tcx, 'g, Flow> {
+        graph: &'g Flow,
         tcx: TyCtxt<'tcx>,
         detailed: bool,
     }
 
-    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>> for G<'tcx, 'g> {
+    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>> for G<'tcx, 'g, GlobalFlowGraph<'tcx, 'g>> {
+        fn nodes(&'a self) -> dot::Nodes<'a, N<'g>> {
+            self.graph
+                .location_states
+                .keys()
+                .chain(
+                    self.graph
+                        .location_states
+                        .values()
+                        .flat_map(|s| s.values().flat_map(|s| s.iter())),
+                )
+                .cloned()
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .into()
+        }
+
+        fn edges(&'a self) -> dot::Edges<'a, E<'g>> {
+            self.graph
+                .location_states
+                .iter()
+                .flat_map(|(&to, deps)| {
+                    let (loc, body) = to.innermost_location_and_body();
+                    read_places_with_provenance(
+                        loc,
+                        &self.tcx.body_for_body_id(body).body.stmt_at(loc),
+                        self.tcx,
+                    )
+                    .flat_map(|p| deps.get(&p).into_iter().flat_map(|s| s.iter().cloned()))
+                    .map(move |from| E {
+                        from,
+                        to,
+                        into: To::None,
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into()
+        }
+        fn source(&'a self, edge: &E<'g>) -> N<'g> {
+            edge.from
+        }
+        fn target(&'a self, edge: &E<'g>) -> N<'g> {
+            edge.to
+        }
+    }
+
+    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>> for G<'tcx, 'g, CallOnlyFlow<'g>> {
         fn nodes(&'a self) -> dot::Nodes<'a, N<'g>> {
             self.graph
                 .iter()
@@ -139,7 +188,7 @@ pub mod call_only_flow_dot {
         }
     }
 
-    impl<'a, 'g, 'tcx> dot::Labeller<'a, N<'g>, E<'g>> for G<'tcx, 'g> {
+    impl<'a, 'g, 'tcx, Flow> dot::Labeller<'a, N<'g>, E<'g>> for G<'tcx, 'g, Flow> {
         fn graph_id(&'a self) -> dot::Id<'a> {
             dot::Id::new("g").unwrap()
         }
@@ -162,13 +211,11 @@ pub mod call_only_flow_dot {
             e: &E<'g>,
         ) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
             (
-                Some(
-                    match e.into {
-                        To::Ctrl => dot::Id::new("ctrl"),
-                        To::Arg(i) => dot::Id::new(format!("a{}", i)),
-                    }
-                    .unwrap(),
-                ),
+                match e.into {
+                    To::Ctrl => Some(dot::Id::new("ctrl").unwrap()),
+                    To::Arg(i) => Some(dot::Id::new(format!("a{}", i)).unwrap()),
+                    To::None => None,
+                },
                 None,
             )
         }
@@ -213,22 +260,39 @@ pub mod call_only_flow_dot {
                 write!(s, "|{typ}}}|")?;
                 if let Some(stmt) = stmt {
                     match stmt {
-                        Either::Left(_stmt) => {
-                            unimplemented!()
-                        }
                         Either::Right(term) => {
-                            let (fun, args, _) = term.as_fn_and_args().unwrap();
-                            let fun_name = self.tcx.item_name(fun);
-                            write!(s, "{{{{")?;
-                            for (i, arg) in args.iter().enumerate() {
-                                write!(s, "<a{}>", i)?;
-                                match arg {
-                                    Some(a) if self.detailed => write!(s, "{:?}", a),
-                                    _ => write!(s, "{}", i),
-                                }?;
-                                write!(s, "|")?;
+                            if let Ok((fun, args, _)) = term.as_fn_and_args() {
+                                let fun_name = self.tcx.item_name(fun);
+                                write!(s, "{{{{")?;
+                                for (i, arg) in args.iter().enumerate() {
+                                    write!(s, "<a{}>", i)?;
+                                    match arg {
+                                        Some(a) if self.detailed => write!(s, "{:?}", a),
+                                        _ => write!(s, "{}", i),
+                                    }?;
+                                    write!(s, "|")?;
+                                }
+                                write!(s, "C}}|<ret>{fun_name}}}")?;
+                            } else {
+                                write!(s, "<ret>")?;
+                                term.kind.fmt_head(s)?;
                             }
-                            write!(s, "C}}|<ret>{fun_name}}}")?;
+                        }
+                        Either::Left(Statement {
+                            kind: StatementKind::Assign(assign),
+                            ..
+                        }) => {
+                            let mut to = String::new();
+                            write!(to, "{:?}", assign.1)?;
+                            // Chop off the type information (if it exists),
+                            // because it makes the dot label invalid
+                            if let Some(idx) = to.find(':') {
+                                to.truncate(idx);
+                            }
+                            write!(s, "<ret>{:?} = {:?}", assign.0, to)?;
+                        }
+                        Either::Left(_stmt) => {
+                            write!(s, "<ret>?")?;
                         }
                     }
                 } else {
@@ -247,11 +311,14 @@ pub mod call_only_flow_dot {
     }
 
     /// Write a dot representation for this `graph` to `out`.
-    pub fn dump<W: std::io::Write>(
-        tcx: TyCtxt,
-        graph: &CallOnlyFlow,
+    pub fn dump<'tcx, 'g, W: std::io::Write, Flow, N: Clone, E: Clone>(
+        tcx: TyCtxt<'tcx>,
+        graph: &'g Flow,
         mut out: W,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<()>
+    where
+        for<'a> G<'tcx, 'g, Flow>: dot::GraphWalk<'a, N, E> + dot::Labeller<'a, N, E>,
+    {
         dot::render(
             &G {
                 graph,
@@ -281,6 +348,7 @@ fn format_global_location<T: IsGlobalLocation>(
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result {
     let mut v = std::iter::successors(Some(t), |l| l.next()).collect::<Vec<_>>();
+    v.reverse();
     let mut is_first = true;
     while let Some(next) = v.pop() {
         if is_first {
@@ -453,7 +521,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
 
 /// Read a flow and a set of mentioned `mir::Body`s from the file. Is expected
 /// to use JSON serialization.
-/// 
+///
 /// The companion function [write_non_transitive_graph_and_body] can be used to
 /// create such a file.
 pub fn read_non_transitive_graph_and_body<R: std::io::Read>(

@@ -1,6 +1,6 @@
 //! Forge serializers for data structures from [`desc`](crate::desc) based on
 //! the [`pretty`] crate.
-//! 
+//!
 //! A description of the Forge entities we emit and what they mean can be found
 //! [here](https://www.notion.so/justus-adam/Using-Dataflow-0fb0b2bef50c40b1ba888d623c447e80#2a405f54559741ae9d17ec746a3c14f1)
 
@@ -37,12 +37,12 @@ where
 {
 }
 
-/// Extension trait to lay out an iterator as a Forge relation. 
-/// 
+/// Extension trait to lay out an iterator as a Forge relation.
+///
 /// Each element of the iterator a tuple of iterators `(left, right)` which are
 /// then laid out like `(left.next() + left.next() + ...)->(right.next() +
 /// right.next() + ...)`. And then the rows are laid out with `+` in between.
-/// 
+///
 /// Importantly this tries to handle cases correctly where the iterators are
 /// empty, in which case it emits `none` and not just empty parentheses (which
 /// would be an error in Forge).
@@ -221,7 +221,6 @@ mod name {
     //! Constants for the names of the Forge entities (`sig`s and relations) we
     //! emit.
 
-
     pub const SRC: &'static str = "Src";
     /// Previously "Arg"
     pub const INPUT_ARGUMENT: &'static str = "InputArgument";
@@ -249,7 +248,7 @@ mod name {
 
     lazy_static! {
         /// A description of the preamble of Forge `sig`s we always emit.
-        /// 
+        ///
         /// These are in topological order, because the code generation just
         /// iterates over this vector and emits them in the same order as in
         /// this vector and Forge requires everything (e.g. an inherited `sig`)
