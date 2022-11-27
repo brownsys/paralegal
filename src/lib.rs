@@ -108,6 +108,8 @@ struct AnalysisCtrl {
     /// Flowistry's recursive analysis)
     #[clap(long, env)]
     no_recursive_analysis: bool,
+    #[clap(long, env)]
+    no_recursive_flowistry: bool,
 }
 
 /// Arguments that control the output of debug information or output to be

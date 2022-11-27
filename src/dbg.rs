@@ -74,7 +74,9 @@ pub mod call_only_flow_dot {
         ana::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
         rust::mir::{Statement, StatementKind, TerminatorKind},
         rust::ty::TyCtxt,
-        utils::{places_read, read_places_with_provenance, AsFnAndArgs, TyCtxtExt},
+        utils::{
+            is_real_location, places_read, read_places_with_provenance, AsFnAndArgs, TyCtxtExt,
+        },
         Either,
     };
 
@@ -121,12 +123,19 @@ pub mod call_only_flow_dot {
                 .iter()
                 .flat_map(|(&to, deps)| {
                     let (loc, body) = to.innermost_location_and_body();
-                    read_places_with_provenance(
-                        loc,
-                        &self.tcx.body_for_body_id(body).body.stmt_at(loc),
-                        self.tcx,
-                    )
-                    .flat_map(|p| deps.get(&p).into_iter().flat_map(|s| s.iter().cloned()))
+                    let body_with_facts = self.tcx.body_for_body_id(body);
+                    if is_real_location(&body_with_facts.body, loc) {
+                        Some(read_places_with_provenance(
+                            loc,
+                            &body_with_facts.body.stmt_at(loc),
+                            self.tcx,
+                        ))
+                    } else {
+                        None
+                    }
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|p| deps.resolve(p).1)
                     .map(move |from| E {
                         from,
                         to,
@@ -286,7 +295,7 @@ pub mod call_only_flow_dot {
                             write!(to, "{:?}", assign.1)?;
                             // Chop off the type information (if it exists),
                             // because it makes the dot label invalid
-                            if let Some(idx) = to.find(':') {
+                            if let Some(idx) = to.find([':', '{']) {
                                 to.truncate(idx);
                             }
                             write!(s, "<ret>{:?} = {:?}", assign.0, to)?;
@@ -447,9 +456,10 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                 places_read
                     .iter()
                     .cloned()
-                    .map(|p| (p, true, deps.get(&p).unwrap_or(&empty_set)))
+                    .map(|p| (p, true, deps.resolve_set(p).unwrap_or(&empty_set)))
                     .chain(
-                        deps.iter()
+                        deps.matrix_raw()
+                            .iter()
                             .filter(|k| !places_read.contains(k.0))
                             .map(|(p, deps)| (*p, false, deps)),
                     ),

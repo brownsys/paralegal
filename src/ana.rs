@@ -408,6 +408,87 @@ impl<'g> GLI<'g> {
 /// callee) that influenced the values at this place.
 pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
 
+#[derive(Clone)]
+pub struct TranslatedDepMatrix<'tcx, 'g> {
+    matrix: GlobalDepMatrix<'tcx, 'g>,
+    translator: Option<HashMap<Place<'tcx>, Place<'tcx>>>,
+}
+
+impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
+    fn resolve_place(&self, place: Place<'tcx>) -> Option<Place<'tcx>> {
+        self.translator
+            .as_ref()
+            .and_then(|t| t.get(&place))
+            .cloned()
+    }
+
+    // Document why option<place>
+    pub fn resolve(
+        &self,
+        place: Place<'tcx>,
+    ) -> (
+        Option<Place<'tcx>>,
+        impl Iterator<Item = GlobalLocation<'g>> + '_,
+    ) {
+        let resolved = self.resolve_place(place);
+        (
+            resolved,
+            self.matrix
+                .get(&resolved.unwrap_or(place))
+                .into_iter()
+                .flat_map(|s| s.iter())
+                .cloned(),
+        )
+    }
+
+    pub fn resolve_set(&self, place: Place<'tcx>) -> Option<&HashSet<GlobalLocation<'g>>> {
+        self.matrix.get(&self.resolve_place(place).unwrap_or(place))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = Place<'tcx>> + '_ {
+        self.matrix.keys().cloned()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &HashSet<GlobalLocation<'g>>> {
+        self.matrix.values()
+    }
+
+    pub fn untranslated(matrix: GlobalDepMatrix<'tcx, 'g>) -> Self {
+        Self {
+            matrix,
+            translator: None,
+        }
+    }
+
+    pub fn translated(
+        matrix: GlobalDepMatrix<'tcx, 'g>,
+        translator: HashMap<Place<'tcx>, Place<'tcx>>,
+    ) -> Self {
+        Self {
+            matrix,
+            translator: Some(translator),
+        }
+    }
+
+    pub fn relativize<F: Fn(GlobalLocation<'g>) -> GlobalLocation<'g>>(
+        &self,
+        location_relativizer: F,
+    ) -> Self {
+        Self {
+            translator: self.translator.clone(),
+            matrix: self
+                .matrix
+                .iter()
+                .map(|(&k, set)| (k, set.iter().cloned().map(&location_relativizer).collect()))
+                .collect(),
+        }
+    }
+
+    pub fn matrix_raw(&self) -> &GlobalDepMatrix<'tcx, 'g> {
+        &self.matrix
+    }
+}
+
 /// A flowistry-like 3-dimensional tensor describing the [`Place`] dependencies of
 /// all locations (including of inlined callees).
 ///
@@ -426,7 +507,7 @@ pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation
 /// The special matrix `return_state` is the union of all dependency matrices at
 /// each call to `return`.
 pub struct GlobalFlowGraph<'tcx, 'g> {
-    pub location_states: HashMap<GlobalLocation<'g>, GlobalDepMatrix<'tcx, 'g>>,
+    pub location_states: HashMap<GlobalLocation<'g>, TranslatedDepMatrix<'tcx, 'g>>,
     return_state: GlobalDepMatrix<'tcx, 'g>,
 }
 
@@ -764,7 +845,9 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 fluid_set, ContextMode, EvalMode, EVAL_MODE, RECURSE_SELECTOR,
             };
             let mut eval_mode = EvalMode::default();
-            if !self.analysis_opts.no_recursive_analysis {
+            if !(self.analysis_opts.no_recursive_analysis
+                || self.analysis_opts.no_recursive_flowistry)
+            {
                 eval_mode.context_mode = ContextMode::Recurse;
             }
             fluid_set!(EVAL_MODE, eval_mode);
@@ -789,7 +872,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             body,
             local_def_id,
             root_function,
-            translated_return_states: RefCell::new(HashMap::new()),
+            translation_matrixes: RefCell::new(HashMap::new()),
             flow_constructor: self,
             //under_construction: RefCell::new(GlobalFlowGraph::new()),
             under_construction: GlobalFlowGraph::new(),
@@ -901,9 +984,9 @@ fn deep_dependencies_of<'tcx, 'g>(
         places
             .iter()
             .flat_map(|place| provenance_of(tcx, *place).into_iter())
-            .filter_map(|place| Some((place, g.location_states.get(&loc)?.get(&place)?)))
-            .flat_map(|(p, s)| s.iter().map(move |l| (p, *l)))
-            .collect::<Vec<(mir::Place<'tcx>, GlobalLocation<'g>)>>()
+            .filter_map(|place| Some(g.location_states.get(&loc)?.resolve(place)))
+            .flat_map(|(p, s)| s.map(move |l| (p, l)))
+            .collect::<Vec<(Option<mir::Place<'tcx>>, GlobalLocation<'g>)>>()
     };
     // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
     //
@@ -920,24 +1003,34 @@ fn deep_dependencies_of<'tcx, 'g>(
 
     // A reverse dfs traversing the flowistry tensor which terminates every time we find a function call.
     while let Some((place, location)) = queue.pop() {
-        match Keep::from_global_location(tcx, location) {
-            Keep::Keep(..) | Keep::Argument(_) => {
-                debug!("Found dependency from {p:?} on {location} via the last place {place:?}");
-                deps.insert(location);
-            }
-            Keep::Reject(stmt_at_loc) if !seen.contains(&location) => {
-                seen.insert(location);
-                queue.extend(deps_for_places(
-                    location,
-                    &if let Some(stmt) = stmt_at_loc {
-                        places_read(location.innermost_location_and_body().0, &stmt)
-                            .collect::<Vec<_>>()
+        // A special situation has ocurred. We've hit a translation boundary
+        // (either an argument or a call site of an inlined function). This
+        // causes a translation of the place, but otherwise this location must
+        // be rejected so we translate, resolve and move on.
+        if let Some(translated) = place {
+            seen.insert(location);
+            queue.extend(deps_for_places(location, &[translated]));
+        } else {
+            match Keep::from_global_location(tcx, location) {
+                Keep::Keep(..) | Keep::Argument(_) => {
+                    debug!(
+                        "Found dependency from {p:?} on {location} via the last place {place:?}"
+                    );
+                    deps.insert(location);
+                }
+                Keep::Reject(stmt_at_loc) if !seen.contains(&location) => {
+                    seen.insert(location);
+                    if let Some(stmt) = stmt_at_loc {
+                        queue.extend(deps_for_places(
+                        location,
+                            &places_read(location.innermost_location_and_body().0, &stmt)
+                                .collect::<Vec<_>>()));
                     } else {
-                        vec![place]
-                    },
-                ))
+                        error!("Rejection without statement should not happen anymore. Rejected {location} without statement");
+                    }
+                }
+                _ => (),
             }
-            _ => (),
         }
     }
     deps
@@ -983,7 +1076,7 @@ struct FunctionInliner<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> {
     /// The return of an inlined function call can be used by several locations.
     /// This map stores the results of translating the callees `Place`s to our
     /// `Place`s for each call site so that we only do that translation once.
-    translated_return_states: RefCell<HashMap<mir::Location, GlobalDepMatrix<'tcx, 'g>>>,
+    translation_matrixes: RefCell<HashMap<mir::Location, HashMap<Place<'tcx>, Place<'tcx>>>>,
 
     /// The graph we are currently constructing.
     under_construction: GlobalFlowGraph<'tcx, 'g>,
@@ -1041,30 +1134,25 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         move |call_site, callee| gli.global_location_from_relative(callee, call_site, root_function)
     }
 
-    /// Create the state after a callee returns. The main job of this function
-    /// is to call `translate_child_to_parent` appropriately on the places
-    /// mentioned in the callees dependency matrix at the point of function exit
-    /// so that we can query the matrix with the places defined in our function
-    /// (i.e. `self.body`)
-    fn create_return_state(
+    fn create_translation_matrix(
         &self,
-        l: Location,
+        _l: Location,
         args: &[Option<mir::Place<'tcx>>],
         destination: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         inner_body: &mir::Body<'tcx>,
         inner_flow: &FunctionFlow<'tcx, 'g>,
-    ) -> GlobalDepMatrix<'tcx, 'g> {
+    ) -> HashMap<Place<'tcx>, Place<'tcx>> {
         inner_flow
             .flow
             .return_state
-            .iter()
-            .flat_map(|(&p, deps)| {
+            .keys()
+            .flat_map(|&child| {
                 let parent = translate_child_to_parent(
                     self.tcx(),
                     self.local_def_id,
                     &args,
                     destination,
-                    p,
+                    child,
                     true,
                     inner_body,
                     self.body,
@@ -1074,19 +1162,9 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     .into_iter()
                     .flat_map(|p| alias_info.aliases(p).iter())
                     .collect::<Vec<_>>();
-                aliases.into_iter().map(|&parent| {
-                    (
-                        parent,
-                        deps.iter()
-                            .map(|d| {
-                                self.gli()
-                                    .global_location_from_relative(*d, l, self.root_function)
-                            })
-                            .collect(),
-                    )
-                })
+                aliases.into_iter().map(move |&parent| (parent, child))
             })
-            .collect()
+            .collect::<HashMap<_, _>>()
     }
 
     /// Either transforms the location into a global one or, if it names the
@@ -1107,31 +1185,13 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     .and_then(|t| Some((t, self.flow_constructor.inner_flow_for_terminator(t).ok()?)))
             }
         {
-            let mut translated_return_states_borrow =
-                self.translated_return_states.borrow_mut();
-            // This is ugly but `translate_child_to_parent` only
-            // works from the callee to the caller (and I don't want
-            // to reimplement/change it right now) so instead I try
-            // to translate every possible place in the callee and
-            // materialize the result of that in this map, which I
-            // memoize in `translated_return_states` so that I only
-            // do it once.
-            let translated_return_state = translated_return_states_borrow
-                .entry(l)
-                .or_insert_with(|| {
-                    let return_state = self.create_return_state(l,args.as_slice(), dest, inner_body, inner_flow.borrow());
-                    debug!(
-                        "  Final state\n{}",
-                        PrintableDependencyMatrix::new(&return_state, 4)
-                    );
-                    return_state
-                });
+            let translation_matrix = self.create_translation_matrix(l,args.as_slice(), dest, inner_body, inner_flow.borrow());
                 //let aliases = from_flowistry.analysis.aliases.aliases(place);
-            if let Some(deps) = translated_return_state.get(&place) {
+            if let Some(deps) = translation_matrix.get(&place).and_then(|o| inner_flow.flow.return_state.get(o)) {
                 deps.iter().cloned().collect::<Vec<_>>()
             } else {
                 warn!(
-                    "Dependent place {place:?} not found in translated return states {translated_return_state:?}",
+                    "Dependent place {place:?} not found in translation matrix {translation_matrix:?}",
                 );
                 vec![]
             }
@@ -1155,7 +1215,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     ) -> HashSet<GlobalLocation<'g>> {
         dep_set
             .iter()
-            .flat_map(|l| self.globalize_or_inline_call(place, *l))
+            .map(|l| self.gli().globalize_location(*l, self.root_function))
             .collect()
     }
 }
@@ -1171,11 +1231,16 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
         self.under_construction
             //.borrow_mut()
             .location_states
-            .insert(global_loc, regular_result);
+            .insert(
+                global_loc,
+                TranslatedDepMatrix::untranslated(regular_result),
+            );
     }
 
     fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: Location) {
-        //let mut under_construction = self.under_construction; //.borrow_mut();
+        // First we handle this as the default case. This
+        // also recurses as necessary
+        let state_at_term = self.handle_regular_location(location);
         if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
             self.flow_constructor.inner_flow_for_terminator(terminator)
         {
@@ -1186,37 +1251,39 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             // place does not immediately cross into a parent,
             // but first into such an argument location where it
             // can get translated.
-            let as_parent_dep_matrix: GlobalDepMatrix<'tcx, 'g> = inner_flow
+            let parent_translation_matrix = inner_flow
                 .flow
                 .location_states
                 .values()
                 .flat_map(|s| s.keys())
                 .collect::<HashSet<_>>()
                 .into_iter()
-                .filter_map(|&p| {
+                .filter_map(|child| {
                     Some((
-                        p,
+                        child,
                         translate_child_to_parent(
                             self.tcx(),
                             self.local_def_id,
                             &args,
                             dest,
-                            p,
+                            child,
                             false,
                             inner_body,
                             self.body,
                         )?,
                     ))
                 })
-                .map(|(child, parent)| {
-                    (
-                        child,
-                        self.make_row_global(parent, caller_state.row_set(parent)),
-                    )
-                })
-                .collect();
+                .collect::<HashMap<_, _>>();
+            let parent_dep_matrix =
+                TranslatedDepMatrix::translated(state_at_term, parent_translation_matrix);
+            debug!(
+                "Calculated parent dependency matrix at terminator {:?}\n{}",
+                terminator.kind,
+                dbg::PrintableDependencyMatrix::new(&parent_dep_matrix.matrix, 2)
+            );
 
             let gli = self.gli();
+            let root_function = self.root_function;
             let make_relative_location = self.relative_global_location_maker();
 
             let locs_to_add = inner_flow
@@ -1226,16 +1293,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                 .map(|(inner_loc, map)| {
                     (
                         make_relative_location(location, *inner_loc),
-                        map.iter()
-                            .map(|(&place, deps)| {
-                                (
-                                    place,
-                                    deps.iter()
-                                        .map(|dep| make_relative_location(location, *dep))
-                                        .collect::<HashSet<_>>(),
-                                )
-                            })
-                            .collect::<HashMap<_, _>>(),
+                        map.relativize(|dep| make_relative_location(location, dep)),
                     )
                 })
                 .chain((1..=args.len()).into_iter().map(|a| {
@@ -1247,13 +1305,23 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                         inner_body_id,
                     );
                     let global_arg_loc = make_relative_location(location, global_call_site);
-                    (global_arg_loc, as_parent_dep_matrix.clone())
-                }));
+                    (global_arg_loc, parent_dep_matrix.clone())
+                }))
+                .chain(std::iter::once((
+                    gli.globalize_location(location, root_function),
+                    TranslatedDepMatrix::translated(
+                        inner_flow.flow.return_state.clone(),
+                        self.create_translation_matrix(
+                            location,
+                            args.as_slice(),
+                            dest,
+                            inner_body,
+                            inner_flow.borrow(),
+                        ),
+                    ),
+                )));
             self.under_construction.location_states.extend(locs_to_add);
         } else {
-            // First we handle this as the default case. This
-            // also recurses as necessary
-            let state_at_term = self.handle_regular_location(location);
             // In the special case of a `return` terminator we
             // merge its state onto any prior state for the
             // return
@@ -1268,7 +1336,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             };
             self.under_construction.location_states.insert(
                 self.gli().globalize_location(location, self.root_function),
-                state_at_term,
+                TranslatedDepMatrix::untranslated(state_at_term),
             );
         }
     }
