@@ -49,6 +49,7 @@ fn check_user_data(user_data: &UserData) -> bool {
 fn send_user_data(_user_data: &UserData) {
 }
 
+#[dfpp::label{ modifies, arguments = [0] }] // TODO: why is this label necessary?
 fn modify(_user_data: &mut UserData) {
 }
 

@@ -40,7 +40,7 @@ fn process_basic() {
 #[test]
 fn process_if() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("process_basic"))).unwrap();
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("process_if"))).unwrap();
 
     let get = graph.function_call("get_user_data");
     let check = graph.function_call("check_user_data");
@@ -56,7 +56,7 @@ fn process_if() {
 #[test]
 fn process_if_after() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("process_basic"))).unwrap();
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("process_if_after"))).unwrap();
 
     let get = graph.function_call("get_user_data");
     let check = graph.function_call("check_user_data");
