@@ -110,6 +110,8 @@ struct AnalysisCtrl {
     no_recursive_analysis: bool,
     #[clap(long, env)]
     no_recursive_flowistry: bool,
+    #[clap(long, env)]
+    use_reachable_values_in_dfs: bool,
 }
 
 /// Arguments that control the output of debug information or output to be

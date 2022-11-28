@@ -125,11 +125,14 @@ pub mod call_only_flow_dot {
                     let (loc, body) = to.innermost_location_and_body();
                     let body_with_facts = self.tcx.body_for_body_id(body);
                     if is_real_location(&body_with_facts.body, loc) {
-                        Some(read_places_with_provenance(
-                            loc,
-                            &body_with_facts.body.stmt_at(loc),
-                            self.tcx,
-                        ).flat_map(|p| deps.resolve(p).1))
+                        Some(
+                            read_places_with_provenance(
+                                loc,
+                                &body_with_facts.body.stmt_at(loc),
+                                self.tcx,
+                            )
+                            .flat_map(|p| deps.resolve(p).1),
+                        )
                     } else {
                         None
                     }
@@ -447,6 +450,8 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
             let places_read = if !is_real_location(&body.body, inner_location) {
                 write!(f, " is argument {}", inner_location.statement_index - 1)?;
                 HashSet::new()
+            } else if deps.is_translated() {
+                HashSet::new()
             } else {
                 utils::places_read(inner_location, &body.body.stmt_at(inner_location)).collect()
             };
@@ -459,17 +464,26 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                     .cloned()
                     .map(|p| (p, true, deps.resolve_set(p).unwrap_or(&empty_set)))
                     .chain({
-                        let mut keys = deps.matrix_raw().keys().cloned().filter(|k| !places_read.contains(k)).collect::<Vec<_>>();
+                        let mut keys = deps
+                            .matrix_raw()
+                            .keys()
+                            .cloned()
+                            .filter(|k| !places_read.contains(k))
+                            .collect::<Vec<_>>();
                         keys.sort_by_key(|p| p.local);
                         keys.into_iter().map(|k| (k, false, &deps.matrix_raw()[&k]))
-                    }
-                    ),
+                    }),
                 6,
             )?;
             if let Some(m) = deps.translator() {
-                writeln!(f, "  Also translates places as")?;
+                writeln!(f, "    Also translates places as")?;
                 for (k, v) in m.iter() {
-                    writeln!(f, "      {:15} -> {:15}", format!("{k:?}"), format!("{v:?}"))?;
+                    writeln!(
+                        f,
+                        "      {:15} -> {:15}",
+                        format!("{k:?}"),
+                        format!("{v:?}")
+                    )?;
                 }
             }
         }

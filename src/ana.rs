@@ -101,9 +101,9 @@ pub struct Flow<'tcx, 'g> {
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>);
 
-impl <'tcx> std::cmp::PartialOrd for GlobalLocation<'tcx> {
+impl<'tcx> std::cmp::PartialOrd for GlobalLocation<'tcx> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        use std::cmp::{Ordering};
+        use std::cmp::Ordering;
         if self.function() != other.function() {
             return self.function().hir_id.partial_cmp(&other.function().hir_id);
         }
@@ -121,7 +121,7 @@ impl <'tcx> std::cmp::PartialOrd for GlobalLocation<'tcx> {
     }
 }
 
-impl <'tcx> std::cmp::Ord for GlobalLocation<'tcx> {
+impl<'tcx> std::cmp::Ord for GlobalLocation<'tcx> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.partial_cmp(other).unwrap()
     }
@@ -502,11 +502,7 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
     ) -> Self {
         Self {
             translator: self.translator.clone(),
-            matrix: self
-                .matrix
-                .iter()
-                .map(|(&k, set)| (k, set.iter().cloned().map(&location_relativizer).collect()))
-                .collect(),
+            matrix: relativize_global_dep_matrix(&self.matrix, location_relativizer),
         }
     }
 
@@ -521,6 +517,16 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
     pub fn translator(&self) -> Option<&HashMap<Place<'tcx>, Place<'tcx>>> {
         self.translator.as_ref()
     }
+}
+
+fn relativize_global_dep_matrix<'g, 'tcx, F: Fn(GlobalLocation<'g>) -> GlobalLocation<'g>>(
+    matrix: &GlobalDepMatrix<'tcx, 'g>,
+    location_relativizer: F,
+) -> GlobalDepMatrix<'tcx, 'g> {
+    matrix
+        .iter()
+        .map(|(&k, set)| (k, set.iter().cloned().map(&location_relativizer).collect()))
+        .collect()
 }
 
 /// A flowistry-like 3-dimensional tensor describing the [`Place`] dependencies of
@@ -947,7 +953,12 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
         g.location_states
             .iter()
-            .filter_map(|(loc, _)| {
+            .filter_map(|(loc, deps)| {
+                if deps.is_translated() {
+                    // Skip locations that are only there to translate places
+                    // on function boundaries.
+                    return None;
+                }
                 let (inner_location, inner_body) = loc.innermost_location_and_body();
                 let (args, _) =
                     Keep::from_location(tcx, inner_body, inner_location, loc.is_at_root())
@@ -962,8 +973,16 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                     .analysis
                     .analysis
                     .aliases;
-                let deep_deps_for =
-                    |p: mir::Place<'tcx>| deep_dependencies_of(tcx, aliases, *loc, g, p);
+                let deep_deps_for = |p: mir::Place<'tcx>| {
+                    deep_dependencies_of(
+                        tcx,
+                        aliases,
+                        *loc,
+                        g,
+                        p,
+                        self.analysis_opts.use_reachable_values_in_dfs,
+                    )
+                };
                 Some((
                     *loc,
                     CallDeps {
@@ -997,6 +1016,7 @@ fn deep_dependencies_of<'tcx, 'g>(
     loc: GlobalLocation<'g>,
     g: &GlobalFlowGraph<'tcx, 'g>,
     p: mir::Place<'tcx>,
+    use_reachable_places: bool,
 ) -> HashSet<GlobalLocation<'g>> {
     let (inner_loc, inner_body) = loc.innermost_location_and_body();
     let stmt =
@@ -1018,18 +1038,21 @@ fn deep_dependencies_of<'tcx, 'g>(
         places
             .iter()
             .flat_map(|place| provenance_of(tcx, *place).into_iter())
-            .filter_map(|place| Some(g.location_states.get(&loc)?.resolve(place)))
-            .flat_map(|(p, s)| s.map(move |l| (p, l)))
-            .collect::<Vec<(Option<mir::Place<'tcx>>, GlobalLocation<'g>)>>()
+            .filter_map(|place| Some((place, g.location_states.get(&loc)?.resolve(place))))
+            .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
+            .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
     };
+
     // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
-    //
-    // let reachable_places = aliases
-    //     .reachable_values(p, ast::Mutability::Not)
-    //     .into_iter()
-    //     .cloned()
-    //     .collect::<Vec<_>>();
-    let reachable_places = vec![p];
+    let reachable_places = if use_reachable_places {
+        aliases
+            .reachable_values(p, ast::Mutability::Not)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        vec![p]
+    };
     debug!("Determined the reachable places for {p:?} @ {loc} are {reachable_places:?}");
     let mut queue = deps_for_places(loc, &reachable_places);
     let mut seen = HashSet::new();
@@ -1041,9 +1064,10 @@ fn deep_dependencies_of<'tcx, 'g>(
         // (either an argument or a call site of an inlined function). This
         // causes a translation of the place, but otherwise this location must
         // be rejected so we translate, resolve and move on.
-        if let Some(translated) = place {
-            seen.insert(location);
-            queue.extend(deps_for_places(location, &[translated]));
+        if g.location_states.get(&location).map(|s| s.is_translated()) == Some(true) {
+            // Don't insert this location into `seen`, because we might cross
+            // this boundary multiple times with different places
+            queue.extend(deps_for_places(location, &[place]));
         } else {
             match Keep::from_global_location(tcx, location) {
                 Keep::Keep(..) | Keep::Argument(_) => {
@@ -1056,9 +1080,10 @@ fn deep_dependencies_of<'tcx, 'g>(
                     seen.insert(location);
                     if let Some(stmt) = stmt_at_loc {
                         queue.extend(deps_for_places(
-                        location,
+                            location,
                             &places_read(location.innermost_location_and_body().0, &stmt)
-                                .collect::<Vec<_>>()));
+                                .collect::<Vec<_>>(),
+                        ));
                     } else {
                         error!("Rejection without statement should not happen anymore. Rejected {location} without statement");
                     }
@@ -1319,6 +1344,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             let gli = self.gli();
             let root_function = self.root_function;
             let make_relative_location = self.relative_global_location_maker();
+            let local_relativizer = |dep| make_relative_location(location, dep);
 
             let locs_to_add = inner_flow
                 .flow
@@ -1327,7 +1353,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                 .map(|(inner_loc, map)| {
                     (
                         make_relative_location(location, *inner_loc),
-                        map.relativize(|dep| make_relative_location(location, dep)),
+                        map.relativize(local_relativizer),
                     )
                 })
                 .chain((1..=args.len()).into_iter().map(|a| {
@@ -1344,7 +1370,10 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                 .chain(std::iter::once((
                     gli.globalize_location(location, root_function),
                     TranslatedDepMatrix::translated(
-                        inner_flow.flow.return_state.clone(),
+                        relativize_global_dep_matrix(
+                            &inner_flow.flow.return_state,
+                            local_relativizer,
+                        ),
                         self.create_translation_matrix(
                             location,
                             args.as_slice(),
