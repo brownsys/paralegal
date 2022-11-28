@@ -32,7 +32,7 @@ use std::{
 };
 
 use crate::{
-    dbg::{self, PrintableDependencyMatrix},
+    dbg::{self},
     desc::*,
     rust::*,
     sah::HashVerifications,
@@ -81,6 +81,7 @@ pub struct Flow<'tcx, 'g> {
     /// dataflow analysis for this body can actually be retrieved using
     /// `self.function_flows[self.root_function].unwrap()`
     pub root_function: BodyId,
+    #[allow(dead_code)]
     /// Memoization of inlined, finely granular (includes statements and
     /// non-call terminators) dataflow analysis result graphs for each function
     /// called directly or indirectly from `self.root_function`.
@@ -489,7 +490,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     > {
         t.as_fn_and_args().and_then(|(p, args, dest)| {
             let node = self.tcx.hir().get_if_local(p).ok_or("non-local node")?;
-            let (callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
+            let (_callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
                 .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
             let () = if self.should_inline(*callee_local_id) {
                 Ok(())
@@ -575,7 +576,6 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             body,
             local_def_id,
             root_function,
-            translation_matrixes: RefCell::new(HashMap::new()),
             flow_constructor: self,
             //under_construction: RefCell::new(GlobalFlowGraph::new()),
             under_construction: GlobalFlowGraph::new(),
@@ -794,12 +794,6 @@ struct FunctionInliner<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> {
     /// The body id of `body`
     root_function: BodyId,
 
-    // Mutable memoization
-    /// The return of an inlined function call can be used by several locations.
-    /// This map stores the results of translating the callees `Place`s to our
-    /// `Place`s for each call site so that we only do that translation once.
-    translation_matrixes: RefCell<HashMap<mir::Location, HashMap<Place<'tcx>, Place<'tcx>>>>,
-
     /// The graph we are currently constructing.
     under_construction: GlobalFlowGraph<'tcx, 'g>,
 }
@@ -827,7 +821,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         }
         matrix
             .rows()
-            .map(|(place, dep_set)| (place, self.make_row_global(place, dep_set)))
+            .map(|(place, dep_set)| (place, self.make_row_global( dep_set)))
             .collect::<HashMap<_, _>>()
     }
 
@@ -889,40 +883,6 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             .collect::<HashMap<_, _>>()
     }
 
-    /// Either transforms the location into a global one or, if it names the
-    /// boundary of a function call to a function we want to inline, returns the
-    /// translated dependencies of `place` in the return state of the
-    /// function-call-to-be-inlined.
-    fn globalize_or_inline_call(
-        &self,
-        place: Place<'tcx>,
-        l: Location,
-    ) -> impl Iterator<Item = GlobalLocation<'g>> {
-        if let Some((t, (inner_flow, body_id, inner_body, args, dest))) =
-            if !is_real_location(self.body, l) {
-                None
-            } else {
-                self.body.stmt_at(l)
-                    .right()
-                    .and_then(|t| Some((t, self.flow_constructor.inner_flow_for_terminator(t).ok()?)))
-            }
-        {
-            let translation_matrix = self.create_translation_matrix(l,args.as_slice(), dest, inner_body, inner_flow.borrow());
-                //let aliases = from_flowistry.analysis.aliases.aliases(place);
-            if let Some(deps) = translation_matrix.get(&place).and_then(|o| inner_flow.flow.return_state.get(o)) {
-                deps.iter().cloned().collect::<Vec<_>>()
-            } else {
-                warn!(
-                    "Dependent place {place:?} not found in translation matrix {translation_matrix:?}",
-                );
-                vec![]
-            }
-        } else {
-            vec![self.gli().globalize_location(l, self.root_function)]
-        }
-        .into_iter()
-    }
-
     /// Transform the dependencies ([`Location`]s as calculated by flowistry)
     /// into global locations.
     ///
@@ -932,7 +892,6 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     /// and merge in the dependencies for the translated place.
     fn make_row_global(
         &self,
-        place: Place<'tcx>,
         dep_set: IndexSet<mir::Location, flowistry::indexed::RefSet<mir::Location>>,
     ) -> HashSet<GlobalLocation<'g>> {
         dep_set
@@ -966,7 +925,6 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
         if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
             self.flow_constructor.inner_flow_for_terminator(terminator)
         {
-            let caller_state = self.from_flowistry.state_at(location).matrix();
             // Translate every place in the child optimistically
             // to a parent place. This allows us to uphold the
             // invariant that when tracing dependencies a local
@@ -1436,17 +1394,17 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     interesting_output_types,
                 );
             }
-            if let Some(anns) = stmt_anns {
+            if let Some(_anns) = stmt_anns {
                 // This is currently commented out because hash verification is
                 // buggy
                 unimplemented!();
-                for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
-                    //hash_verifications.handle(ann, tcx, terminator, &body, loc, matrix);
-                }
+                // for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
+                //     //hash_verifications.handle(ann, tcx, terminator, &body, loc, matrix);
+                // }
                 // TODO this is attaching to functions instead of call
                 // sites. Once we start actually tracking call sites
                 // this needs to be adjusted
-                register_call_site(tcx, call_site_annotations, defid, Some(anns));
+                // register_call_site(tcx, call_site_annotations, defid, Some(anns));
             }
 
             for (arg_slot, arg_deps) in deps.input_deps.iter().enumerate() {
