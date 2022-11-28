@@ -108,8 +108,18 @@ struct AnalysisCtrl {
     /// Flowistry's recursive analysis)
     #[clap(long, env)]
     no_recursive_analysis: bool,
+    /// Make flowistry use a recursive analysis strategy. We turn this off by
+    /// default, because we perform the recursion by ourselves and doing it
+    /// twice has lead to bugs.
     #[clap(long, env)]
-    no_recursive_flowistry: bool,
+    recursive_flowistry: bool,
+    /// Use
+    /// [`Aliases::reachable_values`](flowistry::mir::aliases::Aliases::reachable_values)
+    /// in the beginning of the
+    /// [`deep_dependencies_of`](ana::deep_dependencies_of) dfs. Disabled by
+    /// default, see also [this notion
+    /// page](https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c)
+    /// for further comment.
     #[clap(long, env)]
     use_reachable_values_in_dfs: bool,
 }

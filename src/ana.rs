@@ -885,8 +885,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 fluid_set, ContextMode, EvalMode, EVAL_MODE, RECURSE_SELECTOR,
             };
             let mut eval_mode = EvalMode::default();
-            if !(self.analysis_opts.no_recursive_analysis
-                || self.analysis_opts.no_recursive_flowistry)
+            if !self.analysis_opts.no_recursive_analysis &&
+                self.analysis_opts.recursive_flowistry
             {
                 eval_mode.context_mode = ContextMode::Recurse;
             }
