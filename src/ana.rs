@@ -101,6 +101,32 @@ pub struct Flow<'tcx, 'g> {
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>);
 
+impl <'tcx> std::cmp::PartialOrd for GlobalLocation<'tcx> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use std::cmp::{Ordering};
+        if self.function() != other.function() {
+            return self.function().hir_id.partial_cmp(&other.function().hir_id);
+        }
+
+        if self.location() == other.location() {
+            match (self.next(), other.next()) {
+                (Some(my_next), Some(other_next)) => my_next.partial_cmp(other_next),
+                (None, None) => Some(Ordering::Equal),
+                (None, _) => Some(Ordering::Less),
+                _ => Some(Ordering::Greater),
+            }
+        } else {
+            self.location().partial_cmp(&other.location())
+        }
+    }
+}
+
+impl <'tcx> std::cmp::Ord for GlobalLocation<'tcx> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
 /// The idea of a global location is to capture the call chain up to a specific
 /// location.
 ///
@@ -486,6 +512,14 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
 
     pub fn matrix_raw(&self) -> &GlobalDepMatrix<'tcx, 'g> {
         &self.matrix
+    }
+
+    pub fn is_translated(&self) -> bool {
+        self.translator.is_some()
+    }
+
+    pub fn translator(&self) -> Option<&HashMap<Place<'tcx>, Place<'tcx>>> {
+        self.translator.as_ref()
     }
 }
 
