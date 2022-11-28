@@ -16,7 +16,8 @@
 use serde::Deserialize;
 
 use crate::{
-    ana::{CallDeps, GlobalLocation, GlobalLocationS, IsGlobalLocation},
+    ana::CallDeps,
+    ir::{GlobalLocation, GlobalLocationS, IsGlobalLocation},
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
@@ -367,13 +368,13 @@ impl<'g> From<&'_ GlobalLocation<'g>> for RawGlobalLocation {
     }
 }
 
-impl crate::ana::IsGlobalLocation for RawGlobalLocation {
+impl IsGlobalLocation for RawGlobalLocation {
     fn as_global_location_s(&self) -> &GlobalLocationS<RawGlobalLocation> {
         &self.0
     }
 }
 
-impl<'g> Serialize for crate::ana::GlobalLocation<'g> {
+impl<'g> Serialize for GlobalLocation<'g> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,

@@ -50,6 +50,7 @@ pub use either::Either;
 pub use rustc_span::Symbol;
 
 mod ana;
+pub mod ir;
 pub mod ann_parse;
 pub mod dbg;
 pub mod desc;
@@ -60,7 +61,6 @@ pub mod utils;
 
 use ana::AttrMatchT;
 
-pub use ana::IsGlobalLocation;
 pub use utils::outfile_pls;
 
 use frg::ToForge;

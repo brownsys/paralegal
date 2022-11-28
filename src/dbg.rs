@@ -11,13 +11,14 @@
 use flowistry::indexed::IndexedDomain;
 
 use crate::{
-    ana::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation},
+    ana::{CallOnlyFlow, GlobalFlowGraph},
+    ir::{GlobalLocation, IsGlobalLocation},
     rust::{
         mir::{self, Place},
         TyCtxt,
     },
     utils::{self, is_real_location},
-    HashMap, HashSet, IsGlobalLocation,
+    HashMap, HashSet,
 };
 extern crate dot;
 
@@ -68,11 +69,12 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 
 pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
-    use std::{collections::HashSet, hash::Hash};
+    use std::{collections::HashSet};
 
     use crate::{
-        ana::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
-        rust::mir::{Statement, StatementKind, TerminatorKind},
+        ana::{CallOnlyFlow, GlobalFlowGraph},
+        ir::{GlobalLocation, IsGlobalLocation},
+        rust::mir::{Statement, StatementKind},
         rust::ty::TyCtxt,
         utils::{
             is_real_location, places_read, read_places_with_provenance, AsFnAndArgs, TyCtxtExt,
