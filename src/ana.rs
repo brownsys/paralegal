@@ -28,13 +28,7 @@ use std::{
 };
 
 use crate::{
-    dbg::{self},
-    desc::*,
-    ir::*,
-    rust::*,
-    sah::HashVerifications,
-    utils::*,
-    Either, HashMap, HashSet,
+    dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*, Either, HashMap, HashSet,
 };
 
 use hir::{
@@ -45,10 +39,7 @@ use hir::{
 };
 use mir::{Location, Place, Terminator, TerminatorKind};
 use rustc_hir::def_id::LocalDefId;
-use rustc_middle::{
-    hir::nested_filter::OnlyBodies,
-    ty::{self, TyCtxt},
-};
+use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use flowistry::{
@@ -135,7 +126,7 @@ pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation
 ///    
 ///    Translation tables for these locations are created with
 ///    [`FunctionInliner::create_caller_to_callee_translation_table`].
-/// 
+///
 /// Both of the creation methods for translation tables use
 /// [`translate_child_to_parent`] under the hood.
 ///
