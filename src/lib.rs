@@ -50,11 +50,11 @@ pub use either::Either;
 pub use rustc_span::Symbol;
 
 mod ana;
-pub mod ir;
 pub mod ann_parse;
 pub mod dbg;
 pub mod desc;
 mod frg;
+pub mod ir;
 mod sah;
 pub mod serializers;
 pub mod utils;

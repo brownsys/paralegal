@@ -34,10 +34,10 @@ use std::{
 use crate::{
     dbg::{self},
     desc::*,
+    ir::*,
     rust::*,
     sah::HashVerifications,
     utils::*,
-    ir::*,
     Either, HashMap, HashSet,
 };
 
@@ -93,18 +93,69 @@ pub struct Flow<'tcx, 'g> {
     pub reduced_flow: CallOnlyFlow<'g>,
 }
 
+type PlaceTranslationTable<'tcx> = HashMap<Place<'tcx>, Place<'tcx>>;
+
 /// A flowistry-like dependency matrix at a specific location. Describes for
 /// each place the most recent global locations (these could be locations in a
 /// callee) that influenced the values at this place.
 pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
 
+/// A [`GlobalDepMatrix`] that may also translate between places.
+///
+/// A [`Place`] value is always relative to (and only unique in) a
+/// [`mir::Body`]. As such when we inline one body into another both may define
+/// the same place (e.g. the return place `_0`). This means we need a way to
+/// translate from places of the caller to places of the callee and vice-versa
+/// when we perform cross-function dependency analysis. At special boundary
+/// locations (the call sites) we therefore have dependency matrices that
+/// translate between places.
+///
+/// There are two types of locations in a [`GlobalFlowGraph`] that use
+/// translation (e.g. where [`is_translated`](Self::is_translated) returns
+/// `true`). As an example consider
+///
+/// ```
+/// fn bar(argument: i32) -> i32 { argument }
+///
+/// fn foo() {
+///     let x = 1;
+///     let y = bar(x);
+/// }
+/// ```
+///
+/// 1. **Caller call sites**: Location of the call site for `bar` (probably
+///    `bb0[1]`) translates places from inside `bar` to places in `foo`. In this
+///    case the return value `argument` (more precisely the mir place `_0` which
+///    is assigned to `argument`).
+/// 2. **Callee argument locations**: The special locations used by flowistry to
+///    describe arguments translate places from the caller to the callee. In
+///    this case the location for `argument` (probably `bb1[1]@bb0[1]`, notice
+///    this is a relative location) translates the input `x` (probably place
+///    `_1`) to the argument places `argument` (also probably `_1` in this
+///    case).
+///
+/// All other locations in the [`GlobalFlowGraph`] are not translated, i.e.
+/// [`resolve(p)`](Self::resolve) is the same as `self.matrix.get(p)`.
+///
+/// The visualization for the [`GlobalFlowGraph`] via
+/// [`dbg::PrintableGranularFlow`] shows the translation tables for locations
+/// that use translation as well for debugging purposes.
+///
+/// To construct a matrix use [`translated`](Self::translated) or
+/// [`untranslated`](Self::untranslated).
 #[derive(Clone)]
 pub struct TranslatedDepMatrix<'tcx, 'g> {
+    /// The flowistry style dependency matrix
     matrix: GlobalDepMatrix<'tcx, 'g>,
-    translator: Option<HashMap<Place<'tcx>, Place<'tcx>>>,
+    /// An optional mapping between places
+    translator: Option<PlaceTranslationTable<'tcx>>,
 }
 
 impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
+    /// Lookup this places in the translation table (if there is one).
+    ///
+    /// Returns none if the place was not found or if no translation table is
+    /// present.
     fn resolve_place(&self, place: Place<'tcx>) -> Option<Place<'tcx>> {
         self.translator
             .as_ref()
@@ -112,7 +163,12 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
             .cloned()
     }
 
-    // Document why option<place>
+    /// Lookup the dependencies for this [`Place`].
+    ///
+    /// If the place has an entry in our translation table that entry is used
+    /// instead of the place itself to perform the lookup. If such a translation
+    /// happened the returned optional place is `Some(translation_result)` and
+    /// `None` otherwise.
     pub fn resolve(
         &self,
         place: Place<'tcx>,
@@ -131,18 +187,25 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
         )
     }
 
+    /// Lookup te dependencies for this place as a set.
+    ///
+    /// Only used for debug output in [`dbg`]. Performs translation, like
+    /// [`resolve`](Self::resolve).
     pub fn resolve_set(&self, place: Place<'tcx>) -> Option<&HashSet<GlobalLocation<'g>>> {
         self.matrix.get(&self.resolve_place(place).unwrap_or(place))
     }
 
+    /// Iterate over the keys of the dependency matrix
     pub fn keys(&self) -> impl Iterator<Item = Place<'tcx>> + '_ {
         self.matrix.keys().cloned()
     }
 
+    /// Iterate over the values of the dependency matrix
     pub fn values(&self) -> impl Iterator<Item = &HashSet<GlobalLocation<'g>>> {
         self.matrix.values()
     }
 
+    /// Create a dependency matrix that does not translate any places.
     pub fn untranslated(matrix: GlobalDepMatrix<'tcx, 'g>) -> Self {
         Self {
             matrix,
@@ -150,6 +213,8 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
         }
     }
 
+    /// Create a dependency matrix that translates places using the provided
+    /// translation table.
     pub fn translated(
         matrix: GlobalDepMatrix<'tcx, 'g>,
         translator: HashMap<Place<'tcx>, Place<'tcx>>,
@@ -160,6 +225,10 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
         }
     }
 
+    /// Create a new matrix where each location has been transformed with the
+    /// provided closure.
+    ///
+    /// See [`relativize_global_dep_matrix`].
     pub fn relativize<F: Fn(GlobalLocation<'g>) -> GlobalLocation<'g>>(
         &self,
         location_relativizer: F,
@@ -170,19 +239,31 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
         }
     }
 
+    /// The raw, untranslated dependency matrix.
+    ///
+    /// Used only for debugging purposes in [`dbg`], you should use
+    /// [`resolve`](Self::resolve) instead.
     pub fn matrix_raw(&self) -> &GlobalDepMatrix<'tcx, 'g> {
         &self.matrix
     }
 
+    /// Does this matrix perform translation, i.e. is this one of the special
+    /// boundary locations.
     pub fn is_translated(&self) -> bool {
         self.translator.is_some()
     }
 
+    /// The translation matrix used (if any).
     pub fn translator(&self) -> Option<&HashMap<Place<'tcx>, Place<'tcx>>> {
         self.translator.as_ref()
     }
 }
 
+/// Call the provided closure on every [`GlobalLocation`] in this matrix.
+///
+/// Usually used to relativize the location (using
+/// [`gli.global_location_from_relative`](GLI::global_location_from_relative))
+/// hence the name.
 fn relativize_global_dep_matrix<'g, 'tcx, F: Fn(GlobalLocation<'g>) -> GlobalLocation<'g>>(
     matrix: &GlobalDepMatrix<'tcx, 'g>,
     location_relativizer: F,
@@ -549,9 +630,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 fluid_set, ContextMode, EvalMode, EVAL_MODE, RECURSE_SELECTOR,
             };
             let mut eval_mode = EvalMode::default();
-            if !self.analysis_opts.no_recursive_analysis &&
-                self.analysis_opts.recursive_flowistry
-            {
+            if !self.analysis_opts.no_recursive_analysis && self.analysis_opts.recursive_flowistry {
                 eval_mode.context_mode = ContextMode::Recurse;
             }
             fluid_set!(EVAL_MODE, eval_mode);
@@ -821,7 +900,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         }
         matrix
             .rows()
-            .map(|(place, dep_set)| (place, self.make_row_global( dep_set)))
+            .map(|(place, dep_set)| (place, self.make_row_global(dep_set)))
             .collect::<HashMap<_, _>>()
     }
 
@@ -850,14 +929,49 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         move |call_site, callee| gli.global_location_from_relative(callee, call_site, root_function)
     }
 
-    fn create_translation_matrix(
+    /// Create a [`PlaceTranslationTable`] that maps places from the callee
+    /// (`inner_flow`) to the caller (`self.body`).
+    fn create_callee_to_caller_translation_table(
         &self,
-        _l: Location,
+        inner_flow: &FunctionFlow<'tcx, 'g>,
+        args: &[Option<mir::Place<'tcx>>],
+        inner_body: &mir::Body<'tcx>,
+        dest: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+    ) -> PlaceTranslationTable<'tcx> {
+        inner_flow
+            .flow
+            .location_states
+            .values()
+            .flat_map(|s| s.keys())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .filter_map(|child| {
+                Some((
+                    child,
+                    translate_child_to_parent(
+                        self.tcx(),
+                        self.local_def_id,
+                        args,
+                        dest,
+                        child,
+                        false,
+                        inner_body,
+                        self.body,
+                    )?,
+                ))
+            })
+            .collect::<HashMap<_, _>>()
+    }
+
+    /// Create a [`PlaceTranslationTable`] that maps places from the caller
+    /// (`self.body`) to places in the callee (`inner_flow`).
+    fn create_caller_to_callee_translation_table(
+        &self,
         args: &[Option<mir::Place<'tcx>>],
         destination: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         inner_body: &mir::Body<'tcx>,
         inner_flow: &FunctionFlow<'tcx, 'g>,
-    ) -> HashMap<Place<'tcx>, Place<'tcx>> {
+    ) -> PlaceTranslationTable<'tcx> {
         inner_flow
             .flow
             .return_state
@@ -906,9 +1020,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
 {
     fn visit_statement(&mut self, _statement: &mir::Statement<'tcx>, location: Location) {
         let regular_result = self.handle_regular_location(location);
-        let global_loc = self
-            .gli()
-            .globalize_location(location, self.root_function);
+        let global_loc = self.gli().globalize_location(location, self.root_function);
         self.under_construction
             //.borrow_mut()
             .location_states
@@ -925,35 +1037,23 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
         if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
             self.flow_constructor.inner_flow_for_terminator(terminator)
         {
-            // Translate every place in the child optimistically
-            // to a parent place. This allows us to uphold the
-            // invariant that when tracing dependencies a local
-            // place does not immediately cross into a parent,
-            // but first into such an argument location where it
-            // can get translated.
-            let parent_translation_matrix = inner_flow
-                .flow
-                .location_states
-                .values()
-                .flat_map(|s| s.keys())
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .filter_map(|child| {
-                    Some((
-                        child,
-                        translate_child_to_parent(
-                            self.tcx(),
-                            self.local_def_id,
-                            &args,
-                            dest,
-                            child,
-                            false,
-                            inner_body,
-                            self.body,
-                        )?,
-                    ))
-                })
-                .collect::<HashMap<_, _>>();
+            // A translation table from places in `inner_flow` to places from
+            // `self.body` by lining them up at the arguments.
+            //
+            // Constructed by optimistically translating every place in the
+            // callee to a place in the caller. This allows us to uphold the
+            // invariant that when tracing dependencies a local place does not
+            // immediately cross into a parent, but first into such an argument
+            // location where it can get translated.
+            let parent_translation_matrix = self.create_callee_to_caller_translation_table(
+                &inner_flow,
+                args.as_slice(),
+                inner_body,
+                dest,
+            );
+            // A special dependency matrix that will be inserted at the argument
+            // locations which performs translation from callee places to caller
+            // places.
             let parent_dep_matrix =
                 TranslatedDepMatrix::translated(state_at_term, parent_translation_matrix);
             debug!(
@@ -964,47 +1064,64 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
 
             let gli = self.gli();
             let root_function = self.root_function;
+            // Construct this closure detached form `self` here so we can
+            // reference it in the upcoming iterators while still mutably
+            // modifying `self.under_construction`
             let make_relative_location = self.relative_global_location_maker();
             let local_relativizer = |dep| make_relative_location(location, dep);
 
-            let locs_to_add = inner_flow
-                .flow
-                .location_states
-                .iter()
-                .map(|(inner_loc, map)| {
-                    (
-                        make_relative_location(location, *inner_loc),
-                        map.relativize(local_relativizer),
-                    )
-                })
-                .chain((1..=args.len()).into_iter().map(|a| {
-                    let global_call_site = gli.globalize_location(
-                        mir::Location {
-                            block: mir::BasicBlock::from_usize(inner_body.basic_blocks().len()),
-                            statement_index: a,
-                        },
-                        inner_body_id,
-                    );
-                    let global_arg_loc = make_relative_location(location, global_call_site);
-                    (global_arg_loc, parent_dep_matrix.clone())
-                }))
-                .chain(std::iter::once((
-                    gli.globalize_location(location, root_function),
-                    TranslatedDepMatrix::translated(
-                        relativize_global_dep_matrix(
-                            &inner_flow.flow.return_state,
-                            local_relativizer,
-                        ),
-                        self.create_translation_matrix(
-                            location,
-                            args.as_slice(),
-                            dest,
-                            inner_body,
-                            inner_flow.borrow(),
-                        ),
+            // Now we build up all the locations we will splice into our graph.
+
+            // First we make a new, relative location for every regular (i.e.
+            // not an argument) location in the inner graph
+            let translated_inner_locations =
+                inner_flow
+                    .flow
+                    .location_states
+                    .iter()
+                    .map(|(inner_loc, map)| {
+                        (
+                            make_relative_location(location, *inner_loc),
+                            map.relativize(local_relativizer),
+                        )
+                    });
+
+            // The we add the argument locations. These are special, because the
+            // also perform place translation (see `TranslatedDepMatrix`)
+            let argument_locations = (1..=args.len()).into_iter().map(|a| {
+                let global_call_site = gli.globalize_location(
+                    mir::Location {
+                        block: mir::BasicBlock::from_usize(inner_body.basic_blocks().len()),
+                        statement_index: a,
+                    },
+                    inner_body_id,
+                );
+                let global_arg_loc = make_relative_location(location, global_call_site);
+                (global_arg_loc, parent_dep_matrix.clone())
+            });
+
+            // Lastly we create a location for this call site. This is also a
+            // special, translating location and represents the return state
+            // from calling `inner_flow` at this call site (see `TranslatedDepMatrix`).
+            let call_site_location = (
+                gli.globalize_location(location, root_function),
+                TranslatedDepMatrix::translated(
+                    relativize_global_dep_matrix(&inner_flow.flow.return_state, local_relativizer),
+                    self.create_caller_to_callee_translation_table(
+                        args.as_slice(),
+                        dest,
+                        inner_body,
+                        inner_flow.borrow(),
                     ),
-                )));
-            self.under_construction.location_states.extend(locs_to_add);
+                ),
+            );
+
+            // Add all of them into our flow.
+            self.under_construction.location_states.extend(
+                translated_inner_locations
+                    .chain(argument_locations)
+                    .chain(std::iter::once(call_site_location)),
+            );
         } else {
             // In the special case of a `return` terminator we
             // merge its state onto any prior state for the

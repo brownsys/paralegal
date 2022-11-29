@@ -1,3 +1,6 @@
+//! Unique identifiers for a point in the MIR program execution that span cross
+//! function boundaries.
+//!
 //! The idea of a global location is to capture the call chain up to a specific
 //! location.
 //!
@@ -59,9 +62,9 @@
 //!
 //! The innermost location is what you'd want to look up if you are wanting to
 //! see the actual statement or terminator that this location refers to.
-//! 
+//!
 //! # Usage
-//! 
+//!
 //! Global locations are intended to be used via the [`IsGlobalLocation`] trait.
 //!
 //! ## Why we need a trait
@@ -77,13 +80,12 @@
 //! serializable version is an owned `Box` and as such would be moved with these
 //! function calls.
 
-use crate::rust::*;
+use crate::desc::{CallSite, DataSource, Identifier};
 use crate::rust::rustc_arena;
-use rustc_data_structures::{intern::Interned, sharded::ShardedHashMap};
-use hir::BodyId;
-use crate::desc::{DataSource, Identifier, CallSite};
+use crate::rust::*;
 use crate::utils::*;
-
+use hir::BodyId;
+use rustc_data_structures::{intern::Interned, sharded::ShardedHashMap};
 
 /// The interned version of a global location. See the [module level documentation](super)
 /// information on usage and rational.
@@ -219,7 +221,6 @@ impl<'g> GlobalLocation<'g> {
     }
 }
 
-
 impl<'g> std::borrow::Borrow<GlobalLocationS<GlobalLocation<'g>>> for GlobalLocation<'g> {
     fn borrow(&self) -> &GlobalLocationS<GlobalLocation<'g>> {
         &self.0 .0
@@ -283,15 +284,15 @@ pub struct GlobalLocationInterner<'g> {
 }
 
 impl<'g> GlobalLocationInterner<'g> {
-    pub fn intern_location(
-        &'g self,
-        loc: GlobalLocationS<GlobalLocation<'g>>,
-    ) -> GlobalLocation<'g> {
+    fn intern_location(&'g self, loc: GlobalLocationS<GlobalLocation<'g>>) -> GlobalLocation<'g> {
         GlobalLocation(Interned::new_unchecked(
             self.known_locations
                 .intern(loc, |loc| self.arena.alloc(loc)),
         ))
     }
+    /// Construct a new interner.
+    ///
+    /// We have to take the arena by reference because the lifetime of the reference ensures it outlives the interner and is not mutated altered.
     pub fn new(arena: &'g rustc_arena::TypedArena<GlobalLocationS<GlobalLocation<'g>>>) -> Self {
         GlobalLocationInterner {
             arena,

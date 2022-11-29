@@ -69,7 +69,7 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 
 pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
-    use std::{collections::HashSet};
+    use std::collections::HashSet;
 
     use crate::{
         ana::{CallOnlyFlow, GlobalFlowGraph},
