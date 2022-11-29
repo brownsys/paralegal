@@ -1,29 +1,25 @@
 //! Main analysis pass which proceeds as follows:
 //!
-//! 1. The HIR visitor [`CollectingVisitor`](./struct.CollectingVisitor.html)
-//!    traverses the HIR and collects annotated entities.
-//! 2. [`CollectingVisitor::analyze`](./struct.CollectingVisitor.html#method.analyze)
-//!    is called, which initiates a dataflow analysis on every `mir::Body` that
-//!    was annotated with `#[dfpp::analyze]` and performs the following steps
+//! 1. The HIR visitor [`CollectingVisitor`] traverses the HIR and collects
+//!    annotated entities.
+//! 2. [`CollectingVisitor::analyze`] is called, which initiates a dataflow
+//!    analysis on every [`mir::Body`] that was annotated with
+//!    `#[dfpp::analyze]` and performs the following steps
 //!
-//!    1. Create a
-//!       [`GlobalFlowConstructor`](./struct.GlobalFlowConstructor.html)
+//!    1. Create a [`GlobalFlowConstructor`]
 //!    2. The constructor recursively creates finely granular flow graphs
-//!       ([`GlobalFlowGraph`](./struct.GlobalFlowGraph.html)) for callees using
-//!       information it gets by running flowistry's dataflow analysis on each
-//!       Body. Then it inlines them into the caller using a
-//!       [`FunctionInliner`](./struct.FunctionInliner.html) (in
-//!       [`compute_granular_global_flow`](./struct.GlobalFlowConstructor.html#method.compute_granular_global_flow))
+//!       ([`GlobalFlowGraph`]) for callees using information it gets by running
+//!       flowistry's dataflow analysis on each Body. Then it inlines them into
+//!       the caller using a [`FunctionInliner`] (in
+//!       [`GlobalFlowConstructor::compute_granular_global_flows`](GlobalFlowConstructor::compute_granular_global_flows))
 //!    3. Reduce the inlined, granular graph for the target function to a
-//!       `CallOnlyGraph` (on
-//!       [`compute_call_only_flow`](./struct.GlobalFlowConstructor.html#method.compute_call_only_flow))
-//!    4. Transform the call-only-flow into a
-//!       [`desc::Ctrl`](../desc/struct.Ctrl.html) description by adding
+//!       [`CallOnlyFlow`] (on
+//!       [`compute_call_only_flow`](GlobalFlowConstructor::compute_call_only_flow))
+//!    4. Transform the call-only-flow into a [`Ctrl`] description by adding
 //!       information about annotated entities (in
-//!       [`CollectingVisitor::handle_target`](./struct.CollectingVisitor.html#method.handle_target))
+//!       [`CollectingVisitor::handle_target`]
 //!
-//! 3. Combine the [`Ctrl`](../desc/struct.Ctrl.html) graphs into one
-//!    [`desc::ProgramDescription`](../desc/struct.ProgramDescription.html)
+//! 3. Combine the [`Ctrl`] graphs into one [`ProgramDescription`]
 
 use std::{
     borrow::{Borrow, Cow},
@@ -325,12 +321,12 @@ pub struct FunctionFlow<'tcx, 'g> {
     analysis: AnalysisResults<'tcx, FlowAnalysis<'tcx, 'tcx, NonTransitiveFlowDomain<'tcx>>>,
 }
 /// A memoization structure used to memoize and coordinate the recursion in
-/// `GlobalFlowConstructor::compute_granular_global_flows`.
+/// [`GlobalFlowConstructor::compute_granular_global_flows`].
 type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<FunctionFlow<'tcx, 'g>>>>>;
 /// Coarse grained, `Place` abstracted version of a `GlobalFlowGraph`.
 pub type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<GlobalLocation<'g>>>;
 
-/// Dependencies of a function call with the `Place`s abstracted away. Instead
+/// Dependencies of a function call with the [`Place`]s abstracted away. Instead
 /// each location in the `input_deps` vector corresponds to the dependencies for
 /// the positional argument at that index. For methods the 0th index is `self`.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -428,10 +424,10 @@ fn translate_child_to_parent<'tcx>(
     Some(parent_arg_projected)
 }
 
-/// Bundles together data needed for the global flow construction. The
-/// idea is you construct this with `new` then call
-/// `compute_granular_global_flows` and then `compute_call_only_flow` on the
-/// result, then discard this struct.
+/// Bundles together data needed for the global flow construction. The idea is
+/// you construct this with [`Self::new`] then call
+/// [`Self::compute_granular_global_flows`] and then
+/// [`Self::compute_call_only_flow`] on the result, then discard this struct.
 struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
     // Configuration
     /// Command line and environment options that control analysis behavior (for
@@ -441,7 +437,7 @@ struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
     dbg_opts: &'a crate::DbgArgs,
     /// A selector that controls which functions are inlined, both in our code
     /// as well as which functions are recursed into in flowistry. See
-    /// `InlineSelector` for more information.
+    /// [`InlineSelector`] for more information.
     inline_selector: P,
 
     // Allocators
@@ -451,21 +447,22 @@ struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
     gli: GLI<'g>,
 
     // Memoization
-    /// Memoization of intermediate analyses (see `FunctionFlows` documentation for more)
+    /// Memoization of intermediate analyses (see [`FunctionFlows`]
+    /// documentation for more)
     function_flows: FunctionFlows<'tcx, 'g>,
 }
 
 /// This essentially describes a closure that determines for a given
-/// `LocalDefId` if it should be inlined. Originally this was in fact done by
+/// [`LocalDefId`] if it should be inlined. Originally this was in fact done by
 /// passing a closure, but it couldn't properly satisfy the type checker,
 /// because the selector has to be stored in `fluid_let` variable, which is a
 /// dynamically scoped variable. This means that the type needs to be valid for
 /// a static lifetime, which I believe closures are not.
 ///
 /// In particular the way that this works is that values of this interface are
-/// then wrapped with `RecurseSelector`, which is a flowistry interface that
-/// satisfies `flowistry::extensions::RecurseSelector`. The wrapper then simply
-/// dispatches to the `InlineSelector`.
+/// then wrapped with [`RecurseSelector`], which is a flowistry interface that
+/// satisfies [`flowistry::extensions::RecurseSelector`]. The wrapper then
+/// simply dispatches to the [`InlineSelector`].
 ///
 /// The reason for the two tiers of selectors is that
 ///
@@ -473,10 +470,10 @@ struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
 ///   decouples from the specifics of dfpp
 /// - We use the selectors to skip functions with annotations, but I wanted to
 ///   keep the construction of inlined flow graphs agnostic to any notion of
-///   annotations. Those are handled by the `Visitor`
+///   annotations. Those are handled by the [`CollectingVisitor`]
 ///
 /// The only implementation currently in use for this is
-/// `SkipAnnotatedFunctionSelector`.
+/// [`SkipAnnotatedFunctionSelector`].
 pub trait InlineSelector: 'static {
     fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool;
 }
@@ -487,10 +484,13 @@ impl<T: InlineSelector> InlineSelector for Rc<T> {
     }
 }
 
-/// A `flowistry::extensions::RecurseSelector` that disables recursion if either
+/// A [`flowistry::extensions::RecurseSelector`] that disables recursion if
+/// either
 ///
-/// 1. `inline_disabled` has been set (this is usually coming from `crate::AnalysisCtrl::no_recursive_analysis`)
-/// 2. The wrapped `InlineSelector` returns `false` for the `LocalDefId` of the called function.
+/// 1. `inline_disabled` has been set (this is usually coming from
+///    `crate::AnalysisCtrl::no_recursive_analysis`)
+/// 2. The wrapped [`InlineSelector`] returns `false` for the [`LocalDefId`] of
+///    the called function.
 /// 3. The terminator is not a function call
 /// 4. The function being called cannot be statically determined
 ///
@@ -534,8 +534,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
         }
     }
 
-    /// This does the same as `RecurseSelector`. It's kind of difficult to reuse
-    /// the recurse selector (because it gets moved into a `fluid_let` to
+    /// This does the same as [`RecurseSelector`]. It's kind of difficult to
+    /// reuse the recurse selector (because it gets moved into a `fluid_let` to
     /// control flowistry recursion), hence this reimplementation here.
     fn should_inline(&self, did: LocalDefId) -> bool {
         !self.analysis_opts.no_recursive_analysis
@@ -548,17 +548,17 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     /// 1. The computed flow
     /// 2. The id of the body of the called function
     /// 3. The body of the called function
-    /// 4. The arguments to the called function (like `AsFnAndArgs` does).
-    /// 5. The return place mentioned in the terminator (like `AsFnAndArgs`
+    /// 4. The arguments to the called function (like [`AsFnAndArgs`] does).
+    /// 5. The return place mentioned in the terminator (like [`AsFnAndArgs`]
     ///    does)
     ///
     /// This function fails if
     ///
     /// - The terminator is not a function call
     /// - The called function cannot be statically determined (see
-    ///   `AsFnAndArgs`)
+    ///   [`AsFnAndArgs`])
     /// - The called function is not from the local crate
-    /// - `self.should_inline` returned `false` for the defid of the called
+    /// - [`Self::should_inline`] returned `false` for the defid of the called
     ///   function
     /// - This is a recursive call. Note that this does not only apply for
     ///   direct recursive calls, e.g. `foo` calls `foo`, but also mutual
@@ -599,9 +599,9 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     /// Computes a granular, inlined flow for the body of the `root_function` id
     /// provided. The granular flow contains all locations in this body,
     /// including those that reference statements and non-call terminators. See
-    /// also the documentation for `FunctionFlow`.
+    /// also the documentation for [`FunctionFlow`].
     ///
-    /// The main work of transforming the body is done by the `FunctionInliner`
+    /// The main work of transforming the body is done by the [`FunctionInliner`]
     /// struct which, similar to the `GlobalFlowConstructor` bundles together
     /// read-only information and mutable memoization state.
     ///
@@ -692,8 +692,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     /// preserving connections between those locations by flattening transitive
     /// connections via statements between them.
     ///
-    /// This is the canonical way for computing a `CallOnlyFlow` and supposed to
-    /// be called after/on the result of `compute_granular_global_flows`.
+    /// This is the canonical way for computing a [`CallOnlyFlow`] and supposed to
+    /// be called after/on the result of [`Self::compute_granular_global_flows`].
     fn compute_call_only_flow(&self, g: &GlobalFlowGraph<'tcx, 'g>) -> CallOnlyFlow<'g> {
         debug!(
             "Shrinking global flow graph with {} states",
@@ -1277,7 +1277,7 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
     }
 }
 
-/// The only implementation of `InlineSelector` currently in use. This skips
+/// The only implementation of [`InlineSelector`] currently in use. This skips
 /// inlining for all `LocalDefId` values that are found in the map of
 /// `self.marked_objects` i.e. all those functions that have annotations.
 #[derive(Clone)]
@@ -1298,14 +1298,15 @@ impl InlineSelector for SkipAnnotatedFunctionSelector {
 /// A map of objects for which we have found annotations.
 ///
 /// This is sharable so we can stick it into the
-/// `SkipAnnotatedFunctionSelector`. Technically at that point this map is
+/// [`SkipAnnotatedFunctionSelector`]. Technically at that point this map is
 /// read-only.
 type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 
 /// This visitor traverses the items in the analyzed crate to discover
 /// annotations and analysis targets and store them in this struct. After the
-/// discovery phase `self.analyze()` is used to drive the actual analysis. All
-/// of this is conveniently encapsulated in the `self.run()` method.
+/// discovery phase [`Self::analyze`] is used to drive the
+/// actual analysis. All of this is conveniently encapsulated in the
+/// [`Self::run`] method.
 pub struct CollectingVisitor<'tcx> {
     /// Reference to rust compiler queries.
     tcx: TyCtxt<'tcx>,
@@ -1334,7 +1335,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         }
     }
 
-    /// Does the function named by this id have the `dfff::analyze` annotation
+    /// Does the function named by this id have the `dfpp::analyze` annotation
     fn should_analyze_function(&self, ident: HirId) -> bool {
         self.tcx
             .hir()
@@ -1344,7 +1345,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     }
 
     /// Driver function. Performs the data collection via visit, then calls
-    /// `self.analyze()` to construct the Forge friendly description of all
+    /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
     pub fn run(mut self) -> std::io::Result<ProgramDescription> {
         let tcx = self.tcx;
@@ -1561,9 +1562,9 @@ impl<'tcx> CollectingVisitor<'tcx> {
         Ok((Identifier::new(id.name), flows))
     }
 
-    /// Main analysis driver. Essentially just calls `handle_target` once for
-    /// every function in `self.functions_to_analyze` after doing some other
-    /// setup necessary for the flow graph creation.
+    /// Main analysis driver. Essentially just calls [`Self::handle_target`]
+    /// once for every function in `self.functions_to_analyze` after doing some
+    /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
     fn analyze(mut self) -> std::io::Result<ProgramDescription> {
