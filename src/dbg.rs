@@ -324,6 +324,12 @@ pub mod call_only_flow_dot {
     }
 
     /// Write a dot representation for this `graph` to `out`.
+    /// 
+    /// You can use this function on [`CallOnlyFlow`] or [`GlobalFlowGraph`].
+    /// 
+    /// **Caveat**: the rendering for [`GlobalFlowGraph`] is currently broken,
+    /// as it does not show the links into inlined function correctly at the
+    /// call site.
     pub fn dump<'tcx, 'g, W: std::io::Write, Flow, N: Clone, E: Clone>(
         tcx: TyCtxt<'tcx>,
         graph: &'g Flow,
