@@ -292,7 +292,7 @@ impl<X, Y> Relation<X, Y> {
 
 /// XXX This representation is outdated and can lead to collisions. We need
 /// something that is closer to a
-/// [`GlobalLocation`](crate::ana::GlobalLocation).
+/// [`GlobalLocation`](crate::ir::GlobalLocation).
 #[derive(
     Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Debug, serde::Serialize, serde::Deserialize,
 )]

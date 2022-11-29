@@ -326,7 +326,7 @@ impl<'g> GLI<'g> {
     }
     /// Create a top-level [`GlobalLocation`] (e.g. a non-nested call)
     ///
-    /// `function` is the id of the [`mir::Body`] that the [`Location`] is from.
+    /// `function` is the id of the [`mir::Body`] that the [`mir::Location`] is from.
     ///
     /// See the [`IsGlobalLocation`](./trait.IsGlobalLocation.html#construction)
     /// trait for more information.

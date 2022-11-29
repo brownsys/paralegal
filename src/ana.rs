@@ -127,12 +127,21 @@ pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation
 ///    `bb0[1]`) translates places from inside `bar` to places in `foo`. In this
 ///    case the return value `argument` (more precisely the mir place `_0` which
 ///    is assigned to `argument`).
+///    
+///    The translation tables for these locations are created with
+///    [`FunctionInliner::create_callee_to_caller_translation_table`].
 /// 2. **Callee argument locations**: The special locations used by flowistry to
 ///    describe arguments translate places from the caller to the callee. In
 ///    this case the location for `argument` (probably `bb1[1]@bb0[1]`, notice
 ///    this is a relative location) translates the input `x` (probably place
 ///    `_1`) to the argument places `argument` (also probably `_1` in this
 ///    case).
+///    
+///    Translation tables for these locations are created with
+///    [`FunctionInliner::create_caller_to_callee_translation_table`].
+/// 
+/// Both of the creation methods for translation tables use
+/// [`translate_child_to_parent`] under the hood.
 ///
 /// All other locations in the [`GlobalFlowGraph`] are not translated, i.e.
 /// [`resolve(p)`](Self::resolve) is the same as `self.matrix.get(p)`.
@@ -189,7 +198,7 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
 
     /// Lookup te dependencies for this place as a set.
     ///
-    /// Only used for debug output in [`dbg`]. Performs translation, like
+    /// Only used for debug output in [`dbg`](mod@dbg). Performs translation, like
     /// [`resolve`](Self::resolve).
     pub fn resolve_set(&self, place: Place<'tcx>) -> Option<&HashSet<GlobalLocation<'g>>> {
         self.matrix.get(&self.resolve_place(place).unwrap_or(place))
@@ -241,7 +250,7 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
 
     /// The raw, untranslated dependency matrix.
     ///
-    /// Used only for debugging purposes in [`dbg`], you should use
+    /// Used only for debugging purposes in [`dbg`](mod@dbg), you should use
     /// [`resolve`](Self::resolve) instead.
     pub fn matrix_raw(&self) -> &GlobalDepMatrix<'tcx, 'g> {
         &self.matrix
@@ -287,7 +296,7 @@ fn relativize_global_dep_matrix<'g, 'tcx, F: Fn(GlobalLocation<'g>) -> GlobalLoc
 /// In short even with global locations any given place never crosses a function
 /// boundary directly but always wither via an argument location or the call
 /// site. This is what allow us to use a plain [`Place`], because we can perform
-/// translation at these special locations (see also [`translate_child_to_parent`]).
+/// translation at these special locations (see also [`TranslatedDepMatrix`]).
 ///
 /// The special matrix `return_state` is the union of all dependency matrices at
 /// each call to `return`.
@@ -748,7 +757,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 ///
 /// In addition the set of places that is considered "read" for `loc` (the
 /// initial location) is
-/// [`Aliases::reachable_values(p)`](flowistry::mir::Aliases::reachable_values).
+/// [`Aliases::reachable_values(p)`](flowistry::mir::aliases::Aliases::reachable_values).
 /// This means we consider all subplaces as also read. This only makes sense for
 /// function calls, hence this should only be called on locations that represent
 /// function calls.
@@ -1160,7 +1169,7 @@ impl<'tcx> Keep<'tcx> {
     /// [`GlobalLocation`]s.
     ///
     /// Global locations are easily used wrong in subtle ways (see also [its
-    /// documentation](IsGlobalLocation)) and this method ensures the correct
+    /// documentation](crate::ir::global_location)) and this method ensures the correct
     /// information from the global locations are used to construct a [`Keep`]
     /// value (i.e. the innermost location is queried).
     fn from_global_location(tcx: TyCtxt<'tcx>, location: GlobalLocation) -> Self {
@@ -1307,7 +1316,7 @@ pub struct CollectingVisitor<'tcx> {
     /// which annotations they are and what type of item it is.
     marked_objects: MarkedObjects,
     /// Expressions and statements we found annotations on. At the moment those
-    /// should only be [`desc::ExceptionAnnotation`]s.
+    /// should only be [`ExceptionAnnotation`]s.
     marked_stmts: HashMap<HirId, ((Vec<Annotation>, usize), Span, DefId)>,
     /// Functions that are annotated with `#[dfpp::analyze]`. For these we will
     /// later perform the analysis
