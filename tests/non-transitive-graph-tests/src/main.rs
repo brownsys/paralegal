@@ -111,6 +111,31 @@ fn source() -> i32 {
     0
 }
 
+struct S {}
+
+#[dfpp::label(noinline, return)]
+fn new_s() -> S { S {} }
+
+impl std::ops::Deref for S {
+    type Target = T;
+    #[dfpp::label(noinline, return)]
+    fn deref(&self) -> &T {
+        unimplemented!()
+    }
+}
+
+struct T {}
+
+#[dfpp::label(noinline, return)]
+fn read_t(t: &T) {
+}
+
+#[dfpp::analyze]
+fn spurious_connections_in_derefs() {
+    let s = new_s();
+    let t : &T = &*s;
+    read_t(t);
+}
 
 
 #[dfpp::label(there, arguments = [0])]
