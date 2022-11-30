@@ -1,4 +1,6 @@
-//! A depndency
+//! A sparse dependency tensor similar to flowistry's Θ. 
+//! 
+//! Additionally supports optional translation between [`Place`]s.
 
 use super::global_location::*;
 use crate::{rust::*, HashMap, HashSet};
