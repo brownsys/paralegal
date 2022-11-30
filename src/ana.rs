@@ -446,7 +446,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                         *loc,
                         g,
                         p,
-                        self.analysis_opts.use_reachable_values_in_dfs,
+                        self.analysis_opts.use_reachable_values_in_dfs(),
                     )
                 };
                 Some((
@@ -482,7 +482,7 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     loc: GlobalLocation<'g>,
     g: &GlobalFlowGraph<'tcx, 'g>,
     p: mir::Place<'tcx>,
-    use_reachable_places: bool,
+    use_reachable_places: Option<mir::Mutability>,
 ) -> HashSet<GlobalLocation<'g>> {
     let (inner_loc, inner_body) = loc.innermost_location_and_body();
     let stmt =
@@ -510,9 +510,9 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     };
 
     // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
-    let reachable_places = if use_reachable_places {
+    let reachable_places = if let Some(m) = use_reachable_places {
         aliases
-            .reachable_values(p, ast::Mutability::Not)
+            .reachable_values(p, m)
             .into_iter()
             .cloned()
             .collect::<Vec<_>>()
