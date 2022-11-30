@@ -427,7 +427,7 @@ pub fn format_dependency_matrix<
             if !is_first {
                 write!(f, ", ")?;
             } else {
-                is_first = true;
+                is_first = false;
             }
             write!(f, "{dep}")?;
         }
@@ -454,7 +454,7 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
             } else if deps.is_translated() {
                 HashSet::new()
             } else {
-                utils::places_read(inner_location, &body.body.stmt_at(inner_location)).collect()
+                utils::read_places_with_provenance(inner_location, &body.body.stmt_at(inner_location), self.tcx).collect()
             };
             writeln!(f, "")?;
             let empty_set = HashSet::new();
