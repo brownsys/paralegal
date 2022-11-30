@@ -233,7 +233,7 @@ impl PreFrg {
         use_rustc(|| {
             Self(
                 serde_json::from_reader(
-                    &mut std::fs::File::open(format!("{dir}/{}", dfpp::FLOW_GRAPH_OUT_NAME))
+                    &mut std::fs::File::open(format!("{dir}/{}", dfpp::consts::FLOW_GRAPH_OUT_NAME))
                         .unwrap(),
                 )
                 .unwrap(),
