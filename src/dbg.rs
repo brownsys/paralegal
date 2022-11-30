@@ -11,8 +11,7 @@
 use flowistry::indexed::IndexedDomain;
 
 use crate::{
-    ana::{CallOnlyFlow, GlobalFlowGraph},
-    ir::{GlobalLocation, IsGlobalLocation},
+    ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
     rust::{
         mir::{self, Place},
         TyCtxt,
@@ -72,13 +71,10 @@ pub mod call_only_flow_dot {
     use std::collections::HashSet;
 
     use crate::{
-        ana::{CallOnlyFlow, GlobalFlowGraph},
-        ir::{GlobalLocation, IsGlobalLocation},
+        ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
-        rust::ty::TyCtxt,
-        utils::{
-            is_real_location, places_read, read_places_with_provenance, AsFnAndArgs, TyCtxtExt,
-        },
+        rust::TyCtxt,
+        utils::{is_real_location, read_places_with_provenance, AsFnAndArgs, TyCtxtExt},
         Either,
     };
 
@@ -391,12 +387,9 @@ impl<'g> std::fmt::Display for GlobalLocation<'g> {
     }
 }
 
-/// A [`crate::ana::GlobalDepMatrix`] that can be `Display`ed with
+/// A [`crate::ir::GlobalDepMatrix`] that can be `Display`ed with
 /// an indent.
-pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(
-    &'a crate::ana::GlobalDepMatrix<'tcx, 'g>,
-    usize,
-);
+pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(&'a crate::ir::GlobalDepMatrix<'tcx, 'g>, usize);
 
 impl<'a, 'g, 'tcx> PrintableDependencyMatrix<'a, 'g, 'tcx> {
     pub fn new(map: &'a HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>, indent: usize) -> Self {

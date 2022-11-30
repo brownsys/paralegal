@@ -28,7 +28,8 @@ use std::{
 };
 
 use crate::{
-    dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*, Either, HashMap, HashSet,
+    consts, dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*, Either, HashMap,
+    HashSet,
 };
 
 use hir::{
@@ -56,283 +57,6 @@ pub type AttrMatchT = Vec<Symbol>;
 /// XXX: This needs to be adjusted to attach to the actual call site instead of
 /// the function `DefId`
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
-
-/// The result of the data flow analysis for a function.
-///
-/// This gets constructed using [`Flow::compute`] in
-/// [`CollectingVisitor::handle_target`] and is then queried to build a
-/// [`Ctrl`].
-pub struct Flow<'tcx, 'g> {
-    /// The id of the body for which this analysis was requested. The finely
-    /// granular (includes statements and non-call terminators), inlined
-    /// dataflow analysis for this body can actually be retrieved using
-    /// `self.function_flows[self.root_function].unwrap()`
-    pub root_function: BodyId,
-    #[allow(dead_code)]
-    /// Memoization of inlined, finely granular (includes statements and
-    /// non-call terminators) dataflow analysis result graphs for each function
-    /// called directly or indirectly from `self.root_function`.
-    function_flows: FunctionFlows<'tcx, 'g>,
-    /// The result of removing statements and terminators from the inlined graph
-    /// of `self.root_function`. Also uses a representation (input dependencies
-    /// vector) that abstracts away the concrete `Place`s the call is performed
-    /// with.
-    pub reduced_flow: CallOnlyFlow<'g>,
-}
-
-type PlaceTranslationTable<'tcx> = HashMap<Place<'tcx>, Place<'tcx>>;
-
-/// A flowistry-like dependency matrix at a specific location. Describes for
-/// each place the most recent global locations (these could be locations in a
-/// callee) that influenced the values at this place.
-pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
-
-/// A [`GlobalDepMatrix`] that may also translate between places.
-///
-/// A [`Place`] value is always relative to (and only unique in) a
-/// [`mir::Body`]. As such when we inline one body into another both may define
-/// the same place (e.g. the return place `_0`). This means we need a way to
-/// translate from places of the caller to places of the callee and vice-versa
-/// when we perform cross-function dependency analysis. At special boundary
-/// locations (the call sites) we therefore have dependency matrices that
-/// translate between places.
-///
-/// There are two types of locations in a [`GlobalFlowGraph`] that use
-/// translation (e.g. where [`is_translated`](Self::is_translated) returns
-/// `true`). As an example consider
-///
-/// ```
-/// fn bar(argument: i32) -> i32 { argument }
-///
-/// fn foo() {
-///     let x = 1;
-///     let y = bar(x);
-/// }
-/// ```
-///
-/// 1. **Caller call sites**: Location of the call site for `bar` (probably
-///    `bb0[1]`) translates places from inside `bar` to places in `foo`. In this
-///    case the return value `argument` (more precisely the mir place `_0` which
-///    is assigned to `argument`).
-///    
-///    The translation tables for these locations are created with
-///    [`FunctionInliner::create_callee_to_caller_translation_table`].
-/// 2. **Callee argument locations**: The special locations used by flowistry to
-///    describe arguments translate places from the caller to the callee. In
-///    this case the location for `argument` (probably `bb1[1]@bb0[1]`, notice
-///    this is a relative location) translates the input `x` (probably place
-///    `_1`) to the argument places `argument` (also probably `_1` in this
-///    case).
-///    
-///    Translation tables for these locations are created with
-///    [`FunctionInliner::create_caller_to_callee_translation_table`].
-///
-/// Both of the creation methods for translation tables use
-/// [`translate_child_to_parent`] under the hood.
-///
-/// All other locations in the [`GlobalFlowGraph`] are not translated, i.e.
-/// [`resolve(p)`](Self::resolve) is the same as `self.matrix.get(p)`.
-///
-/// The visualization for the [`GlobalFlowGraph`] via
-/// [`dbg::PrintableGranularFlow`] shows the translation tables for locations
-/// that use translation as well for debugging purposes.
-///
-/// To construct a matrix use [`translated`](Self::translated) or
-/// [`untranslated`](Self::untranslated).
-#[derive(Clone)]
-pub struct TranslatedDepMatrix<'tcx, 'g> {
-    /// The flowistry style dependency matrix
-    matrix: GlobalDepMatrix<'tcx, 'g>,
-    /// An optional mapping between places
-    translator: Option<PlaceTranslationTable<'tcx>>,
-}
-
-impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
-    /// Lookup this places in the translation table (if there is one).
-    ///
-    /// Returns none if the place was not found or if no translation table is
-    /// present.
-    fn resolve_place(&self, place: Place<'tcx>) -> Option<Place<'tcx>> {
-        self.translator
-            .as_ref()
-            .and_then(|t| t.get(&place))
-            .cloned()
-    }
-
-    /// Lookup the dependencies for this [`Place`].
-    ///
-    /// If the place has an entry in our translation table that entry is used
-    /// instead of the place itself to perform the lookup. If such a translation
-    /// happened the returned optional place is `Some(translation_result)` and
-    /// `None` otherwise.
-    pub fn resolve(
-        &self,
-        place: Place<'tcx>,
-    ) -> (
-        Option<Place<'tcx>>,
-        impl Iterator<Item = GlobalLocation<'g>> + '_,
-    ) {
-        let resolved = self.resolve_place(place);
-        (
-            resolved,
-            self.matrix
-                .get(&resolved.unwrap_or(place))
-                .into_iter()
-                .flat_map(|s| s.iter())
-                .cloned(),
-        )
-    }
-
-    /// Lookup te dependencies for this place as a set.
-    ///
-    /// Only used for debug output in [`dbg`](mod@dbg). Performs translation, like
-    /// [`resolve`](Self::resolve).
-    pub fn resolve_set(&self, place: Place<'tcx>) -> Option<&HashSet<GlobalLocation<'g>>> {
-        self.matrix.get(&self.resolve_place(place).unwrap_or(place))
-    }
-
-    /// Iterate over the keys of the dependency matrix
-    pub fn keys(&self) -> impl Iterator<Item = Place<'tcx>> + '_ {
-        self.matrix.keys().cloned()
-    }
-
-    /// Iterate over the values of the dependency matrix
-    pub fn values(&self) -> impl Iterator<Item = &HashSet<GlobalLocation<'g>>> {
-        self.matrix.values()
-    }
-
-    /// Create a dependency matrix that does not translate any places.
-    pub fn untranslated(matrix: GlobalDepMatrix<'tcx, 'g>) -> Self {
-        Self {
-            matrix,
-            translator: None,
-        }
-    }
-
-    /// Create a dependency matrix that translates places using the provided
-    /// translation table.
-    pub fn translated(
-        matrix: GlobalDepMatrix<'tcx, 'g>,
-        translator: HashMap<Place<'tcx>, Place<'tcx>>,
-    ) -> Self {
-        Self {
-            matrix,
-            translator: Some(translator),
-        }
-    }
-
-    /// Create a new matrix where each location has been transformed with the
-    /// provided closure.
-    ///
-    /// See [`relativize_global_dep_matrix`].
-    pub fn relativize<F: Fn(GlobalLocation<'g>) -> GlobalLocation<'g>>(
-        &self,
-        location_relativizer: F,
-    ) -> Self {
-        Self {
-            translator: self.translator.clone(),
-            matrix: relativize_global_dep_matrix(&self.matrix, location_relativizer),
-        }
-    }
-
-    /// The raw, untranslated dependency matrix.
-    ///
-    /// Used only for debugging purposes in [`dbg`](mod@dbg), you should use
-    /// [`resolve`](Self::resolve) instead.
-    pub fn matrix_raw(&self) -> &GlobalDepMatrix<'tcx, 'g> {
-        &self.matrix
-    }
-
-    /// Does this matrix perform translation, i.e. is this one of the special
-    /// boundary locations.
-    pub fn is_translated(&self) -> bool {
-        self.translator.is_some()
-    }
-
-    /// The translation matrix used (if any).
-    pub fn translator(&self) -> Option<&HashMap<Place<'tcx>, Place<'tcx>>> {
-        self.translator.as_ref()
-    }
-}
-
-/// Call the provided closure on every [`GlobalLocation`] in this matrix.
-///
-/// Usually used to relativize the location (using
-/// [`gli.global_location_from_relative`](GLI::global_location_from_relative))
-/// hence the name.
-fn relativize_global_dep_matrix<'g, 'tcx, F: Fn(GlobalLocation<'g>) -> GlobalLocation<'g>>(
-    matrix: &GlobalDepMatrix<'tcx, 'g>,
-    location_relativizer: F,
-) -> GlobalDepMatrix<'tcx, 'g> {
-    matrix
-        .iter()
-        .map(|(&k, set)| (k, set.iter().cloned().map(&location_relativizer).collect()))
-        .collect()
-}
-
-/// A flowistry-like 3-dimensional tensor describing the [`Place`] dependencies of
-/// all locations (including of inlined callees).
-///
-/// It is guaranteed that for each place the most recent location that modified
-/// it is either
-///
-/// 1. in the same function (call)
-/// 2. one of the argument locations
-/// 3. the return or input place of a function call
-///
-/// In short even with global locations any given place never crosses a function
-/// boundary directly but always wither via an argument location or the call
-/// site. This is what allow us to use a plain [`Place`], because we can perform
-/// translation at these special locations (see also [`TranslatedDepMatrix`]).
-///
-/// The special matrix `return_state` is the union of all dependency matrices at
-/// each call to `return`.
-pub struct GlobalFlowGraph<'tcx, 'g> {
-    pub location_states: HashMap<GlobalLocation<'g>, TranslatedDepMatrix<'tcx, 'g>>,
-    return_state: GlobalDepMatrix<'tcx, 'g>,
-}
-
-impl<'tcx, 'g> GlobalFlowGraph<'tcx, 'g> {
-    fn new() -> Self {
-        GlobalFlowGraph {
-            location_states: HashMap::new(),
-            return_state: HashMap::new(),
-        }
-    }
-}
-
-/// The analysis result for one function. See [`GlobalFlowGraph`] for
-/// explanations, this struct just also bundles in the [`AnalysisResults`] we
-/// got from flowistry for the `self.flow.root_function`. Currently the sole
-/// purpose of doing this is so that we can later query
-/// `self.analysis.analysis.aliases()` to resolve `reachable_values` and
-/// [`Place`] [`aliases()`](flowistry::mir::aliases::Aliases::aliases).
-pub struct FunctionFlow<'tcx, 'g> {
-    flow: GlobalFlowGraph<'tcx, 'g>,
-    analysis: AnalysisResults<'tcx, FlowAnalysis<'tcx, 'tcx, NonTransitiveFlowDomain<'tcx>>>,
-}
-/// A memoization structure used to memoize and coordinate the recursion in
-/// [`GlobalFlowConstructor::compute_granular_global_flows`].
-type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<FunctionFlow<'tcx, 'g>>>>>;
-/// Coarse grained, `Place` abstracted version of a `GlobalFlowGraph`.
-pub type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<GlobalLocation<'g>>>;
-
-/// Dependencies of a function call with the [`Place`]s abstracted away. Instead
-/// each location in the `input_deps` vector corresponds to the dependencies for
-/// the positional argument at that index. For methods the 0th index is `self`.
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(bound(
-    serialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Serialize",
-    deserialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Deserialize<'de>"
-))]
-pub struct CallDeps<Location> {
-    /// Additional dependencies that arise from the control flow, e.g. the scope
-    /// this function call is located in.
-    pub ctrl_deps: HashSet<Location>,
-    /// Dependencies of each argument in the same order as the parameters
-    /// provided to the function call.
-    pub input_deps: Vec<HashSet<Location>>,
-}
 
 /// This function is wholesale lifted from flowistry's recursive analysis. Edits
 /// that have been made are just to lift it from a lambda to a top-level
@@ -362,7 +86,7 @@ pub struct CallDeps<Location> {
 /// This function does more sophisticated mapping as well through references,
 /// derefs and fields. However in all honesty I haven't bothered (yet) to
 /// understand its precise capabilities, which should be documented here.
-fn translate_child_to_parent<'tcx>(
+pub fn translate_child_to_parent<'tcx>(
     tcx: TyCtxt<'tcx>,
     parent_local_def_id: LocalDefId,
     args: &[Option<mir::Place<'tcx>>],
@@ -419,7 +143,7 @@ fn translate_child_to_parent<'tcx>(
 /// you construct this with [`Self::new`] then call
 /// [`Self::compute_granular_global_flows`] and then
 /// [`Self::compute_call_only_flow`] on the result, then discard this struct.
-struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
+pub struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
     // Configuration
     /// Command line and environment options that control analysis behavior (for
     /// us and for flowistry).
@@ -752,7 +476,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 /// This means we consider all subplaces as also read. This only makes sense for
 /// function calls, hence this should only be called on locations that represent
 /// function calls.
-fn deep_dependencies_of<'tcx, 'g>(
+pub fn deep_dependencies_of<'tcx, 'g>(
     tcx: TyCtxt<'tcx>,
     aliases: &flowistry::mir::aliases::Aliases<'_, 'tcx>,
     loc: GlobalLocation<'g>,
@@ -858,7 +582,7 @@ fn deep_dependencies_of<'tcx, 'g>(
 /// inserted into `location_states` but also added to `return_state` when we are
 /// handling a terminator. However `handle_regular_location` itself does not
 /// know in which context it is being used (to make its implementation simpler).
-struct FunctionInliner<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> {
+pub struct FunctionInliner<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> {
     // Read-only information
     /// The parent constructor struct. For the function we will be inlining we
     /// operate on the flows that this parent has already computed.
@@ -1059,7 +783,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             debug!(
                 "Calculated parent dependency matrix at terminator {:?}\n{}",
                 terminator.kind,
-                dbg::PrintableDependencyMatrix::new(&parent_dep_matrix.matrix, 2)
+                dbg::PrintableDependencyMatrix::new(parent_dep_matrix.matrix_raw(), 2)
             );
 
             let gli = self.gli();
@@ -1332,7 +1056,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             .hir()
             .attrs(ident)
             .iter()
-            .any(|a| a.matches_path(&crate::ANALYZE_MARKER))
+            .any(|a| a.matches_path(&consts::ANALYZE_MARKER))
     }
 
     /// Driver function. Performs the data collection via visit, then calls
@@ -1652,16 +1376,16 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
             .attrs(id)
             .iter()
             .filter_map(|a| {
-                a.match_extract(&crate::LABEL_MARKER, |i| {
+                a.match_extract(&consts::LABEL_MARKER, |i| {
                     Annotation::Label(crate::ann_parse::ann_match_fn(i))
                 })
                 .or_else(|| {
-                    a.match_extract(&crate::OTYPE_MARKER, |i| {
+                    a.match_extract(&consts::OTYPE_MARKER, |i| {
                         Annotation::OType(crate::ann_parse::otype_ann_match(i))
                     })
                 })
                 .or_else(|| {
-                    a.match_extract(&crate::EXCEPTION_MARKER, |i| {
+                    a.match_extract(&consts::EXCEPTION_MARKER, |i| {
                         Annotation::Exception(crate::ann_parse::match_exception(i))
                     })
                 })

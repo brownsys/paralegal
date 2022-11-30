@@ -3,21 +3,20 @@
 //! The proxy structs are foreign serializers for their non-proxy counterparts,
 //! see <https://serde.rs/remote-derive.html> for more information. As a naming
 //! convention `<name>Proxy` is used to (de)serialize `<name>` e.g.
-//! `BasicBlockProxy` (de)serializes a `mir::BasicBlock`.
+//! [`BasicBlockProxy`] (de)serializes a [`mir::BasicBlock`].
 //!
 //! Be aware that in some cases serialization is not bidirectional (usually if
 //! there is a lifetime parameter in the serialized type). For instance
 //! [`GlobalLocation`] can be serialized, but only a [`RawGlobalLocation`] can
 //! be deserialized.
 //!
-//! Some types (such as `mir::Body`) first have to be explicitly transformed
-//! into the respective proxy type. In the case of `mir::Body` this can be done
-//! with [`BodyProxy::from_body_with_normalize`]
+//! Some types (such as [`mir::Body`]) first have to be explicitly transformed
+//! into the respective proxy type. In the case of [`mir::Body`] this can be
+//! done with [`BodyProxy::from_body_with_normalize`]
 use serde::Deserialize;
 
 use crate::{
-    ana::CallDeps,
-    ir::{GlobalLocation, GlobalLocationS, IsGlobalLocation},
+    ir::{CallDeps, GlobalLocation, GlobalLocationS, IsGlobalLocation},
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
@@ -338,19 +337,20 @@ pub struct BodyIdProxy {
 }
 
 /// This exists because of serde's restrictions on how you derive serializers.
-/// `BodyIdProxy` can be used to serialize a `BodyId` but if the `BodyId` is
-/// used as e.g. a key in a map or in a vector it does not dispatch to the
-/// remote impl on `BodyIdProxy`. Implementing the serializers for the map or
-/// vector by hand is annoying so instead you can map over the datastructure,
-/// wrap each `BodyId` in this proxy type and then dispatch to the `serialize`
-/// impl for the reconstructed data structure.
+/// [`BodyIdProxy`] can be used to serialize a [`BodyId`](hir::BodyId) but if
+/// the [`BodyId`](hir::BodyId) is used as e.g. a key in a map or in a vector it
+/// does not dispatch to the remote impl on [`BodyIdProxy`]. Implementing the
+/// serializers for the map or vector by hand is annoying so instead you can map
+/// over the datastructure, wrap each [`BodyId`](hir::BodyId) in this proxy type
+/// and then dispatch to the `serialize` impl for the reconstructed data
+/// structure.
 #[derive(Serialize, Deserialize)]
 pub struct BodyIdProxy2(#[serde(with = "BodyIdProxy")] pub hir::BodyId);
 
 /// A serializable non-interned version of [`GlobalLocation`].
 ///
 /// Thanks to the [`IsGlobalLocation`] trait you can use this the same way as a
-/// `GlobalLocation`. Though be aware that this struct is significantly larger
+/// [`GlobalLocation`]. Though be aware that this struct is significantly larger
 /// in memory as it contains a singly-linked list of call chains that is not
 /// interned.
 ///
@@ -410,9 +410,10 @@ mod serde_map_via_vec {
     //! JSON string object, but sometimes that is not the case. Since the
     //! [`HashMap`] struct only requires its keys be [`Eq`] and [`Hash`] other
     //! non-string values may have been used as key (such is the case in
-    //! [`Bodies`](super::Bodies)). Unfortunately you can still use the [`Serialize`] trait on
-    //! [`HashMap`], even if the keys do not serialize to strings. Instead a
-    //! runtime error will be thrown when a non-string key is encountered.
+    //! [`Bodies`](super::Bodies)). Unfortunately you can still use the
+    //! [`Serialize`] trait on [`HashMap`], even if the keys do not serialize to
+    //! strings. Instead a runtime error will be thrown when a non-string key is
+    //! encountered.
     //!
     //! This module converts the [`HashMap`] into a [`Vec`] of tuples and
     //! (de)serializes that, which permits arbitrary types to be used for the
@@ -464,8 +465,8 @@ impl SerializableCallOnlyFlow {
     }
 }
 
-impl From<&crate::ana::CallOnlyFlow<'_>> for SerializableCallOnlyFlow {
-    fn from(other: &crate::ana::CallOnlyFlow<'_>) -> Self {
+impl From<&crate::ir::CallOnlyFlow<'_>> for SerializableCallOnlyFlow {
+    fn from(other: &crate::ir::CallOnlyFlow<'_>) -> Self {
         SerializableCallOnlyFlow(
             other
                 .iter()

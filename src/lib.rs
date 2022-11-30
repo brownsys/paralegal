@@ -57,22 +57,13 @@ mod frg;
 pub mod ir;
 mod sah;
 pub mod serializers;
+#[macro_use]
 pub mod utils;
-
-use ana::AttrMatchT;
+pub mod consts;
 
 pub use utils::outfile_pls;
 
 use frg::ToForge;
-
-/// Conveniently create a vector of [`Symbol`]s. This way you can just write
-/// `sym_vec!["s1", "s2", ...]` and this macro will make sure to call
-/// [`Symbol::intern`]
-macro_rules! sym_vec {
-    ($($e:expr),*) => {
-        vec![$(Symbol::intern($e)),*]
-    };
-}
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -153,27 +144,8 @@ struct DbgArgs {
     dump_ctrl_mir: bool,
 }
 
-/// Name of the file used for emitting the JSON serialized
-/// [`desc::ProgramDescription`].
-pub const FLOW_GRAPH_OUT_NAME: &'static str = "flow-graph.json";
-
 struct Callbacks {
     opts: &'static Args,
-}
-
-lazy_static! {
-    /// This will match the annotation `#[dfpp::label(...)]` when using
-    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
-    static ref LABEL_MARKER: AttrMatchT = sym_vec!["dfpp", "label"];
-    /// This will match the annotation `#[dfpp::analyze]` when using
-    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
-    static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
-    /// This will match the annotation `#[dfpp::output_types(...)]` when using
-    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
-    static ref OTYPE_MARKER: AttrMatchT = sym_vec!["dfpp", "output_types"];
-    /// This will match the annotation `#[dfpp::exception(...)]` when using
-    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
-    static ref EXCEPTION_MARKER: AttrMatchT = sym_vec!["dfpp", "exception"];
 }
 
 impl rustc_driver::Callbacks for Callbacks {
@@ -198,7 +170,7 @@ impl rustc_driver::Callbacks for Callbacks {
                     .truncate(true)
                     .create(true)
                     .write(true)
-                    .open(FLOW_GRAPH_OUT_NAME)
+                    .open(consts::FLOW_GRAPH_OUT_NAME)
                     .unwrap(),
                 &desc,
             )
@@ -220,18 +192,6 @@ impl rustc_driver::Callbacks for Callbacks {
         );
         rustc_driver::Compilation::Stop
     }
-}
-
-lazy_static! {
-    /// The symbol `arguments` which we use for refinement in a `#[dfpp::label(...)]`
-    /// annotation.
-    static ref ARG_SYM: Symbol = Symbol::intern("arguments");
-    /// The symbol `return` which we use for refinement in a `#[dfpp::label(...)]`
-    /// annotation.
-    static ref RETURN_SYM: Symbol = Symbol::intern("return");
-    /// The symbol `verification_hash` which we use for refinement in a
-    /// `#[dfpp::exception(...)]` annotation.
-    static ref VERIFICATION_HASH_SYM: Symbol = Symbol::intern("verification_hash");
 }
 
 impl rustc_plugin::RustcPlugin for DfppPlugin {

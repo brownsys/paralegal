@@ -6,9 +6,7 @@ extern crate either;
 
 use either::Either;
 
-use crate::desc::*;
-use crate::rust::*;
-use crate::{HashMap, HashSet};
+use crate::{consts, desc::*, rust::*, HashMap, HashSet};
 use rustc_middle::ty::{self, TyCtxt};
 use std::cell::RefCell;
 
@@ -52,7 +50,7 @@ impl HashVerifications {
             }
         } else {
             self.0 += 1;
-            error!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `{} = \"{hash:032x}\"` into the annotation.", crate::VERIFICATION_HASH_SYM.as_str());
+            error!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `{} = \"{hash:032x}\"` into the annotation.", consts::VERIFICATION_HASH_SYM.as_str());
         }
     }
 }
