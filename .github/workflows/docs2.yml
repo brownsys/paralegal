@@ -18,18 +18,16 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build
       run: cargo doc --document-private-items
-    - name: Massage path
-      run: mv target/doc _site
     
     - name: Archive artifact
       shell: sh
       run: |
+        cd target/doc
         chmod -c -R +r . | while read line; do
           echo "::warning title=Changed permissions on a file::$line"
         done
         tar \
           --dereference --hard-dereference \
-          --directory _site \
           -zcvf "$RUNNER_TEMP/artifact.tar.gz" \
           --exclude=.git \
           --exclude=.github \
