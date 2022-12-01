@@ -491,10 +491,12 @@ impl ProgramDescription {
     where
         D::Doc: Clone,
     {
-        alloc.forge_relation(self.all_sinks().into_iter().map(|src| {
-            (
-                std::iter::once(src.as_forge(alloc)),
-                std::iter::once(call_site_as_forge(alloc, &src.function)),
+        alloc.forge_relation(self.all_sinks().into_iter().filter_map(|src| {
+            src.as_argument().map(|(function, _)|
+                (
+                    std::iter::once(src.as_forge(alloc)),
+                    std::iter::once(call_site_as_forge(alloc, function)),
+                )
             )
         }))
     }
