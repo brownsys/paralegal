@@ -28,7 +28,7 @@ fn eliminate_return_connection() {
     let s = new_s();
     // 'a : 'b
     let t  = deref_t(&s);
-    read_t(t);
+    read(t);
 }
 
 #[dfpp::label(noinline)]
@@ -43,24 +43,24 @@ fn eliminate_mut_input_connection() {
 }
 
 fn insert_ref<'v, 't: 'v, T>(v : &mut Vec<&'v T>, t: &'t T) {}
-fn insert_ref2<'v, 't: 'v, T>(v : &mut Vec<&'v T>, t: &'t T) {
+fn insert_ref_2<'v, 't: 'v, T>(v : &mut Vec<&'v T>, t: &'t T) {
     v.push(v)
 }
 
 #[dfpp::analyze]
 fn input_collection_elimination_isnt_a_problem_empty() {
     let x = new_s();
-    let mut y = Vec::new();
-    insert_ref(& mut y, &x);
+    let mut v = Vec::new();
+    insert_ref(& mut v, &x);
     read(&v);
 }
 
 #[dfpp::analyze]
 fn input_collection_elimination_isnt_a_problem_vec_push() {
     let x = new_s();
-    let mut y = Vec::new();
-    y.insert(0, &x);
-    insert_ref_2( & mut y, &x);
+    let mut v = Vec::new();
+    v.insert(0, &x);
+    insert_ref_2( & mut v, &x);
     read(&v);
 }
 

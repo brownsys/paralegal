@@ -40,7 +40,7 @@ use hir::{
 };
 use mir::{Location, Place, Terminator, TerminatorKind};
 use rustc_hir::def_id::LocalDefId;
-use rustc_middle::hir::nested_filter::OnlyBodies;
+use rustc_middle::{hir::nested_filter::OnlyBodies, ty::{PredicateKind, OutlivesPredicate, RegionKind}};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use flowistry::{
@@ -464,6 +464,41 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     }
 }
 
+use ty::RegionVid;
+
+struct ComputeCallObligations<'tcx>{
+    tcx: TyCtxt<'tcx>,
+    result: HashSet<(RegionVid, RegionVid)>,
+}
+
+impl <'tcx> mir::visit::Visitor<'tcx> for ComputeCallObligations<'tcx> {
+    fn visit_terminator(&mut self,terminator: &Terminator<'tcx>,location:Location) {
+        if let Ok((did, _, _)) = terminator.as_fn_and_args() {
+            let predicates = self.tcx.item_bounds(did);
+            for predicate in predicates.iter() {
+                if let PredicateKind::RegionOutlives(OutlivesPredicate(r1, r2)) = predicate.kind().skip_binder() {
+                    if let (RegionKind::ReVar(v1), RegionKind::ReVar(v2)) = (r1.kind(), r2.kind()) {
+                        self.result.insert((v1, v2));
+                    }
+                }
+            }
+        }
+
+        self.super_terminator(terminator, location)
+    }
+}
+
+
+fn compute_constraint_selector<'tcx, 'a>(tcx: TyCtxt<'tcx>, body: &'a mir::Body<'tcx>) -> impl Fn(RegionVid, RegionVid) -> bool + 'tcx + 'a {
+    let mut vis = ComputeCallObligations {
+        result: HashSet::new(),
+        tcx
+    };
+    <ComputeCallObligations as mir::visit::Visitor>::visit_body(&mut vis, body);
+    let set = vis.result;
+    move |r1, r2| !set.contains(&(r1, r2))
+}
+
 /// Perform a depth-first search up the dependency tree formed from looking up
 /// the [`places_read`] at a location in `g`, starting from `loc`.
 ///
@@ -485,8 +520,10 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     use_reachable_places: Option<mir::Mutability>,
 ) -> HashSet<GlobalLocation<'g>> {
     let (inner_loc, inner_body) = loc.innermost_location_and_body();
+    let def_id = tcx.hir().body_owner_def_id(inner_body);
+    let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
     let stmt =
-        borrowck_facts::get_body_with_borrowck_facts(tcx, tcx.hir().body_owner_def_id(inner_body))
+            body_with_facts
             .body
             .stmt_at(inner_loc);
     if !matches!(
@@ -509,9 +546,11 @@ pub fn deep_dependencies_of<'tcx, 'g>(
             .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
     };
 
+
     // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
     let reachable_places = if let Some(m) = use_reachable_places {
-        aliases
+        let new_aliases = flowistry::mir::aliases::Aliases::build_with_fact_selection(tcx, def_id.to_def_id(), body_with_facts, compute_constraint_selector(tcx, &body_with_facts.body));
+        new_aliases
             .reachable_values(p, m)
             .into_iter()
             .cloned()
