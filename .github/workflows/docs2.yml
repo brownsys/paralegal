@@ -1,14 +1,5 @@
 
 name: Documentation
-inputs:
-  path:
-    description: "Path of the directory containing the static assets."
-    required: true
-    default: "_site/"
-  retention-days:
-    description: "Duration after which artifact will expire in days."
-    required: false
-    default: "1"
 on:
   push:
     branches: [ "main" ]
@@ -28,9 +19,7 @@ jobs:
     - name: Build
       run: cargo doc --document-private-items
     - name: Massage path
-      run: mv target/doc "$INPUT_PATH"
-      env:
-        INPUT_PATH: ${{ inputs.path }}
+      run: mv target/doc _site
     
     - name: Archive artifact
       shell: sh
@@ -40,19 +29,17 @@ jobs:
         done
         tar \
           --dereference --hard-dereference \
-          --directory "$INPUT_PATH" \
+          --directory _site \
           -zcvf "$RUNNER_TEMP/artifact.tar.gz" \
           --exclude=.git \
           --exclude=.github \
           .
-      env:
-        INPUT_PATH: ${{ inputs.path }}
     - name: Upload artifact
       uses: actions/upload-artifact@main
       with:
         name: github-pages
         path: ${{ runner.temp }}/artifact.tar.gz
-        retention-days: ${{ inputs.retention-days }}
+        retention-days: 1
     - uses: actions/deploy-pages@v1
     
       
