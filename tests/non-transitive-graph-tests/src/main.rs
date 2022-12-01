@@ -22,6 +22,7 @@ fn conditional_happens_before(cond: bool) {
     send_user_data(&user_data);
 }
 
+#[dfpp::label(dont_recurse, arguments=[0])]
 fn data_contains_3(d: &UserData) -> bool {
     d.data.iter().any(|i| *i == 3)
 }
@@ -93,11 +94,68 @@ fn get_other_data() -> Vec<i64> {
     return vec![1, 2, 3]
 }
 
+#[dfpp::label(yey_dfpp_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
 fn dp_user_data(user_data: &mut UserData) {
     for i in &mut user_data.data {
         *i = 2;
     }
 }
+
+#[dfpp::label(noinline, return)]
+fn modify_vec(v: &mut [i64]) {
+}
+
+#[dfpp::analyze]
+fn modify_pointer() {
+    let ref mut p = get_user_data();
+    modify_vec(&mut p.data);
+    send_user_data(p);
+}
+
+#[dfpp::label(noinline, return)]
+fn modify_it(x: &mut i32) {}
+
+#[dfpp::analyze]
+fn on_mut_var() {
+    let mut x = source();
+    modify_it(&mut x);
+    receiver(x)
+}
+
+#[dfpp::label(hello, return)]
+fn source() -> i32 {
+    0
+}
+
+struct S {}
+
+#[dfpp::label(noinline, return)]
+fn new_s() -> S { S {} }
+
+impl std::ops::Deref for S {
+    type Target = T;
+    #[dfpp::label(noinline, return)]
+    fn deref(&self) -> &T {
+        unimplemented!()
+    }
+}
+
+struct T {}
+
+#[dfpp::label(noinline, return)]
+fn read_t(t: &T) {
+}
+
+#[dfpp::analyze]
+fn spurious_connections_in_derefs() {
+    let s = new_s();
+    let t : &T = &*s;
+    read_t(t);
+}
+
+
+#[dfpp::label(there, arguments = [0])]
+fn receiver(x: i32) {}
 
 fn dp_user_data_with(user_data: &mut UserData, other_data: &Vec<i64>) {
     for i in 0..user_data.data.len() {

@@ -1,3 +1,4 @@
+//! Ties together the crate and defines command line options.
 #![feature(rustc_private)]
 
 #[macro_use]
@@ -12,6 +13,8 @@ extern crate simple_logger;
 extern crate log;
 
 pub mod rust {
+    //! Exposes the rustc external crates (this mod is just to tidy things up).
+    pub extern crate rustc_arena;
     pub extern crate rustc_ast;
     pub extern crate rustc_borrowck;
     pub extern crate rustc_data_structures;
@@ -39,6 +42,8 @@ use rust::*;
 use flowistry::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
 
+// This import is sort of special because it comes from the private rustc
+// dependencies and not from our `Cargo.toml`.
 pub extern crate either;
 pub use either::Either;
 
@@ -48,22 +53,22 @@ mod ana;
 pub mod ann_parse;
 pub mod dbg;
 pub mod desc;
-pub mod foreign_serializers;
 mod frg;
+pub mod ir;
 mod sah;
+pub mod serializers;
+#[macro_use]
+pub mod utils;
+pub mod consts;
 
-use ana::AttrMatchT;
+pub use utils::outfile_pls;
 
 use frg::ToForge;
 
-macro_rules! sym_vec {
-    ($($e:expr),*) => {
-        vec![$(Symbol::intern($e)),*]
-    };
-}
-
+/// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
 
+/// Top level command line arguments
 #[derive(serde::Serialize, serde::Deserialize, clap::Parser)]
 pub struct Args {
     /// This argument doesn't do anything, but when cargo invokes `cargo-dfpp`
@@ -71,60 +76,88 @@ pub struct Args {
     /// clap it otherwise complains about the superfluous argument.
     _progname: String,
     /// Print additional logging output (up to the "info" level)
-    #[clap(short, long)]
+    #[clap(short, long, env = "DFPP_VERBOSE")]
     verbose: bool,
     /// Print additional logging output (up to the "debug" level)
-    #[clap(long)]
+    #[clap(long, env = "DFPP_DEBUG")]
     debug: bool,
+    /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
+    /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis Control")]
     anactrl: AnalysisCtrl,
+    /// Additional arguments that control debug args specifically
     #[clap(flatten, next_help_heading = "Additional Debugging Output")]
     dbg: DbgArgs,
 }
 
+/// Arguments that control the flow analysis
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct AnalysisCtrl {
-    /// Use the vanilla Flowistry algorithm. Creates the transitive Θ tensor. By
-    /// default we use the augmented Flowistry algorithm that calculates the
-    /// non-transitive Ω tensor.
+    /// Disables all recursive analysis (both dfpps inlining as well as
+    /// Flowistry's recursive analysis)
     #[clap(long, env)]
-    use_transitive_graph: bool,
-    /// Disable shrinking of the location domain for the non-transitive Ω
-    /// tensor. By default the domain will be shrunk to only include function
-    /// calls, arguments to the analyzed controller. Also removes the functions
-    /// from the FUNCTION_BLACKLIST.
+    no_recursive_analysis: bool,
+    /// Make flowistry use a recursive analysis strategy. We turn this off by
+    /// default, because we perform the recursion by ourselves and doing it
+    /// twice has lead to bugs.
     #[clap(long, env)]
-    no_shrink_flow_domains: bool,
+    recursive_flowistry: bool,
+    /// Use
+    /// [`Aliases::reachable_values`](flowistry::mir::aliases::Aliases::reachable_values)
+    /// in the beginning of the
+    /// [`deep_dependencies_of`](ana::deep_dependencies_of) dfs. Disabled by
+    /// default, see also [this notion
+    /// page](https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c)
+    /// for further comment.
+    #[clap(long, env)]
+    use_reachable_values_in_dfs: Option<String>,
 }
 
+impl AnalysisCtrl {
+    fn use_reachable_values_in_dfs(&self) -> Option<mir::Mutability> {
+        self.use_reachable_values_in_dfs.as_ref().map(|s| 
+            match s.to_lowercase().as_str()  {
+                "mut" => mir::Mutability::Mut,
+                "" => mir::Mutability::Not,
+                m => panic!("Unknown mutability specification {m}"),
+            }
+        )
+    }
+}
+
+/// Arguments that control the output of debug information or output to be
+/// consumed for testing.
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct DbgArgs {
     /// Dumps a table representing retrieved Flowistry matrices to stdout.
     #[clap(long, env)]
     dump_flowistry_matrix: bool,
-    /// Dumps a dot graph representation of the dataflow calculated for each controller to <name of controller>.ntg.gv
+    /// Dumps a dot graph representation of the finely granular, inlined flow of each controller.
+    #[clap(long, env)]
+    dump_inlined_function_flow: bool,
+    /// Dumps a dot graph representation of the dataflow calculated for each
+    /// controller to <name of controller>.ntg.gv
     #[clap(long, env)]
     dump_non_transitive_graph: bool,
-    /// For each controller dumps the calculated dataflow graphs as well as information about the MIR to <name of controller>.ntgb.json. Can be deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
+    /// For each controller dumps the calculated dataflow graphs as well as
+    /// information about the MIR to <name of controller>.ntgb.json. Can be
+    /// deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
     #[clap(long, env)]
     dump_serialized_non_transitive_graph: bool,
-    /// Outputs a dot graph for each function that is analyzed. Graphs are
-    /// dumped to <name of function>.mir.gv
+    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json)
+    /// format to "flow-graph.json". Used for testing.
     #[clap(long, env)]
-    dump_analyzed_mir_graph: bool,
+    dump_serialized_flow_graph: bool,
+    /// For each controller dump a dot representation for each [`mir::Body`] as
+    /// provided by rustc
+    #[clap(long, env)]
+    dump_ctrl_mir: bool,
 }
 
 struct Callbacks {
     opts: &'static Args,
-}
-
-lazy_static! {
-    static ref LABEL_MARKER: AttrMatchT = sym_vec!["dfpp", "label"];
-    static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
-    static ref OTYPE_MARKER: AttrMatchT = sym_vec!["dfpp", "output_types"];
-    static ref EXCEPTION_MARKER: AttrMatchT = sym_vec!["dfpp", "exception"];
 }
 
 impl rustc_driver::Callbacks for Callbacks {
@@ -141,8 +174,20 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .take()
-            .enter(|tcx| ana::Visitor::new(tcx, self.opts).run())
+            .enter(|tcx| ana::CollectingVisitor::new(tcx, self.opts).run())
             .unwrap();
+        if self.opts.dbg.dump_serialized_flow_graph {
+            serde_json::to_writer(
+                &mut std::fs::OpenOptions::new()
+                    .truncate(true)
+                    .create(true)
+                    .write(true)
+                    .open(consts::FLOW_GRAPH_OUT_NAME)
+                    .unwrap(),
+                &desc,
+            )
+            .unwrap();
+        }
         info!("All elems walked");
         let mut outf = std::fs::OpenOptions::new()
             .create(true)
@@ -159,12 +204,6 @@ impl rustc_driver::Callbacks for Callbacks {
         );
         rustc_driver::Compilation::Stop
     }
-}
-
-lazy_static! {
-    static ref ARG_SYM: Symbol = Symbol::intern("arguments");
-    static ref RETURN_SYM: Symbol = Symbol::intern("return");
-    static ref VERIFICATION_HASH_SYM: Symbol = Symbol::intern("verification_hash");
 }
 
 impl rustc_plugin::RustcPlugin for DfppPlugin {

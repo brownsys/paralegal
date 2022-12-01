@@ -1,12 +1,22 @@
-/// Nom-based parser-combinators for parsing the token stream in HIR
-/// annotations.
-use crate::rust::*;
-
-use crate::desc::{
-    AnnotationRefinement, AnnotationRefinementKind, ExceptionAnnotation, Identifier,
-    LabelAnnotation, TypeDescriptor,
+//! [`nom`]-based parser-combinators for parsing the token stream in Rust
+//! [`Attribute`](crate::rust::ast::Attribute)s.
+//!
+//! Usually used in a closure handed to
+//! [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract).
+//!
+//! The benefit of using a combinator library such as [`nom`] is not just that
+//! it gives us boundaries for parsers that lets us (re)combine them, but also
+//! that we get features that are annoying to implement (such as backtracking)
+//! for free.
+use crate::{
+    consts,
+    desc::{
+        AnnotationRefinement, AnnotationRefinementKind, ExceptionAnnotation, Identifier,
+        LabelAnnotation, TypeDescriptor,
+    },
+    rust::*,
+    Symbol,
 };
-use crate::Symbol;
 use ast::{token, tokenstream};
 use token::*;
 use tokenstream::*;
@@ -18,6 +28,10 @@ use nom::{
     Parser,
 };
 
+/// Just a newtype-wrapper for `CursorRef` so we can implement traits on it
+/// (specifically [`nom::InputLength`]).
+///
+/// Construct if from a [`TokenStream`] with [`Self::from_stream`].
 #[derive(Clone)]
 pub struct I<'a>(CursorRef<'a>);
 type R<'a, T> = nom::IResult<I<'a>, T>;
@@ -30,6 +44,7 @@ impl<'a> Iterator for I<'a> {
 }
 
 impl<'a> I<'a> {
+    /// Canonical constructor for [`I`]
     pub fn from_stream(s: &'a TokenStream) -> Self {
         I(s.trees())
     }
@@ -59,6 +74,10 @@ impl<'a> nom::InputLength for I<'a> {
         slf.0.len() - slf.1
     }
 }
+
+/// Parse any one token, returning the token.
+///
+/// This is the basic primitive that all other parsers are built from.
 fn one(mut tree: I) -> R<&TokenTree> {
     match tree.next() {
         None => Result::Err(nom::Err::Error(Error::new(
@@ -69,6 +88,11 @@ fn one(mut tree: I) -> R<&TokenTree> {
     }
 }
 
+/// Parse a single token that is not a subtree and return the token.
+///
+/// The difference between this and [`one`] is that this function expects the
+/// token to be a [`TokenTree::Token`] and does not permit
+/// [`TokenTree::Delimited`] subtrees.
 pub fn one_token(i: I) -> R<&Token> {
     nom::combinator::map_res(one, |t| match t {
         TokenTree::Token(t) => Ok(t),
@@ -76,6 +100,13 @@ pub fn one_token(i: I) -> R<&Token> {
     })(i)
 }
 
+/// Parse a [`TokenKind::Literal`] if it has a specific [`LitKind`] and return
+/// the payload of the literal.
+///
+/// This can parse all types of literals since the literal payloads in these
+/// token treed are uniformly represented as strings and need to be parsed to
+/// extract the actual type of the literal. So you will likely want to call
+/// [`str::parse`] on the result.
 pub fn lit<'a, A, F: Fn(&str) -> Result<A, String> + 'a>(
     k: LitKind,
     f: F,
@@ -91,6 +122,7 @@ pub fn lit<'a, A, F: Fn(&str) -> Result<A, String> + 'a>(
     })
 }
 
+/// Parse an integer literal and return the integer.
 pub fn integer(i: I) -> R<u16> {
     lit(LitKind::Integer, |symbol: &str| {
         symbol
@@ -99,6 +131,8 @@ pub fn integer(i: I) -> R<u16> {
     })(i)
 }
 
+/// Parse an identifier. Identifiers in annotations are similar to identifiers
+/// in rust in general, e.g. strings or word character, numbers and underscores.
 pub fn identifier(i: I) -> R<Symbol> {
     nom::combinator::map_res(one_token, |t| match t.ident() {
         Some((rustc_span::symbol::Ident { name, .. }, _)) => Ok(name),
@@ -106,6 +140,7 @@ pub fn identifier(i: I) -> R<Symbol> {
     })(i)
 }
 
+/// Expect the next token to be an identifier with the value `s`
 pub fn assert_identifier<'a>(s: Symbol) -> impl FnMut(I<'a>) -> R<'a, ()> {
     nom::combinator::map_res(
         identifier,
@@ -113,6 +148,9 @@ pub fn assert_identifier<'a>(s: Symbol) -> impl FnMut(I<'a>) -> R<'a, ()> {
     )
 }
 
+/// Parse a [`TokenTree::Delimited`] with the delimiter character `delim`,
+/// applying the subparser `p` to the tokens in between the delimiters and
+/// return the result of the subparser.
 pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>>>(
     mut p: P,
     delim: Delimiter,
@@ -130,6 +168,7 @@ pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>>>(
     }
 }
 
+/// Expect the next token to have the token kind `k`.
 pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
     nom::combinator::map_res(
         one_token,
@@ -137,6 +176,11 @@ pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
     )
 }
 
+/// Parse something dictionnary-like.
+///
+/// Expects the next token to be a braces delimited subtree containing pairs of
+/// `keys` and `values` that are comme separated and where each key and value is
+/// separated with an `=`. E.g. something of the form `{ k1 = v1, k2 = v2, ...}`
 pub fn dict<'a, K, V, P: Parser<I<'a>, K, Error<I<'a>>>, G: Parser<I<'a>, V, Error<I<'a>>>>(
     keys: P,
     values: G,
@@ -150,6 +194,7 @@ pub fn dict<'a, K, V, P: Parser<I<'a>, K, Error<I<'a>>>, G: Parser<I<'a>, V, Err
     )
 }
 
+/// Parse bracket-delimited, comma-separated integers, e.g. `[1,2,3]`.
 pub fn integer_list(i: I) -> R<Vec<u16>> {
     delimited(
         nom::multi::separated_list0(assert_token(TokenKind::Comma), integer),
@@ -157,6 +202,7 @@ pub fn integer_list(i: I) -> R<Vec<u16>> {
     )(i)
 }
 
+/// Parser for the payload of the `#[dfpp::output_type(...)]` annotation.
 pub(crate) fn otype_ann_match(ann: &ast::MacArgs) -> Vec<TypeDescriptor> {
     match ann {
         ast::MacArgs::Delimited(_, _, stream) => {
@@ -174,6 +220,7 @@ pub(crate) fn otype_ann_match(ann: &ast::MacArgs) -> Vec<TypeDescriptor> {
     }
 }
 
+/// Parser for an [`ExceptionAnnotation`]
 pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
     use rustc_ast::*;
     match ann {
@@ -181,7 +228,7 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
             let p = |i| {
                 let (i, verification_hash) = nom::combinator::opt(nom::sequence::preceded(
                     nom::sequence::tuple((
-                        assert_identifier(*crate::VERIFICATION_HASH_SYM),
+                        assert_identifier(*consts::VERIFICATION_HASH_SYM),
                         assert_token(TokenKind::Eq),
                     )),
                     lit(token::LitKind::Str, |s| {
@@ -199,6 +246,11 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
     }
 }
 
+/// A parser for annotation refinements.
+///
+/// Is not guaranteed to consume the entire input if does not match. You may
+/// want to call [`nom::combinator::eof`] afterwards to guarantee all input has
+/// been consumed.
 fn refinements_parser(i: I) -> R<AnnotationRefinement> {
     nom::combinator::map_res(
         // nom::multi::separated_list0(
@@ -206,14 +258,14 @@ fn refinements_parser(i: I) -> R<AnnotationRefinement> {
         nom::branch::alt((
             nom::sequence::preceded(
                 nom::sequence::tuple((
-                    assert_identifier(*crate::ARG_SYM),
+                    assert_identifier(*consts::ARG_SYM),
                     assert_token(TokenKind::Eq),
                 )),
                 nom::combinator::map(integer_list, |il| AnnotationRefinementKind::Argument(il)),
             ),
             nom::combinator::value(
                 AnnotationRefinementKind::Return,
-                assert_identifier(*crate::RETURN_SYM),
+                assert_identifier(*consts::RETURN_SYM),
             ),
         )),
         //),
@@ -226,6 +278,7 @@ fn refinements_parser(i: I) -> R<AnnotationRefinement> {
     )(i)
 }
 
+/// Parser for a [`LabelAnnotation`]
 pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> LabelAnnotation {
     use rustc_ast::*;
     use token::*;

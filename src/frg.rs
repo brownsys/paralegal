@@ -1,3 +1,9 @@
+//! Forge serializers for data structures from [`desc`](crate::desc) based on
+//! the [`pretty`] crate.
+//!
+//! A description of the Forge entities we emit and what they mean can be found
+//! [here](https://www.notion.so/justus-adam/Using-Dataflow-0fb0b2bef50c40b1ba888d623c447e80#2a405f54559741ae9d17ec746a3c14f1)
+
 extern crate pretty;
 
 use crate::{desc::CallSite, HashSet};
@@ -7,6 +13,8 @@ use crate::desc::{
     Annotation, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription, Relation,
 };
 
+/// Extension trait to lay out a sequence of documents with [`DocAllocator::hardline`]s
+/// in between.
 trait DocLines<'a, A = ()>: DocAllocator<'a, A>
 where
     A: 'a,
@@ -29,6 +37,15 @@ where
 {
 }
 
+/// Extension trait to lay out an iterator as a Forge relation.
+///
+/// Each element of the iterator a tuple of iterators `(left, right)` which are
+/// then laid out like `(left.next() + left.next() + ...)->(right.next() +
+/// right.next() + ...)`. And then the rows are laid out with `+` in between.
+///
+/// Importantly this tries to handle cases correctly where the iterators are
+/// empty, in which case it emits `none` and not just empty parentheses (which
+/// would be an error in Forge).
 trait DocFrgRel<'a, A = ()>: DocAllocator<'a, A>
 where
     A: 'a,
@@ -75,6 +92,7 @@ where
 {
 }
 
+/// A serialization trait for Forge.
 pub trait ToForge<'a, A, D>
 where
     A: 'a,
@@ -84,6 +102,8 @@ where
 }
 
 lazy_static! {
+    /// Symbols that are used in forge and therefore cannot be an identifier so
+    /// we have to escape them.
     static ref FORGE_RESERVED_SYMBOLS: HashSet<Identifier> = [
         "expect", "test", "implies", "is", "not", "some", "all", "sig", "pred", "no", "one", "sig",
         "open", "and", "abstract", "extends", "none", "set"
@@ -133,6 +153,8 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a str {
     }
 }
 
+/// Basically a decomposed version of `ToForge` for `DataSink` for the case
+/// where you have its constituent parts but not a `DataSink`.
 fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
     alloc: &'b D,
     function: &'b CallSite,
@@ -147,7 +169,12 @@ fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
-        data_sink_as_forge(alloc, &self.function, self.arg_slot)
+        match self {
+            DataSink::Return => alloc.text("`return"),
+            DataSink::Argument { function, arg_slot } => {
+                data_sink_as_forge(alloc, function, *arg_slot)
+            }
+        }
     }
 }
 
@@ -199,6 +226,9 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSource {
 }
 
 mod name {
+    //! Constants for the names of the Forge entities (`sig`s and relations) we
+    //! emit.
+
     pub const SRC: &'static str = "Src";
     /// Previously "Arg"
     pub const INPUT_ARGUMENT: &'static str = "InputArgument";
@@ -224,7 +254,12 @@ mod name {
     pub const EXCEPTIONS_LABEL: &'static str = "exception";
 
     lazy_static! {
-        /// For now the order here *must* be topological as the code gen does not reorder this automatically
+        /// A description of the preamble of Forge `sig`s we always emit.
+        ///
+        /// These are in topological order, because the code generation just
+        /// iterates over this vector and emits them in the same order as in
+        /// this vector and Forge requires everything (e.g. an inherited `sig`)
+        /// to be defined before being referenced.
         pub static ref SIGS: Vec<(
                 &'static str,
                 bool,
@@ -259,6 +294,7 @@ mod name {
     }
 }
 
+/// Emits `one sig <inner> extends <parent> {}`
 fn make_one_sig<'a, A: Clone + 'a, D: DocAllocator<'a, A>, I: Pretty<'a, D, A>>(
     alloc: &'a D,
     inner: I,
@@ -275,6 +311,8 @@ where
         .append(" {}")
 }
 
+/// Emits `(h[0] + h[1] + ...)` but also handles the empty set correctly (by
+/// emitting `none`).
 fn hash_set_into_forge<'a, A: 'a, D: DocAllocator<'a, A>, T: ToForge<'a, A, D>>(
     h: HashSet<T>,
     alloc: &'a D,
@@ -297,6 +335,7 @@ fn hash_set_into_call_site_forge<'a, A: 'a, D: DocAllocator<'a, A>>(
     }
 }
 
+/// Emit `sig`s for everything in [`name::SIGS`](struct@name::SIGS)
 fn make_forge_sigs<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(alloc: &'a D) -> DocBuilder<'a, D, A>
 where
     D::Doc: Clone,
@@ -329,6 +368,8 @@ where
 }
 
 impl ProgramDescription {
+    /// Returns all labels in this program description, including the special
+    /// [`name::EXCEPTIONS_LABEL`] label.
     fn used_labels(&self) -> HashSet<Identifier> {
         self.annotations
             .values()
@@ -341,6 +382,8 @@ impl ProgramDescription {
             .map(Identifier::new)
             .collect()
     }
+
+    /// Creates a `sig` for every label.
     fn make_label_sigs<'a, A: Clone + 'a, D: DocAllocator<'a, A>>(
         &self,
         alloc: &'a D,
@@ -355,6 +398,7 @@ impl ProgramDescription {
         )
     }
 
+    /// Returns all types mentioned in this program description.
     fn all_types(&self) -> HashSet<&Identifier> {
         self.annotations
             .iter()
@@ -398,10 +442,14 @@ impl ProgramDescription {
                                 self.all_sinks()
                                     .into_iter()
                                     .filter(|s| {
-                                        &s.function.function == id
-                                            && a.refinement
-                                                .on_argument()
-                                                .contains(&(s.arg_slot as u16))
+                                        matches!(
+                                            s,
+                                            DataSink::Argument{function, arg_slot} if
+                                            &function.function == id
+                                                && a.refinement
+                                                    .on_argument()
+                                                    .contains(&(*arg_slot as u16))
+                                        )
                                     })
                                     .map(|s| s.as_forge(alloc)),
                             )
@@ -496,7 +544,7 @@ impl Ctrl {
     {
         alloc.hardline().append(
             alloc
-                .forge_relation(self.types.iter().map(|(i, desc)| {
+                .forge_relation(self.types.0.iter().map(|(i, desc)| {
                     (
                         std::iter::once(data_source_as_forge(i, alloc)),
                         desc.iter().map(|t| t.as_forge(alloc)),

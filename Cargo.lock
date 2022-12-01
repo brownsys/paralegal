@@ -146,14 +146,13 @@ dependencies = [
 
 [[package]]
 name = "dot"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a74b6c4d4a1cff5f454164363c16b72fa12463ca6b31f4b5f2035a65fa3d5906"
+version = "0.1.4-dev"
+source = "git+https://github.com/JustusAdam/dot-rust?rev=ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106#ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106"
 
 [[package]]
 name = "flowistry"
 version = "0.5.24"
-source = "git+https://github.com/brownsys/flowistry?rev=3fdb75449f38c05c0c636e67f6823cf56675f37a#3fdb75449f38c05c0c636e67f6823cf56675f37a"
+source = "git+https://github.com/brownsys/flowistry?rev=1e8e54beccb4720d713cf2baa5b205700f5987d6#1e8e54beccb4720d713cf2baa5b205700f5987d6"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -337,7 +336,7 @@ dependencies = [
 [[package]]
 name = "rustc_plugin"
 version = "0.5.24"
-source = "git+https://github.com/brownsys/flowistry?rev=3fdb75449f38c05c0c636e67f6823cf56675f37a#3fdb75449f38c05c0c636e67f6823cf56675f37a"
+source = "git+https://github.com/brownsys/flowistry?rev=1e8e54beccb4720d713cf2baa5b205700f5987d6#1e8e54beccb4720d713cf2baa5b205700f5987d6"
 dependencies = [
  "cargo_metadata",
  "log",

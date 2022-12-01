@@ -1,11 +1,12 @@
-/// Semantics aware hashing for MIR slices.
+//! Semantics aware hashing for MIR slices.
+//!
+//! There are several weaknesses with this at the moment so it is actually not
+//! used at the moment.
 extern crate either;
 
 use either::Either;
 
-use crate::desc::*;
-use crate::rust::*;
-use crate::{HashMap, HashSet};
+use crate::{consts, desc::*, rust::*, HashMap, HashSet};
 use rustc_middle::ty::{self, TyCtxt};
 use std::cell::RefCell;
 
@@ -31,6 +32,7 @@ impl HashVerifications {
         r
     }
 
+    #[allow(dead_code)]
     pub fn handle<'tcx>(
         &mut self,
         ann: &ExceptionAnnotation,
@@ -48,27 +50,8 @@ impl HashVerifications {
             }
         } else {
             self.0 += 1;
-            error!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `{} = \"{hash:032x}\"` into the annotation.", crate::VERIFICATION_HASH_SYM.as_str());
+            error!("Exception annotation is missing a verification hash. Please submit this code for review and once approved add `{} = \"{hash:032x}\"` into the annotation.", consts::VERIFICATION_HASH_SYM.as_str());
         }
-    }
-}
-
-/// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
-/// object via the `visit::MutVisitor` trait. Crucial difference to
-/// `PlaceVisitor` is that this function can alter the place itself.
-struct RePlacer<'tcx, F>(TyCtxt<'tcx>, F);
-
-impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for RePlacer<'tcx, F> {
-    fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
-        self.0
-    }
-    fn visit_place(
-        &mut self,
-        place: &mut mir::Place<'tcx>,
-        _context: mir::visit::PlaceContext,
-        _location: mir::Location,
-    ) {
-        self.1(place)
     }
 }
 
@@ -430,6 +413,7 @@ mod graphviz_out {
 
 pub type Matrix<'tcx> = flowistry::infoflow::FlowDomainMatrix<'tcx>;
 
+#[allow(dead_code)]
 pub fn compute_verification_hash_for_stmt_2<'tcx>(
     tcx: TyCtxt<'tcx>,
     t: &mir::Terminator<'tcx>,
@@ -444,11 +428,11 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
         .while_hashing_spans(false, |hctx| {
             use mir::visit::MutVisitor;
             let mut loc_set = HashSet::<mir::Location>::new();
-            crate::ana::PlaceVisitor(|pl: &mir::Place<'tcx>| {
+            crate::utils::PlaceVisitor(|pl: &mir::Place<'tcx>| {
                 loc_set.extend(
                     matrix
                         .row(*pl)
-                        .filter(|l| crate::ana::is_real_location(body, **l)),
+                        .filter(|l| crate::utils::is_real_location(body, **l)),
                 );
             })
             .visit_terminator(t, loc);
