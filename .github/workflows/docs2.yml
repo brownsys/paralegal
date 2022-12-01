@@ -1,6 +1,14 @@
 
 name: Documentation
-
+inputs:
+  path:
+    description: "Path of the directory containing the static assets."
+    required: true
+    default: "_site/"
+  retention-days:
+    description: "Duration after which artifact will expire in days."
+    required: false
+    default: "1"
 on:
   push:
     branches: [ "main" ]
@@ -19,9 +27,32 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build
       run: cargo doc --document-private-items
-    - name: Zip
-      run: cd target/doc && tar -zcf github-pages * && mv github-pages ../..
-    - uses: actions/upload-pages-artifact@main
+    - name: Massage path
+      run: mv target/doc "$INPUT_PATH"
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+    
+    - name: Archive artifact
+      shell: sh
+      run: |
+        chmod -c -R +r . | while read line; do
+          echo "::warning title=Changed permissions on a file::$line"
+        done
+        tar \
+          --dereference --hard-dereference \
+          --directory "$INPUT_PATH" \
+          -zcvf "$RUNNER_TEMP/artifact.tar.gz" \
+          --exclude=.git \
+          --exclude=.github \
+          .
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+    - name: Upload artifact
+      uses: actions/upload-artifact@main
+      with:
+        name: github-pages
+        path: ${{ runner.temp }}/artifact.tar.gz
+        retention-days: ${{ inputs.retention-days }}
     - uses: actions/deploy-pages@v1
     
       
