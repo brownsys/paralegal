@@ -21,6 +21,6 @@ jobs:
     - name: Zip
       run: cd target/doc && tar -zcf github-pages * && mv github-pages ../..
     - uses: actions/upload-pages-artifact@main
-    - uses: actions/deploy-pages@1
+    - uses: actions/deploy-pages@v1
     
       
