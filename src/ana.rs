@@ -466,25 +466,51 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
 use ty::RegionVid;
 
-struct ComputeCallObligations<'tcx>{
+struct ComputeCallObligations<'tcx, 'a>{
     tcx: TyCtxt<'tcx>,
+    body: &'a mir::Body<'tcx>,
     result: HashSet<(RegionVid, RegionVid)>,
 }
 
-impl <'tcx> mir::visit::Visitor<'tcx> for ComputeCallObligations<'tcx> {
+struct RegionCollector {
+    result: HashSet<RegionVid>,
+}
+
+impl <'tcx> ty::fold::TypeVisitor<'tcx> for RegionCollector {
+    fn visit_region(&mut self, r: ty::Region<'tcx>) -> std::ops::ControlFlow<Self::BreakTy> {
+        if let RegionKind::ReVar(v) = r.kind() {
+            self.result.insert(v);
+        }
+        std::ops::ControlFlow::Continue(())
+    }
+}
+
+impl <'tcx, 'a> mir::visit::Visitor<'tcx> for ComputeCallObligations<'tcx, 'a> {
     fn visit_terminator(&mut self,terminator: &Terminator<'tcx>,location:Location) {
-        if let Ok((did, _, _)) = terminator.as_fn_and_args() {
-            let predicates = self.tcx.item_bounds(did);
-            for predicate in predicates.iter() {
-                if let PredicateKind::RegionOutlives(OutlivesPredicate(r1, r2)) = predicate.kind().skip_binder() {
-                    if let (RegionKind::ReVar(v1), RegionKind::ReVar(v2)) = (r1.kind(), r2.kind()) {
-                        self.result.insert((v1, v2));
-                    }
+        if let TerminatorKind::Call { args, destination,.. } = &terminator.kind {
+            let mut collector = RegionCollector{ result: HashSet::new() };
+            for p in destination.as_ref().into_iter().map(|p| p.0).chain(args.iter().filter_map(mir::Operand::place)) {
+                <RegionCollector as ty::fold::TypeVisitor>::visit_ty(&mut collector, p.ty(self.body, self.tcx).ty);
+            }
+            let as_vec = collector.result.into_iter().collect::<Vec<_>>();
+            for i in 0..as_vec.len() {
+                for j in 0..i {
+                    self.result.insert((as_vec[i], as_vec[j]));
+                    self.result.insert((as_vec[j], as_vec[i]));
                 }
             }
         }
-
         self.super_terminator(terminator, location)
+    }
+
+    fn visit_place(&mut self,place: &Place<'tcx>,context:mir::visit::PlaceContext,location:Location) {
+        let mut collector = RegionCollector{ result: HashSet::new() };
+        <RegionCollector as ty::fold::TypeVisitor>::visit_ty(&mut collector, place.ty(self.body, self.tcx).ty);
+        let set = collector.result;
+        if !set.is_empty() {
+            debug!("{place:?} contains regions {set:?}");
+        }
+        self.super_place(place, context, location)
     }
 }
 
@@ -492,11 +518,19 @@ impl <'tcx> mir::visit::Visitor<'tcx> for ComputeCallObligations<'tcx> {
 fn compute_constraint_selector<'tcx, 'a>(tcx: TyCtxt<'tcx>, body: &'a mir::Body<'tcx>) -> impl Fn(RegionVid, RegionVid) -> bool + 'tcx + 'a {
     let mut vis = ComputeCallObligations {
         result: HashSet::new(),
+        body,
         tcx
     };
     <ComputeCallObligations as mir::visit::Visitor>::visit_body(&mut vis, body);
     let set = vis.result;
-    move |r1, r2| !set.contains(&(r1, r2))
+    debug!("Found region obligations {:?}", set);
+    move |r1, r2| {
+        let allow = !set.contains(&(r1, r2));
+        if !allow {
+            debug!("Eliminating entailment {:?} -> {:?}", r1, r2);
+        } 
+        allow
+    }
 }
 
 /// Perform a depth-first search up the dependency tree formed from looking up
