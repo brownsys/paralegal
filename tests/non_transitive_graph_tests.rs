@@ -115,12 +115,12 @@ fn loop_retains_dependency() {
     let dp = graph.function_call("dp_user_data");
     let modify_other = graph.function_call("modify_other_data");
     let send = graph.function_call("send_user_data");
-    assert!(graph.connects(get, dp));
-    assert!(graph.connects(get_other, dp));
-    assert!(graph.connects(modify_other, dp));
-    assert!(graph.connects(dp, send));
-    assert!(graph.connects(modify_other, send));
-    assert!(graph.connects_direct(get, send));
+    assert!(graph.connects(&get, &dp));
+    assert!(graph.connects(&get_other, &dp));
+    assert!(graph.connects(&modify_other, &dp));
+    assert!(graph.connects(&dp, &send));
+    assert!(graph.connects(&modify_other, &send));
+    assert!(graph.connects_direct(&get, &send));
 }
 
 #[allow(dead_code)]
