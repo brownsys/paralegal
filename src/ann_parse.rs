@@ -8,13 +8,15 @@
 //! it gives us boundaries for parsers that lets us (re)combine them, but also
 //! that we get features that are annoying to implement (such as backtracking)
 //! for free.
-use crate::rust::*;
-
-use crate::desc::{
-    AnnotationRefinement, AnnotationRefinementKind, ExceptionAnnotation, Identifier,
-    LabelAnnotation, TypeDescriptor,
+use crate::{
+    consts,
+    desc::{
+        AnnotationRefinement, AnnotationRefinementKind, ExceptionAnnotation, Identifier,
+        LabelAnnotation, TypeDescriptor,
+    },
+    rust::*,
+    Symbol,
 };
-use crate::Symbol;
 use ast::{token, tokenstream};
 use token::*;
 use tokenstream::*;
@@ -226,7 +228,7 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
             let p = |i| {
                 let (i, verification_hash) = nom::combinator::opt(nom::sequence::preceded(
                     nom::sequence::tuple((
-                        assert_identifier(*crate::VERIFICATION_HASH_SYM),
+                        assert_identifier(*consts::VERIFICATION_HASH_SYM),
                         assert_token(TokenKind::Eq),
                     )),
                     lit(token::LitKind::Str, |s| {
@@ -256,14 +258,14 @@ fn refinements_parser(i: I) -> R<AnnotationRefinement> {
         nom::branch::alt((
             nom::sequence::preceded(
                 nom::sequence::tuple((
-                    assert_identifier(*crate::ARG_SYM),
+                    assert_identifier(*consts::ARG_SYM),
                     assert_token(TokenKind::Eq),
                 )),
                 nom::combinator::map(integer_list, |il| AnnotationRefinementKind::Argument(il)),
             ),
             nom::combinator::value(
                 AnnotationRefinementKind::Return,
-                assert_identifier(*crate::RETURN_SYM),
+                assert_identifier(*consts::RETURN_SYM),
             ),
         )),
         //),

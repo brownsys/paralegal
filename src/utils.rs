@@ -471,3 +471,13 @@ impl<'tcx, F: FnMut(&mut mir::Place<'tcx>)> mir::visit::MutVisitor<'tcx> for ReP
         self.1(place)
     }
 }
+
+/// Conveniently create a vector of [`Symbol`]s. This way you can just write
+/// `sym_vec!["s1", "s2", ...]` and this macro will make sure to call
+/// [`Symbol::intern`]
+#[macro_export]
+macro_rules! sym_vec {
+    ($($e:expr),*) => {
+        vec![$(Symbol::intern($e)),*]
+    };
+}

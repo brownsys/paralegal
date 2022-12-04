@@ -76,6 +76,7 @@ fn produce_string() -> String {
 
 #[dfpp::analyze]
 fn field_sensitivity() {
+    let distraction = 4;
     let mut s = S {
         usize_field: 0,
         string_field: produce_string(),
@@ -83,6 +84,7 @@ fn field_sensitivity() {
     modify_a_field(&mut s);
     read_usize(s.usize_field);
     read_string(s.string_field);
+    read_usize(distraction);
 }
 
 fn main() {}

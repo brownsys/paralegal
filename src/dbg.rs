@@ -11,13 +11,13 @@
 use flowistry::indexed::IndexedDomain;
 
 use crate::{
-    ana::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation},
+    ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
     rust::{
         mir::{self, Place},
         TyCtxt,
     },
     utils::{self, is_real_location},
-    HashMap, HashSet, IsGlobalLocation,
+    HashMap, HashSet,
 };
 extern crate dot;
 
@@ -68,13 +68,13 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 
 pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
-    use std::{collections::HashSet, hash::Hash};
+    use std::collections::HashSet;
 
     use crate::{
-        ana::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
-        rust::mir::{Statement, StatementKind, TerminatorKind},
-        rust::ty::TyCtxt,
-        utils::{places_read, read_places_with_provenance, AsFnAndArgs, TyCtxtExt},
+        ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
+        rust::mir::{Statement, StatementKind},
+        rust::TyCtxt,
+        utils::{is_real_location, read_places_with_provenance, AsFnAndArgs, TyCtxtExt},
         Either,
     };
 
@@ -121,12 +121,21 @@ pub mod call_only_flow_dot {
                 .iter()
                 .flat_map(|(&to, deps)| {
                     let (loc, body) = to.innermost_location_and_body();
-                    read_places_with_provenance(
-                        loc,
-                        &self.tcx.body_for_body_id(body).body.stmt_at(loc),
-                        self.tcx,
-                    )
-                    .flat_map(|p| deps.get(&p).into_iter().flat_map(|s| s.iter().cloned()))
+                    let body_with_facts = self.tcx.body_for_body_id(body);
+                    if is_real_location(&body_with_facts.body, loc) {
+                        Some(
+                            read_places_with_provenance(
+                                loc,
+                                &body_with_facts.body.stmt_at(loc),
+                                self.tcx,
+                            )
+                            .flat_map(|p| deps.resolve(p).1),
+                        )
+                    } else {
+                        None
+                    }
+                    .into_iter()
+                    .flatten()
                     .map(move |from| E {
                         from,
                         to,
@@ -286,7 +295,7 @@ pub mod call_only_flow_dot {
                             write!(to, "{:?}", assign.1)?;
                             // Chop off the type information (if it exists),
                             // because it makes the dot label invalid
-                            if let Some(idx) = to.find(':') {
+                            if let Some(idx) = to.find([':', '{']) {
                                 to.truncate(idx);
                             }
                             write!(s, "<ret>{:?} = {:?}", assign.0, to)?;
@@ -311,6 +320,12 @@ pub mod call_only_flow_dot {
     }
 
     /// Write a dot representation for this `graph` to `out`.
+    ///
+    /// You can use this function on [`CallOnlyFlow`] or [`GlobalFlowGraph`].
+    ///
+    /// **Caveat**: the rendering for [`GlobalFlowGraph`] is currently broken,
+    /// as it does not show the links into inlined function correctly at the
+    /// call site.
     pub fn dump<'tcx, 'g, W: std::io::Write, Flow, N: Clone, E: Clone>(
         tcx: TyCtxt<'tcx>,
         graph: &'g Flow,
@@ -372,12 +387,9 @@ impl<'g> std::fmt::Display for GlobalLocation<'g> {
     }
 }
 
-/// A [`crate::ana::GlobalDepMatrix`] that can be `Display`ed with
+/// A [`crate::ir::GlobalDepMatrix`] that can be `Display`ed with
 /// an indent.
-pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(
-    &'a crate::ana::GlobalDepMatrix<'tcx, 'g>,
-    usize,
-);
+pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(&'a crate::ir::GlobalDepMatrix<'tcx, 'g>, usize);
 
 impl<'a, 'g, 'tcx> PrintableDependencyMatrix<'a, 'g, 'tcx> {
     pub fn new(map: &'a HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>, indent: usize) -> Self {
@@ -391,8 +403,8 @@ impl<'a, 'g, 'tcx> std::fmt::Display for PrintableDependencyMatrix<'a, 'g, 'tcx>
     }
 }
 
-/// Helper function for the `Display` implementation on
-/// [`PrintableDependencyMatrix`](./struct.PrintableDependencyMatrix.html)
+/// Helper function for the [`std::fmt::Display`] implementation on
+/// [`PrintableDependencyMatrix`]
 pub fn format_dependency_matrix<
     'tcx,
     'g,
@@ -405,10 +417,9 @@ pub fn format_dependency_matrix<
     for (place, read, deps) in it {
         write!(
             f,
-            "{:indent$}{}{:?} -> ",
-            "",
+            "{:>indent$}{:15} -> ",
             if read { "> " } else { "" },
-            place
+            format!("{place:?}")
         )?;
         let mut is_first = true;
         write!(f, "{{")?;
@@ -416,7 +427,7 @@ pub fn format_dependency_matrix<
             if !is_first {
                 write!(f, ", ")?;
             } else {
-                is_first = true;
+                is_first = false;
             }
             write!(f, "{dep}")?;
         }
@@ -427,7 +438,10 @@ pub fn format_dependency_matrix<
 
 impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (loc, deps) in self.flow.location_states.iter() {
+        let mut locs = self.flow.location_states.keys().collect::<Vec<_>>();
+        locs.sort();
+        for loc in locs {
+            let deps = &self.flow.location_states[loc];
             write!(f, "  {}", loc)?;
             let (inner_location, inner_body) = loc.innermost_location_and_body();
             let body = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
@@ -437,8 +451,10 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
             let places_read = if !is_real_location(&body.body, inner_location) {
                 write!(f, " is argument {}", inner_location.statement_index - 1)?;
                 HashSet::new()
+            } else if deps.is_translated() {
+                HashSet::new()
             } else {
-                utils::places_read(inner_location, &body.body.stmt_at(inner_location)).collect()
+                utils::read_places_with_provenance(inner_location, &body.body.stmt_at(inner_location), self.tcx).collect()
             };
             writeln!(f, "")?;
             let empty_set = HashSet::new();
@@ -447,14 +463,30 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                 places_read
                     .iter()
                     .cloned()
-                    .map(|p| (p, true, deps.get(&p).unwrap_or(&empty_set)))
-                    .chain(
-                        deps.iter()
-                            .filter(|k| !places_read.contains(k.0))
-                            .map(|(p, deps)| (*p, false, deps)),
-                    ),
-                4,
+                    .map(|p| (p, true, deps.resolve_set(p).unwrap_or(&empty_set)))
+                    .chain({
+                        let mut keys = deps
+                            .matrix_raw()
+                            .keys()
+                            .cloned()
+                            .filter(|k| !places_read.contains(k))
+                            .collect::<Vec<_>>();
+                        keys.sort_by_key(|p| p.local);
+                        keys.into_iter().map(|k| (k, false, &deps.matrix_raw()[&k]))
+                    }),
+                6,
             )?;
+            if let Some(m) = deps.translator() {
+                writeln!(f, "    Also translates places as")?;
+                for (k, v) in m.iter() {
+                    writeln!(
+                        f,
+                        "      {:15} -> {:15}",
+                        format!("{k:?}"),
+                        format!("{v:?}")
+                    )?;
+                }
+            }
         }
         Ok(())
     }

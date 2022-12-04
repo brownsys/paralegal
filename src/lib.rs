@@ -1,4 +1,8 @@
 //! Ties together the crate and defines command line options.
+//! 
+//! While this is technically a "library", it only is so for the purposes of
+//! being able to reference the same code in the two executables `dfpp` and
+//! `cargo-dfpp` (a structure suggested by [rustc_plugin]).
 #![feature(rustc_private)]
 
 #[macro_use]
@@ -54,25 +58,16 @@ pub mod ann_parse;
 pub mod dbg;
 pub mod desc;
 mod frg;
+pub mod ir;
 mod sah;
 pub mod serializers;
+#[macro_use]
 pub mod utils;
+pub mod consts;
 
-use ana::AttrMatchT;
-
-pub use ana::IsGlobalLocation;
 pub use utils::outfile_pls;
 
 use frg::ToForge;
-
-/// Conveniently create a vector of [`Symbol`]s. This way you can just write
-/// `sym_vec!["s1", "s2", ...]` and this macro will make sure to call
-/// [`Symbol::intern`]
-macro_rules! sym_vec {
-    ($($e:expr),*) => {
-        vec![$(Symbol::intern($e)),*]
-    };
-}
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -111,6 +106,32 @@ struct AnalysisCtrl {
     /// Outputs control dependencies separately in Forge
     #[clap(long, env)]
     separate_control_deps: bool,
+    /// Make flowistry use a recursive analysis strategy. We turn this off by
+    /// default, because we perform the recursion by ourselves and doing it
+    /// twice has lead to bugs.
+    #[clap(long, env)]
+    recursive_flowistry: bool,
+    /// Use
+    /// [`Aliases::reachable_values`](flowistry::mir::aliases::Aliases::reachable_values)
+    /// in the beginning of the
+    /// [`deep_dependencies_of`](ana::deep_dependencies_of) dfs. Disabled by
+    /// default, see also [this notion
+    /// page](https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c)
+    /// for further comment.
+    #[clap(long, env)]
+    use_reachable_values_in_dfs: Option<String>,
+}
+
+impl AnalysisCtrl {
+    fn use_reachable_values_in_dfs(&self) -> Option<mir::Mutability> {
+        self.use_reachable_values_in_dfs.as_ref().map(|s| 
+            match s.to_lowercase().as_str()  {
+                "mut" => mir::Mutability::Mut,
+                "" => mir::Mutability::Not,
+                m => panic!("Unknown mutability specification {m}"),
+            }
+        )
+    }
 }
 
 /// Arguments that control the output of debug information or output to be
@@ -142,27 +163,8 @@ struct DbgArgs {
     dump_ctrl_mir: bool,
 }
 
-/// Name of the file used for emitting the JSON serialized
-/// [`desc::ProgramDescription`].
-pub const FLOW_GRAPH_OUT_NAME: &'static str = "flow-graph.json";
-
 struct Callbacks {
     opts: &'static Args,
-}
-
-lazy_static! {
-    /// This will match the annotation `#[dfpp::label(...)]` when using
-    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
-    static ref LABEL_MARKER: AttrMatchT = sym_vec!["dfpp", "label"];
-    /// This will match the annotation `#[dfpp::analyze]` when using
-    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
-    static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
-    /// This will match the annotation `#[dfpp::output_types(...)]` when using
-    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
-    static ref OTYPE_MARKER: AttrMatchT = sym_vec!["dfpp", "output_types"];
-    /// This will match the annotation `#[dfpp::exception(...)]` when using
-    /// [`MetaItemMatch::match_extract`](utils::MetaItemMatch::match_extract)
-    static ref EXCEPTION_MARKER: AttrMatchT = sym_vec!["dfpp", "exception"];
 }
 
 impl rustc_driver::Callbacks for Callbacks {
@@ -187,7 +189,7 @@ impl rustc_driver::Callbacks for Callbacks {
                     .truncate(true)
                     .create(true)
                     .write(true)
-                    .open(FLOW_GRAPH_OUT_NAME)
+                    .open(consts::FLOW_GRAPH_OUT_NAME)
                     .unwrap(),
                 &desc,
             )
@@ -209,18 +211,6 @@ impl rustc_driver::Callbacks for Callbacks {
         );
         rustc_driver::Compilation::Stop
     }
-}
-
-lazy_static! {
-    /// The symbol `arguments` which we use for refinement in a `#[dfpp::label(...)]`
-    /// annotation.
-    static ref ARG_SYM: Symbol = Symbol::intern("arguments");
-    /// The symbol `return` which we use for refinement in a `#[dfpp::label(...)]`
-    /// annotation.
-    static ref RETURN_SYM: Symbol = Symbol::intern("return");
-    /// The symbol `verification_hash` which we use for refinement in a
-    /// `#[dfpp::exception(...)]` annotation.
-    static ref VERIFICATION_HASH_SYM: Symbol = Symbol::intern("verification_hash");
 }
 
 impl rustc_plugin::RustcPlugin for DfppPlugin {
@@ -256,7 +246,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         };
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
-            .with_module_level("flowistry", log::LevelFilter::Error)
+            .with_module_level("flowistry", log::LevelFilter::Warn)
             .init()
             .unwrap();
         let opts = Box::leak(Box::new(plugin_args));

@@ -4,8 +4,9 @@ extern crate rustc_middle;
 extern crate rustc_span;
 use dfpp::{
     desc::{DataSink, Identifier, ProgramDescription},
+    ir::IsGlobalLocation,
     serializers::{Bodies, RawGlobalLocation},
-    HashMap, HashSet, IsGlobalLocation, Symbol,
+    HashMap, HashSet, Symbol,
 };
 use hir::BodyId;
 use rustc_middle::mir;
@@ -232,7 +233,7 @@ impl PreFrg {
         use_rustc(|| {
             Self(
                 serde_json::from_reader(
-                    &mut std::fs::File::open(format!("{dir}/{}", dfpp::FLOW_GRAPH_OUT_NAME))
+                    &mut std::fs::File::open(format!("{dir}/{}", dfpp::consts::FLOW_GRAPH_OUT_NAME))
                         .unwrap(),
                 )
                 .unwrap(),

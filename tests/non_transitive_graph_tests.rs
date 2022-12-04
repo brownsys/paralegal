@@ -102,6 +102,27 @@ fn loops() {
     assert!(graph.connects_direct(&get, &send));
 }
 
+#[test]
+fn loop_retains_dependency() {
+    assert!(*TEST_CRATE_ANALYZED);
+    let graph = do_in_crate_dir(|| {
+        G::from_file(Symbol::intern("loop_retains_dependency"))
+    })
+    .unwrap();
+
+    let get = graph.function_call("get_user_data");
+    let get_other = graph.function_call("get_other_data");
+    let dp = graph.function_call("dp_user_data");
+    let modify_other = graph.function_call("modify_other_data");
+    let send = graph.function_call("send_user_data");
+    assert!(graph.connects(get, dp));
+    assert!(graph.connects(get_other, dp));
+    assert!(graph.connects(modify_other, dp));
+    assert!(graph.connects(dp, send));
+    assert!(graph.connects(modify_other, send));
+    assert!(graph.connects_direct(get, send));
+}
+
 #[allow(dead_code)]
 fn arguments() {
     assert!(*TEST_CRATE_ANALYZED);
@@ -142,4 +163,18 @@ fn on_mut_var() {
 
     assert!(graph.connects(&source, &modify));
     assert!(graph.connects(&modify, &receive));
+}
+
+#[test]
+fn spurious_connections_in_deref() {
+    assert!(*TEST_CRATE_ANALYZED);
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("spurious_connections_in_derefs"))).unwrap();
+
+    let ref source = graph.function_call("new_s");
+    let ref modify = graph.function_call("deref");
+    let ref receive = graph.function_call("read_t");
+    assert!(graph.connects_direct(source, modify));
+    assert!(graph.connects_direct(modify, receive));
+    assert!(!graph.connects_direct(source, receive));
+    assert!(graph.connects(source, receive));
 }

@@ -1,0 +1,55 @@
+
+name: Documentation
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo doc --document-private-items
+    
+    - name: Archive artifact
+      shell: sh
+      run: |
+        cd target/doc
+        chmod -c -R +r . | while read line; do
+          echo "::warning title=Changed permissions on a file::$line"
+        done
+        tar \
+          --dereference --hard-dereference \
+          -zcvf "$RUNNER_TEMP/artifact.tar.gz" \
+          --exclude=.git \
+          --exclude=.github \
+          .
+    - name: Upload artifact
+      uses: actions/upload-artifact@main
+      with:
+        name: github-pages
+        path: ${{ runner.temp }}/artifact.tar.gz
+        retention-days: 1
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      pages: write      # to deploy to Pages
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Deploy 
+      id: deployment
+      uses: actions/deploy-pages@v1
+    
+      
