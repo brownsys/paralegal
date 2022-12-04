@@ -1017,6 +1017,15 @@ impl InlineSelector for SkipAnnotatedFunctionSelector {
 /// read-only.
 type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 
+/// Error information that comes from the SAT solver
+/// 
+/// This may not necessarily be provided if DFPP is being called to do the initial analysis
+struct ErrorInfo {
+    pred: String, 
+    source: String, 
+    sink: String
+}
+
 /// This visitor traverses the items in the analyzed crate to discover
 /// annotations and analysis targets and store them in this struct. After the
 /// discovery phase [`Self::analyze`] is used to drive the
@@ -1047,6 +1056,19 @@ impl<'tcx> CollectingVisitor<'tcx> {
             marked_objects: Rc::new(RefCell::new(HashMap::new())),
             marked_stmts: HashMap::new(),
             functions_to_analyze: vec![],
+        }
+    }
+
+    fn get_error_information(&self) -> Option<ErrorInfo> {
+        if self.opts.error {
+            Some(
+                ErrorInfo { 
+                    pred: self.opts.pred.clone().unwrap(), 
+                    source: self.opts.source.clone().unwrap(), 
+                    sink: self.opts.sink.clone().unwrap() }
+            )
+        } else {
+            None
         }
     }
 
@@ -1134,6 +1156,11 @@ impl<'tcx> CollectingVisitor<'tcx> {
             )
             .unwrap()
         }
+
+        debug!("Checking whether DFPP is doing an error-message pass");
+        if let Some(em) = self.get_error_information() {
+            
+        }        
 
         debug!("Handling target {}", id.name);
         let flow = Flow::compute(

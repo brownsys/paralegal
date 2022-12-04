@@ -90,7 +90,19 @@ pub struct Args {
     /// Additional arguments that control debug args specifically
     #[clap(flatten, next_help_heading = "Additional Debugging Output")]
     dbg: DbgArgs,
+    /// Command line flag that specifies whether DFPP is going to perform analysis on the
+    /// annotated code, or whether it takes in the error information coming from Forge and prints
+    /// that instead.
+    #[clap(short, long)]
+    error: bool, 
+    /// Name of the predicate that failed
+    pred: Option<String>, 
+    /// Name of the source of the violating edge
+    source: Option<String>, 
+    /// Name of the sink of the violating edge
+    sink: Option<String>
 }
+
 
 /// Arguments that control the flow analysis
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
