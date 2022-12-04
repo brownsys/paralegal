@@ -441,8 +441,16 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
                 // Gets the `Aliases` struct for `inner_body` that flowistry has computed for us earlier.
                 let ref aliases = flow_analysis.aliases;
-                let deep_deps_for =
-                    |p: mir::Place<'tcx>| deep_dependencies_of(tcx, aliases, *loc, g, p);
+                let deep_deps_for = |p: mir::Place<'tcx>| {
+                    deep_dependencies_of(
+                        tcx,
+                        aliases,
+                        *loc,
+                        g,
+                        p,
+                        self.analysis_opts.use_reachable_values_in_dfs(),
+                    )
+                };
 
                 let ref controlled_by = flow_analysis
                     .control_dependencies
