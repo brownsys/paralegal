@@ -87,6 +87,14 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
         .success()
 }
 
+pub fn run_forge(file: &str) -> bool {
+	std::process::Command::new("racket")
+		.arg(file)
+		.status()
+		.unwrap()
+		.success()
+}
+
 use dfpp::serializers::SerializableCallOnlyFlow;
 
 pub struct G {
