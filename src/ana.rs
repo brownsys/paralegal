@@ -24,7 +24,7 @@
 use std::{
     borrow::{Borrow, Cow},
     cell::RefCell,
-    rc::Rc,
+    rc::Rc, fs::read,
 };
 
 use crate::{
@@ -40,7 +40,7 @@ use hir::{
 };
 use mir::{Location, Place, Terminator, TerminatorKind};
 use rustc_hir::def_id::LocalDefId;
-use rustc_middle::hir::nested_filter::OnlyBodies;
+use rustc_middle::{hir::nested_filter::OnlyBodies, mir::BasicBlock};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use flowistry::{
@@ -1022,8 +1022,56 @@ type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 /// This may not necessarily be provided if DFPP is being called to do the initial analysis
 struct ErrorInfo {
     pred: String, 
+    ctrl: String,
     source: String, 
     sink: String
+}
+
+impl ErrorInfo {
+
+    fn parse_location(s: &String) -> Location {
+        let chars = s.chars().into_iter().rev();
+        let index_num = 0;
+        let index_power = 1;
+        let block_num = 0;
+        let block_power = 1;
+        let working_on_index = true; // true means we're working on the index, false means we're working on the block
+
+        loop {
+            match chars.next() {
+                Some(c) if c == '_' => {
+                    working_on_index = false;
+                }, 
+                Some(c) if c.is_numeric() => {
+                    if working_on_index {
+                        index_num = index_num + (c.to_digit(10).unwrap() * index_power);
+                        index_power = index_power * 10;
+                    } else {
+                        block_num = block_num + (c.to_digit(10).unwrap() * block_power);
+                        block_power = block_power * 10;  
+                    }
+                }, 
+                Some(c) if c == 'b' => {
+                    break;
+                }, 
+                Some(c) => {},
+                None => panic!()
+            }
+        }
+
+        Location {
+            block: BasicBlock { private: block_num }, 
+            statement_index: index_num.try_into().unwrap()
+        }
+    }
+
+    pub fn source_location(&self) -> Location {
+        Self::parse_location(&self.source)
+    }
+
+    pub fn sink_location(&self) -> Location {
+        Self::parse_location(&self.sink)
+    }
 }
 
 /// This visitor traverses the items in the analyzed crate to discover
@@ -1064,6 +1112,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             Some(
                 ErrorInfo { 
                     pred: self.opts.pred.clone().unwrap(), 
+                    ctrl: self.opts.ctrl.clone().unwrap(),
                     source: self.opts.source.clone().unwrap(), 
                     sink: self.opts.sink.clone().unwrap() }
             )
@@ -1159,7 +1208,33 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
         debug!("Checking whether DFPP is doing an error-message pass");
         if let Some(em) = self.get_error_information() {
+            let transitive_flow_matrix = flowistry::infoflow::compute_flow(
+                tcx, b, controller_body_with_facts);
+
+            let source_location = em.source_location();
+            let sink_location = em.sink_location();
+
+            let source_dependencies = transitive_flow_matrix.state_at(source_location);
+            let sink_dependencies = transitive_flow_matrix.state_at(sink_location);
+
+            if is_real_location(&controller_body_with_facts.body, source_location) {
+                let source_places = read_places_with_provenance(
+                    source_location, 
+                    &controller_body_with_facts.body.stmt_at(source_location), 
+                    tcx);
+                
+                let source_dependencies_vec = source_places
+                    .map(|place| {
+                        source_dependencies.row(place).indices()
+                    });
             
+                source_dependencies_vec.map(|is| {
+                        for is_elt in is.indices() {
+                            acc.push(is_elt.clone());
+                        }
+                        acc
+                    });
+            }
         }        
 
         debug!("Handling target {}", id.name);
