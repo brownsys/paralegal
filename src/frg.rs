@@ -287,6 +287,7 @@ mod name {
                         None,
                         vec![
                             (FLOW, set(&arr(SRC, CALL_ARGUMENT))),
+							(CTRL_FLOW, set(&arr(SRC, CALL_ARGUMENT))),
                             (TYPES, set(&arr(SRC, TYPE))),
                         ],
                     ),
