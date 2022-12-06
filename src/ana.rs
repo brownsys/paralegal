@@ -574,8 +574,10 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]| {
         places
             .iter()
-            .flat_map(|place| provenance_of(tcx, *place).into_iter())
-            .filter_map(|place| Some((place, g.location_states.get(&loc)?.resolve(place))))
+            .filter_map(|place| 
+                provenance_of(tcx, *place).into_iter()
+                .find_map(|place| Some((place, g.location_states.get(&loc)?.resolve(place))))
+            )
             .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
             .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
     };
