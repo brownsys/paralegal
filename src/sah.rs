@@ -6,7 +6,7 @@ extern crate either;
 
 use either::Either;
 
-use crate::{consts, desc::*, rust::*, HashMap, HashSet};
+use crate::{consts, desc::*, rust::*, HashMap, HashSet, utils::LocationExt};
 use rustc_middle::ty::{self, TyCtxt};
 use std::cell::RefCell;
 
@@ -432,7 +432,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                 loc_set.extend(
                     matrix
                         .row(*pl)
-                        .filter(|l| crate::utils::is_real_location(body, **l)),
+                        .filter(|l| l.is_real(body)),
                 );
             })
             .visit_terminator(t, loc);

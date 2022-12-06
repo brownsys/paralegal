@@ -66,30 +66,46 @@ impl MetaItemMatch for ast::Attribute {
     }
 }
 
-/// Extract a `DefId` if this type references an object that has one. This is
-/// true for most user defined types, including types form the standard library,
-/// but not builtin types, such as `u32`, arrays or ad-hoc types such as
-/// function pointers.
-///
-/// Use with caution, this function might not be exhaustive (yet).
-pub fn ty_def(ty: ty::Ty) -> Option<DefId> {
-    match ty.kind() {
-        ty::TyKind::Adt(def, _) => Some(def.did()),
-        ty::TyKind::Foreign(did)
-        | ty::TyKind::FnDef(did, _)
-        | ty::TyKind::Closure(did, _)
-        | ty::TyKind::Generator(did, _, _)
-        | ty::TyKind::Opaque(did, _) => Some(*did),
-        _ => None,
+
+/// Extension trait for [`ty::Ty`]. This lets us implement methods on
+/// [`ty::Ty`]. [`Self`] is only ever supposed to be instantiated as [`ty::Ty`].
+pub trait TyExt {
+    /// Extract a `DefId` if this type references an object that has one. This
+    /// is true for most user defined types, including types form the standard
+    /// library, but not builtin types, such as `u32`, arrays or ad-hoc types
+    /// such as function pointers.
+    ///
+    /// Use with caution, this function might not be exhaustive (yet).
+    fn defid(self) -> Option<DefId>;
+}
+
+impl <'tcx> TyExt for ty::Ty<'tcx> {
+    fn defid(self) -> Option<DefId> {
+        match self.kind() {
+            ty::TyKind::Adt(def, _) => Some(def.did()),
+            ty::TyKind::Foreign(did)
+            | ty::TyKind::FnDef(did, _)
+            | ty::TyKind::Closure(did, _)
+            | ty::TyKind::Generator(did, _, _)
+            | ty::TyKind::Opaque(did, _) => Some(*did),
+            _ => None,
+        }
     }
 }
 
-/// Generic arguments can reference non-type things (in particular constants and
-/// lifetimes). If it is a type, then this extracts that type, otherwise `None`.
-pub fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
-    match a.unpack() {
-        ty::subst::GenericArgKind::Type(t) => Some(t),
-        _ => None,
+pub trait GenericArgExt<'tcx> {
+    /// Generic arguments can reference non-type things (in particular constants
+    /// and lifetimes). If it is a type, then this extracts that type, otherwise
+    /// `None`.
+    fn as_type(self) -> Option<ty::Ty<'tcx>>;
+}
+
+impl <'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
+    fn as_type(self) -> Option<ty::Ty<'tcx>> {
+        match self.unpack() {
+            ty::subst::GenericArgKind::Type(t) => Some(t),
+            _ => None,
+        }
     }
 }
 
@@ -201,17 +217,26 @@ impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisit
     }
 }
 
-/// This function deals with the fact that flowistry uses special locations to
-/// refer to function arguments. Those locations are not recognized the rustc
-/// functions that operate on MIR and thus need to be filtered before doing
-/// things such as indexing into a `mir::Body`.
-pub fn is_real_location(body: &mir::Body, l: mir::Location) -> bool {
-    body.basic_blocks().get(l.block).map(|bb| 
-            // Its `<=` because if len == statement_index it refers to the
-            // terminator
-            // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
-            l.statement_index <= bb.statements.len())
-        == Some(true)
+/// Extension trait for [`Location`]. This lets us implement methods on
+/// [`Location`]. [`Self`] is only ever supposed to be instantiated as
+/// [`Location`].
+pub trait LocationExt {
+    /// This function deals with the fact that flowistry uses special locations
+    /// to refer to function arguments. Those locations are not recognized the
+    /// rustc functions that operate on MIR and thus need to be filtered before
+    /// doing things such as indexing into a `mir::Body`.
+    fn is_real(self, body: &mir::Body) -> bool;
+}
+
+impl LocationExt for Location {
+    fn is_real(self, body: &mir::Body) -> bool {
+        body.basic_blocks().get(self.block).map(|bb| 
+                // Its `<=` because if len == statement_index it refers to the
+                // terminator
+                // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
+                self.statement_index <= bb.statements.len())
+            == Some(true)
+    }
 }
 
 /// Return the places that are read in this statements and possible ref/deref
@@ -257,32 +282,39 @@ impl <'tcx> PlaceExt<'tcx> for Place<'tcx> {
     }
 }
 
+/// Extension trait for [`hir::Node`]. This lets up implement methods on
+/// [`hir::Node`]. [`Self`] should only ever be instantiated as [`hir::Node`].
+pub trait NodeExt<'hir> {
+    /// Try and unwrap this `node` as some sort of function.
+    ///
+    /// [HIR](hir) has two different kinds of items that are types of function,
+    /// one is top-level `fn`s the other is an `impl` item of function type.
+    /// This function lets you extract common information from either. Returns
+    /// [`None`] if the node is not of a function-like type.
+    fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)>;
+}
 
-/// Try and unwrap this `node` as some sort of function.
-///
-/// [HIR](hir) has two different kinds of items that are types of function, one
-/// is top-level `fn`s the other is an `impl` item of function type. This
-/// function lets you extract common information from either. Returns [`None`]
-/// if the node is not of a function-like type.
-pub fn node_as_fn<'hir>(
-    node: &hir::Node<'hir>,
-) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
-    if let hir::Node::Item(hir::Item {
-        ident,
-        def_id,
-        kind: hir::ItemKind::Fn(_, _, body_id),
-        ..
-    })
-    | hir::Node::ImplItem(hir::ImplItem {
-        ident,
-        def_id,
-        kind: hir::ImplItemKind::Fn(_, body_id),
-        ..
-    }) = node
-    {
-        Some((ident, def_id, body_id))
-    } else {
-        None
+impl <'hir> NodeExt<'hir> for hir::Node<'hir> {
+    fn as_fn(
+        &self
+    ) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
+        if let hir::Node::Item(hir::Item {
+            ident,
+            def_id,
+            kind: hir::ItemKind::Fn(_, _, body_id),
+            ..
+        })
+        | hir::Node::ImplItem(hir::ImplItem {
+            ident,
+            def_id,
+            kind: hir::ImplItemKind::Fn(_, body_id),
+            ..
+        }) = self
+        {
+            Some((ident, def_id, body_id))
+        } else {
+            None
+        }
     }
 }
 
