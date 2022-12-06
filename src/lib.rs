@@ -113,17 +113,20 @@ struct AnalysisCtrl {
     /// for further comment.
     #[clap(long, env)]
     use_reachable_values_in_dfs: Option<String>,
+    #[clap(long, env)]
+    use_location_based_entailment_elimination: bool,
 }
 
 impl AnalysisCtrl {
-    fn use_reachable_values_in_dfs(&self) -> Option<mir::Mutability> {
-        self.use_reachable_values_in_dfs.as_ref().map(|s| 
-            match s.to_lowercase().as_str()  {
+    fn use_reachable_values_in_dfs(&self) -> Option<(mir::Mutability, bool)> {
+        self.use_reachable_values_in_dfs.as_ref().map(|s| {
+            let mut_spec = match s.to_lowercase().as_str()  {
                 "mut" => mir::Mutability::Mut,
                 "" => mir::Mutability::Not,
                 m => panic!("Unknown mutability specification {m}"),
-            }
-        )
+            };
+            (mut_spec, self.use_location_based_entailment_elimination)
+        })
     }
 }
 
@@ -239,7 +242,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         };
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
-            .with_module_level("flowistry", log::LevelFilter::Error)
+            //.with_module_level("flowistry", log::LevelFilter::Error)
             .init()
             .unwrap();
         let opts = Box::leak(Box::new(plugin_args));

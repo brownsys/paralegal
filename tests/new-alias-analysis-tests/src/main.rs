@@ -4,7 +4,7 @@
 #[dfpp::label(noinline, return)]
 fn modify_it(x: &mut u32) {}
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 fn track_mutable_modify() {
     let mut x = new_s();
     modify_it(&mut x.field);
@@ -12,11 +12,12 @@ fn track_mutable_modify() {
 }
 
 struct S {
-    field: u32
+    field: u32,
+    field2: u32,
 }
 
 #[dfpp::label(noinline, return)]
-fn new_s() -> S { S {} }
+fn new_s() -> S { S {field: 0, field2: 1} }
 
 #[dfpp::label(noinline)]
 fn deref_t(s: &S) -> &String {
@@ -34,7 +35,7 @@ fn eliminate_return_connection() {
 #[dfpp::label(noinline)]
 fn read<T>(t: &T) {}
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 fn eliminate_mut_input_connection() {
     let mut s : S = new_s();
     let mut v = Vec::new();
@@ -47,7 +48,7 @@ fn insert_ref_2<'v, 't: 'v, T>(v : &mut Vec<&'v T>, t: &'t T) {
     v.push(t)
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 fn input_elimination_isnt_a_problem_empty() {
     let x = new_s();
     let mut v = Vec::new();
@@ -55,7 +56,7 @@ fn input_elimination_isnt_a_problem_empty() {
     read(&v);
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 fn input_elimination_isnt_a_problem_vec_push() {
     let x = new_s();
     let mut v = Vec::new();
@@ -84,7 +85,7 @@ fn assoc<'a, 'b : 'a>(x: &mut T<'a>, s: &'b S) {
 
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 fn input_elimination_isnt_a_problem_statement() {
     let ref r = new_s();
     let ref r2 = another_s();

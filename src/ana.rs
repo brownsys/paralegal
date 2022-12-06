@@ -39,8 +39,9 @@ use hir::{
     BodyId,
 };
 use mir::{Location, Place, Terminator, TerminatorKind};
+use rustc_borrowck::BodyWithBorrowckFacts;
 use rustc_hir::def_id::LocalDefId;
-use rustc_middle::{hir::nested_filter::OnlyBodies, ty::{PredicateKind, OutlivesPredicate, RegionKind}};
+use rustc_middle::{hir::nested_filter::OnlyBodies, ty::RegionKind};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use flowistry::{
@@ -469,7 +470,29 @@ use ty::RegionVid;
 struct ComputeCallObligations<'tcx, 'a>{
     tcx: TyCtxt<'tcx>,
     body: &'a mir::Body<'tcx>,
-    result: HashSet<(RegionVid, RegionVid)>,
+    result: HashSet<(usize, RegionVid)>,
+    terminator_index: usize,
+    largest_vid: RegionVid,
+}
+
+impl <'tcx, 'a> ComputeCallObligations<'tcx, 'a> {
+    fn new(tcx: TyCtxt<'tcx>, body: &'a mir::Body<'tcx>) -> Self {
+        Self {
+            tcx, body, result: HashSet::new(), terminator_index: 0, largest_vid: RegionVid::from_usize(0)
+        }
+    }
+
+    fn result(&self) -> HashSet<(RegionVid, RegionVid)> {
+        self.result.iter().flat_map(|&(idx, v)| {
+            let mut new_vid = self.largest_vid;
+            <RegionVid as rustc_index::vec::Idx>::increment_by(&mut new_vid, idx);
+            [(new_vid, v), (v, new_vid)]
+        }).collect()
+    }
+
+    fn handle_vid(&mut self, vid: RegionVid) {
+        self.largest_vid = vid.max(self.largest_vid);
+    }
 }
 
 struct RegionCollector {
@@ -487,48 +510,88 @@ impl <'tcx> ty::fold::TypeVisitor<'tcx> for RegionCollector {
 
 impl <'tcx, 'a> mir::visit::Visitor<'tcx> for ComputeCallObligations<'tcx, 'a> {
     fn visit_terminator(&mut self,terminator: &Terminator<'tcx>,location:Location) {
+        debug!("Visiting terminator {:?}", terminator.kind);
         if let TerminatorKind::Call { args, destination,.. } = &terminator.kind {
             let mut collector = RegionCollector{ result: HashSet::new() };
             for p in destination.as_ref().into_iter().map(|p| p.0).chain(args.iter().filter_map(mir::Operand::place)) {
                 <RegionCollector as ty::fold::TypeVisitor>::visit_ty(&mut collector, p.ty(self.body, self.tcx).ty);
             }
-            let as_vec = collector.result.into_iter().collect::<Vec<_>>();
-            for i in 0..as_vec.len() {
-                for j in 0..i {
-                    self.result.insert((as_vec[i], as_vec[j]));
-                    self.result.insert((as_vec[j], as_vec[i]));
-                }
+            for vid in collector.result {
+                self.handle_vid(vid);
+                let tidx = self.terminator_index;
+                self.result.insert((tidx, vid));
             }
+            self.terminator_index +=1;
         }
         self.super_terminator(terminator, location)
     }
+
+    fn visit_statement(&mut self,statement: &mir::Statement<'tcx>,location:Location) {
+        debug!("Visiting statement {:?}", statement.kind);
+        self.super_statement(statement, location)
+    }
+
 
     fn visit_place(&mut self,place: &Place<'tcx>,context:mir::visit::PlaceContext,location:Location) {
         let mut collector = RegionCollector{ result: HashSet::new() };
         <RegionCollector as ty::fold::TypeVisitor>::visit_ty(&mut collector, place.ty(self.body, self.tcx).ty);
         let set = collector.result;
         if !set.is_empty() {
-            debug!("{place:?} contains regions {set:?}");
+            debug!("{place:?} at location {location:?} contains regions {set:?}");
         }
         self.super_place(place, context, location)
     }
+
+    fn visit_region(&mut self,region:ty::Region<'tcx>,_:Location) {
+        debug!("Saw region {:?}", region);
+        if let RegionKind::ReVar(v) = region.kind() {
+            self.handle_vid(v);
+        }
+        self.super_region(region)
+    }
 }
 
+extern crate polonius_engine;
 
-fn compute_constraint_selector<'tcx, 'a>(tcx: TyCtxt<'tcx>, body: &'a mir::Body<'tcx>) -> impl Fn(RegionVid, RegionVid) -> bool + 'tcx + 'a {
-    let mut vis = ComputeCallObligations {
-        result: HashSet::new(),
-        body,
-        tcx
-    };
-    <ComputeCallObligations as mir::visit::Visitor>::visit_body(&mut vis, body);
-    let set = vis.result;
-    debug!("Found region obligations {:?}", set);
-    move |r1, r2| {
-        let allow = !set.contains(&(r1, r2));
-        if !allow {
-            debug!("Eliminating entailment {:?} -> {:?}", r1, r2);
-        } 
+type LocationIndex = <rustc_borrowck::consumers::RustcFacts as polonius_engine::FactTypes>::Point;
+
+enum ConstraintSelector<'tcx, 'a> {
+    LocationBased {
+        body_with_facts: &'a BodyWithBorrowckFacts<'tcx>,
+    },
+    EntailmentMatchingBased {
+        elimination_set: HashSet<(RegionVid, RegionVid)>,
+    }
+}
+
+impl <'a, 'tcx> ConstraintSelector<'tcx, 'a> {
+    fn location_based(body_with_facts: &'a BodyWithBorrowckFacts<'tcx>) -> Self {
+        Self::LocationBased { body_with_facts }
+    }
+    fn entailment_matching_based(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> Self {
+        let mut vis = ComputeCallObligations::new(
+            tcx,
+            body,
+        );
+        <ComputeCallObligations as mir::visit::Visitor>::visit_body(&mut vis, body);
+        debug!("Largest vid seen: {:?}, highest terminator index: {}", vis.largest_vid, vis.terminator_index);
+        let elimination_set = vis.result();
+        debug!("Found region obligations {:?}", elimination_set);
+        Self::EntailmentMatchingBased { elimination_set }
+    }
+    fn select(&self, r1: RegionVid, r2: RegionVid, idx: LocationIndex) -> bool {
+        let allow = match self {
+            Self::LocationBased { body_with_facts } => {
+                use rustc_borrowck::consumers::RichLocation;
+                let loc = match body_with_facts.location_table.to_location(idx) {
+                    RichLocation::Mid(l) => l,
+                    RichLocation::Start(l) => l,
+                };
+                body_with_facts.body.stmt_at(loc).is_right()
+            }
+            Self::EntailmentMatchingBased { elimination_set } => !elimination_set.contains(&(r1, r2))
+        };
+        debug!("{} entailment {:?} -> {:?}", if allow { "Allowing" } else { "Eliminating" }, r1, r2);
         allow
     }
 }
@@ -551,7 +614,7 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     loc: GlobalLocation<'g>,
     g: &GlobalFlowGraph<'tcx, 'g>,
     p: mir::Place<'tcx>,
-    use_reachable_places: Option<mir::Mutability>,
+    use_reachable_places: Option<(mir::Mutability, bool)>,
 ) -> HashSet<GlobalLocation<'g>> {
     let (inner_loc, inner_body) = loc.innermost_location_and_body();
     let def_id = tcx.hir().body_owner_def_id(inner_body);
@@ -584,17 +647,25 @@ pub fn deep_dependencies_of<'tcx, 'g>(
 
 
     // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
-    let reachable_places = if let Some(m) = use_reachable_places {
-        let new_aliases = flowistry::mir::aliases::Aliases::build_with_fact_selection(tcx, def_id.to_def_id(), body_with_facts, compute_constraint_selector(tcx, &body_with_facts.body));
-        new_aliases
+    let reachable_places = if let Some((m, use_locations)) = use_reachable_places {
+        let selector = if use_locations {
+            ConstraintSelector::location_based(body_with_facts)
+        } else {
+            ConstraintSelector::entailment_matching_based(tcx, &body_with_facts.body)
+        };
+        let new_aliases = flowistry::mir::aliases::Aliases::build_with_fact_selection(tcx, def_id.to_def_id(), body_with_facts, |r1, r2, idx| selector.select(r1, r2, idx));
+        let a = new_aliases
             .reachable_values(p, m)
             .into_iter()
             .cloned()
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+
+        debug!("Determined the reachable places ({m:?}) for {p:?} @ {loc} are {a:?}");
+        debug!("Aliases would have been {:?}", new_aliases.aliases(p));
+        a
     } else {
         vec![p]
     };
-    debug!("Determined the reachable places for {p:?} @ {loc} are {reachable_places:?}");
     let mut queue = deps_for_places(loc, &reachable_places);
     let mut seen = HashSet::new();
     let mut deps = HashSet::new();
