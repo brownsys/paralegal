@@ -504,7 +504,7 @@ pub fn deep_dependencies_of<'tcx, 'g>(
         places
             .iter()
             .filter_map(|place| 
-                provenance_of(tcx, *place).into_iter()
+                place.provenance(tcx).into_iter()
                 .find_map(|place| Some((place, g.location_states.get(&loc)?.resolve(place))))
             )
             .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))

@@ -226,28 +226,37 @@ pub fn read_places_with_provenance<'tcx>(
 ) -> impl Iterator<Item = Place<'tcx>> {
     places_read(l, stmt)
         .into_iter()
-        .flat_map(move |place| provenance_of(tcx, place).into_iter())
+        .flat_map(move |place| place.provenance(tcx).into_iter())
 }
 
-/// Constructs a set of places that are ref/deref/field un-layerings of the
-/// input place.
-/// 
-/// The ordering is starting with the place itself, then successively removing
-/// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
-/// [_1.foo.bar, _1.foo, _1]`
-pub fn provenance_of<'tcx>(tcx: TyCtxt<'tcx>, place: Place<'tcx>) -> Vec<Place<'tcx>> {
-    use flowistry::mir::utils::PlaceExt;
-    let mut refs = place
-        .refs_in_projection();
-    refs.reverse();
-    refs
-        .into_iter()
-        .map(|t| mir::Place::from_ref(t.0, tcx))
-        .chain(
-            std::iter::once(place)
-        )
-        .collect()
+/// Extension trait for [`Place`]s so we can implement methods on them. [`Self`]
+/// is only ever supposed to be instantiated as [`Place`].
+pub trait PlaceExt<'tcx> {
+    /// Constructs a set of places that are ref/deref/field un-layerings of the
+    /// input place.
+    /// 
+    /// The ordering is starting with the place itself, then successively removing
+    /// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
+    /// [_1.foo.bar, _1.foo, _1]`
+    fn provenance(self, tcx: TyCtxt<'tcx>) -> Vec<Place<'tcx>>;
 }
+
+impl <'tcx> PlaceExt<'tcx> for Place<'tcx> {
+    fn provenance(self, tcx: TyCtxt<'tcx>) -> Vec<Place<'tcx>> {
+        use flowistry::mir::utils::PlaceExt;
+        let mut refs = self
+            .refs_in_projection();
+        refs.reverse();
+        refs
+            .into_iter()
+            .map(|t| mir::Place::from_ref(t.0, tcx))
+            .chain(
+                std::iter::once(self)
+            )
+            .collect()
+    }
+}
+
 
 /// Try and unwrap this `node` as some sort of function.
 ///
