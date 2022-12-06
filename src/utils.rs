@@ -175,10 +175,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
                 Ok((
                     defid,
                     args.iter()
-                        .map(|a| match a {
-                            mir::Operand::Move(p) | mir::Operand::Copy(p) => Some(*p),
-                            mir::Operand::Constant(_) => None,
-                        })
+                        .map(|a| a.place())
                         .collect(),
                     *destination,
                 ))
@@ -234,17 +231,20 @@ pub fn read_places_with_provenance<'tcx>(
 
 /// Constructs a set of places that are ref/deref/field un-layerings of the
 /// input place.
-///
-/// TODO: This needs more elaboration, but tbh this is lifted straight from
-/// Flowistry and I haven't yet bothered to figure out what exactly it does.
+/// 
+/// The ordering is starting with the place itself, then successively removing
+/// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
+/// [_1.foo.bar, _1.foo, _1]`
 pub fn provenance_of<'tcx>(tcx: TyCtxt<'tcx>, place: Place<'tcx>) -> Vec<Place<'tcx>> {
     use flowistry::mir::utils::PlaceExt;
-    std::iter::once(place)
+    let mut refs = place
+        .refs_in_projection();
+    refs.reverse();
+    refs
+        .into_iter()
+        .map(|t| mir::Place::from_ref(t.0, tcx))
         .chain(
-            place
-                .refs_in_projection()
-                .into_iter()
-                .map(|t| mir::Place::from_ref(t.0, tcx)),
+            std::iter::once(place)
         )
         .collect()
 }
