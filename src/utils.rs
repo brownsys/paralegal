@@ -376,14 +376,14 @@ pub trait TyCtxtExt<'tcx> {
     fn body_for_body_id(
         self,
         b: BodyId,
-    ) -> &'tcx crate::rust::rustc_borrowck::BodyWithBorrowckFacts<'tcx>;
+    ) -> &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     fn body_for_body_id(
         self,
         b: BodyId,
-    ) -> &'tcx crate::rust::rustc_borrowck::BodyWithBorrowckFacts<'tcx> {
+    ) -> &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx> {
         flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
             self,
             self.hir().body_owner_def_id(b),

@@ -307,7 +307,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 .compute_granular_global_flows(*callee_body_id)
                 .ok_or("is recursive")?;
             let body =
-                &borrowck_facts::get_body_with_borrowck_facts(self.tcx, *callee_local_id).body;
+                borrowck_facts::get_body_with_borrowck_facts(self.tcx, *callee_local_id).simplified_body();
             Ok((inner_flow, *callee_body_id, body, args, dest))
         })
     }
@@ -349,7 +349,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
         let local_def_id = self.tcx.hir().body_owner_def_id(root_function);
 
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
-        let body = &body_with_facts.body;
+        let body = body_with_facts.simplified_body();
         let from_flowistry = {
             use flowistry::extensions::{
                 fluid_set, ContextMode, EvalMode, EVAL_MODE, RECURSE_SELECTOR,
@@ -591,10 +591,10 @@ impl <'a, 'tcx> ConstraintSelector<'tcx, 'a> {
                 let stmt = 
                 body_with_facts.body.stmt_at(loc);
                 match &stmt {
-                    Either::Right(term) => debug!("Introduced by {:?} @ {rich_loc:?}", term.kind),
+                    Either::Right(term) => debug!("Introduced by {:?} @ {rich_loc:?} ({idx:?})", term.kind),
                     Either::Left(stmt) => debug!("Introduced by {:?} @ {rich_loc:?}", stmt.kind),
                 };
-                !stmt.is_right()
+                !matches!(stmt, Either::Right(Terminator {kind: TerminatorKind::Call {..}, ..}))
             }
             Self::EntailmentMatchingBased { elimination_set } => !elimination_set.contains(&(r1, r2))
         };
@@ -628,7 +628,7 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
     let stmt =
             body_with_facts
-            .body
+            .simplified_body()
             .stmt_at(inner_loc);
     if !matches!(
         stmt,
@@ -656,9 +656,9 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
     let reachable_places = if let Some((m, use_locations)) = use_reachable_places {
         let selector = if use_locations {
-            ConstraintSelector::location_based(body_with_facts)
+            ConstraintSelector::location_based(body_with_facts.body_with_facts())
         } else {
-            ConstraintSelector::entailment_matching_based(tcx, &body_with_facts.body)
+            ConstraintSelector::entailment_matching_based(tcx, &body_with_facts.simplified_body())
         };
         let new_aliases = flowistry::mir::aliases::Aliases::build_with_fact_selection(tcx, def_id.to_def_id(), body_with_facts, |r1, r2, idx| selector.select(r1, r2, idx));
         let a = new_aliases
@@ -1064,14 +1064,14 @@ impl<'tcx> Keep<'tcx> {
     ) -> Self {
         let body_with_facts =
             borrowck_facts::get_body_with_borrowck_facts(tcx, tcx.hir().body_owner_def_id(body_id));
-        if !is_real_location(&body_with_facts.body, location) {
+        if !is_real_location(&body_with_facts.simplified_body(), location) {
             if loc_is_top_level {
                 Keep::Argument(location.statement_index)
             } else {
                 Keep::Reject(None)
             }
         } else {
-            let stmt_at_loc = body_with_facts.body.stmt_at(location);
+            let stmt_at_loc = body_with_facts.simplified_body().stmt_at(location);
             match stmt_at_loc {
                 Either::Right(t) => t
                     .as_fn_and_args()
@@ -1281,7 +1281,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         if self.opts.dbg.dump_ctrl_mir {
             mir::graphviz::write_mir_fn_graphviz(
                 tcx,
-                &controller_body_with_facts.body,
+                &controller_body_with_facts.simplified_body(),
                 false,
                 &mut outfile_pls(format!("{}.mir.gv", id.name)).unwrap(),
             )
@@ -1301,7 +1301,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         );
 
         // Register annotations on argument types for this controller.
-        let controller_body = &controller_body_with_facts.body;
+        let controller_body = &controller_body_with_facts.simplified_body();
         {
             let types = controller_body.args_iter().map(|l| {
                 let ty = controller_body.local_decls[l].ty;
@@ -1338,7 +1338,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.
             let inner_body_with_facts = tcx.body_for_body_id(inner_body_id);
-            let ref inner_body = inner_body_with_facts.body;
+            let ref inner_body = inner_body_with_facts.simplified_body();
             if !is_real_location(&inner_body, inner_location) {
                 assert!(loc.is_at_root());
                 // These can only be (controller) arguments and they cannot have

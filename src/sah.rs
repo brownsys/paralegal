@@ -555,7 +555,7 @@ impl<'tcx, 'a> ty::TypeVisitor<'tcx> for ExternalDependencyHasher<'tcx, 'a> {
             | Opaque(did, _) => {
                 if let Some(ldid) = did.as_local() {
                     flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(self.tcx, ldid)
-                        .body
+                        .simplified_body()
                         .hash_stable(self.hctx, self.hasher);
                 } else {
                     use crate::rust::rustc_middle::dep_graph::DepContext;
