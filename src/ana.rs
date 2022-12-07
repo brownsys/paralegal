@@ -583,11 +583,18 @@ impl <'a, 'tcx> ConstraintSelector<'tcx, 'a> {
         let allow = match self {
             Self::LocationBased { body_with_facts } => {
                 use rustc_borrowck::consumers::RichLocation;
-                let loc = match body_with_facts.location_table.to_location(idx) {
+                let rich_loc = body_with_facts.location_table.to_location(idx);
+                let loc = match rich_loc {
                     RichLocation::Mid(l) => l,
                     RichLocation::Start(l) => l,
                 };
-                body_with_facts.body.stmt_at(loc).is_right()
+                let stmt = 
+                body_with_facts.body.stmt_at(loc);
+                match &stmt {
+                    Either::Right(term) => debug!("Introduced by {:?} @ {rich_loc:?}", term.kind),
+                    Either::Left(stmt) => debug!("Introduced by {:?} @ {rich_loc:?}", stmt.kind),
+                };
+                !stmt.is_right()
             }
             Self::EntailmentMatchingBased { elimination_set } => !elimination_set.contains(&(r1, r2))
         };
