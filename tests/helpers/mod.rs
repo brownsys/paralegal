@@ -14,6 +14,10 @@ use rustc_middle::mir;
 use either::Either;
 
 use std::borrow::Cow;
+use dfpp::outfile_pls;
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::Path;
 
 lazy_static! {
     static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -93,6 +97,27 @@ pub fn run_forge(file: &str) -> bool {
 		.status()
 		.unwrap()
 		.success()
+}
+
+pub fn write_forge(file: &str, pred: &str, flow: &str, result: &str) -> Result<(), std::io::Error> {
+	let content = format!("#lang forge 
+
+open \"helpers.frg\"
+open \"analysis_result.frg\"
+
+test expect {{
+	{}: {{
+		{}[`{}]
+	}} for Flows is {}
+}}
+	", format!("{}_test", pred), pred, flow, result);
+
+
+	outfile_pls(file).and_then(
+		|mut f| {
+			f.write_all(content.as_bytes())
+		}
+	)
 }
 
 use dfpp::serializers::SerializableCallOnlyFlow;

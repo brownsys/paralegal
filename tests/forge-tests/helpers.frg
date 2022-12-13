@@ -1,6 +1,6 @@
 #lang forge
 
-open "../analysis_result.frg"
+open "analysis_result.frg"
 
 pred flows_to[cs: Ctrl, o: Object, f : (CallArgument + CallSite)] {
     some c: cs |

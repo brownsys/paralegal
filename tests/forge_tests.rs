@@ -2,7 +2,6 @@
 #[macro_use]
 extern crate lazy_static;
 
-use dfpp::Symbol;
 mod helpers;
 use helpers::*;
 
@@ -22,8 +21,18 @@ lazy_static! {
         );
 }
 
-fn get_forge_result(file: &str) -> bool {
-	do_in_crate_dir(|| { run_forge(file) }).map_or_else(
+fn create_forge_file(test_name: &str, pred: &str, flow: &str, result: &str) -> bool {
+	do_in_crate_dir(|| { write_forge(&format!("test_{}.frg", test_name), pred, flow, result) }).map_or_else(
+		|e| {
+			println!("io err {}", e);
+			false
+		},
+		|_| true
+	)
+}
+
+fn get_forge_result(test_name: &str) -> bool {
+	do_in_crate_dir(|| { run_forge(&format!("test_{}.frg", test_name)) }).map_or_else(
 		|e| {
 			println!("io err {}", e);
 			false
@@ -36,5 +45,10 @@ fn get_forge_result(file: &str) -> bool {
 fn t() {
     assert!(*TEST_CRATE_ANALYZED);
 	
-	assert!(get_forge_result("forge/allowed_sources.frg"));
+	assert!(create_forge_file(
+		"allowed_sources", 
+		"only_send_to_allowed_sources", 
+		"process_if", 
+		"theorem"));
+	assert!(get_forge_result("allowed_sources"));
 }
