@@ -15,9 +15,7 @@ use either::Either;
 
 use std::borrow::Cow;
 use dfpp::outfile_pls;
-use std::fs::File;
 use std::io::prelude::*;
-use std::path::Path;
 
 lazy_static! {
     static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
