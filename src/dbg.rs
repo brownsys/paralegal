@@ -16,7 +16,7 @@ use crate::{
         mir::{self, Place},
         TyCtxt,
     },
-    utils::{self, is_real_location},
+    utils::{self, LocationExt},
     HashMap, HashSet,
 };
 extern crate dot;
@@ -74,7 +74,7 @@ pub mod call_only_flow_dot {
         ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{is_real_location, read_places_with_provenance, AsFnAndArgs, TyCtxtExt},
+        utils::{read_places_with_provenance, AsFnAndArgs, TyCtxtExt, LocationExt},
         Either,
     };
 
@@ -122,7 +122,7 @@ pub mod call_only_flow_dot {
                 .flat_map(|(&to, deps)| {
                     let (loc, body) = to.innermost_location_and_body();
                     let body_with_facts = self.tcx.body_for_body_id(body);
-                    if is_real_location(&body_with_facts.body, loc) {
+                    if loc.is_real(&body_with_facts.body) {
                         Some(
                             read_places_with_provenance(
                                 loc,
@@ -252,7 +252,7 @@ pub mod call_only_flow_dot {
                         )?;
                     }
                 };
-                let stmt = if !crate::utils::is_real_location(&body, loc) {
+                let stmt = if !loc.is_real(&body) {
                     None
                 } else {
                     Some(body.stmt_at(loc))
@@ -448,7 +448,7 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                 self.tcx,
                 self.tcx.hir().body_owner_def_id(inner_body),
             );
-            let places_read = if !is_real_location(&body.body, inner_location) {
+            let places_read = if !inner_location.is_real(&body.body) {
                 write!(f, " is argument {}", inner_location.statement_index - 1)?;
                 HashSet::new()
             } else if deps.is_translated() {

@@ -295,7 +295,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     > {
         t.as_fn_and_args().and_then(|(p, args, dest)| {
             let node = self.tcx.hir().get_if_local(p).ok_or("non-local node")?;
-            let (_callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
+            let (_callee_id, callee_local_id, callee_body_id) = node.as_fn()
                 .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
             let () = if self.should_inline(*callee_local_id) {
                 Ok(())
@@ -518,8 +518,10 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]| {
         places
             .iter()
-            .flat_map(|place| provenance_of(tcx, *place).into_iter())
-            .filter_map(|place| Some((place, g.location_states.get(&loc)?.resolve(place))))
+            .filter_map(|place| 
+                place.provenance(tcx).into_iter()
+                .find_map(|place| Some((place, g.location_states.get(&loc)?.resolve(place))))
+            )
             .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
             .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
     };
@@ -926,7 +928,7 @@ impl<'tcx> Keep<'tcx> {
     ) -> Self {
         let body_with_facts =
             borrowck_facts::get_body_with_borrowck_facts(tcx, tcx.hir().body_owner_def_id(body_id));
-        if !is_real_location(&body_with_facts.body, location) {
+        if !location.is_real(&body_with_facts.body) {
             if loc_is_top_level {
                 Keep::Argument(location.statement_index)
             } else {
@@ -1088,8 +1090,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
     fn annotated_subtypes(&self, ty: ty::Ty) -> HashSet<TypeDescriptor> {
         ty.walk()
             .filter_map(|ty| {
-                generic_arg_as_type(ty)
-                    .and_then(ty_def)
+                ty.as_type()
+                    .and_then(TyExt::defid)
                     .and_then(DefId::as_local)
                     .and_then(|def| {
                         let hid = self.tcx.hir().local_def_id_to_hir_id(def);
@@ -1201,7 +1203,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             // on bight not be the `body` we fetched before.
             let inner_body_with_facts = tcx.body_for_body_id(inner_body_id);
             let ref inner_body = inner_body_with_facts.body;
-            if !is_real_location(&inner_body, inner_location) {
+            if !inner_location.is_real(&inner_body) {
                 assert!(loc.is_at_root());
                 // These can only be (controller) arguments and they cannot have
                 // dependencies (and thus not receive any data)
@@ -1283,18 +1285,18 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 };
                 for dep in arg_deps.iter() {
                     flows.add_data_flow(
-                        Cow::Owned(dep.as_data_source(tcx, |l| is_real_location(&inner_body, l))),
+                        Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
                         to.clone(),
                     );
                 }
                 if self.opts.anactrl.separate_control_deps {
                     for dep in deps.ctrl_deps.iter() {
-                        flows.add_ctrl_flow(Cow::Owned(dep.as_data_source(tcx, |l| is_real_location(&inner_body, l))),
+                        flows.add_ctrl_flow(Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
                         to.clone(),)
                     }
                 } else {
                     for dep in deps.ctrl_deps.iter() {
-                        flows.add_data_flow(Cow::Owned(dep.as_data_source(tcx, |l| is_real_location(&inner_body, l))),
+                        flows.add_data_flow(Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
                         to.clone(),)
                     }
                 }
