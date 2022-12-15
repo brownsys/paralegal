@@ -104,32 +104,7 @@ struct AnalysisCtrl {
     /// twice has lead to bugs.
     #[clap(long, env)]
     recursive_flowistry: bool,
-    /// Use
-    /// [`Aliases::reachable_values`](flowistry::mir::aliases::Aliases::reachable_values)
-    /// in the beginning of the
-    /// [`deep_dependencies_of`](ana::deep_dependencies_of) dfs. Disabled by
-    /// default, see also [this notion
-    /// page](https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c)
-    /// for further comment.
-    #[clap(long, env)]
-    use_reachable_values_in_dfs: Option<String>,
-    #[clap(long, env)]
-    use_location_based_entailment_elimination: bool,
 }
-
-impl AnalysisCtrl {
-    fn use_reachable_values_in_dfs(&self) -> Option<(mir::Mutability, bool)> {
-        self.use_reachable_values_in_dfs.as_ref().map(|s| {
-            let mut_spec = match s.to_lowercase().as_str() {
-                "mut" => mir::Mutability::Mut,
-                "" => mir::Mutability::Not,
-                m => panic!("Unknown mutability specification {m}"),
-            };
-            (mut_spec, self.use_location_based_entailment_elimination)
-        })
-    }
-}
-
 /// Arguments that control the output of debug information or output to be
 /// consumed for testing.
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]

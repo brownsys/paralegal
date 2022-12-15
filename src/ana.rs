@@ -47,7 +47,12 @@ use rustc_span::{symbol::Ident, Span, Symbol};
 use flowistry::{
     indexed::IndexSet,
     infoflow::{FlowAnalysis, FlowDomain, NonTransitiveFlowDomain},
-    mir::{borrowck_facts::{self, CachedSimplifedBodyWithFacts}, engine::AnalysisResults, utils::PlaceExt},
+    mir::{
+        aliases::Aliases,
+        borrowck_facts::{self, CachedSimplifedBodyWithFacts},
+        engine::AnalysisResults,
+        utils::PlaceExt,
+    },
 };
 
 /// Values of this type can be matched against Rust attributes
@@ -97,7 +102,6 @@ pub fn translate_child_to_parent<'tcx>(
     body: &mir::Body<'tcx>,
     parent_body: &mir::Body<'tcx>,
 ) -> Option<mir::Place<'tcx>> {
-    use flowistry::mir::utils::PlaceExt;
     use mir::HasLocalDecls;
     use mir::ProjectionElem;
     if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
@@ -166,7 +170,7 @@ pub struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
     /// Memoization of intermediate analyses (see [`FunctionFlows`]
     /// documentation for more)
     function_flows: FunctionFlows<'tcx, 'g>,
-    
+
     /// Memoization of non-transitive alias analysis
     flattening_helper: RefCell<DependencyFlatteningHelper<'tcx>>,
 }
@@ -250,7 +254,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             gli,
             function_flows: RefCell::new(HashMap::new()),
             inline_selector,
-            flattening_helper: RefCell::new(DependencyFlatteningHelper::new(tcx, analysis_opts.use_reachable_values_in_dfs())),
+            flattening_helper: RefCell::new(DependencyFlatteningHelper::new(tcx)),
         }
     }
 
@@ -434,23 +438,10 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 let (args, _) =
                     Keep::from_location(tcx, inner_body, inner_location, loc.is_at_root())
                         .into_keep()?;
-                let flows_borrow = self.function_flows.borrow();
-                // Gets the `Aliases` struct for `inner_body` that flowistry has computed for us earlier.
-                let ref aliases = flows_borrow
-                    .get(&inner_body)
-                    .unwrap()
-                    .as_ref()
-                    .unwrap()
-                    .analysis
-                    .analysis
-                    .aliases;
                 let deep_deps_for = |p: mir::Place<'tcx>| {
-                    deep_dependencies_of(
-                        &mut self.flattening_helper.borrow_mut(),
-                        *loc,
-                        g,
-                        p,
-                    )
+                    self.flattening_helper
+                        .borrow_mut()
+                        .deep_dependencies_of(*loc, g, p)
                 };
                 Some((
                     *loc,
@@ -469,225 +460,103 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
 use ty::RegionVid;
 
-struct ComputeCallObligations<'tcx, 'a> {
-    tcx: TyCtxt<'tcx>,
-    body: &'a mir::Body<'tcx>,
-    result: HashSet<(usize, RegionVid)>,
-    terminator_index: usize,
-    largest_vid: RegionVid,
-}
-
-impl<'tcx, 'a> ComputeCallObligations<'tcx, 'a> {
-    fn new(tcx: TyCtxt<'tcx>, body: &'a mir::Body<'tcx>) -> Self {
-        Self {
-            tcx,
-            body,
-            result: HashSet::new(),
-            terminator_index: 0,
-            largest_vid: RegionVid::from_usize(0),
-        }
-    }
-
-    fn result(&self) -> HashSet<(RegionVid, RegionVid)> {
-        self.result
-            .iter()
-            .flat_map(|&(idx, v)| {
-                let mut new_vid = self.largest_vid;
-                <RegionVid as rustc_index::vec::Idx>::increment_by(&mut new_vid, idx);
-                [(new_vid, v), (v, new_vid)]
-            })
-            .collect()
-    }
-
-    fn handle_vid(&mut self, vid: RegionVid) {
-        self.largest_vid = vid.max(self.largest_vid);
-    }
-}
-
-struct RegionCollector {
-    result: HashSet<RegionVid>,
-}
-
-impl<'tcx> ty::fold::TypeVisitor<'tcx> for RegionCollector {
-    fn visit_region(&mut self, r: ty::Region<'tcx>) -> std::ops::ControlFlow<Self::BreakTy> {
-        if let RegionKind::ReVar(v) = r.kind() {
-            self.result.insert(v);
-        }
-        std::ops::ControlFlow::Continue(())
-    }
-}
-
-impl<'tcx, 'a> mir::visit::Visitor<'tcx> for ComputeCallObligations<'tcx, 'a> {
-    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-        debug!("Visiting terminator {:?}", terminator.kind);
-        if let TerminatorKind::Call {
-            args, destination, ..
-        } = &terminator.kind
-        {
-            let mut collector = RegionCollector {
-                result: HashSet::new(),
-            };
-            for p in destination
-                .as_ref()
-                .into_iter()
-                .map(|p| p.0)
-                .chain(args.iter().filter_map(mir::Operand::place))
-            {
-                <RegionCollector as ty::fold::TypeVisitor>::visit_ty(
-                    &mut collector,
-                    p.ty(self.body, self.tcx).ty,
-                );
-            }
-            for vid in collector.result {
-                self.handle_vid(vid);
-                let tidx = self.terminator_index;
-                self.result.insert((tidx, vid));
-            }
-            self.terminator_index += 1;
-        }
-        self.super_terminator(terminator, location)
-    }
-
-    fn visit_statement(&mut self, statement: &mir::Statement<'tcx>, location: Location) {
-        debug!("Visiting statement {:?}", statement.kind);
-        self.super_statement(statement, location)
-    }
-
-    fn visit_place(
-        &mut self,
-        place: &Place<'tcx>,
-        context: mir::visit::PlaceContext,
-        location: Location,
-    ) {
-        let mut collector = RegionCollector {
-            result: HashSet::new(),
-        };
-        <RegionCollector as ty::fold::TypeVisitor>::visit_ty(
-            &mut collector,
-            place.ty(self.body, self.tcx).ty,
-        );
-        let set = collector.result;
-        if !set.is_empty() {
-            debug!("{place:?} at location {location:?} contains regions {set:?}");
-        }
-        self.super_place(place, context, location)
-    }
-
-    fn visit_region(&mut self, region: ty::Region<'tcx>, _: Location) {
-        debug!("Saw region {:?}", region);
-        if let RegionKind::ReVar(v) = region.kind() {
-            self.handle_vid(v);
-        }
-        self.super_region(region)
-    }
-}
-
 extern crate polonius_engine;
 
 type LocationIndex = <rustc_borrowck::consumers::RustcFacts as polonius_engine::FactTypes>::Point;
 
-enum ConstraintSelector<'tcx, 'a> {
-    LocationBased {
-        body_with_facts: &'a BodyWithBorrowckFacts<'tcx>,
-    },
-    EntailmentMatchingBased {
-        elimination_set: HashSet<(RegionVid, RegionVid)>,
-    },
+struct ConstraintSelector<'tcx, 'a> {
+    body_with_facts: &'a BodyWithBorrowckFacts<'tcx>,
 }
 
 impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
     fn location_based(body_with_facts: &'a BodyWithBorrowckFacts<'tcx>) -> Self {
-        Self::LocationBased { body_with_facts }
+        Self { body_with_facts }
     }
-    fn entailment_matching_based(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> Self {
-        let mut vis = ComputeCallObligations::new(tcx, body);
-        <ComputeCallObligations as mir::visit::Visitor>::visit_body(&mut vis, body);
-        debug!(
-            "Largest vid seen: {:?}, highest terminator index: {}",
-            vis.largest_vid, vis.terminator_index
-        );
-        let elimination_set = vis.result();
-        debug!("Found region obligations {:?}", elimination_set);
-        Self::EntailmentMatchingBased { elimination_set }
-    }
-    fn select(&self, r1: RegionVid, r2: RegionVid, idx: LocationIndex) -> bool {
-        let allow = match self {
-            Self::LocationBased { body_with_facts } => {
-                use rustc_borrowck::consumers::RichLocation;
-                let rich_loc = body_with_facts.location_table.to_location(idx);
-                let loc = match rich_loc {
-                    RichLocation::Mid(l) => l,
-                    RichLocation::Start(l) => l,
-                };
-                let stmt = body_with_facts.body.stmt_at(loc);
-                match &stmt {
-                    Either::Right(term) => {
-                        debug!("Introduced by {:?} @ {rich_loc:?} ({idx:?})", term.kind)
-                    }
-                    Either::Left(stmt) => debug!("Introduced by {:?} @ {rich_loc:?}", stmt.kind),
-                };
-                !matches!(
-                    stmt,
-                    Either::Right(Terminator {
-                        kind: TerminatorKind::Call { .. },
-                        ..
-                    })
-                )
-            }
-            Self::EntailmentMatchingBased { elimination_set } => {
-                !elimination_set.contains(&(r1, r2))
-            }
+
+    fn select(&self, _: RegionVid, _: RegionVid, idx: LocationIndex) -> bool {
+        use rustc_borrowck::consumers::RichLocation;
+        let rich_loc = self.body_with_facts.location_table.to_location(idx);
+        let loc = match rich_loc {
+            RichLocation::Mid(l) => l,
+            RichLocation::Start(l) => l,
         };
-        debug!(
-            "{} entailment {:?} -> {:?}",
-            if allow { "Allowing" } else { "Eliminating" },
-            r1,
-            r2
-        );
-        allow
+        let stmt = self.body_with_facts.body.stmt_at(loc);
+        match &stmt {
+            Either::Right(term) => {
+                debug!("Introduced by {:?} @ {rich_loc:?} ({idx:?})", term.kind)
+            }
+            Either::Left(stmt) => debug!("Introduced by {:?} @ {rich_loc:?}", stmt.kind),
+        };
+        !matches!(
+            stmt,
+            Either::Right(Terminator {
+                kind: TerminatorKind::Call { .. },
+                ..
+            })
+        )
     }
 }
 
-use flowistry::mir::aliases::Aliases;
+/// A memoizing helper for resolving dependencies of a [`Place`] during
+/// [`GlobalFlowConstructor::compute_call_only_flow`].
+///
+/// It constructs [`Aliases`] for the provided body (a computation that is
+/// memoized internally). The aliases are constructed without considering
+/// region entailments (essentially "outlives" constraints on the lifetimes in
+/// the function) that are caused by function calls. This is deliberate and
+/// causes the resulting `Aliases` to act non-transitively with respect to
+/// function calls.
+///
+/// Lastly we use the computed aliases to call `aliases.reachable_values(p)` where `p` is the place argument that was provided.
 pub struct DependencyFlatteningHelper<'tcx> {
     memoized_analyses: HashMap<LocalDefId, Aliases<'tcx, 'tcx>>,
     tcx: TyCtxt<'tcx>,
-    use_reachable_places: Option<(mir::Mutability, bool)>,
 }
 
-impl <'tcx> DependencyFlatteningHelper<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, use_reachable_places: Option<(mir::Mutability, bool)>) -> Self {
+impl<'tcx> DependencyFlatteningHelper<'tcx> {
+    /// Construct a new helper with an empty memoization.
+    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
-            memoized_analyses: HashMap::new(), tcx, use_reachable_places
+            memoized_analyses: HashMap::new(),
+            tcx,
         }
     }
 
-    pub fn reachable_places(&mut self, body_with_facts: &'tcx CachedSimplifedBodyWithFacts<'tcx>, def_id: LocalDefId, p: mir::Place<'tcx>) -> Vec<Place<'tcx>> {
-        if let Some((m, use_locations)) = self.use_reachable_places {
-            let new_aliases = self.get_aliases(def_id, body_with_facts, use_locations);
-            let a = new_aliases
-                .reachable_values(p, m)
-                .into_iter()
-                .flat_map(|&p| new_aliases.conflicts(p).iter())
-                .cloned()
-                .filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
-                .collect::<Vec<_>>();
+    /// The reachable places for `p` in `body_with_facts` depending on the
+    /// setting if `self.use_reachable_places`.
+    ///
+    /// If the configuration says to use [`Aliases::reachable_values`] then this
+    /// may compute [`Aliases`] for the body, optionally discarding function
+    /// call locations from the set of borrowcheck facts, see documentation on
+    /// [`Self`] for more information.
+    pub fn reachable_values(
+        &mut self,
+        body_with_facts: &'tcx CachedSimplifedBodyWithFacts<'tcx>,
+        def_id: LocalDefId,
+        p: mir::Place<'tcx>,
+    ) -> Vec<Place<'tcx>> {
+        let new_aliases = self.get_aliases(def_id, body_with_facts);
+        let a = new_aliases
+            .reachable_values(p, ast::Mutability::Not)
+            .into_iter()
+            .flat_map(|&p| new_aliases.conflicts(p).iter())
+            .cloned()
+            .filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
+            .collect::<Vec<_>>();
 
-            debug!("Determined the reachable places ({m:?}) for {p:?} are {a:?}");
-            debug!("Aliases would have been {:?}", new_aliases.aliases(p));
-            a
-        } else {
-            vec![p]
-        }
+        debug!("Determined the reachable places for {p:?} are {a:?}");
+        debug!("Aliases would have been {:?}", new_aliases.aliases(p));
+        a
     }
 
-    fn get_aliases(&mut self, def_id: LocalDefId, body_with_facts: &'tcx CachedSimplifedBodyWithFacts<'tcx>, use_locations: bool) -> &Aliases<'tcx, 'tcx> {
+    /// Memoized [`Aliases::build_with_facts_selection`].
+    fn get_aliases(
+        &mut self,
+        def_id: LocalDefId,
+        body_with_facts: &'tcx CachedSimplifedBodyWithFacts<'tcx>,
+    ) -> &Aliases<'tcx, 'tcx> {
         self.memoized_analyses.entry(def_id).or_insert_with(|| {
-            let selector = if use_locations {
-                ConstraintSelector::location_based(body_with_facts.body_with_facts())
-            } else {
-                ConstraintSelector::entailment_matching_based(self.tcx, &body_with_facts.simplified_body())
-            };
+            let selector = ConstraintSelector::location_based(body_with_facts.body_with_facts());
             Aliases::build_with_fact_selection(
                 self.tcx,
                 def_id.to_def_id(),
@@ -696,101 +565,100 @@ impl <'tcx> DependencyFlatteningHelper<'tcx> {
             )
         })
     }
-}
 
-/// Perform a depth-first search up the dependency tree formed from looking up
-/// the [`places_read`] at a location in `g`, starting from `loc`.
-///
-/// Terminates on each branch when a location `l` is encountered that does not
-/// satisfy `matches!(Keep::from_global_location(tcx, l), Keep::Reject(_))`.
-///
-/// In addition the set of places that is considered "read" for `loc` (the
-/// initial location) is
-/// [`Aliases::reachable_values(p)`](flowistry::mir::aliases::Aliases::reachable_values).
-/// This means we consider all subplaces as also read. This only makes sense for
-/// function calls, hence this should only be called on locations that represent
-/// function calls.
-pub fn deep_dependencies_of<'tcx, 'g>(
-    flattening_helper: &mut DependencyFlatteningHelper<'tcx>,
-    loc: GlobalLocation<'g>,
-    g: &GlobalFlowGraph<'tcx, 'g>,
-    p: mir::Place<'tcx>,
-) -> HashSet<GlobalLocation<'g>> {
-    debug!("Flattening {p:?} @ {loc}");
-    let tcx = flattening_helper.tcx;
-    let (inner_loc, inner_body) = loc.innermost_location_and_body();
-    let def_id = tcx.hir().body_owner_def_id(inner_body);
-    let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
-    let stmt = body_with_facts.simplified_body().stmt_at(inner_loc);
-    if !matches!(
-        stmt,
-        Either::Right(Terminator {
-            kind: TerminatorKind::Call { .. },
-            ..
-        })
-    ) {
-        warn!("`deep_dependencies_of` was called on non-function-call location {} with statement {:?}", loc, stmt);
-    }
-    // Get the combined dependencies for `places` at the
-    // location `loc` also taking into account provenance.
-    let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]|
-        if let Some(deps) = g.location_states.get(&loc) {
-        places
-            .iter()
-            .flat_map(|&origin| {
-                provenance_of(tcx, origin)
-                    .into_iter()
-                    .map(|projection| {
-                        (projection, deps.resolve(projection))
-                    })
+    /// Perform a depth-first search up the dependency tree formed from looking up
+    /// the [`places_read`] at a location in `g`, starting from `loc`.
+    ///
+    /// Terminates on each branch when a location `l` is encountered that does not
+    /// satisfy `matches!(Keep::from_global_location(tcx, l), Keep::Reject(_))`.
+    ///
+    /// In addition the set of places that is considered "read" for `loc` (the
+    /// initial location) is
+    /// [`Aliases::reachable_values(p)`](flowistry::mir::aliases::Aliases::reachable_values).
+    /// This means we consider all subplaces as also read. This only makes sense for
+    /// function calls, hence this should only be called on locations that represent
+    /// function calls.
+    pub fn deep_dependencies_of<'g>(
+        &mut self,
+        loc: GlobalLocation<'g>,
+        g: &GlobalFlowGraph<'tcx, 'g>,
+        p: mir::Place<'tcx>,
+    ) -> HashSet<GlobalLocation<'g>> {
+        debug!("Flattening {p:?} @ {loc}");
+        let tcx = self.tcx;
+        let (inner_loc, inner_body) = loc.innermost_location_and_body();
+        let def_id = tcx.hir().body_owner_def_id(inner_body);
+        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
+        let stmt = body_with_facts.simplified_body().stmt_at(inner_loc);
+        if !matches!(
+            stmt,
+            Either::Right(Terminator {
+                kind: TerminatorKind::Call { .. },
+                ..
             })
-            .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
-            .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
-        } else {
-            vec![]
+        ) {
+            warn!("`deep_dependencies_of` was called on non-function-call location {} with statement {:?}", loc, stmt);
+        }
+        // Get the combined dependencies for `places` at the
+        // location `loc` also taking into account provenance.
+        let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]| {
+            if let Some(deps) = g.location_states.get(&loc) {
+                places
+                    .iter()
+                    .flat_map(|&origin| {
+                        provenance_of(tcx, origin)
+                            .into_iter()
+                            .map(|projection| (projection, deps.resolve(projection)))
+                    })
+                    .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
+                    .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
+            } else {
+                vec![]
+            }
         };
 
-    // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
-    let reachable_places = flattening_helper.reachable_places(body_with_facts, def_id, p);
-    let mut queue = deps_for_places(loc, &reachable_places);
-    let mut seen = HashSet::new();
-    let mut deps = HashSet::new();
+        // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
+        let reachable_places = self.reachable_values(body_with_facts, def_id, p);
+        let mut queue = deps_for_places(loc, &reachable_places);
+        let mut seen = HashSet::new();
+        let mut deps = HashSet::new();
 
-    // A reverse dfs traversing the flowistry tensor which terminates every time we find a function call.
-    while let Some((place, location)) = queue.pop() {
-        // A special situation has ocurred. We've hit a translation boundary
-        // (either an argument or a call site of an inlined function). This
-        // causes a translation of the place, but otherwise this location must
-        // be rejected so we translate, resolve and move on.
-        if g.location_states.get(&location).map(|s| s.is_translated()) == Some(true) {
-            // Don't insert this location into `seen`, because we might cross
-            // this boundary multiple times with different places
-            queue.extend(deps_for_places(location, &[place]));
-        } else {
-            match Keep::from_global_location(tcx, location) {
-                Keep::Keep(..) | Keep::Argument(_) => {
-                    debug!(
-                        "Found dependency from {p:?} on {location} via the last place {place:?}"
-                    );
-                    deps.insert(location);
-                }
-                Keep::Reject(stmt_at_loc) if !seen.contains(&location) => {
-                    seen.insert(location);
-                    if let Some(stmt) = stmt_at_loc {
-                        queue.extend(deps_for_places(
-                            location,
-                            &places_read(tcx, location.innermost_location_and_body().0, &stmt)
-                                .collect::<Vec<_>>(),
-                        ));
-                    } else {
-                        error!("Rejection without statement should not happen anymore. Rejected {location} without statement");
+        // A reverse dfs traversing the flowistry tensor which terminates every time we find a function call.
+        while let Some((place, location)) = queue.pop() {
+            // A special situation has ocurred. We've hit a translation boundary
+            // (either an argument or a call site of an inlined function). This
+            // causes a translation of the place, but otherwise this location must
+            // be rejected so we translate, resolve and move on.
+            if g.location_states.get(&location).map(|s| s.is_translated()) == Some(true) {
+                // Don't insert this location into `seen`, because we might cross
+                // this boundary multiple times with different places
+                queue.extend(deps_for_places(location, &[place]));
+            } else {
+                match Keep::from_global_location(tcx, location) {
+                    Keep::Keep(..) | Keep::Argument(_) => {
+                        debug!(
+                            "Found dependency from {p:?} on {location} via the last place {place:?}"
+                        );
+                        deps.insert(location);
                     }
+                    Keep::Reject(stmt_at_loc) if !seen.contains(&location) => {
+                        seen.insert(location);
+                        if let Some(stmt) = stmt_at_loc {
+                            queue.extend(deps_for_places(
+                                location,
+                                &places_read(tcx, location.innermost_location_and_body().0, &stmt)
+                                    .collect::<Vec<_>>(),
+                            ));
+                        } else {
+                            error!("Rejection without statement should not happen anymore. Rejected {location} without statement");
+                        }
+                    }
+                    _ => (),
                 }
-                _ => (),
             }
         }
+        deps
     }
-    deps
 }
 
 /// A struct responsible for creating a global flow matrix for one `mir::Body`,
@@ -1100,8 +968,9 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
 }
 
 /// A helper struct classifying whether a given `GlobalLocation` should be kept
-/// during `compute_call_only_flow`. The main way to use this struct is with the
-/// `from_location` function which also has additional documentation.
+/// during [`GlobalFlowConstructor::compute_call_only_flow`]. The main way to
+/// use this struct is with the `from_location` function which also has
+/// additional documentation.
 enum Keep<'tcx> {
     Keep(
         SimplifiedArguments<'tcx>,
