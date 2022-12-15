@@ -528,7 +528,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                         .flat_map(|s| s.iter().cloned()),
                 )
             })
-            .map(|l| l.function())
+            .map(|l| l.innermost_location_and_body().1)
             .collect::<HashSet<crate::rust::hir::BodyId>>()
             .into_iter()
             .map(|bid| {
