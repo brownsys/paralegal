@@ -716,6 +716,7 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     g: &GlobalFlowGraph<'tcx, 'g>,
     p: mir::Place<'tcx>,
 ) -> HashSet<GlobalLocation<'g>> {
+    debug!("Flattening {p:?} @ {loc}");
     let tcx = flattening_helper.tcx;
     let (inner_loc, inner_body) = loc.innermost_location_and_body();
     let def_id = tcx.hir().body_owner_def_id(inner_body);
@@ -732,17 +733,22 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     }
     // Get the combined dependencies for `places` at the
     // location `loc` also taking into account provenance.
-    let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]| {
+    let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]|
+        if let Some(deps) = g.location_states.get(&loc) {
         places
             .iter()
-            .filter_map(|place| {
-                provenance_of(tcx, *place)
+            .flat_map(|&origin| {
+                provenance_of(tcx, origin)
                     .into_iter()
-                    .find_map(|place| Some((place, g.location_states.get(&loc)?.resolve(place))))
+                    .map(|projection| {
+                        (projection, deps.resolve(projection))
+                    })
             })
             .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
             .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
-    };
+        } else {
+            vec![]
+        };
 
     // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
     let reachable_places = flattening_helper.reachable_places(body_with_facts, def_id, p);

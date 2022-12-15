@@ -241,9 +241,15 @@ pub fn provenance_of<'tcx>(
     place: Place<'tcx>,
 ) -> smallvec::SmallVec<[Place<'tcx>; 2]> {
     let mut refs = place.place_and_refs_in_projection(tcx);
+    // Now make sure the ordering is correct. The refs as we get them from above
+    // are `[_1.foo.bar, _1, _1.foo]`, e.g. first the place, then the local and
+    // then successively more projections.
+    //
+    // So first we reverse it, because we want successively fewer projections
     refs.reverse();
-    let rlen = refs.len();
-    refs.rotate_left(rlen - 1);
+    // Now we have the right order, except for `place` (e.g. the most specific
+    // place) being at the end, so we rotate to get it to the front.
+    refs.rotate_right(0);
     refs
 }
 
@@ -366,12 +372,26 @@ pub fn places_read<'tcx>(
             kind: mir::StatementKind::Assign(a),
             ..
         }) => {
-            // this should actually be more selective. Right now this just
-            // discards the last projection, regardless of the type of
-            // projection. In actually it should discard everything from the
-            // last field or index projection onwards.
             let mut proj = a.0.iter_projections();
+            // We advance the iterator from the end until we find a projection
+            // that might not return the full object, e.g. field access or
+            // indexing.
+            //
+            // `iter_projections` returns an iterator of successively more
+            // projections, e.g. it starts with the local itself, like `_1` and
+            // then adds on e.g. `*_1`, `(*_1).foo` etc.
+            //
+            // We advance from the end because we want to basically drop
+            // everything that is more specific. As an example if you had
+            // `*((*_1).foo) = bla` then only the `foo` field gets modified, so
+            // `_1` *and* `*_1` should still be considered read, but we can't
+            // just do "filter" or the last `*` will cause `((*_1).foo, *)` to
+            // end up in the result as well (leakage).
             let last_field_proj = proj.rfind(|pl| pl.1.may_be_indirect());
+            // Now we iterate over the rest, including the field projection we
+            // found, because we only consider the first part of the tuple (a
+            // `PlaceRef`) which contains a place *up to* the projection in the
+            // second part of the tuple (which is what our condition was on)>
             for pl in proj.chain(last_field_proj.into_iter()) {
                 vis.visit_place(
                     &Place::from_ref(pl.0, tcx),
