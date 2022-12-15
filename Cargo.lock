@@ -152,6 +152,7 @@ source = "git+https://github.com/JustusAdam/dot-rust?rev=ff2b42ceda98c639c8ea3cb
 [[package]]
 name = "flowistry"
 version = "0.5.24"
+source = "git+https://github.com/brownsys/flowistry?rev=ee38c0876494930059317d49032dde7db885ce17#ee38c0876494930059317d49032dde7db885ce17"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -335,6 +336,7 @@ dependencies = [
 [[package]]
 name = "rustc_plugin"
 version = "0.5.24"
+source = "git+https://github.com/brownsys/flowistry?rev=ee38c0876494930059317d49032dde7db885ce17#ee38c0876494930059317d49032dde7db885ce17"
 dependencies = [
  "cargo_metadata",
  "log",
