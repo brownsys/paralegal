@@ -120,7 +120,7 @@ struct AnalysisCtrl {
 impl AnalysisCtrl {
     fn use_reachable_values_in_dfs(&self) -> Option<(mir::Mutability, bool)> {
         self.use_reachable_values_in_dfs.as_ref().map(|s| {
-            let mut_spec = match s.to_lowercase().as_str()  {
+            let mut_spec = match s.to_lowercase().as_str() {
                 "mut" => mir::Mutability::Mut,
                 "" => mir::Mutability::Not,
                 m => panic!("Unknown mutability specification {m}"),

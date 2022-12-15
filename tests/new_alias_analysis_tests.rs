@@ -39,7 +39,8 @@ fn track_mutable_modify() {
 #[test]
 fn eliminate_return_connection() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("eliminate_return_connection"))).unwrap();
+    let graph =
+        do_in_crate_dir(|| G::from_file(Symbol::intern("eliminate_return_connection"))).unwrap();
     let ref source = graph.function_call("new_s");
     let ref pass_through = graph.function_call("deref_t");
     let ref read = graph.function_call("read");
@@ -52,7 +53,8 @@ fn eliminate_return_connection() {
 #[test]
 fn eliminate_mut_input_connection() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("eliminate_mut_input_connection"))).unwrap();
+    let graph =
+        do_in_crate_dir(|| G::from_file(Symbol::intern("eliminate_mut_input_connection"))).unwrap();
     let ref source = graph.function_call("new_s");
     let ref push = graph.function_call("push");
     let ref read = graph.function_call("read");
@@ -65,7 +67,9 @@ fn eliminate_mut_input_connection() {
 #[test]
 fn input_elimination_isnt_a_problem_empty() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("input_elimination_isnt_a_problem_empty"))).unwrap();
+    let graph =
+        do_in_crate_dir(|| G::from_file(Symbol::intern("input_elimination_isnt_a_problem_empty")))
+            .unwrap();
     let ref source = graph.function_call("new_s");
     let ref read = graph.function_call("read");
 
@@ -75,7 +79,10 @@ fn input_elimination_isnt_a_problem_empty() {
 #[test]
 fn input_elimination_isnt_a_problem_vec_push() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("input_elimination_isnt_a_problem_vec_push"))).unwrap();
+    let graph = do_in_crate_dir(|| {
+        G::from_file(Symbol::intern("input_elimination_isnt_a_problem_vec_push"))
+    })
+    .unwrap();
     let ref source = graph.function_call("new_s");
     let ref push = graph.function_call("push");
     let ref insert = graph.function_call("insert");
@@ -92,10 +99,13 @@ fn input_elimination_isnt_a_problem_vec_push() {
 #[test]
 fn input_elimination_isnt_a_problem_statement() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("input_elimination_isnt_a_problem_statement"))).unwrap();
+    let graph = do_in_crate_dir(|| {
+        G::from_file(Symbol::intern("input_elimination_isnt_a_problem_statement"))
+    })
+    .unwrap();
 
     let ref src_1 = graph.function_call("new_s");
-    let ref src_2  = graph.function_call("another_s");
+    let ref src_2 = graph.function_call("another_s");
 
     let ref assoc = graph.function_call("assoc");
 
