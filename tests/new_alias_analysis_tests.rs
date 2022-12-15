@@ -88,11 +88,11 @@ fn input_elimination_isnt_a_problem_vec_push() {
     let ref insert = graph.function_call("insert(");
     let ref read = graph.function_call("read");
 
+    assert!(graph.connects_direct(source, insert));
+    assert!(graph.connects_direct(insert, push));
+    assert!(graph.connects_direct(push, read));
     assert!(graph.connects_direct(source, push));
-    assert!(graph.connects_direct(push, insert));
-    assert!(graph.connects_direct(insert, read));
-    assert!(!graph.connects_direct(source, insert));
-    assert!(!graph.connects_direct(push, read));
+    assert!(!graph.connects_direct(insert, read));
     assert!(!graph.connects_direct(source, read));
 }
 
