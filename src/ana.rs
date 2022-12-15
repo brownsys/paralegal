@@ -513,7 +513,7 @@ impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
 /// memoized internally). The aliases are constructed without considering
 /// region entailments (essentially "outlives" constraints on the lifetimes in
 /// the function) that are caused by function calls. This is deliberate and
-/// causes the resulting `Aliases` to act non-transitively with respect to
+/// causes the resulting [`Aliases`] to act non-transitively with respect to
 /// function calls.
 ///
 /// Lastly we use the computed aliases to call `aliases.reachable_values(p)` where `p` is the place argument that was provided.
@@ -559,7 +559,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         a
     }
 
-    /// Memoized [`Aliases::build_with_facts_selection`].
+    /// Memoized [`Aliases::build_with_fact_selection`].
     fn get_aliases(
         &mut self,
         def_id: LocalDefId,
@@ -584,7 +584,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
     ///
     /// In addition the set of places that is considered "read" for `loc` (the
     /// initial location) is
-    /// [`Aliases::reachable_values(p)`](flowistry::mir::aliases::Aliases::reachable_values).
+    /// [`reachable_values(p)`](Self::reachable_values)
     /// This means we consider all subplaces as also read. This only makes sense for
     /// function calls, hence this should only be called on locations that represent
     /// function calls.
