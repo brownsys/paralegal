@@ -28,7 +28,7 @@ use std::{
 };
 
 use crate::{
-    consts, dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*, Either, HashMap,
+    consts, dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::{*, PlaceExt}, Either, HashMap,
     HashSet,
 };
 
@@ -51,7 +51,6 @@ use flowistry::{
         aliases::Aliases,
         borrowck_facts::{self, CachedSimplifedBodyWithFacts},
         engine::AnalysisResults,
-        utils::PlaceExt,
     },
 };
 
@@ -114,7 +113,7 @@ pub fn translate_child_to_parent<'tcx>(
         }
     }
 
-    if !child.is_arg(body) || (mutated && !child.is_indirect()) {
+    if !flowistry::mir::utils::PlaceExt::is_arg(&child, body) || (mutated && !child.is_indirect()) {
         return None;
     }
 
@@ -140,7 +139,7 @@ pub fn translate_child_to_parent<'tcx>(
         projection.push(elem);
     }
 
-    let parent_arg_projected = Place::make(parent_toplevel_arg.local, &projection, tcx);
+    let parent_arg_projected = <Place as flowistry::mir::utils::PlaceExt>::make(parent_toplevel_arg.local, &projection, tcx);
     Some(parent_arg_projected)
 }
 
@@ -304,7 +303,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     > {
         t.as_fn_and_args().and_then(|(p, args, dest)| {
             let node = self.tcx.hir().get_if_local(p).ok_or("non-local node")?;
-            let (_callee_id, callee_local_id, callee_body_id) = node_as_fn(&node)
+            let (_callee_id, callee_local_id, callee_body_id) = node.as_fn()
                 .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
             let () = if self.should_inline(*callee_local_id) {
                 Ok(())
@@ -535,6 +534,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         def_id: LocalDefId,
         p: mir::Place<'tcx>,
     ) -> Vec<Place<'tcx>> {
+        use flowistry::mir::utils::PlaceExt;
         let new_aliases = self.get_aliases(def_id, body_with_facts);
         let a = new_aliases
             .reachable_values(p, ast::Mutability::Not)
@@ -606,7 +606,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                 places
                     .iter()
                     .flat_map(|&origin| {
-                        provenance_of(tcx, origin)
+                        origin.provenance(tcx)
                             .into_iter()
                             .map(|projection| (projection, deps.resolve(projection)))
                     })
@@ -1012,7 +1012,7 @@ impl<'tcx> Keep<'tcx> {
     ) -> Self {
         let body_with_facts =
             borrowck_facts::get_body_with_borrowck_facts(tcx, tcx.hir().body_owner_def_id(body_id));
-        if !is_real_location(&body_with_facts.simplified_body(), location) {
+        if !location.is_real(&body_with_facts.simplified_body()) {
             if loc_is_top_level {
                 Keep::Argument(location.statement_index)
             } else {
@@ -1174,8 +1174,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
     fn annotated_subtypes(&self, ty: ty::Ty) -> HashSet<TypeDescriptor> {
         ty.walk()
             .filter_map(|ty| {
-                generic_arg_as_type(ty)
-                    .and_then(ty_def)
+                ty.as_type()
+                    .and_then(TyExt::defid)
                     .and_then(DefId::as_local)
                     .and_then(|def| {
                         let hid = self.tcx.hir().local_def_id_to_hir_id(def);
@@ -1287,7 +1287,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             // on bight not be the `body` we fetched before.
             let inner_body_with_facts = tcx.body_for_body_id(inner_body_id);
             let ref inner_body = inner_body_with_facts.simplified_body();
-            if !is_real_location(&inner_body, inner_location) {
+            if !inner_location.is_real(&inner_body) {
                 assert!(loc.is_at_root());
                 // These can only be (controller) arguments and they cannot have
                 // dependencies (and thus not receive any data)
@@ -1369,7 +1369,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 };
                 for dep in arg_deps.iter() {
                     flows.add(
-                        Cow::Owned(dep.as_data_source(tcx, |l| is_real_location(&inner_body, l))),
+                        Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
                         to.clone(),
                     );
                 }

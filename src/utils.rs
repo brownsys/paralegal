@@ -1,7 +1,8 @@
 //! Utility functions, general purpose structs and extension traits
 
-use flowistry::mir::utils::PlaceExt;
 extern crate smallvec;
+
+use smallvec::SmallVec;
 
 use crate::{
     desc::Identifier,
@@ -69,30 +70,46 @@ impl MetaItemMatch for ast::Attribute {
     }
 }
 
-/// Extract a `DefId` if this type references an object that has one. This is
-/// true for most user defined types, including types form the standard library,
-/// but not builtin types, such as `u32`, arrays or ad-hoc types such as
-/// function pointers.
-///
-/// Use with caution, this function might not be exhaustive (yet).
-pub fn ty_def(ty: ty::Ty) -> Option<DefId> {
-    match ty.kind() {
-        ty::TyKind::Adt(def, _) => Some(def.did()),
-        ty::TyKind::Foreign(did)
-        | ty::TyKind::FnDef(did, _)
-        | ty::TyKind::Closure(did, _)
-        | ty::TyKind::Generator(did, _, _)
-        | ty::TyKind::Opaque(did, _) => Some(*did),
-        _ => None,
+
+/// Extension trait for [`ty::Ty`]. This lets us implement methods on
+/// [`ty::Ty`]. [`Self`] is only ever supposed to be instantiated as [`ty::Ty`].
+pub trait TyExt {
+    /// Extract a `DefId` if this type references an object that has one. This
+    /// is true for most user defined types, including types form the standard
+    /// library, but not builtin types, such as `u32`, arrays or ad-hoc types
+    /// such as function pointers.
+    ///
+    /// Use with caution, this function might not be exhaustive (yet).
+    fn defid(self) -> Option<DefId>;
+}
+
+impl <'tcx> TyExt for ty::Ty<'tcx> {
+    fn defid(self) -> Option<DefId> {
+        match self.kind() {
+            ty::TyKind::Adt(def, _) => Some(def.did()),
+            ty::TyKind::Foreign(did)
+            | ty::TyKind::FnDef(did, _)
+            | ty::TyKind::Closure(did, _)
+            | ty::TyKind::Generator(did, _, _)
+            | ty::TyKind::Opaque(did, _) => Some(*did),
+            _ => None,
+        }
     }
 }
 
-/// Generic arguments can reference non-type things (in particular constants and
-/// lifetimes). If it is a type, then this extracts that type, otherwise `None`.
-pub fn generic_arg_as_type(a: ty::subst::GenericArg) -> Option<ty::Ty> {
-    match a.unpack() {
-        ty::subst::GenericArgKind::Type(t) => Some(t),
-        _ => None,
+pub trait GenericArgExt<'tcx> {
+    /// Generic arguments can reference non-type things (in particular constants
+    /// and lifetimes). If it is a type, then this extracts that type, otherwise
+    /// `None`.
+    fn as_type(self) -> Option<ty::Ty<'tcx>>;
+}
+
+impl <'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
+    fn as_type(self) -> Option<ty::Ty<'tcx>> {
+        match self.unpack() {
+            ty::subst::GenericArgKind::Type(t) => Some(t),
+            _ => None,
+        }
     }
 }
 
@@ -202,17 +219,26 @@ impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisit
     }
 }
 
-/// This function deals with the fact that flowistry uses special locations to
-/// refer to function arguments. Those locations are not recognized the rustc
-/// functions that operate on MIR and thus need to be filtered before doing
-/// things such as indexing into a `mir::Body`.
-pub fn is_real_location(body: &mir::Body, l: mir::Location) -> bool {
-    body.basic_blocks().get(l.block).map(|bb| 
-            // Its `<=` because if len == statement_index it refers to the
-            // terminator
-            // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
-            l.statement_index <= bb.statements.len())
-        == Some(true)
+/// Extension trait for [`Location`]. This lets us implement methods on
+/// [`Location`]. [`Self`] is only ever supposed to be instantiated as
+/// [`Location`].
+pub trait LocationExt {
+    /// This function deals with the fact that flowistry uses special locations
+    /// to refer to function arguments. Those locations are not recognized the
+    /// rustc functions that operate on MIR and thus need to be filtered before
+    /// doing things such as indexing into a `mir::Body`.
+    fn is_real(self, body: &mir::Body) -> bool;
+}
+
+impl LocationExt for Location {
+    fn is_real(self, body: &mir::Body) -> bool {
+        body.basic_blocks().get(self.block).map(|bb| 
+                // Its `<=` because if len == statement_index it refers to the
+                // terminator
+                // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
+                self.statement_index <= bb.statements.len())
+            == Some(true)
+    }
 }
 
 /// Return the places that are read in this statements and possible ref/deref
@@ -227,57 +253,71 @@ pub fn read_places_with_provenance<'tcx>(
 ) -> impl Iterator<Item = Place<'tcx>> {
     places_read(tcx, l, stmt)
         .into_iter()
-        .flat_map(move |place| provenance_of(tcx, place).into_iter())
+        .flat_map(move |place| place.provenance(tcx).into_iter())
 }
 
-/// Constructs a set of places that are ref/deref/field un-layerings of the
-/// input place.
-///
-/// The ordering is starting with the place itself, then successively removing
-/// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
-/// [_1.foo.bar, _1.foo, _1]`
-pub fn provenance_of<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    place: Place<'tcx>,
-) -> smallvec::SmallVec<[Place<'tcx>; 2]> {
-    let mut refs = place.place_and_refs_in_projection(tcx);
-    // Now make sure the ordering is correct. The refs as we get them from above
-    // are `[_1.foo.bar, _1, _1.foo]`, e.g. first the place, then the local and
-    // then successively more projections.
-    //
-    // So first we reverse it, because we want successively fewer projections
-    refs.reverse();
-    // Now we have the right order, except for `place` (e.g. the most specific
-    // place) being at the end, so we rotate to get it to the front.
-    refs.rotate_right(0);
-    refs
+/// Extension trait for [`Place`]s so we can implement methods on them. [`Self`]
+/// is only ever supposed to be instantiated as [`Place`].
+pub trait PlaceExt<'tcx> {
+    /// Constructs a set of places that are ref/deref/field un-layerings of the
+    /// input place.
+    /// 
+    /// The ordering is starting with the place itself, then successively removing
+    /// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
+    /// [_1.foo.bar, _1.foo, _1]`
+    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>;2]>;
 }
 
-/// Try and unwrap this `node` as some sort of function.
-///
-/// [HIR](hir) has two different kinds of items that are types of function, one
-/// is top-level `fn`s the other is an `impl` item of function type. This
-/// function lets you extract common information from either. Returns [`None`]
-/// if the node is not of a function-like type.
-pub fn node_as_fn<'hir>(
-    node: &hir::Node<'hir>,
-) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
-    if let hir::Node::Item(hir::Item {
-        ident,
-        def_id,
-        kind: hir::ItemKind::Fn(_, _, body_id),
-        ..
-    })
-    | hir::Node::ImplItem(hir::ImplItem {
-        ident,
-        def_id,
-        kind: hir::ImplItemKind::Fn(_, body_id),
-        ..
-    }) = node
-    {
-        Some((ident, def_id, body_id))
-    } else {
-        None
+impl <'tcx> PlaceExt<'tcx> for Place<'tcx> {
+    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>;2]> {
+        use flowistry::mir::utils::PlaceExt;
+        let mut refs = self.place_and_refs_in_projection(tcx);
+        // Now make sure the ordering is correct. The refs as we get them from above
+        // are `[_1.foo.bar, _1, _1.foo]`, e.g. first the place, then the local and
+        // then successively more projections.
+        //
+        // So first we reverse it, because we want successively fewer projections
+        refs.reverse();
+        // Now we have the right order, except for `place` (e.g. the most specific
+        // place) being at the end, so we rotate to get it to the front.
+        refs.rotate_right(0);
+        refs
+    }
+}
+
+/// Extension trait for [`hir::Node`]. This lets up implement methods on
+/// [`hir::Node`]. [`Self`] should only ever be instantiated as [`hir::Node`].
+pub trait NodeExt<'hir> {
+    /// Try and unwrap this `node` as some sort of function.
+    ///
+    /// [HIR](hir) has two different kinds of items that are types of function,
+    /// one is top-level `fn`s the other is an `impl` item of function type.
+    /// This function lets you extract common information from either. Returns
+    /// [`None`] if the node is not of a function-like type.
+    fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)>;
+}
+
+impl <'hir> NodeExt<'hir> for hir::Node<'hir> {
+    fn as_fn(
+        &self
+    ) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
+        if let hir::Node::Item(hir::Item {
+            ident,
+            def_id,
+            kind: hir::ItemKind::Fn(_, _, body_id),
+            ..
+        })
+        | hir::Node::ImplItem(hir::ImplItem {
+            ident,
+            def_id,
+            kind: hir::ImplItemKind::Fn(_, body_id),
+            ..
+        }) = self
+        {
+            Some((ident, def_id, body_id))
+        } else {
+            None
+        }
     }
 }
 
@@ -394,7 +434,7 @@ pub fn places_read<'tcx>(
             // second part of the tuple (which is what our condition was on)>
             for pl in proj.chain(last_field_proj.into_iter()) {
                 vis.visit_place(
-                    &Place::from_ref(pl.0, tcx),
+                    &<Place as flowistry::mir::utils::PlaceExt>::from_ref(pl.0, tcx),
                     mir::visit::PlaceContext::MutatingUse(mir::visit::MutatingUseContext::Store),
                     location,
                 );
