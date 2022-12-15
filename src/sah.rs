@@ -6,7 +6,7 @@ extern crate either;
 
 use either::Either;
 
-use crate::{consts, desc::*, rust::*, HashMap, HashSet, utils::LocationExt};
+use crate::{consts, desc::*, rust::*, utils::LocationExt, HashMap, HashSet};
 use rustc_middle::ty::{self, TyCtxt};
 use std::cell::RefCell;
 
@@ -429,11 +429,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
             use mir::visit::MutVisitor;
             let mut loc_set = HashSet::<mir::Location>::new();
             crate::utils::PlaceVisitor(|pl: &mir::Place<'tcx>| {
-                loc_set.extend(
-                    matrix
-                        .row(*pl)
-                        .filter(|l| l.is_real(body)),
-                );
+                loc_set.extend(matrix.row(*pl).filter(|l| l.is_real(body)));
             })
             .visit_terminator(t, loc);
 

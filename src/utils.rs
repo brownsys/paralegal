@@ -70,7 +70,6 @@ impl MetaItemMatch for ast::Attribute {
     }
 }
 
-
 /// Extension trait for [`ty::Ty`]. This lets us implement methods on
 /// [`ty::Ty`]. [`Self`] is only ever supposed to be instantiated as [`ty::Ty`].
 pub trait TyExt {
@@ -83,7 +82,7 @@ pub trait TyExt {
     fn defid(self) -> Option<DefId>;
 }
 
-impl <'tcx> TyExt for ty::Ty<'tcx> {
+impl<'tcx> TyExt for ty::Ty<'tcx> {
     fn defid(self) -> Option<DefId> {
         match self.kind() {
             ty::TyKind::Adt(def, _) => Some(def.did()),
@@ -104,7 +103,7 @@ pub trait GenericArgExt<'tcx> {
     fn as_type(self) -> Option<ty::Ty<'tcx>>;
 }
 
-impl <'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
+impl<'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
     fn as_type(self) -> Option<ty::Ty<'tcx>> {
         match self.unpack() {
             ty::subst::GenericArgKind::Type(t) => Some(t),
@@ -261,15 +260,15 @@ pub fn read_places_with_provenance<'tcx>(
 pub trait PlaceExt<'tcx> {
     /// Constructs a set of places that are ref/deref/field un-layerings of the
     /// input place.
-    /// 
+    ///
     /// The ordering is starting with the place itself, then successively removing
     /// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
     /// [_1.foo.bar, _1.foo, _1]`
-    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>;2]>;
+    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>; 2]>;
 }
 
-impl <'tcx> PlaceExt<'tcx> for Place<'tcx> {
-    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>;2]> {
+impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
+    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>; 2]> {
         use flowistry::mir::utils::PlaceExt;
         let mut refs = self.place_and_refs_in_projection(tcx);
         // Now make sure the ordering is correct. The refs as we get them from above
@@ -297,10 +296,8 @@ pub trait NodeExt<'hir> {
     fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)>;
 }
 
-impl <'hir> NodeExt<'hir> for hir::Node<'hir> {
-    fn as_fn(
-        &self
-    ) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
+impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
+    fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
         if let hir::Node::Item(hir::Item {
             ident,
             def_id,

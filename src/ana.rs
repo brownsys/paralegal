@@ -28,8 +28,13 @@ use std::{
 };
 
 use crate::{
-    consts, dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::{*, PlaceExt}, Either, HashMap,
-    HashSet,
+    consts, dbg,
+    desc::*,
+    ir::*,
+    rust::*,
+    sah::HashVerifications,
+    utils::{PlaceExt, *},
+    Either, HashMap, HashSet,
 };
 
 use hir::{
@@ -139,7 +144,11 @@ pub fn translate_child_to_parent<'tcx>(
         projection.push(elem);
     }
 
-    let parent_arg_projected = <Place as flowistry::mir::utils::PlaceExt>::make(parent_toplevel_arg.local, &projection, tcx);
+    let parent_arg_projected = <Place as flowistry::mir::utils::PlaceExt>::make(
+        parent_toplevel_arg.local,
+        &projection,
+        tcx,
+    );
     Some(parent_arg_projected)
 }
 
@@ -303,7 +312,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     > {
         t.as_fn_and_args().and_then(|(p, args, dest)| {
             let node = self.tcx.hir().get_if_local(p).ok_or("non-local node")?;
-            let (_callee_id, callee_local_id, callee_body_id) = node.as_fn()
+            let (_callee_id, callee_local_id, callee_body_id) = node
+                .as_fn()
                 .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
             let () = if self.should_inline(*callee_local_id) {
                 Ok(())
@@ -606,7 +616,8 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                 places
                     .iter()
                     .flat_map(|&origin| {
-                        origin.provenance(tcx)
+                        origin
+                            .provenance(tcx)
                             .into_iter()
                             .map(|projection| (projection, deps.resolve(projection)))
                     })

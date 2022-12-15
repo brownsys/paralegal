@@ -179,8 +179,8 @@ impl G {
     }
 
     pub fn function_calls(&self, pattern: &str) -> HashSet<(mir::Location, hir::BodyId)> {
-		let mut fn_pattern = pattern.to_owned();
-		fn_pattern.push_str("(");
+        let mut fn_pattern = pattern.to_owned();
+        fn_pattern.push_str("(");
         self.body
             .0
             .iter()

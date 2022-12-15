@@ -105,10 +105,8 @@ fn loops() {
 #[test]
 fn loop_retains_dependency() {
     assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| {
-        G::from_file(Symbol::intern("loop_retains_dependency"))
-    })
-    .unwrap();
+    let graph =
+        do_in_crate_dir(|| G::from_file(Symbol::intern("loop_retains_dependency"))).unwrap();
 
     let get = graph.function_call("get_user_data");
     let get_other = graph.function_call("get_other_data");

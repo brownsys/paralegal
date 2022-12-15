@@ -74,7 +74,7 @@ pub mod call_only_flow_dot {
         ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{read_places_with_provenance, AsFnAndArgs, TyCtxtExt, LocationExt},
+        utils::{read_places_with_provenance, AsFnAndArgs, LocationExt, TyCtxtExt},
         Either,
     };
 

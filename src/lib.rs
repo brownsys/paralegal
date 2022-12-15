@@ -1,5 +1,5 @@
 //! Ties together the crate and defines command line options.
-//! 
+//!
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `dfpp` and
 //! `cargo-dfpp` (a structure suggested by [rustc_plugin]).
