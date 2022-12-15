@@ -85,7 +85,7 @@ fn input_elimination_isnt_a_problem_vec_push() {
     .unwrap();
     let ref source = graph.function_call("new_s");
     let ref push = graph.function_call("push");
-    let ref insert = graph.function_call("insert");
+    let ref insert = graph.function_call("insert(");
     let ref read = graph.function_call("read");
 
     assert!(graph.connects_direct(source, push));
