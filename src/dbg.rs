@@ -454,7 +454,12 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
             } else if deps.is_translated() {
                 HashSet::new()
             } else {
-                utils::read_places_with_provenance(inner_location, &body.simplified_body().stmt_at(inner_location), self.tcx).collect()
+                utils::read_places_with_provenance(
+                    inner_location,
+                    &body.simplified_body().stmt_at(inner_location),
+                    self.tcx,
+                )
+                .collect()
             };
             writeln!(f, "")?;
             let empty_set = HashSet::new();

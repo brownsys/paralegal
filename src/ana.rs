@@ -47,7 +47,7 @@ use rustc_span::{symbol::Ident, Span, Symbol};
 use flowistry::{
     indexed::IndexSet,
     infoflow::{FlowAnalysis, FlowDomain, NonTransitiveFlowDomain},
-    mir::{borrowck_facts, engine::AnalysisResults},
+    mir::{borrowck_facts, engine::AnalysisResults, utils::PlaceExt},
 };
 
 /// Values of this type can be matched against Rust attributes
@@ -306,8 +306,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             let inner_flow = self
                 .compute_granular_global_flows(*callee_body_id)
                 .ok_or("is recursive")?;
-            let body =
-                borrowck_facts::get_body_with_borrowck_facts(self.tcx, *callee_local_id).simplified_body();
+            let body = borrowck_facts::get_body_with_borrowck_facts(self.tcx, *callee_local_id)
+                .simplified_body();
             Ok((inner_flow, *callee_body_id, body, args, dest))
         })
     }
@@ -467,7 +467,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
 use ty::RegionVid;
 
-struct ComputeCallObligations<'tcx, 'a>{
+struct ComputeCallObligations<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     body: &'a mir::Body<'tcx>,
     result: HashSet<(usize, RegionVid)>,
@@ -475,19 +475,26 @@ struct ComputeCallObligations<'tcx, 'a>{
     largest_vid: RegionVid,
 }
 
-impl <'tcx, 'a> ComputeCallObligations<'tcx, 'a> {
+impl<'tcx, 'a> ComputeCallObligations<'tcx, 'a> {
     fn new(tcx: TyCtxt<'tcx>, body: &'a mir::Body<'tcx>) -> Self {
         Self {
-            tcx, body, result: HashSet::new(), terminator_index: 0, largest_vid: RegionVid::from_usize(0)
+            tcx,
+            body,
+            result: HashSet::new(),
+            terminator_index: 0,
+            largest_vid: RegionVid::from_usize(0),
         }
     }
 
     fn result(&self) -> HashSet<(RegionVid, RegionVid)> {
-        self.result.iter().flat_map(|&(idx, v)| {
-            let mut new_vid = self.largest_vid;
-            <RegionVid as rustc_index::vec::Idx>::increment_by(&mut new_vid, idx);
-            [(new_vid, v), (v, new_vid)]
-        }).collect()
+        self.result
+            .iter()
+            .flat_map(|&(idx, v)| {
+                let mut new_vid = self.largest_vid;
+                <RegionVid as rustc_index::vec::Idx>::increment_by(&mut new_vid, idx);
+                [(new_vid, v), (v, new_vid)]
+            })
+            .collect()
     }
 
     fn handle_vid(&mut self, vid: RegionVid) {
@@ -499,7 +506,7 @@ struct RegionCollector {
     result: HashSet<RegionVid>,
 }
 
-impl <'tcx> ty::fold::TypeVisitor<'tcx> for RegionCollector {
+impl<'tcx> ty::fold::TypeVisitor<'tcx> for RegionCollector {
     fn visit_region(&mut self, r: ty::Region<'tcx>) -> std::ops::ControlFlow<Self::BreakTy> {
         if let RegionKind::ReVar(v) = r.kind() {
             self.result.insert(v);
@@ -508,33 +515,55 @@ impl <'tcx> ty::fold::TypeVisitor<'tcx> for RegionCollector {
     }
 }
 
-impl <'tcx, 'a> mir::visit::Visitor<'tcx> for ComputeCallObligations<'tcx, 'a> {
-    fn visit_terminator(&mut self,terminator: &Terminator<'tcx>,location:Location) {
+impl<'tcx, 'a> mir::visit::Visitor<'tcx> for ComputeCallObligations<'tcx, 'a> {
+    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         debug!("Visiting terminator {:?}", terminator.kind);
-        if let TerminatorKind::Call { args, destination,.. } = &terminator.kind {
-            let mut collector = RegionCollector{ result: HashSet::new() };
-            for p in destination.as_ref().into_iter().map(|p| p.0).chain(args.iter().filter_map(mir::Operand::place)) {
-                <RegionCollector as ty::fold::TypeVisitor>::visit_ty(&mut collector, p.ty(self.body, self.tcx).ty);
+        if let TerminatorKind::Call {
+            args, destination, ..
+        } = &terminator.kind
+        {
+            let mut collector = RegionCollector {
+                result: HashSet::new(),
+            };
+            for p in destination
+                .as_ref()
+                .into_iter()
+                .map(|p| p.0)
+                .chain(args.iter().filter_map(mir::Operand::place))
+            {
+                <RegionCollector as ty::fold::TypeVisitor>::visit_ty(
+                    &mut collector,
+                    p.ty(self.body, self.tcx).ty,
+                );
             }
             for vid in collector.result {
                 self.handle_vid(vid);
                 let tidx = self.terminator_index;
                 self.result.insert((tidx, vid));
             }
-            self.terminator_index +=1;
+            self.terminator_index += 1;
         }
         self.super_terminator(terminator, location)
     }
 
-    fn visit_statement(&mut self,statement: &mir::Statement<'tcx>,location:Location) {
+    fn visit_statement(&mut self, statement: &mir::Statement<'tcx>, location: Location) {
         debug!("Visiting statement {:?}", statement.kind);
         self.super_statement(statement, location)
     }
 
-
-    fn visit_place(&mut self,place: &Place<'tcx>,context:mir::visit::PlaceContext,location:Location) {
-        let mut collector = RegionCollector{ result: HashSet::new() };
-        <RegionCollector as ty::fold::TypeVisitor>::visit_ty(&mut collector, place.ty(self.body, self.tcx).ty);
+    fn visit_place(
+        &mut self,
+        place: &Place<'tcx>,
+        context: mir::visit::PlaceContext,
+        location: Location,
+    ) {
+        let mut collector = RegionCollector {
+            result: HashSet::new(),
+        };
+        <RegionCollector as ty::fold::TypeVisitor>::visit_ty(
+            &mut collector,
+            place.ty(self.body, self.tcx).ty,
+        );
         let set = collector.result;
         if !set.is_empty() {
             debug!("{place:?} at location {location:?} contains regions {set:?}");
@@ -542,7 +571,7 @@ impl <'tcx, 'a> mir::visit::Visitor<'tcx> for ComputeCallObligations<'tcx, 'a> {
         self.super_place(place, context, location)
     }
 
-    fn visit_region(&mut self,region:ty::Region<'tcx>,_:Location) {
+    fn visit_region(&mut self, region: ty::Region<'tcx>, _: Location) {
         debug!("Saw region {:?}", region);
         if let RegionKind::ReVar(v) = region.kind() {
             self.handle_vid(v);
@@ -561,20 +590,20 @@ enum ConstraintSelector<'tcx, 'a> {
     },
     EntailmentMatchingBased {
         elimination_set: HashSet<(RegionVid, RegionVid)>,
-    }
+    },
 }
 
-impl <'a, 'tcx> ConstraintSelector<'tcx, 'a> {
+impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
     fn location_based(body_with_facts: &'a BodyWithBorrowckFacts<'tcx>) -> Self {
         Self::LocationBased { body_with_facts }
     }
     fn entailment_matching_based(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> Self {
-        let mut vis = ComputeCallObligations::new(
-            tcx,
-            body,
-        );
+        let mut vis = ComputeCallObligations::new(tcx, body);
         <ComputeCallObligations as mir::visit::Visitor>::visit_body(&mut vis, body);
-        debug!("Largest vid seen: {:?}, highest terminator index: {}", vis.largest_vid, vis.terminator_index);
+        debug!(
+            "Largest vid seen: {:?}, highest terminator index: {}",
+            vis.largest_vid, vis.terminator_index
+        );
         let elimination_set = vis.result();
         debug!("Found region obligations {:?}", elimination_set);
         Self::EntailmentMatchingBased { elimination_set }
@@ -588,17 +617,31 @@ impl <'a, 'tcx> ConstraintSelector<'tcx, 'a> {
                     RichLocation::Mid(l) => l,
                     RichLocation::Start(l) => l,
                 };
-                let stmt = 
-                body_with_facts.body.stmt_at(loc);
+                let stmt = body_with_facts.body.stmt_at(loc);
                 match &stmt {
-                    Either::Right(term) => debug!("Introduced by {:?} @ {rich_loc:?} ({idx:?})", term.kind),
+                    Either::Right(term) => {
+                        debug!("Introduced by {:?} @ {rich_loc:?} ({idx:?})", term.kind)
+                    }
                     Either::Left(stmt) => debug!("Introduced by {:?} @ {rich_loc:?}", stmt.kind),
                 };
-                !matches!(stmt, Either::Right(Terminator {kind: TerminatorKind::Call {..}, ..}))
+                !matches!(
+                    stmt,
+                    Either::Right(Terminator {
+                        kind: TerminatorKind::Call { .. },
+                        ..
+                    })
+                )
             }
-            Self::EntailmentMatchingBased { elimination_set } => !elimination_set.contains(&(r1, r2))
+            Self::EntailmentMatchingBased { elimination_set } => {
+                !elimination_set.contains(&(r1, r2))
+            }
         };
-        debug!("{} entailment {:?} -> {:?}", if allow { "Allowing" } else { "Eliminating" }, r1, r2);
+        debug!(
+            "{} entailment {:?} -> {:?}",
+            if allow { "Allowing" } else { "Eliminating" },
+            r1,
+            r2
+        );
         allow
     }
 }
@@ -626,10 +669,7 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     let (inner_loc, inner_body) = loc.innermost_location_and_body();
     let def_id = tcx.hir().body_owner_def_id(inner_body);
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
-    let stmt =
-            body_with_facts
-            .simplified_body()
-            .stmt_at(inner_loc);
+    let stmt = body_with_facts.simplified_body().stmt_at(inner_loc);
     if !matches!(
         stmt,
         Either::Right(Terminator {
@@ -644,14 +684,14 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     let deps_for_places = |loc: GlobalLocation<'g>, places: &[Place<'tcx>]| {
         places
             .iter()
-            .filter_map(|place| 
-                provenance_of(tcx, *place).into_iter()
-                .find_map(|place| Some((place, g.location_states.get(&loc)?.resolve(place))))
-            )
+            .filter_map(|place| {
+                provenance_of(tcx, *place)
+                    .into_iter()
+                    .find_map(|place| Some((place, g.location_states.get(&loc)?.resolve(place))))
+            })
             .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
             .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
     };
-
 
     // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
     let reachable_places = if let Some((m, use_locations)) = use_reachable_places {
@@ -660,11 +700,18 @@ pub fn deep_dependencies_of<'tcx, 'g>(
         } else {
             ConstraintSelector::entailment_matching_based(tcx, &body_with_facts.simplified_body())
         };
-        let new_aliases = flowistry::mir::aliases::Aliases::build_with_fact_selection(tcx, def_id.to_def_id(), body_with_facts, |r1, r2, idx| selector.select(r1, r2, idx));
+        let new_aliases = flowistry::mir::aliases::Aliases::build_with_fact_selection(
+            tcx,
+            def_id.to_def_id(),
+            body_with_facts,
+            |r1, r2, idx| selector.select(r1, r2, idx),
+        );
         let a = new_aliases
             .reachable_values(p, m)
             .into_iter()
+            .flat_map(|&p| new_aliases.conflicts(p).iter())
             .cloned()
+            .filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
             .collect::<Vec<_>>();
 
         debug!("Determined the reachable places ({m:?}) for {p:?} @ {loc} are {a:?}");
@@ -700,7 +747,7 @@ pub fn deep_dependencies_of<'tcx, 'g>(
                     if let Some(stmt) = stmt_at_loc {
                         queue.extend(deps_for_places(
                             location,
-                            &places_read(location.innermost_location_and_body().0, &stmt)
+                            &places_read(tcx, location.innermost_location_and_body().0, &stmt)
                                 .collect::<Vec<_>>(),
                         ));
                     } else {

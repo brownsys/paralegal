@@ -1,11 +1,14 @@
 //! Utility functions, general purpose structs and extension traits
 
+use flowistry::mir::utils::PlaceExt;
+extern crate smallvec;
+
 use crate::{
     desc::Identifier,
     rust::{
         ast, hir,
         hir::{def_id::DefId, hir_id::HirId, BodyId},
-        mir::{self, Location, Place, Statement, Terminator},
+        mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_span::symbol::Ident,
         ty,
     },
@@ -174,9 +177,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
                 }?;
                 Ok((
                     defid,
-                    args.iter()
-                        .map(|a| a.place())
-                        .collect(),
+                    args.iter().map(|a| a.place()).collect(),
                     *destination,
                 ))
             }
@@ -224,29 +225,26 @@ pub fn read_places_with_provenance<'tcx>(
     stmt: &Either<&Statement<'tcx>, &Terminator<'tcx>>,
     tcx: TyCtxt<'tcx>,
 ) -> impl Iterator<Item = Place<'tcx>> {
-    places_read(l, stmt)
+    places_read(tcx, l, stmt)
         .into_iter()
         .flat_map(move |place| provenance_of(tcx, place).into_iter())
 }
 
 /// Constructs a set of places that are ref/deref/field un-layerings of the
 /// input place.
-/// 
+///
 /// The ordering is starting with the place itself, then successively removing
 /// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
 /// [_1.foo.bar, _1.foo, _1]`
-pub fn provenance_of<'tcx>(tcx: TyCtxt<'tcx>, place: Place<'tcx>) -> Vec<Place<'tcx>> {
-    use flowistry::mir::utils::PlaceExt;
-    let mut refs = place
-        .refs_in_projection();
+pub fn provenance_of<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    place: Place<'tcx>,
+) -> smallvec::SmallVec<[Place<'tcx>; 2]> {
+    let mut refs = place.place_and_refs_in_projection(tcx);
     refs.reverse();
+    let rlen = refs.len();
+    refs.rotate_left(rlen - 1);
     refs
-        .into_iter()
-        .map(|t| mir::Place::from_ref(t.0, tcx))
-        .chain(
-            std::iter::once(place)
-        )
-        .collect()
 }
 
 /// Try and unwrap this `node` as some sort of function.
@@ -333,10 +331,27 @@ pub fn outfile_pls<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<std::f
         .open(path)
 }
 
+pub trait ProjectionElemExt {
+    fn may_be_indirect(self) -> bool;
+}
+
+impl<V, T> ProjectionElemExt for ProjectionElem<V, T> {
+    fn may_be_indirect(self) -> bool {
+        matches!(
+            self,
+            ProjectionElem::Field(..)
+                | ProjectionElem::Index(..)
+                | ProjectionElem::ConstantIndex { .. }
+                | ProjectionElem::Subslice { .. }
+        )
+    }
+}
+
 /// Return all places mentioned at this location that are *read*. Which means
 /// that if a `Place` is not read but assigned (e.g. the return place of a
 /// function call), it will not be in the result set.
 pub fn places_read<'tcx>(
+    tcx: TyCtxt<'tcx>,
     location: mir::Location,
     stmt: &Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>,
 ) -> impl Iterator<Item = mir::Place<'tcx>> {
@@ -346,10 +361,26 @@ pub fn places_read<'tcx>(
         places.insert(*p);
     });
     match stmt {
+        // TODO: This needs to deal with fields!!
         Either::Left(mir::Statement {
             kind: mir::StatementKind::Assign(a),
             ..
-        }) => vis.visit_rvalue(&a.1, location),
+        }) => {
+            // this should actually be more selective. Right now this just
+            // discards the last projection, regardless of the type of
+            // projection. In actually it should discard everything from the
+            // last field or index projection onwards.
+            let mut proj = a.0.iter_projections();
+            let last_field_proj = proj.rfind(|pl| pl.1.may_be_indirect());
+            for pl in proj.chain(last_field_proj.into_iter()) {
+                vis.visit_place(
+                    &Place::from_ref(pl.0, tcx),
+                    mir::visit::PlaceContext::MutatingUse(mir::visit::MutatingUseContext::Store),
+                    location,
+                );
+            }
+            vis.visit_rvalue(&a.1, location);
+        }
         Either::Right(term) => vis.visit_terminator(term, location), // TODO this is not correct
         _ => (),
     };
