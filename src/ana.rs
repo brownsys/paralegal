@@ -47,7 +47,7 @@ use rustc_span::{symbol::Ident, Span, Symbol};
 use flowistry::{
     indexed::IndexSet,
     infoflow::{FlowAnalysis, FlowDomain, NonTransitiveFlowDomain},
-    mir::{borrowck_facts, engine::AnalysisResults, utils::PlaceExt},
+    mir::{borrowck_facts::{self, CachedSimplifedBodyWithFacts}, engine::AnalysisResults, utils::PlaceExt},
 };
 
 /// Values of this type can be matched against Rust attributes
@@ -166,6 +166,9 @@ pub struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
     /// Memoization of intermediate analyses (see [`FunctionFlows`]
     /// documentation for more)
     function_flows: FunctionFlows<'tcx, 'g>,
+    
+    /// Memoization of non-transitive alias analysis
+    flattening_helper: RefCell<DependencyFlatteningHelper<'tcx>>,
 }
 
 /// This essentially describes a closure that determines for a given
@@ -247,6 +250,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             gli,
             function_flows: RefCell::new(HashMap::new()),
             inline_selector,
+            flattening_helper: RefCell::new(DependencyFlatteningHelper::new(tcx, analysis_opts.use_reachable_values_in_dfs())),
         }
     }
 
@@ -442,12 +446,10 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                     .aliases;
                 let deep_deps_for = |p: mir::Place<'tcx>| {
                     deep_dependencies_of(
-                        tcx,
-                        aliases,
+                        &mut self.flattening_helper.borrow_mut(),
                         *loc,
                         g,
                         p,
-                        self.analysis_opts.use_reachable_values_in_dfs(),
                     )
                 };
                 Some((
@@ -646,6 +648,56 @@ impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
     }
 }
 
+use flowistry::mir::aliases::Aliases;
+pub struct DependencyFlatteningHelper<'tcx> {
+    memoized_analyses: HashMap<LocalDefId, Aliases<'tcx, 'tcx>>,
+    tcx: TyCtxt<'tcx>,
+    use_reachable_places: Option<(mir::Mutability, bool)>,
+}
+
+impl <'tcx> DependencyFlatteningHelper<'tcx> {
+    pub fn new(tcx: TyCtxt<'tcx>, use_reachable_places: Option<(mir::Mutability, bool)>) -> Self {
+        Self {
+            memoized_analyses: HashMap::new(), tcx, use_reachable_places
+        }
+    }
+
+    pub fn reachable_places(&mut self, body_with_facts: &'tcx CachedSimplifedBodyWithFacts<'tcx>, def_id: LocalDefId, p: mir::Place<'tcx>) -> Vec<Place<'tcx>> {
+        if let Some((m, use_locations)) = self.use_reachable_places {
+            let new_aliases = self.get_aliases(def_id, body_with_facts, use_locations);
+            let a = new_aliases
+                .reachable_values(p, m)
+                .into_iter()
+                .flat_map(|&p| new_aliases.conflicts(p).iter())
+                .cloned()
+                .filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
+                .collect::<Vec<_>>();
+
+            debug!("Determined the reachable places ({m:?}) for {p:?} are {a:?}");
+            debug!("Aliases would have been {:?}", new_aliases.aliases(p));
+            a
+        } else {
+            vec![p]
+        }
+    }
+
+    fn get_aliases(&mut self, def_id: LocalDefId, body_with_facts: &'tcx CachedSimplifedBodyWithFacts<'tcx>, use_locations: bool) -> &Aliases<'tcx, 'tcx> {
+        self.memoized_analyses.entry(def_id).or_insert_with(|| {
+            let selector = if use_locations {
+                ConstraintSelector::location_based(body_with_facts.body_with_facts())
+            } else {
+                ConstraintSelector::entailment_matching_based(self.tcx, &body_with_facts.simplified_body())
+            };
+            Aliases::build_with_fact_selection(
+                self.tcx,
+                def_id.to_def_id(),
+                body_with_facts,
+                |r1, r2, idx| selector.select(r1, r2, idx),
+            )
+        })
+    }
+}
+
 /// Perform a depth-first search up the dependency tree formed from looking up
 /// the [`places_read`] at a location in `g`, starting from `loc`.
 ///
@@ -659,13 +711,12 @@ impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
 /// function calls, hence this should only be called on locations that represent
 /// function calls.
 pub fn deep_dependencies_of<'tcx, 'g>(
-    tcx: TyCtxt<'tcx>,
-    aliases: &flowistry::mir::aliases::Aliases<'_, 'tcx>,
+    flattening_helper: &mut DependencyFlatteningHelper<'tcx>,
     loc: GlobalLocation<'g>,
     g: &GlobalFlowGraph<'tcx, 'g>,
     p: mir::Place<'tcx>,
-    use_reachable_places: Option<(mir::Mutability, bool)>,
 ) -> HashSet<GlobalLocation<'g>> {
+    let tcx = flattening_helper.tcx;
     let (inner_loc, inner_body) = loc.innermost_location_and_body();
     let def_id = tcx.hir().body_owner_def_id(inner_body);
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
@@ -694,32 +745,7 @@ pub fn deep_dependencies_of<'tcx, 'g>(
     };
 
     // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
-    let reachable_places = if let Some((m, use_locations)) = use_reachable_places {
-        let selector = if use_locations {
-            ConstraintSelector::location_based(body_with_facts.body_with_facts())
-        } else {
-            ConstraintSelector::entailment_matching_based(tcx, &body_with_facts.simplified_body())
-        };
-        let new_aliases = flowistry::mir::aliases::Aliases::build_with_fact_selection(
-            tcx,
-            def_id.to_def_id(),
-            body_with_facts,
-            |r1, r2, idx| selector.select(r1, r2, idx),
-        );
-        let a = new_aliases
-            .reachable_values(p, m)
-            .into_iter()
-            .flat_map(|&p| new_aliases.conflicts(p).iter())
-            .cloned()
-            .filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
-            .collect::<Vec<_>>();
-
-        debug!("Determined the reachable places ({m:?}) for {p:?} @ {loc} are {a:?}");
-        debug!("Aliases would have been {:?}", new_aliases.aliases(p));
-        a
-    } else {
-        vec![p]
-    };
+    let reachable_places = flattening_helper.reachable_places(body_with_facts, def_id, p);
     let mut queue = deps_for_places(loc, &reachable_places);
     let mut seen = HashSet::new();
     let mut deps = HashSet::new();
