@@ -1,11 +1,15 @@
 //! Utility functions, general purpose structs and extension traits
 
+extern crate smallvec;
+
+use smallvec::SmallVec;
+
 use crate::{
     desc::Identifier,
     rust::{
         ast, hir,
         hir::{def_id::DefId, hir_id::HirId, BodyId},
-        mir::{self, Location, Place, Statement, Terminator},
+        mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_span::symbol::Ident,
         ty,
     },
@@ -66,7 +70,6 @@ impl MetaItemMatch for ast::Attribute {
     }
 }
 
-
 /// Extension trait for [`ty::Ty`]. This lets us implement methods on
 /// [`ty::Ty`]. [`Self`] is only ever supposed to be instantiated as [`ty::Ty`].
 pub trait TyExt {
@@ -79,7 +82,7 @@ pub trait TyExt {
     fn defid(self) -> Option<DefId>;
 }
 
-impl <'tcx> TyExt for ty::Ty<'tcx> {
+impl<'tcx> TyExt for ty::Ty<'tcx> {
     fn defid(self) -> Option<DefId> {
         match self.kind() {
             ty::TyKind::Adt(def, _) => Some(def.did()),
@@ -100,7 +103,7 @@ pub trait GenericArgExt<'tcx> {
     fn as_type(self) -> Option<ty::Ty<'tcx>>;
 }
 
-impl <'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
+impl<'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
     fn as_type(self) -> Option<ty::Ty<'tcx>> {
         match self.unpack() {
             ty::subst::GenericArgKind::Type(t) => Some(t),
@@ -190,9 +193,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
                 }?;
                 Ok((
                     defid,
-                    args.iter()
-                        .map(|a| a.place())
-                        .collect(),
+                    args.iter().map(|a| a.place()).collect(),
                     *destination,
                 ))
             }
@@ -249,7 +250,7 @@ pub fn read_places_with_provenance<'tcx>(
     stmt: &Either<&Statement<'tcx>, &Terminator<'tcx>>,
     tcx: TyCtxt<'tcx>,
 ) -> impl Iterator<Item = Place<'tcx>> {
-    places_read(l, stmt)
+    places_read(tcx, l, stmt)
         .into_iter()
         .flat_map(move |place| place.provenance(tcx).into_iter())
 }
@@ -259,26 +260,27 @@ pub fn read_places_with_provenance<'tcx>(
 pub trait PlaceExt<'tcx> {
     /// Constructs a set of places that are ref/deref/field un-layerings of the
     /// input place.
-    /// 
+    ///
     /// The ordering is starting with the place itself, then successively removing
     /// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
     /// [_1.foo.bar, _1.foo, _1]`
-    fn provenance(self, tcx: TyCtxt<'tcx>) -> Vec<Place<'tcx>>;
+    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>; 2]>;
 }
 
-impl <'tcx> PlaceExt<'tcx> for Place<'tcx> {
-    fn provenance(self, tcx: TyCtxt<'tcx>) -> Vec<Place<'tcx>> {
+impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
+    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>; 2]> {
         use flowistry::mir::utils::PlaceExt;
-        let mut refs = self
-            .refs_in_projection();
+        let mut refs = self.place_and_refs_in_projection(tcx);
+        // Now make sure the ordering is correct. The refs as we get them from above
+        // are `[_1.foo.bar, _1, _1.foo]`, e.g. first the place, then the local and
+        // then successively more projections.
+        //
+        // So first we reverse it, because we want successively fewer projections
         refs.reverse();
+        // Now we have the right order, except for `place` (e.g. the most specific
+        // place) being at the end, so we rotate to get it to the front.
+        refs.rotate_right(0);
         refs
-            .into_iter()
-            .map(|t| mir::Place::from_ref(t.0, tcx))
-            .chain(
-                std::iter::once(self)
-            )
-            .collect()
     }
 }
 
@@ -294,10 +296,8 @@ pub trait NodeExt<'hir> {
     fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)>;
 }
 
-impl <'hir> NodeExt<'hir> for hir::Node<'hir> {
-    fn as_fn(
-        &self
-    ) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
+impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
+    fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
         if let hir::Node::Item(hir::Item {
             ident,
             def_id,
@@ -374,10 +374,27 @@ pub fn outfile_pls<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<std::f
         .open(path)
 }
 
+pub trait ProjectionElemExt {
+    fn may_be_indirect(self) -> bool;
+}
+
+impl<V, T> ProjectionElemExt for ProjectionElem<V, T> {
+    fn may_be_indirect(self) -> bool {
+        matches!(
+            self,
+            ProjectionElem::Field(..)
+                | ProjectionElem::Index(..)
+                | ProjectionElem::ConstantIndex { .. }
+                | ProjectionElem::Subslice { .. }
+        )
+    }
+}
+
 /// Return all places mentioned at this location that are *read*. Which means
 /// that if a `Place` is not read but assigned (e.g. the return place of a
 /// function call), it will not be in the result set.
 pub fn places_read<'tcx>(
+    tcx: TyCtxt<'tcx>,
     location: mir::Location,
     stmt: &Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>,
 ) -> impl Iterator<Item = mir::Place<'tcx>> {
@@ -387,10 +404,40 @@ pub fn places_read<'tcx>(
         places.insert(*p);
     });
     match stmt {
+        // TODO: This needs to deal with fields!!
         Either::Left(mir::Statement {
             kind: mir::StatementKind::Assign(a),
             ..
-        }) => vis.visit_rvalue(&a.1, location),
+        }) => {
+            let mut proj = a.0.iter_projections();
+            // We advance the iterator from the end until we find a projection
+            // that might not return the full object, e.g. field access or
+            // indexing.
+            //
+            // `iter_projections` returns an iterator of successively more
+            // projections, e.g. it starts with the local itself, like `_1` and
+            // then adds on e.g. `*_1`, `(*_1).foo` etc.
+            //
+            // We advance from the end because we want to basically drop
+            // everything that is more specific. As an example if you had
+            // `*((*_1).foo) = bla` then only the `foo` field gets modified, so
+            // `_1` *and* `*_1` should still be considered read, but we can't
+            // just do "filter" or the last `*` will cause `((*_1).foo, *)` to
+            // end up in the result as well (leakage).
+            let last_field_proj = proj.rfind(|pl| pl.1.may_be_indirect());
+            // Now we iterate over the rest, including the field projection we
+            // found, because we only consider the first part of the tuple (a
+            // `PlaceRef`) which contains a place *up to* the projection in the
+            // second part of the tuple (which is what our condition was on)>
+            for pl in proj.chain(last_field_proj.into_iter()) {
+                vis.visit_place(
+                    &<Place as flowistry::mir::utils::PlaceExt>::from_ref(pl.0, tcx),
+                    mir::visit::PlaceContext::MutatingUse(mir::visit::MutatingUseContext::Store),
+                    location,
+                );
+            }
+            vis.visit_rvalue(&a.1, location);
+        }
         Either::Right(term) => vis.visit_terminator(term, location), // TODO this is not correct
         _ => (),
     };
@@ -417,14 +464,14 @@ pub trait TyCtxtExt<'tcx> {
     fn body_for_body_id(
         self,
         b: BodyId,
-    ) -> &'tcx crate::rust::rustc_borrowck::BodyWithBorrowckFacts<'tcx>;
+    ) -> &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     fn body_for_body_id(
         self,
         b: BodyId,
-    ) -> &'tcx crate::rust::rustc_borrowck::BodyWithBorrowckFacts<'tcx> {
+    ) -> &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx> {
         flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
             self,
             self.hir().body_owner_def_id(b),

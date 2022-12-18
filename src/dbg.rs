@@ -74,7 +74,7 @@ pub mod call_only_flow_dot {
         ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{read_places_with_provenance, AsFnAndArgs, TyCtxtExt, LocationExt},
+        utils::{read_places_with_provenance, AsFnAndArgs, LocationExt, TyCtxtExt},
         Either,
     };
 
@@ -122,11 +122,11 @@ pub mod call_only_flow_dot {
                 .flat_map(|(&to, deps)| {
                     let (loc, body) = to.innermost_location_and_body();
                     let body_with_facts = self.tcx.body_for_body_id(body);
-                    if loc.is_real(&body_with_facts.body) {
+                    if loc.is_real(&body_with_facts.simplified_body()) {
                         Some(
                             read_places_with_provenance(
                                 loc,
-                                &body_with_facts.body.stmt_at(loc),
+                                &body_with_facts.simplified_body().stmt_at(loc),
                                 self.tcx,
                             )
                             .flat_map(|p| deps.resolve(p).1),
@@ -236,7 +236,7 @@ pub mod call_only_flow_dot {
                 self.tcx,
                 self.tcx.hir().body_owner_def_id(body_id),
             );
-            let body = &body_with_facts.body;
+            let body = &body_with_facts.simplified_body();
             let write_label = |s: &mut String| -> std::fmt::Result {
                 write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
                 if self.detailed {
@@ -448,13 +448,18 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                 self.tcx,
                 self.tcx.hir().body_owner_def_id(inner_body),
             );
-            let places_read = if !inner_location.is_real(&body.body) {
+            let places_read = if !inner_location.is_real(&body.simplified_body()) {
                 write!(f, " is argument {}", inner_location.statement_index - 1)?;
                 HashSet::new()
             } else if deps.is_translated() {
                 HashSet::new()
             } else {
-                utils::read_places_with_provenance(inner_location, &body.body.stmt_at(inner_location), self.tcx).collect()
+                utils::read_places_with_provenance(
+                    inner_location,
+                    &body.simplified_body().stmt_at(inner_location),
+                    self.tcx,
+                )
+                .collect()
             };
             writeln!(f, "")?;
             let empty_set = HashSet::new();
@@ -523,7 +528,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                         .flat_map(|s| s.iter().cloned()),
                 )
             })
-            .map(|l| l.function())
+            .map(|l| l.innermost_location_and_body().1)
             .collect::<HashSet<crate::rust::hir::BodyId>>()
             .into_iter()
             .map(|bid| {
@@ -534,7 +539,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                             tcx,
                             tcx.hir().body_owner_def_id(bid),
                         )
-                        .body,
+                        .simplified_body(),
                         tcx,
                     ),
                 )

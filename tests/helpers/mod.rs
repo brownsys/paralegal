@@ -210,8 +210,8 @@ impl G {
     }
 
     pub fn function_calls(&self, pattern: &str) -> HashSet<(mir::Location, hir::BodyId)> {
-		let mut fn_pattern = pattern.to_owned();
-		fn_pattern.push_str("(");
+        let mut fn_pattern = pattern.to_owned();
+        fn_pattern.push_str("(");
         self.body
             .0
             .iter()
@@ -266,8 +266,11 @@ impl PreFrg {
         use_rustc(|| {
             Self(
                 serde_json::from_reader(
-                    &mut std::fs::File::open(format!("{dir}/{}", dfpp::consts::FLOW_GRAPH_OUT_NAME))
-                        .unwrap(),
+                    &mut std::fs::File::open(format!(
+                        "{dir}/{}",
+                        dfpp::consts::FLOW_GRAPH_OUT_NAME
+                    ))
+                    .unwrap(),
                 )
                 .unwrap(),
             )
