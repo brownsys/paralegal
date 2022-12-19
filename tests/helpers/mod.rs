@@ -210,15 +210,13 @@ impl G {
     }
 
     pub fn function_calls(&self, pattern: &str) -> HashSet<(mir::Location, hir::BodyId)> {
-        let mut fn_pattern = pattern.to_owned();
-        fn_pattern.push_str("(");
         self.body
             .0
             .iter()
             .flat_map(|(bid, body)| {
                 body.0
                     .iter()
-                    .filter(|s| s.1.contains(&fn_pattern))
+                    .filter(|s| s.1.contains(pattern))
                     .map(|s| (s.0, *bid))
             })
             .collect()
