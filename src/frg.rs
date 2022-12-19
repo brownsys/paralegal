@@ -170,7 +170,9 @@ fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            DataSink::Return => alloc.text("`return"),
+            DataSink::Return { function } => {
+				call_site_as_forge(alloc, function)
+			},
             DataSink::Argument { function, arg_slot } => {
                 data_sink_as_forge(alloc, function, *arg_slot)
             }
@@ -287,7 +289,7 @@ mod name {
                         None,
                         vec![
                             (FLOW, set(&arr(SRC, CALL_ARGUMENT))),
-							(CTRL_FLOW, set(&arr(SRC, CALL_ARGUMENT))),
+							(CTRL_FLOW, set(&arr(SRC, OBJ))),
                             (TYPES, set(&arr(SRC, TYPE))),
                         ],
                     ),

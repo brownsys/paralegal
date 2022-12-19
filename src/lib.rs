@@ -103,9 +103,6 @@ struct AnalysisCtrl {
     /// Flowistry's recursive analysis)
     #[clap(long, env)]
     no_recursive_analysis: bool,
-    /// Outputs control dependencies separately in Forge
-    #[clap(long, env)]
-    separate_control_deps: bool,
     /// Make flowistry use a recursive analysis strategy. We turn this off by
     /// default, because we perform the recursion by ourselves and doing it
     /// twice has lead to bugs.

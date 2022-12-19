@@ -339,7 +339,7 @@ impl DataSource {
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DataSink {
     Argument { function: CallSite, arg_slot: usize },
-    Return,
+    Return { function: CallSite },
 }
 
 impl DataSink {

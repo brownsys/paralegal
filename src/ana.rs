@@ -475,7 +475,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                         ctrl_deps.extend(deps);
                     }
                 }
-				
+
                 Some((
                     *loc,
                     CallDeps {
@@ -1385,6 +1385,12 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 // register_call_site(tcx, call_site_annotations, defid, Some(anns));
             }
 
+			// Add ctrl flows to callsite.
+			for dep in deps.ctrl_deps.iter() {
+				flows.add_ctrl_flow(Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
+				DataSink::Return { function: call_site.clone() },)
+			}
+
             for (arg_slot, arg_deps) in deps.input_deps.iter().enumerate() {
                 // This will be the target of any flow we register
                 let to = if loc.is_at_root()
@@ -1395,7 +1401,9 @@ impl<'tcx> CollectingVisitor<'tcx> {
                             ..
                         })
                     ) {
-                    DataSink::Return
+                    DataSink::Return {
+						function: call_site.clone(),
+					}
                 } else {
                     DataSink::Argument {
                         function: call_site.clone(),
@@ -1408,17 +1416,12 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         to.clone(),
                     );
                 }
-                if self.opts.anactrl.separate_control_deps {
-                    for dep in deps.ctrl_deps.iter() {
-                        flows.add_ctrl_flow(Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
-                        to.clone(),)
-                    }
-                } else {
-                    for dep in deps.ctrl_deps.iter() {
-                        flows.add_data_flow(Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
-                        to.clone(),)
-                    }
-                }
+
+				// Add ctrl flows to arguments.
+				for dep in deps.ctrl_deps.iter() {
+					flows.add_ctrl_flow(Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
+					to.clone(),)
+				}
             }
         }
         Ok((Identifier::new(id.name), flows))
