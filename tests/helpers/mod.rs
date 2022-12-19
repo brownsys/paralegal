@@ -97,18 +97,18 @@ pub fn run_forge(file: &str) -> bool {
 		.success()
 }
 
-pub fn write_forge(file: &str, pred: &str, flow: &str, result: &str) -> Result<(), std::io::Error> {
+pub fn write_forge(file: &str, property: &str, result: &str) -> Result<(), std::io::Error> {
 	let content = format!("#lang forge 
 
 open \"helpers.frg\"
 open \"analysis_result.frg\"
 
 test expect {{
-	{}: {{
-		{}[`{}]
+	property_test: {{
+		{}
 	}} for Flows is {}
 }}
-	", format!("{}_test", pred), pred, flow, result);
+	", property, result);
 
 
 	outfile_pls(file).and_then(

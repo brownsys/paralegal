@@ -21,8 +21,8 @@ lazy_static! {
         );
 }
 
-fn create_forge_file(test_name: &str, pred: &str, flow: &str, result: &str) -> bool {
-	do_in_crate_dir(|| { write_forge(&format!("test_{}.frg", test_name), pred, flow, result) }).map_or_else(
+fn create_forge_file(test_name: &str, property: &str, result: &str) -> bool {
+	do_in_crate_dir(|| { write_forge(&format!("test_{}.frg", test_name), property, result) }).map_or_else(
 		|e| {
 			println!("io err {}", e);
 			false
@@ -42,13 +42,29 @@ fn get_forge_result(test_name: &str) -> bool {
 }
 
 #[test]
-fn t() {
+fn vacuity() {
     assert!(*TEST_CRATE_ANALYZED);
+
+	assert!(create_forge_file(
+		"vacuity", 
+		"", 
+		"sat"));
+	assert!(get_forge_result("vacuity"));
+}
+
+#[test]
+fn control_flow() {
+    assert!(*TEST_CRATE_ANALYZED);
+
+	assert!(create_forge_file(
+		"process_invalid_check", 
+		"check_always_happens[`process_invalid_check]", 
+		"theorem"));
+	assert!(!get_forge_result("process_if"));
 	
 	assert!(create_forge_file(
-		"allowed_sources", 
-		"only_send_to_allowed_sources", 
 		"process_if", 
+		"check_always_happens[`process_if]", 
 		"theorem"));
-	assert!(get_forge_result("allowed_sources"));
+	assert!(get_forge_result("process_if"));
 }

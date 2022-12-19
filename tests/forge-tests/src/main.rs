@@ -19,12 +19,19 @@ fn process_if() {
     }
 }
 
+#[dfpp::analyze]
+fn process_invalid_check() {
+    let user_data = get_user_data();
+    check_user_data(&user_data);
+    send_user_data(&user_data);
+}
+
 #[dfpp::label{source, return}]
 fn get_user_data() -> UserData {
     return UserData{data: vec![1, 2, 3]}
 }
 
-#[dfpp::label{checks, arguments = [0]}]
+#[dfpp::label{checks, return}]
 fn check_user_data(user_data: &UserData) -> bool {
     for i in &user_data.data {
         if i < &0 {
