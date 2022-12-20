@@ -21,6 +21,10 @@ lazy_static! {
         );
 }
 
+// This will create a forge file with the name "test_{test_name}.frg"
+// that test expects that running {property} for Flows is {result}.
+// To test a predicate on a specific ctrl, property should be of the form
+// pred[`ctrl_name]
 fn create_forge_file(test_name: &str, property: &str, result: &str) -> bool {
 	do_in_crate_dir(|| { write_forge(&format!("test_{}.frg", test_name), property, result) }).map_or_else(
 		|e| {
@@ -31,6 +35,8 @@ fn create_forge_file(test_name: &str, property: &str, result: &str) -> bool {
 	)
 }
 
+// This will return true if running the file passes all of the tests,
+// and false otherwise. 
 fn get_forge_result(test_name: &str) -> bool {
 	do_in_crate_dir(|| { run_forge(&format!("test_{}.frg", test_name)) }).map_or_else(
 		|e| {
