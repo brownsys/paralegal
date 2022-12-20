@@ -97,6 +97,8 @@ pub struct Args {
     error: bool, 
     /// Name of the predicate that failed
     pred: Option<String>, 
+    /// Name of the controller that the violating edge belongs to
+    ctrl: Option<String>,
     /// Name of the source of the violating edge
     source: Option<String>, 
     /// Name of the sink of the violating edge

@@ -32,6 +32,7 @@ use crate::{
     HashSet,
 };
 
+use dot::Labeller;
 use hir::{
     def_id::DefId,
     hir_id::HirId,
@@ -1030,12 +1031,14 @@ struct ErrorInfo {
 impl ErrorInfo {
 
     fn parse_location(s: &String) -> Location {
-        let chars = s.chars().into_iter().rev();
-        let index_num = 0;
-        let index_power = 1;
-        let block_num = 0;
-        let block_power = 1;
-        let working_on_index = true; // true means we're working on the index, false means we're working on the block
+        let mut chars = s.chars().into_iter().rev();
+        let mut index_num = 0;
+        let mut index_power = 1;
+        let mut block_num = 0;
+        let mut block_power = 1;
+        let mut working_on_index = true; // true means we're working on the index, false means we're working on the block
+
+        let MULT_FACTOR = 10;
 
         loop {
             match chars.next() {
@@ -1044,23 +1047,22 @@ impl ErrorInfo {
                 }, 
                 Some(c) if c.is_numeric() => {
                     if working_on_index {
-                        index_num = index_num + (c.to_digit(10).unwrap() * index_power);
-                        index_power = index_power * 10;
+                        index_num = index_num + (c.to_digit(MULT_FACTOR).unwrap() * index_power);
+                        index_power = index_power * MULT_FACTOR;
                     } else {
-                        block_num = block_num + (c.to_digit(10).unwrap() * block_power);
-                        block_power = block_power * 10;  
+                        block_num = block_num + (c.to_digit(MULT_FACTOR).unwrap() * block_power);
+                        block_power = block_power * MULT_FACTOR;  
                     }
                 }, 
                 Some(c) if c == 'b' => {
                     break;
                 }, 
-                Some(c) => {},
+                Some(_) => {},
                 None => panic!()
             }
         }
-
         Location {
-            block: BasicBlock { private: block_num }, 
+            block: BasicBlock::from_u32(block_num), 
             statement_index: index_num.try_into().unwrap()
         }
     }
@@ -1224,16 +1226,23 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     tcx);
                 
                 let source_dependencies_vec = source_places
-                    .map(|place| {
-                        source_dependencies.row(place).indices()
+                    .flat_map(|place| {
+                        source_dependencies.row(place)
+                    })
+                    .map(|loc| {
+                        let mir = &controller_body_with_facts.body.stmt_at(*loc);
+                        match mir {
+                            Either::Left(stmt) => { dbg!(&(&*stmt).kind); }
+                            Either::Right(term) => { dbg!(&(&*term).kind); }
+                        }
                     });
             
-                source_dependencies_vec.map(|is| {
-                        for is_elt in is.indices() {
-                            acc.push(is_elt.clone());
-                        }
-                        acc
-                    });
+                // source_dependencies_vec.map(|is| {
+                //         for is_elt in is.indices() {
+                //             acc.push(is_elt.clone());
+                //         }
+                //         acc
+                //     });
             }
         }        
 
