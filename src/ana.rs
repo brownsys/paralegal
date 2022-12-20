@@ -21,10 +21,11 @@
 //!
 //! 3. Combine the [`Ctrl`] graphs into one [`ProgramDescription`]
 
+use core::panic;
 use std::{
     borrow::{Borrow, Cow},
     cell::RefCell,
-    rc::Rc, fs::read,
+    rc::Rc, fs,
 };
 
 use crate::{
@@ -1020,6 +1021,7 @@ type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 /// Error information that comes from the SAT solver
 /// 
 /// This may not necessarily be provided if DFPP is being called to do the initial analysis
+#[derive(Debug, Clone)]
 struct ErrorInfo {
     pred: String, 
     ctrl: String,
@@ -1027,40 +1029,52 @@ struct ErrorInfo {
     sink: String
 }
 
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+struct FrgErrorInfo {
+    ctrl: Vec<Vec<String>>,
+    minimal_subflow: Vec<Vec<String>>
+}
+
 impl ErrorInfo {
 
     fn parse_location(s: &String) -> Location {
-        let chars = s.chars().into_iter().rev();
-        let index_num = 0;
-        let index_power = 1;
-        let block_num = 0;
-        let block_power = 1;
-        let working_on_index = true; // true means we're working on the index, false means we're working on the block
+        let mut chars = s.chars().into_iter().rev();
+        let mut index_num = 0;
+        let mut index_power = 1;
+        let mut block_num = 0;
+        let mut block_power = 1;
+        let mut started_index = false;
+        let mut working_on_index = true; // true means we're working on the index, false means we're working on the block
+
+        let MULT_FACTOR = 10;
 
         loop {
             match chars.next() {
                 Some(c) if c == '_' => {
+                    if !started_index {
+                        started_index = true;
+                    }
                     working_on_index = false;
                 }, 
                 Some(c) if c.is_numeric() => {
                     if working_on_index {
-                        index_num = index_num + (c.to_digit(10).unwrap() * index_power);
-                        index_power = index_power * 10;
+                        index_num = index_num + (c.to_digit(MULT_FACTOR).unwrap() * index_power);
+                        index_power = index_power * MULT_FACTOR;
                     } else {
-                        block_num = block_num + (c.to_digit(10).unwrap() * block_power);
-                        block_power = block_power * 10;  
+                        block_num = block_num + (c.to_digit(MULT_FACTOR).unwrap() * block_power);
+                        block_power = block_power * MULT_FACTOR;  
                     }
                 }, 
                 Some(c) if c == 'b' => {
                     break;
                 }, 
-                Some(c) => {},
+                Some(_) => {},
                 None => panic!()
             }
         }
 
         Location {
-            block: BasicBlock { private: block_num }, 
+            block: BasicBlock::from_u32(block_num), 
             statement_index: index_num.try_into().unwrap()
         }
     }
@@ -1104,6 +1118,20 @@ impl<'tcx> CollectingVisitor<'tcx> {
             marked_objects: Rc::new(RefCell::new(HashMap::new())),
             marked_stmts: HashMap::new(),
             functions_to_analyze: vec![],
+        }
+    }
+
+    fn get_error_information_json(&self) -> Option<FrgErrorInfo> {
+        if self.opts.json {
+            let json_output = fs::read_to_string(self.opts.frg_error_info.clone().unwrap()).unwrap();
+            let frg_ef = &mut serde_json::Deserializer::from_str(json_output.as_str()); 
+            let result: Result<FrgErrorInfo, _> = serde_path_to_error::deserialize(frg_ef);
+            match result {
+                Ok(f) => Some(f),
+                Err(e) => panic!("{}", e)
+            }
+        } else {
+            None
         }
     }
 
@@ -1207,35 +1235,67 @@ impl<'tcx> CollectingVisitor<'tcx> {
         }
 
         debug!("Checking whether DFPP is doing an error-message pass");
-        if let Some(em) = self.get_error_information() {
+        if let Some(em) = self.get_error_information_json() {
+            dbg!(&em);
             let transitive_flow_matrix = flowistry::infoflow::compute_flow(
                 tcx, b, controller_body_with_facts);
 
-            let source_location = em.source_location();
-            let sink_location = em.sink_location();
+            // let source_location = em.source_location();
+            // let sink_location = em.sink_location();
 
-            let source_dependencies = transitive_flow_matrix.state_at(source_location);
-            let sink_dependencies = transitive_flow_matrix.state_at(sink_location);
+            let source_location = Location {block: BasicBlock::from_usize(24), statement_index: 2};
+            let sink_location = Location {block: BasicBlock::from_usize(32), statement_index: 4};
+
+            debug!("Source location {:?}", &source_location);
+            debug!("Sink location {:?}", &sink_location);
+            debug!("Test location {:?}", Location {block: BasicBlock::from_usize(21), statement_index: 1});
 
             if is_real_location(&controller_body_with_facts.body, source_location) {
+                dbg!(source_location);
+                let source_dependencies = transitive_flow_matrix.state_at(source_location);
+
                 let source_places = read_places_with_provenance(
                     source_location, 
                     &controller_body_with_facts.body.stmt_at(source_location), 
                     tcx);
                 
-                let source_dependencies_vec = source_places
-                    .map(|place| {
-                        source_dependencies.row(place).indices()
-                    });
-            
-                source_dependencies_vec.map(|is| {
-                        for is_elt in is.indices() {
-                            acc.push(is_elt.clone());
+                source_places
+                    .flat_map(|place| {
+                        source_dependencies.row(place)
+                    })
+                    .for_each(|loc| {
+                        let mir = &controller_body_with_facts.body.stmt_at(*loc);
+                        match mir {
+                            Either::Left(stmt) => { dbg!(&(&*stmt).kind); }
+                            Either::Right(term) => { dbg!(&(&*term).kind); }
                         }
-                        acc
                     });
             }
-        }        
+
+            if is_real_location(&controller_body_with_facts.body, sink_location) {
+                dbg!(sink_location);
+                let sink_dependencies = transitive_flow_matrix.state_at(sink_location);
+
+                let sink_places = read_places_with_provenance(
+                    sink_location, 
+                    &controller_body_with_facts.body.stmt_at(sink_location), 
+                    tcx);
+                
+                sink_places
+                    .flat_map(|place| {
+                        sink_dependencies.row(place)
+                    })
+                    .for_each(|loc| {
+                        let mir = &controller_body_with_facts.body.stmt_at(*loc);
+                        match mir {
+                            Either::Left(stmt) => { dbg!(&(&*stmt).kind); }
+                            Either::Right(term) => { dbg!(&(&*term).kind); }
+                        }
+                    });
+            }
+
+            panic!()
+        }      
 
         debug!("Handling target {}", id.name);
         let flow = Flow::compute(
