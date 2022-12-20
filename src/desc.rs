@@ -188,8 +188,11 @@ impl ProgramDescription {
     pub fn all_sources(&self) -> HashSet<&DataSource> {
         self.controllers
             .values()
-            .flat_map(|c| c.data_flow.0.keys().chain(c.types.0.keys()))
-            .collect()
+            .flat_map(|c| 
+				c.data_flow.0.keys()
+					.chain(c.types.0.keys())
+					.chain(c.ctrl_flow.0.keys()))
+			.collect()
     }
     /// Gather all [`DataSink`]s mentioned in this program description
     ///

@@ -60,7 +60,7 @@ fn control_flow() {
 		"process_invalid_check", 
 		"check_always_happens[`process_invalid_check]", 
 		"theorem"));
-	assert!(!get_forge_result("process_if"));
+	assert!(!get_forge_result("process_invalid_check"));
 	
 	assert!(create_forge_file(
 		"process_if", 
