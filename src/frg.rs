@@ -668,7 +668,6 @@ where
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(
                                                     alloc.hardline().append(
-                                                        // (&ctrl.ctrl_flow).as_forge(alloc)
                                                         (alloc.forge_relation(
                                                             (&ctrl.ctrl_flow).0.iter().map(
                                                                 |(src, sinks)| {
