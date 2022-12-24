@@ -170,9 +170,7 @@ fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            DataSink::Return { function } => {
-				call_site_as_forge(alloc, function)
-			},
+            DataSink::Return => alloc.text("`return"),
             DataSink::Argument { function, arg_slot } => {
                 data_sink_as_forge(alloc, function, *arg_slot)
             }
@@ -227,7 +225,7 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSource {
     }
 }
 
-mod name {
+pub mod name {
     //! Constants for the names of the Forge entities (`sig`s and relations) we
     //! emit.
 
@@ -289,7 +287,7 @@ mod name {
                         None,
                         vec![
                             (FLOW, set(&arr(SRC, CALL_ARGUMENT))),
-							(CTRL_FLOW, set(&arr(SRC, OBJ))),
+                            (CTRL_FLOW, set(&arr(SRC, CALL_SITE))),
                             (TYPES, set(&arr(SRC, TYPE))),
                         ],
                     ),
@@ -668,9 +666,28 @@ where
                                         .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
-                                                std::iter::once(alloc.hardline().append(
-                                                    (&ctrl.ctrl_flow).as_forge(alloc).indent(4),
-                                                )),
+                                                std::iter::once(
+                                                    alloc.hardline().append(
+                                                        // (&ctrl.ctrl_flow).as_forge(alloc)
+                                                        (alloc.forge_relation(
+                                                            (&ctrl.ctrl_flow).0.iter().map(
+                                                                |(src, sinks)| {
+                                                                    (
+                                                                        std::iter::once(
+                                                                            src.as_forge(alloc),
+                                                                        ),
+                                                                        sinks.iter().map(|sink| {
+                                                                            call_site_as_forge(
+                                                                                alloc, sink,
+                                                                            )
+                                                                        }),
+                                                                    )
+                                                                },
+                                                            ),
+                                                        ))
+                                                        .indent(4),
+                                                    ),
+                                                ),
                                             )
                                         }))
                                         .indent(4),

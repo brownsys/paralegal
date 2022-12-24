@@ -454,15 +454,15 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                         .deep_dependencies_of(*loc, g, p)
                 };
 
-				// Determine the control flow dependency for the location.
-				let flows_borrow = self.function_flows.borrow();
+                // Determine the control flow dependency for the location.
+                let flows_borrow = self.function_flows.borrow();
                 let ref flow_analysis = flows_borrow
-                .get(&inner_body)
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .analysis
-                .analysis;
+                    .get(&inner_body)
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .analysis
+                    .analysis;
                 let ref controlled_by = flow_analysis
                     .control_dependencies
                     .dependent_on(inner_location.block);
@@ -470,7 +470,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 for block in controlled_by.into_iter().flat_map(|set| set.iter()) {
                     let mir_location = flow_analysis.body.terminator_loc(block);
                     // Get the terminator location and find all the places that it references, then call deep_deps to find the corresponding dependency locations.
-                    let referenced_places = places_read(tcx, mir_location, &flow_analysis.body.stmt_at(mir_location));
+                    let referenced_places =
+                        places_read(tcx, mir_location, &flow_analysis.body.stmt_at(mir_location));
                     for deps in referenced_places.map(deep_deps_for) {
                         ctrl_deps.extend(deps);
                     }
@@ -1385,11 +1386,13 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 // register_call_site(tcx, call_site_annotations, defid, Some(anns));
             }
 
-			// Add ctrl flows to callsite.
-			for dep in deps.ctrl_deps.iter() {
-				flows.add_ctrl_flow(Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
-				DataSink::Return { function: call_site.clone() },)
-			}
+            // Add ctrl flows to callsite.
+            for dep in deps.ctrl_deps.iter() {
+                flows.add_ctrl_flow(
+                    Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
+                    call_site.clone(),
+                )
+            }
 
             for (arg_slot, arg_deps) in deps.input_deps.iter().enumerate() {
                 // This will be the target of any flow we register
@@ -1401,9 +1404,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                             ..
                         })
                     ) {
-                    DataSink::Return {
-						function: call_site.clone(),
-					}
+                    DataSink::Return
                 } else {
                     DataSink::Argument {
                         function: call_site.clone(),
@@ -1416,12 +1417,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         to.clone(),
                     );
                 }
-
-				// Add ctrl flows to arguments.
-				for dep in deps.ctrl_deps.iter() {
-					flows.add_ctrl_flow(Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
-					to.clone(),)
-				}
             }
         }
         Ok((Identifier::new(id.name), flows))

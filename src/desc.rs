@@ -188,11 +188,14 @@ impl ProgramDescription {
     pub fn all_sources(&self) -> HashSet<&DataSource> {
         self.controllers
             .values()
-            .flat_map(|c| 
-				c.data_flow.0.keys()
-					.chain(c.types.0.keys())
-					.chain(c.ctrl_flow.0.keys()))
-			.collect()
+            .flat_map(|c| {
+                c.data_flow
+                    .0
+                    .keys()
+                    .chain(c.types.0.keys())
+                    .chain(c.ctrl_flow.0.keys())
+            })
+            .collect()
     }
     /// Gather all [`DataSink`]s mentioned in this program description
     ///
@@ -218,7 +221,19 @@ impl ProgramDescription {
                     .0
                     .values()
                     .flat_map(|v| v.iter().filter_map(DataSink::as_argument).map(|s| s.0))
-                    .chain(ctrl.data_flow.0.keys().filter_map(|src| src.as_function_call()))
+                    .chain(
+                        ctrl.data_flow
+                            .0
+                            .keys()
+                            .filter_map(|src| src.as_function_call()),
+                    )
+                    .chain(
+                        ctrl.ctrl_flow
+                            .0
+                            .keys()
+                            .filter_map(|src| src.as_function_call()),
+                    )
+                    .chain(ctrl.ctrl_flow.0.values().flat_map(|v| v.iter()))
             })
             .collect()
     }
@@ -342,7 +357,7 @@ impl DataSource {
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DataSink {
     Argument { function: CallSite, arg_slot: usize },
-    Return { function: CallSite },
+    Return,
 }
 
 impl DataSink {
@@ -362,7 +377,7 @@ pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct Ctrl {
     pub data_flow: Relation<DataSource, DataSink>,
-    pub ctrl_flow: Relation<DataSource, DataSink>,
+    pub ctrl_flow: Relation<DataSource, CallSite>,
     pub types: CtrlTypes,
 }
 
@@ -404,7 +419,7 @@ impl Ctrl {
             m.insert(from.into_owned(), std::iter::once(to).collect());
         }
     }
-    pub fn add_ctrl_flow(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {
+    pub fn add_ctrl_flow(&mut self, from: std::borrow::Cow<DataSource>, to: CallSite) {
         let m = &mut self.ctrl_flow.0;
         if let Some(e) = m.get_mut(&from) {
             e.insert(to);

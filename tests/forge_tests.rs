@@ -26,51 +26,51 @@ lazy_static! {
 // To test a predicate on a specific ctrl, property should be of the form
 // pred[`ctrl_name]
 fn create_forge_file(test_name: &str, property: &str, result: &str) -> bool {
-	do_in_crate_dir(|| { write_forge(&format!("test_{}.frg", test_name), property, result) }).map_or_else(
-		|e| {
-			println!("io err {}", e);
-			false
-		},
-		|_| true
-	)
+    do_in_crate_dir(|| write_forge(&format!("test_{}.frg", test_name), property, result))
+        .map_or_else(
+            |e| {
+                println!("io err {}", e);
+                false
+            },
+            |_| true,
+        )
 }
 
 // This will return true if running the file passes all of the tests,
-// and false otherwise. 
+// and false otherwise.
 fn get_forge_result(test_name: &str) -> bool {
-	do_in_crate_dir(|| { run_forge(&format!("test_{}.frg", test_name)) }).map_or_else(
-		|e| {
-			println!("io err {}", e);
-			false
-		},
-		|t| t
-	)
+    do_in_crate_dir(|| run_forge(&format!("test_{}.frg", test_name))).map_or_else(
+        |e| {
+            println!("io err {}", e);
+            false
+        },
+        |t| t,
+    )
 }
 
 #[test]
 fn vacuity() {
     assert!(*TEST_CRATE_ANALYZED);
 
-	assert!(create_forge_file(
-		"vacuity", 
-		"", 
-		"sat"));
-	assert!(get_forge_result("vacuity"));
+    assert!(create_forge_file("vacuity", "", "sat"));
+    assert!(get_forge_result("vacuity"));
 }
 
 #[test]
 fn control_flow() {
     assert!(*TEST_CRATE_ANALYZED);
 
-	assert!(create_forge_file(
-		"process_invalid_check", 
-		"check_always_happens[`process_invalid_check]", 
-		"theorem"));
-	assert!(!get_forge_result("process_invalid_check"));
-	
-	assert!(create_forge_file(
-		"process_if", 
-		"check_always_happens[`process_if]", 
-		"theorem"));
-	assert!(get_forge_result("process_if"));
+    assert!(create_forge_file(
+        "process_invalid_check",
+        "check_always_happens[`process_invalid_check]",
+        "theorem"
+    ));
+    assert!(!get_forge_result("process_invalid_check"));
+
+    assert!(create_forge_file(
+        "process_if",
+        "check_always_happens[`process_if]",
+        "theorem"
+    ));
+    assert!(get_forge_result("process_if"));
 }

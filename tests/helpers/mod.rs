@@ -13,8 +13,8 @@ use rustc_middle::mir;
 
 use either::Either;
 
-use std::borrow::Cow;
 use dfpp::outfile_pls;
+use std::borrow::Cow;
 use std::io::prelude::*;
 
 lazy_static! {
@@ -90,15 +90,16 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
 }
 
 pub fn run_forge(file: &str) -> bool {
-	std::process::Command::new("racket")
-		.arg(file)
-		.status()
-		.unwrap()
-		.success()
+    std::process::Command::new("racket")
+        .arg(file)
+        .status()
+        .unwrap()
+        .success()
 }
 
 pub fn write_forge(file: &str, property: &str, result: &str) -> Result<(), std::io::Error> {
-	let content = format!("#lang forge 
+    let content = format!(
+        "#lang forge 
 
 open \"helpers.frg\"
 open \"analysis_result.frg\"
@@ -106,16 +107,15 @@ open \"analysis_result.frg\"
 test expect {{
 	property_test: {{
 		{}
-	}} for Flows is {}
+	}} for {} is {}
 }}
-	", property, result);
+	",
+        property,
+        dfpp::frg::name::FLOWS_PREDICATE,
+        result
+    );
 
-
-	outfile_pls(file).and_then(
-		|mut f| {
-			f.write_all(content.as_bytes())
-		}
-	)
+    outfile_pls(file).and_then(|mut f| f.write_all(content.as_bytes()))
 }
 
 use dfpp::serializers::SerializableCallOnlyFlow;
@@ -339,6 +339,30 @@ impl<'g> CtrlRef<'g> {
                         ctrl: Cow::Borrowed(self),
                     }),
             )
+            .chain(
+                self.ctrl
+                    .ctrl_flow
+                    .0
+                    .keys()
+                    .filter_map(dfpp::desc::DataSource::as_function_call)
+                    .map(|f| CallSiteRef {
+                        function: fun,
+                        call_site: f,
+                        ctrl: Cow::Borrowed(self),
+                    }),
+            )
+            .chain(
+                self.ctrl
+                    .ctrl_flow
+                    .0
+                    .values()
+                    .flat_map(|cs_map| cs_map.iter())
+                    .map(|f| CallSiteRef {
+                        function: fun,
+                        call_site: f,
+                        ctrl: Cow::Borrowed(self),
+                    }),
+            )
             .filter(|ref_| ref_.function.ident == ref_.call_site.function)
             .collect();
         all.dedup_by_key(|r| r.call_site);
@@ -406,35 +430,50 @@ impl<'g> CallSiteRef<'g> {
     }
 
     pub fn flows_to(&self, sink: &DataSinkRef) -> bool {
+        let next_hop = |src| {
+            self.ctrl
+                .ctrl
+                .data_flow
+                .0
+                .get(&dfpp::desc::DataSource::FunctionCall(src))
+                .iter()
+                .flat_map(|i| i.iter())
+                .map(|ds| Either::Left(ds))
+                .chain(
+                    self.ctrl
+                        .ctrl
+                        .ctrl_flow
+                        .0
+                        .get(&dfpp::desc::DataSource::FunctionCall(
+                            self.call_site.clone(),
+                        ))
+                        .iter()
+                        .flat_map(|i| i.iter())
+                        .map(|cs| Either::Right(cs)),
+                )
+                .collect()
+        };
+
         let mut seen = HashSet::new();
-        let mut queue: Vec<_> = self
-            .ctrl
-            .ctrl
-            .data_flow
-            .0
-            .get(&dfpp::desc::DataSource::FunctionCall(
-                self.call_site.clone(),
-            ))
-            .iter()
-            .flat_map(|i| i.iter())
-            .collect();
+        let mut queue: Vec<_> = next_hop(self.call_site.clone());
         while let Some(n) = queue.pop() {
-            if sink == n {
+            if match n {
+                Either::Left(l) => sink == l,
+                _ => false,
+            } {
                 return true;
             }
-            if !seen.contains(n) {
+
+            if !seen.contains(&n) {
                 seen.insert(n);
-                if let Some((fun, _)) = n.as_argument() {
-                    queue.extend(
-                        self.ctrl
-                            .ctrl
-                            .data_flow
-                            .0
-                            .get(&dfpp::desc::DataSource::FunctionCall(fun.clone()))
-                            .iter()
-                            .flat_map(|s| s.iter()),
-                    );
-                }
+                match n {
+                    Either::Left(l) => {
+                        if let Some((fun, _)) = l.as_argument() {
+                            queue.extend(next_hop(fun.clone()))
+                        }
+                    }
+                    Either::Right(r) => queue.extend(next_hop(r.clone())),
+                };
             }
         }
         false
