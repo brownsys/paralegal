@@ -30,7 +30,7 @@ pred check_always_happens[c: Ctrl] {
     all o : labeled_objects[Type, sensitive], a : labeled_objects[CallArgument, sink] | 
         flows_to_ctrl[c, o, a] implies ( 
             some chks : labeled_objects[Object, checks] {
-				chks -> a in (c.flow + c.ctrl_flow)
+				chks -> a.arg_call_site in (c.flow + c.ctrl_flow)
 				and flows_to_ctrl[c, o, chks]
 			}
         )
