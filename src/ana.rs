@@ -197,7 +197,7 @@ pub struct GlobalFlowConstructor<'tcx, 'g, 'a, P: InlineSelector + Clone> {
 ///
 /// The reason for the two tiers of selectors is that
 ///
-/// - Flowsitry is a separate crate and so I wanted a way to control it that
+/// - Flowistry is a separate crate and so I wanted a way to control it that
 ///   decouples from the specifics of dfpp
 /// - We use the selectors to skip functions with annotations, but I wanted to
 ///   keep the construction of inlined flow graphs agnostic to any notion of
@@ -471,17 +471,36 @@ use ty::RegionVid;
 
 extern crate polonius_engine;
 
+/// For some reason I can't find a canonical place where the `LocationIndex`
+/// type from [`rustc_borrowck`] is exported. So instead I alias it here using
+/// the [`polonius_engine::FactTypes`] trait through which it *must* be
+/// exported.
+/// 
+/// Some of our type signatures need to refer to this type which this alias
+/// makes easier.
 type LocationIndex = <rustc_borrowck::consumers::RustcFacts as polonius_engine::FactTypes>::Point;
 
+/// The constraint selector is essentially a closure. The function that it
+/// encapsulates is [`Self::select`] and it is constructed with
+/// [`Self::location_based`].
+/// 
+/// This type, as a selector, is handed to
+/// [`flowistry::mir::aliases::Aliases::build_with_fact_selection`]. This is
+/// done during construction of the [`CallOnlyFlow`] where we require a
+/// non-transitive alias analysis. This struct facilitates this by severing
+/// lifetime entailments over function calls which makes the alias analysis
+/// non-transitive with respect to function calls.
 struct ConstraintSelector<'tcx, 'a> {
     body_with_facts: &'a BodyWithBorrowckFacts<'tcx>,
 }
 
 impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
+    /// Now the only constructor for this type
     fn location_based(body_with_facts: &'a BodyWithBorrowckFacts<'tcx>) -> Self {
         Self { body_with_facts }
     }
 
+    /// Selects whether to keep a fact from `BodyWithBorrowckFacts.all_facts.subset_base`
     fn select(&self, _: RegionVid, _: RegionVid, idx: LocationIndex) -> bool {
         use rustc_borrowck::consumers::RichLocation;
         let rich_loc = self.body_with_facts.location_table.to_location(idx);

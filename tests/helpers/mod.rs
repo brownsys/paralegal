@@ -20,6 +20,9 @@ lazy_static! {
     pub static ref DFPP_INSTALLED: bool = install_dfpp();
 }
 
+/// Run an action `F` in the directory `P`, ensuring that afterwards the
+/// original working directory is reestablished *and* also takes a lock so that
+/// no two parallel processes try to switch directory simultaneously.
 pub fn with_current_directory<
     P: AsRef<std::path::Path>,
     A,
@@ -39,6 +42,12 @@ pub fn with_current_directory<
     }
 }
 
+/// Run the action `F` in directory `P` and with rustc data structures
+/// initialized (e.g. using [`Symbol`] works), taking care to lock the directory
+/// change and resetting the working directory after.
+/// 
+/// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
+/// [`Symbol`]s created after `F` and may cause dereference errors.
 pub fn cwd_and_use_rustc_in<
     P: AsRef<std::path::Path>,
     A,
@@ -52,6 +61,10 @@ pub fn cwd_and_use_rustc_in<
     })
 }
 
+/// Initialize rustc data structures (e.g. [`Symbol`] works) and run `F`
+/// 
+/// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
+/// [`Symbol`]s created after `F` and may cause dereference errors.
 pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
     rustc_span::create_default_session_if_not_set_then(|_| f())
 }
@@ -69,6 +82,12 @@ pub fn install_dfpp() -> bool {
         .success()
 }
 
+/// Run dfpp in the current directory, passing the
+/// `--dump-serialized-non-transitive-graph` flag, which dumps a
+/// [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow) for each controller.
+/// 
+/// The result is suitable for reading with
+/// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
 pub fn run_dfpp_with_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")
@@ -78,6 +97,11 @@ pub fn run_dfpp_with_graph_dump() -> bool {
         .success()
 }
 
+/// Run dfpp in the current directory, passing the
+/// `--dump-serialized-flow-graph` which dumps the [`ProgramDescription`] as
+/// JSON.
+/// 
+/// The result is suitable for reading with [`PreFrg::from_file_at`]
 pub fn run_dfpp_with_flow_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")
@@ -89,6 +113,7 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
 
 use dfpp::serializers::SerializableCallOnlyFlow;
 
+/// A deserialized version of [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow)
 pub struct G {
     pub graph: SerializableCallOnlyFlow,
     pub body: Bodies,
@@ -138,6 +163,7 @@ impl MatchCallSite for (mir::Location, hir::BodyId) {
 }
 
 impl G {
+    /// Direct predecessor nodes of `n`
     fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
         self.graph.0.get(&n).into_iter().flat_map(|deps| {
             std::iter::once(&deps.ctrl_deps)
@@ -145,6 +171,8 @@ impl G {
                 .flat_map(|s| s.iter())
         })
     }
+
+    /// Is there any path (using directed edges) from `from` to `to`.
     pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
         let mut queue = to
             .get_call_sites(&self.graph)
@@ -165,6 +193,8 @@ impl G {
         false
     }
 
+    /// Is there an edge between `from` and `to`. Equivalent to testing if
+    /// `from` is in `g.predecessors(to)`.
     pub fn connects_direct<From: MatchCallSite, To: GetCallSites>(
         &self,
         from: &From,
@@ -178,6 +208,7 @@ impl G {
         false
     }
 
+    /// Return all call sites for functions with names matching `pattern`.
     pub fn function_calls(&self, pattern: &str) -> HashSet<(mir::Location, hir::BodyId)> {
         let mut fn_pattern = pattern.to_owned();
         fn_pattern.push_str("(");
@@ -193,6 +224,7 @@ impl G {
             .collect()
     }
 
+    /// Like `function_calls` but requires that only one such call is found.
     pub fn function_call(&self, pattern: &str) -> (mir::Location, hir::BodyId) {
         let v = self.function_calls(pattern);
         assert!(
@@ -202,12 +234,14 @@ impl G {
         v.into_iter().next().unwrap()
     }
 
+    /// Deserialize from a `.ntgb.json` file for the controller named `s`
     pub fn from_file(s: Symbol) -> Self {
         let (graph, body) = dfpp::dbg::read_non_transitive_graph_and_body(
             std::fs::File::open(format!("{}.ntgb.json", s.as_str())).unwrap(),
         );
         Self { graph, body }
     }
+    /// Get the `n`th argument for this `bid` body.
     pub fn argument(&self, bid: BodyId, n: usize) -> mir::Location {
         self.body.0[&bid]
             .0
