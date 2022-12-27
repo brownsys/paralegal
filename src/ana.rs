@@ -509,12 +509,6 @@ impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
             RichLocation::Start(l) => l,
         };
         let stmt = self.body_with_facts.body.stmt_at(loc);
-        match &stmt {
-            Either::Right(term) => {
-                debug!("Introduced by {:?} @ {rich_loc:?} ({idx:?})", term.kind)
-            }
-            Either::Left(stmt) => debug!("Introduced by {:?} @ {rich_loc:?}", stmt.kind),
-        };
         !matches!(
             stmt,
             Either::Right(Terminator {
@@ -752,10 +746,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                 dbg::PrintableMatrix(matrix)
             );
         }
+        GlobalDepMatrix::make(
         matrix
             .rows()
             .map(|(place, dep_set)| (place, self.make_row_global(dep_set)))
-            .collect::<HashMap<_, _>>()
+            )
     }
 
     /// Makes `callee` relative to `call_site` in the function we operate on,
@@ -913,7 +908,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             debug!(
                 "Calculated parent dependency matrix at terminator {:?}\n{}",
                 terminator.kind,
-                dbg::PrintableDependencyMatrix::new(parent_dep_matrix.matrix_raw(), 2)
+                dbg::PrintableDependencyMatrix::new(&parent_dep_matrix.matrix_raw(), 2)
             );
 
             let gli = self.gli();
@@ -984,7 +979,8 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                 for (p, deps) in state_at_term.iter() {
                     self.under_construction
                         .return_state
-                        .entry(*p)
+                        .0
+                        .entry(crate::ir::tensors::PlaceWrapper(*p))
                         .or_insert_with(|| HashSet::new())
                         .extend(deps.iter().cloned());
                 }

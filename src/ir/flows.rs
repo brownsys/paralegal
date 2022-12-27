@@ -59,7 +59,7 @@ impl<'tcx, 'g> GlobalFlowGraph<'tcx, 'g> {
     pub fn new() -> Self {
         GlobalFlowGraph {
             location_states: HashMap::new(),
-            return_state: HashMap::new(),
+            return_state: GlobalDepMatrix::new(),
         }
     }
 }

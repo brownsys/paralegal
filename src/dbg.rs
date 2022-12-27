@@ -392,7 +392,7 @@ impl<'g> std::fmt::Display for GlobalLocation<'g> {
 pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(&'a crate::ir::GlobalDepMatrix<'tcx, 'g>, usize);
 
 impl<'a, 'g, 'tcx> PrintableDependencyMatrix<'a, 'g, 'tcx> {
-    pub fn new(map: &'a HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>, indent: usize) -> Self {
+    pub fn new(map: &'a crate::ir::GlobalDepMatrix<'tcx, 'g>, indent: usize) -> Self {
         Self(map, indent)
     }
 }
@@ -477,7 +477,7 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                             .filter(|k| !places_read.contains(k))
                             .collect::<Vec<_>>();
                         keys.sort_by_key(|p| p.local);
-                        keys.into_iter().map(|k| (k, false, &deps.matrix_raw()[&k]))
+                        keys.into_iter().map(|k| (k, false, deps.matrix_raw().get(&k).unwrap()))
                     }),
                 6,
             )?;

@@ -7,12 +7,63 @@ use crate::{rust::*, HashMap, HashSet};
 
 use mir::Place;
 
+const PLACE_INTERNING_FIX: bool = true;
+
+#[derive(Clone, Copy)]
+pub struct PlaceWrapper<'tcx>(pub Place<'tcx>);
+
+impl <'tcx> std::cmp::PartialEq for PlaceWrapper<'tcx> {
+    fn eq(&self, other: &Self) -> bool {
+        if PLACE_INTERNING_FIX {
+            format!("{:?}", self.0) == format!("{:?}", other.0)
+        } else {
+            self.0 == other.0
+        }
+    }
+}
+
+impl <'tcx> std::cmp::Eq for PlaceWrapper<'tcx> {}
+
+impl <'tcx> std::hash::Hash for PlaceWrapper<'tcx> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if PLACE_INTERNING_FIX {
+            format!("{:?}", self.0).hash(state)
+        } else {
+            self.0.hash(state)
+        }
+    }
+}
+
 pub type PlaceTranslationTable<'tcx> = HashMap<Place<'tcx>, Place<'tcx>>;
 
 /// A flowistry-like dependency matrix at a specific location. Describes for
 /// each place the most recent global locations (these could be locations in a
 /// callee) that influenced the values at this place.
-pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
+#[derive(Clone)]
+pub struct GlobalDepMatrix<'tcx, 'g>(pub HashMap<PlaceWrapper<'tcx>, HashSet<GlobalLocation<'g>>>);
+
+impl <'tcx,'g> GlobalDepMatrix<'tcx, 'g> {
+    pub fn get<'a>(&self, p: &'a Place<'tcx>) -> Option<&HashSet<GlobalLocation<'g>>> {
+        self.0.get(&PlaceWrapper(*p))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item=&Place<'tcx>> {
+        self.0.keys().map(|k| &k.0)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item=&HashSet<GlobalLocation<'g>>> {
+        self.0.values()
+    }
+    pub fn iter(&self) -> impl Iterator<Item=(&Place<'tcx>, &HashSet<GlobalLocation<'g>>)> {
+        self.0.iter().map(|(k, v)| (&k.0, v))
+    }
+    pub fn make<I: Iterator<Item=(Place<'tcx>, HashSet<GlobalLocation<'g>>)>>(i: I) -> Self {
+        Self(i.map(|(k, v)| (PlaceWrapper(k), v)).collect())
+    }
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+}
 
 /// A [`GlobalDepMatrix`] that may also translate between places.
 ///
@@ -194,8 +245,9 @@ pub fn relativize_global_dep_matrix<'g, 'tcx, F: Fn(GlobalLocation<'g>) -> Globa
     matrix: &GlobalDepMatrix<'tcx, 'g>,
     location_relativizer: F,
 ) -> GlobalDepMatrix<'tcx, 'g> {
+    GlobalDepMatrix::make(
     matrix
         .iter()
         .map(|(&k, set)| (k, set.iter().cloned().map(&location_relativizer).collect()))
-        .collect()
+        )
 }
