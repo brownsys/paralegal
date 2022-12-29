@@ -57,7 +57,7 @@ mod ana;
 pub mod ann_parse;
 pub mod dbg;
 pub mod desc;
-mod frg;
+pub mod frg;
 pub mod ir;
 mod sah;
 pub mod serializers;

@@ -232,7 +232,7 @@ pub trait LocationExt {
 
 impl LocationExt for Location {
     fn is_real(self, body: &mir::Body) -> bool {
-        body.basic_blocks().get(self.block).map(|bb| 
+        body.basic_blocks().get(self.block).map(|bb|
                 // Its `<=` because if len == statement_index it refers to the
                 // terminator
                 // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html

@@ -555,7 +555,7 @@ impl<'tcx, 'a> ty::TypeVisitor<'tcx> for ExternalDependencyHasher<'tcx, 'a> {
                         .hash_stable(self.hctx, self.hasher);
                 } else {
                     use crate::rust::rustc_middle::dep_graph::DepContext;
-                    self.tcx.dep_graph().with_query(|_g| 
+                    self.tcx.dep_graph().with_query(|_g|
                         // ???
                         ());
                 }

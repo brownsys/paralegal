@@ -225,7 +225,7 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSource {
     }
 }
 
-mod name {
+pub mod name {
     //! Constants for the names of the Forge entities (`sig`s and relations) we
     //! emit.
 
@@ -242,6 +242,7 @@ mod name {
     pub const FUN_REL: &'static str = "function";
     pub const CTRL: &'static str = "Ctrl";
     pub const FLOW: &'static str = "flow";
+    pub const CTRL_FLOW: &'static str = "ctrl_flow";
     pub const FLOWS_PREDICATE: &'static str = "Flows";
     pub const OBJ: &'static str = "Object";
     pub const LABEL: &'static str = "Label";
@@ -286,6 +287,7 @@ mod name {
                         None,
                         vec![
                             (FLOW, set(&arr(SRC, CALL_ARGUMENT))),
+                            (CTRL_FLOW, set(&arr(SRC, CALL_SITE))),
                             (TYPES, set(&arr(SRC, TYPE))),
                         ],
                     ),
@@ -651,8 +653,40 @@ where
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(alloc.hardline().append(
-                                                    (&ctrl.flow).as_forge(alloc).indent(4),
+                                                    (&ctrl.data_flow).as_forge(alloc).indent(4),
                                                 )),
+                                            )
+                                        }))
+                                        .indent(4),
+                                ),
+                            ),
+                            alloc.text(name::CTRL_FLOW).append(" = ").append(
+                                alloc.hardline().append(
+                                    alloc
+                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                            (
+                                                std::iter::once(e.as_forge(alloc)),
+                                                std::iter::once(
+                                                    alloc.hardline().append(
+                                                        (alloc.forge_relation(
+                                                            (&ctrl.ctrl_flow).0.iter().map(
+                                                                |(src, sinks)| {
+                                                                    (
+                                                                        std::iter::once(
+                                                                            src.as_forge(alloc),
+                                                                        ),
+                                                                        sinks.iter().map(|sink| {
+                                                                            call_site_as_forge(
+                                                                                alloc, sink,
+                                                                            )
+                                                                        }),
+                                                                    )
+                                                                },
+                                                            ),
+                                                        ))
+                                                        .indent(4),
+                                                    ),
+                                                ),
                                             )
                                         }))
                                         .indent(4),
