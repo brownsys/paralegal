@@ -430,12 +430,12 @@ impl<'g> CallSiteRef<'g> {
     }
 
     pub fn flows_to(&self, sink: &DataSinkRef) -> bool {
-        let next_hop = |src| {
+        let next_hop = |src: dfpp::desc::CallSite| {
             self.ctrl
                 .ctrl
                 .data_flow
                 .0
-                .get(&dfpp::desc::DataSource::FunctionCall(src))
+                .get(&dfpp::desc::DataSource::FunctionCall(src.clone()))
                 .iter()
                 .flat_map(|i| i.iter())
                 .map(|ds| Either::Left(ds))
@@ -444,9 +444,7 @@ impl<'g> CallSiteRef<'g> {
                         .ctrl
                         .ctrl_flow
                         .0
-                        .get(&dfpp::desc::DataSource::FunctionCall(
-                            self.call_site.clone(),
-                        ))
+                        .get(&dfpp::desc::DataSource::FunctionCall(src.clone()))
                         .iter()
                         .flat_map(|i| i.iter())
                         .map(|cs| Either::Right(cs)),
