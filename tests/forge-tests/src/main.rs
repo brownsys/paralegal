@@ -6,11 +6,6 @@ struct UserData {
     pub data: Vec<i64>,
 }
 
-#[dfpp::label(auth_witness)]
-#[dfpp::label(safe_source)]
-#[dfpp::label(scopes)]
-struct i {}
-
 #[dfpp::analyze]
 fn process_if() {
     let user_data = get_user_data();

@@ -136,7 +136,7 @@ fn process_no_args() {
     let get = graph.function_call("get_user_data");
     let send = graph.function_call("send_user_data");
 
-    assert!(graph.connects(&getx, &get)); // TODO: This passes but doesn't show up in frg.
+    assert!(graph.connects(&getx, &get));
     assert!(graph.connects(&get, &send));
     assert!(graph.connects(&getx, &send));
     assert!(graph.connects_direct(&get, &send));
