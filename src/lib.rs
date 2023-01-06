@@ -93,19 +93,10 @@ pub struct Args {
     /// Command line flag that specifies whether we're using a JSON output.
     /// // COMMENT BACK IN //
     #[clap(short, long)]
-    json: bool, 
+    err_pass: bool, 
     /// Path where the Forge JSON output exists
-    frg_error_info: Option<String>,
-    // #[clap(short, long)]
-    // error: bool, 
-    // /// Name of the predicate that failed
-    // pred: Option<String>, 
-    // /// Name of the controller that the violating edge belongs to
-    // ctrl: Option<String>,
-    // /// Name of the source of the violating edge
-    // source: Option<String>, 
-    // /// Name of the sink of the violating edge
-    // sink: Option<String>
+    #[clap(default_value = "./instances.json")]
+    frg_error_info: String,
 }
 
 /// Arguments that control the flow analysis

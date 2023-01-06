@@ -1130,8 +1130,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
 // COMMENT BACK IN //
 
     fn get_error_information_json(&self) -> Option<DfppErrorInfo> {
-        if self.opts.json {
-            let json_output = fs::read_to_string(self.opts.frg_error_info.clone().unwrap()).unwrap();
+        if self.opts.err_pass {
+            let json_output = fs::read_to_string(self.opts.frg_error_info.clone()).unwrap();
             let frg_ef = &mut serde_json::Deserializer::from_str(json_output.as_str()); 
             let result: Result<FrgErrorInfo, _> = serde_path_to_error::deserialize(frg_ef);
             match result {
