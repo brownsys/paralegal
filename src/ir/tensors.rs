@@ -7,7 +7,7 @@ use crate::{rust::*, HashMap, HashSet};
 
 use mir::Place;
 
-const PLACE_INTERNING_FIX: bool = true;
+const PLACE_INTERNING_FIX: bool = false;
 
 #[derive(Clone, Copy)]
 pub struct PlaceWrapper<'tcx>(pub Place<'tcx>);
@@ -90,7 +90,7 @@ impl <'tcx,'g> GlobalDepMatrix<'tcx, 'g> {
 ///
 /// 1. **Caller call sites**: Location of the call site for `bar` (probably
 ///    `bb0[1]`) translates places from inside `bar` to places in `foo`. In this
-///    case the return value `argument` (more precisely the mir place `_0` which
+///    case the return value `argument` (more precisely the mir place `_1` which
 ///    is assigned to `argument`).
 ///    
 ///    The translation tables for these locations are created with

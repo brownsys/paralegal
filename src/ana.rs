@@ -632,7 +632,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                         origin
                             .provenance(tcx)
                             .into_iter()
-                            .map(|projection| (projection, deps.resolve(projection)))
+                            .map(|projection| (projection, deps.resolve(flowistry::mir::utils::PlaceExt::normalize(&projection, tcx, tcx.hir().body_owner_def_id(loc.innermost_location_and_body().1).to_def_id()))))
                     })
                     .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
                     .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()

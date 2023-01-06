@@ -70,6 +70,8 @@ pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
     use std::collections::HashSet;
 
+    use flowistry::mir::utils::PlaceExt;
+
     use crate::{
         ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
@@ -129,7 +131,7 @@ pub mod call_only_flow_dot {
                                 &body_with_facts.simplified_body().stmt_at(loc),
                                 self.tcx,
                             )
-                            .flat_map(|p| deps.resolve(p).1),
+                            .flat_map(move |p| deps.resolve(p.normalize(self.tcx, self.tcx.hir().body_owner_def_id(to.innermost_location_and_body().1).to_def_id())).1),
                         )
                     } else {
                         None
