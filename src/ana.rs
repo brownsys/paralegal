@@ -33,6 +33,7 @@ use crate::{
     HashSet,
 };
 
+use dot::Labeller;
 use hir::{
     def_id::DefId,
     hir_id::HirId,
@@ -1032,7 +1033,7 @@ impl FrgErrorInfo {
         let mut index_vec = vec![];
         let mut working_on_block = false;
         let mut working_on_index = false;
-    
+
         loop {
             match chars.next() {
                 Some(c) if c == 'b' => {
@@ -1060,9 +1061,10 @@ impl FrgErrorInfo {
                 None => panic!()
             }
         }
+        
         let block_num = block_vec.iter().fold(0, |base, elt| { (base * 10) + elt });
         let index_num = index_vec.iter().fold(0, |base, elt| { (base * 10) + elt });
-    
+        
         Location {
             block: BasicBlock::from_u32(block_num), 
             statement_index: index_num.try_into().unwrap()
