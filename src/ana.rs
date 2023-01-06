@@ -1018,73 +1018,79 @@ impl InlineSelector for SkipAnnotatedFunctionSelector {
 /// read-only.
 type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 
-/// Error information that comes from the SAT solver
-/// 
-/// This may not necessarily be provided if DFPP is being called to do the initial analysis
-#[derive(Debug, Clone)]
-struct ErrorInfo {
-    pred: String, 
-    ctrl: String,
-    source: String, 
-    sink: String
-}
-
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 struct FrgErrorInfo {
     ctrl: Vec<Vec<String>>,
     minimal_subflow: Vec<Vec<String>>
 }
 
-impl ErrorInfo {
-
-    fn parse_location(s: &String) -> Location {
-        let mut chars = s.chars().into_iter().rev();
-        let mut index_num = 0;
-        let mut index_power = 1;
-        let mut block_num = 0;
-        let mut block_power = 1;
-        let mut started_index = false;
-        let mut working_on_index = true; // true means we're working on the index, false means we're working on the block
-
-        let MULT_FACTOR = 10;
-
+impl FrgErrorInfo {
+    /// Parses a forge-style DFPP location into the Rust `Location` struct
+    pub fn parse_location(s: &String) -> Location {
+        let mut chars = s.chars().into_iter();
+        let mut block_vec = vec![];
+        let mut index_vec = vec![];
+        let mut working_on_block = false;
+        let mut working_on_index = false;
+    
         loop {
             match chars.next() {
-                Some(c) if c == '_' => {
-                    if !started_index {
-                        started_index = true;
-                    }
-                    working_on_index = false;
-                }, 
-                Some(c) if c.is_numeric() => {
-                    if working_on_index {
-                        index_num = index_num + (c.to_digit(MULT_FACTOR).unwrap() * index_power);
-                        index_power = index_power * MULT_FACTOR;
-                    } else {
-                        block_num = block_num + (c.to_digit(MULT_FACTOR).unwrap() * block_power);
-                        block_power = block_power * MULT_FACTOR;  
-                    }
-                }, 
                 Some(c) if c == 'b' => {
-                    break;
+                    working_on_block = true;
+                }, 
+                Some(c) if c == 'i' => {
+                    working_on_block = false; 
+                    working_on_index = true;
+                }, 
+                Some(c) if c == '_' => {
+                    if !working_on_block && working_on_index {
+                        break;
+                    }
+                }
+                Some(i) if i.is_digit(10) => {
+                    if working_on_block {
+                        block_vec.push(i.to_digit(10).unwrap());
+                    } else if working_on_index {
+                        index_vec.push(i.to_digit(10).unwrap());
+                    } else {
+                        continue;
+                    }
                 }, 
                 Some(_) => {},
                 None => panic!()
             }
         }
-
+        let block_num = block_vec.iter().fold(0, |base, elt| { (base * 10) + elt });
+        let index_num = index_vec.iter().fold(0, |base, elt| { (base * 10) + elt });
+    
         Location {
             block: BasicBlock::from_u32(block_num), 
             statement_index: index_num.try_into().unwrap()
         }
     }
+}
 
-    pub fn source_location(&self) -> Location {
-        Self::parse_location(&self.source)
-    }
+/// Error information that comes from the SAT solver, deserialized into a form that DFPP can easily work with
+/// This may not necessarily be provided if DFPP is being called to do the initial analysis
+#[derive(Debug, Clone)]
+struct DfppErrorInfo {
+    locations: Vec<Location>
+}
 
-    pub fn sink_location(&self) -> Location {
-        Self::parse_location(&self.sink)
+impl From<FrgErrorInfo> for DfppErrorInfo {
+    fn from(frg_err: FrgErrorInfo) -> Self {
+        let src_idx = 1;
+        let sink_idx = 2;
+        let mut locations = vec![];
+        for edge in frg_err.minimal_subflow {
+            let source_location = edge.get(src_idx).unwrap();
+            let sink_location = edge.get(sink_idx).unwrap();
+
+            locations.push(FrgErrorInfo::parse_location(source_location));
+            locations.push(FrgErrorInfo::parse_location(sink_location));
+        }
+
+        Self { locations }
     }
 }
 
@@ -1121,29 +1127,17 @@ impl<'tcx> CollectingVisitor<'tcx> {
         }
     }
 
-    fn get_error_information_json(&self) -> Option<FrgErrorInfo> {
+// COMMENT BACK IN //
+
+    fn get_error_information_json(&self) -> Option<DfppErrorInfo> {
         if self.opts.json {
             let json_output = fs::read_to_string(self.opts.frg_error_info.clone().unwrap()).unwrap();
             let frg_ef = &mut serde_json::Deserializer::from_str(json_output.as_str()); 
             let result: Result<FrgErrorInfo, _> = serde_path_to_error::deserialize(frg_ef);
             match result {
-                Ok(f) => Some(f),
+                Ok(f) => Some(f.into()),
                 Err(e) => panic!("{}", e)
             }
-        } else {
-            None
-        }
-    }
-
-    fn get_error_information(&self) -> Option<ErrorInfo> {
-        if self.opts.error {
-            Some(
-                ErrorInfo { 
-                    pred: self.opts.pred.clone().unwrap(), 
-                    ctrl: self.opts.ctrl.clone().unwrap(),
-                    source: self.opts.source.clone().unwrap(), 
-                    sink: self.opts.sink.clone().unwrap() }
-            )
         } else {
             None
         }
@@ -1240,60 +1234,30 @@ impl<'tcx> CollectingVisitor<'tcx> {
             let transitive_flow_matrix = flowistry::infoflow::compute_flow(
                 tcx, b, controller_body_with_facts);
 
-            // let source_location = em.source_location();
-            // let sink_location = em.sink_location();
-
-            let source_location = Location {block: BasicBlock::from_usize(24), statement_index: 2};
-            let sink_location = Location {block: BasicBlock::from_usize(32), statement_index: 4};
-
-            debug!("Source location {:?}", &source_location);
-            debug!("Sink location {:?}", &sink_location);
-            debug!("Test location {:?}", Location {block: BasicBlock::from_usize(21), statement_index: 1});
-
-            if is_real_location(&controller_body_with_facts.body, source_location) {
-                dbg!(source_location);
-                let source_dependencies = transitive_flow_matrix.state_at(source_location);
-
-                let source_places = read_places_with_provenance(
-                    source_location, 
-                    &controller_body_with_facts.body.stmt_at(source_location), 
-                    tcx);
-                
-                source_places
-                    .flat_map(|place| {
-                        source_dependencies.row(place)
-                    })
-                    .for_each(|loc| {
-                        let mir = &controller_body_with_facts.body.stmt_at(*loc);
-                        match mir {
-                            Either::Left(stmt) => { dbg!(&(&*stmt).kind); }
-                            Either::Right(term) => { dbg!(&(&*term).kind); }
-                        }
-                    });
+            for loc in em.locations {
+                if is_real_location(&controller_body_with_facts.body, loc) {
+                    dbg!(loc);
+                    let source_dependencies = transitive_flow_matrix.state_at(loc);
+    
+                    let source_places = read_places_with_provenance(
+                        loc, 
+                        &controller_body_with_facts.body.stmt_at(loc), 
+                        tcx);
+                    
+                    source_places
+                        .flat_map(|place| {
+                            source_dependencies.row(place)
+                        })
+                        .for_each(|loc| {
+                            let mir = &controller_body_with_facts.body.stmt_at(*loc);
+                            match mir {
+                                Either::Left(stmt) => { dbg!(&(&*stmt).kind); }
+                                Either::Right(term) => { dbg!(&(&*term).kind); }
+                            }
+                        });
+                }
             }
-
-            if is_real_location(&controller_body_with_facts.body, sink_location) {
-                dbg!(sink_location);
-                let sink_dependencies = transitive_flow_matrix.state_at(sink_location);
-
-                let sink_places = read_places_with_provenance(
-                    sink_location, 
-                    &controller_body_with_facts.body.stmt_at(sink_location), 
-                    tcx);
-                
-                sink_places
-                    .flat_map(|place| {
-                        sink_dependencies.row(place)
-                    })
-                    .for_each(|loc| {
-                        let mir = &controller_body_with_facts.body.stmt_at(*loc);
-                        match mir {
-                            Either::Left(stmt) => { dbg!(&(&*stmt).kind); }
-                            Either::Right(term) => { dbg!(&(&*term).kind); }
-                        }
-                    });
-            }
-
+            // For now, use a panic to display all the error information.
             panic!()
         }      
 

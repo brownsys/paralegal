@@ -91,23 +91,21 @@ pub struct Args {
     #[clap(flatten, next_help_heading = "Additional Debugging Output")]
     dbg: DbgArgs,
     /// Command line flag that specifies whether we're using a JSON output.
+    /// // COMMENT BACK IN //
     #[clap(short, long)]
     json: bool, 
-    /// Path where the deserialized JSON struct exists
+    /// Path where the Forge JSON output exists
     frg_error_info: Option<String>,
-    /// Command line flag that specifies whether DFPP is going to perform analysis on the
-    /// annotated code, or whether it takes in the error information coming from Forge and prints
-    /// that instead.
-    #[clap(short, long)]
-    error: bool, 
-    /// Name of the predicate that failed
-    pred: Option<String>, 
-    /// Name of the controller that the violating edge belongs to
-    ctrl: Option<String>,
-    /// Name of the source of the violating edge
-    source: Option<String>, 
-    /// Name of the sink of the violating edge
-    sink: Option<String>
+    // #[clap(short, long)]
+    // error: bool, 
+    // /// Name of the predicate that failed
+    // pred: Option<String>, 
+    // /// Name of the controller that the violating edge belongs to
+    // ctrl: Option<String>,
+    // /// Name of the source of the violating edge
+    // source: Option<String>, 
+    // /// Name of the sink of the violating edge
+    // sink: Option<String>
 }
 
 /// Arguments that control the flow analysis
