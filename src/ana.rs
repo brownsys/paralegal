@@ -746,11 +746,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                 dbg::PrintableMatrix(matrix)
             );
         }
-        GlobalDepMatrix::make(
+        use flowistry::mir::utils::PlaceExt;
         matrix
             .rows()
-            .map(|(place, dep_set)| (place, self.make_row_global(dep_set)))
-            )
+            .map(|(place, dep_set)| (place.normalize(self.tcx(), self.local_def_id.to_def_id()), self.make_row_global(dep_set)))
+            .collect()
     }
 
     /// Makes `callee` relative to `call_site` in the function we operate on,
@@ -979,8 +979,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                 for (p, deps) in state_at_term.iter() {
                     self.under_construction
                         .return_state
-                        .0
-                        .entry(crate::ir::tensors::PlaceWrapper(*p))
+                        .entry(*p)
                         .or_insert_with(|| HashSet::new())
                         .extend(deps.iter().cloned());
                 }
