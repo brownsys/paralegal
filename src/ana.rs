@@ -1022,7 +1022,9 @@ type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 struct FrgErrorInfo {
     ctrl: Vec<Vec<String>>,
-    minimal_subflow: Vec<Vec<String>>
+    minimal_subflow: Option<Vec<Vec<String>>>, 
+    missing_subflow: Option<Vec<Vec<String>>>,
+    missing_labels: Option<Vec<Vec<String>>>,
 }
 
 impl FrgErrorInfo {
@@ -1070,6 +1072,61 @@ impl FrgErrorInfo {
             statement_index: index_num.try_into().unwrap()
         }
     }
+
+    // TODO: Abstract this more.
+    fn get_minimal_subflow_loc_as_str(&self) -> Vec<String> {
+        match self.minimal_subflow {
+            None => vec![], 
+            Some(ref ms) => {
+                let src_idx = 1;
+                let sink_idx = 2;
+                let mut locations = vec![];
+                for edge in ms.iter() {
+                    let source_location = edge.get(src_idx).unwrap().clone();
+                    let sink_location = edge.get(sink_idx).unwrap().clone();
+        
+                    locations.push(source_location);
+                    locations.push(sink_location);
+                }
+                locations
+            }
+        }
+    }
+
+    fn get_missing_subflow_loc_as_str(&self) -> Vec<String> {
+        match self.missing_subflow {
+            None => vec![], 
+            Some(ref ms) => {
+                let src_idx = 1;
+                let sink_idx = 2;
+                let mut locations = vec![];
+                for edge in ms.iter() {
+                    let source_location = edge.get(src_idx).unwrap().clone();
+                    let sink_location = edge.get(sink_idx).unwrap().clone();
+        
+                    locations.push(source_location);
+                    locations.push(sink_location);
+                }
+                locations
+            }
+        }
+    }
+
+    fn get_labels_loc_as_str(&self) -> Vec<String> {
+        match self.missing_labels {
+            None => vec![], 
+            Some(ref ml) => {
+                let call_arg_idx = 1;
+                let mut locations = vec![];
+                for edge in ml.iter() {
+                    let call_arg_location = edge.get(call_arg_idx).unwrap().clone();
+
+                    locations.push(call_arg_location);
+                }
+                locations
+            }
+        }
+    }
 }
 
 /// Error information that comes from the SAT solver, deserialized into a form that DFPP can easily work with
@@ -1081,15 +1138,17 @@ struct DfppErrorInfo {
 
 impl From<FrgErrorInfo> for DfppErrorInfo {
     fn from(frg_err: FrgErrorInfo) -> Self {
-        let src_idx = 1;
-        let sink_idx = 2;
+        let minimal_subflow_locations = frg_err.get_minimal_subflow_loc_as_str();
+        let missing_subflow_locations = frg_err.get_missing_subflow_loc_as_str();
+        let missing_labels_locations = frg_err.get_labels_loc_as_str();
+        let all_locations: Vec<_> = vec![minimal_subflow_locations, 
+            missing_subflow_locations, missing_labels_locations]
+            .into_iter()
+            .flatten()
+            .collect();
         let mut locations = vec![];
-        for edge in frg_err.minimal_subflow {
-            let source_location = edge.get(src_idx).unwrap();
-            let sink_location = edge.get(sink_idx).unwrap();
-
-            locations.push(FrgErrorInfo::parse_location(source_location));
-            locations.push(FrgErrorInfo::parse_location(sink_location));
+        for loc in all_locations {
+            locations.push(FrgErrorInfo::parse_location(&loc));
         }
 
         Self { locations }
@@ -1252,10 +1311,10 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         })
                         .for_each(|loc| {
                             let mir = &controller_body_with_facts.body.stmt_at(*loc);
-                            match mir {
-                                Either::Left(stmt) => { dbg!(&(&*stmt).kind); }
-                                Either::Right(term) => { dbg!(&(&*term).kind); }
-                            }
+                            // match mir {
+                            //     Either::Left(stmt) => { dbg!(&(&*stmt).kind); }
+                            //     Either::Right(term) => { dbg!(&(&*term).kind); }
+                            // }
                         });
                 }
             }
