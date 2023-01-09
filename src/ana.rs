@@ -219,7 +219,7 @@ impl<T: InlineSelector> InlineSelector for Rc<T> {
 /// either
 ///
 /// 1. `inline_disabled` has been set (this is usually coming from
-///    `crate::AnalysisCtrl::no_recursive_analysis`)
+///    [`crate::AnalysisCtrl::no_recursive_analysis`])
 /// 2. The wrapped [`InlineSelector`] returns `false` for the [`LocalDefId`] of
 ///    the called function.
 /// 3. The terminator is not a function call
@@ -710,16 +710,16 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
     }
 }
 
-/// A struct responsible for creating a global flow matrix for one `mir::Body`,
+/// A struct responsible for creating a global flow matrix for one [`mir::Body`],
 /// inlining all callees (that are configured to be inlined). It is a similar
 /// idea to `GlobalFlowConstructor` (in fact it wraps one) that bundles together
-/// all information needed to inline into one `mir::Body` so that we can split
+/// all information needed to inline into one [`mir::Body`] so that we can split
 /// it into helper functions which all have access to this information.
 ///
 /// ## Usage
 ///
-/// The function inliner implements `mir::visit::Visitor` that should be applied
-/// to only the same `Body` this struct was initialized with.
+/// The function inliner implements [`mir::visit::Visitor`] that should be applied
+/// to only the same [`mir::Body`] this struct was initialized with.
 ///
 /// The methods are currently split into the visit methods that actually modify
 /// `self.under_construction` and helper methods such as
@@ -729,7 +729,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
 /// agnostically and later make a determination about where to insert their
 /// results. For instance the result of `handle_regular_location` is both
 /// inserted into `location_states` but also added to `return_state` when we are
-/// handling a terminator. However `handle_regular_location` itself does not
+/// handling a terminator. However [`Self::handle_regular_location`] itself does not
 /// know in which context it is being used (to make its implementation simpler).
 pub struct FunctionInliner<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> {
     // Read-only information
