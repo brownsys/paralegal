@@ -85,7 +85,7 @@ fn blessed_and_unblessed_safe_sources(config: u8) {
 	send(recipients)
 }
 
-// The following fails only_send_to_allowed_sources because bless flows into recipients after the instantiation of safe_source_with_bless. This cannot be permitted because it looks identical in the graph as if we added staff and then did the check later in some irrelevant place. I think we do need to have some concept of the speciality of modifying fns like append, push, etc. 
+// The following fails only_send_to_allowed_sources because bless flows into recipients after the instantiation of safe_source_with_bless. This cannot be permitted because it looks identical in the graph as if we added staff and then did the check later in some irrelevant place. I think we do need to have some concept of the specialness of modifying fns like append, push, etc. 
 #[dfpp::analyze]
 fn conditional_modification(config: u8) {
 	let mut recipients = empty_vec();
