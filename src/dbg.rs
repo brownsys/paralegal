@@ -85,7 +85,7 @@ pub mod call_only_flow_dot {
         to: N<'g>,
         into: To,
     }
-    #[derive(Clone)]
+    #[derive(Clone, PartialEq)]
     enum To {
         Ctrl,
         Arg(usize),
@@ -316,6 +316,10 @@ pub mod call_only_flow_dot {
             let mut s = String::new();
             write_label(&mut s).unwrap();
             dot::LabelText::LabelStr(s.into())
+        }
+
+        fn edge_color(&'a self, e: &E<'g>) -> Option<dot::LabelText<'a>> {
+            (e.into == To::Ctrl).then(|| dot::LabelText::LabelStr("aqua".into()))
         }
     }
 
