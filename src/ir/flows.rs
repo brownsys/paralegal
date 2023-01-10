@@ -8,6 +8,7 @@ use flowistry::{
     infoflow::{FlowAnalysis, NonTransitiveFlowDomain},
     mir::engine::AnalysisResults,
 };
+use serde::{Serialize, Deserialize};
 
 /// The result of the data flow analysis for a function.
 ///
@@ -29,7 +30,7 @@ pub struct Flow<'tcx, 'g> {
     /// of `self.root_function`. Also uses a representation (input dependencies
     /// vector) that abstracts away the concrete `Place`s the call is performed
     /// with.
-    pub reduced_flow: CallOnlyFlow<'g>,
+    pub reduced_flow: CallOnlyFlow<GlobalLocation<'g>>,
 }
 
 /// A flowistry-like 3-dimensional tensor describing the [`Place`](mir::Place)
@@ -80,7 +81,15 @@ pub struct FunctionFlow<'tcx, 'g> {
 pub type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<FunctionFlow<'tcx, 'g>>>>>;
 /// Coarse grained, [`Place`](mir::Place) abstracted version of a
 /// [`GlobalFlowGraph`].
-pub type CallOnlyFlow<'g> = HashMap<GlobalLocation<'g>, CallDeps<GlobalLocation<'g>>>;
+#[derive(Serialize, Deserialize)]
+#[serde(bound(
+    serialize   = "Location: std::cmp::Eq + std::hash::Hash + serde::Serialize",
+    deserialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Deserialize<'de>"))]
+pub struct CallOnlyFlow<Location> { 
+    #[serde(with="crate::serializers::serde_map_via_vec")]
+    pub location_dependencies: HashMap<Location, CallDeps<Location>>,
+    pub return_dependencies: HashSet<Location>,
+}
 
 /// Dependencies of a function call with the [`Place`](mir::Place)s abstracted
 /// away. Instead each location in the `input_deps` vector corresponds to the

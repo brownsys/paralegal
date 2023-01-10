@@ -177,6 +177,8 @@ impl GetCallSites for (mir::Location, hir::BodyId) {
     }
 }
 
+
+
 pub trait MatchCallSite {
     fn match_(&self, call_site: &RawGlobalLocation) -> bool;
 }
@@ -196,7 +198,7 @@ impl MatchCallSite for (mir::Location, hir::BodyId) {
 impl G {
     /// Direct predecessor nodes of `n`
     fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
-        self.graph.0.get(&n).into_iter().flat_map(|deps| {
+        self.graph.location_dependencies.get(&n).into_iter().flat_map(|deps| {
             std::iter::once(&deps.ctrl_deps)
                 .chain(deps.input_deps.iter())
                 .flat_map(|s| s.iter())

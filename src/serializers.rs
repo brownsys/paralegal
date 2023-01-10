@@ -16,7 +16,7 @@
 use serde::Deserialize;
 
 use crate::{
-    ir::{CallDeps, GlobalLocation, GlobalLocationS, IsGlobalLocation},
+    ir::{CallDeps, GlobalLocation, GlobalLocationS, IsGlobalLocation, CallOnlyFlow},
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
@@ -382,27 +382,9 @@ impl<'g> Serialize for GlobalLocation<'g> {
         RawGlobalLocation::from(self).serialize(serializer)
     }
 }
-pub struct SerializableCallOnlyFlow(pub HashMap<RawGlobalLocation, CallDeps<RawGlobalLocation>>);
+pub type SerializableCallOnlyFlow = CallOnlyFlow<RawGlobalLocation>;
 
-impl Serialize for SerializableCallOnlyFlow {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serde_map_via_vec::serialize(&self.0, serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for SerializableCallOnlyFlow {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(Self(serde_map_via_vec::deserialize(deserializer)?))
-    }
-}
-
-mod serde_map_via_vec {
+pub mod serde_map_via_vec {
     //! Serialize a [`HashMap`] by converting it to a [`Vec`], lifting
     //! restrictions on the types of permissible keys.
     //!
@@ -455,7 +437,7 @@ mod serde_map_via_vec {
 
 impl SerializableCallOnlyFlow {
     pub fn all_locations_iter(&self) -> impl Iterator<Item = &RawGlobalLocation> {
-        self.0.iter().flat_map(|(from, deps)| {
+        self.location_dependencies.iter().flat_map(|(from, deps)| {
             std::iter::once(from).chain(
                 std::iter::once(&deps.ctrl_deps)
                     .chain(deps.input_deps.iter())
@@ -465,10 +447,11 @@ impl SerializableCallOnlyFlow {
     }
 }
 
-impl From<&crate::ir::CallOnlyFlow<'_>> for SerializableCallOnlyFlow {
-    fn from(other: &crate::ir::CallOnlyFlow<'_>) -> Self {
-        SerializableCallOnlyFlow(
-            other
+impl CallOnlyFlow<GlobalLocation<'_>> {
+    pub fn make_serializable(&self) -> SerializableCallOnlyFlow {
+        CallOnlyFlow { 
+            location_dependencies: 
+              self.location_dependencies
                 .iter()
                 .map(|(g, v)| {
                     (
@@ -483,11 +466,12 @@ impl From<&crate::ir::CallOnlyFlow<'_>> for SerializableCallOnlyFlow {
                         },
                     )
                 })
-                .collect(),
-        )
+                .collect()
+            , return_dependencies: 
+                self.return_dependencies.iter().map(|l| l.into()).collect()
+         }
     }
 }
-
 /// A serializable version of [`mir::Body`]s, mapped to their [`hir::BodyId`] so
 /// that you can resolve the body belonging to a global location (see
 /// [`IsGlobalLocation::function`]).

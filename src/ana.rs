@@ -427,7 +427,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     ///
     /// This is the canonical way for computing a [`CallOnlyFlow`] and supposed to
     /// be called after/on the result of [`Self::compute_granular_global_flows`].
-    fn compute_call_only_flow(&self, g: &GlobalFlowGraph<'tcx, 'g>) -> CallOnlyFlow<'g> {
+    fn compute_call_only_flow(&self, body_id: BodyId, g: &GlobalFlowGraph<'tcx, 'g>) -> CallOnlyFlow<GlobalLocation<'g>> {
         debug!(
             "Shrinking global flow graph with {} states",
             g.location_states.len()
@@ -435,7 +435,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
         let tcx = self.tcx;
 
-        g.location_states
+        let location_dependencies = g.location_states
             .iter()
             .filter_map(|(loc, deps)| {
                 if deps.is_translated() {
@@ -488,7 +488,15 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                     },
                 ))
             })
-            .collect()
+            .collect();
+
+        let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
+
+        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
+        let body = body_with_facts.simplified_body();
+        let return_dependencies = 
+            body.basic_blocks().iter_enumerated().filter(|(_, bbdat)| matches!(bbdat.terminator().kind, TerminatorKind::Return)).map(|(i, _)| body.terminator_loc(i)).flat_map(|l| self.flattening_helper.borrow_mut().deep_dependencies_of(self.gli.globalize_location(l, body_id), g, Place::return_place())).collect();
+        CallOnlyFlow { location_dependencies, return_dependencies }
     }
 }
 
@@ -642,6 +650,9 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
             stmt,
             Either::Right(Terminator {
                 kind: TerminatorKind::Call { .. },
+                ..
+            }) | Either::Right(Terminator {
+                kind: TerminatorKind::Return,
                 ..
             })
         ) {
@@ -1129,11 +1140,11 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
                 .unwrap();
         }
 
-        let reduced_flow = constructor.compute_call_only_flow(&granular_flow.flow);
+        let reduced_flow = constructor.compute_call_only_flow(body_id, &granular_flow.flow);
         debug!(
             "Constructed reduced flow of {} locations\n{:?}",
-            reduced_flow.len(),
-            reduced_flow.keys()
+            reduced_flow.location_dependencies.len(),
+            reduced_flow.location_dependencies.keys()
         );
         Self {
             root_function: body_id,
@@ -1327,7 +1338,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 })
         }
 
-        for (loc, deps) in flow.reduced_flow.iter() {
+        for (loc, deps) in flow.reduced_flow.location_dependencies.iter() {
             // It's important to look at the innermost location. It's easy to
             // use `location()` and `function()` on a global location instead
             // but that is the outermost call site, not the location for the actual call.
@@ -1432,6 +1443,9 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     );
                 }
             }
+        }
+        for dep in flow.reduced_flow.return_dependencies.iter() {
+            flows.add_data_flow(Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))), DataSink::Return);
         }
         Ok((Identifier::new(id.name), flows))
     }
