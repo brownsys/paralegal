@@ -657,7 +657,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                         origin
                             .provenance(tcx)
                             .into_iter()
-                            .map(|projection| (projection, deps.resolve(projection)))
+                            .map(|projection| (projection, deps.resolve(flowistry::mir::utils::PlaceExt::normalize(&projection, tcx, tcx.hir().body_owner_def_id(loc.innermost_location_and_body().1).to_def_id()))))
                     })
                     .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
                     .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
@@ -771,11 +771,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                 dbg::PrintableMatrix(matrix)
             );
         }
-        GlobalDepMatrix::make(
+        use flowistry::mir::utils::PlaceExt;
         matrix
             .rows()
-            .map(|(place, dep_set)| (place, self.make_row_global(dep_set)))
-            )
+            .map(|(place, dep_set)| (place.normalize(self.tcx(), self.local_def_id.to_def_id()), self.make_row_global(dep_set)))
+            .collect()
     }
 
     /// Makes `callee` relative to `call_site` in the function we operate on,
@@ -1004,8 +1004,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                 for (p, deps) in state_at_term.iter() {
                     self.under_construction
                         .return_state
-                        .0
-                        .entry(crate::ir::tensors::PlaceWrapper(*p))
+                        .entry(*p)
                         .or_insert_with(|| HashSet::new())
                         .extend(deps.iter().cloned());
                 }
