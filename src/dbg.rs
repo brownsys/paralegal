@@ -134,7 +134,18 @@ pub mod call_only_flow_dot {
                                 &body_with_facts.simplified_body().stmt_at(loc),
                                 self.tcx,
                             )
-                            .flat_map(move |p| deps.resolve(p.normalize(self.tcx, self.tcx.hir().body_owner_def_id(to.innermost_location_and_body().1).to_def_id())).1),
+                            .flat_map(move |p| {
+                                deps.resolve(
+                                    p.normalize(
+                                        self.tcx,
+                                        self.tcx
+                                            .hir()
+                                            .body_owner_def_id(to.innermost_location_and_body().1)
+                                            .to_def_id(),
+                                    ),
+                                )
+                                .1
+                            }),
                         )
                     } else {
                         None
@@ -159,7 +170,9 @@ pub mod call_only_flow_dot {
         }
     }
 
-    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>> for G<'tcx, 'g, CallOnlyFlow<GlobalLocation<'g>>> {
+    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>>
+        for G<'tcx, 'g, CallOnlyFlow<GlobalLocation<'g>>>
+    {
         fn nodes(&'a self) -> dot::Nodes<'a, N<'g>> {
             self.graph
                 .location_dependencies
@@ -245,12 +258,11 @@ pub mod call_only_flow_dot {
 
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
             use std::fmt::Write;
-            let (loc, body_id) =
-                if let Some(n) = n { 
-                    n.innermost_location_and_body()
-                } else {
-                    return dot::LabelText::LabelStr("return".into())
-                };
+            let (loc, body_id) = if let Some(n) = n {
+                n.innermost_location_and_body()
+            } else {
+                return dot::LabelText::LabelStr("return".into());
+            };
             let body_with_facts = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
                 self.tcx,
                 self.tcx.hir().body_owner_def_id(body_id),
@@ -500,7 +512,8 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                             .filter(|k| !places_read.contains(k))
                             .collect::<Vec<_>>();
                         keys.sort_by_key(|p| p.local);
-                        keys.into_iter().map(|k| (k, false, deps.matrix_raw().get(&k).unwrap()))
+                        keys.into_iter()
+                            .map(|k| (k, false, deps.matrix_raw().get(&k).unwrap()))
                     }),
                 6,
             )?;
@@ -570,14 +583,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
             })
             .collect::<HashMap<_, _>>(),
     );
-    serde_json::to_writer(
-        &mut out,
-        &(
-            flow.make_serializable(),
-            bodies,
-        ),
-    )
-    .unwrap()
+    serde_json::to_writer(&mut out, &(flow.make_serializable(), bodies)).unwrap()
 }
 
 /// Read a flow and a set of mentioned `mir::Body`s from the file. Is expected

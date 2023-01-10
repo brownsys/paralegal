@@ -8,7 +8,7 @@ use flowistry::{
     infoflow::{FlowAnalysis, NonTransitiveFlowDomain},
     mir::engine::AnalysisResults,
 };
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// The result of the data flow analysis for a function.
 ///
@@ -83,10 +83,11 @@ pub type FunctionFlows<'tcx, 'g> = RefCell<HashMap<BodyId, Option<Rc<FunctionFlo
 /// [`GlobalFlowGraph`].
 #[derive(Serialize, Deserialize)]
 #[serde(bound(
-    serialize   = "Location: std::cmp::Eq + std::hash::Hash + serde::Serialize",
-    deserialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Deserialize<'de>"))]
-pub struct CallOnlyFlow<Location> { 
-    #[serde(with="crate::serializers::serde_map_via_vec")]
+    serialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Serialize",
+    deserialize = "Location: std::cmp::Eq + std::hash::Hash + serde::Deserialize<'de>"
+))]
+pub struct CallOnlyFlow<Location> {
+    #[serde(with = "crate::serializers::serde_map_via_vec")]
     pub location_dependencies: HashMap<Location, CallDeps<Location>>,
     pub return_dependencies: HashSet<Location>,
 }

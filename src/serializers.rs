@@ -16,7 +16,7 @@
 use serde::Deserialize;
 
 use crate::{
-    ir::{CallDeps, GlobalLocation, GlobalLocationS, IsGlobalLocation, CallOnlyFlow},
+    ir::{CallDeps, CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
@@ -449,9 +449,9 @@ impl SerializableCallOnlyFlow {
 
 impl CallOnlyFlow<GlobalLocation<'_>> {
     pub fn make_serializable(&self) -> SerializableCallOnlyFlow {
-        CallOnlyFlow { 
-            location_dependencies: 
-              self.location_dependencies
+        CallOnlyFlow {
+            location_dependencies: self
+                .location_dependencies
                 .iter()
                 .map(|(g, v)| {
                     (
@@ -466,10 +466,9 @@ impl CallOnlyFlow<GlobalLocation<'_>> {
                         },
                     )
                 })
-                .collect()
-            , return_dependencies: 
-                self.return_dependencies.iter().map(|l| l.into()).collect()
-         }
+                .collect(),
+            return_dependencies: self.return_dependencies.iter().map(|l| l.into()).collect(),
+        }
     }
 }
 /// A serializable version of [`mir::Body`]s, mapped to their [`hir::BodyId`] so

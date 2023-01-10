@@ -47,7 +47,7 @@ pub fn with_current_directory<
 /// Run the action `F` in directory `P` and with rustc data structures
 /// initialized (e.g. using [`Symbol`] works), taking care to lock the directory
 /// change and resetting the working directory after.
-/// 
+///
 /// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
 /// [`Symbol`]s created after `F` and may cause dereference errors.
 pub fn cwd_and_use_rustc_in<
@@ -64,7 +64,7 @@ pub fn cwd_and_use_rustc_in<
 }
 
 /// Initialize rustc data structures (e.g. [`Symbol`] works) and run `F`
-/// 
+///
 /// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
 /// [`Symbol`]s created after `F` and may cause dereference errors.
 pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
@@ -87,7 +87,7 @@ pub fn install_dfpp() -> bool {
 /// Run dfpp in the current directory, passing the
 /// `--dump-serialized-non-transitive-graph` flag, which dumps a
 /// [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow) for each controller.
-/// 
+///
 /// The result is suitable for reading with
 /// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
 pub fn run_dfpp_with_graph_dump() -> bool {
@@ -102,7 +102,7 @@ pub fn run_dfpp_with_graph_dump() -> bool {
 /// Run dfpp in the current directory, passing the
 /// `--dump-serialized-flow-graph` which dumps the [`ProgramDescription`] as
 /// JSON.
-/// 
+///
 /// The result is suitable for reading with [`PreFrg::from_file_at`]
 pub fn run_dfpp_with_flow_graph_dump() -> bool {
     std::process::Command::new("cargo")
@@ -177,8 +177,6 @@ impl GetCallSites for (mir::Location, hir::BodyId) {
     }
 }
 
-
-
 pub trait MatchCallSite {
     fn match_(&self, call_site: &RawGlobalLocation) -> bool;
 }
@@ -198,11 +196,15 @@ impl MatchCallSite for (mir::Location, hir::BodyId) {
 impl G {
     /// Direct predecessor nodes of `n`
     fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
-        self.graph.location_dependencies.get(&n).into_iter().flat_map(|deps| {
-            std::iter::once(&deps.ctrl_deps)
-                .chain(deps.input_deps.iter())
-                .flat_map(|s| s.iter())
-        })
+        self.graph
+            .location_dependencies
+            .get(&n)
+            .into_iter()
+            .flat_map(|deps| {
+                std::iter::once(&deps.ctrl_deps)
+                    .chain(deps.input_deps.iter())
+                    .flat_map(|s| s.iter())
+            })
     }
 
     /// Is there any path (using directed edges) from `from` to `to`.
@@ -242,11 +244,19 @@ impl G {
     }
 
     pub fn returns_direct<From: MatchCallSite>(&self, from: &From) -> bool {
-        self.graph.return_dependencies.iter().any(|d| from.match_(d))
+        self.graph
+            .return_dependencies
+            .iter()
+            .any(|d| from.match_(d))
     }
 
     pub fn returns<From: MatchCallSite>(&self, from: &From) -> bool {
-        self.returns_direct(from) || self.graph.return_dependencies.iter().any(|r| self.connects(from, r))
+        self.returns_direct(from)
+            || self
+                .graph
+                .return_dependencies
+                .iter()
+                .any(|r| self.connects(from, r))
     }
 
     /// Return all call sites for functions with names matching `pattern`.

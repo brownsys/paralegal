@@ -2,7 +2,6 @@
 
 extern crate smallvec;
 
-
 use smallvec::SmallVec;
 
 use crate::{
@@ -570,4 +569,3 @@ macro_rules! sym_vec {
         vec![$(Symbol::intern($e)),*]
     };
 }
-

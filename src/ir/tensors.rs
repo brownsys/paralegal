@@ -12,7 +12,7 @@ pub type PlaceTranslationTable<'tcx> = HashMap<Place<'tcx>, Place<'tcx>>;
 /// A flowistry-like dependency matrix at a specific location. Describes for
 /// each place the most recent global locations (these could be locations in a
 /// callee) that influenced the values at this place.
-/// 
+///
 /// It is important to note that [`Place`]s do not always compare equal (and
 /// hash equally), even if they are structurally equal. This is particularly
 /// relevant as we have observed issues related to this phenomenon with regards
@@ -20,8 +20,6 @@ pub type PlaceTranslationTable<'tcx> = HashMap<Place<'tcx>, Place<'tcx>>;
 /// that you canonicalize the place you look up in this map with
 /// [`Aliases::normalize`](flowistry::mir::aliases::Aliases::normalize).
 pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
-
-
 
 /// A [`GlobalDepMatrix`] that may also translate between places.
 ///
