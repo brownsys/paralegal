@@ -1,6 +1,21 @@
 #![feature(register_tool)]
 #![register_tool(dfpp)]
 
+#[dfpp::label(noinline)]
+fn input() -> i32 {
+    0
+}
+
+#[dfpp::label(noinline)]
+fn output(i : i32) -> i32 {
+    i
+}
+
+#[dfpp::analyze]
+fn return_is_tracked() -> i32 {
+    output(input())
+}
+
 #[dfpp::label(sensitive)]
 struct UserData {
     pub data: Vec<i64>,

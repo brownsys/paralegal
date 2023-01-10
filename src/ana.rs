@@ -427,7 +427,11 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     ///
     /// This is the canonical way for computing a [`CallOnlyFlow`] and supposed to
     /// be called after/on the result of [`Self::compute_granular_global_flows`].
-    fn compute_call_only_flow(&self, g: &GlobalFlowGraph<'tcx, 'g>) -> CallOnlyFlow<'g> {
+    fn compute_call_only_flow(
+        &self,
+        body_id: BodyId,
+        g: &GlobalFlowGraph<'tcx, 'g>,
+    ) -> CallOnlyFlow<GlobalLocation<'g>> {
         debug!(
             "Shrinking global flow graph with {} states",
             g.location_states.len()
@@ -435,7 +439,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
         let tcx = self.tcx;
 
-        g.location_states
+        let location_dependencies = g
+            .location_states
             .iter()
             .filter_map(|(loc, deps)| {
                 if deps.is_translated() {
@@ -488,7 +493,30 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                     },
                 ))
             })
-            .collect()
+            .collect();
+
+        let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
+
+        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
+        let body = body_with_facts.simplified_body();
+        let return_dependencies: HashSet<_> = body
+            .basic_blocks()
+            .iter_enumerated()
+            .filter(|(_, bbdat)| matches!(bbdat.terminator().kind, TerminatorKind::Return))
+            .map(|(i, _)| body.terminator_loc(i))
+            .flat_map(|l| {
+                self.flattening_helper.borrow_mut().deep_dependencies_of(
+                    self.gli.globalize_location(l, body_id),
+                    g,
+                    Place::return_place(),
+                )
+            })
+            .collect();
+        debug!("Found {} return dependencies", return_dependencies.len());
+        CallOnlyFlow {
+            location_dependencies,
+            return_dependencies,
+        }
     }
 }
 
@@ -500,7 +528,7 @@ extern crate polonius_engine;
 /// type from [`rustc_borrowck`] is exported. So instead I alias it here using
 /// the [`polonius_engine::FactTypes`] trait through which it *must* be
 /// exported.
-/// 
+///
 /// Some of our type signatures need to refer to this type which this alias
 /// makes easier.
 type LocationIndex = <rustc_borrowck::consumers::RustcFacts as polonius_engine::FactTypes>::Point;
@@ -508,7 +536,7 @@ type LocationIndex = <rustc_borrowck::consumers::RustcFacts as polonius_engine::
 /// The constraint selector is essentially a closure. The function that it
 /// encapsulates is [`Self::select`] and it is constructed with
 /// [`Self::location_based`].
-/// 
+///
 /// This type, as a selector, is handed to
 /// [`flowistry::mir::aliases::Aliases::build_with_fact_selection`]. This is
 /// done during construction of the [`CallOnlyFlow`] where we require a
@@ -589,7 +617,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
             .into_iter()
             .flat_map(|&p| new_aliases.conflicts(p).iter())
             .cloned()
-            .filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
+            //.filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
             .collect::<Vec<_>>();
 
         debug!("Determined the reachable places for {p:?} are {a:?}");
@@ -643,6 +671,9 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
             Either::Right(Terminator {
                 kind: TerminatorKind::Call { .. },
                 ..
+            }) | Either::Right(Terminator {
+                kind: TerminatorKind::Return,
+                ..
             })
         ) {
             warn!("`deep_dependencies_of` was called on non-function-call location {} with statement {:?}", loc, stmt);
@@ -654,10 +685,18 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                 places
                     .iter()
                     .flat_map(|&origin| {
-                        origin
-                            .provenance(tcx)
-                            .into_iter()
-                            .map(|projection| (projection, deps.resolve(projection)))
+                        origin.provenance(tcx).into_iter().map(|projection| {
+                            (
+                                projection,
+                                deps.resolve(flowistry::mir::utils::PlaceExt::normalize(
+                                    &projection,
+                                    tcx,
+                                    tcx.hir()
+                                        .body_owner_def_id(loc.innermost_location_and_body().1)
+                                        .to_def_id(),
+                                )),
+                            )
+                        })
                     })
                     .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
                     .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
@@ -771,11 +810,16 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                 dbg::PrintableMatrix(matrix)
             );
         }
-        GlobalDepMatrix::make(
+        use flowistry::mir::utils::PlaceExt;
         matrix
             .rows()
-            .map(|(place, dep_set)| (place, self.make_row_global(dep_set)))
-            )
+            .map(|(place, dep_set)| {
+                (
+                    place.normalize(self.tcx(), self.local_def_id.to_def_id()),
+                    self.make_row_global(dep_set),
+                )
+            })
+            .collect()
     }
 
     /// Makes `callee` relative to `call_site` in the function we operate on,
@@ -1004,8 +1048,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                 for (p, deps) in state_at_term.iter() {
                     self.under_construction
                         .return_state
-                        .0
-                        .entry(crate::ir::tensors::PlaceWrapper(*p))
+                        .entry(*p)
                         .or_insert_with(|| HashSet::new())
                         .extend(deps.iter().cloned());
                 }
@@ -1130,11 +1173,11 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
                 .unwrap();
         }
 
-        let reduced_flow = constructor.compute_call_only_flow(&granular_flow.flow);
+        let reduced_flow = constructor.compute_call_only_flow(body_id, &granular_flow.flow);
         debug!(
             "Constructed reduced flow of {} locations\n{:?}",
-            reduced_flow.len(),
-            reduced_flow.keys()
+            reduced_flow.location_dependencies.len(),
+            reduced_flow.location_dependencies.keys()
         );
         Self {
             root_function: body_id,
@@ -1328,7 +1371,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 })
         }
 
-        for (loc, deps) in flow.reduced_flow.iter() {
+        for (loc, deps) in flow.reduced_flow.location_dependencies.iter() {
             // It's important to look at the innermost location. It's easy to
             // use `location()` and `function()` on a global location instead
             // but that is the outermost call site, not the location for the actual call.
@@ -1433,6 +1476,12 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     );
                 }
             }
+        }
+        for dep in flow.reduced_flow.return_dependencies.iter() {
+            flows.add_data_flow(
+                Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))),
+                DataSink::Return,
+            );
         }
         Ok((Identifier::new(id.name), flows))
     }

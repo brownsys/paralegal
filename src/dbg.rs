@@ -70,6 +70,8 @@ pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
     use std::collections::HashSet;
 
+    use flowistry::mir::utils::PlaceExt;
+
     use crate::{
         ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
@@ -78,14 +80,15 @@ pub mod call_only_flow_dot {
         Either,
     };
 
-    pub type N<'g> = GlobalLocation<'g>;
+    /// `None` encodes the return state of the function
+    pub type N<'g> = Option<GlobalLocation<'g>>;
     #[derive(Clone)]
     pub struct E<'g> {
         from: N<'g>,
         to: N<'g>,
         into: To,
     }
-    #[derive(Clone)]
+    #[derive(Clone, PartialEq)]
     enum To {
         Ctrl,
         Arg(usize),
@@ -111,6 +114,8 @@ pub mod call_only_flow_dot {
                 .cloned()
                 .collect::<HashSet<_>>()
                 .into_iter()
+                .map(Some)
+                .chain([None])
                 .collect::<Vec<_>>()
                 .into()
         }
@@ -129,16 +134,28 @@ pub mod call_only_flow_dot {
                                 &body_with_facts.simplified_body().stmt_at(loc),
                                 self.tcx,
                             )
-                            .flat_map(|p| deps.resolve(p).1),
+                            .flat_map(move |p| {
+                                deps.resolve(
+                                    p.normalize(
+                                        self.tcx,
+                                        self.tcx
+                                            .hir()
+                                            .body_owner_def_id(to.innermost_location_and_body().1)
+                                            .to_def_id(),
+                                    ),
+                                )
+                                .1
+                            }),
                         )
                     } else {
                         None
                     }
                     .into_iter()
                     .flatten()
+                    .map(Some)
                     .map(move |from| E {
                         from,
-                        to,
+                        to: Some(to),
                         into: To::None,
                     })
                 })
@@ -153,9 +170,12 @@ pub mod call_only_flow_dot {
         }
     }
 
-    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>> for G<'tcx, 'g, CallOnlyFlow<'g>> {
+    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>>
+        for G<'tcx, 'g, CallOnlyFlow<GlobalLocation<'g>>>
+    {
         fn nodes(&'a self) -> dot::Nodes<'a, N<'g>> {
             self.graph
+                .location_dependencies
                 .iter()
                 .flat_map(|(to, v)| {
                     std::iter::once(*to)
@@ -164,24 +184,27 @@ pub mod call_only_flow_dot {
                 })
                 .collect::<HashSet<_>>()
                 .into_iter()
+                .map(Some)
+                .chain([None])
                 .collect::<Vec<_>>()
                 .into()
         }
         fn edges(&'a self) -> dot::Edges<'a, E<'g>> {
             self.graph
+                .location_dependencies
                 .iter()
                 .flat_map(|(&to, v)| {
                     v.ctrl_deps
                         .iter()
                         .map(move |&from| E {
-                            from,
-                            to,
+                            from: Some(from),
+                            to: Some(to),
                             into: To::Ctrl,
                         })
                         .chain(v.input_deps.iter().enumerate().flat_map(move |(i, deps)| {
                             deps.iter().map(move |&from| E {
-                                from,
-                                to,
+                                from: Some(from),
+                                to: Some(to),
                                 into: To::Arg(i),
                             })
                         }))
@@ -202,7 +225,11 @@ pub mod call_only_flow_dot {
             dot::Id::new("g").unwrap()
         }
         fn node_id(&'a self, n: &N<'g>) -> dot::Id<'a> {
-            dot::Id::new(format!("n{}", n.stable_id())).unwrap()
+            if let Some(n) = n {
+                dot::Id::new(format!("n{}", n.stable_id())).unwrap()
+            } else {
+                dot::Id::new("return").unwrap()
+            }
         }
         fn node_shape(&'a self, _node: &N<'g>) -> Option<dot::LabelText<'a>> {
             Some(dot::LabelText::LabelStr("record".into()))
@@ -231,7 +258,11 @@ pub mod call_only_flow_dot {
 
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
             use std::fmt::Write;
-            let (loc, body_id) = n.innermost_location_and_body();
+            let (loc, body_id) = if let Some(n) = n {
+                n.innermost_location_and_body()
+            } else {
+                return dot::LabelText::LabelStr("return".into());
+            };
             let body_with_facts = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
                 self.tcx,
                 self.tcx.hir().body_owner_def_id(body_id),
@@ -316,6 +347,10 @@ pub mod call_only_flow_dot {
             let mut s = String::new();
             write_label(&mut s).unwrap();
             dot::LabelText::LabelStr(s.into())
+        }
+
+        fn edge_color(&'a self, e: &E<'g>) -> Option<dot::LabelText<'a>> {
+            (e.into == To::Ctrl).then(|| dot::LabelText::LabelStr("aqua".into()))
         }
     }
 
@@ -477,7 +512,8 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                             .filter(|k| !places_read.contains(k))
                             .collect::<Vec<_>>();
                         keys.sort_by_key(|p| p.local);
-                        keys.into_iter().map(|k| (k, false, deps.matrix_raw().get(&k).unwrap()))
+                        keys.into_iter()
+                            .map(|k| (k, false, deps.matrix_raw().get(&k).unwrap()))
                     }),
                 6,
             )?;
@@ -516,11 +552,12 @@ pub fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item = mir::L
 /// [read_non_transitive_graph_and_body].
 pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
     tcx: TyCtxt,
-    flow: &CallOnlyFlow,
+    flow: &CallOnlyFlow<GlobalLocation>,
     mut out: W,
 ) {
     let bodies = Bodies(
-        flow.iter()
+        flow.location_dependencies
+            .iter()
             .flat_map(|(l, deps)| {
                 std::iter::once(*l).chain(
                     std::iter::once(&deps.ctrl_deps)
@@ -546,14 +583,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
             })
             .collect::<HashMap<_, _>>(),
     );
-    serde_json::to_writer(
-        &mut out,
-        &(
-            crate::serializers::SerializableCallOnlyFlow::from(flow),
-            bodies,
-        ),
-    )
-    .unwrap()
+    serde_json::to_writer(&mut out, &(flow.make_serializable(), bodies)).unwrap()
 }
 
 /// Read a flow and a set of mentioned `mir::Body`s from the file. Is expected
