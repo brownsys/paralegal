@@ -589,7 +589,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
             .into_iter()
             .flat_map(|&p| new_aliases.conflicts(p).iter())
             .cloned()
-            .filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
+            //.filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
             .collect::<Vec<_>>();
 
         debug!("Determined the reachable places for {p:?} are {a:?}");
