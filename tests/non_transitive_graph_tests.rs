@@ -23,6 +23,18 @@ lazy_static! {
 }
 
 #[test]
+fn return_is_tracked() {
+    assert!(*TEST_CRATE_ANALYZED);
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("return_is_tracked"))).unwrap();
+
+    let get = graph.function_call("input");
+    let send = graph.function_call("output");
+
+    assert!(graph.returns_direct(&send));
+    assert!(graph.returns(&get));
+}
+
+#[test]
 fn simple_happens_before_has_connections() {
     assert!(*TEST_CRATE_ANALYZED);
     let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("basic_happens_before"))).unwrap();

@@ -494,8 +494,9 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
         let body = body_with_facts.simplified_body();
-        let return_dependencies = 
+        let return_dependencies : HashSet<_> = 
             body.basic_blocks().iter_enumerated().filter(|(_, bbdat)| matches!(bbdat.terminator().kind, TerminatorKind::Return)).map(|(i, _)| body.terminator_loc(i)).flat_map(|l| self.flattening_helper.borrow_mut().deep_dependencies_of(self.gli.globalize_location(l, body_id), g, Place::return_place())).collect();
+            debug!("Found {} return dependencies", return_dependencies.len());
         CallOnlyFlow { location_dependencies, return_dependencies }
     }
 }

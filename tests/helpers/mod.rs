@@ -241,6 +241,14 @@ impl G {
         false
     }
 
+    pub fn returns_direct<From: MatchCallSite>(&self, from: &From) -> bool {
+        self.graph.return_dependencies.iter().any(|d| from.match_(d))
+    }
+
+    pub fn returns<From: MatchCallSite>(&self, from: &From) -> bool {
+        self.returns_direct(from) || self.graph.return_dependencies.iter().any(|r| self.connects(from, r))
+    }
+
     /// Return all call sites for functions with names matching `pattern`.
     pub fn function_calls(&self, pattern: &str) -> HashSet<(mir::Location, hir::BodyId)> {
         self.body
