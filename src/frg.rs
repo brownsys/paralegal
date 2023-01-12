@@ -13,6 +13,8 @@ use crate::desc::{
     Annotation, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription, Relation,
 };
 
+use self::name::Qualifier;
+
 /// Extension trait to lay out a sequence of documents with [`DocAllocator::hardline`]s
 /// in between.
 trait DocLines<'a, A = ()>: DocAllocator<'a, A>
@@ -170,7 +172,7 @@ fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            DataSink::Return => alloc.text("`return"),
+            DataSink::Return => alloc.text(name::RETURN),
             DataSink::Argument { function, arg_slot } => {
                 data_sink_as_forge(alloc, function, *arg_slot)
             }
@@ -238,6 +240,8 @@ pub mod name {
     pub const CALL_SITE: &'static str = "CallSite";
     /// Previously "CallSite"
     pub const CALL_ARGUMENT: &'static str = "CallArgument";
+    pub const RETURN: &'static str = "Return";
+    pub const SINK: &'static str = "Sink";
     pub const FUNCTION: &'static str = "Function";
     pub const FUN_REL: &'static str = "function";
     pub const CTRL: &'static str = "Ctrl";
@@ -254,6 +258,13 @@ pub mod name {
     pub const OTYPE_REL: &'static str = "otype";
     pub const EXCEPTIONS_LABEL: &'static str = "exception";
 
+    pub enum Qualifier {
+        Abstract,
+        One,
+        No,
+    }
+
+    use Qualifier::*;
     lazy_static! {
         /// A description of the preamble of Forge `sig`s we always emit.
         ///
@@ -263,7 +274,7 @@ pub mod name {
         /// to be defined before being referenced.
         pub static ref SIGS: Vec<(
                 &'static str,
-                bool,
+                Qualifier,
                 Option<&'static str>,
                 Vec<(&'static str, String)>,
             )> = {
@@ -271,19 +282,21 @@ pub mod name {
                 let one = |i| "one ".to_string() + i;
                 let arr = |from: &str, to| from.to_string() + "->" + to;
                 vec![
-                    (LABEL, true, None, vec![]),
-                    (OBJ, true, None, vec![(LABELS_REL, set(LABEL))]),
-                    (FUNCTION, false, Some(OBJ), vec![]),
-                    (SRC, true, Some(OBJ), vec![]),
+                    (LABEL, Abstract, None, vec![]),
+                    (OBJ, Abstract, None, vec![(LABELS_REL, set(LABEL))]),
+                    (FUNCTION, No, Some(OBJ), vec![]),
+                    (SRC, Abstract, Some(OBJ), vec![]),
+                    (SINK, Abstract, Some(OBJ), vec![]),
+                    (RETURN, One, Some(SINK), vec![]),
                     //(CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]),
-                    (CALL_ARGUMENT, false, Some(OBJ), vec![(ARG_CALL_SITE, one(CALL_SITE))]),
-                    (INPUT_ARGUMENT, false, Some(SRC), vec![]),
-                    (TYPE, false, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
+                    (CALL_ARGUMENT, No, Some(SINK), vec![(ARG_CALL_SITE, one(CALL_SITE))]),
+                    (INPUT_ARGUMENT, No, Some(SRC), vec![]),
+                    (TYPE, No, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
                     //(CALL_ARGUMENT_OUTPUT, Some(SRC), vec![(RETURN_CALL_SITE, one(CALL_SITE))]),
-                    (CALL_SITE, false, Some(SRC), vec![(FUN_REL, one(FUNCTION))]),
+                    (CALL_SITE, No, Some(SRC), vec![(FUN_REL, one(FUNCTION))]),
                     (
                         CTRL,
-                        false,
+                        No,
                         None,
                         vec![
                             (FLOW, set(&arr(SRC, CALL_ARGUMENT))),
@@ -342,9 +355,13 @@ fn make_forge_sigs<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(alloc: &'a D) -> D
 where
     D::Doc: Clone,
 {
-    alloc.lines(name::SIGS.iter().map(|(name, abstract_, parent, fields)| {
+    alloc.lines(name::SIGS.iter().map(|(name, qualifier, parent, fields)| {
         alloc
-            .text(if *abstract_ { "abstract sig " } else { "sig " })
+            .text(match *qualifier { 
+                Qualifier::Abstract => "abstract sig ",
+                Qualifier::No => "sig ",
+                Qualifier::One => "one sig ",
+            })
             .append(*name)
             .append(parent.map_or(alloc.nil(), |p| alloc.text(" extends ").append(p)))
             .append(alloc.space())
@@ -621,6 +638,12 @@ where
                                 .text(name::CALL_ARGUMENT)
                                 .append(" = ")
                                 .append(hash_set_into_forge(self.all_sinks(), alloc)),
+                            alloc.text(name::RETURN)
+                                .append(" = `")
+                                .append(name::RETURN),
+                            alloc.text(name::SINK)
+                                .append(" = ")
+                                .append(hash_set_into_forge([name::CALL_ARGUMENT, name::RETURN].into_iter().collect::<HashSet<_>>(), alloc)),
                             alloc
                                 .text(name::TYPE)
                                 .append(" = ")
@@ -633,7 +656,7 @@ where
                                 .text(name::OBJ)
                                 .append(" = ")
                                 .append(hash_set_into_forge(
-                                    [name::FUNCTION, name::SRC, name::CALL_ARGUMENT, name::TYPE]
+                                    [name::FUNCTION, name::SRC, name::SINK, name::TYPE]
                                         .into_iter()
                                         .collect::<HashSet<_>>(),
                                     alloc,
