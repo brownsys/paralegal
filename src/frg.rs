@@ -172,7 +172,7 @@ fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            DataSink::Return => alloc.text(name::RETURN),
+            DataSink::Return => alloc.text("`Return"),
             DataSink::Argument { function, arg_slot } => {
                 data_sink_as_forge(alloc, function, *arg_slot)
             }
@@ -299,7 +299,7 @@ pub mod name {
                         No,
                         None,
                         vec![
-                            (FLOW, set(&arr(SRC, CALL_ARGUMENT))),
+                            (FLOW, set(&arr(SRC, SINK))),
                             (CTRL_FLOW, set(&arr(SRC, CALL_SITE))),
                             (TYPES, set(&arr(SRC, TYPE))),
                         ],
@@ -634,13 +634,18 @@ where
                                         .collect::<HashSet<_>>(),
                                     alloc,
                                 )),
+							alloc.text(name::RETURN)
+                                .append(" = `")
+                                .append(name::RETURN),
                             alloc
                                 .text(name::CALL_ARGUMENT)
                                 .append(" = ")
-                                .append(hash_set_into_forge(self.all_sinks(), alloc)),
-                            alloc.text(name::RETURN)
-                                .append(" = `")
-                                .append(name::RETURN),
+                                .append(hash_set_into_forge(self.all_sinks().iter().filter_map(|ds| {
+									match ds {
+										DataSink::Argument { .. } => Some(*ds),
+										_ => None,
+									}
+								}).collect(), alloc)),
                             alloc.text(name::SINK)
                                 .append(" = ")
                                 .append(hash_set_into_forge([name::CALL_ARGUMENT, name::RETURN].into_iter().collect::<HashSet<_>>(), alloc)),
