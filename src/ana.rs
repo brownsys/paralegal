@@ -1361,7 +1361,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             );
         }
 
-        if self.opts.dbg.dump_non_transitive_graph {
+        if self.opts.dbg.dump_call_only_flow() {
             outfile_pls(format!("{}.call-only-flow.gv", id.name))
                 .and_then(|mut file| {
                     dbg::call_only_flow_dot::dump(tcx, &flow.reduced_flow, &mut file)
