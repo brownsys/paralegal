@@ -442,7 +442,14 @@ impl ProgramDescription {
                 // Maybe, maybe not. Only time will
                 // tell.
                 //
-                // The "old behavior" I am restoring is that
+                // The "old behavior" I am restoring is that if there is a label
+                // `l` on function `f`, then what is actually emitted into forge
+                // is `cs1_f->l + cs2_f->l`, i.e. the label is being attached to
+                // each call site of the function in addition to the function
+                // itself.
+                // Part of why we choose this behavior is because there is no
+                // call-site-independent representation for arguments, so the
+                // label has to be attached to the call site argument.
                 anns.iter()
                     .filter_map(Annotation::as_label_ann)
                     .map(move |a| {
@@ -473,12 +480,7 @@ impl ProgramDescription {
                                     .map(|s| s.as_forge(alloc)),
                             )
                             .chain(
-                                if a.refinement.on_self() && typ.is_type() {
-                                    Some(id.as_forge(alloc))
-                                } else {
-                                    None
-                                }
-                                .into_iter(),
+                                [id.as_forge(alloc)]
                             )
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
