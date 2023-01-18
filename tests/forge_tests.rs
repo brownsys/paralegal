@@ -77,7 +77,7 @@ fn control_flow() {
 
 #[test]
 fn blessing_safe_sources() {
-	assert!(*TEST_CRATE_ANALYZED);
+    assert!(*TEST_CRATE_ANALYZED);
 
     assert!(create_forge_file(
         "blessed_safe_sources",
@@ -86,28 +86,28 @@ fn blessing_safe_sources() {
     ));
     assert!(get_forge_result("blessed_safe_sources"));
 
-	assert!(create_forge_file(
+    assert!(create_forge_file(
         "only_safe_sources",
         "only_send_to_allowed_sources[`only_safe_sources]",
         "theorem"
     ));
     assert!(get_forge_result("only_safe_sources"));
 
-	assert!(create_forge_file(
+    assert!(create_forge_file(
         "unblessed_safe_sources_with_bless",
         "only_send_to_allowed_sources[`unblessed_safe_sources_with_bless]",
         "theorem"
     ));
     assert!(!get_forge_result("unblessed_safe_sources_with_bless"));
 
-	assert!(create_forge_file(
+    assert!(create_forge_file(
         "unsafe_sources",
         "only_send_to_allowed_sources[`unsafe_sources]",
         "theorem"
     ));
     assert!(!get_forge_result("unsafe_sources"));
 
-	assert!(create_forge_file(
+    assert!(create_forge_file(
         "blessed_and_unblessed_safe_sources",
         "only_send_to_allowed_sources[`blessed_and_unblessed_safe_sources]",
         "theorem"
@@ -117,13 +117,13 @@ fn blessing_safe_sources() {
 
 #[test]
 fn conditional_modification() {
-	assert!(*TEST_CRATE_ANALYZED);
+    assert!(*TEST_CRATE_ANALYZED);
 
     assert!(create_forge_file(
         "conditional_modification",
         "only_send_to_allowed_sources[`conditional_modification]",
         "theorem"
     ));
-	// TODO:(livia) Below fails, see forge-tests/main.rs
+    // TODO:(livia) Below fails, see forge-tests/main.rs
     // assert!(get_forge_result("conditional_modification"));
 }

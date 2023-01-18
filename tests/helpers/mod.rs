@@ -116,7 +116,7 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
 pub fn run_forge(file: &str) -> bool {
     std::process::Command::new("racket")
         .arg(file)
-		.stdout(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
         .status()
         .unwrap()
         .success()

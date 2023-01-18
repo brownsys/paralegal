@@ -97,7 +97,6 @@ pub struct Args {
     /// Additional arguments that control debug args specifically
     #[clap(flatten, next_help_heading = "Debugging and Testing")]
     dbg: DbgArgs,
-
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
@@ -105,7 +104,7 @@ struct ModelCtrl {
     /// A JSON file from which to load additional annotations. Whereas normally
     /// annotation can only be placed on crate-local items, these can also be
     /// placed on third party items, such as functions from the stdlib.
-    /// 
+    ///
     /// The file is expected to contain a `HashMap<Identifier, (Vec<Annotation>,
     /// ObjectType)>`, which is the same type as `annotations` field from the
     /// `ProgramDescription` struct. It uses the `serde` derived serializer. An
@@ -190,9 +189,9 @@ impl rustc_driver::Callbacks for Callbacks {
             .enter(|tcx| ana::CollectingVisitor::new(tcx, self.opts).run())
             .unwrap();
         if let Some(annotation_file) = self.opts.modelctrl.external_annotations.as_ref() {
-            let external_annotations : HashMap<_,_> = serde_json::from_reader(
-                &mut std::fs::File::open(annotation_file).unwrap()
-            ).unwrap();
+            let external_annotations: HashMap<_, _> =
+                serde_json::from_reader(&mut std::fs::File::open(annotation_file).unwrap())
+                    .unwrap();
             desc.annotations.extend(external_annotations);
         }
         if self.opts.dbg.dump_serialized_flow_graph {
