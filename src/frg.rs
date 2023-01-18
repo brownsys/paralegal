@@ -244,6 +244,8 @@ pub mod name {
     pub const SINK: &'static str = "Sink";
     pub const FUNCTION: &'static str = "Function";
     pub const FUN_REL: &'static str = "function";
+    pub const FORMAL_PARAMETER: &'static str = "FormalParameter";
+    pub const FORMAL_PARAMETER_FUNCTION: &'static str = "fp_fun_rel";
     pub const CTRL: &'static str = "Ctrl";
     pub const FLOW: &'static str = "flow";
     pub const CTRL_FLOW: &'static str = "ctrl_flow";
@@ -285,6 +287,7 @@ pub mod name {
                     (LABEL, Abstract, None, vec![]),
                     (OBJ, Abstract, None, vec![(LABELS_REL, set(LABEL))]),
                     (FUNCTION, No, Some(OBJ), vec![]),
+                    (FORMAL_PARAMETER, No, Some(OBJ), vec![(FORMAL_PARAMETER_FUNCTION, one(FUNCTION))]),
                     (SRC, Abstract, Some(OBJ), vec![]),
                     (SINK, Abstract, Some(OBJ), vec![]),
                     (RETURN, One, Some(SINK), vec![]),
@@ -357,7 +360,7 @@ where
 {
     alloc.lines(name::SIGS.iter().map(|(name, qualifier, parent, fields)| {
         alloc
-            .text(match *qualifier { 
+            .text(match *qualifier {
                 Qualifier::Abstract => "abstract sig ",
                 Qualifier::No => "sig ",
                 Qualifier::One => "one sig ",
@@ -386,6 +389,22 @@ where
     }))
 }
 
+#[derive(Hash, PartialEq, Eq)]
+struct FormalParameter {
+    function: Identifier,
+    position: u16,
+}
+
+impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for FormalParameter {
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+        alloc
+            .text("`fp_")
+            .append(self.function.as_str().to_string())
+            .append("_")
+            .append(alloc.as_string(self.position))
+    }
+}
+
 impl ProgramDescription {
     /// Returns all labels in this program description, including the special
     /// [`name::EXCEPTIONS_LABEL`] label.
@@ -399,6 +418,25 @@ impl ProgramDescription {
                 name::EXCEPTIONS_LABEL,
             )))
             .map(Identifier::new)
+            .collect()
+    }
+
+    fn all_formal_parameters(&self) -> HashSet<FormalParameter> {
+        self.annotations
+            .iter()
+            .flat_map(|(function, (anns, _))| {
+                anns.iter()
+                    .filter_map(Annotation::as_label_ann)
+                    .flat_map(|l| {
+                        l.refinement
+                            .on_argument()
+                            .iter()
+                            .map(|&position| FormalParameter {
+                                function: *function,
+                                position,
+                            })
+                    })
+            })
             .collect()
     }
 
@@ -479,9 +517,14 @@ impl ProgramDescription {
                                     })
                                     .map(|s| s.as_forge(alloc)),
                             )
-                            .chain(
-                                [id.as_forge(alloc)]
-                            )
+                            .chain([id.as_forge(alloc)])
+                            .chain(a.refinement.on_argument().iter().map(|slot| {
+                                FormalParameter {
+                                    function: *id,
+                                    position: *slot,
+                                }
+                                .as_forge(alloc)
+                            }))
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
                             .into_iter(),
@@ -636,21 +679,28 @@ where
                                         .collect::<HashSet<_>>(),
                                     alloc,
                                 )),
-							alloc.text(name::RETURN)
-                                .append(" = `")
-                                .append(name::RETURN),
+                            alloc.text(name::RETURN).append(" = `").append(name::RETURN),
+                            alloc.text(name::CALL_ARGUMENT).append(" = ").append(
+                                hash_set_into_forge(
+                                    self.all_sinks()
+                                        .iter()
+                                        .filter_map(|ds| match ds {
+                                            DataSink::Argument { .. } => Some(*ds),
+                                            _ => None,
+                                        })
+                                        .collect(),
+                                    alloc,
+                                ),
+                            ),
                             alloc
-                                .text(name::CALL_ARGUMENT)
+                                .text(name::SINK)
                                 .append(" = ")
-                                .append(hash_set_into_forge(self.all_sinks().iter().filter_map(|ds| {
-									match ds {
-										DataSink::Argument { .. } => Some(*ds),
-										_ => None,
-									}
-								}).collect(), alloc)),
-                            alloc.text(name::SINK)
-                                .append(" = ")
-                                .append(hash_set_into_forge([name::CALL_ARGUMENT, name::RETURN].into_iter().collect::<HashSet<_>>(), alloc)),
+                                .append(hash_set_into_forge(
+                                    [name::CALL_ARGUMENT, name::RETURN]
+                                        .into_iter()
+                                        .collect::<HashSet<_>>(),
+                                    alloc,
+                                )),
                             alloc
                                 .text(name::TYPE)
                                 .append(" = ")
@@ -660,12 +710,22 @@ where
                                 .append(" = ")
                                 .append(hash_set_into_forge(self.all_functions(), alloc)),
                             alloc
+                                .text(name::FORMAL_PARAMETER)
+                                .append(" = ")
+                                .append(hash_set_into_forge(self.all_formal_parameters(), alloc)),
+                            alloc
                                 .text(name::OBJ)
                                 .append(" = ")
                                 .append(hash_set_into_forge(
-                                    [name::FUNCTION, name::SRC, name::SINK, name::TYPE]
-                                        .into_iter()
-                                        .collect::<HashSet<_>>(),
+                                    [
+                                        name::FUNCTION,
+                                        name::SRC,
+                                        name::SINK,
+                                        name::TYPE,
+                                        name::FORMAL_PARAMETER,
+                                    ]
+                                    .into_iter()
+                                    .collect::<HashSet<_>>(),
                                     alloc,
                                 )),
                             alloc
