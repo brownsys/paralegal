@@ -72,13 +72,25 @@ use frg::ToForge;
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
 
-/// Top level command line arguments
-#[derive(serde::Serialize, serde::Deserialize, clap::Parser)]
-pub struct Args {
+#[derive(clap::Parser)]
+struct ArgWrapper {
     /// This argument doesn't do anything, but when cargo invokes `cargo-dfpp`
     /// it always provides "dfpp" as the first argument and since we parse with
     /// clap it otherwise complains about the superfluous argument.
     _progname: String,
+
+    /// The actual arguments
+    #[clap(flatten)]
+    args: Args,
+
+    /// Pass through for additional cargo arguments (like --features)
+    #[clap(last = true)]
+    cargo_args: Vec<String>,
+}
+
+/// Top level command line arguments
+#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
+pub struct Args {
     /// Print additional logging output (up to the "info" level)
     #[clap(short, long, env = "DFPP_VERBOSE")]
     verbose: bool,
@@ -127,6 +139,7 @@ struct AnalysisCtrl {
     #[clap(long, env)]
     recursive_flowistry: bool,
 }
+
 /// Arguments that control the output of debug information or output to be
 /// consumed for testing.
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
@@ -236,10 +249,12 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         _target_dir: &rustc_plugin::Utf8Path,
     ) -> rustc_plugin::RustcPluginArgs<Self::Args> {
         use clap::Parser;
+        let args = ArgWrapper::parse();
         rustc_plugin::RustcPluginArgs {
-            args: Args::parse(),
+            args: args.args,
             file: None,
             flags: None,
+            cargo_args: args.cargo_args,
         }
     }
 
