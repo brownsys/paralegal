@@ -398,10 +398,10 @@ struct FormalParameter {
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for FormalParameter {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc
-            .text("`fp_")
-            .append(self.function.as_str().to_string())
-            .append("_")
+            .text("`fp")
             .append(alloc.as_string(self.position))
+            .append("_")
+            .append(self.function.as_str().to_string())
     }
 }
 
@@ -424,18 +424,19 @@ impl ProgramDescription {
     fn all_formal_parameters(&self) -> HashSet<FormalParameter> {
         self.annotations
             .iter()
-            .flat_map(|(function, (anns, _))| {
-                anns.iter()
-                    .filter_map(Annotation::as_label_ann)
-                    .flat_map(|l| {
-                        l.refinement
-                            .on_argument()
-                            .iter()
-                            .map(|&position| FormalParameter {
-                                function: *function,
-                                position,
-                            })
+            .flat_map(|(function, (_, oj))| {
+                if let ObjectType::Function(num) = oj {
+                    Some(num)
+                } else {
+                    None
+                }
+                .into_iter()
+                .flat_map(|l| {
+                    (0..*l).map(|position| FormalParameter {
+                        function: *function,
+                        position: position as u16,
                     })
+                })
             })
             .collect()
     }
