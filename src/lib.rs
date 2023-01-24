@@ -195,18 +195,19 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
+        let external_annotations: HashMap<_, _> =
+            if let Some(annotation_file) = self.opts.modelctrl.external_annotations.as_ref() {
+                serde_json::from_reader(&mut std::fs::File::open(annotation_file).unwrap()).unwrap()
+            } else {
+                HashMap::new()
+            };
         let mut desc = queries
             .global_ctxt()
             .unwrap()
             .take()
-            .enter(|tcx| ana::CollectingVisitor::new(tcx, self.opts).run())
+            .enter(|tcx| ana::CollectingVisitor::new(tcx, self.opts, &external_annotations).run())
             .unwrap();
-        if let Some(annotation_file) = self.opts.modelctrl.external_annotations.as_ref() {
-            let external_annotations: HashMap<_, _> =
-                serde_json::from_reader(&mut std::fs::File::open(annotation_file).unwrap())
-                    .unwrap();
-            desc.annotations.extend(external_annotations);
-        }
+        desc.annotations.extend(external_annotations);
         if self.opts.dbg.dump_serialized_flow_graph {
             serde_json::to_writer(
                 &mut std::fs::OpenOptions::new()

@@ -1217,7 +1217,7 @@ type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 /// discovery phase [`Self::analyze`] is used to drive the
 /// actual analysis. All of this is conveniently encapsulated in the
 /// [`Self::run`] method.
-pub struct CollectingVisitor<'tcx> {
+pub struct CollectingVisitor<'tcx, 'a> {
     /// Reference to rust compiler queries.
     tcx: TyCtxt<'tcx>,
     /// Command line arguments.
@@ -1232,16 +1232,24 @@ pub struct CollectingVisitor<'tcx> {
     /// Functions that are annotated with `#[dfpp::analyze]`. For these we will
     /// later perform the analysis
     functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
+
+    /// Annotations that are to be placed on external functions and types.
+    external_annotations: &'a AnnotationMap,
 }
 
-impl<'tcx> CollectingVisitor<'tcx> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
+impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
+    pub(crate) fn new(
+        tcx: TyCtxt<'tcx>,
+        opts: &'static crate::Args,
+        external_annotations: &'a AnnotationMap,
+    ) -> Self {
         Self {
             tcx,
             opts,
             marked_objects: Rc::new(RefCell::new(HashMap::new())),
             marked_stmts: HashMap::new(),
             functions_to_analyze: vec![],
+            external_annotations,
         }
     }
 
@@ -1270,14 +1278,17 @@ impl<'tcx> CollectingVisitor<'tcx> {
             .filter_map(|ty| {
                 ty.as_type()
                     .and_then(TyExt::defid)
-                    .and_then(DefId::as_local)
+                    //.and_then(DefId::as_local)
                     .and_then(|def| {
-                        let hid = self.tcx.hir().local_def_id_to_hir_id(def);
-                        if self.marked_objects.as_ref().borrow().contains_key(&hid) {
-                            Some(Identifier::new(
-                                self.tcx
-                                    .item_name(self.tcx.hir().local_def_id(hid).to_def_id()),
-                            ))
+                        let item_name = Identifier::new(self.tcx.item_name(def));
+                        if def.as_local().map_or(false, |ldef| {
+                            self.marked_objects
+                                .as_ref()
+                                .borrow()
+                                .contains_key(&self.tcx.hir().local_def_id_to_hir_id(ldef))
+                        }) || self.external_annotations.contains_key(&item_name)
+                        {
+                            Some(item_name)
                         } else {
                             None
                         }
@@ -1569,7 +1580,7 @@ fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
         .unwrap() as usize
 }
 
-impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
+impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
     type NestedFilter = OnlyBodies;
 
     fn nested_visit_map(&mut self) -> Self::Map {

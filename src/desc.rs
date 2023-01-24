@@ -173,12 +173,14 @@ impl ObjectType {
     }
 }
 
+pub type AnnotationMap = HashMap<Identifier, (Vec<Annotation>, ObjectType)>;
+
 /// A Forge friendly representation of the dataflow graphs we calculated and the
 /// annotations we found.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ProgramDescription {
     pub controllers: HashMap<Endpoint, Ctrl>,
-    pub annotations: HashMap<Identifier, (Vec<Annotation>, ObjectType)>,
+    pub annotations: AnnotationMap,
 }
 
 impl ProgramDescription {
