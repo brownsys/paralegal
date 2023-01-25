@@ -1492,8 +1492,11 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     }
                 };
                 for dep in arg_deps.iter() {
+                    if inner_location.block == mir::BasicBlock::from_usize(0) && inner_location.statement_index == 6 {
+                        debug!("{loc}: {dep}");
+                    }
                     flows.add_data_flow(
-                        Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
+                        Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))),
                         to.clone(),
                     );
                 }
