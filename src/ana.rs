@@ -135,6 +135,7 @@ pub fn translate_child_to_parent<'tcx>(
     let parent_param_env = tcx.param_env(parent_local_def_id);
     for elem in child.projection.iter() {
         ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
+            debug!("ty: {ty:?}, child: {child:?}, elem: {elem:?}, field: {field:?}");
             ty.field_ty(tcx, field)
         });
         let elem = match elem {
@@ -859,7 +860,10 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         inner_flow
             .flow
             .location_states
-            .values()
+            .iter()
+            .filter_map(|(loc, matrix)| {
+                (loc.is_at_root() && !matrix.is_translated()).then_some(matrix)
+            })
             .flat_map(|s| s.keys())
             .collect::<HashSet<_>>()
             .into_iter()
@@ -955,6 +959,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
         if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
             self.flow_constructor.inner_flow_for_terminator(terminator)
         {
+            debug!(
+                "Creating callee {:?} to caller {} translation table",
+                terminator.kind,
+                self.tcx().item_name(self.local_def_id.to_def_id())
+            );
             // A translation table from places in `inner_flow` to places from
             // `self.body` by lining them up at the arguments.
             //
@@ -1017,6 +1026,8 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                 let global_arg_loc = make_relative_location(location, global_call_site);
                 (global_arg_loc, parent_dep_matrix.clone())
             });
+
+            debug!("Creating caller to callee translation table");
 
             // Lastly we create a location for this call site. This is also a
             // special, translating location and represents the return state
