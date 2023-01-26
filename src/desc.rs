@@ -247,6 +247,7 @@ impl ProgramDescription {
         self.all_call_sites()
             .into_iter()
             .map(|cs| &cs.function)
+            .chain(self.annotations.iter().filter(|f| f.1.1.is_function().is_some()).map(|f| f.0))
             .collect()
     }
 }
