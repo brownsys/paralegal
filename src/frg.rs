@@ -604,6 +604,20 @@ impl ProgramDescription {
             )
         }))
     }
+    fn make_formal_param_relation<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
+        &'a self,
+        alloc: &'a D,
+    ) -> DocBuilder<'a, D, A>
+    where
+        D::Doc: Clone,
+    {
+        alloc.forge_relation(
+            self.all_formal_parameters().into_iter().map(|p| {
+                let fn_forge = p.function.as_forge(alloc);
+                (std::iter::once(p.as_forge(alloc)), std::iter::once(fn_forge))       
+            })
+        )
+    }
 }
 
 impl Ctrl {
@@ -727,7 +741,9 @@ where
                             alloc
                                 .text(name::FUNCTION)
                                 .append(" = ")
-                                .append(hash_set_into_forge(self.all_functions(), alloc)),
+                                .append(hash_set_into_forge(self.all_functions(), alloc))
+                                .append(" + ")
+                                .append(name::CTRL),
                             alloc
                                 .text(name::OBJ)
                                 .append(" = ")
@@ -848,6 +864,12 @@ where
                                             .append(alloc.hardline()),
                                     )
                                     .parens(),
+                                ),
+                            alloc.text(name::FORMAL_PARAMETER_FUNCTION).append(" = ").append(
+                                alloc.hardline()
+                                .append(
+                                    self.make_formal_param_relation(alloc).indent(4).append(alloc.hardline())
+                                ).parens()
                             ),
                         ])
                         .nest(4)
