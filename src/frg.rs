@@ -296,7 +296,7 @@ pub mod name {
                     (
                         CTRL,
                         No,
-                        None,
+                        Some(FUNCTION),
                         vec![
                             (FLOW, set(&arr(SRC, SINK))),
                             (CTRL_FLOW, set(&arr(SRC, CALL_SITE))),
@@ -727,9 +727,7 @@ where
                             alloc
                                 .text(name::FUNCTION)
                                 .append(" = ")
-                                .append(hash_set_into_forge(self.all_functions(), alloc))
-                                .append(" + ")
-                                .append(name::CTRL),
+                                .append(hash_set_into_forge(self.all_functions(), alloc)),
                             alloc
                                 .text(name::OBJ)
                                 .append(" = ")
