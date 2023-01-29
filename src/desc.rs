@@ -199,6 +199,22 @@ impl ProgramDescription {
             })
             .collect()
     }
+    /// Gather all [`DataSource`]s that are mentioned in this program description.
+    ///
+    /// Essentially just `self.controllers.flat_map(|c| c.keys())`
+    pub fn all_sources_with_ctrl(&self) -> HashSet<(Identifier, &DataSource)> {
+        self.controllers
+            .iter()
+            .flat_map(|(name, c)| {
+                c.data_flow
+                    .0
+                    .keys()
+                    .chain(c.types.0.keys())
+                    .chain(c.ctrl_flow.0.keys())
+                    .map(|ds| (*name, ds))
+            })
+            .collect()
+    }
     /// Gather all [`DataSink`]s mentioned in this program description
     ///
     /// Essentially just `self.controllers.flat_map(|c| c.values())`

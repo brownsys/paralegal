@@ -214,16 +214,15 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
 fn data_source_as_forge<'b, A, D: DocAllocator<'b, A>>(
     src: &'b DataSource,
     alloc: &'b D,
+    ctrl: Identifier,
 ) -> DocBuilder<'b, D, A> {
     match src {
         DataSource::FunctionCall(f) => call_site_as_forge(alloc, f),
-        DataSource::Argument(a) => alloc.text("`arg_").append(alloc.as_string(a)),
-    }
-}
-
-impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSource {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
-        data_source_as_forge(self, alloc)
+        DataSource::Argument(a) => FormalParameter {
+            function: ctrl,
+            position: *a as u16,
+        }
+        .as_forge(alloc),
     }
 }
 
@@ -232,8 +231,6 @@ pub mod name {
     //! emit.
 
     pub const SRC: &'static str = "Src";
-    /// Previously "Arg"
-    pub const INPUT_ARGUMENT: &'static str = "InputArgument";
     /// Previously "Call"
     //pub const CALL_ARGUMENT_OUTPUT: &'static str = "FnOut";
     /// Previously "Fn"
@@ -287,13 +284,12 @@ pub mod name {
                     (LABEL, Abstract, None, vec![]),
                     (OBJ, Abstract, None, vec![(LABELS_REL, set(LABEL))]),
                     (FUNCTION, No, Some(OBJ), vec![]),
-                    (FORMAL_PARAMETER, No, Some(OBJ), vec![(FORMAL_PARAMETER_FUNCTION, one(FUNCTION))]),
                     (SRC, Abstract, Some(OBJ), vec![]),
+                    (FORMAL_PARAMETER, No, Some(SRC), vec![(FORMAL_PARAMETER_FUNCTION, one(FUNCTION))]),
                     (SINK, Abstract, Some(OBJ), vec![]),
                     (RETURN, One, Some(SINK), vec![]),
                     //(CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]),
                     (CALL_ARGUMENT, No, Some(SINK), vec![(ARG_CALL_SITE, one(CALL_SITE))]),
-                    (INPUT_ARGUMENT, No, Some(SRC), vec![]),
                     (TYPE, No, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
                     //(CALL_ARGUMENT_OUTPUT, Some(SRC), vec![(RETURN_CALL_SITE, one(CALL_SITE))]),
                     (CALL_SITE, No, Some(SRC), vec![(FUN_REL, one(FUNCTION))]),
@@ -438,6 +434,16 @@ impl ProgramDescription {
                     })
                 })
             })
+            .chain(self.controllers.iter().flat_map(|(&function, ctrl)| {
+                ctrl.data_flow
+                    .0
+                    .keys()
+                    .filter_map(|src| src.as_argument())
+                    .map(move |position| FormalParameter {
+                        function,
+                        position: position as u16,
+                    })
+            }))
             .collect()
     }
 
@@ -494,7 +500,7 @@ impl ProgramDescription {
                     .map(move |a| {
                         (
                             if a.refinement.on_return() {
-                                Some(self.all_sources().into_iter().filter(|s| {
+                                Some(self.all_sources_with_ctrl().into_iter().filter(|(_, s)| {
                                     s.as_function_call().map_or(false, |c| &c.function == id)
                                 }))
                             } else {
@@ -502,7 +508,7 @@ impl ProgramDescription {
                             }
                             .into_iter()
                             .flat_map(|i| i)
-                            .map(|ds| ds.as_forge(alloc))
+                            .map(|(ctrl, ds)| data_source_as_forge(ds, alloc, ctrl))
                             .chain(
                                 self.all_sinks()
                                     .into_iter()
@@ -604,6 +610,7 @@ impl Ctrl {
     fn make_types_relation<'a, A: 'a, D: DocAllocator<'a, A>>(
         &'a self,
         alloc: &'a D,
+        ctrl: Identifier,
     ) -> DocBuilder<'a, D, A>
     where
         D::Doc: Clone,
@@ -613,7 +620,7 @@ impl Ctrl {
             alloc
                 .forge_relation(self.types.0.iter().map(|(i, desc)| {
                     (
-                        std::iter::once(data_source_as_forge(i, alloc)),
+                        std::iter::once(data_source_as_forge(i, alloc, ctrl)),
                         desc.iter().map(|t| t.as_forge(alloc)),
                     )
                 }))
@@ -662,20 +669,24 @@ where
                             alloc.text(name::CALL_SITE).append(" = ").append(
                                 hash_set_into_call_site_forge(self.all_call_sites(), alloc),
                             ),
-                            alloc.text(name::INPUT_ARGUMENT).append(" = ").append(
-                                hash_set_into_forge(
-                                    self.all_sources()
-                                        .into_iter()
-                                        .filter(|s| s.as_argument().is_some())
-                                        .collect::<HashSet<_>>(),
-                                    alloc,
-                                ),
-                            ),
+                            // alloc.text(name::INPUT_ARGUMENT).append(" = ").append(
+                            //     hash_set_into_forge(
+                            //         self.all_sources()
+                            //             .into_iter()
+                            //             .filter(|s| s.as_argument().is_some())
+                            //             .collect::<HashSet<_>>(),
+                            //         alloc,
+                            //     )
+                            alloc
+                                .text(name::FORMAL_PARAMETER)
+                                .append(" = ")
+                                .append(hash_set_into_forge(self.all_formal_parameters(), alloc)),
+
                             alloc
                                 .text(name::SRC)
                                 .append(" = ")
                                 .append(hash_set_into_forge(
-                                    [name::INPUT_ARGUMENT, name::CALL_SITE]
+                                    [name::FORMAL_PARAMETER, name::CALL_SITE]
                                         .into_iter()
                                         .collect::<HashSet<_>>(),
                                     alloc,
@@ -707,13 +718,18 @@ where
                                 .append(" = ")
                                 .append(hash_set_into_forge(self.all_types(), alloc)),
                             alloc
+                                .text(name::CTRL)
+                                .append(" = ")
+                                .append(hash_set_into_forge(
+                                    self.controllers.keys().collect::<HashSet<_>>(),
+                                    alloc,
+                                )),
+                            alloc
                                 .text(name::FUNCTION)
                                 .append(" = ")
-                                .append(hash_set_into_forge(self.all_functions(), alloc)),
-                            alloc
-                                .text(name::FORMAL_PARAMETER)
-                                .append(" = ")
-                                .append(hash_set_into_forge(self.all_formal_parameters(), alloc)),
+                                .append(hash_set_into_forge(self.all_functions(), alloc))
+                                .append(" + ")
+                                .append(name::CTRL),
                             alloc
                                 .text(name::OBJ)
                                 .append(" = ")
@@ -723,17 +739,9 @@ where
                                         name::SRC,
                                         name::SINK,
                                         name::TYPE,
-                                        name::FORMAL_PARAMETER,
                                     ]
                                     .into_iter()
                                     .collect::<HashSet<_>>(),
-                                    alloc,
-                                )),
-                            alloc
-                                .text(name::CTRL)
-                                .append(" = ")
-                                .append(hash_set_into_forge(
-                                    self.controllers.keys().collect::<HashSet<_>>(),
                                     alloc,
                                 )),
                             alloc.nil(),
@@ -744,7 +752,16 @@ where
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(alloc.hardline().append(
-                                                    (&ctrl.data_flow).as_forge(alloc).indent(4),
+                                                    //(&ctrl.data_flow).as_forge(alloc)
+                                                    alloc.forge_relation(
+                                                        ctrl.data_flow.0.iter().map(|(source, sinks)| 
+                                                            (
+                                                                std::iter::once(data_source_as_forge(source, alloc, *e)),
+                                                                sinks.iter().map(|snk| snk.as_forge(alloc))
+                                                            )
+                                                        )
+                                                    )
+                                                    .indent(4),
                                                 )),
                                             )
                                         }))
@@ -764,7 +781,7 @@ where
                                                                 |(src, sinks)| {
                                                                     (
                                                                         std::iter::once(
-                                                                            src.as_forge(alloc),
+                                                                            data_source_as_forge(src, alloc, *e)
                                                                         ),
                                                                         sinks.iter().map(|sink| {
                                                                             call_site_as_forge(
@@ -789,7 +806,7 @@ where
                                         .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
-                                                std::iter::once(ctrl.make_types_relation(alloc)),
+                                                std::iter::once(ctrl.make_types_relation(alloc, *e)),
                                             )
                                         }))
                                         .indent(4),
