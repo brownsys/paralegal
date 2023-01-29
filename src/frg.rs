@@ -438,6 +438,9 @@ impl ProgramDescription {
                 ctrl.data_flow
                     .0
                     .keys()
+                    .chain(
+                        ctrl.types.0.keys()
+                    )
                     .filter_map(|src| src.as_argument())
                     .map(move |position| FormalParameter {
                         function,
