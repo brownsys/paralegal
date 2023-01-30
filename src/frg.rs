@@ -195,12 +195,12 @@ where
 
 fn call_site_as_forge<'b, A, D: DocAllocator<'b, A>>(
     alloc: &'b D,
-    function: &'b CallSite,
+    function: &CallSite,
 ) -> DocBuilder<'b, D, A> {
     alloc.text("`cs_").append(function.as_forge(alloc))
 }
 
-impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
+impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'_ CallSite {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.text(format!(
             "{}_b{}_i{}",
@@ -212,17 +212,18 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
 }
 
 fn data_source_as_forge<'b, A, D: DocAllocator<'b, A>>(
-    src: &'b DataSource,
+    src: &DataSource,
     alloc: &'b D,
-    ctrl: Identifier,
 ) -> DocBuilder<'b, D, A> {
     match src {
         DataSource::FunctionCall(f) => call_site_as_forge(alloc, f),
-        DataSource::Argument(a) => FormalParameter {
-            function: ctrl,
-            position: *a as u16,
-        }
-        .as_forge(alloc),
+        DataSource::Argument(a) => alloc.text("`arg_").append(alloc.as_string(a)),
+    }
+}
+
+impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for DataSource {
+    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+        data_source_as_forge(&self, alloc)
     }
 }
 
@@ -285,7 +286,7 @@ pub mod name {
                     (OBJ, Abstract, None, vec![(LABELS_REL, set(LABEL))]),
                     (FUNCTION, No, Some(OBJ), vec![]),
                     (SRC, Abstract, Some(OBJ), vec![]),
-                    (FORMAL_PARAMETER, No, Some(SRC), vec![(FORMAL_PARAMETER_FUNCTION, one(FUNCTION))]),
+                    (FORMAL_PARAMETER, No, Some(SRC), vec![(FORMAL_PARAMETER_FUNCTION, set(FUNCTION))]),
                     (SINK, Abstract, Some(OBJ), vec![]),
                     (RETURN, One, Some(SINK), vec![]),
                     //(CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]),
@@ -385,22 +386,6 @@ where
     }))
 }
 
-#[derive(Hash, PartialEq, Eq)]
-struct FormalParameter {
-    function: Identifier,
-    position: u16,
-}
-
-impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for FormalParameter {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
-        alloc
-            .text("`fp")
-            .append(alloc.as_string(self.position))
-            .append("_")
-            .append(self.function.as_str().to_string())
-    }
-}
-
 impl ProgramDescription {
     /// Returns all labels in this program description, including the special
     /// [`name::EXCEPTIONS_LABEL`] label.
@@ -417,7 +402,7 @@ impl ProgramDescription {
             .collect()
     }
 
-    fn all_formal_parameters(&self) -> HashSet<FormalParameter> {
+    fn all_formal_parameters(&self) -> HashSet<(Identifier, usize)> {
         self.annotations
             .iter()
             .flat_map(|(function, (_, oj))| {
@@ -427,25 +412,15 @@ impl ProgramDescription {
                     None
                 }
                 .into_iter()
-                .flat_map(|l| {
-                    (0..*l).map(|position| FormalParameter {
-                        function: *function,
-                        position: position as u16,
-                    })
-                })
+                .flat_map(|l| (0..*l).map(|position| (*function, position)))
             })
             .chain(self.controllers.iter().flat_map(|(&function, ctrl)| {
                 ctrl.data_flow
                     .0
                     .keys()
-                    .chain(
-                        ctrl.types.0.keys()
-                    )
+                    .chain(ctrl.types.0.keys())
                     .filter_map(|src| src.as_argument())
-                    .map(move |position| FormalParameter {
-                        function,
-                        position: position as u16,
-                    })
+                    .map(move |position| (function, position))
             }))
             .collect()
     }
@@ -511,7 +486,7 @@ impl ProgramDescription {
                             }
                             .into_iter()
                             .flat_map(|i| i)
-                            .map(|(ctrl, ds)| data_source_as_forge(ds, alloc, ctrl))
+                            .map(|(ctrl, ds)| data_source_as_forge(ds, alloc))
                             .chain(
                                 self.all_sinks()
                                     .into_iter()
@@ -528,13 +503,6 @@ impl ProgramDescription {
                                     .map(|s| s.as_forge(alloc)),
                             )
                             .chain([id.as_forge(alloc)])
-                            .chain(a.refinement.on_argument().iter().map(|slot| {
-                                FormalParameter {
-                                    function: *id,
-                                    position: *slot,
-                                }
-                                .as_forge(alloc)
-                            }))
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
                             .into_iter(),
@@ -615,10 +583,14 @@ impl ProgramDescription {
         D::Doc: Clone,
     {
         alloc.forge_relation(
-            self.all_formal_parameters().into_iter().map(|p| {
-                let fn_forge = p.function.as_forge(alloc);
-                (std::iter::once(p.as_forge(alloc)), std::iter::once(fn_forge))       
-            })
+            self.all_formal_parameters()
+                .into_iter()
+                .map(|(ident, num)| {
+                    (
+                        std::iter::once(DataSource::Argument(num).as_forge(alloc)),
+                        std::iter::once(ident.as_forge(alloc)),
+                    )
+                }),
         )
     }
 }
@@ -637,7 +609,7 @@ impl Ctrl {
             alloc
                 .forge_relation(self.types.0.iter().map(|(i, desc)| {
                     (
-                        std::iter::once(data_source_as_forge(i, alloc, ctrl)),
+                        std::iter::once(data_source_as_forge(i, alloc)),
                         desc.iter().map(|t| t.as_forge(alloc)),
                     )
                 }))
@@ -697,7 +669,7 @@ where
                             alloc
                                 .text(name::FORMAL_PARAMETER)
                                 .append(" = ")
-                                .append(hash_set_into_forge(self.all_formal_parameters(), alloc)),
+                                .append(hash_set_into_forge((0..8).map(DataSource::Argument).collect(), alloc)),
 
                             alloc
                                 .text(name::SRC)
@@ -773,7 +745,7 @@ where
                                                     alloc.forge_relation(
                                                         ctrl.data_flow.0.iter().map(|(source, sinks)| 
                                                             (
-                                                                std::iter::once(data_source_as_forge(source, alloc, *e)),
+                                                                std::iter::once(data_source_as_forge(source, alloc)),
                                                                 sinks.iter().map(|snk| snk.as_forge(alloc))
                                                             )
                                                         )
@@ -798,7 +770,7 @@ where
                                                                 |(src, sinks)| {
                                                                     (
                                                                         std::iter::once(
-                                                                            data_source_as_forge(src, alloc, *e)
+                                                                            data_source_as_forge(src, alloc)
                                                                         ),
                                                                         sinks.iter().map(|sink| {
                                                                             call_site_as_forge(
