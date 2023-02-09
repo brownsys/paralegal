@@ -887,7 +887,7 @@ where
                                                     .flat_map(|label| 
                                                         label.refinement.on_argument().iter().map(|i| 
                                                             (
-                                                                std::iter::once(DataSource::Argument(*i as usize).as_forge(alloc)), 
+                                                                std::iter::once(FormalParameter { position: *i, function: *ident }.as_forge(alloc)), 
                                                                 std::iter::once(ident.as_forge(alloc).append("->").append(label.label.as_str())))))
                                                     
                                             )   
