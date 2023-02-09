@@ -243,6 +243,7 @@ pub mod name {
     pub const FUN_REL: &'static str = "function";
     pub const FORMAL_PARAMETER: &'static str = "FormalParameter";
     pub const FORMAL_PARAMETER_FUNCTION: &'static str = "fp_fun_rel";
+    pub const FORMAL_PARAMETER_ANNOTATION: &'static str = "fp_ann";
     pub const CTRL: &'static str = "Ctrl";
     pub const FLOW: &'static str = "flow";
     pub const CTRL_FLOW: &'static str = "ctrl_flow";
@@ -285,7 +286,9 @@ pub mod name {
                     (OBJ, Abstract, None, vec![(LABELS_REL, set(LABEL))]),
                     (FUNCTION, No, Some(OBJ), vec![]),
                     (SRC, Abstract, Some(OBJ), vec![]),
-                    (FORMAL_PARAMETER, No, Some(SRC), vec![(FORMAL_PARAMETER_FUNCTION, one(FUNCTION))]),
+                    (FORMAL_PARAMETER, No, Some(SRC), vec![
+                        (FORMAL_PARAMETER_FUNCTION, set(FUNCTION)),
+                        (FORMAL_PARAMETER_ANNOTATION, set(&arr(FUNCTION, LABEL)))]),
                     (SINK, Abstract, Some(OBJ), vec![]),
                     (RETURN, One, Some(SINK), vec![]),
                     //(CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]),
@@ -874,6 +877,26 @@ where
                                     self.make_formal_param_relation(alloc).indent(4).append(alloc.hardline())
                                 ).parens()
                             ),
+                            alloc.text(name::FORMAL_PARAMETER_ANNOTATION).append(" = ").append(
+                                alloc.hardline()
+                                .append(
+                                    alloc.forge_relation(
+                                        self.annotations.iter()
+                                            .flat_map(|(ident, (anns, _))|
+                                                anns.iter().filter_map(Annotation::as_label_ann)
+                                                    .flat_map(|label| 
+                                                        label.refinement.on_argument().iter().map(|i| 
+                                                            (
+                                                                std::iter::once(DataSource::Argument(*i as usize).as_forge(alloc)), 
+                                                                std::iter::once(ident.as_forge(alloc).append("->").append(label.label.as_str())))))
+                                                    
+                                            )   
+                                    )
+                                    .indent(4)
+                                    .append(alloc.hardline())
+                                )
+                                .parens()
+                            )
                         ])
                         .nest(4)
                         .append(alloc.hardline())
