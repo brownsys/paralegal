@@ -45,7 +45,7 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
         for (_, v) in domain.as_vec().iter_enumerated() {
             write!(out, "{:^cell_width$}", format!("{:?}", v))?
         }
-        writeln!(out, "")?;
+        writeln!(out)?;
 
         for (v, r) in self.0.rows() {
             write!(
@@ -60,7 +60,7 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
                     if r.contains(i) { "×" } else { " " }
                 )?
             }
-            writeln!(out, "")?
+            writeln!(out)?
         }
         Ok(())
     }
@@ -88,7 +88,7 @@ pub mod call_only_flow_dot {
         to: N<'g>,
         into: To,
     }
-    #[derive(Clone, PartialEq)]
+    #[derive(Clone, PartialEq, Eq)]
     enum To {
         Ctrl,
         Arg(usize),
@@ -127,7 +127,7 @@ pub mod call_only_flow_dot {
                 .flat_map(|(&to, deps)| {
                     let (loc, body) = to.innermost_location_and_body();
                     let body_with_facts = self.tcx.body_for_body_id(body);
-                    if loc.is_real(&body_with_facts.simplified_body()) {
+                    if loc.is_real(body_with_facts.simplified_body()) {
                         Some(
                             read_places_with_provenance(
                                 loc,
@@ -283,7 +283,7 @@ pub mod call_only_flow_dot {
                         )?;
                     }
                 };
-                let stmt = if !loc.is_real(&body) {
+                let stmt = if !loc.is_real(body) {
                     None
                 } else {
                     Some(body.stmt_at(loc))
@@ -458,7 +458,7 @@ pub fn format_dependency_matrix<
         )?;
         let mut is_first = true;
         write!(f, "{{")?;
-        for dep in deps.iter().cloned() {
+        for dep in deps {
             if !is_first {
                 write!(f, ", ")?;
             } else {
@@ -483,7 +483,7 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                 self.tcx,
                 self.tcx.hir().body_owner_def_id(inner_body),
             );
-            let places_read = if !inner_location.is_real(&body.simplified_body()) {
+            let places_read = if !inner_location.is_real(body.simplified_body()) {
                 write!(f, " is argument {}", inner_location.statement_index - 1)?;
                 HashSet::new()
             } else if deps.is_translated() {
@@ -496,7 +496,7 @@ impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
                 )
                 .collect()
             };
-            writeln!(f, "")?;
+            writeln!(f)?;
             let empty_set = HashSet::new();
             format_dependency_matrix(
                 f,
@@ -572,7 +572,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                 (
                     bid,
                     BodyProxy::from_body_with_normalize(
-                        &flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
+                        flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
                             tcx,
                             tcx.hir().body_owner_def_id(bid),
                         )

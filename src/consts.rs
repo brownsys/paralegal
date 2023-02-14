@@ -10,7 +10,7 @@ use crate::Symbol;
 
 /// Name of the file used for emitting the JSON serialized
 /// [`ProgramDescription`](crate::desc::ProgramDescription).
-pub const FLOW_GRAPH_OUT_NAME: &'static str = "flow-graph.json";
+pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
 
 lazy_static! {
     /// The symbol `arguments` which we use for refinement in a `#[dfpp::label(...)]`

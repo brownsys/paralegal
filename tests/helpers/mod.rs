@@ -5,8 +5,7 @@ extern crate rustc_span;
 use dfpp::{
     desc::{DataSink, Identifier, ProgramDescription},
     ir::IsGlobalLocation,
-    serializers::{Bodies, RawGlobalLocation},
-    HashMap, HashSet, Symbol,
+    serializers::{Bodies, RawGlobalLocation}, HashSet, Symbol,
 };
 use hir::BodyId;
 use rustc_middle::mir;
@@ -199,7 +198,7 @@ impl G {
     fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
         self.graph
             .location_dependencies
-            .get(&n)
+            .get(n)
             .into_iter()
             .flat_map(|deps| {
                 std::iter::once(&deps.ctrl_deps)
@@ -378,7 +377,7 @@ impl<'g> CtrlRef<'g> {
                     .filter_map(DataSink::as_argument)
                     .map(|sink| CallSiteRef {
                         function: fun,
-                        call_site: &sink.0,
+                        call_site: sink.0,
                         ctrl: Cow::Borrowed(self),
                     })
             })
@@ -493,16 +492,16 @@ impl<'g> CallSiteRef<'g> {
                 .get(&dfpp::desc::DataSource::FunctionCall(src.clone()))
                 .iter()
                 .flat_map(|i| i.iter())
-                .map(|ds| Either::Left(ds))
+                .map(Either::Left)
                 .chain(
                     self.ctrl
                         .ctrl
                         .ctrl_flow
                         .0
-                        .get(&dfpp::desc::DataSource::FunctionCall(src.clone()))
+                        .get(&dfpp::desc::DataSource::FunctionCall(src))
                         .iter()
                         .flat_map(|i| i.iter())
-                        .map(|cs| Either::Right(cs)),
+                        .map(Either::Right),
                 )
                 .collect()
         };

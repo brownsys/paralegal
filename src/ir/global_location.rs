@@ -223,7 +223,7 @@ impl<'g> GlobalLocation<'g> {
 
 impl<'g> std::borrow::Borrow<GlobalLocationS<GlobalLocation<'g>>> for GlobalLocation<'g> {
     fn borrow(&self) -> &GlobalLocationS<GlobalLocation<'g>> {
-        &self.0 .0
+        self.0 .0
     }
 }
 

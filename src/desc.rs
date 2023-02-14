@@ -115,7 +115,7 @@ impl AnnotationRefinement {
                     self.on_return = true;
                     Ok(self)
                 } else {
-                    Err(format!("Double on-return annotation"))
+                    Err("Double on-return annotation".to_string())
                 }
             }
         }
@@ -423,7 +423,7 @@ impl Ctrl {
             self.types
                 .0
                 .entry(ident)
-                .or_insert_with(|| HashSet::new())
+                .or_insert_with(HashSet::new)
                 .extend(set.into_iter())
         })
     }

@@ -70,7 +70,7 @@ impl<'a> nom::InputLength for I<'a> {
         type __EvilTarget<'a> = (&'a TokenStream, usize);
         use std::mem::{size_of, transmute};
         assert_eq!(size_of::<__EvilTarget>(), size_of::<Self>());
-        let slf = unsafe { transmute::<&Self, &__EvilTarget<'_>>(&self) };
+        let slf = unsafe { transmute::<&Self, &__EvilTarget<'_>>(self) };
         slf.0.len() - slf.1
     }
 }
@@ -210,7 +210,7 @@ pub(crate) fn otype_ann_match(ann: &ast::MacArgs) -> Vec<TypeDescriptor> {
                 assert_token(TokenKind::Comma),
                 nom::combinator::map(identifier, Identifier::new),
             );
-            p(I::from_stream(&stream))
+            p(I::from_stream(stream))
                 .unwrap_or_else(|err: nom::Err<_>| {
                     panic!("parser failed on {ann:?} with error {err:?}")
                 })
@@ -239,7 +239,7 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
                 let _ = nom::combinator::eof(i)?;
                 Ok(ExceptionAnnotation { verification_hash })
             };
-            p(I::from_stream(&stream))
+            p(I::from_stream(stream))
                 .unwrap_or_else(|err: nom::Err<_>| panic!("parser failed with error {err:?}"))
         }
         _ => panic!(),
@@ -261,7 +261,7 @@ fn refinements_parser(i: I) -> R<AnnotationRefinement> {
                     assert_identifier(*consts::ARG_SYM),
                     assert_token(TokenKind::Eq),
                 )),
-                nom::combinator::map(integer_list, |il| AnnotationRefinementKind::Argument(il)),
+                nom::combinator::map(integer_list, AnnotationRefinementKind::Argument),
             ),
             nom::combinator::value(
                 AnnotationRefinementKind::Return,
@@ -291,10 +291,10 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> LabelAnnotation {
                 let (_, _) = nom::combinator::eof(i)?;
                 Ok(LabelAnnotation {
                     label,
-                    refinement: refinement.unwrap_or_else(|| AnnotationRefinement::empty()),
+                    refinement: refinement.unwrap_or_else(AnnotationRefinement::empty),
                 })
             };
-            p(I::from_stream(&stream))
+            p(I::from_stream(stream))
                 .unwrap_or_else(|err: nom::Err<_>| panic!("parser failed with error {err:?}"))
         }
         _ => panic!(),

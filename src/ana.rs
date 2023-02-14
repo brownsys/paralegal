@@ -46,7 +46,7 @@ use hir::{
 use mir::{Location, Place, Terminator, TerminatorKind};
 use rustc_borrowck::BodyWithBorrowckFacts;
 use rustc_hir::def_id::LocalDefId;
-use rustc_middle::{hir::nested_filter::OnlyBodies, ty::RegionKind};
+use rustc_middle::{hir::nested_filter::OnlyBodies};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use flowistry::{
@@ -316,7 +316,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             let (_callee_id, callee_local_id, callee_body_id) = node
                 .as_fn()
                 .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
-            let () = if self.should_inline(*callee_local_id) {
+            if self.should_inline(*callee_local_id) {
                 Ok(())
             } else {
                 Err("Inline selector was false")
@@ -405,7 +405,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
         use mir::visit::Visitor;
 
-        inliner.visit_body(&body);
+        inliner.visit_body(body);
 
         self.function_flows.borrow_mut().insert(
             root_function,
@@ -462,18 +462,18 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
 
                 // Determine the control flow dependency for the location.
                 let flows_borrow = self.function_flows.borrow();
-                let ref flow_analysis = flows_borrow
+                let flow_analysis = &flows_borrow
                     .get(&inner_body)
                     .unwrap()
                     .as_ref()
                     .unwrap()
                     .analysis
                     .analysis;
-                let ref controlled_by = flow_analysis
+                let controlled_by = &flow_analysis
                     .control_dependencies
                     .dependent_on(inner_location.block);
                 let mut ctrl_deps = HashSet::new();
-                for block in controlled_by.into_iter().flat_map(|set| set.iter()) {
+                for block in controlled_by.iter().flat_map(|set| set.iter()) {
                     let mir_location = flow_analysis.body.terminator_loc(block);
                     // Get the terminator location and find all the places that it references, then call deep_deps to find the corresponding dependency locations.
                     let referenced_places =
@@ -488,9 +488,9 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                     CallDeps {
                         input_deps: args
                             .into_iter()
-                            .map(|p| p.map_or_else(|| HashSet::new(), deep_deps_for))
+                            .map(|p| p.map_or_else(HashSet::new, deep_deps_for))
                             .collect(),
-                        ctrl_deps: ctrl_deps,
+                        ctrl_deps,
                     },
                 ))
             })
@@ -611,11 +611,11 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         def_id: LocalDefId,
         p: mir::Place<'tcx>,
     ) -> Vec<Place<'tcx>> {
-        use flowistry::mir::utils::PlaceExt;
+        
         let new_aliases = self.get_aliases(def_id, body_with_facts);
         let a = new_aliases
             .reachable_values(p, ast::Mutability::Not)
-            .into_iter()
+            .iter()
             .flat_map(|&p| new_aliases.conflicts(p).iter())
             .cloned()
             //.filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
@@ -902,7 +902,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                 let parent = translate_child_to_parent(
                     self.tcx(),
                     self.local_def_id,
-                    &args,
+                    args,
                     destination,
                     child,
                     true,
@@ -986,7 +986,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             debug!(
                 "Calculated parent dependency matrix at terminator {:?}\n{}",
                 terminator.kind,
-                dbg::PrintableDependencyMatrix::new(&parent_dep_matrix.matrix_raw(), 2)
+                dbg::PrintableDependencyMatrix::new(parent_dep_matrix.matrix_raw(), 2)
             );
 
             let gli = self.gli();
@@ -1060,7 +1060,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
                     self.under_construction
                         .return_state
                         .entry(*p)
-                        .or_insert_with(|| HashSet::new())
+                        .or_insert_with(HashSet::new)
                         .extend(deps.iter().cloned());
                 }
             };
@@ -1117,7 +1117,7 @@ impl<'tcx> Keep<'tcx> {
     ) -> Self {
         let body_with_facts =
             borrowck_facts::get_body_with_borrowck_facts(tcx, tcx.hir().body_owner_def_id(body_id));
-        if !location.is_real(&body_with_facts.simplified_body()) {
+        if !location.is_real(body_with_facts.simplified_body()) {
             if loc_is_top_level {
                 Keep::Argument(location.statement_index)
             } else {
@@ -1349,7 +1349,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         if self.opts.dbg.dump_ctrl_mir {
             mir::graphviz::write_mir_fn_graphviz(
                 tcx,
-                &controller_body_with_facts.simplified_body(),
+                controller_body_with_facts.simplified_body(),
                 false,
                 &mut outfile_pls(format!("{}.mir.gv", id.name)).unwrap(),
             )
@@ -1406,8 +1406,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.
             let inner_body_with_facts = tcx.body_for_body_id(inner_body_id);
-            let ref inner_body = inner_body_with_facts.simplified_body();
-            if !inner_location.is_real(&inner_body) {
+            let inner_body = &inner_body_with_facts.simplified_body();
+            if !inner_location.is_real(inner_body) {
                 assert!(loc.is_at_root());
                 // These can only be (controller) arguments and they cannot have
                 // dependencies (and thus not receive any data)
@@ -1473,7 +1473,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             // Add ctrl flows to callsite.
             for dep in deps.ctrl_deps.iter() {
                 flows.add_ctrl_flow(
-                    Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(&inner_body))),
+                    Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(inner_body))),
                     call_site.clone(),
                 )
             }
@@ -1522,7 +1522,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         let interner = GlobalLocationInterner::new(&arena);
         let gli = GLI::new(&interner);
         let tcx = self.tcx;
-        let mut targets = std::mem::replace(&mut self.functions_to_analyze, vec![]);
+        let mut targets = std::mem::take(&mut self.functions_to_analyze);
         let interesting_fn_defs = self
             .marked_objects
             .as_ref()

@@ -129,7 +129,7 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for Identifier {
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a Identifier {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
-        self.clone().as_forge(alloc)
+        (*self).as_forge(alloc)
     }
 }
 
@@ -230,33 +230,33 @@ pub mod name {
     //! Constants for the names of the Forge entities (`sig`s and relations) we
     //! emit.
 
-    pub const SRC: &'static str = "Src";
+    pub const SRC: &str = "Src";
     /// Previously "Call"
     //pub const CALL_ARGUMENT_OUTPUT: &'static str = "FnOut";
     /// Previously "Fn"
-    pub const CALL_SITE: &'static str = "CallSite";
+    pub const CALL_SITE: &str = "CallSite";
     /// Previously "CallSite"
-    pub const CALL_ARGUMENT: &'static str = "CallArgument";
-    pub const RETURN: &'static str = "Return";
-    pub const SINK: &'static str = "Sink";
-    pub const FUNCTION: &'static str = "Function";
-    pub const FUN_REL: &'static str = "function";
-    pub const FORMAL_PARAMETER: &'static str = "FormalParameter";
-    pub const FORMAL_PARAMETER_FUNCTION: &'static str = "fp_fun_rel";
-    pub const FORMAL_PARAMETER_ANNOTATION: &'static str = "fp_ann";
-    pub const CTRL: &'static str = "Ctrl";
-    pub const FLOW: &'static str = "flow";
-    pub const CTRL_FLOW: &'static str = "ctrl_flow";
-    pub const FLOWS_PREDICATE: &'static str = "Flows";
-    pub const OBJ: &'static str = "Object";
-    pub const LABEL: &'static str = "Label";
-    pub const LABELS_REL: &'static str = "labels";
-    pub const TYPES: &'static str = "types";
-    pub const TYPE: &'static str = "Type";
-    pub const ARG_CALL_SITE: &'static str = "arg_call_site";
+    pub const CALL_ARGUMENT: &str = "CallArgument";
+    pub const RETURN: &str = "Return";
+    pub const SINK: &str = "Sink";
+    pub const FUNCTION: &str = "Function";
+    pub const FUN_REL: &str = "function";
+    pub const FORMAL_PARAMETER: &str = "FormalParameter";
+    pub const FORMAL_PARAMETER_FUNCTION: &str = "fp_fun_rel";
+    pub const FORMAL_PARAMETER_ANNOTATION: &str = "fp_ann";
+    pub const CTRL: &str = "Ctrl";
+    pub const FLOW: &str = "flow";
+    pub const CTRL_FLOW: &str = "ctrl_flow";
+    pub const FLOWS_PREDICATE: &str = "Flows";
+    pub const OBJ: &str = "Object";
+    pub const LABEL: &str = "Label";
+    pub const LABELS_REL: &str = "labels";
+    pub const TYPES: &str = "types";
+    pub const TYPE: &str = "Type";
+    pub const ARG_CALL_SITE: &str = "arg_call_site";
     //pub const RETURN_CALL_SITE: &'static str = "ret_call_site";
-    pub const OTYPE_REL: &'static str = "otype";
-    pub const EXCEPTIONS_LABEL: &'static str = "exception";
+    pub const OTYPE_REL: &str = "otype";
+    pub const EXCEPTIONS_LABEL: &str = "exception";
 
     pub enum Qualifier {
         Abstract,
@@ -485,7 +485,7 @@ impl ProgramDescription {
         D::Doc: Clone,
     {
         alloc
-            .forge_relation(self.annotations.iter().flat_map(|(id, (anns, typ))| {
+            .forge_relation(self.annotations.iter().flat_map(|(id, (anns, _typ))| {
                 // I've decided to do the more
                 // complicated thing here which
                 // restores the old behavior. Is
@@ -513,7 +513,7 @@ impl ProgramDescription {
                                 None
                             }
                             .into_iter()
-                            .flat_map(|i| i)
+                            .flatten()
                             .map(|(ctrl, ds)| data_source_as_forge(ds, alloc, ctrl))
                             .chain(
                                 self.all_sinks()
@@ -797,7 +797,7 @@ where
                                                 std::iter::once(
                                                     alloc.hardline().append(
                                                         (alloc.forge_relation(
-                                                            (&ctrl.ctrl_flow).0.iter().map(
+                                                            ctrl.ctrl_flow.0.iter().map(
                                                                 |(src, sinks)| {
                                                                     (
                                                                         std::iter::once(

@@ -181,9 +181,9 @@ fn spurious_connections_in_deref() {
     let graph =
         do_in_crate_dir(|| G::from_file(Symbol::intern("spurious_connections_in_derefs"))).unwrap();
 
-    let ref source = graph.function_call("new_s");
-    let ref modify = graph.function_call("deref");
-    let ref receive = graph.function_call("read_t");
+    let source = &graph.function_call("new_s");
+    let modify = &graph.function_call("deref");
+    let receive = &graph.function_call("read_t");
     assert!(graph.connects_direct(source, modify));
     assert!(graph.connects_direct(modify, receive));
     assert!(!graph.connects_direct(source, receive));

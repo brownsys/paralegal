@@ -103,7 +103,7 @@ where
     I::Reindexed: Eq + std::hash::Hash + Copy,
 {
     fn reindex(&mut self, old: I::Reindexed) -> I::Reindexed {
-        let ref mut src = self.source;
+        let src = &mut self.source;
         *self.mapper.entry(old).or_insert_with(|| src.advance(&old))
     }
 }
@@ -391,7 +391,7 @@ mod graphviz_out {
             use std::fmt::Write;
             let bbdat = &self.body.basic_blocks()[*bb];
             let (stmts, term) =
-                match super::slice_basic_block(|l| self.loc_set.contains(&l), *bb, &bbdat) {
+                match super::slice_basic_block(|l| self.loc_set.contains(&l), *bb, bbdat) {
                     Either::Left(stmts) => (stmts, None),
                     Either::Right(bbdat) => (bbdat.statements, bbdat.terminator),
                 };
@@ -468,7 +468,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
                         } else {
                             let s = its.first().unwrap();
                             let (_, mut slice) = std::mem::replace(
-                                memoization.get_mut(&s).unwrap(),
+                                memoization.get_mut(s).unwrap(),
                                 MemoEntry::Consolidated,
                             )
                             .into_processed()

@@ -197,7 +197,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
                     *destination,
                 ))
             }
-            _ => Err("Not a function call".into()),
+            _ => Err("Not a function call"),
         }
     }
 }
