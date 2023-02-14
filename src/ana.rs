@@ -1291,7 +1291,11 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     .and_then(TyExt::defid)
                     //.and_then(DefId::as_local)
                     .and_then(|def| {
-                        let item_name = Identifier::new(self.tcx.item_name(def));
+                        let maybe_item_name = self.tcx.opt_item_name(def);
+                        if maybe_item_name.is_none() {
+                            info!("Could not find item name for type {ty:?}");
+                        }
+                        let item_name = Identifier::new(maybe_item_name?);
                         if def.as_local().map_or(false, |ldef| {
                             self.marked_objects
                                 .as_ref()
