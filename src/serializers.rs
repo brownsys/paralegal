@@ -35,9 +35,9 @@ struct BasicBlockProxy {
     private: usize,
 }
 
-impl Into<mir::BasicBlock> for BasicBlockProxy {
-    fn into(self) -> mir::BasicBlock {
-        mir::BasicBlock::from_usize(self.private)
+impl From<BasicBlockProxy> for mir::BasicBlock {
+    fn from(proxy: BasicBlockProxy) -> mir::BasicBlock {
+        mir::BasicBlock::from_usize(proxy.private)
     }
 }
 
@@ -79,12 +79,12 @@ impl From<mir::Location> for LocationProxy {
     }
 }
 
-impl Into<mir::Location> for LocationProxy {
-    fn into(self) -> mir::Location {
-        let Self {
+impl From<LocationProxy> for mir::Location {
+    fn from(proxy: LocationProxy) -> mir::Location {
+        let LocationProxy {
             block,
             statement_index,
-        } = self;
+        } = proxy;
         mir::Location {
             block,
             statement_index,
@@ -263,9 +263,9 @@ impl From<Symbol> for SymbolProxy {
     }
 }
 
-impl Into<Symbol> for SymbolProxy {
-    fn into(self) -> Symbol {
-        self.0
+impl From<SymbolProxy> for Symbol {
+    fn from(proxy: SymbolProxy) -> Symbol {
+        proxy.0
     }
 }
 
@@ -290,9 +290,9 @@ struct ItemLocalIdProxy {
     private: u32,
 }
 
-impl Into<hir::ItemLocalId> for ItemLocalIdProxy {
-    fn into(self) -> hir::ItemLocalId {
-        hir::ItemLocalId::from_u32(self.private)
+impl From<ItemLocalIdProxy> for hir::ItemLocalId {
+    fn from(proxy: ItemLocalIdProxy) -> hir::ItemLocalId {
+        hir::ItemLocalId::from_u32(proxy.private)
     }
 }
 
@@ -307,9 +307,9 @@ struct DefIndexProxy {
     private: u32,
 }
 
-impl Into<def_id::DefIndex> for DefIndexProxy {
-    fn into(self) -> def_id::DefIndex {
-        def_id::DefIndex::from_u32(self.private)
+impl From<DefIndexProxy> for def_id::DefIndex {
+    fn from(proxy: DefIndexProxy) -> def_id::DefIndex {
+        def_id::DefIndex::from_u32(proxy.private)
     }
 }
 

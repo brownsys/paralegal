@@ -405,14 +405,17 @@ pub struct Ctrl {
     pub types: CtrlTypes,
 }
 
-impl Ctrl {
-    pub fn new() -> Self {
+impl Default for Ctrl {
+    fn default() -> Self {
         Ctrl {
             data_flow: Relation::empty(),
             ctrl_flow: Relation::empty(),
             types: Relation::empty(),
         }
     }
+}
+
+impl Ctrl {
 
     /// Extend the type annotations
     pub fn add_types<I: IntoIterator<Item = (DataSource, HashSet<TypeDescriptor>)>>(

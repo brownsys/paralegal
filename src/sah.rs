@@ -191,42 +191,38 @@ impl<'tcx, F: FnMut(mir::BasicBlock) -> Option<Option<mir::BasicBlock>>>
         terminator
             .successors_mut()
             .for_each(|suc| *suc = self.reindex_basic_block(*suc));
-        terminator
+        if let Some(s) = terminator
             .unwind_mut()
-            .and_then(Option::as_mut)
-            .map(|s| *s = self.reindex_basic_block(*s));
+            .and_then(Option::as_mut) 
+        {
+            *s = self.reindex_basic_block(*s);
+        }
         self.super_terminator(terminator, location);
     }
 
     fn visit_operand(&mut self, operand: &mut mir::Operand<'tcx>, location: mir::Location) {
-        match operand {
-            mir::Operand::Constant(op) => match op.literal {
-                mir::ConstantKind::Ty(ref mut t) => {
-                    let mut new_val = t.val();
-                    match new_val {
-                        ty::ConstKind::Unevaluated(ref mut unev) => {
-                            if unev
-                                .promoted
-                                .as_mut()
-                                .map(|p| {
-                                    *p = self.promotion_reindexer.reindex(*p);
-                                })
-                                .is_some()
-                            {
-                                *t = self.tcx.mk_const(ty::ConstS {
-                                    ty: t.ty(),
-                                    val: new_val,
-                                });
-                                println!("{operand:?}");
-                            };
-                        }
-                        _ => (),
+        
+         if let mir::Operand::Constant(op) = operand { 
+            if let mir::ConstantKind::Ty(ref mut t) = op.literal {
+                let mut new_val = t.val();
+                if let ty::ConstKind::Unevaluated(ref mut unev) = new_val  {
+                    if unev
+                        .promoted
+                        .as_mut()
+                        .map(|p| {
+                            *p = self.promotion_reindexer.reindex(*p);
+                        })
+                        .is_some()
+                    {
+                        *t = self.tcx.mk_const(ty::ConstS {
+                            ty: t.ty(),
+                            val: new_val,
+                        });
+                        println!("{operand:?}");
                     }
                 }
-                _ => (),
-            },
-            _ => (),
-        };
+            };
+        }
         self.super_operand(operand, location);
     }
 

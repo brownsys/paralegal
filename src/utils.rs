@@ -445,12 +445,12 @@ pub fn places_read<'tcx>(
 }
 
 /// Creates an `Identifier` for this `HirId`
-pub fn identifier_for_hid<'tcx>(tcx: TyCtxt<'tcx>, hid: HirId) -> Identifier {
+pub fn identifier_for_hid(tcx: TyCtxt, hid: HirId) -> Identifier {
     Identifier::new(tcx.item_name(tcx.hir().local_def_id(hid).to_def_id()))
 }
 
 /// Creates an `Identifier` for this `DefId`
-pub fn identifier_for_fn<'tcx>(tcx: TyCtxt<'tcx>, p: DefId) -> Identifier {
+pub fn identifier_for_fn(tcx: TyCtxt, p: DefId) -> Identifier {
     Identifier::new(tcx.item_name(p))
 }
 

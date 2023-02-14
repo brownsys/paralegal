@@ -400,7 +400,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             root_function,
             flow_constructor: self,
             //under_construction: RefCell::new(GlobalFlowGraph::new()),
-            under_construction: GlobalFlowGraph::new(),
+            under_construction: GlobalFlowGraph::default(),
         };
 
         use mir::visit::Visitor;
@@ -910,11 +910,10 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     self.body,
                 );
                 let alias_info = &self.from_flowistry.analysis.aliases;
-                let aliases = parent
+                parent
                     .into_iter()
                     .flat_map(|p| alias_info.aliases(p).iter())
-                    .collect::<Vec<_>>();
-                aliases.into_iter().map(move |&parent| (parent, child))
+                    .map(move |&parent| (parent, child))
             })
             .collect::<HashMap<_, _>>()
     }
@@ -1323,7 +1322,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         b: BodyId,
         gli: GLI<'g>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
-        let mut flows = Ctrl::new();
+        let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(b);
         fn register_call_site<'tcx>(
             tcx: TyCtxt<'tcx>,

@@ -56,8 +56,8 @@ pub struct GlobalFlowGraph<'tcx, 'g> {
     pub return_state: GlobalDepMatrix<'tcx, 'g>,
 }
 
-impl<'tcx, 'g> GlobalFlowGraph<'tcx, 'g> {
-    pub fn new() -> Self {
+impl<'tcx, 'g> Default for GlobalFlowGraph<'tcx, 'g> {
+    fn default() -> Self {
         GlobalFlowGraph {
             location_states: HashMap::new(),
             return_state: GlobalDepMatrix::new(),
