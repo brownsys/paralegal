@@ -103,7 +103,7 @@ fn check2(user_data: &UserData) -> bool {
 fn send_user_data(_user_data: &UserData) {
 }
 
-#[dfpp::label{ noinline, return }] // TODO: After call-chain-analysis is fixed this label can be removed.
+#[dfpp::label{ noinline, return }]
 fn modify(_user_data: &mut UserData) {
 }
 
