@@ -1634,12 +1634,16 @@ impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
                     .insert(id, (sink_matches, ObjectType::Function(decl.inputs.len())))
                     .is_none()
             } else {
+                // I'm restricting the Ctor here to `Unit`, because in that case
+                // the annotation ends up on the synthesized constructor (for
+                // some reason).
                 match node {
                     hir::Node::Ty(_)
                     | hir::Node::Item(hir::Item {
                         kind: hir::ItemKind::Struct(..),
                         ..
-                    }) => self
+                    })
+                    | hir::Node::Ctor(hir::VariantData::Unit(..)) => self
                         .marked_objects
                         .as_ref()
                         .borrow_mut()
