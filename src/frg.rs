@@ -441,9 +441,7 @@ impl ProgramDescription {
                 ctrl.data_flow
                     .0
                     .keys()
-                    .chain(
-                        ctrl.types.0.keys()
-                    )
+                    .chain(ctrl.types.0.keys())
                     .filter_map(|src| src.as_argument())
                     .map(move |position| FormalParameter {
                         function,
@@ -617,12 +615,13 @@ impl ProgramDescription {
     where
         D::Doc: Clone,
     {
-        alloc.forge_relation(
-            self.all_formal_parameters().into_iter().map(|p| {
-                let fn_forge = p.function.as_forge(alloc);
-                (std::iter::once(p.as_forge(alloc)), std::iter::once(fn_forge))       
-            })
-        )
+        alloc.forge_relation(self.all_formal_parameters().into_iter().map(|p| {
+            let fn_forge = p.function.as_forge(alloc);
+            (
+                std::iter::once(p.as_forge(alloc)),
+                std::iter::once(fn_forge),
+            )
+        }))
     }
 }
 

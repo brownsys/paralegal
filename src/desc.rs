@@ -416,7 +416,6 @@ impl Default for Ctrl {
 }
 
 impl Ctrl {
-
     /// Extend the type annotations
     pub fn add_types<I: IntoIterator<Item = (DataSource, HashSet<TypeDescriptor>)>>(
         &mut self,

@@ -5,7 +5,8 @@ extern crate rustc_span;
 use dfpp::{
     desc::{DataSink, Identifier, ProgramDescription},
     ir::IsGlobalLocation,
-    serializers::{Bodies, RawGlobalLocation}, HashSet, Symbol,
+    serializers::{Bodies, RawGlobalLocation},
+    HashSet, Symbol,
 };
 use hir::BodyId;
 use rustc_middle::mir;
