@@ -22,7 +22,7 @@ lazy_static! {
         );
 }
 #[test]
-fn simple_happens_before_has_connections() {
+fn top_level_inlining_happens() {
     assert!(*TEST_CRATE_ANALYZED);
     let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("basic_happens_before"))).unwrap();
 
@@ -35,3 +35,35 @@ fn simple_happens_before_has_connections() {
     assert!(graph.connects(&get, &send));
     assert!(!graph.connects_direct(&get, &send))
 }
+#[test]
+fn awaiting_works() {
+    assert!(*TEST_CRATE_ANALYZED);
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("awaiting_happens_before"))).unwrap();
+
+    let get = graph.function_call("async_get_user_data");
+    let dp = graph.function_call("async_dp_user_data");
+    let send = graph.function_call("async_send_user_data");
+
+    assert!(graph.connects(&get, &dp));
+    assert!(graph.connects(&dp, &send));
+    assert!(graph.connects(&get, &send));
+    assert!(!graph.connects_direct(&get, &send))
+}
+
+#[test]
+fn no_awaiting_cross_taint() {
+    assert!(*TEST_CRATE_ANALYZED);
+    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("two_data_over_boundary"))).unwrap();
+
+    let get = graph.function_call(" get_user_data(");
+    let get2 = graph.function_call("get_user_data2");
+    let send = graph.function_call("send_user_data(");
+    let send2 = graph.function_call("send_user_data2");
+
+    assert!(graph.connects(&get, &send));
+    assert!(graph.connects(&get2, &send2));
+    assert!(!graph.connects(&get, &send2));
+    assert!(!graph.connects(&get2, &send));
+}
+
+
