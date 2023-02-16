@@ -7,8 +7,8 @@ use smallvec::SmallVec;
 use crate::{
     desc::Identifier,
     rust::{
-        ast, hir,
-        hir::{def_id::DefId, hir_id::HirId, BodyId},
+        ast,
+        hir::{self, def_id::DefId, hir_id::HirId, BodyId},
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_span::symbol::Ident,
         ty,
@@ -293,27 +293,33 @@ pub trait NodeExt<'hir> {
     /// one is top-level `fn`s the other is an `impl` item of function type.
     /// This function lets you extract common information from either. Returns
     /// [`None`] if the node is not of a function-like type.
-    fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)>;
+    fn as_fn(&self, tcx: TyCtxt) -> Option<(Ident, hir::def_id::LocalDefId, BodyId)>;
 }
 
 impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
-    fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
-        if let hir::Node::Item(hir::Item {
-            ident,
-            def_id,
-            kind: hir::ItemKind::Fn(_, _, body_id),
-            ..
-        })
-        | hir::Node::ImplItem(hir::ImplItem {
-            ident,
-            def_id,
-            kind: hir::ImplItemKind::Fn(_, body_id),
-            ..
-        }) = self
-        {
-            Some((ident, def_id, body_id))
-        } else {
-            None
+    fn as_fn(&self, tcx: TyCtxt) -> Option<(Ident, hir::def_id::LocalDefId, BodyId)> {
+        match self {
+            hir::Node::Item(hir::Item {
+                ident,
+                def_id,
+                kind: hir::ItemKind::Fn(_, _, body_id),
+                ..
+            })
+            | hir::Node::ImplItem(hir::ImplItem {
+                ident,
+                def_id,
+                kind: hir::ImplItemKind::Fn(_, body_id),
+                ..
+            }) => Some((*ident, *def_id, *body_id)),
+            hir::Node::Expr(hir::Expr {
+                kind: hir::ExprKind::Closure(_, _, body_id, _, _),
+                ..
+            }) => Some((
+                Ident::from_str("closure"),
+                tcx.hir().body_owner_def_id(*body_id),
+                *body_id,
+            )),
+            _ => None,
         }
     }
 }
@@ -347,11 +353,25 @@ pub fn extract_places<'tcx>(
 
 /// Get the name of the function for this body as an `Ident`.
 pub fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
-    tcx.hir()
-        .find_by_def_id(tcx.hir().body_owner_def_id(body_id))
+    let map = tcx.hir();
+    let node = map.find_by_def_id(map.body_owner_def_id(body_id)).unwrap();
+    node.ident()
+        .or_else(|| {
+            matches!(
+                node,
+                hir::Node::Expr(hir::Expr {
+                    kind: hir::ExprKind::Closure(..),
+                    ..
+                })
+            )
+            .then(|| {
+                map.get(map.enclosing_body_owner(map.body_owner(body_id)))
+                    .ident()
+                    .map(|id| Ident::from_str(&(id.as_str().to_string() + "_closure")))
+            })
+            .flatten()
+        })
         .unwrap()
-        .ident()
-        .expect("no def id?")
 }
 
 /// Give me this file as writable (possibly creating or overwriting it).

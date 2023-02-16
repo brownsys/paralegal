@@ -46,7 +46,7 @@ use hir::{
 use mir::{Location, Place, Terminator, TerminatorKind};
 use rustc_borrowck::BodyWithBorrowckFacts;
 use rustc_hir::def_id::LocalDefId;
-use rustc_middle::{hir::nested_filter::OnlyBodies};
+use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use flowistry::{
@@ -273,61 +273,6 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     fn should_inline(&self, did: LocalDefId) -> bool {
         !self.analysis_opts.no_recursive_analysis
             && self.inline_selector.should_inline(self.tcx, did)
-    }
-
-    /// Find or compute the finely granular flow for the function that this
-    /// terminator calls. If successful returns
-    ///
-    /// 1. The computed flow
-    /// 2. The id of the body of the called function
-    /// 3. The body of the called function
-    /// 4. The arguments to the called function (like [`AsFnAndArgs`] does).
-    /// 5. The return place mentioned in the terminator (like [`AsFnAndArgs`]
-    ///    does)
-    ///
-    /// This function fails if
-    ///
-    /// - The terminator is not a function call
-    /// - The called function cannot be statically determined (see
-    ///   [`AsFnAndArgs`])
-    /// - The called function is not from the local crate
-    /// - [`Self::should_inline`] returned `false` for the defid of the called
-    ///   function
-    /// - This is a recursive call. Note that this does not only apply for
-    ///   direct recursive calls, e.g. `foo` calls `foo`, but also mutual
-    ///   recursion e.g. `foo` calls `bar` which calls `foo`.
-    ///
-    /// The error message will indicate which of these cases occurred.
-    fn inner_flow_for_terminator(
-        &self,
-        t: &mir::Terminator<'tcx>,
-    ) -> Result<
-        (
-            Rc<FunctionFlow<'tcx, 'g>>,
-            BodyId,
-            &'tcx mir::Body<'tcx>,
-            Vec<Option<mir::Place<'tcx>>>,
-            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        ),
-        &'static str,
-    > {
-        t.as_fn_and_args().and_then(|(p, args, dest)| {
-            let node = self.tcx.hir().get_if_local(p).ok_or("non-local node")?;
-            let (_callee_id, callee_local_id, callee_body_id) = node
-                .as_fn()
-                .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
-            if self.should_inline(*callee_local_id) {
-                Ok(())
-            } else {
-                Err("Inline selector was false")
-            }?;
-            let inner_flow = self
-                .compute_granular_global_flows(*callee_body_id)
-                .ok_or("is recursive")?;
-            let body = borrowck_facts::get_body_with_borrowck_facts(self.tcx, *callee_local_id)
-                .simplified_body();
-            Ok((inner_flow, *callee_body_id, body, args, dest))
-        })
     }
 
     /// Computes a granular, inlined flow for the body of the `root_function` id
@@ -611,7 +556,6 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         def_id: LocalDefId,
         p: mir::Place<'tcx>,
     ) -> Vec<Place<'tcx>> {
-        
         let new_aliases = self.get_aliases(def_id, body_with_facts);
         let a = new_aliases
             .reachable_values(p, ast::Mutability::Not)
@@ -823,6 +767,86 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             .collect()
     }
 
+    /// Find or compute the finely granular flow for the function that this
+    /// terminator calls. If successful returns
+    ///
+    /// 1. The computed flow
+    /// 2. The id of the body of the called function
+    /// 3. The body of the called function
+    /// 4. The arguments to the called function (like [`AsFnAndArgs`] does).
+    /// 5. The return place mentioned in the terminator (like [`AsFnAndArgs`]
+    ///    does)
+    ///
+    /// This function fails if
+    ///
+    /// - The terminator is not a function call
+    /// - The called function cannot be statically determined (see
+    ///   [`AsFnAndArgs`])
+    /// - The called function is not from the local crate
+    /// - [`Self::should_inline`] returned `false` for the defid of the called
+    ///   function
+    /// - This is a recursive call. Note that this does not only apply for
+    ///   direct recursive calls, e.g. `foo` calls `foo`, but also mutual
+    ///   recursion e.g. `foo` calls `bar` which calls `foo`.
+    ///
+    /// The error message will indicate which of these cases occurred.
+    fn inner_flow_for_terminator(
+        &self,
+        t: &mir::Terminator<'tcx>,
+    ) -> Result<
+        (
+            Rc<FunctionFlow<'tcx, 'g>>,
+            BodyId,
+            &'tcx mir::Body<'tcx>,
+            Vec<Option<mir::Place<'tcx>>>,
+            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+        ),
+        &'static str,
+    > {
+        t.as_fn_and_args().and_then(|(p, mut args, dest)| {
+            let (p, args) = if Some(p) != self.tcx().lang_items().from_generator_fn() {
+                (p, args)
+            } else {
+                let closure = args
+                    .pop()
+                    .expect("Expected closure argument")
+                    .expect("Expected non-const closure argument");
+                debug_assert!(closure.projection.is_empty());
+                let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                    self.body.local_decls[closure.local].ty.kind()
+                {
+                    *gid
+                } else {
+                    unreachable!("Expected Generator")
+                };
+                (closure_fn, vec![Some(closure), None])
+            };
+
+            self.tcx()
+                .hir()
+                .get_if_local(p)
+                .ok_or("non-local node")
+                .and_then(|node| {
+                    let (_callee_id, callee_local_id, callee_body_id) = node
+                        .as_fn(self.tcx())
+                        .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
+                    if self.flow_constructor.should_inline(callee_local_id) {
+                        Ok(())
+                    } else {
+                        Err("Inline selector was false")
+                    }?;
+                    let inner_flow = self
+                        .flow_constructor
+                        .compute_granular_global_flows(callee_body_id)
+                        .ok_or("is recursive")?;
+                    let body =
+                        borrowck_facts::get_body_with_borrowck_facts(self.tcx(), callee_local_id)
+                            .simplified_body();
+                    Ok((inner_flow, callee_body_id, body, args, dest))
+                })
+        })
+    }
+
     /// Makes `callee` relative to `call_site` in the function we operate on,
     /// i.e. `self.root_function`
     ///
@@ -956,7 +980,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
         // also recurses as necessary
         let state_at_term = self.handle_regular_location(location);
         if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
-            self.flow_constructor.inner_flow_for_terminator(terminator)
+            self.inner_flow_for_terminator(terminator)
         {
             debug!(
                 "Creating callee {:?} to caller {} translation table",
@@ -1241,10 +1265,31 @@ pub struct CollectingVisitor<'tcx, 'a> {
     marked_stmts: HashMap<HirId, ((Vec<Annotation>, usize), Span, DefId)>,
     /// Functions that are annotated with `#[dfpp::analyze]`. For these we will
     /// later perform the analysis
-    functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
+    functions_to_analyze: Vec<FnToAnalyze<'tcx>>,
 
     /// Annotations that are to be placed on external functions and types.
     external_annotations: &'a AnnotationMap,
+}
+
+pub struct FnToAnalyze<'tcx> {
+    name: Ident,
+    body_id: BodyId,
+    kind: FnKind<'tcx>,
+    declaration: &'tcx hir::FnDecl<'tcx>,
+}
+
+impl<'tcx> FnToAnalyze<'tcx> {
+    fn name(&self) -> Symbol {
+        self.name.name
+    }
+
+    fn asyncness(&self) -> hir::IsAsync {
+        self.kind.asyncness()
+    }
+
+    fn is_async(&self) -> bool {
+        matches!(self.asyncness(), hir::IsAsync::Async)
+    }
 }
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
@@ -1318,12 +1363,11 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         _hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
-        id: Ident,
-        b: BodyId,
+        target: FnToAnalyze<'tcx>,
         gli: GLI<'g>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
-        let local_def_id = self.tcx.hir().body_owner_def_id(b);
+        let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
         fn register_call_site<'tcx>(
             tcx: TyCtxt<'tcx>,
             map: &mut CallSiteAnnotations,
@@ -1350,17 +1394,17 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 tcx,
                 controller_body_with_facts.simplified_body(),
                 false,
-                &mut outfile_pls(format!("{}.mir.gv", id.name)).unwrap(),
+                &mut outfile_pls(format!("{}.mir.gv", target.name())).unwrap(),
             )
             .unwrap()
         }
 
-        debug!("Handling target {}", id.name);
+        debug!("Handling target {}", target.name());
         let flow = Flow::compute(
             &self.opts.anactrl,
             &self.opts.dbg,
             tcx,
-            b,
+            target.body_id,
             gli,
             SkipAnnotatedFunctionSelector {
                 marked_objects: self.marked_objects.clone(),
@@ -1382,12 +1426,12 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             dbg::write_non_transitive_graph_and_body(
                 tcx,
                 &flow.reduced_flow,
-                outfile_pls(format!("{}.ntgb.json", id.name)).unwrap(),
+                outfile_pls(format!("{}.ntgb.json", target.name())).unwrap(),
             );
         }
 
         if self.opts.dbg.dump_call_only_flow() {
-            outfile_pls(format!("{}.call-only-flow.gv", id.name))
+            outfile_pls(format!("{}.call-only-flow.gv", target.name()))
                 .and_then(|mut file| {
                     dbg::call_only_flow_dot::dump(tcx, &flow.reduced_flow, &mut file)
                 })
@@ -1508,7 +1552,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 DataSink::Return,
             );
         }
-        Ok((Identifier::new(id.name), flows))
+        Ok((Identifier::new(target.name()), flows))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -1538,13 +1582,12 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         crate::sah::HashVerifications::with(|hash_verifications| {
             targets
                 .drain(..)
-                .map(|(id, b, _)| {
+                .map(|desc| {
                     self.handle_target(
                         hash_verifications,
                         &mut call_site_annotations,
                         &interesting_fn_defs,
-                        id,
-                        b,
+                        desc,
                         gli,
                     )
                 })
@@ -1692,17 +1735,22 @@ impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
     /// Finds the functions that have been marked as targets.
     fn visit_fn(
         &mut self,
-        fk: FnKind<'tcx>,
-        fd: &'tcx rustc_hir::FnDecl<'tcx>,
-        b: BodyId,
+        kind: FnKind<'tcx>,
+        declaration: &'tcx rustc_hir::FnDecl<'tcx>,
+        body_id: BodyId,
         s: Span,
         id: HirId,
     ) {
-        match &fk {
-            FnKind::ItemFn(ident, _, _) | FnKind::Method(ident, _)
+        match &kind {
+            FnKind::ItemFn(name, _, _) | FnKind::Method(name, _)
                 if self.should_analyze_function(id) =>
             {
-                self.functions_to_analyze.push((*ident, b, fd));
+                self.functions_to_analyze.push(FnToAnalyze {
+                    name: *name,
+                    body_id,
+                    kind,
+                    declaration,
+                });
             }
             _ => (),
         }
@@ -1710,6 +1758,6 @@ impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
         // dispatch to recursive walk. This is probably unnecessary but if in
         // the future we decide to do something with nested items we may need
         // it.
-        intravisit::walk_fn(self, fk, fd, b, s, id)
+        intravisit::walk_fn(self, kind, declaration, body_id, s, id)
     }
 }
