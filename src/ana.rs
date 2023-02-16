@@ -29,7 +29,7 @@ use std::{
 
 use crate::{
     consts, dbg,
-    desc::*,
+    desc::{self, *},
     ir::*,
     rust::*,
     sah::HashVerifications,
@@ -68,89 +68,102 @@ pub type AttrMatchT = Vec<Symbol>;
 /// the function `DefId`
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
-/// This function is wholesale lifted from flowistry's recursive analysis. Edits
-/// that have been made are just to lift it from a lambda to a top-level
-/// function.
-///
-/// What this function does is relate [`Place`] from the body of a callee to a
-/// `Place` in the body of the caller. The most simple example would be one
-/// where it relates the formal parameter of a function to the actual call
-/// argument as follows. (Shown as MIR)
-///
-/// ```plain
-/// fn callee(_1) {
-///   let _2 = ...;
-///   ...
-/// }
-/// fn caller() {
-///   ...
-///   let _3 = ...;
-///   callee(_3)
-/// }
-/// ```
-///
-/// Here `translate_child_to_parent(_1) == Some(_3)`. This only works for places
-/// that are actually related to the parent, e.g. `translate_child_to_parent(_2)
-/// == None` in the example.
-///
-/// This function does more sophisticated mapping as well through references,
-/// derefs and fields. However in all honesty I haven't bothered (yet) to
-/// understand its precise capabilities, which should be documented here.
-pub fn translate_child_to_parent<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    parent_local_def_id: LocalDefId,
-    args: &[Option<mir::Place<'tcx>>],
-    destination: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-    child: mir::Place<'tcx>,
-    mutated: bool,
-    body: &mir::Body<'tcx>,
-    parent_body: &mir::Body<'tcx>,
-) -> Option<mir::Place<'tcx>> {
-    use mir::HasLocalDecls;
-    use mir::ProjectionElem;
-    if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
-        if child.ty(body.local_decls(), tcx).ty.is_unit() {
+impl<'tcx, 'g> InlineableCallDescriptor<'tcx, 'g> {
+    /// This function is wholesale lifted from flowistry's recursive analysis. Edits
+    /// that have been made are just to lift it from a lambda to a top-level
+    /// function.
+    ///
+    /// What this function does is relate [`Place`] from the body of a callee to a
+    /// `Place` in the body of the caller. The most simple example would be one
+    /// where it relates the formal parameter of a function to the actual call
+    /// argument as follows. (Shown as MIR)
+    ///
+    /// ```plain
+    /// fn callee(_1) {
+    ///   let _2 = ...;
+    ///   ...
+    /// }
+    /// fn caller() {
+    ///   ...
+    ///   let _3 = ...;
+    ///   callee(_3)
+    /// }
+    /// ```
+    ///
+    /// Here `translate_child_to_parent(_1) == Some(_3)`. This only works for places
+    /// that are actually related to the parent, e.g. `translate_child_to_parent(_2)
+    /// == None` in the example.
+    ///
+    /// This function does more sophisticated mapping as well through references,
+    /// derefs and fields. However in all honesty I haven't bothered (yet) to
+    /// understand its precise capabilities, which should be documented here.
+    pub fn translate_child_to_parent(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        parent_local_def_id: LocalDefId,
+        child: mir::Place<'tcx>,
+        mutated: bool,
+        parent_body: &mir::Body<'tcx>,
+    ) -> Option<mir::Place<'tcx>> {
+        use mir::HasLocalDecls;
+        use mir::ProjectionElem;
+        if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
+            if child
+                .ty(self.simplified_callee_body.local_decls(), tcx)
+                .ty
+                .is_unit()
+            {
+                return None;
+            }
+
+            if let Some((dst, _)) = self.call_return {
+                return Some(dst);
+            }
+        }
+        let old_child = child;
+        debug!("Translating {child:?}");
+        let child = self.remapper.strip_projection(child)?;
+        if old_child != child {
+            debug!("Remapped {old_child:?} to {child:?}");
+        }
+
+        if !flowistry::mir::utils::PlaceExt::is_arg(&child, self.simplified_callee_body)
+            || (mutated && !child.is_indirect())
+        {
             return None;
         }
 
-        if let Some((dst, _)) = destination {
-            return Some(dst);
+        // For example, say we're calling f(_5.0) and child = (*_1).1 where
+        // .1 is private to parent. Then:
+        //    parent_toplevel_arg = _5.0
+        //    parent_arg_projected = (*_5.0).1
+        //    parent_arg_accessible = (*_5.0)
+
+        let parent_toplevel_arg = self.call_arguments[child.local.as_usize() - 1]?;
+
+        let mut projection = parent_toplevel_arg.projection.to_vec();
+        let mut ty = parent_toplevel_arg.ty(parent_body.local_decls(), tcx);
+        let parent_param_env = tcx.param_env(parent_local_def_id);
+        for elem in child.projection.iter() {
+            ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
+                debug!("ty: {ty:?}, child: {child:?}, elem: {elem:?}, field: {field:?}");
+                ty.field_ty(tcx, field)
+            });
+            let elem = match elem {
+                ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
+                elem => elem,
+            };
+            projection.push(elem);
         }
+
+        let parent_arg_projected = <Place as flowistry::mir::utils::PlaceExt>::make(
+            parent_toplevel_arg.local,
+            &projection,
+            tcx,
+        );
+        
+        Some(parent_arg_projected)
     }
-
-    if !flowistry::mir::utils::PlaceExt::is_arg(&child, body) || (mutated && !child.is_indirect()) {
-        return None;
-    }
-
-    // For example, say we're calling f(_5.0) and child = (*_1).1 where
-    // .1 is private to parent. Then:
-    //    parent_toplevel_arg = _5.0
-    //    parent_arg_projected = (*_5.0).1
-    //    parent_arg_accessible = (*_5.0)
-
-    let parent_toplevel_arg = args[child.local.as_usize() - 1]?;
-
-    let mut projection = parent_toplevel_arg.projection.to_vec();
-    let mut ty = parent_toplevel_arg.ty(parent_body.local_decls(), tcx);
-    let parent_param_env = tcx.param_env(parent_local_def_id);
-    for elem in child.projection.iter() {
-        ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
-            debug!("ty: {ty:?}, child: {child:?}, elem: {elem:?}, field: {field:?}");
-            ty.field_ty(tcx, field)
-        });
-        let elem = match elem {
-            ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
-            elem => elem,
-        };
-        projection.push(elem);
-    }
-
-    let parent_arg_projected = <Place as flowistry::mir::utils::PlaceExt>::make(
-        parent_toplevel_arg.local,
-        &projection,
-        tcx,
-    );
-    Some(parent_arg_projected)
 }
 
 /// Bundles together data needed for the global flow construction. The idea is
@@ -464,6 +477,33 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             return_dependencies,
         }
     }
+}
+
+enum ReprojectFirstField<'tcx> {
+    NoReproject,
+    Reproject {
+        tcx: TyCtxt<'tcx>,
+        reprojected_elem: mir::PlaceElem<'tcx>,
+        on_local: mir::Local,
+    },
+}
+
+impl<'tcx> ReprojectFirstField<'tcx> {
+    fn strip_projection(&self, from: mir::Place<'tcx>) -> Option<mir::Place<'tcx>> {
+        match *self { ReprojectFirstField::Reproject {
+            tcx,
+            reprojected_elem,
+            on_local,
+        } if on_local == from.local =>
+            (from.projection.get(0) == Some(&reprojected_elem)).then(||
+                <Place as flowistry::mir::utils::PlaceExt>::make(from.local, &from.projection[1..], tcx)),
+        _ => Some(from)
+        }
+    }
+}
+
+fn remap_unchanged<'tcx>(_: TyCtxt<'tcx>, from: mir::Place<'tcx>) -> mir::Place<'tcx> {
+    from
 }
 
 use ty::RegionVid;
@@ -793,35 +833,27 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     fn inner_flow_for_terminator(
         &self,
         t: &mir::Terminator<'tcx>,
-    ) -> Result<
-        (
-            Rc<FunctionFlow<'tcx, 'g>>,
-            BodyId,
-            &'tcx mir::Body<'tcx>,
-            Vec<Option<mir::Place<'tcx>>>,
-            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        ),
-        &'static str,
-    > {
-        t.as_fn_and_args().and_then(|(p, mut args, dest)| {
-            let (p, args) = if Some(p) != self.tcx().lang_items().from_generator_fn() {
-                (p, args)
-            } else {
-                let closure = args
-                    .pop()
-                    .expect("Expected one closure argument")
-                    .expect("Expected non-const closure argument");
-                debug_assert!(args.is_empty(), "Expected only one argument");
-                debug_assert!(closure.projection.is_empty());
-                let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
-                    self.body.local_decls[closure.local].ty.kind()
-                {
-                    *gid
+    ) -> Result<InlineableCallDescriptor<'tcx, 'g>, &'static str> {
+        t.as_fn_and_args().and_then(|(p, mut args, call_return)| {
+            let (p, call_arguments, needs_reproject) =
+                if Some(p) != self.tcx().lang_items().from_generator_fn() {
+                    (p, args, false)
                 } else {
-                    unreachable!("Expected Generator")
+                    let closure = args
+                        .pop()
+                        .expect("Expected one closure argument")
+                        .expect("Expected non-const closure argument");
+                    debug_assert!(args.is_empty(), "Expected only one argument");
+                    debug_assert!(closure.projection.is_empty());
+                    let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                        self.body.local_decls[closure.local].ty.kind()
+                    {
+                        *gid
+                    } else {
+                        unreachable!("Expected Generator")
+                    };
+                    (closure_fn, vec![Some(closure), None], true)
                 };
-                (closure_fn, vec![Some(closure), None])
-            };
 
             self.tcx()
                 .hir()
@@ -836,14 +868,35 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     } else {
                         Err("Inline selector was false")
                     }?;
-                    let inner_flow = self
+                    let callee_flow = self
                         .flow_constructor
                         .compute_granular_global_flows(callee_body_id)
                         .ok_or("is recursive")?;
-                    let body =
+                    let simplified_callee_body =
                         borrowck_facts::get_body_with_borrowck_facts(self.tcx(), callee_local_id)
                             .simplified_body();
-                    Ok((inner_flow, callee_body_id, body, args, dest))
+                    let remapper = if needs_reproject {
+                        let on_local = mir::Local::from_usize(1);
+                        let reprojected_elem = mir::PlaceElem::Field(
+                            mir::Field::from_usize(0),
+                            simplified_callee_body.local_decls[on_local].ty,
+                        );
+                        ReprojectFirstField::Reproject {
+                            tcx: self.tcx(),
+                            reprojected_elem,
+                            on_local
+                        }
+                    } else {
+                        ReprojectFirstField::NoReproject
+                    };
+                    Ok(InlineableCallDescriptor {
+                        callee_flow,
+                        callee_body_id,
+                        simplified_callee_body,
+                        call_arguments,
+                        call_return,
+                        remapper,
+                    })
                 })
         })
     }
@@ -877,12 +930,10 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     /// (`inner_flow`) to the caller (`self.body`).
     fn create_callee_to_caller_translation_table(
         &self,
-        inner_flow: &FunctionFlow<'tcx, 'g>,
-        args: &[Option<mir::Place<'tcx>>],
-        inner_body: &mir::Body<'tcx>,
-        dest: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+        descriptor: &InlineableCallDescriptor<'tcx, 'g>,
     ) -> PlaceTranslationTable<'tcx> {
-        inner_flow
+        descriptor
+            .callee_flow
             .flow
             .location_states
             .iter()
@@ -895,14 +946,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             .filter_map(|child| {
                 Some((
                     child,
-                    translate_child_to_parent(
+                    descriptor.translate_child_to_parent(
                         self.tcx(),
                         self.local_def_id,
-                        args,
-                        dest,
                         child,
                         false,
-                        inner_body,
                         self.body,
                     )?,
                 ))
@@ -914,24 +962,19 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     /// (`self.body`) to places in the callee (`inner_flow`).
     fn create_caller_to_callee_translation_table(
         &self,
-        args: &[Option<mir::Place<'tcx>>],
-        destination: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        inner_body: &mir::Body<'tcx>,
-        inner_flow: &FunctionFlow<'tcx, 'g>,
+        descriptor: &InlineableCallDescriptor<'tcx, 'g>,
     ) -> PlaceTranslationTable<'tcx> {
-        inner_flow
+        descriptor
+            .callee_flow
             .flow
             .return_state
             .keys()
             .flat_map(|&child| {
-                let parent = translate_child_to_parent(
+                let parent = descriptor.translate_child_to_parent(
                     self.tcx(),
                     self.local_def_id,
-                    args,
-                    destination,
                     child,
                     true,
-                    inner_body,
                     self.body,
                 );
                 let alias_info = &self.from_flowistry.analysis.aliases;
@@ -961,6 +1004,15 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     }
 }
 
+struct InlineableCallDescriptor<'tcx, 'g> {
+    callee_flow: Rc<FunctionFlow<'tcx, 'g>>,
+    callee_body_id: BodyId,
+    simplified_callee_body: &'tcx mir::Body<'tcx>,
+    call_arguments: Vec<Option<mir::Place<'tcx>>>,
+    call_return: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+    remapper: ReprojectFirstField<'tcx>,
+}
+
 impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx>
     for FunctionInliner<'tcx, 'g, 'opts, 'refs, I>
 {
@@ -980,9 +1032,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
         // First we handle this as the default case. This
         // also recurses as necessary
         let state_at_term = self.handle_regular_location(location);
-        if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
-            self.inner_flow_for_terminator(terminator)
-        {
+        if let Ok(desc) = self.inner_flow_for_terminator(terminator) {
             debug!(
                 "Creating callee {:?} to caller {} translation table",
                 terminator.kind,
@@ -996,12 +1046,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             // invariant that when tracing dependencies a local place does not
             // immediately cross into a parent, but first into such an argument
             // location where it can get translated.
-            let parent_translation_matrix = self.create_callee_to_caller_translation_table(
-                &inner_flow,
-                args.as_slice(),
-                inner_body,
-                dest,
-            );
+            let parent_translation_matrix = self.create_callee_to_caller_translation_table(&desc);
             // A special dependency matrix that will be inserted at the argument
             // locations which performs translation from callee places to caller
             // places.
@@ -1026,7 +1071,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             // First we make a new, relative location for every regular (i.e.
             // not an argument) location in the inner graph
             let translated_inner_locations =
-                inner_flow
+                desc.callee_flow
                     .flow
                     .location_states
                     .iter()
@@ -1039,13 +1084,15 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
 
             // The we add the argument locations. These are special, because the
             // also perform place translation (see `TranslatedDepMatrix`)
-            let argument_locations = (1..=args.len()).into_iter().map(|a| {
+            let argument_locations = (1..=desc.call_arguments.len()).into_iter().map(|a| {
                 let global_call_site = gli.globalize_location(
                     mir::Location {
-                        block: mir::BasicBlock::from_usize(inner_body.basic_blocks().len()),
+                        block: mir::BasicBlock::from_usize(
+                            desc.simplified_callee_body.basic_blocks().len(),
+                        ),
                         statement_index: a,
                     },
-                    inner_body_id,
+                    desc.callee_body_id,
                 );
                 let global_arg_loc = make_relative_location(location, global_call_site);
                 (global_arg_loc, parent_dep_matrix.clone())
@@ -1059,13 +1106,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             let call_site_location = (
                 gli.globalize_location(location, root_function),
                 TranslatedDepMatrix::translated(
-                    relativize_global_dep_matrix(&inner_flow.flow.return_state, local_relativizer),
-                    self.create_caller_to_callee_translation_table(
-                        args.as_slice(),
-                        dest,
-                        inner_body,
-                        inner_flow.borrow(),
+                    relativize_global_dep_matrix(
+                        &desc.callee_flow.flow.return_state,
+                        local_relativizer,
                     ),
+                    self.create_caller_to_callee_translation_table(&desc),
                 ),
             );
 
