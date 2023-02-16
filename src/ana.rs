@@ -809,8 +809,9 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             } else {
                 let closure = args
                     .pop()
-                    .expect("Expected closure argument")
+                    .expect("Expected one closure argument")
                     .expect("Expected non-const closure argument");
+                debug_assert!(args.is_empty(), "Expected only one argument");
                 debug_assert!(closure.projection.is_empty());
                 let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
                     self.body.local_decls[closure.local].ty.kind()

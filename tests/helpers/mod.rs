@@ -36,12 +36,9 @@ pub fn with_current_directory<
     let _guard = CWD_MUTEX.lock().unwrap();
     let current = std::env::current_dir()?;
     std::env::set_current_dir(p)?;
-    let res = std::panic::catch_unwind(f);
-    let set_dir = std::env::set_current_dir(current);
-    match res {
-        Ok(r) => set_dir.map(|()| r),
-        Err(e) => std::panic::resume_unwind(e),
-    }
+    let res = f();
+    let set_dir = std::env::set_current_dir(current)?;
+    Ok(res)
 }
 
 /// Run the action `F` in directory `P` and with rustc data structures
@@ -59,6 +56,7 @@ pub fn cwd_and_use_rustc_in<
     f: F,
 ) -> std::io::Result<A> {
     with_current_directory(p, || {
+        eprintln!("creating session");
         rustc_span::create_default_session_if_not_set_then(|_| f())
     })
 }
@@ -149,6 +147,7 @@ use dfpp::serializers::SerializableCallOnlyFlow;
 pub struct G {
     pub graph: SerializableCallOnlyFlow,
     pub body: Bodies,
+    pub ctrl_name: Symbol,
 }
 
 pub trait GetCallSites {
@@ -266,7 +265,8 @@ impl G {
             .0
             .iter()
             .flat_map(|(bid, body)| {
-                body.0
+                body.1
+                     .0
                     .iter()
                     .filter(|s| s.1.contains(pattern))
                     .map(|s| (s.0, *bid))
@@ -279,7 +279,8 @@ impl G {
         let v = self.function_calls(pattern);
         assert!(
             v.len() == 1,
-            "function '{pattern}' should only occur once in {v:?}"
+            "function '{pattern}' should only occur once in {v:?} (found {})",
+            v.len()
         );
         v.into_iter().next().unwrap()
     }
@@ -289,15 +290,28 @@ impl G {
         let (graph, body) = dfpp::dbg::read_non_transitive_graph_and_body(
             std::fs::File::open(format!("{}.ntgb.json", s.as_str())).unwrap(),
         );
-        Self { graph, body }
+        Self {
+            graph,
+            body,
+            ctrl_name: s,
+        }
+    }
+    pub fn ctrl(&self) -> BodyId {
+        *self
+            .body
+            .0
+            .iter()
+            .find_map(|(id, (name, _))| (*name == self.ctrl_name).then_some(id))
+            .unwrap()
     }
     /// Get the `n`th argument for this `bid` body.
     pub fn argument(&self, bid: BodyId, n: usize) -> mir::Location {
-        self.body.0[&bid]
-            .0
+        let body = &self.body.0[&bid];
+        body.1
+             .0
             .iter()
             .find(|(_, s, _)| s == format!("Argument _{n}").as_str())
-            .unwrap_or_else(|| panic!("Argument {n} not found in {:?}", self.body.0[&bid]))
+            .unwrap_or_else(|| panic!("Argument {n} not found in {:?}", body))
             .0
     }
 }
