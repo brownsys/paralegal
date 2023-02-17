@@ -193,22 +193,53 @@ impl MatchCallSite for (mir::Location, hir::BodyId) {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum EdgeSelection {
+    Data,
+    Control,
+    Both
+}
+
+impl EdgeSelection {
+    fn use_control(self) -> bool {
+        matches!(self, EdgeSelection::Control | EdgeSelection::Both)
+    }
+    fn use_data(self) -> bool {
+        matches!(self, EdgeSelection::Data | EdgeSelection::Both)
+    }
+}
+
 impl G {
     /// Direct predecessor nodes of `n`
     fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
+        self.predecessors_configurable(n, EdgeSelection::Both)
+    }
+
+    fn predecessors_configurable(&self, n: &RawGlobalLocation, con_ty: EdgeSelection) -> impl Iterator<Item = &RawGlobalLocation> {
         self.graph
             .location_dependencies
             .get(n)
             .into_iter()
-            .flat_map(|deps| {
-                std::iter::once(&deps.ctrl_deps)
-                    .chain(deps.input_deps.iter())
+            .flat_map(move |deps| {
+                con_ty.use_control().then(|| 
+                    std::iter::once(&deps.ctrl_deps)
+                ).into_iter().flatten()
+                    .chain(
+                        con_ty.use_data().then(||
+                        deps.input_deps.iter()).into_iter().flatten())
                     .flat_map(|s| s.iter())
             })
     }
+    pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
+        self.connects_configurable(from, to, EdgeSelection::Both)
+    }
+
+    pub fn connects_data<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
+        self.connects_configurable(from, to, EdgeSelection::Data)
+    }
 
     /// Is there any path (using directed edges) from `from` to `to`.
-    pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
+    pub fn connects_configurable<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To, con_ty: EdgeSelection) -> bool {
         let mut queue = to
             .get_call_sites(&self.graph)
             .into_iter()
@@ -223,7 +254,7 @@ impl G {
             if from.match_(n) {
                 return true;
             }
-            queue.extend(self.predecessors(n))
+            queue.extend(self.predecessors_configurable(n, con_ty))
         }
         false
     }

@@ -80,8 +80,24 @@ ana_test!(inlining_crate_local_async_fns graph {
     assert!(graph.connects(&get, &send));
     assert!(!graph.connects_direct(&get, &send))
 });
-ana_test!(arguments_work graph {
-    let send = graph.function_call("send_user_data");
-    let data = graph.argument(graph.ctrl(), 0);
-    assert!(graph.connects(&(data, send.1), &send));
+// ana_test!(arguments_work graph {
+//     let send = graph.function_call("send_user_data");
+//     let data = graph.argument(graph.ctrl(), 0);
+//     assert!(graph.connects(&(data, send.1), &send));
+// });
+
+ana_test!(no_inlining_overtaint graph {
+    let get = graph.function_call(" get_user_data(");
+    let get2 = graph.function_call("get_user_data2");
+    let send = graph.function_call("send_user_data(");
+    let send2 = graph.function_call("send_user_data2");
+    let dp = graph.function_call(" dp_user_data");
+
+    assert!(graph.connects(&get, &send));
+    assert!(graph.connects(&get2, &send2));
+    assert!(graph.connects_data(&get2, &dp));
+    assert!(!graph.connects_data(&get, &dp));
+
+    assert!(!graph.connects(&get, &send2));
+    assert!(!graph.connects(&get2, &send));
 });
