@@ -105,4 +105,16 @@ async fn no_inlining_overtaint() {
     send_user_data2(&ud2);
 }
 
+async fn send_both(ud1: &UserData, ud2: &UserData) {
+    send_user_data(&ud1);
+    send_user_data2(&ud2);
+}
+
+#[dfpp::analyze]
+async fn no_immutable_inlining_overtaint() {
+    let mut ud1 = get_user_data();
+    let mut ud2 = get_user_data2();
+    send_both(&ud1, &ud2);
+}
+
 fn main() {}

@@ -101,3 +101,16 @@ ana_test!(no_inlining_overtaint graph {
     assert!(!graph.connects(&get, &send2));
     assert!(!graph.connects(&get2, &send));
 });
+
+ana_test!(no_immutable_inlining_overtaint graph {
+    let get = graph.function_call(" get_user_data(");
+    let get2 = graph.function_call("get_user_data2");
+    let send = graph.function_call("send_user_data(");
+    let send2 = graph.function_call("send_user_data2");
+
+    assert!(graph.connects(&get, &send));
+    assert!(graph.connects(&get2, &send2));
+    assert!(!graph.connects(&get, &send2));
+    assert!(!graph.connects(&get2, &send));
+});
+
