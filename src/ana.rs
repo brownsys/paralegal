@@ -1048,7 +1048,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             debug!(
                 "Creating callee {:?} to caller {} translation table",
                 terminator.kind,
-                self.tcx().item_name(self.local_def_id.to_def_id())
+                self.tcx().opt_item_name(self.local_def_id.to_def_id()).unwrap_or(Symbol::intern("unknown"))
             );
             // A translation table from places in `inner_flow` to places from
             // `self.body` by lining them up at the arguments.
