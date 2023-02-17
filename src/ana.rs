@@ -143,9 +143,13 @@ impl<'tcx, 'g> InlineableCallDescriptor<'tcx, 'g> {
             return None;
         }
         for &elem in child.projection[idx..].iter() {
-            ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
+            ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, fty| {
                 debug!("ty: {ty:?}, child: {child:?}, elem: {elem:?}, field: {field:?}");
-                ty.field_ty(tcx, field)
+                if matches!(ty.ty.kind(), ty::TyKind::Generator(..)) {
+                    fty
+                } else {
+                    ty.field_ty(tcx, field)
+                }
             });
             let elem = match elem {
                 ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
