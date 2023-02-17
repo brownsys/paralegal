@@ -120,12 +120,6 @@ impl<'tcx, 'g> InlineableCallDescriptor<'tcx, 'g> {
                 return Some(dst);
             }
         }
-        let old_child = child;
-        debug!("Translating {child:?}");
-        let child = self.remapper.strip_projection(child)?;
-        if old_child != child {
-            debug!("Remapped {old_child:?} to {child:?}");
-        }
 
         if !flowistry::mir::utils::PlaceExt::is_arg(&child, self.simplified_callee_body)
             || (mutated && !child.is_indirect())
@@ -144,7 +138,11 @@ impl<'tcx, 'g> InlineableCallDescriptor<'tcx, 'g> {
         let mut projection = parent_toplevel_arg.projection.to_vec();
         let mut ty = parent_toplevel_arg.ty(parent_body.local_decls(), tcx);
         let parent_param_env = tcx.param_env(parent_local_def_id);
-        for elem in child.projection.iter() {
+        let idx = 0; //self.remapper.strip_projection(child);
+        if child.projection.len() < idx {
+            return None;
+        }
+        for &elem in child.projection[idx..].iter() {
             ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
                 debug!("ty: {ty:?}, child: {child:?}, elem: {elem:?}, field: {field:?}");
                 ty.field_ty(tcx, field)
@@ -489,15 +487,25 @@ enum ReprojectFirstField<'tcx> {
 }
 
 impl<'tcx> ReprojectFirstField<'tcx> {
-    fn strip_projection(&self, from: mir::Place<'tcx>) -> Option<mir::Place<'tcx>> {
+    fn remap_to_parent(&self, from: mir::Place<'tcx>) -> mir::Place<'tcx> {
+        match *self {
+            ReprojectFirstField::Reproject { tcx ,..  } =>
+                <Place as flowistry::mir::utils::PlaceExt>::make(
+                    from.local,
+                    &from.projection[..self.strip_projection(from)],
+                    tcx,
+                ),
+            _ => from
+        }
+    }
+    fn strip_projection(&self, from: mir::Place<'tcx>) -> usize {
         match *self { ReprojectFirstField::Reproject {
             tcx,
             reprojected_elem,
             on_local,
-        } if on_local == from.local =>
-            (from.projection.get(0) == Some(&reprojected_elem)).then(||
-                <Place as flowistry::mir::utils::PlaceExt>::make(from.local, &from.projection[1..], tcx)),
-        _ => Some(from)
+        } if on_local == from.local &&
+            from.projection.get(0) == Some(&reprojected_elem) => 1,
+        _ => 0
         }
     }
 }
