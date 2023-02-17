@@ -617,7 +617,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
             //.filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
             .collect::<Vec<_>>();
 
-        debug!("Determined the reachable places for {p:?} are {a:?}");
+        debug!("Determined the reachable places for {p:?} are {:?} and also conflicts {a:?}", new_aliases.reachable_values(p, ast::Mutability::Not));
         debug!("Aliases would have been {:?}", new_aliases.aliases(p));
         a
     }
