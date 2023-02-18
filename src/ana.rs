@@ -437,7 +437,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                     let mir_location = flow_analysis.body.terminator_loc(block);
                     // Get the terminator location and find all the places that it references, then call deep_deps to find the corresponding dependency locations.
                     let referenced_places =
-                        places_read(tcx, mir_location, &flow_analysis.body.stmt_at(mir_location));
+                        places_read(tcx, mir_location, &flow_analysis.body.stmt_at(mir_location), None);
                     for deps in referenced_places.map(deep_deps_for) {
                         ctrl_deps.extend(deps);
                     }
@@ -612,7 +612,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         let a = new_aliases
             .reachable_values(p, ast::Mutability::Not)
             .iter()
-            .flat_map(|&p| new_aliases.conflicts(p).iter())
+            //.flat_map(|&p| new_aliases.conflicts(p).iter())
             .cloned()
             //.filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
             .collect::<Vec<_>>();
@@ -731,7 +731,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                         if let Some(stmt) = stmt_at_loc {
                             queue.extend(deps_for_places(
                                 location,
-                                &places_read(tcx, location.innermost_location_and_body().0, &stmt)
+                                &places_read(tcx, location.innermost_location_and_body().0, &stmt, Some(place))
                                     .collect::<Vec<_>>(),
                             ));
                         } else {

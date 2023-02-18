@@ -250,7 +250,7 @@ pub fn read_places_with_provenance<'tcx>(
     stmt: &Either<&Statement<'tcx>, &Terminator<'tcx>>,
     tcx: TyCtxt<'tcx>,
 ) -> impl Iterator<Item = Place<'tcx>> {
-    places_read(tcx, l, stmt)
+    places_read(tcx, l, stmt, None)
         .into_iter()
         .flat_map(move |place| place.provenance(tcx).into_iter())
 }
@@ -417,6 +417,7 @@ pub fn places_read<'tcx>(
     tcx: TyCtxt<'tcx>,
     location: mir::Location,
     stmt: &Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>,
+    read_after: Option<mir::Place<'tcx>>,
 ) -> impl Iterator<Item = mir::Place<'tcx>> {
     use mir::visit::Visitor;
     let mut places = HashSet::new();
@@ -456,12 +457,44 @@ pub fn places_read<'tcx>(
                     location,
                 );
             }
-            vis.visit_rvalue(&a.1, location);
+            if let mir::Rvalue::Aggregate(_, ops) = &a.1 {
+                match handle_aggregate_assign(a.0, &a.1, tcx, ops, read_after) {
+                    Ok(place) => 
+                        vis.visit_place(
+                            &place
+                            , mir::visit::PlaceContext::NonMutatingUse(mir::visit
+                            ::NonMutatingUseContext::Move), location),
+                    Err(e) => {
+                        warn!("handle_aggregate_assign threw {e}");
+                        vis.visit_rvalue(&a.1, location);
+                    }
+                }
+            } else {
+                vis.visit_rvalue(&a.1, location);
+            }
         }
         Either::Right(term) => vis.visit_terminator(term, location), // TODO this is not correct
         _ => (),
     };
     places.into_iter()
+}
+
+fn handle_aggregate_assign<'tcx>(
+    place: mir::Place<'tcx>,
+    rvalue: &mir::Rvalue<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    ops: &[mir::Operand<'tcx>],
+    read_after: Option<mir::Place<'tcx>>
+) -> Result<mir::Place<'tcx>, &'static str> {
+    let read_after = read_after.ok_or("no read after provided")?;
+    let inner_project = &read_after.projection[place.projection.len()..];
+    let (field, rest_project) = inner_project.split_first().ok_or("projection too short")?;
+    let f = if let mir::ProjectionElem::Field(f, _) = field {
+        f
+    } else {
+        return Err("Not a field projection");
+    };
+    Ok(ops[f.as_usize()].place().ok_or("Constant")?.project_deeper(rest_project, tcx))
 }
 
 /// Creates an `Identifier` for this `HirId`

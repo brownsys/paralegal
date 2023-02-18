@@ -61,21 +61,21 @@ async fn async_send_user_data(user_data: &UserData) {}
 struct UserData {
     pub data: Vec<i64>,
 }
-///#[dfpp::analyze]
+#[dfpp::analyze]
 async fn top_level_inlining_happens() {
     let mut user_data = get_user_data();
     dp_user_data(&mut user_data);
     send_user_data(&user_data);
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 async fn awaiting_works() {
     let mut user_data = async_get_user_data().await;
     async_dp_user_data(&mut user_data).await;
     async_send_user_data(&user_data).await;
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 async fn two_data_over_boundary() {
     let user_data1 = get_user_data();
     let user_data2 = get_user_data2();
@@ -84,19 +84,19 @@ async fn two_data_over_boundary() {
     send_user_data2(&user_data2);
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 async fn arguments_work(d: UserData) {
     send_user_data(&d);
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 async fn inlining_crate_local_async_fns() {
     let mut user_data = get_user_data();
     inlineable_async_dp_user_data(&mut user_data).await;
     send_user_data(&user_data);
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 async fn no_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
