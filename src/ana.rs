@@ -611,9 +611,9 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         let new_aliases = self.get_aliases(def_id, body_with_facts);
         let a = new_aliases
             .reachable_values(p, ast::Mutability::Not)
-            .iter()
-            //.flat_map(|&p| new_aliases.conflicts(p).iter())
-            .cloned()
+            .into_iter()
+            .flat_map(|&p| new_aliases.children(p).into_iter())
+            //.cloned()
             //.filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
             .collect::<Vec<_>>();
 
