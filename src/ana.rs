@@ -163,7 +163,7 @@ impl<'tcx, 'g> InlineableCallDescriptor<'tcx, 'g> {
             &projection,
             tcx,
         );
-        
+
         Some(parent_arg_projected)
     }
 }
@@ -436,8 +436,12 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 for block in controlled_by.iter().flat_map(|set| set.iter()) {
                     let mir_location = flow_analysis.body.terminator_loc(block);
                     // Get the terminator location and find all the places that it references, then call deep_deps to find the corresponding dependency locations.
-                    let referenced_places =
-                        places_read(tcx, mir_location, &flow_analysis.body.stmt_at(mir_location), None);
+                    let referenced_places = places_read(
+                        tcx,
+                        mir_location,
+                        &flow_analysis.body.stmt_at(mir_location),
+                        None,
+                    );
                     for deps in referenced_places.map(deep_deps_for) {
                         ctrl_deps.extend(deps);
                     }
@@ -493,23 +497,24 @@ enum ReprojectFirstField<'tcx> {
 impl<'tcx> ReprojectFirstField<'tcx> {
     fn remap_to_parent(&self, from: mir::Place<'tcx>) -> mir::Place<'tcx> {
         match *self {
-            ReprojectFirstField::Reproject { tcx ,..  } =>
+            ReprojectFirstField::Reproject { tcx, .. } => {
                 <Place as flowistry::mir::utils::PlaceExt>::make(
                     from.local,
                     &from.projection[..self.strip_projection(from)],
                     tcx,
-                ),
-            _ => from
+                )
+            }
+            _ => from,
         }
     }
     fn strip_projection(&self, from: mir::Place<'tcx>) -> usize {
-        match *self { ReprojectFirstField::Reproject {
-            tcx,
-            reprojected_elem,
-            on_local,
-        } if on_local == from.local &&
-            from.projection.get(0) == Some(&reprojected_elem) => 1,
-        _ => 0
+        match *self {
+            ReprojectFirstField::Reproject {
+                tcx,
+                reprojected_elem,
+                on_local,
+            } if on_local == from.local && from.projection.get(0) == Some(&reprojected_elem) => 1,
+            _ => 0,
         }
     }
 }
@@ -731,8 +736,13 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                         if let Some(stmt) = stmt_at_loc {
                             queue.extend(deps_for_places(
                                 location,
-                                &places_read(tcx, location.innermost_location_and_body().0, &stmt, Some(place))
-                                    .collect::<Vec<_>>(),
+                                &places_read(
+                                    tcx,
+                                    location.innermost_location_and_body().0,
+                                    &stmt,
+                                    Some(place),
+                                )
+                                .collect::<Vec<_>>(),
                             ));
                         } else {
                             error!("Rejection without statement should not happen anymore. Rejected {location} without statement");
@@ -896,7 +906,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                         ReprojectFirstField::Reproject {
                             tcx: self.tcx(),
                             reprojected_elem,
-                            on_local
+                            on_local,
                         }
                     } else {
                         ReprojectFirstField::NoReproject
@@ -1048,7 +1058,9 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             debug!(
                 "Creating callee {:?} to caller {} translation table",
                 terminator.kind,
-                self.tcx().opt_item_name(self.local_def_id.to_def_id()).unwrap_or(Symbol::intern("unknown"))
+                self.tcx()
+                    .opt_item_name(self.local_def_id.to_def_id())
+                    .unwrap_or(Symbol::intern("unknown"))
             );
             // A translation table from places in `inner_flow` to places from
             // `self.body` by lining them up at the arguments.

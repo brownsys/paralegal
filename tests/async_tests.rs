@@ -113,4 +113,3 @@ ana_test!(no_immutable_inlining_overtaint graph {
     assert!(!graph.connects(&get, &send2));
     assert!(!graph.connects(&get2, &send));
 });
-

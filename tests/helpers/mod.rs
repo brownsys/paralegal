@@ -197,7 +197,7 @@ impl MatchCallSite for (mir::Location, hir::BodyId) {
 enum EdgeSelection {
     Data,
     Control,
-    Both
+    Both,
 }
 
 impl EdgeSelection {
@@ -215,18 +215,28 @@ impl G {
         self.predecessors_configurable(n, EdgeSelection::Both)
     }
 
-    fn predecessors_configurable(&self, n: &RawGlobalLocation, con_ty: EdgeSelection) -> impl Iterator<Item = &RawGlobalLocation> {
+    fn predecessors_configurable(
+        &self,
+        n: &RawGlobalLocation,
+        con_ty: EdgeSelection,
+    ) -> impl Iterator<Item = &RawGlobalLocation> {
         self.graph
             .location_dependencies
             .get(n)
             .into_iter()
             .flat_map(move |deps| {
-                con_ty.use_control().then(|| 
-                    std::iter::once(&deps.ctrl_deps)
-                ).into_iter().flatten()
+                con_ty
+                    .use_control()
+                    .then(|| std::iter::once(&deps.ctrl_deps))
+                    .into_iter()
+                    .flatten()
                     .chain(
-                        con_ty.use_data().then(||
-                        deps.input_deps.iter()).into_iter().flatten())
+                        con_ty
+                            .use_data()
+                            .then(|| deps.input_deps.iter())
+                            .into_iter()
+                            .flatten(),
+                    )
                     .flat_map(|s| s.iter())
             })
     }
@@ -234,12 +244,21 @@ impl G {
         self.connects_configurable(from, to, EdgeSelection::Both)
     }
 
-    pub fn connects_data<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
+    pub fn connects_data<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+    ) -> bool {
         self.connects_configurable(from, to, EdgeSelection::Data)
     }
 
     /// Is there any path (using directed edges) from `from` to `to`.
-    pub fn connects_configurable<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To, con_ty: EdgeSelection) -> bool {
+    pub fn connects_configurable<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+        con_ty: EdgeSelection,
+    ) -> bool {
         let mut queue = to
             .get_call_sites(&self.graph)
             .into_iter()

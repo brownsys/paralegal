@@ -459,11 +459,13 @@ pub fn places_read<'tcx>(
             }
             if let mir::Rvalue::Aggregate(_, ops) = &a.1 {
                 match handle_aggregate_assign(a.0, &a.1, tcx, ops, read_after) {
-                    Ok(place) => 
-                        vis.visit_place(
-                            &place
-                            , mir::visit::PlaceContext::NonMutatingUse(mir::visit
-                            ::NonMutatingUseContext::Move), location),
+                    Ok(place) => vis.visit_place(
+                        &place,
+                        mir::visit::PlaceContext::NonMutatingUse(
+                            mir::visit::NonMutatingUseContext::Move,
+                        ),
+                        location,
+                    ),
                     Err(e) => {
                         warn!("handle_aggregate_assign threw {e}");
                         vis.visit_rvalue(&a.1, location);
@@ -484,7 +486,7 @@ fn handle_aggregate_assign<'tcx>(
     rvalue: &mir::Rvalue<'tcx>,
     tcx: TyCtxt<'tcx>,
     ops: &[mir::Operand<'tcx>],
-    read_after: Option<mir::Place<'tcx>>
+    read_after: Option<mir::Place<'tcx>>,
 ) -> Result<mir::Place<'tcx>, &'static str> {
     let read_after = read_after.ok_or("no read after provided")?;
     let inner_project = &read_after.projection[place.projection.len()..];
@@ -494,7 +496,10 @@ fn handle_aggregate_assign<'tcx>(
     } else {
         return Err("Not a field projection");
     };
-    Ok(ops[f.as_usize()].place().ok_or("Constant")?.project_deeper(rest_project, tcx))
+    Ok(ops[f.as_usize()]
+        .place()
+        .ok_or("Constant")?
+        .project_deeper(rest_project, tcx))
 }
 
 /// Creates an `Identifier` for this `HirId`
