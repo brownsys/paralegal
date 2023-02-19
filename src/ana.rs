@@ -21,7 +21,7 @@
 //!
 //! 3. Combine the [`Ctrl`] graphs into one [`ProgramDescription`]
 
-use std::{borrowr::Cow, cell::RefCell, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
     consts, dbg,
