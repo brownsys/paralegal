@@ -94,9 +94,14 @@ pub struct Args {
     /// Print additional logging output (up to the "info" level)
     #[clap(short, long, env = "DFPP_VERBOSE")]
     verbose: bool,
-    /// Print additional logging output (up to the "debug" level)
+    /// Print additional logging output (up to the "debug" level).
+    ///
+    /// Passing this flag (or env variable) with no value will enable debug
+    /// output globally. You may instead pass the name of a specific target
+    /// function and then only during analysis of that function the debug output
+    /// is enabled.
     #[clap(long, env = "DFPP_DEBUG")]
-    debug: bool,
+    debug: Option<Option<String>>,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
@@ -264,7 +269,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
-        let lvl = if plugin_args.debug {
+        let lvl = if plugin_args.debug.is_some() {
             log::LevelFilter::Debug
         } else if plugin_args.verbose {
             log::LevelFilter::Info
@@ -276,6 +281,13 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             //.with_module_level("flowistry", log::LevelFilter::Error)
             .init()
             .unwrap();
+        if plugin_args.debug.as_ref().map_or(false, Option::is_some) {
+            log::set_max_level(if plugin_args.verbose {
+                log::LevelFilter::Info
+            } else {
+                log::LevelFilter::Warn
+            })
+        }
         let opts = Box::leak(Box::new(plugin_args));
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }

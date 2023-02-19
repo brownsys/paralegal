@@ -1387,6 +1387,13 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         target: FnToAnalyze,
         gli: GLI<'g>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
+        let reset_lvl =
+            matches!(self.opts.debug, Some(Some(ref s)) if s.as_str() == target.name().as_str())
+                .then(|| {
+                    let lvl = log::max_level();
+                    log::set_max_level(log::LevelFilter::Debug);
+                    lvl
+                });
         let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
         fn register_call_site<'tcx>(
@@ -1572,6 +1579,9 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))),
                 DataSink::Return,
             );
+        }
+        if let Some(reset_lvl) = reset_lvl {
+            log::set_max_level(reset_lvl);
         }
         Ok((Identifier::new(target.name()), flows))
     }
