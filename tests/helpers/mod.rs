@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+
 extern crate either;
 extern crate rustc_hir as hir;
 extern crate rustc_middle;
@@ -37,7 +39,7 @@ pub fn with_current_directory<
     let current = std::env::current_dir()?;
     std::env::set_current_dir(p)?;
     let res = f();
-    let set_dir = std::env::set_current_dir(current)?;
+    std::env::set_current_dir(current)?;
     Ok(res)
 }
 

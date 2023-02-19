@@ -22,14 +22,14 @@
 //! 3. Combine the [`Ctrl`] graphs into one [`ProgramDescription`]
 
 use std::{
-    borrow::{Borrow, Cow},
+    borrowr::Cow,
     cell::RefCell,
     rc::Rc,
 };
 
 use crate::{
     consts, dbg,
-    desc::{self, *},
+    desc::{*},
     ir::*,
     rust::*,
     sah::HashVerifications,
@@ -485,43 +485,6 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     }
 }
 
-enum ReprojectFirstField<'tcx> {
-    NoReproject,
-    Reproject {
-        tcx: TyCtxt<'tcx>,
-        reprojected_elem: mir::PlaceElem<'tcx>,
-        on_local: mir::Local,
-    },
-}
-
-impl<'tcx> ReprojectFirstField<'tcx> {
-    fn remap_to_parent(&self, from: mir::Place<'tcx>) -> mir::Place<'tcx> {
-        match *self {
-            ReprojectFirstField::Reproject { tcx, .. } => {
-                <Place as flowistry::mir::utils::PlaceExt>::make(
-                    from.local,
-                    &from.projection[..self.strip_projection(from)],
-                    tcx,
-                )
-            }
-            _ => from,
-        }
-    }
-    fn strip_projection(&self, from: mir::Place<'tcx>) -> usize {
-        match *self {
-            ReprojectFirstField::Reproject {
-                tcx,
-                reprojected_elem,
-                on_local,
-            } if on_local == from.local && from.projection.get(0) == Some(&reprojected_elem) => 1,
-            _ => 0,
-        }
-    }
-}
-
-fn remap_unchanged<'tcx>(_: TyCtxt<'tcx>, from: mir::Place<'tcx>) -> mir::Place<'tcx> {
-    from
-}
 
 use ty::RegionVid;
 
@@ -616,7 +579,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         let new_aliases = self.get_aliases(def_id, body_with_facts);
         let a = new_aliases
             .reachable_values(p, ast::Mutability::Not)
-            .into_iter()
+            .iter()
             .flat_map(|&p| new_aliases.children(p).into_iter())
             //.cloned()
             //.filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
@@ -857,9 +820,9 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         t: &mir::Terminator<'tcx>,
     ) -> Result<InlineableCallDescriptor<'tcx, 'g>, &'static str> {
         t.as_fn_and_args().and_then(|(p, mut args, call_return)| {
-            let (p, call_arguments, needs_reproject) =
+            let (p, call_arguments) =
                 if Some(p) != self.tcx().lang_items().from_generator_fn() {
-                    (p, args, false)
+                    (p, args)
                 } else {
                     let closure = args
                         .pop()
@@ -874,7 +837,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     } else {
                         unreachable!("Expected Generator")
                     };
-                    (closure_fn, vec![Some(closure), None], true)
+                    (closure_fn, vec![Some(closure), None])
                 };
 
             self.tcx()
@@ -897,27 +860,12 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     let simplified_callee_body =
                         borrowck_facts::get_body_with_borrowck_facts(self.tcx(), callee_local_id)
                             .simplified_body();
-                    let remapper = if needs_reproject {
-                        let on_local = mir::Local::from_usize(1);
-                        let reprojected_elem = mir::PlaceElem::Field(
-                            mir::Field::from_usize(0),
-                            simplified_callee_body.local_decls[on_local].ty,
-                        );
-                        ReprojectFirstField::Reproject {
-                            tcx: self.tcx(),
-                            reprojected_elem,
-                            on_local,
-                        }
-                    } else {
-                        ReprojectFirstField::NoReproject
-                    };
                     Ok(InlineableCallDescriptor {
                         callee_flow,
                         callee_body_id,
                         simplified_callee_body,
                         call_arguments,
                         call_return,
-                        remapper,
                     })
                 })
         })
@@ -1032,7 +980,6 @@ struct InlineableCallDescriptor<'tcx, 'g> {
     simplified_callee_body: &'tcx mir::Body<'tcx>,
     call_arguments: Vec<Option<mir::Place<'tcx>>>,
     call_return: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-    remapper: ReprojectFirstField<'tcx>,
 }
 
 impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx>
@@ -1335,31 +1282,22 @@ pub struct CollectingVisitor<'tcx, 'a> {
     marked_stmts: HashMap<HirId, ((Vec<Annotation>, usize), Span, DefId)>,
     /// Functions that are annotated with `#[dfpp::analyze]`. For these we will
     /// later perform the analysis
-    functions_to_analyze: Vec<FnToAnalyze<'tcx>>,
+    functions_to_analyze: Vec<FnToAnalyze>,
 
     /// Annotations that are to be placed on external functions and types.
     external_annotations: &'a AnnotationMap,
 }
 
-pub struct FnToAnalyze<'tcx> {
+pub struct FnToAnalyze {
     name: Ident,
     body_id: BodyId,
-    kind: FnKind<'tcx>,
-    declaration: &'tcx hir::FnDecl<'tcx>,
 }
 
-impl<'tcx> FnToAnalyze<'tcx> {
+impl FnToAnalyze {
     fn name(&self) -> Symbol {
         self.name.name
     }
 
-    fn asyncness(&self) -> hir::IsAsync {
-        self.kind.asyncness()
-    }
-
-    fn is_async(&self) -> bool {
-        matches!(self.asyncness(), hir::IsAsync::Async)
-    }
 }
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
@@ -1433,7 +1371,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         _hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
-        target: FnToAnalyze<'tcx>,
+        target: FnToAnalyze,
         gli: GLI<'g>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
@@ -1822,8 +1760,6 @@ impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
                 self.functions_to_analyze.push(FnToAnalyze {
                     name: *name,
                     body_id,
-                    kind,
-                    declaration,
                 });
             }
             _ => (),

@@ -483,7 +483,7 @@ pub fn places_read<'tcx>(
 
 fn handle_aggregate_assign<'tcx>(
     place: mir::Place<'tcx>,
-    rvalue: &mir::Rvalue<'tcx>,
+    _rvalue: &mir::Rvalue<'tcx>,
     tcx: TyCtxt<'tcx>,
     ops: &[mir::Operand<'tcx>],
     read_after: Option<mir::Place<'tcx>>,

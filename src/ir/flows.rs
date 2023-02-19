@@ -51,20 +51,11 @@ pub struct Flow<'tcx, 'g> {
 ///
 /// The special matrix `return_state` is the union of all dependency matrices at
 /// each call to `return`.
+#[derive(Default)]
 pub struct GlobalFlowGraph<'tcx, 'g> {
     pub location_states: HashMap<GlobalLocation<'g>, TranslatedDepMatrix<'tcx, 'g>>,
     pub return_state: GlobalDepMatrix<'tcx, 'g>,
 }
-
-impl<'tcx, 'g> Default for GlobalFlowGraph<'tcx, 'g> {
-    fn default() -> Self {
-        GlobalFlowGraph {
-            location_states: HashMap::new(),
-            return_state: GlobalDepMatrix::new(),
-        }
-    }
-}
-
 /// The analysis result for one function. See [`GlobalFlowGraph`] for
 /// explanations, this struct just also bundles in the [`AnalysisResults`] we
 /// got from flowistry for the `self.flow.root_function`. Currently the sole
