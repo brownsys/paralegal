@@ -6,13 +6,12 @@ use dfpp::Symbol;
 mod helpers;
 use helpers::*;
 
-fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::io::Result<A> {
-    with_current_directory("tests/control-flow-tests", f)
-}
+const CRATE_DIR : &str = "tests/control-flow-tests";
+
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = *helpers::DFPP_INSTALLED
-        && do_in_crate_dir(|| { run_dfpp_with_graph_dump() }).map_or_else(
+        && with_current_directory(CRATE_DIR, || { run_dfpp_with_graph_dump() }).map_or_else(
             |e| {
                 println!("io err {}", e);
                 false
@@ -23,15 +22,7 @@ lazy_static! {
 
 macro_rules! define_test {
     ($name:ident : $graph:ident -> $block:block) => {
-        #[test]
-        fn $name() {
-            assert!(*TEST_CRATE_ANALYZED);
-            use_rustc(|| {
-                let $graph =
-                    do_in_crate_dir(|| G::from_file(Symbol::intern(stringify!($name)))).unwrap();
-                $block
-            });
-        }
+        define_G_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $name : $graph -> $block);
     };
 }
 

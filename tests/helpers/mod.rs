@@ -18,7 +18,7 @@ use std::borrow::Cow;
 use std::io::prelude::*;
 
 lazy_static! {
-    static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
     pub static ref DFPP_INSTALLED: bool = install_dfpp();
 }
 
@@ -117,6 +117,37 @@ macro_rules! define_test_skip {
         #[test]
         fn $name() {
             eprintln!(concat!("Skipping test ", stringify!($name)));
+        }
+    };
+}
+
+pub const CLEAN_TEMPORARIES : bool = true;
+
+/// A base template for tests that use the [G] representation. 
+/// 
+/// This takes care of cleaning up the `.ntgb.json` files that are created for
+/// the tests. This is to ensure that tests cannot run on old versions of the
+/// output. Files are only removed if the test runs successfully.
+/// 
+/// Individual test files usually define a convenience macro that passes a
+/// test-file-global `analyze` and `crate_dir`.
+#[macro_export]
+macro_rules! define_G_test_template {
+    ($analyze:expr, $crate_dir:expr, $name:ident : $graph:ident -> $block:block) => {
+        #[test]
+        fn $name() {
+            assert!(*$analyze);
+            use_rustc(|| {
+                let $graph =
+                    with_current_directory($crate_dir, || G::from_file(Symbol::intern(stringify!($name)))).unwrap();
+                $block
+                if CLEAN_TEMPORARIES {
+                    let _guard = CWD_MUTEX.lock();
+                    let mut p : std::path::PathBuf = $crate_dir.into();
+                    p.push(concat!(stringify!($name), ".ntgb.json"));
+                    std::fs::remove_file(p).unwrap()
+                }
+            });
         }
     };
 }
