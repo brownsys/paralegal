@@ -22,14 +22,14 @@ struct UserData {
 }
 
 #[dfpp::analyze]
-fn basic_happens_before() {
+fn simple_happens_before_has_connections() {
     let mut user_data = get_user_data();
     dp_user_data(&mut user_data);
     send_user_data(&user_data);
 }
 
 #[dfpp::analyze]
-fn conditional_happens_before(cond: bool) {
+fn happens_before_if_has_connections(cond: bool) {
     let mut user_data = get_user_data();
     if cond {
         dp_user_data(&mut user_data);
@@ -84,7 +84,7 @@ fn loop_retains_dependency(mut x: i32) {
 }
 
 #[dfpp::analyze]
-fn args(mut x: i32) {
+fn arguments(mut x: i32) {
     let mut user_data = get_user_data();
     while x < 10 {
         dp_user_data(&mut user_data);
@@ -162,7 +162,7 @@ fn read_t(t: &T) {
 }
 
 #[dfpp::analyze]
-fn spurious_connections_in_derefs() {
+fn spurious_connections_in_deref() {
     let s = new_s();
     let t : &T = &*s;
     read_t(t);

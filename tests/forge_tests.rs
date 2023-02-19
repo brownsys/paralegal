@@ -6,8 +6,7 @@ mod helpers;
 use helpers::*;
 
 fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::io::Result<A> {
-    let crate_dir: std::path::PathBuf = "tests/forge-tests".to_string().into();
-    cwd_and_use_rustc_in(&crate_dir, f)
+    with_current_directory("tests/forge-tests", f)
 }
 
 lazy_static! {
@@ -20,7 +19,6 @@ lazy_static! {
             |t| t
         );
 }
-
 // This will create a forge file with the name "test_{test_name}.frg"
 // that test expects that running {property} for Flows is {result}.
 // To test a predicate on a specific ctrl, property should be of the form

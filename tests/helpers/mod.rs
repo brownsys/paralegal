@@ -111,6 +111,16 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
         .success()
 }
 
+#[macro_export]
+macro_rules! define_test_skip {
+    ($name: ident : $graph:ident -> $block:block) => {
+        #[test]
+        fn $name() {
+            eprintln!(concat!("Skipping test ", stringify!($name)));
+        }
+    };
+}
+
 pub fn run_forge(file: &str) -> bool {
     std::process::Command::new("racket")
         .arg(file)

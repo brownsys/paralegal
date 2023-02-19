@@ -7,8 +7,7 @@ mod helpers;
 use helpers::*;
 
 fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::io::Result<A> {
-    let crate_dir: std::path::PathBuf = "tests/control-flow-tests".to_string().into();
-    cwd_and_use_rustc_in(&crate_dir, f)
+    with_current_directory("tests/control-flow-tests", f)
 }
 
 lazy_static! {
@@ -22,11 +21,21 @@ lazy_static! {
         );
 }
 
-#[test]
-fn process_basic() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("process_basic"))).unwrap();
+macro_rules! define_test {
+    ($name:ident : $graph:ident -> $block:block) => {
+        #[test]
+        fn $name() {
+            assert!(*TEST_CRATE_ANALYZED);
+            use_rustc(|| {
+                let $graph =
+                    do_in_crate_dir(|| G::from_file(Symbol::intern(stringify!($name)))).unwrap();
+                $block
+            });
+        }
+    };
+}
 
+define_test!(process_basic : graph -> {
     let get = graph.function_call("get_user_data");
     let check = graph.function_call("check_user_data");
     let send = graph.function_call("send_user_data");
@@ -35,13 +44,9 @@ fn process_basic() {
     assert!(!graph.connects(&check, &send));
     assert!(graph.connects(&get, &send));
     assert!(graph.connects_direct(&get, &send));
-}
+});
 
-#[test]
-fn process_if() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("process_if"))).unwrap();
-
+define_test!(process_if : graph -> {
     let get = graph.function_call("get_user_data");
     let check = graph.function_call("check_user_data");
     let send = graph.function_call("send_user_data");
@@ -51,13 +56,9 @@ fn process_if() {
     assert!(graph.connects(&get, &send));
     assert!(graph.connects_direct(&get, &send));
     assert!(graph.connects_direct(&check, &send));
-}
+});
 
-#[test]
-fn process_if_after() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("process_if_after"))).unwrap();
-
+define_test!(process_if_after : graph -> {
     let get = graph.function_call("get_user_data");
     let check = graph.function_call("check_user_data");
     let send = graph.function_call("send_user_data");
@@ -67,13 +68,9 @@ fn process_if_after() {
     assert!(graph.connects(&get, &send));
     assert!(graph.connects_direct(&get, &send));
     assert!(!graph.connects_direct(&check, &send));
-}
+});
 
-#[test]
-fn process_nested_if() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("process_nested_if"))).unwrap();
-
+define_test!(process_nested_if : graph -> {
     let get = graph.function_call("get_user_data");
     let check = graph.function_call("check_user_data");
     let check2 = graph.function_call("check2");
@@ -86,14 +83,9 @@ fn process_nested_if() {
     assert!(graph.connects_direct(&get, &send));
     assert!(graph.connects_direct(&check, &check2));
     assert!(graph.connects_direct(&check2, &send));
-}
+});
 
-#[test]
-fn process_if_multiple_statements() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph =
-        do_in_crate_dir(|| G::from_file(Symbol::intern("process_if_multiple_statements"))).unwrap();
-
+define_test!(process_if_multiple_statements : graph -> {
     let get = graph.function_call("get_user_data");
     let check = graph.function_call("check_user_data");
     let modify = graph.function_call("modify");
@@ -107,14 +99,9 @@ fn process_if_multiple_statements() {
     assert!(graph.connects_direct(&check, &modify));
     assert!(graph.connects_direct(&check, &send));
     assert!(graph.connects_direct(&modify, &send));
-}
+});
 
-#[test]
-fn process_if_not_function_call() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph =
-        do_in_crate_dir(|| G::from_file(Symbol::intern("process_if_not_function_call"))).unwrap();
-
+define_test!(process_if_not_function_call : graph -> {
     let getx = graph.function_call("get_x");
     let get = graph.function_call("get_user_data");
     let modify = graph.function_call("modify");
@@ -125,13 +112,9 @@ fn process_if_not_function_call() {
     assert!(graph.connects_direct(&getx, &modify));
     assert!(graph.connects(&getx, &send));
     assert!(!graph.connects_direct(&getx, &send));
-}
+});
 
-#[test]
-fn process_no_args() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("process_no_args"))).unwrap();
-
+define_test!(process_no_args : graph -> {
     let getx = graph.function_call("get_x");
     let get = graph.function_call("get_user_data");
     let send = graph.function_call("send_user_data");
@@ -141,4 +124,4 @@ fn process_no_args() {
     assert!(graph.connects(&getx, &send));
     assert!(graph.connects_direct(&get, &send));
     assert!(graph.connects_direct(&getx, &get));
-}
+});

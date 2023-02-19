@@ -7,8 +7,7 @@ mod helpers;
 use helpers::*;
 
 fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::io::Result<A> {
-    let crate_dir: std::path::PathBuf = "tests/non-transitive-graph-tests".to_string().into();
-    cwd_and_use_rustc_in(&crate_dir, f)
+    with_current_directory("tests/non-transitive-graph-tests", f)
 }
 
 lazy_static! {
@@ -22,23 +21,29 @@ lazy_static! {
         );
 }
 
-#[test]
-fn return_is_tracked() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("return_is_tracked"))).unwrap();
+macro_rules! define_test {
+    ($name:ident :  $graph:ident -> $block:block) => {
+        #[test]
+        fn $name() {
+            assert!(*TEST_CRATE_ANALYZED);
+            use_rustc(|| {
+                let $graph =
+                    do_in_crate_dir(|| G::from_file(Symbol::intern(stringify!($name)))).unwrap();
+                $block
+            });
+        }
+    };
+}
 
+define_test!(return_is_tracked : graph -> {
     let get = graph.function_call("input");
     let send = graph.function_call("output");
 
     assert!(graph.returns_direct(&send));
     assert!(graph.returns(&get));
-}
+});
 
-#[test]
-fn simple_happens_before_has_connections() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("basic_happens_before"))).unwrap();
-
+define_test!(simple_happens_before_has_connections: graph -> {
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
@@ -47,48 +52,27 @@ fn simple_happens_before_has_connections() {
     assert!(graph.connects(&dp, &send));
     assert!(graph.connects(&get, &send));
     assert!(!graph.connects_direct(&get, &send))
-}
+});
 
-#[test]
-fn happens_before_if_has_connections() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph =
-        do_in_crate_dir(|| G::from_file(Symbol::intern("conditional_happens_before"))).unwrap();
-
+define_test!(happens_before_if_has_connections : graph -> {
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
     assert!(graph.connects(&get, &dp,));
     assert!(graph.connects(&dp, &send));
     assert!(graph.connects_direct(&get, &send));
-}
+});
 
-#[test]
-fn data_influenced_conditional_happens_before() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| {
-        G::from_file(Symbol::intern("data_influenced_conditional_happens_before"))
-    })
-    .unwrap();
-
+define_test!(data_influenced_conditional_happens_before: graph -> {
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
     assert!(graph.connects(&get, &dp,));
     assert!(graph.connects(&dp, &send));
     assert!(graph.connects_direct(&get, &send));
-}
+});
 
-#[test]
-fn conditional_happens_before_with_two_parents_before_if() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| {
-        G::from_file(Symbol::intern(
-            "conditional_happens_before_with_two_parents_before_if",
-        ))
-    })
-    .unwrap();
-
+define_test!(conditional_happens_before_with_two_parents_before_if: graph -> {
     let get = graph.function_call("get_user_data_with");
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
@@ -99,27 +83,18 @@ fn conditional_happens_before_with_two_parents_before_if() {
     assert!(graph.connects_direct(&get, &send));
     assert!(!graph.connects_direct(&push, &send));
     assert!(!graph.connects_direct(&push, &dp));
-}
+});
 
-#[test]
-fn loops() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("loops"))).unwrap();
-
+define_test!(loops : graph -> {
     let get = graph.function_call("get_user_data");
     let dp = graph.function_call("dp_user_data");
     let send = graph.function_call("send_user_data");
     assert!(graph.connects(&get, &dp,));
     assert!(graph.connects(&dp, &send));
     assert!(graph.connects_direct(&get, &send));
-}
+});
 
-#[test]
-fn loop_retains_dependency() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph =
-        do_in_crate_dir(|| G::from_file(Symbol::intern("loop_retains_dependency"))).unwrap();
-
+define_test!(loop_retains_dependency : graph -> {
     let get = graph.function_call("get_user_data");
     let get_other = graph.function_call("get_other_data");
     let dp = graph.function_call("dp_user_data");
@@ -131,27 +106,18 @@ fn loop_retains_dependency() {
     assert!(graph.connects(&dp, &send));
     assert!(graph.connects(&modify_other, &send));
     assert!(graph.connects_direct(&get, &send));
-}
+});
 
-#[allow(dead_code)]
-fn arguments() {
-    assert!(*TEST_CRATE_ANALYZED);
-
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("args"))).unwrap();
+define_test_skip!(arguments : graph -> {
     let body_id = *graph.body.0.keys().next().unwrap();
     let a1 = graph.argument(body_id, 0);
 
     let dp = graph.function_call("dp_user_data");
 
     assert!(graph.connects(&(a1, body_id), &dp));
-}
+});
 
-#[test]
-fn modify_pointer() {
-    assert!(*TEST_CRATE_ANALYZED);
-
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("modify_pointer"))).unwrap();
-
+define_test!(modify_pointer : graph -> {
     let get = graph.function_call("get_user_data");
     let create = graph.function_call("modify_vec");
     let send = graph.function_call("send_user_data");
@@ -159,28 +125,18 @@ fn modify_pointer() {
     assert!(graph.connects(&get, &create));
     assert!(graph.connects(&create, &send));
     assert!(graph.connects(&get, &send));
-}
+});
 
-#[test]
-fn on_mut_var() {
-    assert!(*TEST_CRATE_ANALYZED);
-
-    let graph = do_in_crate_dir(|| G::from_file(Symbol::intern("on_mut_var"))).unwrap();
-
+define_test!(on_mut_var : graph -> {
     let source = graph.function_call("source");
     let modify = graph.function_call("modify_it");
     let receive = graph.function_call("receiver");
 
     assert!(graph.connects(&source, &modify));
     assert!(graph.connects(&modify, &receive));
-}
+});
 
-#[test]
-fn spurious_connections_in_deref() {
-    assert!(*TEST_CRATE_ANALYZED);
-    let graph =
-        do_in_crate_dir(|| G::from_file(Symbol::intern("spurious_connections_in_derefs"))).unwrap();
-
+define_test!(spurious_connections_in_deref: graph -> {
     let source = &graph.function_call("new_s");
     let modify = &graph.function_call("deref");
     let receive = &graph.function_call("read_t");
@@ -188,4 +144,4 @@ fn spurious_connections_in_deref() {
     assert!(graph.connects_direct(modify, receive));
     assert!(!graph.connects_direct(source, receive));
     assert!(graph.connects(source, receive));
-}
+});
