@@ -6,8 +6,7 @@ use dfpp::Symbol;
 mod helpers;
 use helpers::*;
 
-const CRATE_DIR : &str = "tests/control-flow-tests";
-
+const CRATE_DIR: &str = "tests/control-flow-tests";
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = *helpers::DFPP_INSTALLED

@@ -1,5 +1,4 @@
 #[allow(dead_code)]
-
 extern crate either;
 extern crate rustc_hir as hir;
 extern crate rustc_middle;
@@ -123,14 +122,14 @@ macro_rules! define_test_skip {
     };
 }
 
-pub const CLEAN_TEMPORARIES : bool = true;
+pub const CLEAN_TEMPORARIES: bool = true;
 
-/// A base template for tests that use the [G] representation. 
-/// 
+/// A base template for tests that use the [G] representation.
+///
 /// This takes care of cleaning up the `.ntgb.json` files that are created for
 /// the tests. This is to ensure that tests cannot run on old versions of the
 /// output. Files are only removed if the test runs successfully.
-/// 
+///
 /// Individual test files usually define a convenience macro that passes a
 /// test-file-global `analyze` and `crate_dir`.
 #[macro_export]

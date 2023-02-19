@@ -21,15 +21,11 @@
 //!
 //! 3. Combine the [`Ctrl`] graphs into one [`ProgramDescription`]
 
-use std::{
-    borrowr::Cow,
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{borrowr::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
     consts, dbg,
-    desc::{*},
+    desc::*,
     ir::*,
     rust::*,
     sah::HashVerifications,
@@ -485,7 +481,6 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     }
 }
 
-
 use ty::RegionVid;
 
 extern crate polonius_engine;
@@ -585,7 +580,10 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
             //.filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
             .collect::<Vec<_>>();
 
-        debug!("Determined the reachable places for {p:?} are {:?} and also conflicts {a:?}", new_aliases.reachable_values(p, ast::Mutability::Not));
+        debug!(
+            "Determined the reachable places for {p:?} are {:?} and also conflicts {a:?}",
+            new_aliases.reachable_values(p, ast::Mutability::Not)
+        );
         debug!("Aliases would have been {:?}", new_aliases.aliases(p));
         a
     }
@@ -820,25 +818,24 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         t: &mir::Terminator<'tcx>,
     ) -> Result<InlineableCallDescriptor<'tcx, 'g>, &'static str> {
         t.as_fn_and_args().and_then(|(p, mut args, call_return)| {
-            let (p, call_arguments) =
-                if Some(p) != self.tcx().lang_items().from_generator_fn() {
-                    (p, args)
+            let (p, call_arguments) = if Some(p) != self.tcx().lang_items().from_generator_fn() {
+                (p, args)
+            } else {
+                let closure = args
+                    .pop()
+                    .expect("Expected one closure argument")
+                    .expect("Expected non-const closure argument");
+                debug_assert!(args.is_empty(), "Expected only one argument");
+                debug_assert!(closure.projection.is_empty());
+                let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                    self.body.local_decls[closure.local].ty.kind()
+                {
+                    *gid
                 } else {
-                    let closure = args
-                        .pop()
-                        .expect("Expected one closure argument")
-                        .expect("Expected non-const closure argument");
-                    debug_assert!(args.is_empty(), "Expected only one argument");
-                    debug_assert!(closure.projection.is_empty());
-                    let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
-                        self.body.local_decls[closure.local].ty.kind()
-                    {
-                        *gid
-                    } else {
-                        unreachable!("Expected Generator")
-                    };
-                    (closure_fn, vec![Some(closure), None])
+                    unreachable!("Expected Generator")
                 };
+                (closure_fn, vec![Some(closure), None])
+            };
 
             self.tcx()
                 .hir()
@@ -1297,7 +1294,6 @@ impl FnToAnalyze {
     fn name(&self) -> Symbol {
         self.name.name
     }
-
 }
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
