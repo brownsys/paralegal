@@ -971,11 +971,25 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     }
 }
 
+/// This is the data structure returned by
+/// [`FunctionInliner::inner_flow_for_terminator`] which contains the
+/// information needed for further inlining. See the documentation for
+/// the fields for more information.
 struct InlineableCallDescriptor<'tcx, 'g> {
+    /// is the fine grained, inlined data flow we have calculated for
+    /// `callee_body_id`. All locations in this flow are relative to that
+    /// function.
     callee_flow: Rc<FunctionFlow<'tcx, 'g>>,
+    /// Obviously the id for the called function body.
     callee_body_id: BodyId,
+    /// This is the version of the body flowistry ran on.
     simplified_callee_body: &'tcx mir::Body<'tcx>,
+    /// These are the arguments this function is called with. These are either
+    /// the arguments as we've parsed them out of the [`Terminator`], but in
+    /// case of an `async` closure we pass an additional [`None`] to respect the
+    /// closure signature.
     call_arguments: Vec<Option<mir::Place<'tcx>>>,
+    /// Is the return place as we found it in the [`Terminator`].
     call_return: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
 }
 
@@ -1285,12 +1299,15 @@ pub struct CollectingVisitor<'tcx, 'a> {
     external_annotations: &'a AnnotationMap,
 }
 
+/// A function we will be targeting to analyze with
+/// [`CollectingVisitor::handle_target`].
 pub struct FnToAnalyze {
     name: Ident,
     body_id: BodyId,
 }
 
 impl FnToAnalyze {
+    /// Give me a name that describes this function.
     fn name(&self) -> Symbol {
         self.name.name
     }
