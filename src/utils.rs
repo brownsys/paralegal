@@ -7,8 +7,8 @@ use smallvec::SmallVec;
 use crate::{
     desc::Identifier,
     rust::{
-        ast, hir,
-        hir::{def_id::DefId, hir_id::HirId, BodyId},
+        ast,
+        hir::{self, def_id::DefId, hir_id::HirId, BodyId},
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_span::symbol::Ident,
         ty,
@@ -250,7 +250,7 @@ pub fn read_places_with_provenance<'tcx>(
     stmt: &Either<&Statement<'tcx>, &Terminator<'tcx>>,
     tcx: TyCtxt<'tcx>,
 ) -> impl Iterator<Item = Place<'tcx>> {
-    places_read(tcx, l, stmt)
+    places_read(tcx, l, stmt, None)
         .into_iter()
         .flat_map(move |place| place.provenance(tcx).into_iter())
 }
@@ -293,27 +293,33 @@ pub trait NodeExt<'hir> {
     /// one is top-level `fn`s the other is an `impl` item of function type.
     /// This function lets you extract common information from either. Returns
     /// [`None`] if the node is not of a function-like type.
-    fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)>;
+    fn as_fn(&self, tcx: TyCtxt) -> Option<(Ident, hir::def_id::LocalDefId, BodyId)>;
 }
 
 impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
-    fn as_fn(&self) -> Option<(&'hir Ident, &'hir hir::def_id::LocalDefId, &'hir BodyId)> {
-        if let hir::Node::Item(hir::Item {
-            ident,
-            def_id,
-            kind: hir::ItemKind::Fn(_, _, body_id),
-            ..
-        })
-        | hir::Node::ImplItem(hir::ImplItem {
-            ident,
-            def_id,
-            kind: hir::ImplItemKind::Fn(_, body_id),
-            ..
-        }) = self
-        {
-            Some((ident, def_id, body_id))
-        } else {
-            None
+    fn as_fn(&self, tcx: TyCtxt) -> Option<(Ident, hir::def_id::LocalDefId, BodyId)> {
+        match self {
+            hir::Node::Item(hir::Item {
+                ident,
+                def_id,
+                kind: hir::ItemKind::Fn(_, _, body_id),
+                ..
+            })
+            | hir::Node::ImplItem(hir::ImplItem {
+                ident,
+                def_id,
+                kind: hir::ImplItemKind::Fn(_, body_id),
+                ..
+            }) => Some((*ident, *def_id, *body_id)),
+            hir::Node::Expr(hir::Expr {
+                kind: hir::ExprKind::Closure(_, _, body_id, _, _),
+                ..
+            }) => Some((
+                Ident::from_str("closure"),
+                tcx.hir().body_owner_def_id(*body_id),
+                *body_id,
+            )),
+            _ => None,
         }
     }
 }
@@ -347,11 +353,25 @@ pub fn extract_places<'tcx>(
 
 /// Get the name of the function for this body as an `Ident`.
 pub fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
-    tcx.hir()
-        .find_by_def_id(tcx.hir().body_owner_def_id(body_id))
+    let map = tcx.hir();
+    let node = map.find_by_def_id(map.body_owner_def_id(body_id)).unwrap();
+    node.ident()
+        .or_else(|| {
+            matches!(
+                node,
+                hir::Node::Expr(hir::Expr {
+                    kind: hir::ExprKind::Closure(..),
+                    ..
+                })
+            )
+            .then(|| {
+                map.get(map.enclosing_body_owner(map.body_owner(body_id)))
+                    .ident()
+                    .map(|id| Ident::from_str(&(id.as_str().to_string() + "_closure")))
+            })
+            .flatten()
+        })
         .unwrap()
-        .ident()
-        .expect("no def id?")
 }
 
 /// Give me this file as writable (possibly creating or overwriting it).
@@ -397,6 +417,7 @@ pub fn places_read<'tcx>(
     tcx: TyCtxt<'tcx>,
     location: mir::Location,
     stmt: &Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>,
+    read_after: Option<mir::Place<'tcx>>,
 ) -> impl Iterator<Item = mir::Place<'tcx>> {
     use mir::visit::Visitor;
     let mut places = HashSet::new();
@@ -436,12 +457,49 @@ pub fn places_read<'tcx>(
                     location,
                 );
             }
-            vis.visit_rvalue(&a.1, location);
+            if let mir::Rvalue::Aggregate(_, ops) = &a.1 {
+                match handle_aggregate_assign(a.0, &a.1, tcx, ops, read_after) {
+                    Ok(place) => vis.visit_place(
+                        &place,
+                        mir::visit::PlaceContext::NonMutatingUse(
+                            mir::visit::NonMutatingUseContext::Move,
+                        ),
+                        location,
+                    ),
+                    Err(e) => {
+                        warn!("handle_aggregate_assign threw {e}");
+                        vis.visit_rvalue(&a.1, location);
+                    }
+                }
+            } else {
+                vis.visit_rvalue(&a.1, location);
+            }
         }
         Either::Right(term) => vis.visit_terminator(term, location), // TODO this is not correct
         _ => (),
     };
     places.into_iter()
+}
+
+fn handle_aggregate_assign<'tcx>(
+    place: mir::Place<'tcx>,
+    rvalue: &mir::Rvalue<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    ops: &[mir::Operand<'tcx>],
+    read_after: Option<mir::Place<'tcx>>,
+) -> Result<mir::Place<'tcx>, &'static str> {
+    let read_after = read_after.ok_or("no read after provided")?;
+    let inner_project = &read_after.projection[place.projection.len()..];
+    let (field, rest_project) = inner_project.split_first().ok_or("projection too short")?;
+    let f = if let mir::ProjectionElem::Field(f, _) = field {
+        f
+    } else {
+        return Err("Not a field projection");
+    };
+    Ok(ops[f.as_usize()]
+        .place()
+        .ok_or("Constant")?
+        .project_deeper(rest_project, tcx))
 }
 
 /// Creates an `Identifier` for this `HirId`

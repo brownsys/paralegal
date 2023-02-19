@@ -191,21 +191,17 @@ impl<'tcx, F: FnMut(mir::BasicBlock) -> Option<Option<mir::BasicBlock>>>
         terminator
             .successors_mut()
             .for_each(|suc| *suc = self.reindex_basic_block(*suc));
-        if let Some(s) = terminator
-            .unwind_mut()
-            .and_then(Option::as_mut) 
-        {
+        if let Some(s) = terminator.unwind_mut().and_then(Option::as_mut) {
             *s = self.reindex_basic_block(*s);
         }
         self.super_terminator(terminator, location);
     }
 
     fn visit_operand(&mut self, operand: &mut mir::Operand<'tcx>, location: mir::Location) {
-        
-         if let mir::Operand::Constant(op) = operand { 
+        if let mir::Operand::Constant(op) = operand {
             if let mir::ConstantKind::Ty(ref mut t) = op.literal {
                 let mut new_val = t.val();
-                if let ty::ConstKind::Unevaluated(ref mut unev) = new_val  {
+                if let ty::ConstKind::Unevaluated(ref mut unev) = new_val {
                     if unev
                         .promoted
                         .as_mut()

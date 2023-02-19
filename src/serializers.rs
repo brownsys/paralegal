@@ -474,7 +474,7 @@ impl CallOnlyFlow<GlobalLocation<'_>> {
 /// A serializable version of [`mir::Body`]s, mapped to their [`hir::BodyId`] so
 /// that you can resolve the body belonging to a global location (see
 /// [`IsGlobalLocation::function`]).
-pub struct Bodies(pub HashMap<hir::BodyId, BodyProxy>);
+pub struct Bodies(pub HashMap<hir::BodyId, (Symbol, BodyProxy)>);
 
 impl Serialize for Bodies {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -483,7 +483,7 @@ impl Serialize for Bodies {
     {
         self.0
             .iter()
-            .map(|(bid, b)| (BodyIdProxy2(*bid), b))
+            .map(|(bid, (name, b))| (BodyIdProxy2(*bid), (SymbolProxy(*name), b)))
             .collect::<Vec<_>>()
             .serialize(serializer)
     }
@@ -497,7 +497,7 @@ impl<'de> Deserialize<'de> for Bodies {
         Vec::deserialize(deserializer).map(|v| {
             Bodies(
                 v.into_iter()
-                    .map(|(BodyIdProxy2(bid), v)| (bid, v))
+                    .map(|(BodyIdProxy2(bid), (SymbolProxy(s), v))| (bid, (s, v)))
                     .collect(),
             )
         })

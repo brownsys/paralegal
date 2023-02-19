@@ -29,7 +29,7 @@ use std::{
 
 use crate::{
     consts, dbg,
-    desc::*,
+    desc::{self, *},
     ir::*,
     rust::*,
     sah::HashVerifications,
@@ -46,7 +46,7 @@ use hir::{
 use mir::{Location, Place, Terminator, TerminatorKind};
 use rustc_borrowck::BodyWithBorrowckFacts;
 use rustc_hir::def_id::LocalDefId;
-use rustc_middle::{hir::nested_filter::OnlyBodies};
+use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use flowistry::{
@@ -68,89 +68,104 @@ pub type AttrMatchT = Vec<Symbol>;
 /// the function `DefId`
 type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 
-/// This function is wholesale lifted from flowistry's recursive analysis. Edits
-/// that have been made are just to lift it from a lambda to a top-level
-/// function.
-///
-/// What this function does is relate [`Place`] from the body of a callee to a
-/// `Place` in the body of the caller. The most simple example would be one
-/// where it relates the formal parameter of a function to the actual call
-/// argument as follows. (Shown as MIR)
-///
-/// ```plain
-/// fn callee(_1) {
-///   let _2 = ...;
-///   ...
-/// }
-/// fn caller() {
-///   ...
-///   let _3 = ...;
-///   callee(_3)
-/// }
-/// ```
-///
-/// Here `translate_child_to_parent(_1) == Some(_3)`. This only works for places
-/// that are actually related to the parent, e.g. `translate_child_to_parent(_2)
-/// == None` in the example.
-///
-/// This function does more sophisticated mapping as well through references,
-/// derefs and fields. However in all honesty I haven't bothered (yet) to
-/// understand its precise capabilities, which should be documented here.
-pub fn translate_child_to_parent<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    parent_local_def_id: LocalDefId,
-    args: &[Option<mir::Place<'tcx>>],
-    destination: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-    child: mir::Place<'tcx>,
-    mutated: bool,
-    body: &mir::Body<'tcx>,
-    parent_body: &mir::Body<'tcx>,
-) -> Option<mir::Place<'tcx>> {
-    use mir::HasLocalDecls;
-    use mir::ProjectionElem;
-    if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
-        if child.ty(body.local_decls(), tcx).ty.is_unit() {
+impl<'tcx, 'g> InlineableCallDescriptor<'tcx, 'g> {
+    /// This function is wholesale lifted from flowistry's recursive analysis. Edits
+    /// that have been made are just to lift it from a lambda to a top-level
+    /// function.
+    ///
+    /// What this function does is relate [`Place`] from the body of a callee to a
+    /// `Place` in the body of the caller. The most simple example would be one
+    /// where it relates the formal parameter of a function to the actual call
+    /// argument as follows. (Shown as MIR)
+    ///
+    /// ```plain
+    /// fn callee(_1) {
+    ///   let _2 = ...;
+    ///   ...
+    /// }
+    /// fn caller() {
+    ///   ...
+    ///   let _3 = ...;
+    ///   callee(_3)
+    /// }
+    /// ```
+    ///
+    /// Here `translate_child_to_parent(_1) == Some(_3)`. This only works for places
+    /// that are actually related to the parent, e.g. `translate_child_to_parent(_2)
+    /// == None` in the example.
+    ///
+    /// This function does more sophisticated mapping as well through references,
+    /// derefs and fields. However in all honesty I haven't bothered (yet) to
+    /// understand its precise capabilities, which should be documented here.
+    pub fn translate_child_to_parent(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        parent_local_def_id: LocalDefId,
+        child: mir::Place<'tcx>,
+        mutated: bool,
+        parent_body: &mir::Body<'tcx>,
+    ) -> Option<mir::Place<'tcx>> {
+        use mir::HasLocalDecls;
+        use mir::ProjectionElem;
+        if child.local == mir::RETURN_PLACE && child.projection.len() == 0 {
+            if child
+                .ty(self.simplified_callee_body.local_decls(), tcx)
+                .ty
+                .is_unit()
+            {
+                return None;
+            }
+
+            if let Some((dst, _)) = self.call_return {
+                return Some(dst);
+            }
+        }
+
+        if !flowistry::mir::utils::PlaceExt::is_arg(&child, self.simplified_callee_body)
+            || (mutated && !child.is_indirect())
+        {
             return None;
         }
 
-        if let Some((dst, _)) = destination {
-            return Some(dst);
+        // For example, say we're calling f(_5.0) and child = (*_1).1 where
+        // .1 is private to parent. Then:
+        //    parent_toplevel_arg = _5.0
+        //    parent_arg_projected = (*_5.0).1
+        //    parent_arg_accessible = (*_5.0)
+
+        let parent_toplevel_arg = self.call_arguments[child.local.as_usize() - 1]?;
+
+        let mut projection = parent_toplevel_arg.projection.to_vec();
+        let mut ty = parent_toplevel_arg.ty(parent_body.local_decls(), tcx);
+        let parent_param_env = tcx.param_env(parent_local_def_id);
+        let idx = 0; //self.remapper.strip_projection(child);
+        if child.projection.len() < idx {
+            return None;
         }
+        for &elem in child.projection[idx..].iter() {
+            ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, fty| {
+                debug!("ty: {ty:?}, child: {child:?}, elem: {elem:?}, field: {field:?}");
+                if matches!(ty.ty.kind(), ty::TyKind::Generator(..)) {
+                    fty
+                } else {
+                    ty.field_ty(tcx, field)
+                }
+            });
+            let elem = match elem {
+                ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
+                elem => elem,
+            };
+            projection.push(elem);
+        }
+
+        let parent_arg_projected = <Place as flowistry::mir::utils::PlaceExt>::make(
+            parent_toplevel_arg.local,
+            &projection,
+            tcx,
+        );
+
+        Some(parent_arg_projected)
     }
-
-    if !flowistry::mir::utils::PlaceExt::is_arg(&child, body) || (mutated && !child.is_indirect()) {
-        return None;
-    }
-
-    // For example, say we're calling f(_5.0) and child = (*_1).1 where
-    // .1 is private to parent. Then:
-    //    parent_toplevel_arg = _5.0
-    //    parent_arg_projected = (*_5.0).1
-    //    parent_arg_accessible = (*_5.0)
-
-    let parent_toplevel_arg = args[child.local.as_usize() - 1]?;
-
-    let mut projection = parent_toplevel_arg.projection.to_vec();
-    let mut ty = parent_toplevel_arg.ty(parent_body.local_decls(), tcx);
-    let parent_param_env = tcx.param_env(parent_local_def_id);
-    for elem in child.projection.iter() {
-        ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
-            debug!("ty: {ty:?}, child: {child:?}, elem: {elem:?}, field: {field:?}");
-            ty.field_ty(tcx, field)
-        });
-        let elem = match elem {
-            ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
-            elem => elem,
-        };
-        projection.push(elem);
-    }
-
-    let parent_arg_projected = <Place as flowistry::mir::utils::PlaceExt>::make(
-        parent_toplevel_arg.local,
-        &projection,
-        tcx,
-    );
-    Some(parent_arg_projected)
 }
 
 /// Bundles together data needed for the global flow construction. The idea is
@@ -273,61 +288,6 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     fn should_inline(&self, did: LocalDefId) -> bool {
         !self.analysis_opts.no_recursive_analysis
             && self.inline_selector.should_inline(self.tcx, did)
-    }
-
-    /// Find or compute the finely granular flow for the function that this
-    /// terminator calls. If successful returns
-    ///
-    /// 1. The computed flow
-    /// 2. The id of the body of the called function
-    /// 3. The body of the called function
-    /// 4. The arguments to the called function (like [`AsFnAndArgs`] does).
-    /// 5. The return place mentioned in the terminator (like [`AsFnAndArgs`]
-    ///    does)
-    ///
-    /// This function fails if
-    ///
-    /// - The terminator is not a function call
-    /// - The called function cannot be statically determined (see
-    ///   [`AsFnAndArgs`])
-    /// - The called function is not from the local crate
-    /// - [`Self::should_inline`] returned `false` for the defid of the called
-    ///   function
-    /// - This is a recursive call. Note that this does not only apply for
-    ///   direct recursive calls, e.g. `foo` calls `foo`, but also mutual
-    ///   recursion e.g. `foo` calls `bar` which calls `foo`.
-    ///
-    /// The error message will indicate which of these cases occurred.
-    fn inner_flow_for_terminator(
-        &self,
-        t: &mir::Terminator<'tcx>,
-    ) -> Result<
-        (
-            Rc<FunctionFlow<'tcx, 'g>>,
-            BodyId,
-            &'tcx mir::Body<'tcx>,
-            Vec<Option<mir::Place<'tcx>>>,
-            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        ),
-        &'static str,
-    > {
-        t.as_fn_and_args().and_then(|(p, args, dest)| {
-            let node = self.tcx.hir().get_if_local(p).ok_or("non-local node")?;
-            let (_callee_id, callee_local_id, callee_body_id) = node
-                .as_fn()
-                .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
-            if self.should_inline(*callee_local_id) {
-                Ok(())
-            } else {
-                Err("Inline selector was false")
-            }?;
-            let inner_flow = self
-                .compute_granular_global_flows(*callee_body_id)
-                .ok_or("is recursive")?;
-            let body = borrowck_facts::get_body_with_borrowck_facts(self.tcx, *callee_local_id)
-                .simplified_body();
-            Ok((inner_flow, *callee_body_id, body, args, dest))
-        })
     }
 
     /// Computes a granular, inlined flow for the body of the `root_function` id
@@ -476,8 +436,12 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 for block in controlled_by.iter().flat_map(|set| set.iter()) {
                     let mir_location = flow_analysis.body.terminator_loc(block);
                     // Get the terminator location and find all the places that it references, then call deep_deps to find the corresponding dependency locations.
-                    let referenced_places =
-                        places_read(tcx, mir_location, &flow_analysis.body.stmt_at(mir_location));
+                    let referenced_places = places_read(
+                        tcx,
+                        mir_location,
+                        &flow_analysis.body.stmt_at(mir_location),
+                        None,
+                    );
                     for deps in referenced_places.map(deep_deps_for) {
                         ctrl_deps.extend(deps);
                     }
@@ -519,6 +483,44 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
             return_dependencies,
         }
     }
+}
+
+enum ReprojectFirstField<'tcx> {
+    NoReproject,
+    Reproject {
+        tcx: TyCtxt<'tcx>,
+        reprojected_elem: mir::PlaceElem<'tcx>,
+        on_local: mir::Local,
+    },
+}
+
+impl<'tcx> ReprojectFirstField<'tcx> {
+    fn remap_to_parent(&self, from: mir::Place<'tcx>) -> mir::Place<'tcx> {
+        match *self {
+            ReprojectFirstField::Reproject { tcx, .. } => {
+                <Place as flowistry::mir::utils::PlaceExt>::make(
+                    from.local,
+                    &from.projection[..self.strip_projection(from)],
+                    tcx,
+                )
+            }
+            _ => from,
+        }
+    }
+    fn strip_projection(&self, from: mir::Place<'tcx>) -> usize {
+        match *self {
+            ReprojectFirstField::Reproject {
+                tcx,
+                reprojected_elem,
+                on_local,
+            } if on_local == from.local && from.projection.get(0) == Some(&reprojected_elem) => 1,
+            _ => 0,
+        }
+    }
+}
+
+fn remap_unchanged<'tcx>(_: TyCtxt<'tcx>, from: mir::Place<'tcx>) -> mir::Place<'tcx> {
+    from
 }
 
 use ty::RegionVid;
@@ -611,17 +613,16 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         def_id: LocalDefId,
         p: mir::Place<'tcx>,
     ) -> Vec<Place<'tcx>> {
-        
         let new_aliases = self.get_aliases(def_id, body_with_facts);
         let a = new_aliases
             .reachable_values(p, ast::Mutability::Not)
-            .iter()
-            .flat_map(|&p| new_aliases.conflicts(p).iter())
-            .cloned()
+            .into_iter()
+            .flat_map(|&p| new_aliases.children(p).into_iter())
+            //.cloned()
             //.filter(|p| p.is_direct(body_with_facts.borrowckd_body()))
             .collect::<Vec<_>>();
 
-        debug!("Determined the reachable places for {p:?} are {a:?}");
+        debug!("Determined the reachable places for {p:?} are {:?} and also conflicts {a:?}", new_aliases.reachable_values(p, ast::Mutability::Not));
         debug!("Aliases would have been {:?}", new_aliases.aliases(p));
         a
     }
@@ -735,8 +736,13 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                         if let Some(stmt) = stmt_at_loc {
                             queue.extend(deps_for_places(
                                 location,
-                                &places_read(tcx, location.innermost_location_and_body().0, &stmt)
-                                    .collect::<Vec<_>>(),
+                                &places_read(
+                                    tcx,
+                                    location.innermost_location_and_body().0,
+                                    &stmt,
+                                    Some(place),
+                                )
+                                .collect::<Vec<_>>(),
                             ));
                         } else {
                             error!("Rejection without statement should not happen anymore. Rejected {location} without statement");
@@ -823,6 +829,100 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             .collect()
     }
 
+    /// Find or compute the finely granular flow for the function that this
+    /// terminator calls. If successful returns
+    ///
+    /// 1. The computed flow
+    /// 2. The id of the body of the called function
+    /// 3. The body of the called function
+    /// 4. The arguments to the called function (like [`AsFnAndArgs`] does).
+    /// 5. The return place mentioned in the terminator (like [`AsFnAndArgs`]
+    ///    does)
+    ///
+    /// This function fails if
+    ///
+    /// - The terminator is not a function call
+    /// - The called function cannot be statically determined (see
+    ///   [`AsFnAndArgs`])
+    /// - The called function is not from the local crate
+    /// - [`Self::should_inline`] returned `false` for the defid of the called
+    ///   function
+    /// - This is a recursive call. Note that this does not only apply for
+    ///   direct recursive calls, e.g. `foo` calls `foo`, but also mutual
+    ///   recursion e.g. `foo` calls `bar` which calls `foo`.
+    ///
+    /// The error message will indicate which of these cases occurred.
+    fn inner_flow_for_terminator(
+        &self,
+        t: &mir::Terminator<'tcx>,
+    ) -> Result<InlineableCallDescriptor<'tcx, 'g>, &'static str> {
+        t.as_fn_and_args().and_then(|(p, mut args, call_return)| {
+            let (p, call_arguments, needs_reproject) =
+                if Some(p) != self.tcx().lang_items().from_generator_fn() {
+                    (p, args, false)
+                } else {
+                    let closure = args
+                        .pop()
+                        .expect("Expected one closure argument")
+                        .expect("Expected non-const closure argument");
+                    debug_assert!(args.is_empty(), "Expected only one argument");
+                    debug_assert!(closure.projection.is_empty());
+                    let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                        self.body.local_decls[closure.local].ty.kind()
+                    {
+                        *gid
+                    } else {
+                        unreachable!("Expected Generator")
+                    };
+                    (closure_fn, vec![Some(closure), None], true)
+                };
+
+            self.tcx()
+                .hir()
+                .get_if_local(p)
+                .ok_or("non-local node")
+                .and_then(|node| {
+                    let (_callee_id, callee_local_id, callee_body_id) = node
+                        .as_fn(self.tcx())
+                        .unwrap_or_else(|| panic!("Expected local function node, got {node:?}"));
+                    if self.flow_constructor.should_inline(callee_local_id) {
+                        Ok(())
+                    } else {
+                        Err("Inline selector was false")
+                    }?;
+                    let callee_flow = self
+                        .flow_constructor
+                        .compute_granular_global_flows(callee_body_id)
+                        .ok_or("is recursive")?;
+                    let simplified_callee_body =
+                        borrowck_facts::get_body_with_borrowck_facts(self.tcx(), callee_local_id)
+                            .simplified_body();
+                    let remapper = if needs_reproject {
+                        let on_local = mir::Local::from_usize(1);
+                        let reprojected_elem = mir::PlaceElem::Field(
+                            mir::Field::from_usize(0),
+                            simplified_callee_body.local_decls[on_local].ty,
+                        );
+                        ReprojectFirstField::Reproject {
+                            tcx: self.tcx(),
+                            reprojected_elem,
+                            on_local,
+                        }
+                    } else {
+                        ReprojectFirstField::NoReproject
+                    };
+                    Ok(InlineableCallDescriptor {
+                        callee_flow,
+                        callee_body_id,
+                        simplified_callee_body,
+                        call_arguments,
+                        call_return,
+                        remapper,
+                    })
+                })
+        })
+    }
+
     /// Makes `callee` relative to `call_site` in the function we operate on,
     /// i.e. `self.root_function`
     ///
@@ -852,12 +952,10 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     /// (`inner_flow`) to the caller (`self.body`).
     fn create_callee_to_caller_translation_table(
         &self,
-        inner_flow: &FunctionFlow<'tcx, 'g>,
-        args: &[Option<mir::Place<'tcx>>],
-        inner_body: &mir::Body<'tcx>,
-        dest: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+        descriptor: &InlineableCallDescriptor<'tcx, 'g>,
     ) -> PlaceTranslationTable<'tcx> {
-        inner_flow
+        descriptor
+            .callee_flow
             .flow
             .location_states
             .iter()
@@ -870,14 +968,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
             .filter_map(|child| {
                 Some((
                     child,
-                    translate_child_to_parent(
+                    descriptor.translate_child_to_parent(
                         self.tcx(),
                         self.local_def_id,
-                        args,
-                        dest,
                         child,
                         false,
-                        inner_body,
                         self.body,
                     )?,
                 ))
@@ -889,24 +984,19 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     /// (`self.body`) to places in the callee (`inner_flow`).
     fn create_caller_to_callee_translation_table(
         &self,
-        args: &[Option<mir::Place<'tcx>>],
-        destination: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        inner_body: &mir::Body<'tcx>,
-        inner_flow: &FunctionFlow<'tcx, 'g>,
+        descriptor: &InlineableCallDescriptor<'tcx, 'g>,
     ) -> PlaceTranslationTable<'tcx> {
-        inner_flow
+        descriptor
+            .callee_flow
             .flow
             .return_state
             .keys()
             .flat_map(|&child| {
-                let parent = translate_child_to_parent(
+                let parent = descriptor.translate_child_to_parent(
                     self.tcx(),
                     self.local_def_id,
-                    args,
-                    destination,
                     child,
                     true,
-                    inner_body,
                     self.body,
                 );
                 let alias_info = &self.from_flowistry.analysis.aliases;
@@ -936,6 +1026,15 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     }
 }
 
+struct InlineableCallDescriptor<'tcx, 'g> {
+    callee_flow: Rc<FunctionFlow<'tcx, 'g>>,
+    callee_body_id: BodyId,
+    simplified_callee_body: &'tcx mir::Body<'tcx>,
+    call_arguments: Vec<Option<mir::Place<'tcx>>>,
+    call_return: Option<(mir::Place<'tcx>, mir::BasicBlock)>,
+    remapper: ReprojectFirstField<'tcx>,
+}
+
 impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx>
     for FunctionInliner<'tcx, 'g, 'opts, 'refs, I>
 {
@@ -955,13 +1054,13 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
         // First we handle this as the default case. This
         // also recurses as necessary
         let state_at_term = self.handle_regular_location(location);
-        if let Ok((inner_flow, inner_body_id, inner_body, args, dest)) =
-            self.flow_constructor.inner_flow_for_terminator(terminator)
-        {
+        if let Ok(desc) = self.inner_flow_for_terminator(terminator) {
             debug!(
                 "Creating callee {:?} to caller {} translation table",
                 terminator.kind,
-                self.tcx().item_name(self.local_def_id.to_def_id())
+                self.tcx()
+                    .opt_item_name(self.local_def_id.to_def_id())
+                    .unwrap_or(Symbol::intern("unknown"))
             );
             // A translation table from places in `inner_flow` to places from
             // `self.body` by lining them up at the arguments.
@@ -971,12 +1070,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             // invariant that when tracing dependencies a local place does not
             // immediately cross into a parent, but first into such an argument
             // location where it can get translated.
-            let parent_translation_matrix = self.create_callee_to_caller_translation_table(
-                &inner_flow,
-                args.as_slice(),
-                inner_body,
-                dest,
-            );
+            let parent_translation_matrix = self.create_callee_to_caller_translation_table(&desc);
             // A special dependency matrix that will be inserted at the argument
             // locations which performs translation from callee places to caller
             // places.
@@ -1001,7 +1095,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             // First we make a new, relative location for every regular (i.e.
             // not an argument) location in the inner graph
             let translated_inner_locations =
-                inner_flow
+                desc.callee_flow
                     .flow
                     .location_states
                     .iter()
@@ -1014,13 +1108,15 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
 
             // The we add the argument locations. These are special, because the
             // also perform place translation (see `TranslatedDepMatrix`)
-            let argument_locations = (1..=args.len()).into_iter().map(|a| {
+            let argument_locations = (1..=desc.call_arguments.len()).into_iter().map(|a| {
                 let global_call_site = gli.globalize_location(
                     mir::Location {
-                        block: mir::BasicBlock::from_usize(inner_body.basic_blocks().len()),
+                        block: mir::BasicBlock::from_usize(
+                            desc.simplified_callee_body.basic_blocks().len(),
+                        ),
                         statement_index: a,
                     },
-                    inner_body_id,
+                    desc.callee_body_id,
                 );
                 let global_arg_loc = make_relative_location(location, global_call_site);
                 (global_arg_loc, parent_dep_matrix.clone())
@@ -1034,13 +1130,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> mir::visit::Visitor<'tcx
             let call_site_location = (
                 gli.globalize_location(location, root_function),
                 TranslatedDepMatrix::translated(
-                    relativize_global_dep_matrix(&inner_flow.flow.return_state, local_relativizer),
-                    self.create_caller_to_callee_translation_table(
-                        args.as_slice(),
-                        dest,
-                        inner_body,
-                        inner_flow.borrow(),
+                    relativize_global_dep_matrix(
+                        &desc.callee_flow.flow.return_state,
+                        local_relativizer,
                     ),
+                    self.create_caller_to_callee_translation_table(&desc),
                 ),
             );
 
@@ -1241,10 +1335,31 @@ pub struct CollectingVisitor<'tcx, 'a> {
     marked_stmts: HashMap<HirId, ((Vec<Annotation>, usize), Span, DefId)>,
     /// Functions that are annotated with `#[dfpp::analyze]`. For these we will
     /// later perform the analysis
-    functions_to_analyze: Vec<(Ident, BodyId, &'tcx rustc_hir::FnDecl<'tcx>)>,
+    functions_to_analyze: Vec<FnToAnalyze<'tcx>>,
 
     /// Annotations that are to be placed on external functions and types.
     external_annotations: &'a AnnotationMap,
+}
+
+pub struct FnToAnalyze<'tcx> {
+    name: Ident,
+    body_id: BodyId,
+    kind: FnKind<'tcx>,
+    declaration: &'tcx hir::FnDecl<'tcx>,
+}
+
+impl<'tcx> FnToAnalyze<'tcx> {
+    fn name(&self) -> Symbol {
+        self.name.name
+    }
+
+    fn asyncness(&self) -> hir::IsAsync {
+        self.kind.asyncness()
+    }
+
+    fn is_async(&self) -> bool {
+        matches!(self.asyncness(), hir::IsAsync::Async)
+    }
 }
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
@@ -1318,12 +1433,11 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         _hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
-        id: Ident,
-        b: BodyId,
+        target: FnToAnalyze<'tcx>,
         gli: GLI<'g>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
-        let local_def_id = self.tcx.hir().body_owner_def_id(b);
+        let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
         fn register_call_site<'tcx>(
             tcx: TyCtxt<'tcx>,
             map: &mut CallSiteAnnotations,
@@ -1350,17 +1464,17 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 tcx,
                 controller_body_with_facts.simplified_body(),
                 false,
-                &mut outfile_pls(format!("{}.mir.gv", id.name)).unwrap(),
+                &mut outfile_pls(format!("{}.mir.gv", target.name())).unwrap(),
             )
             .unwrap()
         }
 
-        debug!("Handling target {}", id.name);
+        debug!("Handling target {}", target.name());
         let flow = Flow::compute(
             &self.opts.anactrl,
             &self.opts.dbg,
             tcx,
-            b,
+            target.body_id,
             gli,
             SkipAnnotatedFunctionSelector {
                 marked_objects: self.marked_objects.clone(),
@@ -1382,12 +1496,12 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             dbg::write_non_transitive_graph_and_body(
                 tcx,
                 &flow.reduced_flow,
-                outfile_pls(format!("{}.ntgb.json", id.name)).unwrap(),
+                outfile_pls(format!("{}.ntgb.json", target.name())).unwrap(),
             );
         }
 
         if self.opts.dbg.dump_call_only_flow() {
-            outfile_pls(format!("{}.call-only-flow.gv", id.name))
+            outfile_pls(format!("{}.call-only-flow.gv", target.name()))
                 .and_then(|mut file| {
                     dbg::call_only_flow_dot::dump(tcx, &flow.reduced_flow, &mut file)
                 })
@@ -1508,7 +1622,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 DataSink::Return,
             );
         }
-        Ok((Identifier::new(id.name), flows))
+        Ok((Identifier::new(target.name()), flows))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -1538,13 +1652,12 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         crate::sah::HashVerifications::with(|hash_verifications| {
             targets
                 .drain(..)
-                .map(|(id, b, _)| {
+                .map(|desc| {
                     self.handle_target(
                         hash_verifications,
                         &mut call_site_annotations,
                         &interesting_fn_defs,
-                        id,
-                        b,
+                        desc,
                         gli,
                     )
                 })
@@ -1696,17 +1809,22 @@ impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
     /// Finds the functions that have been marked as targets.
     fn visit_fn(
         &mut self,
-        fk: FnKind<'tcx>,
-        fd: &'tcx rustc_hir::FnDecl<'tcx>,
-        b: BodyId,
+        kind: FnKind<'tcx>,
+        declaration: &'tcx rustc_hir::FnDecl<'tcx>,
+        body_id: BodyId,
         s: Span,
         id: HirId,
     ) {
-        match &fk {
-            FnKind::ItemFn(ident, _, _) | FnKind::Method(ident, _)
+        match &kind {
+            FnKind::ItemFn(name, _, _) | FnKind::Method(name, _)
                 if self.should_analyze_function(id) =>
             {
-                self.functions_to_analyze.push((*ident, b, fd));
+                self.functions_to_analyze.push(FnToAnalyze {
+                    name: *name,
+                    body_id,
+                    kind,
+                    declaration,
+                });
             }
             _ => (),
         }
@@ -1714,6 +1832,6 @@ impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
         // dispatch to recursive walk. This is probably unnecessary but if in
         // the future we decide to do something with nested items we may need
         // it.
-        intravisit::walk_fn(self, fk, fd, b, s, id)
+        intravisit::walk_fn(self, kind, declaration, body_id, s, id)
     }
 }

@@ -5,7 +5,8 @@ extern crate rustc_span;
 use dfpp::{
     desc::{DataSink, Identifier, ProgramDescription},
     ir::IsGlobalLocation,
-    serializers::{Bodies, RawGlobalLocation}, HashSet, Symbol,
+    serializers::{Bodies, RawGlobalLocation},
+    HashSet, Symbol,
 };
 use hir::BodyId;
 use rustc_middle::mir;
@@ -35,12 +36,9 @@ pub fn with_current_directory<
     let _guard = CWD_MUTEX.lock().unwrap();
     let current = std::env::current_dir()?;
     std::env::set_current_dir(p)?;
-    let res = std::panic::catch_unwind(f);
-    let set_dir = std::env::set_current_dir(current);
-    match res {
-        Ok(r) => set_dir.map(|()| r),
-        Err(e) => std::panic::resume_unwind(e),
-    }
+    let res = f();
+    let set_dir = std::env::set_current_dir(current)?;
+    Ok(res)
 }
 
 /// Run the action `F` in directory `P` and with rustc data structures
@@ -58,6 +56,7 @@ pub fn cwd_and_use_rustc_in<
     f: F,
 ) -> std::io::Result<A> {
     with_current_directory(p, || {
+        eprintln!("creating session");
         rustc_span::create_default_session_if_not_set_then(|_| f())
     })
 }
@@ -148,6 +147,7 @@ use dfpp::serializers::SerializableCallOnlyFlow;
 pub struct G {
     pub graph: SerializableCallOnlyFlow,
     pub body: Bodies,
+    pub ctrl_name: Symbol,
 }
 
 pub trait GetCallSites {
@@ -193,22 +193,72 @@ impl MatchCallSite for (mir::Location, hir::BodyId) {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum EdgeSelection {
+    Data,
+    Control,
+    Both,
+}
+
+impl EdgeSelection {
+    fn use_control(self) -> bool {
+        matches!(self, EdgeSelection::Control | EdgeSelection::Both)
+    }
+    fn use_data(self) -> bool {
+        matches!(self, EdgeSelection::Data | EdgeSelection::Both)
+    }
+}
+
 impl G {
     /// Direct predecessor nodes of `n`
     fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
+        self.predecessors_configurable(n, EdgeSelection::Both)
+    }
+
+    fn predecessors_configurable(
+        &self,
+        n: &RawGlobalLocation,
+        con_ty: EdgeSelection,
+    ) -> impl Iterator<Item = &RawGlobalLocation> {
         self.graph
             .location_dependencies
             .get(n)
             .into_iter()
-            .flat_map(|deps| {
-                std::iter::once(&deps.ctrl_deps)
-                    .chain(deps.input_deps.iter())
+            .flat_map(move |deps| {
+                con_ty
+                    .use_control()
+                    .then(|| std::iter::once(&deps.ctrl_deps))
+                    .into_iter()
+                    .flatten()
+                    .chain(
+                        con_ty
+                            .use_data()
+                            .then(|| deps.input_deps.iter())
+                            .into_iter()
+                            .flatten(),
+                    )
                     .flat_map(|s| s.iter())
             })
     }
+    pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
+        self.connects_configurable(from, to, EdgeSelection::Both)
+    }
+
+    pub fn connects_data<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+    ) -> bool {
+        self.connects_configurable(from, to, EdgeSelection::Data)
+    }
 
     /// Is there any path (using directed edges) from `from` to `to`.
-    pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
+    pub fn connects_configurable<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+        con_ty: EdgeSelection,
+    ) -> bool {
         let mut queue = to
             .get_call_sites(&self.graph)
             .into_iter()
@@ -223,7 +273,7 @@ impl G {
             if from.match_(n) {
                 return true;
             }
-            queue.extend(self.predecessors(n))
+            queue.extend(self.predecessors_configurable(n, con_ty))
         }
         false
     }
@@ -265,7 +315,8 @@ impl G {
             .0
             .iter()
             .flat_map(|(bid, body)| {
-                body.0
+                body.1
+                     .0
                     .iter()
                     .filter(|s| s.1.contains(pattern))
                     .map(|s| (s.0, *bid))
@@ -278,7 +329,8 @@ impl G {
         let v = self.function_calls(pattern);
         assert!(
             v.len() == 1,
-            "function '{pattern}' should only occur once in {v:?}"
+            "function '{pattern}' should only occur once in {v:?} (found {})",
+            v.len()
         );
         v.into_iter().next().unwrap()
     }
@@ -288,15 +340,28 @@ impl G {
         let (graph, body) = dfpp::dbg::read_non_transitive_graph_and_body(
             std::fs::File::open(format!("{}.ntgb.json", s.as_str())).unwrap(),
         );
-        Self { graph, body }
+        Self {
+            graph,
+            body,
+            ctrl_name: s,
+        }
+    }
+    pub fn ctrl(&self) -> BodyId {
+        *self
+            .body
+            .0
+            .iter()
+            .find_map(|(id, (name, _))| (*name == self.ctrl_name).then_some(id))
+            .unwrap()
     }
     /// Get the `n`th argument for this `bid` body.
     pub fn argument(&self, bid: BodyId, n: usize) -> mir::Location {
-        self.body.0[&bid]
-            .0
+        let body = &self.body.0[&bid];
+        body.1
+             .0
             .iter()
             .find(|(_, s, _)| s == format!("Argument _{n}").as_str())
-            .unwrap_or_else(|| panic!("Argument {n} not found in {:?}", self.body.0[&bid]))
+            .unwrap_or_else(|| panic!("Argument {n} not found in {:?}", body))
             .0
     }
 }

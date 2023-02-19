@@ -16,7 +16,7 @@ use crate::{
         mir::{self, Place},
         TyCtxt,
     },
-    utils::{self, LocationExt},
+    utils::{self, body_name_pls, LocationExt},
     HashMap, HashSet,
 };
 extern crate dot;
@@ -571,13 +571,16 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
             .map(|bid| {
                 (
                     bid,
-                    BodyProxy::from_body_with_normalize(
-                        flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
+                    (
+                        body_name_pls(tcx, bid).name,
+                        BodyProxy::from_body_with_normalize(
+                            flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
+                                tcx,
+                                tcx.hir().body_owner_def_id(bid),
+                            )
+                            .simplified_body(),
                             tcx,
-                            tcx.hir().body_owner_def_id(bid),
-                        )
-                        .simplified_body(),
-                        tcx,
+                        ),
                     ),
                 )
             })
