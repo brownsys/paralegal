@@ -112,12 +112,18 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
         .success()
 }
 
+/// Define a test that is skipped. This can be used to temporarily disable the
+/// test. A message can be passed after the test name explaining why it was
+/// skipped and the message will be printed when the test is skipped.
 #[macro_export]
 macro_rules! define_test_skip {
-    ($name: ident : $graph:ident -> $block:block) => {
+    ($name:ident : $graph:ident -> $block:block) => {
+        define_test_skip!($name "" : $graph -> $block);
+    };
+    ($name:ident $message:literal : $graph:ident -> $block:block) => {
         #[test]
         fn $name() {
-            eprintln!(concat!("Skipping test ", stringify!($name)));
+            eprintln!(concat!("Skipping test ", stringify!($name), " ", $message));
         }
     };
 }

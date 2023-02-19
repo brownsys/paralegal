@@ -70,11 +70,12 @@ define_test!(inlining_crate_local_async_fns : graph -> {
     assert!(graph.connects(&get, &send));
     assert!(!graph.connects_direct(&get, &send))
 });
-// ana_test!(arguments_work graph {
-//     let send = graph.function_call("send_user_data");
-//     let data = graph.argument(graph.ctrl(), 0);
-//     assert!(graph.connects(&(data, send.1), &send));
-// });
+
+define_test_skip!(arguments_work "arguments are not emitted properly in the graph data structure the test is defined over, making the test fail. When I manually inspected the (visual) graph dump this test case seemed to be correct." : graph -> {
+    let send = graph.function_call("send_user_data");
+    let data = graph.argument(graph.ctrl(), 0);
+    assert!(graph.connects(&(data, send.1), &send));
+});
 
 define_test!(no_inlining_overtaint : graph -> {
     let get = graph.function_call(" get_user_data(");
