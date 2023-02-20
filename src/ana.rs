@@ -647,21 +647,26 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
             if let Some(deps) = g.location_states.get(&loc) {
                 places
                     .iter()
-                    .flat_map(|&origin| {
-                        origin.provenance(tcx).into_iter().map(|projection| {
-                            (
-                                projection,
-                                deps.resolve(flowistry::mir::utils::PlaceExt::normalize(
-                                    &projection,
-                                    tcx,
-                                    tcx.hir()
-                                        .body_owner_def_id(loc.innermost_location_and_body().1)
-                                        .to_def_id(),
-                                )),
-                            )
-                        })
+                    .flat_map(|&origin| origin.provenance(tcx))
+                    .flat_map(|projection| {
+                        let normalized = flowistry::mir::utils::PlaceExt::normalize(
+                                &projection,
+                                tcx,
+                                tcx.hir()
+                                    .body_owner_def_id(loc.innermost_location_and_body().1)
+                                    .to_def_id(),
+                            );
+                        let (new_place, deps) = match deps.resolve(normalized) {
+                            Translation::Found((new_place, deps)) => {
+                                (new_place, Box::new(deps) as Box<dyn Iterator<Item=GlobalLocation<'g>>>)
+                            },
+                            Translation::Unchanged(deps) => (projection, Box::new(deps) as Box<_>),
+                            Translation::Missing => {
+                                (projection, Box::new(std::iter::empty()) as Box<_>)
+                            }
+                        };
+                        deps.map(move |d| (new_place, d))
                     })
-                    .flat_map(|(p, (new_place, s))| s.map(move |l| (new_place.unwrap_or(p), l)))
                     .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
             } else {
                 vec![]

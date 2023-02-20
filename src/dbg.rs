@@ -73,7 +73,7 @@ pub mod call_only_flow_dot {
     use flowistry::mir::utils::PlaceExt;
 
     use crate::{
-        ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
+        ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation, Translation},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
         utils::{read_places_with_provenance, AsFnAndArgs, LocationExt, TyCtxtExt},
@@ -135,7 +135,7 @@ pub mod call_only_flow_dot {
                                 self.tcx,
                             )
                             .flat_map(move |p| {
-                                deps.resolve(
+                                match deps.resolve(
                                     p.normalize(
                                         self.tcx,
                                         self.tcx
@@ -143,8 +143,11 @@ pub mod call_only_flow_dot {
                                             .body_owner_def_id(to.innermost_location_and_body().1)
                                             .to_def_id(),
                                     ),
-                                )
-                                .1
+                                ) {
+                                    Translation::Missing => panic!(),
+                                    Translation::Found((_, d)) => Box::new(d) as Box<dyn Iterator<Item=GlobalLocation<'g>>>,
+                                    Translation::Unchanged(u) => Box::new(u) as Box<_>,
+                                }
                             }),
                         )
                     } else {

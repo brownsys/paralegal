@@ -84,16 +84,83 @@ pub struct TranslatedDepMatrix<'tcx, 'g> {
     translator: Option<PlaceTranslationTable<'tcx>>,
 }
 
+#[derive(Eq, PartialEq, Clone)]
+pub enum Translation<F, N> {
+    Found(F),
+    Unchanged(N),
+    Missing,
+}
+
+impl <F, N> Translation<F, N> {
+    pub fn map<A, B, G : FnOnce(F) -> A, H : FnOnce(N) -> B>(self, g: G, h: H) -> Translation<A, B> {
+        match self {
+            Translation::Found(t) => Translation::Found(g(t)),
+            Translation::Missing => Translation::Missing,
+            Translation::Unchanged(u) => Translation::Unchanged(h(u)),
+        }
+    }
+    pub fn map_found<R, M : FnOnce(F) -> R>(self, f: M) -> Translation<R, N> {
+        self.map(f, std::convert::identity)
+    }
+
+    pub fn map_missing<R, M : FnOnce(N) -> R>(self, f: M) -> Translation<F, R> {
+        self.map(std::convert::identity, f)
+    }
+
+    pub fn as_ref(&self) -> Translation<&F, &N> {
+        match self {
+            Translation::Missing => Translation::Missing,
+            Translation::Found(f) => Translation::Found(f),
+            Translation::Unchanged(u) => Translation::Unchanged(u),
+        }
+    }
+
+    pub fn found(&self) -> Option<&F> {
+        if let Translation::Found(f) = self {
+            Some(f)
+        } else {
+            None
+        }
+    }
+
+    pub fn unchanged(&self) -> Option<&N> {
+        if let Translation::Unchanged(f) = self {
+            Some(f)
+        } else {
+            None
+        }
+    }
+
+    pub fn missing(&self) -> bool {
+        matches!(self, Translation::Missing)
+    }
+}
+
+impl <F> Translation<F, F> {
+    pub fn not_missing(self) -> Option<F> {
+        match self {
+            Translation::Found(f) => Some(f),
+            Translation::Unchanged(f) => Some(f),
+            Translation::Missing => None,
+        }
+    }
+}
+
 impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
     /// Lookup this places in the translation table (if there is one).
     ///
     /// Returns none if the place was not found or if no translation table is
     /// present.
-    fn resolve_place(&self, place: Place<'tcx>) -> Option<Place<'tcx>> {
-        self.translator
-            .as_ref()
-            .and_then(|t| t.get(&place))
-            .cloned()
+    fn resolve_place(&self, place: Place<'tcx>) -> Translation<Place<'tcx>, ()> {
+        if let Some(t) = self.translator.as_ref() {
+            if let Some(&new) = t.get(&place) {
+                Translation::Found(new)
+            } else {
+                Translation::Missing
+            }
+        } else {
+            Translation::Unchanged(())
+        }
     }
 
     /// Lookup the dependencies for this [`Place`].
@@ -105,27 +172,29 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
     pub fn resolve(
         &self,
         place: Place<'tcx>,
-    ) -> (
-        Option<Place<'tcx>>,
+    ) -> Translation<(
+        Place<'tcx>,
         impl Iterator<Item = GlobalLocation<'g>> + '_,
-    ) {
-        let resolved = self.resolve_place(place);
-        (
-            resolved,
+    ), impl Iterator<Item = GlobalLocation<'g>> + '_,
+    >
+     {
+        let get_deps = |p|
             self.matrix
-                .get(&resolved.unwrap_or(place))
+                .get(&p)
                 .into_iter()
                 .flat_map(|s| s.iter())
-                .cloned(),
-        )
+                .cloned();
+        let resolved = 
+            self.resolve_place(place);
+        resolved.map(|p| (p, get_deps(p)), |()| get_deps(place))
     }
 
-    /// Lookup te dependencies for this place as a set.
+    /// Lookup the dependencies for this place as a set.
     ///
     /// Only used for debug output in [`dbg`](crate::dbg). Performs translation, like
     /// [`resolve`](Self::resolve).
     pub fn resolve_set(&self, place: Place<'tcx>) -> Option<&HashSet<GlobalLocation<'g>>> {
-        self.matrix.get(&self.resolve_place(place).unwrap_or(place))
+        self.matrix.get(self.resolve_place(place).found().unwrap_or(&place))
     }
 
     /// Iterate over the keys of the dependency matrix
