@@ -130,7 +130,7 @@ fn input_elimination_isnt_a_problem_statement() {
     read(&x);
 }
 
-fn arity2_inlineable_async_dp_user_data(ud: &(&mut UserData, &mut UserData)) {
+fn arity2_inlineable_async_dp_user_data(ud: &mut (&mut UserData, &mut UserData)) {
     dp_user_data(ud.1)
 }
 
@@ -138,7 +138,7 @@ fn arity2_inlineable_async_dp_user_data(ud: &(&mut UserData, &mut UserData)) {
 fn no_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
-    arity2_inlineable_async_dp_user_data(&(&mut ud1, &mut ud2));
+    arity2_inlineable_async_dp_user_data(&mut (&mut ud1, &mut ud2));
     send_user_data(&ud1);
     send_user_data2(&ud2);
 }
