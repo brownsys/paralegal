@@ -279,6 +279,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
             //.with_module_level("flowistry", log::LevelFilter::Error)
+            .without_timestamps()
             .init()
             .unwrap();
         if plugin_args.debug.as_ref().map_or(false, Option::is_some) {
