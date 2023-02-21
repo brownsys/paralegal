@@ -6,3 +6,4 @@ pub mod tensors;
 pub use tensors::*;
 pub mod flows;
 pub use flows::*;
+mod regal;
