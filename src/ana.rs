@@ -413,7 +413,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                 let deep_deps_for = |p: mir::Place<'tcx>| {
                     self.flattening_helper
                         .borrow_mut()
-                        .deep_dependencies_of(*loc, g, p)
+                        .deep_dependencies_of(*loc, g, p, &self.function_flows)
                 };
 
                 // Determine the control flow dependency for the location.
@@ -470,6 +470,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                     self.gli.globalize_location(l, body_id),
                     g,
                     Place::return_place(),
+                    &self.function_flows
                 )
             })
             .collect();
@@ -622,9 +623,11 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         loc: GlobalLocation<'g>,
         g: &GlobalFlowGraph<'tcx, 'g>,
         p: mir::Place<'tcx>,
+        flows: &FunctionFlows<'tcx, 'g>,
     ) -> HashSet<GlobalLocation<'g>> {
-        debug!("Flattening {p:?} @ {loc}");
         let tcx = self.tcx;
+        let slf = RefCell::new(self);
+        debug!("Flattening {p:?} @ {loc}");
         let (inner_loc, inner_body) = loc.innermost_location_and_body();
         let def_id = tcx.hir().body_owner_def_id(inner_body);
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
@@ -647,8 +650,8 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
             if let Some(deps) = g.location_states.get(&loc) {
                 places
                     .iter()
-                    .flat_map(|&origin| origin.provenance(tcx))
-                    .flat_map(|projection| {
+                    //.flat_map(|&origin| origin.provenance(tcx))
+                    .flat_map(|&projection| {
                         let normalized = flowistry::mir::utils::PlaceExt::normalize(
                                 &projection,
                                 tcx,
@@ -658,10 +661,19 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                             );
                         let (new_place, deps) = match deps.resolve(normalized) {
                             Translation::Found((new_place, deps)) => {
+                                debug!("      Translated {normalized:?} to {new_place:?}");
                                 (new_place, Box::new(deps) as Box<dyn Iterator<Item=GlobalLocation<'g>>>)
                             },
                             Translation::Unchanged(deps) => (projection, Box::new(deps) as Box<_>),
                             Translation::Missing => {
+                                let body_id = loc.innermost_location_and_body().1;
+                                let def_id = tcx.hir().body_owner_def_id(body_id);
+                                let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
+                                let mut slf = slf.borrow_mut();
+                                let flow = flows.borrow()[&body_id].clone().unwrap();
+                                let aliases = &flow.analysis.analysis.aliases;
+                                //slf.get_aliases(def_id, body_with_facts);
+                                warn!("      Could not translate {normalized:?}. Place aliases are {:?}, normalized aliases are {:?}", aliases.aliases(projection), aliases.aliases(normalized));
                                 (projection, Box::new(std::iter::empty()) as Box<_>)
                             }
                         };
@@ -669,23 +681,26 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                     })
                     .collect::<Vec<(Place<'tcx>, GlobalLocation<'g>)>>()
             } else {
+                debug!("    No dependencies found");
                 vec![]
             }
         };
 
         // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
-        let reachable_places = self.reachable_values(body_with_facts, def_id, p);
+        let reachable_places = slf.borrow_mut().reachable_values(body_with_facts, def_id, p);
         let mut queue = deps_for_places(loc, &reachable_places);
         let mut seen = HashSet::new();
         let mut deps = HashSet::new();
 
         // A reverse dfs traversing the flowistry tensor which terminates every time we find a function call.
         while let Some((place, location)) = queue.pop() {
+            debug!("  considering {place:?} at {location}");
             // A special situation has ocurred. We've hit a translation boundary
             // (either an argument or a call site of an inlined function). This
             // causes a translation of the place, but otherwise this location must
             // be rejected so we translate, resolve and move on.
             if g.location_states.get(&location).map(|s| s.is_translated()) == Some(true) {
+                debug!("    Is crossing function boundary");
                 // Don't insert this location into `seen`, because we might cross
                 // this boundary multiple times with different places
                 queue.extend(deps_for_places(location, &[place]));
@@ -693,11 +708,12 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
                 match Keep::from_global_location(tcx, location) {
                     Keep::Keep(..) | Keep::Argument(_) => {
                         debug!(
-                            "Found dependency from {p:?} on {location} via the last place {place:?}"
+                            "  Found dependency from {p:?} on {location} via the last place {place:?}"
                         );
                         deps.insert(location);
                     }
                     Keep::Reject(stmt_at_loc) if !seen.contains(&location) => {
+                        debug!("    Rejecting");
                         seen.insert(location);
                         if let Some(stmt) = stmt_at_loc {
                             queue.extend(deps_for_places(
@@ -898,12 +914,10 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         move |call_site, callee| gli.global_location_from_relative(callee, call_site, root_function)
     }
 
-    /// Create a [`PlaceTranslationTable`] that maps places from the callee
-    /// (`inner_flow`) to the caller (`self.body`).
-    fn create_callee_to_caller_translation_table(
-        &self,
-        descriptor: &InlineableCallDescriptor<'tcx, 'g>,
-    ) -> PlaceTranslationTable<'tcx> {
+    fn make_place_translation_base<'a>(
+        &'a self, 
+        descriptor: &'a InlineableCallDescriptor<'tcx, 'g>,
+    ) -> Vec<(mir::Place<'tcx>, mir::Place<'tcx>)> {
         descriptor
             .callee_flow
             .flow
@@ -913,7 +927,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                 (loc.is_at_root() && !matrix.is_translated()).then_some(matrix)
             })
             .flat_map(|s| s.keys())
-            .collect::<HashSet<_>>()
+            .collect::<HashSet<mir::Place<'tcx>>>()
             .into_iter()
             .filter_map(|child| {
                 Some((
@@ -927,6 +941,17 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
                     )?,
                 ))
             })
+            .collect()
+    }
+
+    /// Create a [`PlaceTranslationTable`] that maps places from the callee
+    /// (`inner_flow`) to the caller (`self.body`).
+    fn create_callee_to_caller_translation_table(
+        &self,
+        descriptor: &InlineableCallDescriptor<'tcx, 'g>,
+    ) -> PlaceTranslationTable<'tcx> {
+        self.make_place_translation_base(descriptor)
+            .into_iter()
             .collect::<HashMap<_, _>>()
     }
 
@@ -936,26 +961,42 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
         &self,
         descriptor: &InlineableCallDescriptor<'tcx, 'g>,
     ) -> PlaceTranslationTable<'tcx> {
-        descriptor
-            .callee_flow
-            .flow
-            .return_state
-            .keys()
-            .flat_map(|&child| {
-                let parent = descriptor.translate_child_to_parent(
-                    self.tcx(),
-                    self.local_def_id,
-                    child,
-                    true,
-                    self.body,
-                );
+        self.make_place_translation_base(descriptor)
+            .into_iter()
+            .flat_map(|(child, parent)|{
+
                 let alias_info = &self.from_flowistry.analysis.aliases;
-                parent
-                    .into_iter()
-                    .flat_map(|p| alias_info.aliases(p).iter())
+                alias_info.aliases(parent).iter()
                     .map(move |&parent| (parent, child))
             })
-            .collect::<HashMap<_, _>>()
+            .collect()
+
+        // descriptor
+        //     .callee_flow
+        //     .flow
+        //     .location_states
+        //     .iter()
+        //     .filter_map(|(loc, matrix)| {
+        //         (loc.is_at_root() && !matrix.is_translated()).then_some(matrix)
+        //     })
+        //     .flat_map(|s| s.keys())
+        //     .collect::<HashSet<_>>()
+        //     .into_iter()
+        //     .flat_map(|child| {
+        //         let parent = descriptor.translate_child_to_parent(
+        //             self.tcx(),
+        //             self.local_def_id,
+        //             child,
+        //             true,
+        //             self.body,
+        //         );
+        //         let alias_info = &self.from_flowistry.analysis.aliases;
+        //         parent
+        //             .into_iter()
+        //             .flat_map(|p| alias_info.aliases(p).iter())
+        //             .map(move |&parent| (parent, child))
+        //     })
+        //     .collect::<HashMap<_, _>>()
     }
 
     /// Transform the dependencies ([`Location`]s as calculated by flowistry)
