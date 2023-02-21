@@ -8,7 +8,6 @@ use crate::{
     Either, HashMap, HashSet,
 };
 
-use std::{borrow::Cow, cell::RefCell, rc::Rc};
 use hir::{
     def_id::DefId,
     hir_id::HirId,
@@ -20,6 +19,7 @@ use rustc_borrowck::BodyWithBorrowckFacts;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
+use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use flowistry::{
     indexed::IndexSet,
@@ -109,7 +109,6 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             .iter()
             .any(|a| a.matches_path(&consts::ANALYZE_MARKER))
     }
-
 }
 
 /// Confusingly named this function actually computed the highest index
@@ -127,7 +126,6 @@ fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
         .max()
         .unwrap() as usize
 }
-
 
 impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
     type NestedFilter = OnlyBodies;

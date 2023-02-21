@@ -145,7 +145,9 @@ pub mod call_only_flow_dot {
                                     ),
                                 ) {
                                     Translation::Missing => panic!(),
-                                    Translation::Found((_, d)) => Box::new(d) as Box<dyn Iterator<Item=GlobalLocation<'g>>>,
+                                    Translation::Found((_, d)) => {
+                                        Box::new(d) as Box<dyn Iterator<Item = GlobalLocation<'g>>>
+                                    }
                                     Translation::Unchanged(u) => Box::new(u) as Box<_>,
                                 }
                             }),

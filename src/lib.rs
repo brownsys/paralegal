@@ -33,8 +33,8 @@ pub mod rust {
     pub extern crate rustc_middle;
     pub extern crate rustc_mir_dataflow;
     pub extern crate rustc_query_system;
-    pub extern crate rustc_span;
     pub extern crate rustc_serialize;
+    pub extern crate rustc_span;
     pub use super::rustc_index;
 
     pub use rustc_ast as ast;
@@ -63,11 +63,11 @@ mod ana;
 pub mod ann_parse;
 pub mod dbg;
 pub mod desc;
+mod discover;
 pub mod frg;
 pub mod ir;
 mod sah;
 pub mod serializers;
-mod discover;
 #[macro_use]
 pub mod utils;
 pub mod consts;
@@ -217,7 +217,9 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .take()
-            .enter(|tcx| discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run())
+            .enter(|tcx| {
+                discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run()
+            })
             .unwrap();
         desc.annotations.extend(external_annotations);
         if self.opts.dbg.dump_serialized_flow_graph {

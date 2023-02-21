@@ -91,19 +91,19 @@ pub enum Translation<F, N> {
     Missing,
 }
 
-impl <F, N> Translation<F, N> {
-    pub fn map<A, B, G : FnOnce(F) -> A, H : FnOnce(N) -> B>(self, g: G, h: H) -> Translation<A, B> {
+impl<F, N> Translation<F, N> {
+    pub fn map<A, B, G: FnOnce(F) -> A, H: FnOnce(N) -> B>(self, g: G, h: H) -> Translation<A, B> {
         match self {
             Translation::Found(t) => Translation::Found(g(t)),
             Translation::Missing => Translation::Missing,
             Translation::Unchanged(u) => Translation::Unchanged(h(u)),
         }
     }
-    pub fn map_found<R, M : FnOnce(F) -> R>(self, f: M) -> Translation<R, N> {
+    pub fn map_found<R, M: FnOnce(F) -> R>(self, f: M) -> Translation<R, N> {
         self.map(f, std::convert::identity)
     }
 
-    pub fn map_missing<R, M : FnOnce(N) -> R>(self, f: M) -> Translation<F, R> {
+    pub fn map_missing<R, M: FnOnce(N) -> R>(self, f: M) -> Translation<F, R> {
         self.map(std::convert::identity, f)
     }
 
@@ -136,7 +136,7 @@ impl <F, N> Translation<F, N> {
     }
 }
 
-impl <F> Translation<F, F> {
+impl<F> Translation<F, F> {
     pub fn not_missing(self) -> Option<F> {
         match self {
             Translation::Found(f) => Some(f),
@@ -172,20 +172,18 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
     pub fn resolve(
         &self,
         place: Place<'tcx>,
-    ) -> Translation<(
-        Place<'tcx>,
+    ) -> Translation<
+        (Place<'tcx>, impl Iterator<Item = GlobalLocation<'g>> + '_),
         impl Iterator<Item = GlobalLocation<'g>> + '_,
-    ), impl Iterator<Item = GlobalLocation<'g>> + '_,
-    >
-     {
-        let get_deps = |p|
+    > {
+        let get_deps = |p| {
             self.matrix
                 .get(&p)
                 .into_iter()
                 .flat_map(|s| s.iter())
-                .cloned();
-        let resolved = 
-            self.resolve_place(place);
+                .cloned()
+        };
+        let resolved = self.resolve_place(place);
         resolved.map(|p| (p, get_deps(p)), |()| get_deps(place))
     }
 
@@ -194,7 +192,8 @@ impl<'tcx, 'g> TranslatedDepMatrix<'tcx, 'g> {
     /// Only used for debug output in [`dbg`](crate::dbg). Performs translation, like
     /// [`resolve`](Self::resolve).
     pub fn resolve_set(&self, place: Place<'tcx>) -> Option<&HashSet<GlobalLocation<'g>>> {
-        self.matrix.get(self.resolve_place(place).found().unwrap_or(&place))
+        self.matrix
+            .get(self.resolve_place(place).found().unwrap_or(&place))
     }
 
     /// Iterate over the keys of the dependency matrix

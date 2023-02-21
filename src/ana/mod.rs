@@ -32,15 +32,12 @@ use flowistry::{
     },
 };
 
-
-
-use super::discover::{CollectingVisitor, CallSiteAnnotations, FnToAnalyze};
+use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 
 pub mod df;
 pub mod inline;
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
-
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
@@ -343,7 +340,6 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             .collect()
     }
 
-
     /// Extract all types mentioned in this type for which we have annotations.
     /// XXX: This selector is somewhat problematic. For one it matches via
     /// source locations, rather than id, and for another we're using `find`
@@ -372,5 +368,3 @@ impl inline::InlineSelector for SkipAnnotatedFunctionSelector {
             .map_or(true, |anns| anns.0.is_empty())
     }
 }
-
-

@@ -55,7 +55,6 @@ use flowistry::{
     },
 };
 
-
 impl<'tcx, 'g> InlineableCallDescriptor<'tcx, 'g> {
     /// This function is wholesale lifted from flowistry's recursive analysis. Edits
     /// that have been made are just to lift it from a lambda to a top-level
@@ -403,9 +402,12 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                         .into_keep()?;
 
                 let deep_deps_for = |p: mir::Place<'tcx>| {
-                    self.flattening_helper
-                        .borrow_mut()
-                        .deep_dependencies_of(*loc, g, p, &self.function_flows)
+                    self.flattening_helper.borrow_mut().deep_dependencies_of(
+                        *loc,
+                        g,
+                        p,
+                        &self.function_flows,
+                    )
                 };
 
                 // Determine the control flow dependency for the location.
@@ -462,7 +464,7 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
                     self.gli.globalize_location(l, body_id),
                     g,
                     Place::return_place(),
-                    &self.function_flows
+                    &self.function_flows,
                 )
             })
             .collect();
@@ -679,7 +681,9 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         };
 
         // See https://www.notion.so/justus-adam/Call-chain-analysis-26fb36e29f7e4750a270c8d237a527c1#b5dfc64d531749de904a9fb85522949c
-        let reachable_places = slf.borrow_mut().reachable_values(body_with_facts, def_id, p);
+        let reachable_places = slf
+            .borrow_mut()
+            .reachable_values(body_with_facts, def_id, p);
         let mut queue = deps_for_places(loc, &reachable_places);
         let mut seen = HashSet::new();
         let mut deps = HashSet::new();
@@ -907,7 +911,7 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     }
 
     fn make_place_translation_base<'a>(
-        &'a self, 
+        &'a self,
         descriptor: &'a InlineableCallDescriptor<'tcx, 'g>,
     ) -> Vec<(mir::Place<'tcx>, mir::Place<'tcx>)> {
         descriptor
@@ -955,10 +959,11 @@ impl<'tcx, 'g, 'opts, 'refs, I: InlineSelector + Clone> FunctionInliner<'tcx, 'g
     ) -> PlaceTranslationTable<'tcx> {
         self.make_place_translation_base(descriptor)
             .into_iter()
-            .flat_map(|(child, parent)|{
-
+            .flat_map(|(child, parent)| {
                 let alias_info = &self.from_flowistry.analysis.aliases;
-                alias_info.aliases(parent).iter()
+                alias_info
+                    .aliases(parent)
+                    .iter()
                     .map(move |&parent| (parent, child))
             })
             .collect()
@@ -1245,7 +1250,7 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
     ///
     /// Takes care of constructing in accordance with the configuration in
     /// `opts`.
-    pub fn compute<P: InlineSelector + Clone + 'static>(
+    pub(super) fn compute<P: InlineSelector + Clone + 'static>(
         opts: &crate::AnalysisCtrl,
         dbg_opts: &crate::DbgArgs,
         tcx: TyCtxt<'tcx>,
@@ -1286,5 +1291,3 @@ impl<'tcx, 'g> Flow<'tcx, 'g> {
         }
     }
 }
-
-
