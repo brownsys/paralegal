@@ -4,6 +4,7 @@
 //! being able to reference the same code in the two executables `dfpp` and
 //! `cargo-dfpp` (a structure suggested by [rustc_plugin]).
 #![feature(rustc_private)]
+#![feature(min_specialization)]
 
 #[macro_use]
 extern crate clap;
@@ -16,6 +17,10 @@ extern crate simple_logger;
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+pub extern crate rustc_index;
+extern crate rustc_serialize;
+
 pub mod rust {
     //! Exposes the rustc external crates (this mod is just to tidy things up).
     pub extern crate rustc_arena;
@@ -24,12 +29,13 @@ pub mod rust {
     pub extern crate rustc_data_structures;
     pub extern crate rustc_driver;
     pub extern crate rustc_hir;
-    pub extern crate rustc_index;
     pub extern crate rustc_interface;
     pub extern crate rustc_middle;
     pub extern crate rustc_mir_dataflow;
     pub extern crate rustc_query_system;
     pub extern crate rustc_span;
+    pub extern crate rustc_serialize;
+    pub use super::rustc_index;
 
     pub use rustc_ast as ast;
     pub use rustc_hir as hir;
@@ -61,6 +67,7 @@ pub mod frg;
 pub mod ir;
 mod sah;
 pub mod serializers;
+mod discover;
 #[macro_use]
 pub mod utils;
 pub mod consts;
@@ -210,7 +217,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .take()
-            .enter(|tcx| ana::CollectingVisitor::new(tcx, self.opts, &external_annotations).run())
+            .enter(|tcx| discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run())
             .unwrap();
         desc.annotations.extend(external_annotations);
         if self.opts.dbg.dump_serialized_flow_graph {

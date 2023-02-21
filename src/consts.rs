@@ -5,7 +5,7 @@
 //! on first call. This is why many of the constants here are not categorized as
 //! constants, but instead as structs.
 
-use crate::ana::AttrMatchT;
+use crate::discover::AttrMatchT;
 use crate::Symbol;
 
 /// Name of the file used for emitting the JSON serialized
