@@ -350,4 +350,25 @@ impl<'g> GLI<'g> {
     ) -> GlobalLocation<'g> {
         self.make_global_location(root_function, root_location, Some(relative_location))
     }
+
+    pub fn at(self, location: Location, function: BodyId) -> GliAt<'g> {
+        GliAt { gli: self, location, function }
+    }
+}
+
+
+#[derive(Clone)]
+pub struct GliAt<'g> {
+    gli: GLI<'g>,
+    location: mir::Location,
+    function: BodyId,
+}
+
+impl <'g> GliAt<'g> {
+    pub fn as_global_location(&self) -> GlobalLocation<'g> {
+        self.gli.globalize_location(self.location, self.function)
+    }
+    pub fn relativize(&self, relative: GlobalLocation<'g>) -> GlobalLocation<'g> {
+        self.gli.global_location_from_relative(relative, self.location, self.function)
+    }
 }
