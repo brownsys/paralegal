@@ -10,14 +10,14 @@ newtype_index!(
     }
 );
 
-#[derive(Debug, Eq, PartialEq, Clone)]
-enum ProjElem {
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub enum ProjElem {
     Ref,
     FromMir(ProjectionElem<(), ()>),
 }
 
-#[derive(Eq, PartialEq, Clone, Copy)]
-enum Delta {
+#[derive(Eq, PartialEq, Clone, Copy, Hash, Debug)]
+pub enum Delta {
     Positive,
     Negative,
 }
@@ -32,15 +32,26 @@ impl std::ops::Not for Delta {
     }
 }
 
-struct Projections(Vec<ProjElem>);
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct Projections(Vec<ProjElem>);
 
-struct ProjectionDelta {
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct ProjectionDelta {
     delta: Delta,
     projections: Projections,
 }
 
+impl Default for ProjectionDelta {
+    fn default() -> Self {
+        Self {
+            delta: Delta::Positive,
+            projections: Projections(vec![])
+        }
+    }
+}
+
 impl Projections {
-    fn apply(&mut self, delta: &ProjectionDelta) {
+    pub fn apply(&mut self, delta: &ProjectionDelta) {
         self.apply_in_pieces(delta.delta, &delta.projections)
     }
     fn apply_in_pieces(&mut self, delta: Delta, projections: &Projections) {
@@ -52,7 +63,7 @@ impl Projections {
 }
 
 impl ProjectionDelta {
-    fn apply(&mut self, other: &ProjectionDelta) {
+    pub fn apply(&mut self, other: &ProjectionDelta) {
         match self.delta {
             Delta::Positive => self.projections.apply(other),
             Delta::Negative => self.projections.apply_in_pieces(!other.delta, &other.projections)
