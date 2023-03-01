@@ -1019,6 +1019,12 @@ impl InlineSelector for SkipAnnotatedFunctionSelector {
 /// read-only.
 type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
 
+#[derive(Debug, Clone)]
+struct LabelRepair {
+    label: String,
+    location: Location
+}
+
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 struct FrgErrorInfo {
     ctrl: Vec<Vec<String>>,
@@ -1112,18 +1118,26 @@ impl FrgErrorInfo {
         }
     }
 
-    fn get_labels_loc_as_str(&self) -> Vec<String> {
+    fn get_labels_loc_as_str(&self) -> Vec<LabelRepair> {
         match self.missing_labels {
             None => vec![], 
             Some(ref ml) => {
+                let label_idx = 2;
                 let call_arg_idx = 1;
-                let mut locations = vec![];
+
+                let mut label_repairs = vec![];
+
                 for edge in ml.iter() {
+                    let label = edge.get(label_idx).unwrap().clone();
                     let call_arg_location = edge.get(call_arg_idx).unwrap().clone();
 
-                    locations.push(call_arg_location);
+                    label_repairs.push(
+                        LabelRepair {
+                            label, 
+                            location: Self::parse_location(&call_arg_location) 
+                        });
                 }
-                locations
+                label_repairs
             }
         }
     }
@@ -1133,7 +1147,8 @@ impl FrgErrorInfo {
 /// This may not necessarily be provided if DFPP is being called to do the initial analysis
 #[derive(Debug, Clone)]
 struct DfppErrorInfo {
-    locations: Vec<Location>
+    erroneous_locations: Vec<Location>, 
+    missing_labels_locations: Vec<LabelRepair>
 }
 
 impl From<FrgErrorInfo> for DfppErrorInfo {
@@ -1141,17 +1156,16 @@ impl From<FrgErrorInfo> for DfppErrorInfo {
         let minimal_subflow_locations = frg_err.get_minimal_subflow_loc_as_str();
         let missing_subflow_locations = frg_err.get_missing_subflow_loc_as_str();
         let missing_labels_locations = frg_err.get_labels_loc_as_str();
-        let all_locations: Vec<_> = vec![minimal_subflow_locations, 
-            missing_subflow_locations, missing_labels_locations]
+        let all_locations: Vec<_> = vec![minimal_subflow_locations, missing_subflow_locations]
             .into_iter()
             .flatten()
             .collect();
-        let mut locations = vec![];
+        let mut erroneous_locations = vec![];
         for loc in all_locations {
-            locations.push(FrgErrorInfo::parse_location(&loc));
+            erroneous_locations.push(FrgErrorInfo::parse_location(&loc));
         }
 
-        Self { locations }
+        Self { erroneous_locations, missing_labels_locations }
     }
 }
 
@@ -1291,31 +1305,72 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
         debug!("Checking whether DFPP is doing an error-message pass");
         if let Some(em) = self.get_error_information_json() {
-            dbg!(&em);
-            let transitive_flow_matrix = flowistry::infoflow::compute_flow(
-                tcx, b, controller_body_with_facts);
-
-            for loc in em.locations {
-                if is_real_location(&controller_body_with_facts.body, loc) {
-                    dbg!(loc);
-                    let source_dependencies = transitive_flow_matrix.state_at(loc);
+            if em.erroneous_locations.is_empty() && em.missing_labels_locations.is_empty() {
+                println!("Hooray! Found no privacy violations!");
+            } else {
+                // dbg!(&em);
+                let transitive_flow_matrix = flowistry::infoflow::compute_flow(
+                    tcx, b, controller_body_with_facts);
+                
+                println!("Found violation of policy authorized_viewer in:");
+                for loc in &em.erroneous_locations {
+                    let mir = &controller_body_with_facts.body.stmt_at(*loc);
+                    match mir {
+                        Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
+                        Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
+                    }
+                }
+                println!("Relevant context that may have influenced this violation:");
     
-                    let source_places = read_places_with_provenance(
-                        loc, 
-                        &controller_body_with_facts.body.stmt_at(loc), 
-                        tcx);
-                    
-                    source_places
-                        .flat_map(|place| {
-                            source_dependencies.row(place)
-                        })
-                        .for_each(|loc| {
-                            let mir = &controller_body_with_facts.body.stmt_at(*loc);
-                            // match mir {
-                            //     Either::Left(stmt) => { dbg!(&(&*stmt).kind); }
-                            //     Either::Right(term) => { dbg!(&(&*term).kind); }
-                            // }
-                        });
+                for loc in &em.erroneous_locations {
+                    if is_real_location(&controller_body_with_facts.body, *loc) {
+                        // dbg!(loc);
+                        let source_dependencies = transitive_flow_matrix.state_at(*loc);
+        
+                        let source_places = read_places_with_provenance(
+                            *loc, 
+                            &controller_body_with_facts.body.stmt_at(*loc), 
+                            tcx);
+                        
+                        // HACKY
+                        let mut ctr = 0;
+    
+                        source_places
+                            .flat_map(|place| {
+                                source_dependencies.row(place)
+                            })
+                            .for_each(|loc| {
+                                let mir = &controller_body_with_facts.body.stmt_at(*loc);
+                                if ctr <= 10 {
+                                    match mir {
+                                        Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
+                                        Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
+                                    }
+                                }
+                                ctr = ctr + 1;
+                            });
+                    }
+                }
+                
+                println!("You can fix this violation by removing the line(s): ");
+                for loc in &em.erroneous_locations {
+                    let mir = &controller_body_with_facts.body.stmt_at(*loc);
+                    match mir {
+                        Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
+                        Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
+                    }
+                }
+                
+                for label_pair in &em.missing_labels_locations {
+    
+                    println!("Or adding the following annotation: ");
+                    println!("\t{}", &label_pair.label);
+                    println!("To the line:");
+                    let mir = &controller_body_with_facts.body.stmt_at(label_pair.location);
+                    match mir {
+                        Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
+                        Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
+                    }
                 }
             }
             // For now, use a panic to display all the error information.
