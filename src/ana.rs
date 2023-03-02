@@ -38,6 +38,7 @@ use crate::{
     Either, HashMap, HashSet,
 };
 
+use colored::Colorize;
 use dot::Labeller;
 use hir::{
     def_id::DefId,
@@ -1285,6 +1286,11 @@ impl FrgErrorInfo {
         }
     }
 
+    fn get_controller(&self) -> String {
+        // TODO: Make this not horrible software engineering :)
+        self.ctrl.get(0).unwrap().get(1).unwrap().clone()
+    }
+
     // TODO: Abstract this more.
     fn get_minimal_subflow_loc_as_str(&self) -> Vec<String> {
         match self.minimal_subflow {
@@ -1353,12 +1359,14 @@ impl FrgErrorInfo {
 /// This may not necessarily be provided if DFPP is being called to do the initial analysis
 #[derive(Debug, Clone)]
 struct DfppErrorInfo {
+    ctrl: String,
     erroneous_locations: Vec<Location>, 
     missing_labels_locations: Vec<LabelRepair>
 }
 
 impl From<FrgErrorInfo> for DfppErrorInfo {
     fn from(frg_err: FrgErrorInfo) -> Self {
+        let ctrl = frg_err.get_controller();
         let minimal_subflow_locations = frg_err.get_minimal_subflow_loc_as_str();
         let missing_subflow_locations = frg_err.get_missing_subflow_loc_as_str();
         let missing_labels_locations = frg_err.get_labels_loc_as_str();
@@ -1371,7 +1379,7 @@ impl From<FrgErrorInfo> for DfppErrorInfo {
             erroneous_locations.push(FrgErrorInfo::parse_location(&loc));
         }
 
-        Self { erroneous_locations, missing_labels_locations }
+        Self { ctrl, erroneous_locations, missing_labels_locations }
     }
 }
 
@@ -1485,7 +1493,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         id: Ident,
         b: BodyId,
         gli: GLI<'g>,
-    ) -> std::io::Result<(Endpoint, Ctrl)> {
+    ) -> Option<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::new();
         let local_def_id = self.tcx.hir().body_owner_def_id(b);
         fn register_call_site<'tcx>(
@@ -1522,30 +1530,33 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         debug!("Checking whether DFPP is doing an error-message pass");
         if let Some(em) = self.get_error_information_json() {
             if em.erroneous_locations.is_empty() && em.missing_labels_locations.is_empty() {
-                println!("Hooray! Found no privacy violations!");
+                println!("{}", "Hooray! Found no privacy violations!".green());
             } else {
                 // dbg!(&em);
+                if id.name.as_str() != em.ctrl {
+                    return None;
+                }
+                
                 let transitive_flow_matrix = flowistry::infoflow::compute_flow(
                     tcx, b, controller_body_with_facts);
-                
-                println!("Found violation of policy authorized_viewer in:");
+                println!("{} {:?}{}", "Found violation of policy right_to_be_forgotten in target".bold().red(), id.name, ":".bold().red());
                 for loc in &em.erroneous_locations {
-                    let mir = &controller_body_with_facts.body.stmt_at(*loc);
+                    let mir = &controller_body_with_facts.simplified_body().stmt_at(*loc);
                     match mir {
                         Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
                         Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
                     }
                 }
-                println!("Relevant context that may have influenced this violation:");
+                println!("{}", "Relevant context that may have influenced this violation:".bold().red());
     
                 for loc in &em.erroneous_locations {
-                    if is_real_location(&controller_body_with_facts.body, *loc) {
+                    if loc.is_real(&controller_body_with_facts.simplified_body()) {
                         // dbg!(loc);
                         let source_dependencies = transitive_flow_matrix.state_at(*loc);
         
                         let source_places = read_places_with_provenance(
                             *loc, 
-                            &controller_body_with_facts.body.stmt_at(*loc), 
+                            &controller_body_with_facts.simplified_body().stmt_at(*loc), 
                             tcx);
                         
                         // HACKY
@@ -1556,21 +1567,23 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                                 source_dependencies.row(place)
                             })
                             .for_each(|loc| {
-                                let mir = &controller_body_with_facts.body.stmt_at(*loc);
-                                if ctr <= 10 {
-                                    match mir {
-                                        Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
-                                        Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
+                                if loc.is_real(&controller_body_with_facts.simplified_body()) {
+                                    let mir = &controller_body_with_facts.simplified_body().stmt_at(*loc);
+                                    if ctr <= 2 {
+                                        match mir {
+                                            Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
+                                            Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
+                                        }
                                     }
+                                    ctr = ctr + 1;   
                                 }
-                                ctr = ctr + 1;
                             });
                     }
                 }
                 
-                println!("You can fix this violation by removing the line(s): ");
+                println!("{}", "You can fix this violation by removing the line(s): ".bold().green());
                 for loc in &em.erroneous_locations {
-                    let mir = &controller_body_with_facts.body.stmt_at(*loc);
+                    let mir = &controller_body_with_facts.simplified_body().stmt_at(*loc);
                     match mir {
                         Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
                         Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
@@ -1579,10 +1592,10 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 
                 for label_pair in &em.missing_labels_locations {
     
-                    println!("Or adding the following annotation: ");
+                    println!("{}", "Or adding the following annotation: ".bold().green());
                     println!("\t{}", &label_pair.label);
-                    println!("To the line:");
-                    let mir = &controller_body_with_facts.body.stmt_at(label_pair.location);
+                    println!("{}", "To the line:".bold().green());
+                    let mir = &controller_body_with_facts.simplified_body().stmt_at(label_pair.location);
                     match mir {
                         Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
                         Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
@@ -1746,7 +1759,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 DataSink::Return,
             );
         }
-        Ok((Identifier::new(id.name), flows))
+        Some((Identifier::new(id.name), flows))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -1774,9 +1787,9 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             .collect::<HashMap<_, _>>();
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         crate::sah::HashVerifications::with(|hash_verifications| {
-            targets
+            let controllers = targets
                 .drain(..)
-                .map(|(id, b, _)| {
+                .filter_map(|(id, b, _)| {
                     self.handle_target(
                         hash_verifications,
                         &mut call_site_annotations,
@@ -1786,8 +1799,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                         gli,
                     )
                 })
-                .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()
-                .map(|controllers| ProgramDescription {
+                .collect::<HashMap<Endpoint, Ctrl>>();
+                Ok(ProgramDescription {
                     controllers,
                     annotations: call_site_annotations
                         .into_iter()

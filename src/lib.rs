@@ -15,6 +15,7 @@ extern crate lazy_static;
 extern crate simple_logger;
 #[macro_use]
 extern crate log;
+extern crate colored;
 
 pub mod rust {
     //! Exposes the rustc external crates (this mod is just to tidy things up).
@@ -42,6 +43,7 @@ pub mod rust {
 
 use pretty::DocBuilder;
 use rust::*;
+use colored::*;
 
 use flowistry::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
