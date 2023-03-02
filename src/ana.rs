@@ -25,7 +25,7 @@ use core::panic;
 use std::{
     borrow::{Borrow, Cow},
     cell::RefCell,
-    rc::Rc, fs,
+    rc::Rc, fs, process::exit,
 };
 
 use crate::{
@@ -1374,7 +1374,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 }
             }
             // For now, use a panic to display all the error information.
-            panic!()
+            exit(0);
         }      
 
         debug!("Handling target {}", id.name);
