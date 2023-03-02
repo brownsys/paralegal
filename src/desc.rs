@@ -173,12 +173,14 @@ impl ObjectType {
     }
 }
 
+pub type AnnotationMap = HashMap<Identifier, (Vec<Annotation>, ObjectType)>;
+
 /// A Forge friendly representation of the dataflow graphs we calculated and the
 /// annotations we found.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ProgramDescription {
     pub controllers: HashMap<Endpoint, Ctrl>,
-    pub annotations: HashMap<Identifier, (Vec<Annotation>, ObjectType)>,
+    pub annotations: AnnotationMap,
 }
 
 impl ProgramDescription {
@@ -188,7 +190,29 @@ impl ProgramDescription {
     pub fn all_sources(&self) -> HashSet<&DataSource> {
         self.controllers
             .values()
-            .flat_map(|c| c.flow.0.keys().chain(c.types.0.keys()))
+            .flat_map(|c| {
+                c.data_flow
+                    .0
+                    .keys()
+                    .chain(c.types.0.keys())
+                    .chain(c.ctrl_flow.0.keys())
+            })
+            .collect()
+    }
+    /// Gather all [`DataSource`]s that are mentioned in this program description.
+    ///
+    /// Essentially just `self.controllers.flat_map(|c| c.keys())`
+    pub fn all_sources_with_ctrl(&self) -> HashSet<(Identifier, &DataSource)> {
+        self.controllers
+            .iter()
+            .flat_map(|(name, c)| {
+                c.data_flow
+                    .0
+                    .keys()
+                    .chain(c.types.0.keys())
+                    .chain(c.ctrl_flow.0.keys())
+                    .map(|ds| (*name, ds))
+            })
             .collect()
     }
     /// Gather all [`DataSink`]s mentioned in this program description
@@ -197,7 +221,7 @@ impl ProgramDescription {
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
         self.controllers
             .values()
-            .flat_map(|ctrl| ctrl.flow.0.values().flat_map(|v| v.iter()))
+            .flat_map(|ctrl| ctrl.data_flow.0.values().flat_map(|v| v.iter()))
             .collect()
     }
 
@@ -211,11 +235,23 @@ impl ProgramDescription {
         self.controllers
             .values()
             .flat_map(|ctrl| {
-                ctrl.flow
+                ctrl.data_flow
                     .0
                     .values()
                     .flat_map(|v| v.iter().filter_map(DataSink::as_argument).map(|s| s.0))
-                    .chain(ctrl.flow.0.keys().filter_map(|src| src.as_function_call()))
+                    .chain(
+                        ctrl.data_flow
+                            .0
+                            .keys()
+                            .filter_map(|src| src.as_function_call()),
+                    )
+                    .chain(
+                        ctrl.ctrl_flow
+                            .0
+                            .keys()
+                            .filter_map(|src| src.as_function_call()),
+                    )
+                    .chain(ctrl.ctrl_flow.0.values().flat_map(|v| v.iter()))
             })
             .collect()
     }
@@ -227,6 +263,12 @@ impl ProgramDescription {
         self.all_call_sites()
             .into_iter()
             .map(|cs| &cs.function)
+            .chain(
+                self.annotations
+                    .iter()
+                    .filter(|f| f.1 .1.is_function().is_some())
+                    .map(|f| f.0),
+            )
             .collect()
     }
 }
@@ -358,14 +400,16 @@ pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct Ctrl {
-    pub flow: Relation<DataSource, DataSink>,
+    pub data_flow: Relation<DataSource, DataSink>,
+    pub ctrl_flow: Relation<DataSource, CallSite>,
     pub types: CtrlTypes,
 }
 
 impl Ctrl {
     pub fn new() -> Self {
         Ctrl {
-            flow: Relation::empty(),
+            data_flow: Relation::empty(),
+            ctrl_flow: Relation::empty(),
             types: Relation::empty(),
         }
     }
@@ -386,12 +430,21 @@ impl Ctrl {
 
     pub fn with_input_types(types: CtrlTypes) -> Self {
         Ctrl {
-            flow: Relation::empty(),
+            data_flow: Relation::empty(),
+            ctrl_flow: Relation::empty(),
             types,
         }
     }
-    pub fn add(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {
-        let m = &mut self.flow.0;
+    pub fn add_data_flow(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {
+        let m = &mut self.data_flow.0;
+        if let Some(e) = m.get_mut(&from) {
+            e.insert(to);
+        } else {
+            m.insert(from.into_owned(), std::iter::once(to).collect());
+        }
+    }
+    pub fn add_ctrl_flow(&mut self, from: std::borrow::Cow<DataSource>, to: CallSite) {
+        let m = &mut self.ctrl_flow.0;
         if let Some(e) = m.get_mut(&from) {
             e.insert(to);
         } else {

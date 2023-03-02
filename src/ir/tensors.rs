@@ -1,5 +1,5 @@
-//! A sparse dependency tensor similar to flowistry's Θ. 
-//! 
+//! A sparse dependency tensor similar to flowistry's Θ.
+//!
 //! Additionally supports optional translation between [`Place`]s.
 
 use super::global_location::*;
@@ -12,6 +12,13 @@ pub type PlaceTranslationTable<'tcx> = HashMap<Place<'tcx>, Place<'tcx>>;
 /// A flowistry-like dependency matrix at a specific location. Describes for
 /// each place the most recent global locations (these could be locations in a
 /// callee) that influenced the values at this place.
+///
+/// It is important to note that [`Place`]s do not always compare equal (and
+/// hash equally), even if they are structurally equal. This is particularly
+/// relevant as we have observed issues related to this phenomenon with regards
+/// to this mapping structure (in cases of loops). Therefore it is important
+/// that you canonicalize the place you look up in this map with
+/// [`Aliases::normalize`](flowistry::mir::aliases::Aliases::normalize).
 pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation<'g>>>;
 
 /// A [`GlobalDepMatrix`] that may also translate between places.
@@ -39,7 +46,7 @@ pub type GlobalDepMatrix<'tcx, 'g> = HashMap<Place<'tcx>, HashSet<GlobalLocation
 ///
 /// 1. **Caller call sites**: Location of the call site for `bar` (probably
 ///    `bb0[1]`) translates places from inside `bar` to places in `foo`. In this
-///    case the return value `argument` (more precisely the mir place `_0` which
+///    case the return value `argument` (more precisely the mir place `_1` which
 ///    is assigned to `argument`).
 ///    
 ///    The translation tables for these locations are created with

@@ -13,13 +13,18 @@ use rustc_middle::mir;
 
 use either::Either;
 
+use dfpp::outfile_pls;
 use std::borrow::Cow;
+use std::io::prelude::*;
 
 lazy_static! {
     static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
     pub static ref DFPP_INSTALLED: bool = install_dfpp();
 }
 
+/// Run an action `F` in the directory `P`, ensuring that afterwards the
+/// original working directory is reestablished *and* also takes a lock so that
+/// no two parallel processes try to switch directory simultaneously.
 pub fn with_current_directory<
     P: AsRef<std::path::Path>,
     A,
@@ -39,6 +44,12 @@ pub fn with_current_directory<
     }
 }
 
+/// Run the action `F` in directory `P` and with rustc data structures
+/// initialized (e.g. using [`Symbol`] works), taking care to lock the directory
+/// change and resetting the working directory after.
+///
+/// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
+/// [`Symbol`]s created after `F` and may cause dereference errors.
 pub fn cwd_and_use_rustc_in<
     P: AsRef<std::path::Path>,
     A,
@@ -52,6 +63,10 @@ pub fn cwd_and_use_rustc_in<
     })
 }
 
+/// Initialize rustc data structures (e.g. [`Symbol`] works) and run `F`
+///
+/// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
+/// [`Symbol`]s created after `F` and may cause dereference errors.
 pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
     rustc_span::create_default_session_if_not_set_then(|_| f())
 }
@@ -69,6 +84,12 @@ pub fn install_dfpp() -> bool {
         .success()
 }
 
+/// Run dfpp in the current directory, passing the
+/// `--dump-serialized-non-transitive-graph` flag, which dumps a
+/// [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow) for each controller.
+///
+/// The result is suitable for reading with
+/// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
 pub fn run_dfpp_with_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")
@@ -78,6 +99,11 @@ pub fn run_dfpp_with_graph_dump() -> bool {
         .success()
 }
 
+/// Run dfpp in the current directory, passing the
+/// `--dump-serialized-flow-graph` which dumps the [`ProgramDescription`] as
+/// JSON.
+///
+/// The result is suitable for reading with [`PreFrg::from_file_at`]
 pub fn run_dfpp_with_flow_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")
@@ -87,8 +113,39 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
         .success()
 }
 
+pub fn run_forge(file: &str) -> bool {
+    std::process::Command::new("racket")
+        .arg(file)
+        .stdout(std::process::Stdio::piped())
+        .status()
+        .unwrap()
+        .success()
+}
+
+pub fn write_forge(file: &str, property: &str, result: &str) -> Result<(), std::io::Error> {
+    let content = format!(
+        "#lang forge 
+
+open \"helpers.frg\"
+open \"analysis_result.frg\"
+
+test expect {{
+	property_test: {{
+		{}
+	}} for {} is {}
+}}
+	",
+        property,
+        dfpp::frg::name::FLOWS_PREDICATE,
+        result
+    );
+
+    outfile_pls(file).and_then(|mut f| f.write_all(content.as_bytes()))
+}
+
 use dfpp::serializers::SerializableCallOnlyFlow;
 
+/// A deserialized version of [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow)
 pub struct G {
     pub graph: SerializableCallOnlyFlow,
     pub body: Bodies,
@@ -138,13 +195,20 @@ impl MatchCallSite for (mir::Location, hir::BodyId) {
 }
 
 impl G {
+    /// Direct predecessor nodes of `n`
     fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
-        self.graph.0.get(&n).into_iter().flat_map(|deps| {
-            std::iter::once(&deps.ctrl_deps)
-                .chain(deps.input_deps.iter())
-                .flat_map(|s| s.iter())
-        })
+        self.graph
+            .location_dependencies
+            .get(&n)
+            .into_iter()
+            .flat_map(|deps| {
+                std::iter::once(&deps.ctrl_deps)
+                    .chain(deps.input_deps.iter())
+                    .flat_map(|s| s.iter())
+            })
     }
+
+    /// Is there any path (using directed edges) from `from` to `to`.
     pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
         let mut queue = to
             .get_call_sites(&self.graph)
@@ -165,6 +229,8 @@ impl G {
         false
     }
 
+    /// Is there an edge between `from` and `to`. Equivalent to testing if
+    /// `from` is in `g.predecessors(to)`.
     pub fn connects_direct<From: MatchCallSite, To: GetCallSites>(
         &self,
         from: &From,
@@ -178,6 +244,23 @@ impl G {
         false
     }
 
+    pub fn returns_direct<From: MatchCallSite>(&self, from: &From) -> bool {
+        self.graph
+            .return_dependencies
+            .iter()
+            .any(|d| from.match_(d))
+    }
+
+    pub fn returns<From: MatchCallSite>(&self, from: &From) -> bool {
+        self.returns_direct(from)
+            || self
+                .graph
+                .return_dependencies
+                .iter()
+                .any(|r| self.connects(from, r))
+    }
+
+    /// Return all call sites for functions with names matching `pattern`.
     pub fn function_calls(&self, pattern: &str) -> HashSet<(mir::Location, hir::BodyId)> {
         self.body
             .0
@@ -191,6 +274,7 @@ impl G {
             .collect()
     }
 
+    /// Like `function_calls` but requires that only one such call is found.
     pub fn function_call(&self, pattern: &str) -> (mir::Location, hir::BodyId) {
         let v = self.function_calls(pattern);
         assert!(
@@ -200,12 +284,14 @@ impl G {
         v.into_iter().next().unwrap()
     }
 
+    /// Deserialize from a `.ntgb.json` file for the controller named `s`
     pub fn from_file(s: Symbol) -> Self {
         let (graph, body) = dfpp::dbg::read_non_transitive_graph_and_body(
             std::fs::File::open(format!("{}.ntgb.json", s.as_str())).unwrap(),
         );
         Self { graph, body }
     }
+    /// Get the `n`th argument for this `bid` body.
     pub fn argument(&self, bid: BodyId, n: usize) -> mir::Location {
         self.body.0[&bid]
             .0
@@ -233,8 +319,11 @@ impl PreFrg {
         use_rustc(|| {
             Self(
                 serde_json::from_reader(
-                    &mut std::fs::File::open(format!("{dir}/{}", dfpp::consts::FLOW_GRAPH_OUT_NAME))
-                        .unwrap(),
+                    &mut std::fs::File::open(format!(
+                        "{dir}/{}",
+                        dfpp::consts::FLOW_GRAPH_OUT_NAME
+                    ))
+                    .unwrap(),
                 )
                 .unwrap(),
             )
@@ -281,7 +370,7 @@ impl<'g> CtrlRef<'g> {
     pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallSiteRef<'g>> {
         let mut all: Vec<CallSiteRef<'g>> = self
             .ctrl
-            .flow
+            .data_flow
             .0
             .values()
             .flat_map(|v| {
@@ -295,10 +384,34 @@ impl<'g> CtrlRef<'g> {
             })
             .chain(
                 self.ctrl
-                    .flow
+                    .data_flow
                     .0
                     .keys()
                     .filter_map(dfpp::desc::DataSource::as_function_call)
+                    .map(|f| CallSiteRef {
+                        function: fun,
+                        call_site: f,
+                        ctrl: Cow::Borrowed(self),
+                    }),
+            )
+            .chain(
+                self.ctrl
+                    .ctrl_flow
+                    .0
+                    .keys()
+                    .filter_map(dfpp::desc::DataSource::as_function_call)
+                    .map(|f| CallSiteRef {
+                        function: fun,
+                        call_site: f,
+                        ctrl: Cow::Borrowed(self),
+                    }),
+            )
+            .chain(
+                self.ctrl
+                    .ctrl_flow
+                    .0
+                    .values()
+                    .flat_map(|cs_map| cs_map.iter())
                     .map(|f| CallSiteRef {
                         function: fun,
                         call_site: f,
@@ -357,7 +470,7 @@ impl<'g> CallSiteRef<'g> {
         let mut all: Vec<_> = self
             .ctrl
             .ctrl
-            .flow
+            .data_flow
             .0
             .values()
             .flat_map(|s| s.iter())
@@ -372,35 +485,48 @@ impl<'g> CallSiteRef<'g> {
     }
 
     pub fn flows_to(&self, sink: &DataSinkRef) -> bool {
+        let next_hop = |src: dfpp::desc::CallSite| {
+            self.ctrl
+                .ctrl
+                .data_flow
+                .0
+                .get(&dfpp::desc::DataSource::FunctionCall(src.clone()))
+                .iter()
+                .flat_map(|i| i.iter())
+                .map(|ds| Either::Left(ds))
+                .chain(
+                    self.ctrl
+                        .ctrl
+                        .ctrl_flow
+                        .0
+                        .get(&dfpp::desc::DataSource::FunctionCall(src.clone()))
+                        .iter()
+                        .flat_map(|i| i.iter())
+                        .map(|cs| Either::Right(cs)),
+                )
+                .collect()
+        };
+
         let mut seen = HashSet::new();
-        let mut queue: Vec<_> = self
-            .ctrl
-            .ctrl
-            .flow
-            .0
-            .get(&dfpp::desc::DataSource::FunctionCall(
-                self.call_site.clone(),
-            ))
-            .iter()
-            .flat_map(|i| i.iter())
-            .collect();
+        let mut queue: Vec<_> = next_hop(self.call_site.clone());
         while let Some(n) = queue.pop() {
-            if sink == n {
+            if match n {
+                Either::Left(l) => sink == l,
+                _ => false,
+            } {
                 return true;
             }
-            if !seen.contains(n) {
+
+            if !seen.contains(&n) {
                 seen.insert(n);
-                if let Some((fun, _)) = n.as_argument() {
-                    queue.extend(
-                        self.ctrl
-                            .ctrl
-                            .flow
-                            .0
-                            .get(&dfpp::desc::DataSource::FunctionCall(fun.clone()))
-                            .iter()
-                            .flat_map(|s| s.iter()),
-                    );
-                }
+                match n {
+                    Either::Left(l) => {
+                        if let Some((fun, _)) = l.as_argument() {
+                            queue.extend(next_hop(fun.clone()))
+                        }
+                    }
+                    Either::Right(r) => queue.extend(next_hop(r.clone())),
+                };
             }
         }
         false

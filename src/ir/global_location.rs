@@ -192,7 +192,7 @@ pub trait IsGlobalLocation: Sized {
                 function: identifier_for_fn(
                     tcx,
                     tcx.body_for_body_id(dep_fun)
-                        .body
+                        .simplified_body()
                         .stmt_at(dep_loc)
                         .right()
                         .expect("not a terminator")

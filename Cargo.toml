@@ -10,11 +10,11 @@ rustc_private = true
 [dependencies]
 #flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "1f469a4cce9f2e240ad14b5145669a8011d4e6b2" }
 #flowistry = { path = "../flowistry/crates/flowistry" }
-flowistry = { git = "https://github.com/brownsys/flowistry", rev = "1e8e54beccb4720d713cf2baa5b205700f5987d6" }
+flowistry = { git = "https://github.com/brownsys/flowistry", rev = "2b97c8c6deeea6ce857a77d4ff39b4add5dda64d" }
 
 #rustc_plugin = { git = "https://github.com/willcrichton/flowistry", rev = "1f469a4cce9f2e240ad14b5145669a8011d4e6b2" }
 #rustc_plugin = { path = "../flowistry/crates/rustc_plugin" }
-rustc_plugin = { git = "https://github.com/brownsys/flowistry", rev = "1e8e54beccb4720d713cf2baa5b205700f5987d6" }
+rustc_plugin = { git = "https://github.com/brownsys/flowistry", rev = "2b97c8c6deeea6ce857a77d4ff39b4add5dda64d" }
 
 clap = { version = "3", features = ["derive", "cargo", "env"] }
 serde = { version = "1", features = ["derive"] }

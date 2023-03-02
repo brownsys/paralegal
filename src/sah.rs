@@ -6,7 +6,7 @@ extern crate either;
 
 use either::Either;
 
-use crate::{consts, desc::*, rust::*, HashMap, HashSet};
+use crate::{consts, desc::*, rust::*, utils::LocationExt, HashMap, HashSet};
 use rustc_middle::ty::{self, TyCtxt};
 use std::cell::RefCell;
 
@@ -429,11 +429,7 @@ pub fn compute_verification_hash_for_stmt_2<'tcx>(
             use mir::visit::MutVisitor;
             let mut loc_set = HashSet::<mir::Location>::new();
             crate::utils::PlaceVisitor(|pl: &mir::Place<'tcx>| {
-                loc_set.extend(
-                    matrix
-                        .row(*pl)
-                        .filter(|l| crate::utils::is_real_location(body, **l)),
-                );
+                loc_set.extend(matrix.row(*pl).filter(|l| l.is_real(body)));
             })
             .visit_terminator(t, loc);
 
@@ -555,11 +551,11 @@ impl<'tcx, 'a> ty::TypeVisitor<'tcx> for ExternalDependencyHasher<'tcx, 'a> {
             | Opaque(did, _) => {
                 if let Some(ldid) = did.as_local() {
                     flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(self.tcx, ldid)
-                        .body
+                        .simplified_body()
                         .hash_stable(self.hctx, self.hasher);
                 } else {
                     use crate::rust::rustc_middle::dep_graph::DepContext;
-                    self.tcx.dep_graph().with_query(|_g| 
+                    self.tcx.dep_graph().with_query(|_g|
                         // ???
                         ());
                 }

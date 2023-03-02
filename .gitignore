@@ -3,4 +3,6 @@
 
 /rust-dfpp-patch
 flow-graph.json
-/.cargo/
+
+# Local cargo configuration
+.cargo/config.toml

@@ -1,6 +1,21 @@
 #![feature(register_tool)]
 #![register_tool(dfpp)]
 
+#[dfpp::label(noinline)]
+fn input() -> i32 {
+    0
+}
+
+#[dfpp::label(noinline)]
+fn output(i : i32) -> i32 {
+    i
+}
+
+#[dfpp::analyze]
+fn return_is_tracked() -> i32 {
+    output(input())
+}
+
 #[dfpp::label(sensitive)]
 struct UserData {
     pub data: Vec<i64>,
@@ -57,6 +72,18 @@ fn loops(mut x: i32) {
 }
 
 #[dfpp::analyze]
+fn loop_retains_dependency(mut x: i32) {
+    let mut user_data = get_user_data();
+    let mut other_data = get_other_data();
+    while x < 10 {
+        dp_user_data_with(&mut user_data, &other_data);
+        modify_other_data(&mut other_data);
+        x -= 1;
+    }
+    send_user_data(&user_data);
+}
+
+#[dfpp::analyze]
 fn args(mut x: i32) {
     let mut user_data = get_user_data();
     while x < 10 {
@@ -76,6 +103,10 @@ fn get_user_data() -> UserData {
 #[dfpp::label(source)]
 fn get_user_data_with(data: Vec<i64>) -> UserData {
     return UserData { data };
+}
+
+fn get_other_data() -> Vec<i64> {
+    return vec![1, 2, 3]
 }
 
 #[dfpp::label(yey_dfpp_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
@@ -140,6 +171,15 @@ fn spurious_connections_in_derefs() {
 
 #[dfpp::label(there, arguments = [0])]
 fn receiver(x: i32) {}
+
+fn dp_user_data_with(user_data: &mut UserData, other_data: &Vec<i64>) {
+    for i in 0..user_data.data.len() {
+        user_data.data[i] = other_data[i];
+    }
+}
+
+fn modify_other_data(other_data: &mut Vec<i64>) {
+}
 
 #[dfpp::label{ sink, arguments = [0] }]
 fn send_user_data(user_data: &UserData) {}
