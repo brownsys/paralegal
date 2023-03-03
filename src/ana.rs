@@ -1530,16 +1530,19 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         debug!("Checking whether DFPP is doing an error-message pass");
         if let Some(em) = self.get_error_information_json() {
             if em.erroneous_locations.is_empty() && em.missing_labels_locations.is_empty() {
-                println!("{}", "Hooray! Found no privacy violations!".green());
+                println!("\x1b[92mHooray! Found no privacy violations!\x1b[0m");
             } else {
                 // dbg!(&em);
                 if id.name.as_str() != em.ctrl {
                     return None;
                 }
-                
-                let transitive_flow_matrix = flowistry::infoflow::compute_flow(
-                    tcx, b, controller_body_with_facts);
-                println!("{} {:?}{}", "Found violation of policy right_to_be_forgotten in target".bold().red(), id.name, ":".bold().red());
+
+                let transitive_flow_matrix =
+                    flowistry::infoflow::compute_flow(tcx, b, controller_body_with_facts);
+                println!(
+                    "\x1b[31mFound violation of policy \"\x1b[91mright_to_be_forgotten\x1b[31m\" in target {:?}:\x1b[0m",
+                    id.name,
+                );
                 for loc in &em.erroneous_locations {
                     let mir = &controller_body_with_facts.simplified_body().stmt_at(*loc);
                     match mir {
@@ -1547,8 +1550,10 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                         Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
                     }
                 }
-                println!("{}", "Relevant context that may have influenced this violation:".bold().red());
-    
+                println!(
+                    "\x1b[93mRelevant context that may have influenced this violation:\x1b[0m"
+                );
+
                 for loc in &em.erroneous_locations {
                     if loc.is_real(&controller_body_with_facts.simplified_body()) {
                         // dbg!(loc);
@@ -1580,8 +1585,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                             });
                     }
                 }
-                
-                println!("{}", "You can fix this violation by removing the line(s): ".bold().green());
+
+                println!("\x1b[92mYou can fix this violation by removing the line(s): \x1b[0m");
                 for loc in &em.erroneous_locations {
                     let mir = &controller_body_with_facts.simplified_body().stmt_at(*loc);
                     match mir {
@@ -1591,11 +1596,12 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 }
                 
                 for label_pair in &em.missing_labels_locations {
-    
-                    println!("{}", "Or adding the following annotation: ".bold().green());
+                    println!("\x1b[92mOr adding the following annotation: \x1b[0m");
                     println!("\t{}", &label_pair.label);
-                    println!("{}", "To the line:".bold().green());
-                    let mir = &controller_body_with_facts.simplified_body().stmt_at(label_pair.location);
+                    println!("\x1b[92mTo the line: \x1b[0m");
+                    let mir = &controller_body_with_facts
+                        .simplified_body()
+                        .stmt_at(label_pair.location);
                     match mir {
                         Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
                         Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
