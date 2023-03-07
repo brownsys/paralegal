@@ -9,6 +9,8 @@ use crate::{
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
         ty::{subst::GenericArgKind, ClosureKind, TyCtxt, TyKind},
     },
+    Symbol,
+    ty
 };
 
 use flowistry::{
@@ -32,6 +34,7 @@ use flowistry::{
         utils::{OperandExt, PlaceExt},
     },
 };
+use rustc_index::vec::IndexVec;
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug, Copy)]
 pub struct GlobalPlace<'tcx, 'g> {
@@ -71,17 +74,21 @@ use crate::ir::regal;
 
 pub type FlowResults<'a, 'tcx, 'g> = engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g>>;
 
-pub type FlowDomainMatrix<'tcx> = HashMap<Place<'tcx>, HashSet<Dependency>>;
-
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+#[derive(Default, PartialEq, Eq, Hash, Clone)]
 pub struct Dependency {
-    location: Location,
-    projection_delta: regal::ProjectionDelta
+    wildcard: Option<Location>,
+    on_path: HashMap<Path, Location>,
 }
+
+pub type DependencyMap = HashMap<Local, Dependency>;
+
+pub type Path = regal::ProjectionDelta;
+
+
 
 impl From<Location> for Dependency {
     fn from(location: Location) -> Self {
-        Self { location, projection_delta: Default::default() }
+        Self { wildcard: Some(location), on_path: HashMap::default() }
     }
 }
 
@@ -91,50 +98,71 @@ impl From<&'_ Location> for Dependency {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Default)]
-pub struct FlowDomain<'tcx> {
-    matrix: FlowDomainMatrix<'tcx>,
-    overrides: HashMap<Place<'tcx>, Dependency>,
+impl <'tcx> From<&ty::List<PlaceElem<'tcx>>> for Path {
+    fn from(_: &ty::List<PlaceElem>) -> Self {
+        unimplemented!()
+    }
 }
 
-impl<'tcx> FlowDomain<'tcx> {
-    fn override_(&mut self, row: Place<'tcx>, at: Dependency) -> bool {
-        let r = self.overrides.insert(row, at);
-        if let Some(old) = r {
+#[derive(PartialEq, Eq, Clone, Default)]
+pub struct FlowDomain {
+    matrix: DependencyMap,
+    overrides: HashMap<Local, Dependency>,
+}
+
+fn projection_to_delta<'tcx>(l: &ty::List<PlaceElem<'tcx>>) -> Option<Path> {
+    (!l.is_empty()).then(|| l.into())
+}
+
+impl FlowDomain {
+    fn override_(&mut self, row: Place, at: Location) -> bool {
+        let target = self.overrides.entry(row.local).or_default();
+        let old = if let Some(as_delta) = projection_to_delta(row.projection) {
+            target.on_path.insert(as_delta, at)
+        } else {
+            target.wildcard.replace(at)
+        };
+        if let Some(old) = old {
             if old != at {
                 warn!("Duplicate override for key {row:?}, old:{old:?} new:{at:?}");
             }
-        }
-        r.is_none()
+        };
+        old.is_none()
     }
 
-    fn insert(&mut self, k: Place<'tcx>, v: Dependency) -> bool {
-        self.matrix.entry(k).or_default().insert(v)
+    fn insert(&mut self, k: Place, v: Location) -> bool {
+        let target = self.matrix.entry(k.local).or_default();
+        if let Some(as_delta) = projection_to_delta(k.projection) {
+            target.on_path.insert(as_delta, v)
+        } else {
+            target.wildcard.replace(v)
+        }.is_none()
     }
 
-    fn matrix(&self) -> &FlowDomainMatrix<'tcx> {
+    fn matrix(&self) -> &DependencyMap {
         &self.matrix
     }
-    fn matrix_mut<'a>(&mut self) -> &mut FlowDomainMatrix<'tcx> {
+    fn matrix_mut<'a>(&mut self) -> &mut DependencyMap {
         &mut self.matrix
     }
-    fn row<'a>(&'a self, row: Place<'tcx>) -> &HashSet<Dependency> {
-        &self.matrix[&row]
+    fn row<'a>(&'a self, row: Place) -> &HashSet<Dependency> {
+        //&self.matrix[&row]
+        unimplemented!()
     }
     fn union_after(
         &mut self,
-        row: Place<'tcx>,
+        row: Place,
         _from: &HashSet<Dependency>,
-        at: Dependency,
+        at: Location,
     ) -> bool {
         self.override_(row, at)
     }
-    fn include(&mut self, row: Place<'tcx>, at: Dependency) -> bool {
+    fn include(&mut self, row: Place, at: Location) -> bool {
         self.override_(row, at)
     }
 }
 
-impl<'tcx> JoinSemiLattice for FlowDomain<'tcx> {
+impl<'tcx> JoinSemiLattice for FlowDomain {
     fn join(&mut self, other: &Self) -> bool {
         let mut changed = false;
         other.matrix.iter().for_each(|(&r, s)| {
@@ -206,7 +234,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
 
     fn transfer_function(
         &self,
-        state: &mut FlowDomain<'tcx>,
+        state: &mut FlowDomain,
         mutated: Place<'tcx>,
         inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
         location: Location,
@@ -363,7 +391,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
 }
 
 impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
-    type Domain = FlowDomain<'tcx>;
+    type Domain = FlowDomain,
     type Direction = Forward;
     const NAME: &'static str = "FlowAnalysis";
 
