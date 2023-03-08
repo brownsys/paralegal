@@ -61,19 +61,19 @@ impl<B, F> Equality<B, F> {
             Base(_) => unreachable!(),
             RefOf(r) => {
                 self.lhs = *r;
-                self.rhs = Term::new_deref_of(self.rhs);
+                self.rhs = self.rhs.add_deref_of();
             }
             DerefOf(r) => {
                 self.lhs = *r;
-                self.rhs = Term::new_ref_of(self.rhs);
+                self.rhs = self.rhs.add_ref_of();
             }
             MemberOf { field, inner } => {
                 self.lhs = *inner;
-                self.rhs = Term::new_contains_at(*field, self.rhs);
+                self.rhs = self.rhs.add_contains_at(*field);
             }
             ContainsAt { inner, field } => {
                 self.lhs = *inner;
-                self.rhs = Term::new_member_of(*field, self.rhs);
+                self.rhs = self.rhs.add_member_of(*field);
             }
             _ => unreachable!(),
         }
@@ -187,20 +187,20 @@ impl<B, F> Term<B, F> {
         Term::new(TermS::Base(base))
     }
 
-    pub fn new_deref_of(inner: Self) -> Self {
-        Term::new(TermS::DerefOf(inner))
+    pub fn add_deref_of(self) -> Self {
+        Term::new(TermS::DerefOf(self))
     }
 
-    pub fn new_ref_of(inner: Self) -> Self {
-        Term::new(TermS::RefOf(inner))
+    pub fn add_ref_of(self) -> Self {
+        Term::new(TermS::RefOf(self))
     }
 
-    pub fn new_member_of(field: F, inner: Self) -> Self {
-        Term::new(TermS::MemberOf { field, inner })
+    pub fn add_member_of(self, field: F) -> Self {
+        Term::new(TermS::MemberOf { field, inner: self })
     }
 
-    pub fn new_contains_at(field: F, inner: Self) -> Self {
-        Term::new(TermS::ContainsAt { field, inner })
+    pub fn add_contains_at(self, field: F) -> Self {
+        Term::new(TermS::ContainsAt { field, inner: self })
     }
 
     pub fn map<B0, F0, MB: FnMut(&B) -> B0, MF: FnMut(&F) -> F0>(
@@ -324,7 +324,7 @@ pub trait TermFolder<B, F, B0, F0> {
     /// Note that this visitor function does not rewrap automatically,
     /// instead it expects the specialized visitor methods (e.g.
     /// [`Self::visit_deref_of`]) to create a new term or wrap the inner term
-    /// again in [`TermS::DerefOf`].
+    /// again (e.g. in [`TermS::DerefOf`]).
     fn visit_term(&mut self, term: &Term<B, F>) -> Term<B0, F0> {
         use TermS::*;
         match term.kind() {
@@ -340,21 +340,21 @@ pub trait TermFolder<B, F, B0, F0> {
     fn visit_field(&mut self, field: &F) -> F0;
 
     fn visit_ref_of(&mut self, inner: &Term<B, F>) -> Term<B0, F0> {
-        Term::new_ref_of(self.visit_term(inner))
+        self.visit_term(inner).add_ref_of()
     }
 
     fn visit_deref_of(&mut self, inner: &Term<B, F>) -> Term<B0, F0> {
-        Term::new_deref_of(self.visit_term(inner))
+        self.visit_term(inner).add_deref_of()
     }
 
     fn visit_member_of(&mut self, field: &F, inner: &Term<B, F>) -> Term<B0, F0> {
         let new_field = self.visit_field(field);
-        Term::new_member_of(new_field, self.visit_term(inner))
+        self.visit_term(inner).add_member_of(new_field)
     }
 
     fn visit_contains_at(&mut self, field: &F, inner: &Term<B, F>) -> Term<B0, F0> {
         let new_field = self.visit_field(field);
-        Term::new_contains_at(new_field, self.visit_term(inner))
+        self.visit_term(inner).add_contains_at(new_field)
     }
 }
 
