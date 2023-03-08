@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, ops::Index};
 
 use crate::{
     ir::global_location::{GliAt, GlobalLocation, IsGlobalLocation, GLI},
@@ -9,7 +9,7 @@ use crate::{
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
         ty::{subst::GenericArgKind, ClosureKind, TyCtxt, TyKind},
     },
-    ty, Symbol,
+    ty, Symbol, mir
 };
 
 use flowistry::{
@@ -77,111 +77,140 @@ impl<'g> GliAt<'g> {
     }
 }
 
+use super::algebra;
 use crate::ir::regal;
 
 pub type FlowResults<'a, 'tcx, 'g> = engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g>>;
 
-#[derive(Default, PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Hash, Clone, Eq, Debug)]
+pub enum Base {
+    Terminal{ 
+        location: Location,
+        target: regal::TargetPlace,
+    },
+    Variable(Local),
+}
+pub type Term = algebra::Term<Base, mir::Field>;
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Dependency {
-    wildcard: Option<Location>,
-    on_path: HashMap<Path, Location>,
+    expr: Term,
 }
 
-pub type DependencyMap = HashMap<Local, Dependency>;
+impl Dependency {
+    pub fn expr(&self) -> &Term { &self.expr }
+}
 
-pub type Path = regal::ProjectionDelta;
+pub type DependencyMap<'tcx> = SparseMatrix<Place<'tcx>, Dependency>;
 
-impl From<Location> for Dependency {
-    fn from(location: Location) -> Self {
+
+impl Dependency {
+    fn new_terminal(location: Location, target: regal::TargetPlace) -> Self {
         Self {
-            wildcard: Some(location),
-            on_path: HashMap::default(),
+            expr: algebra::Term::new_base(Base::Terminal {location, target })
         }
     }
 }
 
-impl From<&'_ Location> for Dependency {
-    fn from(location: &Location) -> Self {
-        (*location).into()
+type SparseMatrixImpl<K, V> = HashMap<K, HashSet<V>>;
+
+#[derive(Debug, Clone)]
+pub struct SparseMatrix<K, V> {
+    matrix: SparseMatrixImpl<K, V>,
+}
+
+impl <'a, Q: Eq + std::hash::Hash + ?Sized, K: Eq + std::hash::Hash + std::borrow::Borrow<Q>, V> Index<&'a Q> for SparseMatrix<K, V> {
+    type Output = <SparseMatrixImpl<K, V> as Index<&'a Q>>::Output;
+    fn index(&self, index: &Q) -> &Self::Output {
+        &self.matrix[index]
     }
 }
 
-impl<'tcx> From<&ty::List<PlaceElem<'tcx>>> for Path {
-    fn from(_: &ty::List<PlaceElem>) -> Self {
-        unimplemented!()
+impl <K, V> Default for SparseMatrix<K, V> {
+    fn default() -> Self {
+        Self{ matrix: Default::default() }
+    }
+}
+
+impl <K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> PartialEq for SparseMatrix<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.matrix.eq(&other.matrix)
+    }
+}
+impl <K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> Eq for SparseMatrix<K, V> {}
+
+impl <K, V> SparseMatrix<K, V> {
+    pub fn set(&mut self, k: K, v: V) -> bool
+    where K: Eq + std::hash::Hash, V: Eq + std::hash::Hash
+    {
+        self.row_mut(k).insert(v)
+    }
+
+    pub fn rows(&self) -> impl Iterator<Item = (&K, &HashSet<V>)> {
+        self.matrix.iter()
+    }
+
+    pub fn row_mut(&mut self, k: K) -> &mut HashSet<V> 
+    where K: Eq + std::hash::Hash
+    {
+        self.matrix.entry(k).or_insert_with(HashSet::default)
+    }
+
+    pub fn has(&self, k: &K) -> bool 
+    where K: Eq + std::hash::Hash
+    {
+        !self.matrix.get(k).map_or(true, HashSet::is_empty)
     }
 }
 
 #[derive(PartialEq, Eq, Clone, Default)]
-pub struct FlowDomain {
-    matrix: DependencyMap,
-    overrides: HashMap<Local, Dependency>,
+pub struct FlowDomain<'tcx> {
+    matrix: DependencyMap<'tcx>,
+    overrides: DependencyMap<'tcx>,
 }
 
-fn projection_to_delta<'tcx>(l: &ty::List<PlaceElem<'tcx>>) -> Option<Path> {
-    (!l.is_empty()).then(|| l.into())
-}
-
-impl FlowDomain {
-    fn override_(&mut self, row: Place, at: Location) -> bool {
-        let target = self.overrides.entry(row.local).or_default();
-        let old = if let Some(as_delta) = projection_to_delta(row.projection) {
-            target.on_path.insert(as_delta, at)
-        } else {
-            target.wildcard.replace(at)
-        };
-        if let Some(old) = old {
-            if old != at {
-                warn!("Duplicate override for key {row:?}, old:{old:?} new:{at:?}");
-            }
-        };
-        old.is_none()
+impl <'tcx> FlowDomain<'tcx> {
+    fn override_(&mut self, row: Place<'tcx>, at: Dependency) -> bool {
+        self.overrides.set(row, at)
     }
 
-    fn insert(&mut self, k: Place, v: Location) -> bool {
-        let target = self.matrix.entry(k.local).or_default();
-        if let Some(as_delta) = projection_to_delta(k.projection) {
-            target.on_path.insert(as_delta, v)
-        } else {
-            target.wildcard.replace(v)
-        }
-        .is_none()
+    fn insert(&mut self, k: Place<'tcx>, v: Dependency) -> bool {
+        self.matrix.set(k, v)
     }
 
-    fn matrix(&self) -> &DependencyMap {
+    fn matrix(&self) -> &DependencyMap<'tcx> {
         &self.matrix
     }
-    fn matrix_mut<'a>(&mut self) -> &mut DependencyMap {
+    fn matrix_mut<'a>(&mut self) -> &mut DependencyMap<'tcx> {
         &mut self.matrix
     }
-    fn row<'a>(&'a self, row: Place) -> &HashSet<Dependency> {
-        //&self.matrix[&row]
-        unimplemented!()
+    fn row<'a>(&'a self, row: Place<'tcx>) -> &HashSet<Dependency> {
+        &self.matrix[&row]
     }
-    fn union_after(&mut self, row: Place, _from: &HashSet<Dependency>, at: Location) -> bool {
+    fn union_after(&mut self, row: Place<'tcx>, at: Dependency) -> bool {
         self.override_(row, at)
     }
-    fn include(&mut self, row: Place, at: Location) -> bool {
+    fn include(&mut self, row: Place<'tcx>, at: Dependency) -> bool {
         self.override_(row, at)
     }
 }
 
-impl<'tcx> JoinSemiLattice for FlowDomain {
+impl<'tcx> JoinSemiLattice for FlowDomain<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        let mut changed = false;
-        other.matrix.iter().for_each(|(&r, s)| {
-            if other.overrides.contains_key(&r) {
-                changed |= false;
-            } else {
-                for i in s.iter() {
-                    changed |= self.insert(r, *i)
+        let changed = false;
+        for (k, v) in other.matrix().rows() {
+            if other.overrides.has(k) {
+                continue;
+            }
+            let my_set = self.matrix_mut().row_mut(*k);
+            for dep in v {
+                if !my_set.contains(dep) {
+                    changed = true;
+                    my_set.insert(dep.clone());
                 }
-            };
-        });
-        other
-            .overrides
-            .iter()
-            .for_each(|(&p, &l)| changed |= self.insert(p, l));
+            }
+
+        }
         changed
     }
 }
@@ -243,7 +272,6 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
         location: Location,
         mutation_status: MutationStatus,
-        subfn_ana: Option<(BodyId, &AnalysisResults<'tcx, FlowAnalysis<'_, 'tcx, 'g>>)>,
     ) {
         debug!("  Applying mutation to {mutated:?} with inputs {inputs:?}");
 
@@ -255,74 +283,15 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         let gli = self.gli_at(location);
         let global_loc = location;
 
-        // Clear sub-places of mutated place (if sound to do so)
-        if matches!(mutation_status, MutationStatus::Definitely) && mutated_aliases.len() == 1 {
-            let mutated_direct = mutated_aliases.iter().next().unwrap();
-            for sub in all_aliases.children(*mutated_direct).iter() {
-                state.matrix_mut().remove(&all_aliases.normalize(*sub));
-            }
-        }
-
-        let mut input_location_deps = HashSet::default();
-        input_location_deps.insert(global_loc.into());
-
-        let add_deps = |global_place: Place<'tcx>, location_deps: &mut HashSet<Dependency>| {
-            let place = global_place;
-            let reachable_values = {
-                let aliases = all_aliases;
-                aliases.reachable_values(place, Mutability::Not)
-            };
-            let provenance = place
-                .refs_in_projection()
-                .into_iter()
-                .flat_map(|(place_ref, _)| {
-                    all_aliases
-                        .aliases(Place::from_ref(place_ref, self.tcx))
-                        .iter()
-                });
-            for relevant in reachable_values.iter().chain(provenance) {
-                let deps = state.row(all_aliases.normalize(*relevant));
-                trace!("    For relevant {relevant:?} for input {place:?} adding deps {deps:?}");
-                location_deps.extend(deps.iter().cloned());
-            }
-        };
-
-        // Add deps of mutated to include provenance of mutated pointers
-        add_deps(mutated, &mut input_location_deps);
-
-        // Add deps of all inputs
-        let mut children = Vec::new();
-        for (place, elem) in inputs.iter() {
-            add_deps(*place, &mut input_location_deps);
-
-            // If the input is associated to a specific projection of the mutated
-            // place, then save that input's dependencies with the projection
-            if let Some(elem) = elem {
+        let mut children = inputs.iter().filter_map(|(place, elem)| {
+            elem.map(|elem|  {
                 let mut projection = mutated.projection.to_vec();
-                projection.push(*elem);
-                let mut child_deps = HashSet::default();
-                add_deps(*place, &mut child_deps);
-                children.push((
-                    Place::make(mutated.local, &projection, self.tcx),
-                    child_deps,
-                ));
+                projection.push(elem);
+                Place::make(mutated.local, &projection, self.tcx)
             }
-        }
+            ) 
+        }).collect::<Vec<_>>();
 
-        // Add control dependencies
-        let controlled_by = self.control_dependencies.dependent_on(location.block);
-        let body = self.body;
-        for block in controlled_by.into_iter().flat_map(|set| set.iter()) {
-            input_location_deps.insert(body.terminator_loc(block).into());
-
-            // Include dependencies of the switch's operand
-            let terminator = body.basic_blocks()[block].terminator();
-            if let TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
-                if let Some(discr_place) = discr.to_place() {
-                    add_deps(discr_place, &mut input_location_deps);
-                }
-            }
-        }
 
         if children.len() > 0 {
             // In the special case of mutated = aggregate { x: .., y: .. }
@@ -335,14 +304,13 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             }
 
             // Then for constructor arguments that were places, add dependencies of those places.
-            for (child, deps) in children {
-                state.union_after(all_aliases.normalize(child), &deps, global_loc.into());
+            for child in children {
+                state.union_after(all_aliases.normalize(child), global_loc.into());
             }
 
             // Finally add input_location_deps *JUST* to mutated, not conflicts of mutated.
             state.union_after(
                 all_aliases.normalize(mutated),
-                &input_location_deps,
                 global_loc.into(),
             );
         } else {
@@ -369,12 +337,10 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             };
 
             debug!("  Mutated conflicting places: {mutable_conflicts:?}");
-            debug!("    with deps {input_location_deps:?}");
 
             for place in mutable_conflicts.into_iter() {
                 state.union_after(
                     all_aliases.normalize(place),
-                    &input_location_deps,
                     global_loc.into(),
                 );
             }
@@ -383,7 +349,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
 }
 
 impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
-    type Domain = FlowDomain;
+    type Domain = FlowDomain<'tcx>;
     type Direction = Forward;
     const NAME: &'static str = "FlowAnalysis";
 
@@ -400,7 +366,9 @@ impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
                 );
                 state.insert(
                     self.aliases.normalize(*place),
-                    self.location_domain().value(loc).into(),
+                    Dependency::new_terminal(
+                        self.location_domain().value(loc).into(),
+                        regal::TargetPlace::Return)
                 );
             }
         }
@@ -420,7 +388,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
              mutation_status: MutationStatus| {
-                self.transfer_function(state, mutated, inputs, location, mutation_status, None)
+                self.transfer_function(state, mutated, inputs, location, mutation_status)
             },
         )
         .visit_statement(statement, location);
@@ -438,7 +406,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
              mutation_status: MutationStatus| {
-                self.transfer_function(state, mutated, inputs, location, mutation_status, None)
+                self.transfer_function(state, mutated, inputs, location, mutation_status)
             },
         )
         .visit_terminator(terminator, location);

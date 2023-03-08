@@ -103,12 +103,12 @@ pub fn solve<
     B0,
     I: Fn(&B) -> Either<B0, V>,
 >(
-    equations: &mut [Equality<B, F>],
+    equations: &[Equality<B, F>],
     target: &V,
     inspect: I,
 ) -> Vec<Term<B0, F>> {
     let mut eqs_with_bases = equations
-        .iter_mut()
+        .iter()
         .map(|e| {
             (
                 e.bases()
@@ -135,7 +135,7 @@ pub fn solve<
         }
         let all_matching = find_matching(&target);
         assert!(all_matching.len() != 0, "No matching equation");
-        for matching in all_matching {
+        for matching in all_matching.into_iter().cloned() {
             if inspect(matching.lhs.base()).right() != Some(target) {
                 matching.swap()
             }
@@ -146,7 +146,7 @@ pub fn solve<
             intermediates
                 .entry(target)
                 .or_insert_with(HashSet::default)
-                .insert(matching.rhs.clone());
+                .insert(matching.rhs);
         }
     }
     let solutions = vec![];

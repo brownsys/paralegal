@@ -77,7 +77,8 @@ impl ProjectionDelta {
     }
 }
 
-enum TargetPlace {
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum TargetPlace {
     Return,
     Argument(ArgumentIndex),
 }
