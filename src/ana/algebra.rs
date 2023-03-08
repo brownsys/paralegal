@@ -71,7 +71,7 @@ impl <B, F> Equality<B, F> {
 impl <B, F> Equality<B, F> {
 }
 
-fn solve<B: Clone + Hash + Eq, F: Eq + Hash + Clone, V: Clone + Eq + Hash, B0, I: Fn(&B) -> Either<B0, V>>(
+pub fn solve<B: Clone + Hash + Eq, F: Eq + Hash + Clone, V: Clone + Eq + Hash, B0, I: Fn(&B) -> Either<B0, V>>(
     equations: &mut [Equality<B, F>], target: &V, inspect: I
 ) -> Vec<Term<B0, F>> {
     let mut eqs_with_bases = equations.iter_mut().map(|e| (e.bases().into_iter().filter_map(|b| inspect(b).right()).collect::<Vec<_>>(), e)).collect::<Vec<_>>();
@@ -119,43 +119,43 @@ fn solve<B: Clone + Hash + Eq, F: Eq + Hash + Clone, V: Clone + Eq + Hash, B0, I
 }
 
 impl <B, F> Term<B, F> {
-    fn kind(&self) -> &TermS<B, F> {
+    pub fn kind(&self) -> &TermS<B, F> {
         &self.kind
     }
 
-    fn kind_mut(&mut self) -> &mut TermS<B, F> {
+    pub fn kind_mut(&mut self) -> &mut TermS<B, F> {
         &mut self.kind
     }
 
-    fn is_base(&self) -> bool {
+    pub fn is_base(&self) -> bool {
         matches!(self.kind(), TermS::Base(..))
     }
 
-    fn new(kind: TermS<B, F>) -> Self {
+    pub fn new(kind: TermS<B, F>) -> Self {
         Self{ kind: Box::new(kind) }
     }
 
-    fn new_base(base: B) -> Self {
+    pub fn new_base(base: B) -> Self {
         Term::new(TermS::Base(base))
     }
 
-    fn new_deref_of(inner: Self) -> Self {
+    pub fn new_deref_of(inner: Self) -> Self {
         Term::new(TermS::DerefOf(inner))
     }
 
-    fn new_ref_of(inner: Self) -> Self {
+    pub fn new_ref_of(inner: Self) -> Self {
         Term::new(TermS::RefOf(inner))
     }
 
-    fn new_member_of(field: F, inner: Self) -> Self {
+    pub fn new_member_of(field: F, inner: Self) -> Self {
         Term::new(TermS::MemberOf { field, inner })
     }
 
-    fn new_contains_at(field: F, inner: Self) -> Self {
+    pub fn new_contains_at(field: F, inner: Self) -> Self {
         Term::new(TermS::ContainsAt { field, inner })
     }
 
-    fn map<B0, F0, MB: FnMut(&B) -> B0, MF: FnMut(&F) -> F0>(&self, f: MB, g: MF) -> Term<B0, F0> {
+    pub fn map<B0, F0, MB: FnMut(&B) -> B0, MF: FnMut(&F) -> F0>(&self, f: MB, g: MF) -> Term<B0, F0> {
         use TermS::*;
         Term::new(
             match self.kind() {
@@ -174,7 +174,7 @@ impl <B, F> Term<B, F> {
         )
     }
 
-    fn base(&self) -> &B {
+    pub fn base(&self) -> &B {
         struct BaseCollector<'a, B>(Option<&'a B>);
         impl <'t, B, F> TermVisitor<'t, B, F> for BaseCollector<'t, B> {
             fn visit_base(&mut self, base: &'t B) {
@@ -186,7 +186,7 @@ impl <B, F> Term<B, F> {
         c.0.unwrap()
     }
 
-    fn sub(&mut self, other: Self) {
+    pub fn sub(&mut self, other: Self) {
         struct BaseReplacer<B, F>(Option<Term<B, F>>);
         impl <'t, B, F> TermMutVisitor<'t, B, F> for BaseReplacer<B, F> {
             fn visit_term(&mut self, term: &'t mut Term<B, F>) {
@@ -201,6 +201,39 @@ impl <B, F> Term<B, F> {
         let mut repl = BaseReplacer(Some(other));
         repl.visit_term(self);
         assert!(repl.0.is_none());
+    }
+
+    fn simplify_once(&mut self) -> bool {
+        use TermS::*;
+        match self.kind_mut() {
+            RefOf(Term{ kind: box DerefOf(inner) }) 
+            | DerefOf(Term{ kind: box RefOf(inner) }) => {
+                *self = inner;
+                true
+            }
+            MemberOf { field, inner: Term { kind: box ContainsAt { field: inner_field, inner}} }
+            | ContainsAt { field, inner: Term { kind: box MemberOf{ field: inner_field, inner}} } => {
+                assert_eq!(field, inner_field);
+                *term = inner;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn simplify(&mut self) 
+    where F: Eq
+    {
+        struct Simplifier;
+        impl <'t, B, F> TermMutVisitor<'t, B, F> for Simplifier {
+            fn visit_term(&mut self, term: &'t mut Term<B, F>) {
+                // Additional loop here so we simplify this outer part all the
+                // way without causing an endless loop (which is the case if you
+                // instead tried calling `self.visit_term` again at the end).
+                while term.simplify_once() {}
+                self.super_term(term)
+            }
+        }
     }
 }
 
@@ -246,19 +279,19 @@ pub trait TermFolder<B, F, B0, F0>
 
 }
 
-struct TypeChangingBaseReplacer<B>(Option<B>);
 
-impl <B, F: Clone, B0> TermFolder<B, F, B0, F> for TypeChangingBaseReplacer<B0> {
-    fn visit_base(&mut self, base: &B) -> Term<B0, F> {
-        Term::new_base(self.0.expect("Double substitute"))
+pub fn replace_base_and_change_type<B, B0, F: Clone>(base: B, term: &Term<B0, F>) -> Term<B, F> {
+    struct TypeChangingBaseReplacer<B>(Option<B>);
+
+    impl <B, F: Clone, B0> TermFolder<B, F, B0, F> for TypeChangingBaseReplacer<B0> {
+        fn visit_base(&mut self, base: &B) -> Term<B0, F> {
+            Term::new_base(self.0.expect("Double substitute"))
+        }
+
+        fn visit_field(&mut self, field: &F) -> F {
+            field.clone()
+        }
     }
-
-    fn visit_field(&mut self, field: &F) -> F {
-        field.clone()
-    }
-}
-
-fn replace_base_and_change_type<B, B0, F: Clone>(base: B, term: &Term<B0, F>) -> Term<B, F> {
     let mut replacer = TypeChangingBaseReplacer(Some(base));
     let result = replacer.visit_term(term);
     assert!(replacer.0.is_none());
