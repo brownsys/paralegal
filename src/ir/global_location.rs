@@ -352,10 +352,13 @@ impl<'g> GLI<'g> {
     }
 
     pub fn at(self, location: Location, function: BodyId) -> GliAt<'g> {
-        GliAt { gli: self, location, function }
+        GliAt {
+            gli: self,
+            location,
+            function,
+        }
     }
 }
-
 
 #[derive(Clone)]
 pub struct GliAt<'g> {
@@ -364,11 +367,12 @@ pub struct GliAt<'g> {
     function: BodyId,
 }
 
-impl <'g> GliAt<'g> {
+impl<'g> GliAt<'g> {
     pub fn as_global_location(&self) -> GlobalLocation<'g> {
         self.gli.globalize_location(self.location, self.function)
     }
     pub fn relativize(&self, relative: GlobalLocation<'g>) -> GlobalLocation<'g> {
-        self.gli.global_location_from_relative(relative, self.location, self.function)
+        self.gli
+            .global_location_from_relative(relative, self.location, self.function)
     }
 }

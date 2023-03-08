@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    ir::global_location::{GlobalLocation, GLI, GliAt, IsGlobalLocation},
+    ir::global_location::{GliAt, GlobalLocation, IsGlobalLocation, GLI},
     rust::{
         mir::{visit::Visitor, *},
         rustc_data_structures::fx::{FxHashMap as HashMap, FxHashSet as HashSet},
@@ -9,8 +9,7 @@ use crate::{
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
         ty::{subst::GenericArgKind, ClosureKind, TyCtxt, TyKind},
     },
-    Symbol,
-    ty
+    ty, Symbol,
 };
 
 use flowistry::{
@@ -18,7 +17,8 @@ use flowistry::{
     infoflow::mutation::{ModularMutationVisitor, MutationStatus},
     mir::{
         borrowck_facts::{get_body_with_borrowck_facts, CachedSimplifedBodyWithFacts},
-        utils::{self, BodyExt}, engine::AnalysisResults,
+        engine::AnalysisResults,
+        utils::{self, BodyExt},
     },
 };
 use flowistry::{
@@ -64,9 +64,16 @@ impl<'tcx, 'g> GlobalPlace<'tcx, 'g> {
     }
 }
 
-impl <'g> GliAt<'g> {
+impl<'g> GliAt<'g> {
     pub fn relativize_place<'tcx>(&self, place: GlobalPlace<'tcx, 'g>) -> GlobalPlace<'tcx, 'g> {
-        GlobalPlace { place: place.place, location: Some(place.location.map_or_else(|| self.as_global_location(), |prior| self.relativize(prior))) }
+        GlobalPlace {
+            place: place.place,
+            location: Some(
+                place
+                    .location
+                    .map_or_else(|| self.as_global_location(), |prior| self.relativize(prior)),
+            ),
+        }
     }
 }
 
@@ -84,11 +91,12 @@ pub type DependencyMap = HashMap<Local, Dependency>;
 
 pub type Path = regal::ProjectionDelta;
 
-
-
 impl From<Location> for Dependency {
     fn from(location: Location) -> Self {
-        Self { wildcard: Some(location), on_path: HashMap::default() }
+        Self {
+            wildcard: Some(location),
+            on_path: HashMap::default(),
+        }
     }
 }
 
@@ -98,7 +106,7 @@ impl From<&'_ Location> for Dependency {
     }
 }
 
-impl <'tcx> From<&ty::List<PlaceElem<'tcx>>> for Path {
+impl<'tcx> From<&ty::List<PlaceElem<'tcx>>> for Path {
     fn from(_: &ty::List<PlaceElem>) -> Self {
         unimplemented!()
     }
@@ -136,7 +144,8 @@ impl FlowDomain {
             target.on_path.insert(as_delta, v)
         } else {
             target.wildcard.replace(v)
-        }.is_none()
+        }
+        .is_none()
     }
 
     fn matrix(&self) -> &DependencyMap {
@@ -149,12 +158,7 @@ impl FlowDomain {
         //&self.matrix[&row]
         unimplemented!()
     }
-    fn union_after(
-        &mut self,
-        row: Place,
-        _from: &HashSet<Dependency>,
-        at: Location,
-    ) -> bool {
+    fn union_after(&mut self, row: Place, _from: &HashSet<Dependency>, at: Location) -> bool {
         self.override_(row, at)
     }
     fn include(&mut self, row: Place, at: Location) -> bool {
@@ -239,7 +243,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
         location: Location,
         mutation_status: MutationStatus,
-        subfn_ana: Option<(BodyId, &AnalysisResults<'tcx, FlowAnalysis<'_, 'tcx, 'g>>)>
+        subfn_ana: Option<(BodyId, &AnalysisResults<'tcx, FlowAnalysis<'_, 'tcx, 'g>>)>,
     ) {
         debug!("  Applying mutation to {mutated:?} with inputs {inputs:?}");
 
@@ -255,9 +259,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         if matches!(mutation_status, MutationStatus::Definitely) && mutated_aliases.len() == 1 {
             let mutated_direct = mutated_aliases.iter().next().unwrap();
             for sub in all_aliases.children(*mutated_direct).iter() {
-                state
-                    .matrix_mut()
-                    .remove(&all_aliases.normalize(*sub));
+                state.matrix_mut().remove(&all_aliases.normalize(*sub));
             }
         }
 
@@ -311,9 +313,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         let controlled_by = self.control_dependencies.dependent_on(location.block);
         let body = self.body;
         for block in controlled_by.into_iter().flat_map(|set| set.iter()) {
-            input_location_deps.insert(
-                body.terminator_loc(block).into(),
-            );
+            input_location_deps.insert(body.terminator_loc(block).into());
 
             // Include dependencies of the switch's operand
             let terminator = body.basic_blocks()[block].terminator();
@@ -331,19 +331,12 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             // First, ensure that all children have the current in their deps.
             // See test struct_read_constant for where this is needed.
             for child in all_aliases.children(mutated) {
-                state.include(
-                    all_aliases.normalize(child),
-                    global_loc.into(),
-                );
+                state.include(all_aliases.normalize(child), global_loc.into());
             }
 
             // Then for constructor arguments that were places, add dependencies of those places.
             for (child, deps) in children {
-                state.union_after(
-                    all_aliases.normalize(child),
-                    &deps,
-                    global_loc.into(),
-                );
+                state.union_after(all_aliases.normalize(child), &deps, global_loc.into());
             }
 
             // Finally add input_location_deps *JUST* to mutated, not conflicts of mutated.
@@ -387,11 +380,10 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             }
         }
     }
-
 }
 
 impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
-    type Domain = FlowDomain,
+    type Domain = FlowDomain;
     type Direction = Forward;
     const NAME: &'static str = "FlowAnalysis";
 

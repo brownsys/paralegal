@@ -34,10 +34,10 @@ use flowistry::{
 
 use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 
-pub mod df;
-pub mod inline;
 mod abstract_memory;
 mod algebra;
+pub mod df;
+pub mod inline;
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
     /// Driver function. Performs the data collection via visit, then calls

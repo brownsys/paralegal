@@ -45,7 +45,7 @@ impl Default for ProjectionDelta {
     fn default() -> Self {
         Self {
             delta: Delta::Positive,
-            projections: Projections(vec![])
+            projections: Projections(vec![]),
         }
     }
 }
@@ -57,7 +57,11 @@ impl Projections {
     fn apply_in_pieces(&mut self, delta: Delta, projections: &Projections) {
         match delta {
             Delta::Positive => self.0.extend(projections.0.iter().cloned()),
-            Delta::Negative => self.0.drain(..projections.0.len()).zip(projections.0.iter()).for_each(|(old, new)| assert_eq!(&old, new))
+            Delta::Negative => self
+                .0
+                .drain(..projections.0.len())
+                .zip(projections.0.iter())
+                .for_each(|(old, new)| assert_eq!(&old, new)),
         }
     }
 }
@@ -66,7 +70,9 @@ impl ProjectionDelta {
     pub fn apply(&mut self, other: &ProjectionDelta) {
         match self.delta {
             Delta::Positive => self.projections.apply(other),
-            Delta::Negative => self.projections.apply_in_pieces(!other.delta, &other.projections)
+            Delta::Negative => self
+                .projections
+                .apply_in_pieces(!other.delta, &other.projections),
         }
     }
 }

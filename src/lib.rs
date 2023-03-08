@@ -6,6 +6,7 @@
 #![feature(rustc_private)]
 #![feature(min_specialization)]
 #![feature(drain_filter)]
+#![feature(box_patterns)]
 #[macro_use]
 extern crate clap;
 extern crate ordermap;
