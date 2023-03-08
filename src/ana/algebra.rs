@@ -5,7 +5,7 @@ use crate::{
 };
 
 use std::{
-    hash::Hash,
+    hash::{Hash, Hasher},
     fmt::Debug,
 };
 
@@ -23,10 +23,35 @@ pub enum TermS<B, F> {
     ContainsAt { inner: Term<B, F>, field: F },
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Debug)]
 pub struct Equality<B, F> {
     lhs: Term<B, F>,
     rhs: Term<B, F>,
+}
+
+impl <B: std::cmp::PartialEq, F: std::cmp::PartialEq> std::cmp::PartialEq for Equality<B, F> {
+    fn eq(&self, other: &Self) -> bool {
+        // Using an unpack here so compiler warns in case a new field is ever added
+        let Equality { lhs, rhs } = other;
+        (lhs == &self.lhs && rhs == &self.rhs)
+        || (rhs == &self.lhs && lhs == &self.rhs)
+    }
+}
+
+impl <B:Eq, F:Eq> Eq for Equality<B, F> {}
+
+impl <B: Hash, F: Hash> Hash for Equality<B, F> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let mut l= std::collections::hash_map::DefaultHasher::new();
+        let mut r= std::collections::hash_map::DefaultHasher::new();
+
+        self.lhs.hash(&mut l);
+        self.rhs.hash(&mut r);
+
+        state.write_u64(
+            l.finish().wrapping_add(r.finish())
+        )
+    }
 }
 
 impl<B, F> Equality<B, F> {
