@@ -5,7 +5,7 @@
 //! `cargo-dfpp` (a structure suggested by [rustc_plugin]).
 #![feature(rustc_private)]
 #![feature(min_specialization)]
-
+#![feature(drain_filter)]
 #[macro_use]
 extern crate clap;
 extern crate ordermap;
