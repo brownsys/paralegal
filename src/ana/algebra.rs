@@ -318,6 +318,18 @@ impl<B, F> Term<B, F> {
     }
 }
 
+
+impl <B> Term<B, Field> {
+    pub fn wrap_in_elem(self, elem: mir::PlaceElem) -> Self {
+        use mir::ProjectionElem::*;
+        match elem {
+            Field(f, _) => self.add_contains_at(f),
+            Deref => self.add_deref_of(),
+            _ => unimplemented!()
+        }
+    }
+}
+
 pub trait TermFolder<B, F, B0, F0> {
     /// Note that this visitor function does not rewrap automatically,
     /// instead it expects the specialized visitor methods (e.g.
