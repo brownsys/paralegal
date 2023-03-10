@@ -1,7 +1,8 @@
-use std::{cell::RefCell, rc::Rc, ops::Index};
+use std::{cell::RefCell, ops::Index, rc::Rc};
 
 use crate::{
     ir::global_location::{GliAt, GlobalLocation, IsGlobalLocation, GLI},
+    mir,
     rust::{
         mir::{visit::Visitor, *},
         rustc_data_structures::fx::{FxHashMap as HashMap, FxHashSet as HashSet},
@@ -9,7 +10,7 @@ use crate::{
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
         ty::{subst::GenericArgKind, ClosureKind, TyCtxt, TyKind},
     },
-    ty, Symbol, mir
+    ty, Symbol,
 };
 
 use flowistry::{
@@ -36,112 +37,45 @@ use flowistry::{
 };
 use rustc_index::vec::IndexVec;
 
-#[derive(PartialEq, Eq, Hash, Clone, Debug, Copy)]
-pub struct GlobalPlace<'tcx, 'g> {
-    place: Place<'tcx>,
-    location: Option<GlobalLocation<'g>>,
-}
-
-impl<'tcx, 'g> GlobalPlace<'tcx, 'g> {
-    fn from_local(place: Place<'tcx>) -> Self {
-        GlobalPlace {
-            place,
-            location: None,
-        }
-    }
-
-    fn is_return_place(self) -> bool {
-        self.place.local == RETURN_PLACE
-    }
-
-    fn expect_local(self) -> Place<'tcx> {
-        assert_eq!(self.location, None);
-        self.place
-    }
-
-    fn is_local(self) -> bool {
-        self.location.is_none()
-    }
-}
-
-impl<'g> GliAt<'g> {
-    pub fn relativize_place<'tcx>(&self, place: GlobalPlace<'tcx, 'g>) -> GlobalPlace<'tcx, 'g> {
-        GlobalPlace {
-            place: place.place,
-            location: Some(
-                place
-                    .location
-                    .map_or_else(|| self.as_global_location(), |prior| self.relativize(prior)),
-            ),
-        }
-    }
-}
-
-use super::algebra;
-use crate::ir::regal;
-
 pub type FlowResults<'a, 'tcx, 'g> = engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g>>;
-
-#[derive(PartialEq, Hash, Clone, Eq, Debug)]
-pub enum Base {
-    Terminal{ 
-        location: Location,
-        target: regal::TargetPlace,
-    },
-    Variable(Local),
-}
-pub type Term = algebra::Term<Base, mir::Field>;
-
-#[derive(Debug, Hash, PartialEq, Eq, Clone)]
-pub struct Dependency {
-    expr: Term,
-}
-
-impl Dependency {
-    pub fn expr(&self) -> &Term { &self.expr }
-}
-
-pub type DependencyMap<'tcx> = SparseMatrix<Place<'tcx>, Dependency>;
-
-
-impl Dependency {
-    fn new_terminal(location: Location, target: regal::TargetPlace) -> Self {
-        Self {
-            expr: algebra::Term::new_base(Base::Terminal {location, target })
-        }
-    }
-}
 
 type SparseMatrixImpl<K, V> = HashMap<K, HashSet<V>>;
 
 #[derive(Debug, Clone)]
 pub struct SparseMatrix<K, V> {
     matrix: SparseMatrixImpl<K, V>,
+    empty_set: HashSet<V>,
 }
 
-impl <'a, Q: Eq + std::hash::Hash + ?Sized, K: Eq + std::hash::Hash + std::borrow::Borrow<Q>, V> Index<&'a Q> for SparseMatrix<K, V> {
+impl<'a, Q: Eq + std::hash::Hash + ?Sized, K: Eq + std::hash::Hash + std::borrow::Borrow<Q>, V>
+    Index<&'a Q> for SparseMatrix<K, V>
+{
     type Output = <SparseMatrixImpl<K, V> as Index<&'a Q>>::Output;
     fn index(&self, index: &Q) -> &Self::Output {
         &self.matrix[index]
     }
 }
 
-impl <K, V> Default for SparseMatrix<K, V> {
+impl<K, V> Default for SparseMatrix<K, V> {
     fn default() -> Self {
-        Self{ matrix: Default::default() }
+        Self {
+            ..Default::default()
+        }
     }
 }
 
-impl <K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> PartialEq for SparseMatrix<K, V> {
+impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> PartialEq for SparseMatrix<K, V> {
     fn eq(&self, other: &Self) -> bool {
         self.matrix.eq(&other.matrix)
     }
 }
-impl <K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> Eq for SparseMatrix<K, V> {}
+impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> Eq for SparseMatrix<K, V> {}
 
-impl <K, V> SparseMatrix<K, V> {
+impl<K, V> SparseMatrix<K, V> {
     pub fn set(&mut self, k: K, v: V) -> bool
-    where K: Eq + std::hash::Hash, V: Eq + std::hash::Hash
+    where
+        K: Eq + std::hash::Hash,
+        V: Eq + std::hash::Hash,
     {
         self.row_mut(k).insert(v)
     }
@@ -150,18 +84,29 @@ impl <K, V> SparseMatrix<K, V> {
         self.matrix.iter()
     }
 
-    pub fn row_mut(&mut self, k: K) -> &mut HashSet<V> 
-    where K: Eq + std::hash::Hash
+    pub fn row(&self, k: &K) -> &HashSet<V>
+    where
+        K: Eq + std::hash::Hash,
+    {
+        self.matrix.get(k).unwrap_or(&self.empty_set)
+    }
+
+    pub fn row_mut(&mut self, k: K) -> &mut HashSet<V>
+    where
+        K: Eq + std::hash::Hash,
     {
         self.matrix.entry(k).or_insert_with(HashSet::default)
     }
 
-    pub fn has(&self, k: &K) -> bool 
-    where K: Eq + std::hash::Hash
+    pub fn has(&self, k: &K) -> bool
+    where
+        K: Eq + std::hash::Hash,
     {
         !self.matrix.get(k).map_or(true, HashSet::is_empty)
     }
 }
+
+pub type DependencyMap<'tcx> = SparseMatrix<Place<'tcx>, Location>;
 
 #[derive(PartialEq, Eq, Clone, Default)]
 pub struct FlowDomain<'tcx> {
@@ -169,39 +114,44 @@ pub struct FlowDomain<'tcx> {
     overrides: DependencyMap<'tcx>,
 }
 
-impl <'tcx> FlowDomain<'tcx> {
-    fn override_(&mut self, row: Place<'tcx>, at: Dependency) -> bool {
+impl<'tcx> FlowDomain<'tcx> {
+    fn override_(&mut self, row: Place<'tcx>, at: Location) -> bool {
         self.overrides.set(row, at)
     }
-
-    fn insert(&mut self, k: Place<'tcx>, v: Dependency) -> bool {
-        self.matrix.set(k, v)
-    }
-
     fn matrix(&self) -> &DependencyMap<'tcx> {
         &self.matrix
     }
     fn matrix_mut<'a>(&mut self) -> &mut DependencyMap<'tcx> {
         &mut self.matrix
     }
-    fn row<'a>(&'a self, row: Place<'tcx>) -> &HashSet<Dependency> {
-        &self.matrix[&row]
-    }
-    fn union_after(&mut self, row: Place<'tcx>, at: Dependency) -> bool {
+    fn union_after<S: flowistry::indexed::ToSet<Location>>(
+        &mut self,
+        row: Place<'tcx>,
+        _from: &IndexSet<Location, S>,
+        at: Location,
+    ) -> bool {
         self.override_(row, at)
     }
-    fn include(&mut self, row: Place<'tcx>, at: Dependency) -> bool {
+    fn from_location_domain(dom: &Rc<LocationDomain>) -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+    fn include(&mut self, row: Place<'tcx>, at: Location) -> bool {
         self.override_(row, at)
+    }
+    fn rows_after_override(&self) -> impl Iterator<Item = (&Place<'tcx>, &HashSet<Location>)> {
+        self.matrix
+            .rows()
+            .filter(|r| !self.overrides.has(&r.0))
+            .chain(self.overrides.rows())
     }
 }
 
 impl<'tcx> JoinSemiLattice for FlowDomain<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         let changed = false;
-        for (k, v) in other.matrix().rows() {
-            if other.overrides.has(k) {
-                continue;
-            }
+        for (k, v) in other.rows_after_override() {
             let my_set = self.matrix_mut().row_mut(*k);
             for dep in v {
                 if !my_set.contains(dep) {
@@ -209,7 +159,6 @@ impl<'tcx> JoinSemiLattice for FlowDomain<'tcx> {
                     my_set.insert(dep.clone());
                 }
             }
-
         }
         changed
     }
@@ -264,34 +213,86 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
     pub fn gli_at(&self, location: Location) -> GliAt<'g> {
         self.gli.at(location, self.body_id())
     }
-
     fn transfer_function(
         &self,
-        state: &mut FlowDomain,
+        state: &mut Flow,
         mutated: Place<'tcx>,
         inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
         location: Location,
         mutation_status: MutationStatus,
     ) {
         debug!("  Applying mutation to {mutated:?} with inputs {inputs:?}");
+        let location_domain = self.location_domain();
 
         let all_aliases = &self.aliases;
         let mutated_aliases = all_aliases.aliases(mutated);
         trace!("    Mutated aliases: {mutated_aliases:?}");
         assert!(!mutated_aliases.is_empty());
-        let body_id = self.body_id();
-        let gli = self.gli_at(location);
-        let global_loc = location;
 
-        let mut children = inputs.iter().filter_map(|(place, elem)| {
-            elem.map(|elem|  {
-                let mut projection = mutated.projection.to_vec();
-                projection.push(elem);
-                Place::make(mutated.local, &projection, self.tcx)
+        // Clear sub-places of mutated place (if sound to do so)
+        if matches!(mutation_status, MutationStatus::Definitely) && mutated_aliases.len() == 1 {
+            let mutated_direct = mutated_aliases.iter().next().unwrap();
+            for sub in all_aliases.children(*mutated_direct).iter() {
+                state.matrix_mut().clear_row(all_aliases.normalize(*sub));
             }
-            ) 
-        }).collect::<Vec<_>>();
+        }
 
+        let mut input_location_deps = LocationSet::new(location_domain);
+        input_location_deps.insert(location);
+
+        let add_deps = |place: Place<'tcx>, location_deps: &mut LocationSet| {
+            let reachable_values = all_aliases.reachable_values(place, Mutability::Not);
+            let provenance = place
+                .refs_in_projection()
+                .into_iter()
+                .flat_map(|(place_ref, _)| {
+                    all_aliases
+                        .aliases(Place::from_ref(place_ref, self.tcx))
+                        .iter()
+                });
+            for relevant in reachable_values.iter().chain(provenance) {
+                let deps = state.row(all_aliases.normalize(*relevant));
+                trace!("    For relevant {relevant:?} for input {place:?} adding deps {deps:?}");
+                location_deps.union(&deps);
+            }
+        };
+
+        // Add deps of mutated to include provenance of mutated pointers
+        add_deps(mutated, &mut input_location_deps);
+
+        // Add deps of all inputs
+        let mut children = Vec::new();
+        for (place, elem) in inputs.iter() {
+            add_deps(*place, &mut input_location_deps);
+
+            // If the input is associated to a specific projection of the mutated
+            // place, then save that input's dependencies with the projection
+            if let Some(elem) = elem {
+                let mut projection = mutated.projection.to_vec();
+                projection.push(*elem);
+                let mut child_deps = LocationSet::new(location_domain);
+                add_deps(*place, &mut child_deps);
+                children.push((
+                    Place::make(mutated.local, &projection, self.tcx),
+                    child_deps,
+                ));
+            }
+        }
+
+        // Add control dependencies
+        let controlled_by = self.control_dependencies.dependent_on(location.block);
+        let body = self.body;
+        for block in controlled_by.into_iter().flat_map(|set| set.iter()) {
+            input_location_deps.insert(body.terminator_loc(block));
+
+            // Include dependencies of the switch's operand
+            let terminator = body.basic_blocks()[block].terminator();
+            if let TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
+                if let Some(discr_place) = discr.to_place() {
+                    add_deps(discr_place, &mut input_location_deps);
+                }
+            }
+        }
 
         if children.len() > 0 {
             // In the special case of mutated = aggregate { x: .., y: .. }
@@ -300,22 +301,23 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             // First, ensure that all children have the current in their deps.
             // See test struct_read_constant for where this is needed.
             for child in all_aliases.children(mutated) {
-                state.include(all_aliases.normalize(child), global_loc.into());
+                state.include(all_aliases.normalize(child), location);
             }
 
             // Then for constructor arguments that were places, add dependencies of those places.
-            for child in children {
-                state.union_after(all_aliases.normalize(child), global_loc.into());
+            for (child, deps) in children {
+                state.union_after(all_aliases.normalize(child), &deps, location);
             }
 
             // Finally add input_location_deps *JUST* to mutated, not conflicts of mutated.
             state.union_after(
                 all_aliases.normalize(mutated),
-                global_loc.into(),
+                &input_location_deps,
+                location,
             );
         } else {
             // Union dependencies into all conflicting places of the mutated place
-            let mut mutable_conflicts = all_aliases.conflicts(mutated).to_owned();
+            let mut mutable_conflicts = D::mutated_values_for(all_aliases, mutated);
 
             // Remove any conflicts that aren't actually mutable, e.g. if x : &T ends up
             // as an alias of y: &mut T. See test function_lifetime_alias_mut for an example.
@@ -337,12 +339,10 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             };
 
             debug!("  Mutated conflicting places: {mutable_conflicts:?}");
+            debug!("    with deps {input_location_deps:?}");
 
             for place in mutable_conflicts.into_iter() {
-                state.union_after(
-                    all_aliases.normalize(place),
-                    global_loc.into(),
-                );
+                state.union_after(all_aliases.normalize(place), &input_location_deps, location);
             }
         }
     }
@@ -364,12 +364,9 @@ impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
                     "arg={arg:?} / place={place:?} / loc={:?}",
                     self.location_domain().value(loc)
                 );
-                state.insert(
-                    self.aliases.normalize(*place),
-                    Dependency::new_terminal(
-                        self.location_domain().value(loc).into(),
-                        regal::TargetPlace::Return)
-                );
+                state
+                    .matrix_mut()
+                    .insert(self.aliases.normalize(*place), loc);
             }
         }
     }

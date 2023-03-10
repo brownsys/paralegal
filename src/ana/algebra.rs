@@ -1,12 +1,12 @@
 use crate::{
     either::Either,
     mir::{self, Field},
-    HashMap, HashSet,
+    HashMap, HashSet, TyCtxt,
 };
 
 use std::{
-    hash::{Hash, Hasher},
     fmt::Debug,
+    hash::{Hash, Hasher},
 };
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -29,28 +29,25 @@ pub struct Equality<B, F> {
     rhs: Term<B, F>,
 }
 
-impl <B: std::cmp::PartialEq, F: std::cmp::PartialEq> std::cmp::PartialEq for Equality<B, F> {
+impl<B: std::cmp::PartialEq, F: std::cmp::PartialEq> std::cmp::PartialEq for Equality<B, F> {
     fn eq(&self, other: &Self) -> bool {
         // Using an unpack here so compiler warns in case a new field is ever added
         let Equality { lhs, rhs } = other;
-        (lhs == &self.lhs && rhs == &self.rhs)
-        || (rhs == &self.lhs && lhs == &self.rhs)
+        (lhs == &self.lhs && rhs == &self.rhs) || (rhs == &self.lhs && lhs == &self.rhs)
     }
 }
 
-impl <B:Eq, F:Eq> Eq for Equality<B, F> {}
+impl<B: Eq, F: Eq> Eq for Equality<B, F> {}
 
-impl <B: Hash, F: Hash> Hash for Equality<B, F> {
+impl<B: Hash, F: Hash> Hash for Equality<B, F> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let mut l= std::collections::hash_map::DefaultHasher::new();
-        let mut r= std::collections::hash_map::DefaultHasher::new();
+        let mut l = std::collections::hash_map::DefaultHasher::new();
+        let mut r = std::collections::hash_map::DefaultHasher::new();
 
         self.lhs.hash(&mut l);
         self.rhs.hash(&mut r);
 
-        state.write_u64(
-            l.finish().wrapping_add(r.finish())
-        )
+        state.write_u64(l.finish().wrapping_add(r.finish()))
     }
 }
 
@@ -259,8 +256,9 @@ impl<B, F> Term<B, F> {
         assert!(repl.0.is_none());
     }
 
-    fn simplify_once(&mut self) -> bool 
-    where F : Eq + Debug
+    fn simplify_once(&mut self) -> bool
+    where
+        F: Eq + Debug,
     {
         use TermS::*;
         match self.kind_mut() {
@@ -460,5 +458,73 @@ pub trait TermMutVisitor<'t, B, F> {
     fn super_contains_at(&mut self, field: &'t mut F, inner: &'t mut Term<B, F>) {
         self.visit_field(field);
         self.visit_term(inner)
+    }
+}
+
+struct Extractor<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    equations: HashSet<Equality<mir::Local, Field>>,
+}
+
+impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
+    fn visit_assign(
+        &mut self,
+        place: &mir::Place<'tcx>,
+        rvalue: &mir::Rvalue<'tcx>,
+        location: mir::Location,
+    ) {
+        type MirTerm = Term<mir::Local, Field>;
+        let lhs = place.into();
+        use mir::{AggregateKind, Rvalue::*};
+        let rhs_s = match rvalue {
+            Use(op) | UnaryOp(_, op) => Box::new(op.place().into_iter().map(|p| p.into()))
+                as Box<dyn Iterator<Item = MirTerm>>,
+            Ref(_, _, p) => Box::new(std::iter::once(MirTerm::from(p).add_ref_of())) as Box<_>,
+            BinaryOp(_, box (op1, op2)) | CheckedBinaryOp(_, box (op1, op2)) => Box::new(
+                [op1, op2]
+                    .into_iter()
+                    .flat_map(|op| op.place().into_iter())
+                    .map(|op| op.into()),
+            )
+                as Box<_>,
+            Aggregate(box kind, ops) => match kind {
+                AggregateKind::Adt(def_id, idx, substs, _, _) => {
+                    let adt_def = self.tcx.adt_def(*def_id);
+                    let variant = adt_def.variant(*idx);
+                    let iter = variant
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .zip(ops.iter())
+                        .filter_map(|((i, field), op)| {
+                            let place = op.place()?;
+                            let field = mir::ProjectionElem::Field(
+                                Field::from_usize(i),
+                                field.ty(self.tcx, substs),
+                            );
+                            place.into().add_contains_at(field)
+                        });
+                    Box::new(iter) as Box<_>
+                }
+                AggregateKind::Tuple => Box::new(ops.iter().enumerate().map(|(i, op)| {
+                    op.place()
+                        .into_iter()
+                        .map(|p| p.into().add_contains_at(i.into()))
+                })) as Box<_>,
+                _ => {
+                    debug!("Unhandled rvalue {rvalue:?}");
+                    Box::new(std::iter::empty()) as Box<_>
+                }
+            },
+
+            other => {
+                debug!("Unhandled rvalue {other:?}");
+                Box::new(std::iter::empty()) as Box<_>
+            }
+        };
+        self.equations.extend(rhs_s.map(|rhs| Equality {
+            lhs: lhs.clone(),
+            rhs,
+        }))
     }
 }
