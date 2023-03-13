@@ -351,7 +351,7 @@ impl<'g> GLI<'g> {
         self.make_global_location(root_function, root_location, Some(relative_location))
     }
 
-    pub fn at(self, location: Location, function: BodyId) -> GliAt<'g> {
+    pub fn at(self, location: mir::Location, function: BodyId) -> GliAt<'g> {
         GliAt {
             gli: self,
             location,

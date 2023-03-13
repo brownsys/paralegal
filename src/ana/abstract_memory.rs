@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
 
-use syn::token::Override;
 
 use crate::{
     mir,
