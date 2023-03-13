@@ -34,7 +34,7 @@ use flowistry::{
 
 use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 
-mod algebra;
+pub mod algebra;
 pub mod df;
 pub mod inline;
 

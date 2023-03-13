@@ -104,3 +104,11 @@ struct Call {
 struct Body {
     calls: HashMap<Location, Call>,
 }
+
+use crate::ana::{df, algebra};
+
+impl Body {
+    fn construct(flow_analysis: df::FlowResults<'_, '_, '_>, place_resolver: algebra::PlaceResolver) -> Self {
+
+    }
+}
