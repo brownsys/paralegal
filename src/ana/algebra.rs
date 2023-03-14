@@ -17,7 +17,7 @@ pub struct Term<B, F: Copy> {
     terms: Vec<TermS<F>>,
 }
 
-impl Display for Term<TargetPlace, Field> {
+impl <B: Display, F: Display + Copy> Display for Term<B, F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use TermS::*;
         for t in self.terms.iter() {
@@ -26,13 +26,13 @@ impl Display for Term<TargetPlace, Field> {
                 DerefOf => f.write_str("*("),
                 MemberOf(_) => f.write_char('('),
                 ContainsAt(field) =>
-                    write!(f, "{{ .{:?} = ", field),
+                    write!(f, "{{ .{} = ", field),
             }?
         }
         write!(f, "{}", self.base)?;
         for t in self.terms.iter() {
             match t {
-                MemberOf(field) => write!(f, ".{:?})", field),
+                MemberOf(field) => write!(f, ".{})", field),
                 ContainsAt(_) => f.write_str(" }"),
                 _ => f.write_char(')'),
             }?
@@ -58,6 +58,13 @@ pub enum TermS<F: Copy> {
     ContainsAt(F),
 }
 
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
+pub enum Cancel<F: Copy> {
+    NonOverlapping(F, F),
+    Cancels,
+    Remains,
+}
+
 impl<F: Copy> TermS<F> {
     pub fn flip(self) -> Self {
         use TermS::*;
@@ -68,12 +75,39 @@ impl<F: Copy> TermS<F> {
             ContainsAt(f) => MemberOf(f),
         }
     }
+
+    pub fn cancel(self, other: Self) -> Cancel<F> 
+    where F: PartialEq 
+    {
+        use TermS::*;
+        match (self, other) {
+            (MemberOf(f), ContainsAt(g)) | (ContainsAt(g), MemberOf(f)) if f != g => Cancel::NonOverlapping(f, g),
+            _ if self == other.flip() => Cancel::Cancels,
+            _ => Cancel::Remains,
+        }
+    }
+
+    pub fn map_field<F0: Copy, G: FnMut(F) -> F0>(self, mut g: G) -> TermS<F0> {
+        use TermS::*;
+        match self {
+            RefOf => DerefOf,
+            DerefOf => RefOf,
+            MemberOf(f) => ContainsAt(g(f)),
+            ContainsAt(f) => MemberOf(g(f)),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Equality<B, F: Copy> {
     lhs: Term<B, F>,
     rhs: Term<B, F>,
+}
+
+impl <B: Display, F:Display + Copy> Display for Equality<B, F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} = {}", self.rhs, self.lhs)
+    }
 }
 
 impl<B: std::cmp::PartialEq, F: std::cmp::PartialEq + Copy> std::cmp::PartialEq for Equality<B, F> {
@@ -116,9 +150,17 @@ impl<B, F: Copy> Equality<B, F> {
 
 impl<B, F: Copy> Equality<B, F> {}
 
+pub struct Print<F>(F);
+
+impl <F: Fn(&mut std::fmt::Formatter<'_>) -> std::fmt::Result> Display for Print<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (self.0)(f)
+    }
+}
+
 pub fn solve<
-    B: Clone + Hash + Eq,
-    F: Eq + Hash + Clone + Copy,
+    B: Clone + Hash + Eq + Display,
+    F: Eq + Hash + Clone + Copy + Display,
     V: Clone + Eq + Hash + Debug,
     B0,
     I: Fn(&B) -> Either<B0, V>,
@@ -144,7 +186,7 @@ pub fn solve<
     let mut intermediates: HashMap<V, HashSet<Term<B, F>>> = HashMap::new();
     let mut find_matching = |target: &V| {
         eqs_with_bases
-            .drain_filter(|(bases, eq)| bases.contains(&target))
+            .drain_filter(|(bases, _eq)| bases.contains(&target))
             .map(|(_, eq)| eq)
             .collect::<Vec<_>>()
     };
@@ -156,8 +198,8 @@ pub fn solve<
             continue;
         }
         let all_matching = find_matching(&intermediate_target);
-        if all_matching.len() != 0 {
-            debug!("No matching equation for intermediate target {:?} on the way to {:?}", intermediate_target, target);
+        if all_matching.is_empty() {
+            debug!("No matching equation for intermediate target {:?} from {:?}", intermediate_target, target);
         }
         for mut matching in all_matching.into_iter().cloned() {
             if inspect(matching.lhs.base()).right() != Some(intermediate_target.clone()) {
@@ -173,16 +215,36 @@ pub fn solve<
                 .insert(matching.rhs);
         }
     }
+    debug!("Found the intermediates");
+    for (k, vs) in intermediates.iter() {
+        debug!("  {k:?}: {}", Print(|f: &mut std::fmt::Formatter| {
+            let mut first = true;
+            for term in vs {
+                if first {
+                    first = false;
+                } else {
+                    f.write_str(" || ")?;
+                }
+                write!(f, "{}", term)?;
+            }
+            Ok(())
+        }));
+    }
     let mut solutions = vec![];
     let mut targets = intermediates[target].iter().cloned().collect::<Vec<_>>();
-    while let Some(target) = targets.pop() {
-        match inspect(target.base()) {
-            Either::Left(base) => solutions.push(target.replace_base(base)),
-            Either::Right(var) => targets.extend(intermediates[&var].iter().cloned().map(|term| {
-                let mut to_sub = target.clone();
-                to_sub.sub(term);
-                to_sub
-            })),
+    while let Some(intermediate_target) = targets.pop() {
+        match inspect(intermediate_target.base()) {
+            Either::Left(base) => solutions.push(intermediate_target.replace_base(base)),
+            Either::Right(var) =>
+                if let Some(next_eq) = intermediates.get(&var) {
+                    targets.extend(next_eq.iter().cloned().filter_map(|term| {
+                        let mut to_sub = intermediate_target.clone();
+                        to_sub.sub(term);
+                        to_sub.simplify().then_some(to_sub)
+                    }))
+                } else {
+                    debug!("No follow up equation found for {var:?} on the way from {target:?}");
+                }
         }
     }
     solutions
@@ -235,25 +297,47 @@ impl<B, F: Copy> Term<B, F> {
         std::mem::swap(&mut self.terms, &mut terms)
     }
 
-    pub fn simplify(&mut self)
+    pub fn simplify(&mut self) -> bool
     where
-        F: Eq + Debug,
+        F: Eq + Display,
+        B: Display
     {
         let l = self.terms.len();
         let old_terms = std::mem::replace(&mut self.terms, Vec::with_capacity(l));
         let mut it = old_terms.into_iter().peekable();
+        let mut valid = true;
         while let Some(i) = it.next() {
-            if Some(i.flip()) == it.peek().cloned() {
-                it.next();
-            } else {
-                self.terms.push(i);
-            }
+            if let Some(next) = it.peek().cloned() {
+                match i.cancel(next) {
+                    Cancel::NonOverlapping(f, g) => {
+                        debug!("Rejecting {self} because {f} != {g}");
+                        valid = false;
+                    }
+                    Cancel::Cancels => {
+                        it.next();
+                        continue;
+                    }
+                    _ => (),
+                }
+            } 
+            self.terms.push(i);
         }
+        valid
     }
+
     pub fn replace_base<B0>(&self, base: B0) -> Term<B0, F> {
         Term {
             base,
             terms: self.terms.clone(),
+        }
+    }
+
+    pub fn replace_fields<F0: Copy, G: FnMut(F) -> F0>(&self, mut g: G) -> Term<B, F0> 
+    where B: Clone
+    {
+        Term {
+            base: self.base.clone(),
+            terms: self.terms.iter().map(|f| f.map_field(&mut g)).collect()
         }
     }
 }
@@ -269,7 +353,7 @@ impl<B> Term<B, Field> {
     }
 }
 
-type MirEquation = Equality<mir::Local, Field>;
+type MirEquation = Equality<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
 
 struct Extractor<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -285,15 +369,15 @@ impl<'tcx> Extractor<'tcx> {
     }
 }
 
-type MirTerm = Term<Local, Field>;
+type MirTerm = Term<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
 
 impl From<Place<'_>> for MirTerm {
     fn from(p: Place<'_>) -> Self {
-        let mut term = MirTerm::new_base(p.local);
+        let mut term = Term::new_base(DisplayViaDebug(p.local));
         for (_, proj) in p.iter_projections() {
             term = term.wrap_in_elem(proj);
         }
-        term
+        term.replace_fields(DisplayViaDebug)
     }
 }
 
@@ -338,13 +422,13 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                             //     Field::from_usize(i),
                             //     field.ty(self.tcx, substs),
                             // );
-                            Some(MirTerm::from(place).add_contains_at(Field::from_usize(i)))
+                            Some(MirTerm::from(place).add_contains_at(DisplayViaDebug(Field::from_usize(i))))
                         });
                     Box::new(iter) as Box<_>
                 }
                 AggregateKind::Tuple => Box::new(ops.iter().enumerate().filter_map(|(i, op)| {
                     op.place()
-                        .map(|p| MirTerm::from(p).add_contains_at(i.into()))
+                        .map(|p| MirTerm::from(p).add_contains_at(DisplayViaDebug(i.into())))
                 })) as Box<_>,
                 _ => {
                     debug!("Unhandled rvalue {rvalue:?}");
@@ -392,6 +476,28 @@ pub struct PlaceResolver {
     variable_generator: RefCell<VariableGenerator<Local>>,
 }
 
+#[derive(Hash, Eq, Ord, PartialEq, PartialOrd, Clone, Copy)]
+pub struct DisplayViaDebug<T>(T);
+
+impl <T: Debug> Display for DisplayViaDebug<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <T as Debug>::fmt(&self.0, f)
+    }
+}
+
+impl <T: Debug> Debug for DisplayViaDebug<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl <T> std::ops::Deref for DisplayViaDebug<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl PlaceResolver {
     pub fn construct<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> Self {
         use mir::visit::Visitor;
@@ -410,11 +516,12 @@ impl PlaceResolver {
             variable_generator,
         }
     }
-    pub fn resolve(&self, from: Place, to: Place) -> Term<(), Field> {
+
+    pub fn try_resolve(&self, from: Place, to: Place) -> Option<Term<(), DisplayViaDebug<Field>>> {
         let target_term = MirTerm::from(to);
-        let target = self.variable_generator.borrow_mut().generate();
+        let target = DisplayViaDebug(self.variable_generator.borrow_mut().generate());
         let source_term = MirTerm::from(from);
-        let source = self.variable_generator.borrow_mut().generate();
+        let source = DisplayViaDebug(self.variable_generator.borrow_mut().generate());
         let equations = self
             .equations
             .iter()
@@ -430,7 +537,10 @@ impl PlaceResolver {
                 }),
             ])
             .collect::<Vec<_>>();
-        debug!("Equations for resolution from {from:?} to {to:?} are {:?}", equations);
+        debug!("Equations for resolution from {from:?} to {to:?} are:");
+        for eq in equations.iter() {
+            debug!("  {eq}");
+        }
         let mut results = solve(&equations, &source, |&local| {
             if local == target {
                 Either::Left(())
@@ -438,7 +548,14 @@ impl PlaceResolver {
                 Either::Right(local)
             }
         });
-        assert_eq!(results.len(), 1);
-        results.pop().unwrap()
+        assert!(results.len() <= 1);
+        let ret = results.pop();
+        if let Some(res) = ret.as_ref() {
+            debug!("Resolved to {}", res.replace_base(DisplayViaDebug(target)));
+        } else {
+            debug!("No resolution found");
+        }
+        ret
     }
+
 }

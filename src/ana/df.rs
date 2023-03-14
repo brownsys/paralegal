@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cell::RefCell, ops::Index, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, ops::Index, rc::Rc, fmt::Display};
 
 use crate::{
     ir::global_location::{GliAt, GlobalLocation, IsGlobalLocation, GLI},
@@ -125,10 +125,38 @@ pub type Dependency<'tcx> = (Location, Place<'tcx>);
 pub type LocationSet<'tcx> = HashSet<Dependency<'tcx>>;
 pub type DependencyMap<'tcx> = SparseMatrix<Place<'tcx>, Dependency<'tcx>>;
 
-#[derive(PartialEq, Eq, Clone, Default)]
+#[derive(PartialEq, Eq, Clone, Default, Debug)]
 pub struct FlowDomain<'tcx> {
     matrix: DependencyMap<'tcx>,
     overrides: DependencyMap<'tcx>,
+}
+
+impl <'tcx> DependencyMap<'tcx> {
+    pub fn fmt_indent(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
+        for (k, v) in self.matrix.iter() {
+            write!(f, "{:indent$}{k:?}: {{", ' ')?;
+            let mut first = true;
+            for (loc, place) in v {
+                if first {
+                    first = false;
+                } else {
+                    f.write_str(", ")?;
+                }
+                write!(f, "{place:?}@{loc:?}")?;
+            }
+            writeln!(f, "}}")?;
+        }
+        Ok(())
+    }
+}
+
+impl <'tcx> Display for FlowDomain<'tcx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "before:")?;
+        self.matrix.fmt_indent(f, 2)?;
+        writeln!(f, "after:")?;
+        self.overrides.fmt_indent(f, 2)
+    }
 }
 
 impl<'tcx> FlowDomain<'tcx> {
@@ -167,13 +195,7 @@ impl<'tcx> JoinSemiLattice for FlowDomain<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         let mut changed = false;
         for (k, v) in other.rows_after_override() {
-            let my_set = self.matrix_mut().row_mut(*k);
-            for dep in v {
-                if !my_set.contains(dep) {
-                    changed = true;
-                    my_set.insert(dep.clone());
-                }
-            }
+            changed |= self.matrix_mut().union_row(k, Cow::Borrowed(v));
         }
         changed
     }
@@ -254,7 +276,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         // }
 
         let mut input_location_deps = LocationSet::default();
-        if transitive {
+        if !transitive {
             input_location_deps.insert((location, mutated));
         }
 
@@ -395,7 +417,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
              mutation_status: MutationStatus| {
-                self.transfer_function(state, mutated, inputs, location, mutation_status, false)
+                self.transfer_function(state, mutated, inputs, location, mutation_status, true)
             },
         )
         .visit_statement(statement, location);
@@ -419,7 +441,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
                     inputs,
                     location,
                     mutation_status,
-                    matches!(&terminator.kind, TerminatorKind::Call { .. }),
+                    !matches!(&terminator.kind, TerminatorKind::Call { .. }),
                 )
             },
         )

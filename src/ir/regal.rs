@@ -2,7 +2,7 @@ use crate::{
     mir::{Field, Location, ProjectionElem},
     rust::{rustc_hir::def_id::DefId, rustc_index::vec::IndexVec},
     utils::{AsFnAndArgs, LocationExt},
-    HashMap, HashSet,
+    HashMap, HashSet, Either, mir
 };
 
 use std::fmt::{Display, Write};
@@ -89,7 +89,7 @@ pub enum TargetPlace {
 #[derive(Hash, Eq, PartialEq, Debug)]
 struct Dependency {
     target: Target,
-    target_term: algebra::Term<TargetPlace, Field>,
+    target_term: algebra::Term<TargetPlace, algebra::DisplayViaDebug<Field>>,
 }
 
 impl Display for Dependency {
@@ -98,7 +98,7 @@ impl Display for Dependency {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Debug)]
+#[derive(Hash, Eq, PartialEq, Debug, Copy, Clone)]
 enum Target {
     Call(Location),
     Argument(u16),
@@ -168,8 +168,8 @@ use crate::ana::{algebra, df};
 
 impl Body {
     pub fn construct(
-        flow_analysis: df::FlowResults<'_, '_, '_>,
-        place_resolver: algebra::PlaceResolver,
+        flow_analysis: &df::FlowResults<'_, '_, '_>,
+        place_resolver: &algebra::PlaceResolver,
     ) -> Self {
         let body = flow_analysis.analysis.body;
         let calls = body
@@ -184,47 +184,46 @@ impl Body {
                         if let Some(arg) = arg {
                             let ana = flow_analysis.state_at(bbloc);
                             ana.deps(arg)
-                                .map(|&(dep_loc, dep_place)| {
-                                    let target = if dep_loc.is_real(body) {
-                                        Target::Call(dep_loc)
-                                    } else {
-                                        Target::Argument(dep_loc.statement_index as u16 - 1)
-                                    };
-                                    // use target arg place here
+                                .flat_map(|&(dep_loc, dep_place)| {
+                                    let (target, places) = if dep_loc.is_real(body) {
+
                                     let (_, target_args, target_ret) = body
                                         .stmt_at(dep_loc)
                                         .right()
                                         .unwrap()
                                         .as_fn_and_args()
                                         .unwrap();
-                                    let (abstract_target_place, concrete_target_place) =
-                                        target_args
-                                            .into_iter()
-                                            .enumerate()
-                                            .filter_map(|(idx, p)| {
-                                                let p = p?;
-                                                (p.local == dep_place.local).then(|| {
-                                                    (
-                                                        TargetPlace::Argument(
-                                                            ArgumentIndex::from_usize(idx),
-                                                        ),
-                                                        p,
-                                                    )
-                                                })
+                                    
+                                    let places = target_args
+                                        .into_iter()
+                                        .enumerate()
+                                        .filter_map(|(idx, p)|
+                                            Some((
+                                                TargetPlace::Argument(
+                                                    ArgumentIndex::from_usize(idx),
+                                                ),
+                                                p?,
+                                            ))
+                                        )
+                                        .chain(std::iter::once({
+                                            let p = target_ret.unwrap().0;
+                                            (TargetPlace::Return, p)
+                                        }));
+                                        (Target::Call(dep_loc), Either::Left(places))
+                                    } else {
+                                        (Target::Argument(dep_loc.statement_index as u16 - 1), 
+                                        Either::Right(std::iter::once((TargetPlace::Return, mir::Local::from_usize(dep_loc.statement_index).into()))))
+                                    };
+                                    places.into_iter()
+                                        .filter_map(move |(abstract_target_place, concrete_target_place)| {
+                                            let target_term = place_resolver
+                                                .try_resolve(arg, concrete_target_place)?
+                                                .replace_base(abstract_target_place);
+                                            Some(Dependency {
+                                                target_term,
+                                                target,
                                             })
-                                            .next()
-                                            .unwrap_or_else(|| {
-                                                let p = target_ret.unwrap().0;
-                                                assert!(p.local == dep_place.local);
-                                                (TargetPlace::Return, p)
-                                            });
-                                    let target_term = place_resolver
-                                        .resolve(arg, concrete_target_place)
-                                        .replace_base(abstract_target_place);
-                                    Dependency {
-                                        target_term,
-                                        target,
-                                    }
+                                        })
                                 })
                                 .collect()
                         } else {
