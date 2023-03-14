@@ -140,7 +140,7 @@ pub fn solve<
     let mut targets = intermediates[target].iter().cloned().collect::<Vec<_>>();
     while let Some(target) = targets.pop() {
         match inspect(target.base()) {
-            Either::Left(base) => solutions.push(replace_base_and_change_type(base, &target)),
+            Either::Left(base) => solutions.push(target.replace_base(base)),
             Either::Right(var) => targets.extend(intermediates[&var].iter().cloned().map(|term| {
                 let mut to_sub = target.clone();
                 to_sub.sub(term);
@@ -209,6 +209,11 @@ impl<B, F: Copy> Term<B, F> {
             }
         }
     }
+    pub fn replace_base<B0>(&self, base: B0) -> Term<B0, F> {
+        Term {
+            base, terms: self.terms.clone()
+        }
+    }
 }
 
 
@@ -223,11 +228,6 @@ impl <B> Term<B, Field> {
     }
 }
 
-pub fn replace_base_and_change_type<B, B0, F: Copy>(base: B, term: &Term<B0, F>) -> Term<B, F> {
-    Term {
-        base, terms: term.terms.clone()
-    }
-}
 
 type MirEquation = Equality<mir::Local, Field>;
 

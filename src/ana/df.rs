@@ -120,7 +120,9 @@ impl<K, V> SparseMatrix<K, V> {
     }
 }
 
-pub type DependencyMap<'tcx> = SparseMatrix<Place<'tcx>, Location>;
+pub type Dependency<'tcx> = (Location, Place<'tcx>);
+pub type LocationSet<'tcx> = HashSet<Dependency<'tcx>>;
+pub type DependencyMap<'tcx> = SparseMatrix<Place<'tcx>, Dependency<'tcx>>;
 
 #[derive(PartialEq, Eq, Clone, Default)]
 pub struct FlowDomain<'tcx> {
@@ -129,7 +131,10 @@ pub struct FlowDomain<'tcx> {
 }
 
 impl<'tcx> FlowDomain<'tcx> {
-    fn override_(&mut self, row: Place<'tcx>, at: Location) -> bool {
+    pub fn deps(&self, at: Place<'tcx>) -> impl Iterator<Item=&Dependency<'tcx>> {
+        self.matrix()[&at].iter()
+    }
+    fn override_(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
         self.overrides.set(row, at)
     }
     fn matrix(&self) -> &DependencyMap<'tcx> {
@@ -141,7 +146,7 @@ impl<'tcx> FlowDomain<'tcx> {
     fn union_after(
         &mut self,
         row: Place<'tcx>,
-        from: Cow<LocationSet>,
+        from: Cow<LocationSet<'tcx>>,
     ) -> bool {
         self.overrides.union_row(&row, from)
     }
@@ -150,10 +155,10 @@ impl<'tcx> FlowDomain<'tcx> {
             ..Default::default()
         }
     }
-    fn include(&mut self, row: Place<'tcx>, at: Location) -> bool {
+    fn include(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
         self.override_(row, at)
     }
-    fn rows_after_override(&self) -> impl Iterator<Item = (&Place<'tcx>, &HashSet<Location>)> {
+    fn rows_after_override(&self) -> impl Iterator<Item = (&Place<'tcx>, &LocationSet<'tcx>)> {
         self.matrix
             .rows()
             .filter(|r| !self.overrides.has(&r.0))
@@ -188,7 +193,6 @@ pub struct FlowAnalysis<'a, 'tcx, 'g> {
     recurse_selector: &'a dyn RecurseSelector,
 }
 
-type LocationSet = HashSet<Location>;
 
 impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
     fn body_id(&self) -> BodyId {
@@ -254,7 +258,9 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         // }
 
         let mut input_location_deps = LocationSet::default();
-        input_location_deps.insert(location);
+        if transitive {
+            input_location_deps.insert((location, mutated));
+        }
 
         let add_deps = |place: Place<'tcx>, location_deps: &mut LocationSet| {
             if !transitive {
@@ -302,11 +308,11 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             // In the special case of mutated = aggregate { x: .., y: .. }
             // then we ensure that deps(mutated.x) != deps(mutated)
 
-            // First, ensure that all children have the current in their deps.
-            // See test struct_read_constant for where this is needed.
-            for child in all_aliases.children(mutated) {
-                state.include(all_aliases.normalize(child), location);
-            }
+            // // First, ensure that all children have the current in their deps.
+            // // See test struct_read_constant for where this is needed.
+            // for child in all_aliases.children(mutated) {
+            //     state.include(all_aliases.normalize(child), location);
+            // }
 
             // Then for constructor arguments that were places, add dependencies of those places.
             for (child, deps) in children {
@@ -370,7 +376,7 @@ impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
                 );
                 state
                     .matrix_mut()
-                    .set(self.aliases.normalize(*place), *self.location_domain().value(loc));
+                    .set(self.aliases.normalize(*place), (*self.location_domain().value(loc), *place));
             }
         }
     }

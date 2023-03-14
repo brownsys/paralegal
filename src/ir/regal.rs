@@ -1,7 +1,8 @@
 use crate::{
-    mir::{Location, ProjectionElem},
+    mir::{Location, ProjectionElem, Field},
     rust::{rustc_hir::def_id::DefId, rustc_index::vec::IndexVec},
     HashMap, HashSet,
+    utils::{AsFnAndArgs, LocationExt},
 };
 
 newtype_index!(
@@ -83,12 +84,13 @@ pub enum TargetPlace {
     Argument(ArgumentIndex),
 }
 
+#[derive(Hash, Eq, PartialEq, Debug)]
 struct Dependency {
     target: Target,
-    target_place: TargetPlace,
-    projection_delta: ProjectionDelta,
+    target_term: algebra::Term<TargetPlace, Field>
 }
 
+#[derive(Hash, Eq, PartialEq, Debug)]
 enum Target {
     Call(Location),
     Argument(u16),
@@ -109,6 +111,53 @@ use crate::ana::{df, algebra};
 
 impl Body {
     fn construct(flow_analysis: df::FlowResults<'_, '_, '_>, place_resolver: algebra::PlaceResolver) -> Self {
-
+        let body = flow_analysis
+            .analysis
+            .body;
+        let calls = body
+            .basic_blocks()
+            .iter_enumerated()
+            .filter_map(|(bb, bbdat)| {
+                let (function, simple_args, _) = bbdat.terminator().as_fn_and_args().ok()?;
+                let bbloc = body.terminator_loc(bb);
+                let arguments = 
+                    simple_args.into_iter()
+                        .map(|arg| if let Some(arg) = arg {
+                            let ana = flow_analysis.state_at(bbloc);
+                            ana.deps(arg).map(|&(dep_loc, dep_place)| {
+                                let target = if dep_loc.is_real(body) {
+                                    Target::Call(dep_loc)
+                                } else {
+                                    Target::Argument(dep_loc.statement_index as u16 - 1)
+                                };
+                                let (_, target_args, target_ret) = 
+                                    body.stmt_at(dep_loc)
+                                        .right()
+                                        .unwrap()
+                                        .as_fn_and_args()
+                                        .unwrap();
+                                let target_place = 
+                                    target_args.into_iter()
+                                        .enumerate()
+                                        .filter_map(|(idx, p)| (p?.local == dep_place.local).then(|| TargetPlace::Argument(ArgumentIndex::from_usize(idx))))
+                                        .next()
+                                        .unwrap_or_else(|| {
+                                            assert!(target_ret.unwrap().0.local == dep_place.local);
+                                            TargetPlace::Return
+                                        });
+                                let target_term = place_resolver.resolve(arg, dep_place).replace_base(target_place);
+                                Dependency {target_term, target}
+                            }).collect()
+                        } else {
+                            Dependencies::default()
+                        })
+                        .collect();
+                Some((bbloc, Call {
+                    function,
+                    arguments
+                }))
+            })
+            .collect();
+        Self { calls }
     }
 }
