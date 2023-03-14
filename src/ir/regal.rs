@@ -5,6 +5,8 @@ use crate::{
     HashMap, HashSet,
 };
 
+use std::fmt::{Display, Write};
+
 newtype_index!(
     pub struct ArgumentIndex {
         DEBUG_FORMAT = "arg{}"
@@ -90,10 +92,25 @@ struct Dependency {
     target_term: algebra::Term<TargetPlace, Field>,
 }
 
+impl Display for Dependency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} @ {}", self.target, self.target_term)
+    }
+}
+
 #[derive(Hash, Eq, PartialEq, Debug)]
 enum Target {
     Call(Location),
     Argument(u16),
+}
+
+impl Display for Target {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Target::Call(loc) => write!(f, "{loc:?}"),
+            Target::Argument(a) => write!(f, "a{a}"),
+        }
+    }
 }
 
 type Dependencies = HashSet<Dependency>;
@@ -104,9 +121,47 @@ struct Call {
     arguments: IndexVec<ArgumentIndex, Dependencies>,
 }
 
+impl Display for Call {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_char('(')?;
+        let mut first = true;
+        for arg in self.arguments.iter() {
+            if first {
+                first = false;
+            } else {
+                f.write_str(", ")?;
+            }
+            f.write_char('{')?;
+            let mut first_dep = true;
+            for dep in arg {
+                if first_dep {
+                    first_dep = false;
+                } else {
+                    f.write_str(", ")?;
+                }
+                write!(f, "{dep}")?;
+            }
+            f.write_char('}')?;
+        }
+        f.write_char(')')?;
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct Body {
     calls: HashMap<Location, Call>,
+}
+
+impl Display for Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut ordered = self.calls.iter().collect::<Vec<_>>();
+        ordered.sort_by_key(|t| t.0);
+        for (loc, call) in ordered {
+            writeln!(f, "{:<6}: {}", format!("{:?}", loc), call)?
+        }
+        Ok(())
+    }
 }
 
 use crate::ana::{algebra, df};

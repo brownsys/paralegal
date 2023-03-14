@@ -1,13 +1,13 @@
 use crate::{
     either::Either,
     mir::{self, Field, Local, Place},
-    HashMap, HashSet, TyCtxt,
+    HashMap, HashSet, TyCtxt, ir::regal::TargetPlace,
 };
 
 use std::{
     borrow::Cow,
     cell::RefCell,
-    fmt::Debug,
+    fmt::{Debug, Display, Write},
     hash::{Hash, Hasher},
 };
 
@@ -15,6 +15,39 @@ use std::{
 pub struct Term<B, F: Copy> {
     base: B,
     terms: Vec<TermS<F>>,
+}
+
+impl Display for Term<TargetPlace, Field> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use TermS::*;
+        for t in self.terms.iter() {
+            match t {
+                RefOf => f.write_str("&("),
+                DerefOf => f.write_str("*("),
+                MemberOf(_) => f.write_char('('),
+                ContainsAt(field) =>
+                    write!(f, "{{ .{:?} = ", field),
+            }?
+        }
+        write!(f, "{}", self.base)?;
+        for t in self.terms.iter() {
+            match t {
+                MemberOf(field) => write!(f, ".{:?})", field),
+                ContainsAt(_) => f.write_str(" }"),
+                _ => f.write_char(')'),
+            }?
+        }
+        Ok(())
+    }
+}
+
+impl Display for TargetPlace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TargetPlace::Argument(i) => write!(f, "a{}", i.as_usize()),
+            TargetPlace::Return => f.write_char('r'),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
