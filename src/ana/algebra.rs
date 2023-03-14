@@ -86,7 +86,7 @@ impl<B, F: Copy> Equality<B, F> {}
 pub fn solve<
     B: Clone + Hash + Eq,
     F: Eq + Hash + Clone + Copy,
-    V: Clone + Eq + Hash,
+    V: Clone + Eq + Hash + Debug,
     B0,
     I: Fn(&B) -> Either<B0, V>,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
@@ -118,14 +118,16 @@ pub fn solve<
 
     let mut targets = vec![target.clone()];
 
-    while let Some(target) = targets.pop() {
-        if intermediates.contains_key(&target) {
+    while let Some(intermediate_target) = targets.pop() {
+        if intermediates.contains_key(&intermediate_target) {
             continue;
         }
-        let all_matching = find_matching(&target);
-        assert!(all_matching.len() != 0, "No matching equation");
+        let all_matching = find_matching(&intermediate_target);
+        if all_matching.len() != 0 {
+            debug!("No matching equation for intermediate target {:?} on the way to {:?}", intermediate_target, target);
+        }
         for mut matching in all_matching.into_iter().cloned() {
-            if inspect(matching.lhs.base()).right() != Some(target.clone()) {
+            if inspect(matching.lhs.base()).right() != Some(intermediate_target.clone()) {
                 matching.swap()
             }
             matching.rearrange_left_to_right();
@@ -133,7 +135,7 @@ pub fn solve<
                 targets.push(v);
             }
             intermediates
-                .entry(target.clone())
+                .entry(intermediate_target.clone())
                 .or_insert_with(HashSet::default)
                 .insert(matching.rhs);
         }
@@ -367,6 +369,8 @@ impl PlaceResolver {
         let variable_generator = RefCell::new(VariableGenerator::new(mir::Local::from_usize(
             body.local_decls.len(),
         )));
+        debug!("Equations {:?}", equations);
+        debug!("Generating variables from {:?}", variable_generator.borrow().0);
 
         Self {
             equations,
@@ -393,7 +397,8 @@ impl PlaceResolver {
                 }),
             ])
             .collect::<Vec<_>>();
-        let mut results = solve(&equations, &target, |&local| {
+        debug!("Equations for resolution from {from:?} to {to:?} are {:?}", equations);
+        let mut results = solve(&equations, &source, |&local| {
             if local == target {
                 Either::Left(())
             } else {
