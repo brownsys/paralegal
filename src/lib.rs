@@ -279,13 +279,14 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
-        let lvl = if plugin_args.debug == Some(None) || plugin_args.debug == Some(Some("".to_string())) {
-            log::LevelFilter::Debug
-        } else if plugin_args.verbose {
-            log::LevelFilter::Info
-        } else {
-            log::LevelFilter::Warn
-        };
+        let lvl =
+            if plugin_args.debug == Some(None) || plugin_args.debug == Some(Some("".to_string())) {
+                log::LevelFilter::Debug
+            } else if plugin_args.verbose {
+                log::LevelFilter::Info
+            } else {
+                log::LevelFilter::Warn
+            };
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
             //.with_module_level("flowistry", log::LevelFilter::Error)

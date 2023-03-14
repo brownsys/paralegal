@@ -105,10 +105,19 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             marked_objects: self.marked_objects.clone(),
         };
 
-        {
+        if true {
             let selector = inline::RecurseSelector::new(true, Box::new(recurse_selector.clone()));
-            let flow = df::compute_flow_internal(tcx, gli, target.body_id, controller_body_with_facts, &selector);
-            let place_resolver = algebra::PlaceResolver::construct(tcx, controller_body_with_facts.simplified_body());
+            let flow = df::compute_flow_internal(
+                tcx,
+                gli,
+                target.body_id,
+                controller_body_with_facts,
+                &selector,
+            );
+            let place_resolver = algebra::PlaceResolver::construct(
+                tcx,
+                controller_body_with_facts.simplified_body(),
+            );
             let r = regal::Body::construct(flow, place_resolver);
             let mut out = outfile_pls(&format!("{}.regal", target.name())).unwrap();
             use std::io::Write;

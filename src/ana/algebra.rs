@@ -1,14 +1,14 @@
 use crate::{
     either::Either,
-    mir::{self, Field, Place, Local},
+    mir::{self, Field, Local, Place},
     HashMap, HashSet, TyCtxt,
 };
 
 use std::{
+    borrow::Cow,
+    cell::RefCell,
     fmt::Debug,
     hash::{Hash, Hasher},
-    borrow::Cow,
-    cell::RefCell
 };
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -18,14 +18,14 @@ pub struct Term<B, F: Copy> {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
-pub enum TermS<F : Copy> {
+pub enum TermS<F: Copy> {
     RefOf,
     DerefOf,
     MemberOf(F),
     ContainsAt(F),
 }
 
-impl <F:Copy> TermS<F> {
+impl<F: Copy> TermS<F> {
     pub fn flip(self) -> Self {
         use TermS::*;
         match self {
@@ -67,7 +67,9 @@ impl<B: Hash, F: Hash + Copy> Hash for Equality<B, F> {
 
 impl<B, F: Copy> Equality<B, F> {
     pub fn rearrange_left_to_right(&mut self) {
-        self.rhs.terms.extend(self.lhs.terms.drain(..).rev().map(TermS::flip));
+        self.rhs
+            .terms
+            .extend(self.lhs.terms.drain(..).rev().map(TermS::flip));
     }
 
     pub fn swap(&mut self) {
@@ -87,7 +89,7 @@ pub fn solve<
     V: Clone + Eq + Hash,
     B0,
     I: Fn(&B) -> Either<B0, V>,
-    GetEq: std::borrow::Borrow<Equality<B, F>>
+    GetEq: std::borrow::Borrow<Equality<B, F>>,
 >(
     equations: &[GetEq],
     target: &V,
@@ -161,7 +163,10 @@ impl<B, F: Copy> Term<B, F> {
     }
 
     pub fn new_base(base: B) -> Self {
-        Term { base, terms: vec![] }
+        Term {
+            base,
+            terms: vec![],
+        }
     }
 
     pub fn add_deref_of(mut self) -> Self {
@@ -212,23 +217,22 @@ impl<B, F: Copy> Term<B, F> {
     }
     pub fn replace_base<B0>(&self, base: B0) -> Term<B0, F> {
         Term {
-            base, terms: self.terms.clone()
+            base,
+            terms: self.terms.clone(),
         }
     }
 }
 
-
-impl <B> Term<B, Field> {
+impl<B> Term<B, Field> {
     pub fn wrap_in_elem(self, elem: mir::PlaceElem) -> Self {
         use mir::ProjectionElem::*;
         match elem {
             Field(f, _) => self.add_contains_at(f),
             Deref => self.add_deref_of(),
-            _ => unimplemented!()
+            _ => unimplemented!(),
         }
     }
 }
-
 
 type MirEquation = Equality<mir::Local, Field>;
 
@@ -237,10 +241,11 @@ struct Extractor<'tcx> {
     equations: HashSet<MirEquation>,
 }
 
-impl <'tcx> Extractor<'tcx> {
+impl<'tcx> Extractor<'tcx> {
     fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
-            tcx, equations: Default::default()
+            tcx,
+            equations: Default::default(),
         }
     }
 }
@@ -298,9 +303,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                             //     Field::from_usize(i),
                             //     field.ty(self.tcx, substs),
                             // );
-                            Some(
-                                MirTerm::from(place)
-                                .add_contains_at(Field::from_usize(i)))
+                            Some(MirTerm::from(place).add_contains_at(Field::from_usize(i)))
                         });
                     Box::new(iter) as Box<_>
                 }
@@ -328,14 +331,14 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
 
 struct VariableGenerator<T>(T);
 
-impl <T> VariableGenerator<T> {
+impl<T> VariableGenerator<T> {
     pub fn new(t: T) -> Self {
         Self(t)
     }
 
-    pub fn generate(&mut self) -> T 
-    where 
-        T: std::ops::Add<usize, Output=T> + Copy
+    pub fn generate(&mut self) -> T
+    where
+        T: std::ops::Add<usize, Output = T> + Copy,
     {
         let t = self.0.clone();
         self.0 = self.0 + 1;
@@ -343,13 +346,13 @@ impl <T> VariableGenerator<T> {
     }
 }
 
-impl <T: From<usize>> Default for VariableGenerator<T> {
+impl<T: From<usize>> Default for VariableGenerator<T> {
     fn default() -> Self {
         Self::new(0.into())
     }
 }
 
-pub struct PlaceResolver{
+pub struct PlaceResolver {
     equations: Vec<MirEquation>,
     variable_generator: RefCell<VariableGenerator<Local>>,
 }
@@ -361,12 +364,13 @@ impl PlaceResolver {
         extractor.visit_body(body);
         let equations = extractor.equations.into_iter().collect();
 
-        let variable_generator = RefCell::new(VariableGenerator::new(
-            mir::Local::from_usize(body.local_decls.len())
-        ));
+        let variable_generator = RefCell::new(VariableGenerator::new(mir::Local::from_usize(
+            body.local_decls.len(),
+        )));
 
         Self {
-            equations, variable_generator
+            equations,
+            variable_generator,
         }
     }
     pub fn resolve(&self, from: Place, to: Place) -> Term<(), Field> {
@@ -374,13 +378,28 @@ impl PlaceResolver {
         let target = self.variable_generator.borrow_mut().generate();
         let source_term = MirTerm::from(from);
         let source = self.variable_generator.borrow_mut().generate();
-        let equations = 
-            self.equations.iter().map(Cow::Borrowed)
-                .chain([
-                    Cow::Owned(Equality { rhs: Term::new_base(target), lhs: target_term}),
-                    Cow::Owned(Equality { rhs: Term::new_base(source), lhs: source_term})
-                ]).collect::<Vec<_>>();
-        let mut results = solve(&equations, &target, |&local| if local == target { Either::Left(())} else { Either::Right(local)});
+        let equations = self
+            .equations
+            .iter()
+            .map(Cow::Borrowed)
+            .chain([
+                Cow::Owned(Equality {
+                    rhs: Term::new_base(target),
+                    lhs: target_term,
+                }),
+                Cow::Owned(Equality {
+                    rhs: Term::new_base(source),
+                    lhs: source_term,
+                }),
+            ])
+            .collect::<Vec<_>>();
+        let mut results = solve(&equations, &target, |&local| {
+            if local == target {
+                Either::Left(())
+            } else {
+                Either::Right(local)
+            }
+        });
         assert_eq!(results.len(), 1);
         results.pop().unwrap()
     }

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Index, rc::Rc, borrow::Cow};
+use std::{borrow::Cow, cell::RefCell, ops::Index, rc::Rc};
 
 use crate::{
     ir::global_location::{GliAt, GlobalLocation, IsGlobalLocation, GLI},
@@ -24,10 +24,7 @@ use flowistry::{
 };
 use flowistry::{
     extensions::{is_extension_active, ContextMode, MutabilityMode},
-    indexed::{
-        impls::{LocationDomain},
-        IndexMatrix, IndexSet, IndexedDomain, RefSet,
-    },
+    indexed::{impls::LocationDomain, IndexMatrix, IndexSet, IndexedDomain, RefSet},
     mir::{
         aliases::Aliases,
         control_dependencies::ControlDependencies,
@@ -59,7 +56,8 @@ impl<'a, Q: Eq + std::hash::Hash + ?Sized, K: Eq + std::hash::Hash + std::borrow
 impl<K, V> Default for SparseMatrix<K, V> {
     fn default() -> Self {
         Self {
-            ..Default::default()
+            matrix: Default::default(),
+            empty_set: Default::default(),
         }
     }
 }
@@ -105,8 +103,10 @@ impl<K, V> SparseMatrix<K, V> {
         !self.matrix.get(k).map_or(true, HashSet::is_empty)
     }
 
-    pub fn union_row(&mut self, k: &K, row: Cow<HashSet<V>>) -> bool 
-    where K: Eq + std::hash::Hash + Clone, V: Eq + std::hash::Hash + Clone
+    pub fn union_row(&mut self, k: &K, row: Cow<HashSet<V>>) -> bool
+    where
+        K: Eq + std::hash::Hash + Clone,
+        V: Eq + std::hash::Hash + Clone,
     {
         let mut changed = false;
         if !self.has(k) {
@@ -114,7 +114,8 @@ impl<K, V> SparseMatrix<K, V> {
             self.matrix.insert(k.clone(), row.into_owned());
         } else {
             let set = self.row_mut(k.clone());
-            row.iter().for_each(|elem| changed |= set.insert(elem.clone()));
+            row.iter()
+                .for_each(|elem| changed |= set.insert(elem.clone()));
         }
         changed
     }
@@ -131,7 +132,7 @@ pub struct FlowDomain<'tcx> {
 }
 
 impl<'tcx> FlowDomain<'tcx> {
-    pub fn deps(&self, at: Place<'tcx>) -> impl Iterator<Item=&Dependency<'tcx>> {
+    pub fn deps(&self, at: Place<'tcx>) -> impl Iterator<Item = &Dependency<'tcx>> {
         self.matrix()[&at].iter()
     }
     fn override_(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
@@ -143,11 +144,7 @@ impl<'tcx> FlowDomain<'tcx> {
     fn matrix_mut<'a>(&mut self) -> &mut DependencyMap<'tcx> {
         &mut self.matrix
     }
-    fn union_after(
-        &mut self,
-        row: Place<'tcx>,
-        from: Cow<LocationSet<'tcx>>,
-    ) -> bool {
+    fn union_after(&mut self, row: Place<'tcx>, from: Cow<LocationSet<'tcx>>) -> bool {
         self.overrides.union_row(&row, from)
     }
     fn from_location_domain(dom: &Rc<LocationDomain>) -> Self {
@@ -192,7 +189,6 @@ pub struct FlowAnalysis<'a, 'tcx, 'g> {
     recurse_cache: RefCell<HashMap<BodyId, FlowResults<'a, 'tcx, 'g>>>,
     recurse_selector: &'a dyn RecurseSelector,
 }
-
 
 impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
     fn body_id(&self) -> BodyId {
@@ -352,7 +348,10 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             debug!("    with deps {input_location_deps:?}");
 
             for place in mutable_conflicts.into_owned().into_iter() {
-                state.union_after(all_aliases.normalize(place), Cow::Borrowed(&input_location_deps));
+                state.union_after(
+                    all_aliases.normalize(place),
+                    Cow::Borrowed(&input_location_deps),
+                );
             }
         }
     }
@@ -374,9 +373,10 @@ impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
                     "arg={arg:?} / place={place:?} / loc={:?}",
                     self.location_domain().value(loc)
                 );
-                state
-                    .matrix_mut()
-                    .set(self.aliases.normalize(*place), (*self.location_domain().value(loc), *place));
+                state.matrix_mut().set(
+                    self.aliases.normalize(*place),
+                    (*self.location_domain().value(loc), *place),
+                );
             }
         }
     }
@@ -413,7 +413,14 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
              mutation_status: MutationStatus| {
-                self.transfer_function(state, mutated, inputs, location, mutation_status, matches!(&terminator.kind, TerminatorKind::Call { .. }))
+                self.transfer_function(
+                    state,
+                    mutated,
+                    inputs,
+                    location,
+                    mutation_status,
+                    matches!(&terminator.kind, TerminatorKind::Call { .. }),
+                )
             },
         )
         .visit_terminator(terminator, location);

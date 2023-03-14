@@ -236,7 +236,10 @@ pub struct RecurseSelector {
 
 impl RecurseSelector {
     pub fn new(inline_disabled: bool, inline_selector: Box<dyn InlineSelector>) -> Self {
-        Self { inline_disabled, inline_selector }
+        Self {
+            inline_disabled,
+            inline_selector,
+        }
     }
 }
 
