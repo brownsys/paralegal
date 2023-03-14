@@ -108,15 +108,15 @@ impl<K, V> SparseMatrix<K, V> {
     pub fn union_row(&mut self, k: &K, row: Cow<HashSet<V>>) -> bool 
     where K: Eq + std::hash::Hash + Clone, V: Eq + std::hash::Hash + Clone
     {
+        let mut changed = false;
         if !self.has(k) {
+            changed = !row.is_empty();
             self.matrix.insert(k.clone(), row.into_owned());
-            !row.is_empty()
         } else {
             let set = self.row_mut(k.clone());
-            let changed = false;
-            row.into_iter().for_each(|elem| changed |= set.insert(elem));
-            changed
+            row.iter().for_each(|elem| changed |= set.insert(elem.clone()));
         }
+        changed
     }
 }
 
@@ -168,7 +168,7 @@ impl<'tcx> FlowDomain<'tcx> {
 
 impl<'tcx> JoinSemiLattice for FlowDomain<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        let changed = false;
+        let mut changed = false;
         for (k, v) in other.rows_after_override() {
             let my_set = self.matrix_mut().row_mut(*k);
             for dep in v {
@@ -262,7 +262,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             input_location_deps.insert((location, mutated));
         }
 
-        let add_deps = |place: Place<'tcx>, location_deps: &mut LocationSet| {
+        let add_deps = |place: Place<'tcx>, location_deps: &mut LocationSet<'tcx>| {
             if !transitive {
                 return;
             }
@@ -278,7 +278,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             for relevant in reachable_values.iter().chain(provenance) {
                 let deps = state.matrix().row(&all_aliases.normalize(*relevant));
                 trace!("    For relevant {relevant:?} for input {place:?} adding deps {deps:?}");
-                location_deps.union(deps);
+                location_deps.extend(deps.iter());
             }
         };
 
@@ -351,7 +351,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             debug!("  Mutated conflicting places: {mutable_conflicts:?}");
             debug!("    with deps {input_location_deps:?}");
 
-            for place in mutable_conflicts.into_iter() {
+            for place in mutable_conflicts.into_owned().into_iter() {
                 state.union_after(all_aliases.normalize(place), Cow::Borrowed(&input_location_deps));
             }
         }
@@ -428,7 +428,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
     }
 }
 
-fn compute_flow_internal<'a, 'tcx, 'g>(
+pub fn compute_flow_internal<'a, 'tcx, 'g>(
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     body_id: BodyId,

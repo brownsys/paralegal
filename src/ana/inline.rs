@@ -229,9 +229,15 @@ impl<T: InlineSelector> InlineSelector for Rc<T> {
 /// 4. The function being called cannot be statically determined
 ///
 /// The last two are incidental and also simultaneously enforced by flowistry.
-struct RecurseSelector {
+pub struct RecurseSelector {
     inline_disabled: bool,
     inline_selector: Box<dyn InlineSelector>,
+}
+
+impl RecurseSelector {
+    pub fn new(inline_disabled: bool, inline_selector: Box<dyn InlineSelector>) -> Self {
+        Self { inline_disabled, inline_selector }
+    }
 }
 
 impl flowistry::extensions::RecurseSelector for RecurseSelector {

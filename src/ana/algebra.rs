@@ -189,9 +189,10 @@ impl<B, F: Copy> Term<B, F> {
     }
 
     pub fn sub(&mut self, other: Self) {
-        let Self { base, terms } = other;
+        let Self { base, mut terms } = other;
         self.base = base;
-        self.terms.extend(terms)
+        terms.append(&mut self.terms);
+        std::mem::swap(&mut self.terms, &mut terms)
     }
 
     pub fn simplify(&mut self)
@@ -234,6 +235,14 @@ type MirEquation = Equality<mir::Local, Field>;
 struct Extractor<'tcx> {
     tcx: TyCtxt<'tcx>,
     equations: HashSet<MirEquation>,
+}
+
+impl <'tcx> Extractor<'tcx> {
+    fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self {
+            tcx, equations: Default::default()
+        }
+    }
 }
 
 type MirTerm = Term<Local, Field>;
@@ -346,6 +355,20 @@ pub struct PlaceResolver{
 }
 
 impl PlaceResolver {
+    pub fn construct<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> Self {
+        use mir::visit::Visitor;
+        let mut extractor = Extractor::new(tcx);
+        extractor.visit_body(body);
+        let equations = extractor.equations.into_iter().collect();
+
+        let variable_generator = RefCell::new(VariableGenerator::new(
+            mir::Local::from_usize(body.local_decls.len())
+        ));
+
+        Self {
+            equations, variable_generator
+        }
+    }
     pub fn resolve(&self, from: Place, to: Place) -> Term<(), Field> {
         let target_term = MirTerm::from(to);
         let target = self.variable_generator.borrow_mut().generate();

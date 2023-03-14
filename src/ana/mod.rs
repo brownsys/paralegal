@@ -100,15 +100,28 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         }
 
         debug!("Handling target {}", target.name());
+
+        let recurse_selector = SkipAnnotatedFunctionSelector {
+            marked_objects: self.marked_objects.clone(),
+        };
+
+        {
+            let selector = inline::RecurseSelector::new(true, Box::new(recurse_selector.clone()));
+            let flow = df::compute_flow_internal(tcx, gli, target.body_id, controller_body_with_facts, &selector);
+            let place_resolver = algebra::PlaceResolver::construct(tcx, controller_body_with_facts.simplified_body());
+            let r = regal::Body::construct(flow, place_resolver);
+            let mut out = outfile_pls(&format!("{}.regal", target.name())).unwrap();
+            use std::io::Write;
+            write!(&mut out, "{:?}", r).unwrap();
+        }
+
         let flow = Flow::compute(
             &self.opts.anactrl,
             &self.opts.dbg,
             tcx,
             target.body_id,
             gli,
-            SkipAnnotatedFunctionSelector {
-                marked_objects: self.marked_objects.clone(),
-            },
+            recurse_selector,
         );
 
         // Register annotations on argument types for this controller.

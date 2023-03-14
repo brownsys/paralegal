@@ -98,19 +98,21 @@ enum Target {
 
 type Dependencies = HashSet<Dependency>;
 
+#[derive(Debug)]
 struct Call {
     function: DefId,
     arguments: IndexVec<ArgumentIndex, Dependencies>,
 }
 
-struct Body {
+#[derive(Debug)]
+pub struct Body {
     calls: HashMap<Location, Call>,
 }
 
 use crate::ana::{df, algebra};
 
 impl Body {
-    fn construct(flow_analysis: df::FlowResults<'_, '_, '_>, place_resolver: algebra::PlaceResolver) -> Self {
+    pub fn construct(flow_analysis: df::FlowResults<'_, '_, '_>, place_resolver: algebra::PlaceResolver) -> Self {
         let body = flow_analysis
             .analysis
             .body;
@@ -130,22 +132,28 @@ impl Body {
                                 } else {
                                     Target::Argument(dep_loc.statement_index as u16 - 1)
                                 };
+                                // use target arg place here
                                 let (_, target_args, target_ret) = 
                                     body.stmt_at(dep_loc)
                                         .right()
                                         .unwrap()
                                         .as_fn_and_args()
                                         .unwrap();
-                                let target_place = 
+                                let (abstract_target_place, concrete_target_place) = 
                                     target_args.into_iter()
                                         .enumerate()
-                                        .filter_map(|(idx, p)| (p?.local == dep_place.local).then(|| TargetPlace::Argument(ArgumentIndex::from_usize(idx))))
+                                        .filter_map(|(idx, p)| {
+                                            let p = p?;
+                                            (p.local == dep_place.local)
+                                                .then(|| (TargetPlace::Argument(ArgumentIndex::from_usize(idx)), p))
+                                        })
                                         .next()
                                         .unwrap_or_else(|| {
-                                            assert!(target_ret.unwrap().0.local == dep_place.local);
-                                            TargetPlace::Return
+                                            let p = target_ret.unwrap().0;
+                                            assert!(p.local == dep_place.local);
+                                            (TargetPlace::Return, p)
                                         });
-                                let target_term = place_resolver.resolve(arg, dep_place).replace_base(target_place);
+                                let target_term = place_resolver.resolve(arg, concrete_target_place).replace_base(abstract_target_place);
                                 Dependency {target_term, target}
                             }).collect()
                         } else {
