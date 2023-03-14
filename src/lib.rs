@@ -279,7 +279,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
-        let lvl = if plugin_args.debug.is_some() {
+        let lvl = if plugin_args.debug == Some(None) || plugin_args.debug == Some(Some("".to_string())) {
             log::LevelFilter::Debug
         } else if plugin_args.verbose {
             log::LevelFilter::Info
@@ -292,13 +292,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .without_timestamps()
             .init()
             .unwrap();
-        if plugin_args.debug.as_ref().map_or(false, Option::is_some) {
-            log::set_max_level(if plugin_args.verbose {
-                log::LevelFilter::Info
-            } else {
-                log::LevelFilter::Warn
-            })
-        }
         let opts = Box::leak(Box::new(plugin_args));
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }
