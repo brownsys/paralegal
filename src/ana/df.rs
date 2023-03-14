@@ -298,21 +298,6 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             }
         }
 
-        // Add control dependencies
-        let controlled_by = self.control_dependencies.dependent_on(location.block);
-        let body = self.body;
-        for block in controlled_by.into_iter().flat_map(|set| set.iter()) {
-            input_location_deps.insert(body.terminator_loc(block));
-
-            // Include dependencies of the switch's operand
-            let terminator = body.basic_blocks()[block].terminator();
-            if let TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
-                if let Some(discr_place) = discr.to_place() {
-                    add_deps(discr_place, &mut input_location_deps);
-                }
-            }
-        }
-
         if children.len() > 0 {
             // In the special case of mutated = aggregate { x: .., y: .. }
             // then we ensure that deps(mutated.x) != deps(mutated)
@@ -404,7 +389,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
              mutation_status: MutationStatus| {
-                self.transfer_function(state, mutated, inputs, location, mutation_status, true)
+                self.transfer_function(state, mutated, inputs, location, mutation_status, false)
             },
         )
         .visit_statement(statement, location);
@@ -422,7 +407,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
              mutation_status: MutationStatus| {
-                self.transfer_function(state, mutated, inputs, location, mutation_status, false)
+                self.transfer_function(state, mutated, inputs, location, mutation_status, matches!(&terminator.kind, TerminatorKind::Call { .. }))
             },
         )
         .visit_terminator(terminator, location);
