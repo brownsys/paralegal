@@ -20,7 +20,7 @@ pub struct Term<B, F: Copy> {
 impl <B: Display, F: Display + Copy> Display for Term<B, F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use TermS::*;
-        for t in self.terms.iter() {
+        for t in self.terms.iter().rev() {
             match t {
                 RefOf => f.write_str("&("),
                 DerefOf => f.write_str("*("),
@@ -30,7 +30,7 @@ impl <B: Display, F: Display + Copy> Display for Term<B, F> {
             }?
         }
         write!(f, "{}", self.base)?;
-        for t in self.terms.iter() {
+        for t in self.terms.iter().rev() {
             match t {
                 MemberOf(field) => write!(f, ".{})", field),
                 ContainsAt(_) => f.write_str(" }"),
@@ -90,10 +90,10 @@ impl<F: Copy> TermS<F> {
     pub fn map_field<F0: Copy, G: FnMut(F) -> F0>(self, mut g: G) -> TermS<F0> {
         use TermS::*;
         match self {
-            RefOf => DerefOf,
-            DerefOf => RefOf,
-            MemberOf(f) => ContainsAt(g(f)),
-            ContainsAt(f) => MemberOf(g(f)),
+            RefOf => RefOf,
+            DerefOf => DerefOf,
+            MemberOf(f) => MemberOf(g(f)),
+            ContainsAt(f) => ContainsAt(g(f)),
         }
     }
 }
@@ -106,7 +106,7 @@ pub struct Equality<B, F: Copy> {
 
 impl <B: Display, F:Display + Copy> Display for Equality<B, F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} = {}", self.rhs, self.lhs)
+        write!(f, "{} = {}", self.lhs, self.rhs)
     }
 }
 
@@ -346,7 +346,7 @@ impl<B> Term<B, Field> {
     pub fn wrap_in_elem(self, elem: mir::PlaceElem) -> Self {
         use mir::ProjectionElem::*;
         match elem {
-            Field(f, _) => self.add_contains_at(f),
+            Field(f, _) => self.add_member_of(f),
             Deref => self.add_deref_of(),
             _ => unimplemented!(),
         }
@@ -399,7 +399,10 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
         let rhs_s = match rvalue {
             Use(op) | UnaryOp(_, op) => Box::new(op.place().into_iter().map(|p| p.into()))
                 as Box<dyn Iterator<Item = MirTerm>>,
-            Ref(_, _, p) => Box::new(std::iter::once(MirTerm::from(p).add_ref_of())) as Box<_>,
+            Ref(_, _, p) => {
+                let term = MirTerm::from(p).add_ref_of();
+                Box::new(std::iter::once(term)) as Box<_>
+            },
             BinaryOp(_, box (op1, op2)) | CheckedBinaryOp(_, box (op1, op2)) => Box::new(
                 [op1, op2]
                     .into_iter()
