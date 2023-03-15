@@ -143,7 +143,7 @@ impl Display for Call {
             }
             f.write_char('}')?;
         }
-        f.write_char(')')?;
+        write!(f, ")   {:?}", self.function)?;
         Ok(())
     }
 }
