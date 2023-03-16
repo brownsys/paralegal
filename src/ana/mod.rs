@@ -1,8 +1,9 @@
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
-    consts, dbg::{self, locations_of_body},
-    desc::{*, self},
+    consts,
+    dbg::{self, locations_of_body},
+    desc::{self, *},
     ir::*,
     rust::*,
     sah::HashVerifications,
@@ -37,6 +38,7 @@ use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 pub mod algebra;
 pub mod df;
 pub mod inline;
+mod inline2;
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
     /// Driver function. Performs the data collection via visit, then calls
@@ -103,32 +105,6 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         let recurse_selector = SkipAnnotatedFunctionSelector {
             marked_objects: self.marked_objects.clone(),
         };
-
-        if true {
-            let selector = inline::RecurseSelector::new(true, Box::new(recurse_selector.clone()));
-            let body = controller_body_with_facts.simplified_body();
-            let flow = df::compute_flow_internal(
-                tcx,
-                gli,
-                target.body_id,
-                controller_body_with_facts,
-                &selector,
-            );
-            mir::pretty::write_mir_fn(tcx, body, &mut |_, _| Ok(()), &mut outfile_pls(&format!("{}.mir", target.name())).unwrap()).unwrap();
-            let ref mut states_out = outfile_pls(&format!("{}.df", target.name())).unwrap();
-            for l in locations_of_body(body) {
-                writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
-            }
-            let place_resolver = algebra::PlaceResolver::construct(
-                tcx,
-                body,
-            );
-            let r = regal::Body::construct(&flow, &place_resolver);
-            let mut out = outfile_pls(&format!("{}.regal", target.name())).unwrap();
-            use std::io::Write;
-            write!(&mut out, "{}", r).unwrap();
-            return Ok((desc::Identifier::new(target.name()), Ctrl::default()));
-        }
 
         let flow = Flow::compute(
             &self.opts.anactrl,

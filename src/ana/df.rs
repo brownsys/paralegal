@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cell::RefCell, ops::Index, rc::Rc, fmt::Display};
+use std::{borrow::Cow, cell::RefCell, fmt::Display, ops::Index, rc::Rc};
 
 use crate::{
     ir::global_location::{GliAt, GlobalLocation, IsGlobalLocation, GLI},
@@ -131,7 +131,7 @@ pub struct FlowDomain<'tcx> {
     overrides: DependencyMap<'tcx>,
 }
 
-impl <'tcx> DependencyMap<'tcx> {
+impl<'tcx> DependencyMap<'tcx> {
     pub fn fmt_indent(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
         for (k, v) in self.matrix.iter() {
             write!(f, "{:indent$}{k:?}: {{", ' ')?;
@@ -150,7 +150,7 @@ impl <'tcx> DependencyMap<'tcx> {
     }
 }
 
-impl <'tcx> Display for FlowDomain<'tcx> {
+impl<'tcx> Display for FlowDomain<'tcx> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "before:")?;
         self.matrix.fmt_indent(f, 2)?;
