@@ -6,6 +6,7 @@ use crate::{
     HashMap, HashSet, TyCtxt, Symbol
 };
 
+use core::prelude::v1;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -67,8 +68,9 @@ pub enum TermS<F: Copy> {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
-pub enum Cancel<F: Copy> {
-    NonOverlapping(F, F),
+pub enum Cancel<F> {
+    NonOverlappingField(F, F),
+    NonOverlappingVariant(VariantIdx, VariantIdx),
     Cancels,
     Remains,
 }
@@ -93,8 +95,9 @@ impl<F: Copy> TermS<F> {
         use TermS::*;
         match (self, other) {
             (MemberOf(f), ContainsAt(g)) | (ContainsAt(g), MemberOf(f)) if f != g => {
-                Cancel::NonOverlapping(f, g)
+                Cancel::NonOverlappingField(f, g)
             }
+            (Downcast(_, v1), Upcast(_, v2)) | (Upcast(_, v2), Downcast(_, v1)) if v1 != v2 => Cancel::NonOverlappingVariant(v1, v2),
             _ if self == other.flip() => Cancel::Cancels,
             _ => Cancel::Remains,
         }
@@ -341,8 +344,12 @@ impl<B, F: Copy> Term<B, F> {
         while let Some(i) = it.next() {
             if let Some(next) = it.peek().cloned() {
                 match i.cancel(next) {
-                    Cancel::NonOverlapping(f, g) => {
-                        debug!("Rejecting {self} because {f} != {g}");
+                    Cancel::NonOverlappingField(f, g) => {
+                        debug!("Rejecting {self} because fields {f} != {g}");
+                        valid = false;
+                    }
+                    Cancel::NonOverlappingVariant(v1, v2) => {
+                        debug!("Rejecting {self} because variants {v1} != {v2}");
                         valid = false;
                     }
                     Cancel::Cancels => {
