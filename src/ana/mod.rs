@@ -1,6 +1,7 @@
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
+    ana::inline3::to_call_only_flow,
     consts,
     dbg::{self, locations_of_body},
     desc::{self, *},
@@ -8,7 +9,7 @@ use crate::{
     rust::*,
     sah::HashVerifications,
     utils::{PlaceExt, *},
-    Either, HashMap, HashSet, ana::inline3::to_call_only_flow,
+    Either, HashMap, HashSet,
 };
 
 use hir::{
@@ -60,7 +61,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
         target: FnToAnalyze,
         gli: GLI<'g>,
-        inliner: &inline3::Inliner<'tcx, 'g, '_>
+        inliner: &inline3::Inliner<'tcx, 'g, '_>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let reset_lvl =
             matches!(self.opts.debug, Some(Some(ref s)) if s.as_str() == target.name().as_str())
@@ -104,8 +105,20 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
         debug!("Handling target {}", target.name());
 
-        let flow = to_call_only_flow(inliner.get_inlined_graph(target.body_id), |a| gli.globalize_location(Location { block: mir::BasicBlock::from_usize(controller_body_with_facts.simplified_body().basic_blocks().len()), statement_index: a.as_usize() }, target.body_id));
-
+        let flow = to_call_only_flow(inliner.get_inlined_graph(target.body_id), |a| {
+            gli.globalize_location(
+                Location {
+                    block: mir::BasicBlock::from_usize(
+                        controller_body_with_facts
+                            .simplified_body()
+                            .basic_blocks()
+                            .len(),
+                    ),
+                    statement_index: a.as_usize() + 1,
+                },
+                target.body_id,
+            )
+        });
 
         // Register annotations on argument types for this controller.
         let controller_body = &controller_body_with_facts.simplified_body();
@@ -493,8 +506,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         let recurse_selector = SkipAnnotatedFunctionSelector {
             marked_objects: self.marked_objects.clone(),
         };
-        
-        let inliner = inline3::Inliner::new(self.tcx, gli, & recurse_selector);
+
+        let inliner = inline3::Inliner::new(self.tcx, gli, &recurse_selector);
 
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         crate::sah::HashVerifications::with(|hash_verifications| {
@@ -507,7 +520,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                         &interesting_fn_defs,
                         desc,
                         gli,
-                        &inliner
+                        &inliner,
                     )
                 })
                 .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()

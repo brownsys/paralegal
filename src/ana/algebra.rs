@@ -360,7 +360,7 @@ impl<B> Term<B, Field> {
         match elem {
             Field(f, _) => self.add_member_of(f),
             Deref => self.add_deref_of(),
-            _ => unimplemented!(),
+            _ => unimplemented!("{:?}", elem),
         }
     }
 }

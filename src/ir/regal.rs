@@ -46,7 +46,7 @@ pub struct Dependency<L> {
     pub target_term: TargetTerm,
 }
 
-impl <L> Dependency<L> {
+impl<L> Dependency<L> {
     pub fn map_locations<L0, F: FnMut(&L) -> L0>(&self, f: F) -> Dependency<L0> {
         Dependency {
             target: self.target.map_location(f),
@@ -67,11 +67,11 @@ pub enum Target<L> {
     Argument(ArgumentIndex),
 }
 
-impl <L> Target<L> {
+impl<L> Target<L> {
     pub fn map_location<L0, F: FnMut(&L) -> L0>(&self, mut f: F) -> Target<L0> {
         match self {
             Target::Argument(a) => Target::Argument(*a),
-            Target::Call(l) => Target::Call(f(l))
+            Target::Call(l) => Target::Call(f(l)),
         }
     }
 }
@@ -93,31 +93,59 @@ pub struct Call<L> {
     pub arguments: IndexVec<ArgumentIndex, Dependencies<L>>,
 }
 
-impl <L> Call<L> {
-    pub fn map_locations<L0: std::hash::Hash + Eq, F: FnMut(&L) -> L0>(&self, mut f: F) -> Call<L0> {
-        let arguments = 
-            self.arguments.iter().map(|set| set.iter().map(|d| d.map_locations(&mut f)).collect()).collect();
+impl<L> Call<L> {
+    pub fn map_locations<L0: std::hash::Hash + Eq, F: FnMut(&L) -> L0>(
+        &self,
+        mut f: F,
+    ) -> Call<L0> {
+        let arguments = self
+            .arguments
+            .iter()
+            .map(|set| set.iter().map(|d| d.map_locations(&mut f)).collect())
+            .collect();
         Call {
-            function: self.function, arguments
+            function: self.function,
+            arguments,
         }
     }
 
-    pub fn flat_map_dependencies<L0: Eq + std::hash::Hash, F: FnMut(&Dependency<L>) -> I, I: Iterator<Item=Dependency<L0>>>(&self, mut f: F) -> Call<L0>
-    {
+    pub fn flat_map_dependencies<
+        L0: Eq + std::hash::Hash,
+        F: FnMut(&Dependency<L>) -> I,
+        I: Iterator<Item = Dependency<L0>>,
+    >(
+        &self,
+        mut f: F,
+    ) -> Call<L0> {
         Call {
-            function: self.function, arguments: self.arguments.iter().map(|a| a.iter().flat_map(&mut f).collect()).collect()
+            function: self.function,
+            arguments: self
+                .arguments
+                .iter()
+                .map(|a| a.iter().flat_map(&mut f).collect())
+                .collect(),
         }
     }
 
-    pub fn expand_arguments<F: FnMut(ArgumentIndex, &TargetTerm) -> I, I: Iterator<Item=Dependency<L>>>(&self, mut f: F) -> Self 
-    where L: Eq + std::hash::Hash + Clone
+    pub fn expand_arguments<
+        F: FnMut(ArgumentIndex, &TargetTerm) -> I,
+        I: Iterator<Item = Dependency<L>>,
+    >(
+        &self,
+        mut f: F,
+    ) -> Self
+    where
+        L: Eq + std::hash::Hash + Clone,
     {
-        self.flat_map_dependencies(|d| if let Target::Argument(u) = d.target {
-            Either::Right(f(u, &d.target_term))
-        } else {
-            let c : Dependency<L> = d.clone();
-            Either::Left(std::iter::once(c))
-        }.into_iter())
+        self.flat_map_dependencies(|d| {
+            if let Target::Argument(u) = d.target {
+                Either::Right(f(u, &d.target_term))
+            } else {
+                let c: Dependency<L> = d.clone();
+                Either::Left(std::iter::once(c))
+            }
+            .into_iter()
+        })
     }
 }
 
@@ -151,7 +179,8 @@ impl<L: Display> Display for Call<L> {
 #[derive(Debug)]
 pub struct Body<L> {
     pub calls: HashMap<L, Call<L>>,
-    pub return_state: Dependencies<L>,
+    pub return_deps: Dependencies<L>,
+    pub return_arg_deps: Vec<Dependencies<L>>,
 }
 
 impl<L> Body<L> {
@@ -192,14 +221,17 @@ impl RecurseSelector for NeverInline {
     }
 }
 
-pub fn compute_from_body_id(body_id: BodyId, tcx: TyCtxt, gli: GLI) -> Body<DisplayViaDebug<Location>> {
+pub fn compute_from_body_id(
+    body_id: BodyId,
+    tcx: TyCtxt,
+    gli: GLI,
+) -> Body<DisplayViaDebug<Location>> {
     let hir = tcx.hir();
     let target_name = hir.name(hir.body_owner(body_id));
     let local_def_id = tcx.hir().body_owner_def_id(body_id);
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
-    let flow =
-        df::compute_flow_internal(tcx, gli, body_id, body_with_facts, &NeverInline);
+    let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts, &NeverInline);
     mir::pretty::write_mir_fn(
         tcx,
         body,
@@ -257,7 +289,7 @@ impl Body<DisplayViaDebug<Location>> {
         place_resolver: &algebra::PlaceResolver,
     ) -> Self {
         let body = flow_analysis.analysis.body;
-        let dependencies_for = |location : DisplayViaDebug<_>, arg| {
+        let dependencies_for = |location: DisplayViaDebug<_>, arg| {
             let ana = flow_analysis.state_at(*location);
             ana.deps(arg)
                 .flat_map(|&(dep_loc, _dep_place)| {
@@ -283,7 +315,9 @@ impl Body<DisplayViaDebug<Location>> {
                         (Target::Call(dep_loc), Either::Left(places))
                     } else {
                         (
-                            Target::Argument(ArgumentIndex::from_usize(dep_loc.statement_index - 1)),
+                            Target::Argument(ArgumentIndex::from_usize(
+                                dep_loc.statement_index - 1,
+                            )),
                             Either::Right(std::iter::once((
                                 TargetPlace::Return,
                                 mir::Local::from_usize(dep_loc.statement_index).into(),
@@ -310,14 +344,14 @@ impl Body<DisplayViaDebug<Location>> {
             .filter_map(|(bb, bbdat)| {
                 let (function, simple_args, _) = bbdat.terminator().as_fn_and_args().ok()?;
                 let bbloc = DisplayViaDebug(body.terminator_loc(bb));
-                let arguments = 
-                    IndexVec::from_raw(
+                let arguments = IndexVec::from_raw(
                     simple_args
-                    .into_iter()
-                    .map(|arg| {
-                        arg.map_or_else(Dependencies::default, |a| dependencies_for(bbloc, a))
-                    })
-                    .collect());
+                        .into_iter()
+                        .map(|arg| {
+                            arg.map_or_else(Dependencies::default, |a| dependencies_for(bbloc, a))
+                        })
+                        .collect(),
+                );
                 Some((
                     bbloc,
                     Call {
@@ -327,14 +361,26 @@ impl Body<DisplayViaDebug<Location>> {
                 ))
             })
             .collect();
-        let return_state = body
+        let mut return_arg_deps: IndexVec<mir::Local, _> =
+            IndexVec::from_raw(body.args_iter().map(|_| HashSet::new()).collect());
+        let return_deps = body
             .all_returns()
             .map(DisplayViaDebug)
-            .flat_map(|loc| dependencies_for(loc, mir::Place::return_place()).clone().into_iter())
+            .flat_map(|loc| {
+                return_arg_deps.iter_enumerated_mut().for_each(|(i, s)| {
+                    for d in dependencies_for(loc, i.into()) {
+                        s.insert(d);
+                    }
+                });
+                dependencies_for(loc, mir::Place::return_place())
+                    .clone()
+                    .into_iter()
+            })
             .collect();
         Self {
             calls,
-            return_state,
+            return_deps,
+            return_arg_deps: return_arg_deps.raw,
         }
     }
 }
