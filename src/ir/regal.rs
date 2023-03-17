@@ -68,7 +68,7 @@ pub enum Target<L> {
 }
 
 impl <L> Target<L> {
-    pub fn map_location<L0, F: FnMut(&L) -> L0>(&self, f: F) -> Target<L0> {
+    pub fn map_location<L0, F: FnMut(&L) -> L0>(&self, mut f: F) -> Target<L0> {
         match self {
             Target::Argument(a) => Target::Argument(*a),
             Target::Call(l) => Target::Call(f(l))
@@ -94,22 +94,22 @@ pub struct Call<L> {
 }
 
 impl <L> Call<L> {
-    pub fn map_locations<L0: std::hash::Hash + Eq, F: FnMut(&L) -> L0>(&self, f: F) -> Call<L0> {
+    pub fn map_locations<L0: std::hash::Hash + Eq, F: FnMut(&L) -> L0>(&self, mut f: F) -> Call<L0> {
         let arguments = 
-            self.arguments.iter().map(|set| set.iter().map(|d| d.map_locations(f)).collect()).collect();
+            self.arguments.iter().map(|set| set.iter().map(|d| d.map_locations(&mut f)).collect()).collect();
         Call {
             function: self.function, arguments
         }
     }
 
-    pub fn flat_map_dependencies<L0: Eq + std::hash::Hash, F: FnMut(&Dependency<L>) -> I, I: Iterator<Item=Dependency<L0>>>(&self, f: F) -> Call<L0>
+    pub fn flat_map_dependencies<L0: Eq + std::hash::Hash, F: FnMut(&Dependency<L>) -> I, I: Iterator<Item=Dependency<L0>>>(&self, mut f: F) -> Call<L0>
     {
         Call {
-            function: self.function, arguments: self.arguments.iter().map(|a| a.iter().flat_map(f).collect()).collect()
+            function: self.function, arguments: self.arguments.iter().map(|a| a.iter().flat_map(&mut f).collect()).collect()
         }
     }
 
-    pub fn expand_arguments<F: FnMut(ArgumentIndex, &TargetTerm) -> I, I: Iterator<Item=Dependency<L>>>(&self, f: F) -> Self 
+    pub fn expand_arguments<F: FnMut(ArgumentIndex, &TargetTerm) -> I, I: Iterator<Item=Dependency<L>>>(&self, mut f: F) -> Self 
     where L: Eq + std::hash::Hash + Clone
     {
         self.flat_map_dependencies(|d| if let Target::Argument(u) = d.target {
@@ -192,6 +192,33 @@ impl RecurseSelector for NeverInline {
     }
 }
 
+pub fn compute_from_body_id(body_id: BodyId, tcx: TyCtxt, gli: GLI) -> Body<DisplayViaDebug<Location>> {
+    let hir = tcx.hir();
+    let target_name = hir.name(hir.body_owner(body_id));
+    let local_def_id = tcx.hir().body_owner_def_id(body_id);
+    let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
+    let body = body_with_facts.simplified_body();
+    let flow =
+        df::compute_flow_internal(tcx, gli, body_id, body_with_facts, &NeverInline);
+    mir::pretty::write_mir_fn(
+        tcx,
+        body,
+        &mut |_, _| Ok(()),
+        &mut outfile_pls(&format!("{}.mir", target_name)).unwrap(),
+    )
+    .unwrap();
+    let ref mut states_out = outfile_pls(&format!("{}.df", target_name)).unwrap();
+    for l in body.all_locations() {
+        writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
+    }
+    let place_resolver = algebra::PlaceResolver::construct(tcx, body);
+    let r = Body::construct(&flow, &place_resolver);
+    let mut out = outfile_pls(&format!("{}.regal", target_name)).unwrap();
+    use std::io::Write;
+    write!(&mut out, "{}", r).unwrap();
+    r
+}
+
 impl<'tcx, 'g> MemoizingConstructor<'tcx, 'g> {
     pub fn new(tcx: TyCtxt<'tcx>, gli: GLI<'g>) -> Self {
         Self {
@@ -213,29 +240,7 @@ impl<'tcx, 'g> MemoizingConstructor<'tcx, 'g> {
         if let Some(b) = self.memoizer.borrow().get(&body_id) {
             return b.clone();
         }
-        let hir = self.tcx.hir();
-        let target_name = hir.name(hir.body_owner(body_id));
-        let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
-        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
-        let body = body_with_facts.simplified_body();
-        let flow =
-            df::compute_flow_internal(self.tcx, self.gli, body_id, body_with_facts, &NeverInline);
-        mir::pretty::write_mir_fn(
-            self.tcx,
-            body,
-            &mut |_, _| Ok(()),
-            &mut outfile_pls(&format!("{}.mir", target_name)).unwrap(),
-        )
-        .unwrap();
-        let ref mut states_out = outfile_pls(&format!("{}.df", target_name)).unwrap();
-        for l in body.all_locations() {
-            writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
-        }
-        let place_resolver = algebra::PlaceResolver::construct(self.tcx, body);
-        let r = Body::construct(&flow, &place_resolver);
-        let mut out = outfile_pls(&format!("{}.regal", target_name)).unwrap();
-        use std::io::Write;
-        write!(&mut out, "{}", r).unwrap();
+        let r = compute_from_body_id(body_id, self.tcx(), self.gli());
         let rc = Rc::new(r);
         self.memoizer.borrow_mut().insert(body_id, rc.clone());
         rc
@@ -278,7 +283,7 @@ impl Body<DisplayViaDebug<Location>> {
                         (Target::Call(dep_loc), Either::Left(places))
                     } else {
                         (
-                            Target::Argument(dep_loc.statement_index as u16 - 1),
+                            Target::Argument(ArgumentIndex::from_usize(dep_loc.statement_index - 1)),
                             Either::Right(std::iter::once((
                                 TargetPlace::Return,
                                 mir::Local::from_usize(dep_loc.statement_index).into(),
@@ -310,7 +315,7 @@ impl Body<DisplayViaDebug<Location>> {
                     simple_args
                     .into_iter()
                     .map(|arg| {
-                        arg.map_or_else(Dependencies::default, |a| dependencies_for(bbloc, a));
+                        arg.map_or_else(Dependencies::default, |a| dependencies_for(bbloc, a))
                     })
                     .collect());
                 Some((
@@ -325,7 +330,7 @@ impl Body<DisplayViaDebug<Location>> {
         let return_state = body
             .all_returns()
             .map(DisplayViaDebug)
-            .map(|loc| dependencies_for(loc, mir::Place::return_place()))
+            .flat_map(|loc| dependencies_for(loc, mir::Place::return_place()).clone().into_iter())
             .collect();
         Self {
             calls,

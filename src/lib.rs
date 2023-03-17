@@ -18,6 +18,8 @@ extern crate simple_logger;
 #[macro_use]
 extern crate log;
 
+extern crate petgraph;
+
 #[macro_use]
 pub extern crate rustc_index;
 extern crate rustc_serialize;

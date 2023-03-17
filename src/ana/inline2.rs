@@ -42,7 +42,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 Some(local_def_id) if self.recurse_selector.should_inline(self.tcx(), local_def_id) => {
                     let hir = self.tcx().hir();
                     self.get(hir.body_owned_by(hir.local_def_id_to_hir_id(local_def_id)))
-                        .return_state
                 }
                 _ => only_self(),
             }
