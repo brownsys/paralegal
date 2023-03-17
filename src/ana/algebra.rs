@@ -3,7 +3,7 @@ use crate::{
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
     utils::DisplayViaDebug,
-    HashMap, HashSet, TyCtxt,
+    HashMap, HashSet, TyCtxt, Symbol
 };
 
 use std::{
@@ -28,6 +28,8 @@ impl<B: Display, F: Display + Copy> Display for Term<B, F> {
                 DerefOf => f.write_str("*("),
                 MemberOf(_) => f.write_char('('),
                 ContainsAt(field) => write!(f, "{{ .{} = ", field),
+                Downcast(..) => f.write_char('('),
+                Upcast(v, s) => write!(f, "(#{s}"),
             }?
         }
         write!(f, "{}", self.base)?;
@@ -35,6 +37,7 @@ impl<B: Display, F: Display + Copy> Display for Term<B, F> {
             match t {
                 MemberOf(field) => write!(f, ".{})", field),
                 ContainsAt(_) => f.write_str(" }"),
+                Downcast(v, s) => write!(f, " #{s})"),
                 _ => f.write_char(')'),
             }?
         }
@@ -51,12 +54,16 @@ impl Display for TargetPlace {
     }
 }
 
+type VariantIdx = usize;
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
 pub enum TermS<F: Copy> {
     RefOf,
     DerefOf,
     MemberOf(F),
     ContainsAt(F),
+    Downcast(Option<Symbol>, VariantIdx),
+    Upcast(Option<Symbol>, VariantIdx),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
@@ -74,6 +81,8 @@ impl<F: Copy> TermS<F> {
             DerefOf => RefOf,
             MemberOf(f) => ContainsAt(f),
             ContainsAt(f) => MemberOf(f),
+            Downcast(s, v) => Upcast(s, v),
+            Upcast(s, v) => Downcast(s, v),
         }
     }
 
@@ -98,6 +107,8 @@ impl<F: Copy> TermS<F> {
             DerefOf => DerefOf,
             MemberOf(f) => MemberOf(g(f)),
             ContainsAt(f) => ContainsAt(g(f)),
+            Upcast(s, v) => Upcast(s, v),
+            Downcast(s, v) => Downcast(s, v),
         }
     }
 }
@@ -297,6 +308,16 @@ impl<B, F: Copy> Term<B, F> {
         self
     }
 
+    pub fn add_downcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
+        self.terms.push(TermS::Downcast(symbol, idx));
+        self
+    }
+
+    pub fn add_upcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
+        self.terms.push(TermS::Upcast(symbol, idx));
+        self
+    }
+
     pub fn base(&self) -> &B {
         &self.base
     }
@@ -360,6 +381,7 @@ impl<B> Term<B, Field> {
         match elem {
             Field(f, _) => self.add_member_of(f),
             Deref => self.add_deref_of(),
+            Downcast(s, v) => self.add_downcast(s, v.as_usize()),
             _ => unimplemented!("{:?}", elem),
         }
     }

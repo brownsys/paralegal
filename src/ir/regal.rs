@@ -295,18 +295,17 @@ impl Body<DisplayViaDebug<Location>> {
                 .flat_map(|&(dep_loc, _dep_place)| {
                     let dep_loc = DisplayViaDebug(dep_loc);
                     let (target, places) = if dep_loc.is_real(body) {
-                        let (_, target_args, target_ret) = body
-                            .stmt_at(*dep_loc)
-                            .right()
-                            .unwrap()
-                            .as_fn_and_args()
-                            .unwrap();
+                        let (operands, target_ret) = if let mir::TerminatorKind::Call { args, destination, .. } = &body.stmt_at(*dep_loc).right().unwrap().kind {
+                            (args, destination)
+                        } else {
+                            unreachable!()
+                        };
 
-                        let places = target_args
+                        let places = 
+                            flowistry::mir::utils::arg_places(operands.as_slice())
                             .into_iter()
-                            .enumerate()
-                            .filter_map(|(idx, p)| {
-                                Some((TargetPlace::Argument(ArgumentIndex::from_usize(idx)), p?))
+                            .map(|(idx, p)| {
+                                (TargetPlace::Argument(ArgumentIndex::from_usize(idx)), p)
                             })
                             .chain(std::iter::once({
                                 let p = target_ret.unwrap().0;
