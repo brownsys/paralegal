@@ -51,28 +51,41 @@ impl From<&'_ regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
             .map(|(loc, call)| (*loc, g.add_node(Node::Call((**loc, call.function)))))
             .collect::<HashMap<_, _>>();
         let mut arg_map = HashMap::new();
+
+        let return_node = g.add_node(Node::Return(None));
+        let return_arg_nodes = body.return_arg_deps.iter().enumerate().map(|(i, _)| g.add_node(Node::Argument(ArgNum::from_usize(i)))).collect::<Vec<_>>();
+
+        let mut add_dep_edges = |target_id, idx, deps: &HashSet<regal::Dependency<DisplayViaDebug<Location>>>| {
+            for d in deps {
+                use regal::Target;
+                let from = match d.target {
+                    Target::Call(c) => node_map[&c],
+                    Target::Argument(a) => *arg_map
+                        .entry(a)
+                        .or_insert_with(|| g.add_node(Node::Argument(a))),
+                };
+                g.add_edge(
+                    from,
+                    target_id,
+                    Edge {
+                        target_index: ArgNum::from_usize(idx),
+                        term: d.target_term.clone(),
+                    },
+                );
+            }
+        };
+
         for (n, call) in body.calls().iter() {
             let new_id = node_map[n];
             for (idx, deps) in call.arguments.iter().enumerate() {
-                for d in deps {
-                    use regal::Target;
-                    let from = match d.target {
-                        Target::Call(c) => node_map[&c],
-                        Target::Argument(a) => *arg_map
-                            .entry(a)
-                            .or_insert_with(|| g.add_node(Node::Argument(a))),
-                    };
-                    g.add_edge(
-                        from,
-                        new_id,
-                        Edge {
-                            target_index: ArgNum::from_usize(idx),
-                            term: d.target_term.clone(),
-                        },
-                    );
-                }
+                add_dep_edges(new_id, idx, deps)
             }
         }
+        add_dep_edges(return_node, 0, &body.return_deps);
+        for (deps, node) in body.return_arg_deps.iter().zip(return_arg_nodes.iter()) {
+            add_dep_edges(*node, 0, deps);
+        }
+
         g
     }
 }
@@ -301,3 +314,4 @@ pub fn to_call_only_flow<'g, A: FnMut(ArgNum) -> GlobalLocation<'g>>(
         return_dependencies,
     }
 }
+

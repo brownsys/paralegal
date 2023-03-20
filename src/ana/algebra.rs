@@ -3,10 +3,9 @@ use crate::{
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
     utils::DisplayViaDebug,
-    HashMap, HashSet, TyCtxt, Symbol
+    HashMap, HashSet, Symbol, TyCtxt,
 };
 
-use core::prelude::v1;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -97,7 +96,9 @@ impl<F: Copy> TermS<F> {
             (MemberOf(f), ContainsAt(g)) | (ContainsAt(g), MemberOf(f)) if f != g => {
                 Cancel::NonOverlappingField(f, g)
             }
-            (Downcast(_, v1), Upcast(_, v2)) | (Upcast(_, v2), Downcast(_, v1)) if v1 != v2 => Cancel::NonOverlappingVariant(v1, v2),
+            (Downcast(_, v1), Upcast(_, v2)) | (Upcast(_, v2), Downcast(_, v1)) if v1 != v2 => {
+                Cancel::NonOverlappingVariant(v1, v2)
+            }
             _ if self == other.flip() => Cancel::Cancels,
             _ => Cancel::Remains,
         }

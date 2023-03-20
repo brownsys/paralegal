@@ -149,6 +149,20 @@ impl<L> Call<L> {
     }
 }
 
+fn fmt_deps<L: Display>(deps: &Dependencies<L>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_char('{')?;
+    let mut first_dep = true;
+    for dep in deps {
+        if first_dep {
+            first_dep = false;
+        } else {
+            f.write_str(", ")?;
+        }
+        write!(f, "{dep}")?;
+    }
+    f.write_char('}')
+}
+
 impl<L: Display> Display for Call<L> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char('(')?;
@@ -159,17 +173,7 @@ impl<L: Display> Display for Call<L> {
             } else {
                 f.write_str(", ")?;
             }
-            f.write_char('{')?;
-            let mut first_dep = true;
-            for dep in arg {
-                if first_dep {
-                    first_dep = false;
-                } else {
-                    f.write_str(", ")?;
-                }
-                write!(f, "{dep}")?;
-            }
-            f.write_char('}')?;
+            fmt_deps(arg, f)?;
         }
         write!(f, ")   {:?}", self.function)?;
         Ok(())
@@ -203,6 +207,20 @@ impl<L: Display + Ord> Display for Body<L> {
         for (loc, call) in ordered {
             writeln!(f, "{:<6}: {}", format!("{}", loc), call)?
         }
+        write!(f, "return: ")?;
+        fmt_deps(&self.return_deps, f)?;
+        writeln!(f)?;
+        write!(f, "return args: (")?;
+        let mut first_arg = true;
+        for arg in &self.return_arg_deps {
+            if first_arg {
+                first_arg = false;
+            } else {
+                f.write_str(", ")?;
+            }
+            fmt_deps(arg, f)?;
+        }
+        f.write_char(')')?;
         Ok(())
     }
 }
@@ -295,14 +313,17 @@ impl Body<DisplayViaDebug<Location>> {
                 .flat_map(|&(dep_loc, _dep_place)| {
                     let dep_loc = DisplayViaDebug(dep_loc);
                     let (target, places) = if dep_loc.is_real(body) {
-                        let (operands, target_ret) = if let mir::TerminatorKind::Call { args, destination, .. } = &body.stmt_at(*dep_loc).right().unwrap().kind {
-                            (args, destination)
-                        } else {
-                            unreachable!()
-                        };
+                        let (operands, target_ret) =
+                            if let mir::TerminatorKind::Call {
+                                args, destination, ..
+                            } = &body.stmt_at(*dep_loc).right().unwrap().kind
+                            {
+                                (args, destination)
+                            } else {
+                                unreachable!()
+                            };
 
-                        let places = 
-                            flowistry::mir::utils::arg_places(operands.as_slice())
+                        let places = flowistry::mir::utils::arg_places(operands.as_slice())
                             .into_iter()
                             .map(|(idx, p)| {
                                 (TargetPlace::Argument(ArgumentIndex::from_usize(idx)), p)
