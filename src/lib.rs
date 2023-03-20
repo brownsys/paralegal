@@ -281,8 +281,18 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
+        // Setting the log levels is bit complicated because there are two level
+        // filters going on in the logging crates. One is imposed by `log`
+        // automatically and the other by `simple_logger` internally.
+        // 
+        // We use `log::set_max_level` later to selectively enable debug output
+        // for specific targets. This max level is distinct from the one
+        // provided to `with_level` below. Therefore in the case where we have a
+        // `--debug` targeting a specific function we need to set the
+        // `with_level` level lower and then increase it with
+        // `log::set_max_level`.
         let lvl =
-            if plugin_args.debug == Some(None) || plugin_args.debug == Some(Some("".to_string())) {
+            if plugin_args.debug.is_some() {
                 log::LevelFilter::Debug
             } else if plugin_args.verbose {
                 log::LevelFilter::Info
@@ -295,6 +305,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .without_timestamps()
             .init()
             .unwrap();
+        if matches!(plugin_args.debug, Some(Some(ref str)) if str.as_str() != "") {
+            log::set_max_level(if plugin_args.verbose { log::LevelFilter::Info } else { log::LevelFilter::Warn });
+        }
         let opts = Box::leak(Box::new(plugin_args));
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }
