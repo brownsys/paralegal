@@ -651,3 +651,11 @@ impl<T> std::ops::Deref for DisplayViaDebug<T> {
         &self.0
     }
 }
+
+pub struct Print<F>(pub F);
+
+impl<F: Fn(&mut std::fmt::Formatter<'_>) -> std::fmt::Result> Display for Print<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (&self.0)(f)
+    }
+}

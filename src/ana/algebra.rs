@@ -2,7 +2,7 @@ use crate::{
     either::Either,
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
-    utils::DisplayViaDebug,
+    utils::{DisplayViaDebug, Print},
     HashMap, HashSet, Symbol, TyCtxt,
 };
 
@@ -169,13 +169,7 @@ impl<B, F: Copy> Equality<B, F> {
 
 impl<B, F: Copy> Equality<B, F> {}
 
-pub struct Print<F>(F);
 
-impl<F: Fn(&mut std::fmt::Formatter<'_>) -> std::fmt::Result> Display for Print<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        (&self.0)(f)
-    }
-}
 
 pub fn rebase_simplify<
     GetEq: std::borrow::Borrow<Equality<N, F>>,
@@ -228,14 +222,16 @@ pub fn rebase_simplify<
 
     while let Some((v, terms)) = intermediates.keys().next().cloned().and_then(|k| { let v = intermediates.remove(&k)?; Some((k, v))})
     {
-        assert!(terms.len() < 2, "Found fewer than two terms for {v:?}: {}", Print(|f:&mut std::fmt::Formatter<'_>| {
-            let mut first = true;
-            for t in terms.iter() {
-                if first { first = false; } else { f.write_str(", ")?; }
-                t.fmt(f)?;
-            }
-            Ok(())
-        }));
+        if terms.len() < 2 {
+            warn!("Found fewer than two terms for {v:?}: {}", Print(|f:&mut std::fmt::Formatter<'_>| {
+                let mut first = true;
+                for t in terms.iter() {
+                    if first { first = false; } else { f.write_str(", ")?; }
+                    t.fmt(f)?;
+                }
+                Ok(())
+            }));
+        }
         for (idx, lhs) in terms.iter().enumerate() {
             for rhs in terms.iter().skip(idx + 1).cloned() {
                 let eq = Equality { lhs: lhs.clone(), rhs };
