@@ -105,6 +105,7 @@ fn get_user_data_with(data: Vec<i64>) -> UserData {
     return UserData { data };
 }
 
+#[dfpp::label(noinline)]
 fn get_other_data() -> Vec<i64> {
     return vec![1, 2, 3]
 }
