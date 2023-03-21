@@ -335,8 +335,6 @@ impl Body<DisplayViaDebug<Location>> {
                             }));
                         (Target::Call(dep_loc), Either::Left(places))
                     } else {
-                        // TODO figure out if this needs similar children
-                        // treatment as the code above
                         (
                             Target::Argument(ArgumentIndex::from_usize(
                                 dep_loc.statement_index - 1,
@@ -349,24 +347,41 @@ impl Body<DisplayViaDebug<Location>> {
                     };
                     places.into_iter().flat_map(
                         move |(abstract_target_place, concrete_target_place)| {
-                            let children = aliases.reachable_values(arg, rustc_ast::Mutability::Mut);
-                            children.into_iter()
-                                .cloned()
-                                .chain(std::iter::once(arg))
-                                .filter_map(move |child| {
-                                    // In theory we do not have to replace the
-                                    // base here (because it gets substituted)
-                                    // but the types force it.
-                                    let mut target_term = place_resolver.resolve(arg, child).replace_base(abstract_target_place.clone());
-                                    let inner_term = place_resolver
-                                        .try_resolve(child, concrete_target_place)?
-                                        .replace_base(abstract_target_place.clone());
-                                    target_term.sub(inner_term);
-                                    Some(Dependency {
-                                        target_term,
+                            
+                            // The below code is an alternate implementation
+                            // that includes children in the resolution
+
+                            // let children = aliases.reachable_values(arg, rustc_ast::Mutability::Mut);
+                            // children.into_iter()
+                            //     .cloned()
+                            //     .chain(std::iter::once(arg))
+                            //     .filter_map(move |child| {
+                            //         // In theory we do not have to replace the
+                            //         // base here (because it gets substituted)
+                            //         // but the types force it.
+                            //         debug!("Resolving child {child:?} of {arg:?}");
+
+                            //         // TODO I think this resolution should always
+                            //         // succeed but it doesn't. Should investigate.
+                            //         let mut target_term = place_resolver.try_resolve(arg, child)?.replace_base(abstract_target_place.clone());
+                            //         debug!("Resolving {child:?} to {concrete_target_place:?}");
+                            //         let inner_term = place_resolver
+                            //             .try_resolve(child, concrete_target_place)?
+                            //             .replace_base(abstract_target_place.clone());
+                            //         target_term.sub(inner_term);
+                            //         Some(Dependency {
+                            //             target_term,
+                            //             target,
+                            //         })
+                            //     })
+                            place_resolver
+                                .try_resolve(arg, concrete_target_place)
+                                .into_iter()
+                                .map(move |target_term|
+                                    Dependency {
+                                        target_term: target_term.replace_base(abstract_target_place.clone()),
                                         target,
                                     })
-                                })
                         },
                     )
                 })
