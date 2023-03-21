@@ -11,115 +11,24 @@ use crate::{
         ty::{subst::GenericArgKind, ClosureKind, TyCtxt, TyKind},
     },
     ty, Symbol,
+    utils::{SparseMatrix}
 };
 
 use flowistry::{
-    extensions::RecurseSelector,
     infoflow::mutation::{ModularMutationVisitor, MutationStatus},
     mir::{
         borrowck_facts::{get_body_with_borrowck_facts, CachedSimplifedBodyWithFacts},
         engine::AnalysisResults,
-        utils::{self, BodyExt},
-    },
-};
-use flowistry::{
-    extensions::{is_extension_active, ContextMode, MutabilityMode},
-    indexed::{impls::LocationDomain, IndexMatrix, IndexSet, IndexedDomain, RefSet},
-    mir::{
         aliases::Aliases,
         control_dependencies::ControlDependencies,
         engine,
-        utils::{OperandExt, PlaceExt},
+        utils::{OperandExt, PlaceExt, BodyExt},
     },
+    extensions::{RecurseSelector,is_extension_active, ContextMode, MutabilityMode},
+    indexed::{impls::LocationDomain, IndexMatrix, IndexSet, IndexedDomain, RefSet},
 };
-use rustc_index::vec::IndexVec;
 
 pub type FlowResults<'a, 'tcx, 'g> = engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g>>;
-
-type SparseMatrixImpl<K, V> = HashMap<K, HashSet<V>>;
-
-#[derive(Debug, Clone)]
-pub struct SparseMatrix<K, V> {
-    matrix: SparseMatrixImpl<K, V>,
-    empty_set: HashSet<V>,
-}
-
-impl<'a, Q: Eq + std::hash::Hash + ?Sized, K: Eq + std::hash::Hash + std::borrow::Borrow<Q>, V>
-    Index<&'a Q> for SparseMatrix<K, V>
-{
-    type Output = <SparseMatrixImpl<K, V> as Index<&'a Q>>::Output;
-    fn index(&self, index: &Q) -> &Self::Output {
-        &self.matrix[index]
-    }
-}
-
-impl<K, V> Default for SparseMatrix<K, V> {
-    fn default() -> Self {
-        Self {
-            matrix: Default::default(),
-            empty_set: Default::default(),
-        }
-    }
-}
-
-impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> PartialEq for SparseMatrix<K, V> {
-    fn eq(&self, other: &Self) -> bool {
-        self.matrix.eq(&other.matrix)
-    }
-}
-impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> Eq for SparseMatrix<K, V> {}
-
-impl<K, V> SparseMatrix<K, V> {
-    pub fn set(&mut self, k: K, v: V) -> bool
-    where
-        K: Eq + std::hash::Hash,
-        V: Eq + std::hash::Hash,
-    {
-        self.row_mut(k).insert(v)
-    }
-
-    pub fn rows(&self) -> impl Iterator<Item = (&K, &HashSet<V>)> {
-        self.matrix.iter()
-    }
-
-    pub fn row(&self, k: &K) -> &HashSet<V>
-    where
-        K: Eq + std::hash::Hash,
-    {
-        self.matrix.get(k).unwrap_or(&self.empty_set)
-    }
-
-    pub fn row_mut(&mut self, k: K) -> &mut HashSet<V>
-    where
-        K: Eq + std::hash::Hash,
-    {
-        self.matrix.entry(k).or_insert_with(HashSet::default)
-    }
-
-    pub fn has(&self, k: &K) -> bool
-    where
-        K: Eq + std::hash::Hash,
-    {
-        !self.matrix.get(k).map_or(true, HashSet::is_empty)
-    }
-
-    pub fn union_row(&mut self, k: &K, row: Cow<HashSet<V>>) -> bool
-    where
-        K: Eq + std::hash::Hash + Clone,
-        V: Eq + std::hash::Hash + Clone,
-    {
-        let mut changed = false;
-        if !self.has(k) {
-            changed = !row.is_empty();
-            self.matrix.insert(k.clone(), row.into_owned());
-        } else {
-            let set = self.row_mut(k.clone());
-            row.iter()
-                .for_each(|elem| changed |= set.insert(elem.clone()));
-        }
-        changed
-    }
-}
 
 pub type Dependency<'tcx> = (Location, Place<'tcx>);
 pub type LocationSet<'tcx> = HashSet<Dependency<'tcx>>;
@@ -133,7 +42,7 @@ pub struct FlowDomain<'tcx> {
 
 impl<'tcx> DependencyMap<'tcx> {
     pub fn fmt_indent(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
-        for (k, v) in self.matrix.iter() {
+        for (k, v) in self.rows() {
             write!(f, "{:indent$}{k:?}: {{", ' ')?;
             let mut first = true;
             for (loc, place) in v {

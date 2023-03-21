@@ -172,9 +172,9 @@ impl<B, F: Copy> Equality<B, F> {}
 
 
 pub fn rebase_simplify<
-    GetEq: std::borrow::Borrow<Equality<N, F>>,
+    GetEq: std::borrow::Borrow<Equality<B, F>>,
     I: Fn(&B) -> Either<N, V>,
-    It: Iterator<Item=Equality<B, F>>,
+    It: Iterator<Item=GetEq>,
     N: Display + Clone,
     B: Clone + Hash + Eq + Display,
     F: Eq + Hash + Clone + Copy + Display,
@@ -217,7 +217,7 @@ pub fn rebase_simplify<
         }
     };
     for eq in equations {
-        handle_eq(eq, &mut add_intermediate);
+        handle_eq(eq.borrow().clone(), &mut add_intermediate);
     }
 
     while let Some((v, terms)) = intermediates.keys().next().cloned().and_then(|k| { let v = intermediates.remove(&k)?; Some((k, v))})
@@ -595,6 +595,10 @@ pub struct PlaceResolver {
 }
 
 impl PlaceResolver {
+    pub fn equations(&self) -> &[MirEquation] {
+        &self.equations
+    }
+
     pub fn construct<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> Self {
         use mir::visit::Visitor;
         let mut extractor = Extractor::new(tcx);

@@ -11,7 +11,7 @@ use crate::{
         rustc_index::vec::IndexVec, rustc_ast
     },
     utils::{outfile_pls, AsFnAndArgs, DisplayViaDebug, LocationExt},
-    Either, HashMap, HashSet, TyCtxt,
+    Either, HashMap, HashSet, TyCtxt, ana::algebra::Equality,
 };
 
 use std::{
@@ -32,7 +32,7 @@ impl Display for ArgumentIndex {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
 pub enum TargetPlace {
     Return,
     Argument(ArgumentIndex),
@@ -88,16 +88,16 @@ impl<L: Display> Display for Target<L> {
 type Dependencies<L> = HashSet<Dependency<L>>;
 
 #[derive(Debug)]
-pub struct Call<L> {
+pub struct Call<D> {
     pub function: DefId,
-    pub arguments: IndexVec<ArgumentIndex, Dependencies<L>>,
+    pub arguments: IndexVec<ArgumentIndex, D>,
 }
 
-impl<L> Call<L> {
+impl <L> Call<Dependencies<L>> {
     pub fn map_locations<L0: std::hash::Hash + Eq, F: FnMut(&L) -> L0>(
         &self,
         mut f: F,
-    ) -> Call<L0> {
+    ) -> Call<Dependencies<L0>> {
         let arguments = self
             .arguments
             .iter()
@@ -108,7 +108,6 @@ impl<L> Call<L> {
             arguments,
         }
     }
-
     pub fn flat_map_dependencies<
         L0: Eq + std::hash::Hash,
         F: FnMut(&Dependency<L>) -> I,
@@ -116,7 +115,7 @@ impl<L> Call<L> {
     >(
         &self,
         mut f: F,
-    ) -> Call<L0> {
+    ) -> Call<Dependencies<L0>> {
         Call {
             function: self.function,
             arguments: self
@@ -163,7 +162,7 @@ fn fmt_deps<L: Display>(deps: &Dependencies<L>, f: &mut std::fmt::Formatter<'_>)
     f.write_char('}')
 }
 
-impl<L: Display> Display for Call<L> {
+impl<L: Display> Display for Call<Dependencies<L>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char('(')?;
         let mut first = true;
@@ -182,17 +181,17 @@ impl<L: Display> Display for Call<L> {
 
 #[derive(Debug)]
 pub struct Body<L> {
-    pub calls: HashMap<L, Call<L>>,
+    pub calls: HashMap<L, Call<Dependencies<L>>>,
     pub return_deps: Dependencies<L>,
     pub return_arg_deps: Vec<Dependencies<L>>,
 }
 
 impl<L> Body<L> {
-    pub fn calls(&self) -> &HashMap<L, Call<L>> {
+    pub fn calls(&self) -> &HashMap<L, Call<Dependencies<L>>> {
         &self.calls
     }
 
-    pub fn at(&self, l: &L) -> Option<&Call<L>>
+    pub fn at(&self, l: &L) -> Option<&Call<Dependencies<L>>>
     where
         L: Eq + std::hash::Hash,
     {
@@ -433,3 +432,120 @@ impl Body<DisplayViaDebug<Location>> {
         }
     }
 }
+
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
+pub struct RelativePlace<L> {
+    location: L,
+    place: TargetPlace
+}
+
+impl <L:Display> Display for RelativePlace<L> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} @ {}", self.location, self.place)
+    }
+}
+
+pub type Dependencies2<L> = HashSet<Target<L>>;
+
+#[derive(Debug)]
+pub struct Body2<L> {
+    pub calls: HashMap<L, Call<Dependencies2<L>>>,
+    pub return_deps: Dependencies2<L>,
+    pub return_arg_deps: Vec<Dependencies2<L>>,
+    pub equations: Vec<algebra::Equality<Target<RelativePlace<L>>, DisplayViaDebug<Field>>>,
+}
+
+impl Body2<DisplayViaDebug<Location>> { 
+    pub fn construct(
+        flow_analysis: &df::FlowResults<'_, '_, '_>,
+        place_resolver: &algebra::PlaceResolver,
+    ) -> Self {
+        let body = flow_analysis.analysis.body;
+        let mut place_table: HashMap<mir::Local, Target<RelativePlace<DisplayViaDebug<Location>>>> = body.args_iter().enumerate().map(|(idx, l)| (l, Target::Argument(ArgumentIndex::from_usize(idx)))).collect();
+        let mut dependencies_for = |location: DisplayViaDebug<_>, arg| {
+            let ana = flow_analysis.state_at(*location);
+            ana.deps(arg)
+                .map(|&(dep_loc, _dep_place)| {
+                    let dep_loc = DisplayViaDebug(dep_loc);
+                    if dep_loc.is_real(body) {
+                        let mk_rp = |place| Target::Call(RelativePlace { location: dep_loc, place });
+                        let (operands, target_ret) =
+                            if let mir::TerminatorKind::Call {
+                                args, destination, ..
+                            } = &body.stmt_at(*dep_loc).right().unwrap().kind
+                            {
+                                (args, destination)
+                            } else {
+                                unreachable!()
+                            };
+
+                        for (idx, place) in flowistry::mir::utils::arg_places(operands.as_slice()) {
+                            assert!(place.projection.is_empty());
+                            assert!(place_table.insert(place.local, mk_rp(TargetPlace::Argument(ArgumentIndex::from_usize(idx)))).is_some());
+                        }
+                        let target_ret = target_ret.unwrap().0;
+                        assert!(target_ret.projection.is_empty());
+                        assert!(place_table.insert(target_ret.local, mk_rp(TargetPlace::Return)).is_some());
+                        Target::Call(
+                            dep_loc
+                        )
+                    } else {
+                        Target::Argument(ArgumentIndex::from_usize(
+                            dep_loc.statement_index - 1,
+                        ))
+                    }
+                })
+                .collect()
+        };
+        let calls = body
+            .basic_blocks()
+            .iter_enumerated()
+            .filter_map(|(bb, bbdat)| {
+                let (function, simple_args, _) = bbdat.terminator().as_fn_and_args().ok()?;
+                let bbloc = DisplayViaDebug(body.terminator_loc(bb));
+                let arguments = IndexVec::from_raw(
+                    simple_args
+                        .into_iter()
+                        .map(|arg| {
+                            arg.map_or_else(Dependencies2::default, |a| dependencies_for(bbloc, a))
+                        })
+                        .collect(),
+                );
+                Some((
+                    bbloc,
+                    Call {
+                        function,
+                        arguments,
+                    },
+                ))
+            })
+            .collect();
+        let mut return_arg_deps: IndexVec<mir::Local, _> =
+            IndexVec::from_raw(body.args_iter().map(|_| HashSet::new()).collect());
+        let return_deps = body
+            .all_returns()
+            .map(DisplayViaDebug)
+            .flat_map(|loc| {
+                return_arg_deps.iter_enumerated_mut().for_each(|(i, s)| {
+                    for d in dependencies_for(loc, i.into()) {
+                        s.insert(d);
+                    }
+                });
+                dependencies_for(loc, mir::Place::return_place())
+                    .clone()
+                    .into_iter()
+            })
+            .collect();
+
+        let equations = algebra::rebase_simplify(place_resolver.equations().iter(), |base| {
+            place_table.get(base).cloned().map(Either::Left).unwrap_or(Either::Right(*base))
+        });
+        Self {
+            calls,
+            return_deps,
+            return_arg_deps: return_arg_deps.raw,
+            equations,
+        }
+    }
+}
+

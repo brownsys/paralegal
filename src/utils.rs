@@ -12,8 +12,14 @@ use crate::{
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_span::symbol::Ident,
         ty,
+        rustc_data_structures::fx::{FxHashMap, FxHashSet},
     },
-    Either, HashSet, Symbol, TyCtxt,
+    Either, HashSet, Symbol, TyCtxt, HashMap
+};
+
+use std::{
+    borrow::Cow,
+    default::Default
 };
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
@@ -659,3 +665,89 @@ impl<F: Fn(&mut std::fmt::Formatter<'_>) -> std::fmt::Result> Display for Print<
         (&self.0)(f)
     }
 }
+
+type SparseMatrixImpl<K, V> = FxHashMap<K, FxHashSet<V>>;
+
+#[derive(Debug, Clone)]
+pub struct SparseMatrix<K, V> {
+    matrix: SparseMatrixImpl<K, V>,
+    empty_set: FxHashSet<V>,
+}
+
+impl<'a, Q: Eq + std::hash::Hash + ?Sized, K: Eq + std::hash::Hash + std::borrow::Borrow<Q>, V>
+    std::ops::Index<&'a Q> for SparseMatrix<K, V>
+{
+    type Output = <SparseMatrixImpl<K, V> as std::ops::Index<&'a Q>>::Output;
+    fn index(&self, index: &Q) -> &Self::Output {
+        &self.matrix[index]
+    }
+}
+
+impl<K, V> Default for SparseMatrix<K, V> {
+    fn default() -> Self {
+        Self {
+            matrix: Default::default(),
+            empty_set: Default::default(),
+        }
+    }
+}
+
+impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> PartialEq for SparseMatrix<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.matrix.eq(&other.matrix)
+    }
+}
+impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> Eq for SparseMatrix<K, V> {}
+
+impl<K, V> SparseMatrix<K, V> {
+    pub fn set(&mut self, k: K, v: V) -> bool
+    where
+        K: Eq + std::hash::Hash,
+        V: Eq + std::hash::Hash,
+    {
+        self.row_mut(k).insert(v)
+    }
+
+    pub fn rows(&self) -> impl Iterator<Item = (&K, &FxHashSet<V>)> {
+        self.matrix.iter()
+    }
+
+    pub fn row(&self, k: &K) -> &FxHashSet<V>
+    where
+        K: Eq + std::hash::Hash,
+    {
+        self.matrix.get(k).unwrap_or(&self.empty_set)
+    }
+
+    pub fn row_mut(&mut self, k: K) -> &mut FxHashSet<V>
+    where
+        K: Eq + std::hash::Hash,
+    {
+        self.matrix.entry(k).or_insert_with(HashSet::default)
+    }
+
+    pub fn has(&self, k: &K) -> bool
+    where
+        K: Eq + std::hash::Hash,
+    {
+        !self.matrix.get(k).map_or(true, HashSet::is_empty)
+    }
+
+    pub fn union_row(&mut self, k: &K, row: Cow<FxHashSet<V>>) -> bool
+    where
+        K: Eq + std::hash::Hash + Clone,
+        V: Eq + std::hash::Hash + Clone,
+    {
+        let mut changed = false;
+        if !self.has(k) {
+            changed = !row.is_empty();
+            self.matrix.insert(k.clone(), row.into_owned());
+        } else {
+            let set = self.row_mut(k.clone());
+            row.iter()
+                .for_each(|elem| changed |= set.insert(elem.clone()));
+        }
+        changed
+    }
+}
+
