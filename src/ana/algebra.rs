@@ -173,8 +173,82 @@ pub struct Print<F>(F);
 
 impl<F: Fn(&mut std::fmt::Formatter<'_>) -> std::fmt::Result> Display for Print<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        (self.0)(f)
+        (&self.0)(f)
     }
+}
+
+pub fn rebase_simplify<
+    GetEq: std::borrow::Borrow<Equality<N, F>>,
+    I: Fn(&B) -> Either<N, V>,
+    It: Iterator<Item=Equality<B, F>>,
+    N: Display + Clone,
+    B: Clone + Hash + Eq + Display,
+    F: Eq + Hash + Clone + Copy + Display,
+    V: Clone + Eq + Hash + Debug,
+>(
+    equations: It,
+    inspect: I
+) -> Vec<Equality<N, F>> {
+    let mut finals = vec![];
+    let mut add_final = |mut eq: Equality<_,_>| {
+        eq.rearrange_left_to_right();
+        if eq.rhs.simplify() {
+            finals.push(eq);
+        }
+    };
+
+    let mut handle_eq = |mut eq: Equality<_,_>, add_intermediate: &mut dyn FnMut(V, Term<_,_>)| {
+        let il = inspect(eq.lhs.base());
+        let ir =  inspect(eq.rhs.base());
+        if let (Either::Left(newl), Either::Left(newr)) = (il.clone(), ir.clone()) {
+            add_final(Equality { lhs: eq.lhs.replace_base(newl), rhs: eq.rhs.replace_base(newr) });
+        } else {
+            if let Either::Right(v) = il {
+                let mut eq_clone = eq.clone();
+                eq_clone.rearrange_left_to_right();
+                add_intermediate(v, eq_clone.rhs);
+            }
+            if let Either::Right(v) = ir {
+                eq.swap();
+                eq.rearrange_left_to_right();
+                add_intermediate(v, eq.rhs);
+            }
+        }
+    };
+
+    let mut intermediates: HashMap<V, HashSet<Term<B, F>>> = HashMap::default();
+    let mut add_intermediate = |k, mut v : Term<_,_>| {
+        if v.simplify() {
+            intermediates.entry(k).or_insert_with(HashSet::default).insert(v);
+        }
+    };
+    for eq in equations {
+        handle_eq(eq, &mut add_intermediate);
+    }
+
+    while let Some((v, terms)) = intermediates.keys().next().cloned().and_then(|k| { let v = intermediates.remove(&k)?; Some((k, v))})
+    {
+        assert!(terms.len() < 2, "Found fewer than two terms for {v:?}: {}", Print(|f:&mut std::fmt::Formatter<'_>| {
+            let mut first = true;
+            for t in terms.iter() {
+                if first { first = false; } else { f.write_str(", ")?; }
+                t.fmt(f)?;
+            }
+            Ok(())
+        }));
+        for (idx, lhs) in terms.iter().enumerate() {
+            for rhs in terms.iter().skip(idx + 1).cloned() {
+                let eq = Equality { lhs: lhs.clone(), rhs };
+                handle_eq(eq, 
+                    &mut |v, term| {
+                        intermediates.get_mut(&v).map(|s| s.insert(term));
+                    },
+                );
+            }
+        }
+    }
+
+    finals
 }
 
 pub fn solve<
