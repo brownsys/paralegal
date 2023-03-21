@@ -1241,8 +1241,21 @@ struct FrgErrorInfo {
 }
 
 impl FrgErrorInfo {
-    /// Parses a forge-style DFPP location into the Rust `Location` struct
     pub fn parse_location(s: &String) -> Location {
+        let mut chars = s.split('_').rev();
+        let idx = chars.next().unwrap(); // Index will be the last _ separated term
+        let block = chars.next().unwrap(); // Block will be the second to last separated term.
+
+        let idx_num: u32 = idx[1..idx.len()].parse().unwrap();
+        let block_num: u32 = block[1..block.len()].parse().unwrap();
+
+        Location {
+            block: BasicBlock::from_u32(block_num), 
+            statement_index: idx_num.try_into().unwrap()
+        }
+    }
+    /// Parses a forge-style DFPP location into the Rust `Location` struct
+    pub fn _parse_location_deprecated(s: &String) -> Location {
         let mut chars = s.chars().into_iter();
         let mut block_vec = vec![];
         let mut index_vec = vec![];
@@ -1380,6 +1393,85 @@ impl From<FrgErrorInfo> for DfppErrorInfo {
         }
 
         Self { ctrl, erroneous_locations, missing_labels_locations }
+    }
+}
+
+impl DfppErrorInfo {
+    fn print_locations(
+        locations: &Vec<Location>, 
+        ctrl_body_w_facts: &CachedSimplifedBodyWithFacts
+    ) {
+        for loc in locations {
+            let mir = &ctrl_body_w_facts.simplified_body().stmt_at(*loc);
+            match mir {
+                Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
+                Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
+            }
+        }
+    }
+
+    fn print_error_msg<'tcx>(
+        &self, 
+        tcx: TyCtxt<'tcx>, 
+        b: BodyId,
+        ctrl_body_w_facts: &CachedSimplifedBodyWithFacts<'tcx>
+    ) {
+        if self.erroneous_locations.is_empty() && self.missing_labels_locations.is_empty() {
+            println!("\x1b[92mHooray! Found no privacy violations!\x1b[0m");
+        } else {
+            let transitive_flow_matrix =
+                flowistry::infoflow::compute_flow(tcx, b, ctrl_body_w_facts);
+            println!(
+                "\x1b[31mFound violation of policy \"\x1b[91mright_to_be_forgotten\x1b[31m\" in target {:?}:\x1b[0m",
+                self.ctrl,
+            );
+            Self::print_locations(&self.erroneous_locations, &ctrl_body_w_facts);
+
+            println!(
+                "\x1b[93mRelevant context that may have influenced this violation:\x1b[0m"
+            );
+
+            for loc in &self.erroneous_locations {
+                if loc.is_real(&ctrl_body_w_facts.simplified_body()) {
+                    let source_dependencies = transitive_flow_matrix.state_at(*loc);
+    
+                    let source_places = read_places_with_provenance(
+                        *loc, 
+                        &ctrl_body_w_facts.simplified_body().stmt_at(*loc), 
+                        tcx);
+                    
+                    // HACKY
+                    let mut ctr = 0;
+
+                    source_places
+                        .flat_map(|place| {
+                            source_dependencies.row(place)
+                        })
+                        .for_each(|loc| {
+                            if loc.is_real(&ctrl_body_w_facts.simplified_body()) {
+                                let mir = &ctrl_body_w_facts.simplified_body().stmt_at(*loc);
+                                if ctr <= 2 {
+                                    match mir {
+                                        Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
+                                        Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
+                                    }
+                                }
+                                ctr = ctr + 1;   
+                            }
+                        });
+                }
+            }
+
+            println!("\x1b[92mYou can fix this violation by removing the line(s): \x1b[0m");
+            Self::print_locations(&self.erroneous_locations, &ctrl_body_w_facts);
+            
+            for label_pair in &self.missing_labels_locations {
+                println!("\x1b[92mOr ensuring that the following annotation: \x1b[0m");
+                println!("\t{}", &label_pair.label);
+                println!("\x1b[92mReaches the line: \x1b[0m");
+                Self::print_locations(&vec![label_pair.location], &ctrl_body_w_facts);
+            }
+        }
     }
 }
 
@@ -1529,86 +1621,11 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
         debug!("Checking whether DFPP is doing an error-message pass");
         if let Some(em) = self.get_error_information_json() {
-            if em.erroneous_locations.is_empty() && em.missing_labels_locations.is_empty() {
-                println!("\x1b[92mHooray! Found no privacy violations!\x1b[0m");
+            if id.name.as_str() != em.ctrl {
+                return None;
             } else {
-                // dbg!(&em);
-                if id.name.as_str() != em.ctrl {
-                    return None;
-                }
-
-                let transitive_flow_matrix =
-                    flowistry::infoflow::compute_flow(tcx, b, controller_body_with_facts);
-                println!(
-                    "\x1b[31mFound violation of policy \"\x1b[91mright_to_be_forgotten\x1b[31m\" in target {:?}:\x1b[0m",
-                    id.name,
-                );
-                for loc in &em.erroneous_locations {
-                    let mir = &controller_body_with_facts.simplified_body().stmt_at(*loc);
-                    match mir {
-                        Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
-                        Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
-                    }
-                }
-                println!(
-                    "\x1b[93mRelevant context that may have influenced this violation:\x1b[0m"
-                );
-
-                for loc in &em.erroneous_locations {
-                    if loc.is_real(&controller_body_with_facts.simplified_body()) {
-                        // dbg!(loc);
-                        let source_dependencies = transitive_flow_matrix.state_at(*loc);
-        
-                        let source_places = read_places_with_provenance(
-                            *loc, 
-                            &controller_body_with_facts.simplified_body().stmt_at(*loc), 
-                            tcx);
-                        
-                        // HACKY
-                        let mut ctr = 0;
-    
-                        source_places
-                            .flat_map(|place| {
-                                source_dependencies.row(place)
-                            })
-                            .for_each(|loc| {
-                                if loc.is_real(&controller_body_with_facts.simplified_body()) {
-                                    let mir = &controller_body_with_facts.simplified_body().stmt_at(*loc);
-                                    if ctr <= 2 {
-                                        match mir {
-                                            Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
-                                            Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
-                                        }
-                                    }
-                                    ctr = ctr + 1;   
-                                }
-                            });
-                    }
-                }
-
-                println!("\x1b[92mYou can fix this violation by removing the line(s): \x1b[0m");
-                for loc in &em.erroneous_locations {
-                    let mir = &controller_body_with_facts.simplified_body().stmt_at(*loc);
-                    match mir {
-                        Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
-                        Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
-                    }
-                }
-                
-                for label_pair in &em.missing_labels_locations {
-                    println!("\x1b[92mOr adding the following annotation: \x1b[0m");
-                    println!("\t{}", &label_pair.label);
-                    println!("\x1b[92mTo the line: \x1b[0m");
-                    let mir = &controller_body_with_facts
-                        .simplified_body()
-                        .stmt_at(label_pair.location);
-                    match mir {
-                        Either::Left(stmt) => { println!("\t{:?}", &(&*stmt).kind); }
-                        Either::Right(term) => { println!("\t{:?}", &(&*term).kind); }
-                    }
-                }
+                em.print_error_msg(tcx, b, controller_body_with_facts);
             }
-            // For now, use a panic to display all the error information.
             exit(0);
         }      
 
