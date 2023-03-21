@@ -8,7 +8,7 @@ use crate::{
     mir::{Field, Location, ProjectionElem},
     rust::{
         rustc_hir::{def_id::DefId, BodyId},
-        rustc_index::vec::IndexVec,
+        rustc_index::vec::IndexVec, rustc_ast
     },
     utils::{outfile_pls, AsFnAndArgs, DisplayViaDebug, LocationExt},
     Either, HashMap, HashSet, TyCtxt,
@@ -309,6 +309,7 @@ impl Body<DisplayViaDebug<Location>> {
         let body = flow_analysis.analysis.body;
         let dependencies_for = |location: DisplayViaDebug<_>, arg| {
             let ana = flow_analysis.state_at(*location);
+            let aliases = &flow_analysis.analysis.aliases;
             ana.deps(arg)
                 .flat_map(|&(dep_loc, _dep_place)| {
                     let dep_loc = DisplayViaDebug(dep_loc);
@@ -334,6 +335,8 @@ impl Body<DisplayViaDebug<Location>> {
                             }));
                         (Target::Call(dep_loc), Either::Left(places))
                     } else {
+                        // TODO figure out if this needs similar children
+                        // treatment as the code above
                         (
                             Target::Argument(ArgumentIndex::from_usize(
                                 dep_loc.statement_index - 1,
@@ -344,15 +347,26 @@ impl Body<DisplayViaDebug<Location>> {
                             ))),
                         )
                     };
-                    places.into_iter().filter_map(
+                    places.into_iter().flat_map(
                         move |(abstract_target_place, concrete_target_place)| {
-                            let target_term = place_resolver
-                                .try_resolve(arg, concrete_target_place)?
-                                .replace_base(abstract_target_place);
-                            Some(Dependency {
-                                target_term,
-                                target,
-                            })
+                            let children = aliases.reachable_values(arg, rustc_ast::Mutability::Mut);
+                            children.into_iter()
+                                .cloned()
+                                .chain(std::iter::once(arg))
+                                .filter_map(move |child| {
+                                    // In theory we do not have to replace the
+                                    // base here (because it gets substituted)
+                                    // but the types force it.
+                                    let mut target_term = place_resolver.resolve(arg, child).replace_base(abstract_target_place.clone());
+                                    let inner_term = place_resolver
+                                        .try_resolve(child, concrete_target_place)?
+                                        .replace_base(abstract_target_place.clone());
+                                    target_term.sub(inner_term);
+                                    Some(Dependency {
+                                        target_term,
+                                        target,
+                                    })
+                                })
                         },
                     )
                 })

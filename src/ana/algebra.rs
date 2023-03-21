@@ -546,6 +546,13 @@ impl PlaceResolver {
         }
     }
 
+    pub fn resolve(&self, from: Place, to: Place) -> Term<(), DisplayViaDebug<Field>> {
+        self.try_resolve(from, to).unwrap_or_else(|| {
+            panic!("Could not resolve {from:?} to {to:?}")
+        })
+    }
+
+
     pub fn try_resolve(&self, from: Place, to: Place) -> Option<Term<(), DisplayViaDebug<Field>>> {
         let target_term = MirTerm::from(to);
         let target = DisplayViaDebug(self.variable_generator.borrow_mut().generate());
