@@ -1,4 +1,3 @@
-
 use crate::{
     either::Either,
     ir::regal::TargetPlace,
@@ -31,6 +30,7 @@ impl<B: Display, F: Display + Copy> Display for Term<B, F> {
                 ContainsAt(field) => write!(f, "{{ .{} = ", field),
                 Downcast(..) => f.write_char('('),
                 Upcast(v, s) => write!(f, "(#{s}"),
+                Unknown => write!(f, "(?"),
             }?
         }
         write!(f, "{}", self.base)?;
@@ -57,7 +57,7 @@ impl Display for TargetPlace {
 
 type VariantIdx = usize;
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
+#[derive(Clone, Eq, Hash, Debug, Copy, PartialEq)]
 pub enum TermS<F: Copy> {
     RefOf,
     DerefOf,
@@ -65,6 +65,7 @@ pub enum TermS<F: Copy> {
     ContainsAt(F),
     Downcast(Option<Symbol>, VariantIdx),
     Upcast(Option<Symbol>, VariantIdx),
+    Unknown,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
@@ -85,6 +86,7 @@ impl<F: Copy> TermS<F> {
             ContainsAt(f) => MemberOf(f),
             Downcast(s, v) => Upcast(s, v),
             Upcast(s, v) => Downcast(s, v),
+            Unknown => Unknown,
         }
     }
 
@@ -94,6 +96,7 @@ impl<F: Copy> TermS<F> {
     {
         use TermS::*;
         match (self, other) {
+            (Unknown, _) | (_, Unknown) => Cancel::Remains,
             (MemberOf(f), ContainsAt(g)) | (ContainsAt(g), MemberOf(f)) if f != g => {
                 Cancel::NonOverlappingField(f, g)
             }
@@ -114,6 +117,7 @@ impl<F: Copy> TermS<F> {
             ContainsAt(f) => ContainsAt(g(f)),
             Upcast(s, v) => Upcast(s, v),
             Downcast(s, v) => Downcast(s, v),
+            Unknown => Unknown,
         }
     }
 }
@@ -153,6 +157,10 @@ impl<B: Hash, F: Hash + Copy> Hash for Equality<B, F> {
 }
 
 impl<B, F: Copy> Equality<B, F> {
+    pub fn new(lhs: Term<B, F>, rhs: Term<B, F>) -> Self {
+        Self { lhs, rhs }
+    }
+
     pub fn rearrange_left_to_right(&mut self) {
         self.rhs
             .terms
@@ -167,8 +175,7 @@ impl<B, F: Copy> Equality<B, F> {
         [self.lhs.base(), self.rhs.base()]
     }
 
-    pub fn map_bases<B0, G: FnMut(&B) -> B0>(&self, mut f: G) -> Equality<B0, F> 
-    {
+    pub fn map_bases<B0, G: FnMut(&B) -> B0>(&self, mut f: G) -> Equality<B0, F> {
         Equality {
             lhs: self.lhs.replace_base(f(self.lhs.base())),
             rhs: self.rhs.replace_base(f(self.rhs.base())),
@@ -178,37 +185,39 @@ impl<B, F: Copy> Equality<B, F> {
 
 impl<B, F: Copy> Equality<B, F> {}
 
-
-
 pub fn rebase_simplify<
     GetEq: std::borrow::Borrow<Equality<B, F>>,
-    NIt: IntoIterator<Item=N>,
+    NIt: IntoIterator<Item = N>,
     I: Fn(&B) -> Either<NIt, V>,
-    It: Iterator<Item=GetEq>,
+    It: Iterator<Item = GetEq>,
     N: Display + Clone,
     B: Clone + Hash + Eq + Display,
     F: Eq + Hash + Clone + Copy + Display,
     V: Clone + Eq + Hash + Debug,
 >(
     equations: It,
-    inspect: I
+    inspect: I,
 ) -> Vec<Equality<N, F>> {
     let mut finals = vec![];
-    let mut add_final = |mut eq: Equality<_,_>| {
+    let mut add_final = |mut eq: Equality<_, _>| {
         eq.rearrange_left_to_right();
         if eq.rhs.simplify() {
             finals.push(eq);
         }
     };
 
-    let mut handle_eq = |mut eq: Equality<_,_>, add_intermediate: &mut dyn FnMut(V, Term<_,_>)| {
+    let mut handle_eq = |mut eq: Equality<_, _>,
+                         add_intermediate: &mut dyn FnMut(V, Term<_, _>)| {
         let il = inspect(eq.lhs.base());
-        let ir =  inspect(eq.rhs.base());
+        let ir = inspect(eq.rhs.base());
         if il.is_left() && ir.is_left() {
             let rv = ir.left().unwrap().into_iter().collect::<Vec<_>>();
             for newl in il.left().unwrap() {
                 for newr in rv.iter() {
-                    add_final(Equality { lhs: eq.lhs.replace_base(newl.clone()), rhs: eq.rhs.replace_base(newr.clone()) });
+                    add_final(Equality {
+                        lhs: eq.lhs.replace_base(newl.clone()),
+                        rhs: eq.rhs.replace_base(newr.clone()),
+                    });
                 }
             }
         } else {
@@ -226,35 +235,48 @@ pub fn rebase_simplify<
     };
 
     let mut intermediates: HashMap<V, HashSet<Term<B, F>>> = HashMap::default();
-    let mut add_intermediate = |k, mut v : Term<_,_>| {
+    let mut add_intermediate = |k, mut v: Term<_, _>| {
         if v.simplify() {
-            intermediates.entry(k).or_insert_with(HashSet::default).insert(v);
+            intermediates
+                .entry(k)
+                .or_insert_with(HashSet::default)
+                .insert(v);
         }
     };
     for eq in equations {
         handle_eq(eq.borrow().clone(), &mut add_intermediate);
     }
 
-    while let Some((v, terms)) = intermediates.keys().next().cloned().and_then(|k| { let v = intermediates.remove(&k)?; Some((k, v))})
-    {
+    while let Some((v, terms)) = intermediates.keys().next().cloned().and_then(|k| {
+        let v = intermediates.remove(&k)?;
+        Some((k, v))
+    }) {
         if terms.len() < 2 {
-            warn!("Found fewer than two terms for {v:?}: {}", Print(|f:&mut std::fmt::Formatter<'_>| {
-                let mut first = true;
-                for t in terms.iter() {
-                    if first { first = false; } else { f.write_str(", ")?; }
-                    t.fmt(f)?;
-                }
-                Ok(())
-            }));
+            warn!(
+                "Found fewer than two terms for {v:?}: {}",
+                Print(|f: &mut std::fmt::Formatter<'_>| {
+                    let mut first = true;
+                    for t in terms.iter() {
+                        if first {
+                            first = false;
+                        } else {
+                            f.write_str(", ")?;
+                        }
+                        t.fmt(f)?;
+                    }
+                    Ok(())
+                })
+            );
         }
         for (idx, lhs) in terms.iter().enumerate() {
             for rhs in terms.iter().skip(idx + 1).cloned() {
-                let eq = Equality { lhs: lhs.clone(), rhs };
-                handle_eq(eq, 
-                    &mut |v, term| {
-                        intermediates.get_mut(&v).map(|s| s.insert(term));
-                    },
-                );
+                let eq = Equality {
+                    lhs: lhs.clone(),
+                    rhs,
+                };
+                handle_eq(eq, &mut |v, term| {
+                    intermediates.get_mut(&v).map(|s| s.insert(term));
+                });
             }
         }
     }
@@ -345,7 +367,10 @@ pub fn solve<
     if matching_intermediate.is_none() {
         warn!("No intermediate found for {target}");
     }
-    let mut targets = matching_intermediate.into_iter().flat_map(|v| v.iter().cloned()).collect::<Vec<_>>();
+    let mut targets = matching_intermediate
+        .into_iter()
+        .flat_map(|v| v.iter().cloned())
+        .collect::<Vec<_>>();
     let mut seen = HashSet::new();
     while let Some(intermediate_target) = targets.pop() {
         match inspect(intermediate_target.base()) {
@@ -413,6 +438,11 @@ impl<B, F: Copy> Term<B, F> {
 
     pub fn add_upcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
         self.terms.push(TermS::Upcast(symbol, idx));
+        self
+    }
+
+    pub fn add_unknown(mut self) -> Self {
+        self.terms.push(TermS::Unknown);
         self
     }
 
@@ -645,11 +675,9 @@ impl PlaceResolver {
     }
 
     pub fn resolve(&self, from: Place, to: Place) -> Term<(), DisplayViaDebug<Field>> {
-        self.try_resolve(from, to).unwrap_or_else(|| {
-            panic!("Could not resolve {from:?} to {to:?}")
-        })
+        self.try_resolve(from, to)
+            .unwrap_or_else(|| panic!("Could not resolve {from:?} to {to:?}"))
     }
-
 
     pub fn try_resolve(&self, from: Place, to: Place) -> Option<Term<(), DisplayViaDebug<Field>>> {
         let target_term = MirTerm::from(to);

@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use flowistry::cached::Cache;
 use petgraph::{
     prelude as pg,
@@ -5,16 +7,22 @@ use petgraph::{
 };
 
 use crate::{
+    ana::algebra,
     hir::BodyId,
-    ir::{flows::CallOnlyFlow, global_location::IsGlobalLocation, regal, GlobalLocation, GLI, GliAt},
+    ir::{
+        flows::CallOnlyFlow,
+        global_location::IsGlobalLocation,
+        regal::{self, TargetPlace},
+        GliAt, GlobalLocation, GLI,
+    },
+    mir,
     mir::Location,
     rust::hir::def_id::{DefId, LocalDefId},
     utils::DisplayViaDebug,
-    mir,
-    HashMap, HashSet, TyCtxt, ana::algebra, Either
+    Either, HashMap, HashSet, TyCtxt,
 };
 
-use super::{inline::{InlineSelector}, algebra::Equality};
+use super::{algebra::Equality, inline::InlineSelector};
 
 type ArgNum = regal::ArgumentIndex;
 
@@ -22,6 +30,22 @@ pub enum Node<C> {
     Return(Option<ArgNum>),
     Argument(ArgNum),
     Call(C),
+}
+
+impl std::fmt::Display for Node<(GlobalLocation<'_>, DefId)> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Node::Return(n) => {
+                f.write_char('r')?;
+                if let Some(n) = n {
+                    write!(f, "{n:?}")?;
+                }
+                Ok(())
+            }
+            Node::Argument(a) => write!(f, "a{a:?}"),
+            Node::Call((gloc, did)) => write!(f, "{gloc} ({did:?})"),
+        }
+    }
 }
 
 impl<C> Node<C> {
@@ -39,8 +63,10 @@ pub struct Edge {
     target_index: ArgNum,
 }
 
-pub type Equation<L> = algebra::Equality<regal::Target<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>;
-pub type Equations<L> = Vec<algebra::Equality<regal::Target<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>>;
+pub type Equation<L> =
+    algebra::Equality<regal::Target<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>;
+pub type Equations<L> =
+    Vec<algebra::Equality<regal::Target<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>>;
 pub type GraphImpl<L> = pg::StableDiGraph<Node<(L, DefId)>, Edge>;
 
 pub struct GraphWithResolver<L> {
@@ -48,7 +74,7 @@ pub struct GraphWithResolver<L> {
     equations: Equations<L>,
 }
 
-impl <L> Default for GraphWithResolver<L> {
+impl<L> Default for GraphWithResolver<L> {
     fn default() -> Self {
         Self {
             graph: pg::StableDiGraph::new(),
@@ -60,9 +86,8 @@ impl <L> Default for GraphWithResolver<L> {
 type ProcedureGraph = GraphWithResolver<DisplayViaDebug<Location>>;
 type InlinedGraph<'g> = GraphWithResolver<GlobalLocation<'g>>;
 
-impl <C> Node<C> {
-    fn into_target_with<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Option<regal::Target<C0>> 
-    {
+impl<C> Node<C> {
+    fn into_target_with<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Option<regal::Target<C0>> {
         match self {
             Node::Return(_) => None,
             Node::Argument(a) => Some(regal::Target::Argument(*a)),
@@ -71,38 +96,62 @@ impl <C> Node<C> {
     }
 }
 
-impl <'g> InlinedGraph<'g> {
+impl<'g> InlinedGraph<'g> {
     fn prune_impossible_edges<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
         self.graph.retain_edges(|graph, idx| {
             let (from, to) = graph.edge_endpoints(idx).unwrap();
-            let Edge{ target_index } = graph.edge_weight(idx).unwrap();
-            let to_target = if let Some(to_target) = graph.node_weight(to).unwrap().into_target_with(|&(location, did)| regal::RelativePlace { location, place: regal::TargetPlace::Argument(*target_index)}) {
+            let Edge { target_index } = graph.edge_weight(idx).unwrap();
+            let to_weight = graph.node_weight(to).unwrap();
+            let to_target = if let Some(to_target) =
+                to_weight.into_target_with(|&(location, did)| regal::RelativePlace {
+                    location,
+                    place: regal::TargetPlace::Argument(*target_index),
+                }) {
                 to_target
             } else {
-                return true
+                return true;
             };
-            let targets = match graph.node_weight(from).unwrap() {
+            let from_weight = graph.node_weight(from).unwrap();
+            let targets = match from_weight {
                 Node::Argument(a) => Either::Right(std::iter::once(regal::Target::Argument(*a))),
                 Node::Return(_) => unreachable!(),
                 Node::Call((location, did)) => Either::Left({
                     let args = tcx.fn_sig(did).skip_binder().inputs().len();
-                    (0..args).into_iter().map(|a| regal::Target::Call(regal::RelativePlace {
-                        location: *location, place: regal::TargetPlace::Argument(regal::ArgumentIndex::from_usize(a))
-                    })).chain(std::iter::once(regal::Target::Call(regal::RelativePlace {
-                        location: *location, place: regal::TargetPlace::Return
-                    })))
-                })
+                    (0..args)
+                        .into_iter()
+                        .map(|a| {
+                            regal::Target::Call(regal::RelativePlace {
+                                location: *location,
+                                place: regal::TargetPlace::Argument(
+                                    regal::ArgumentIndex::from_usize(a),
+                                ),
+                            })
+                        })
+                        .chain(std::iter::once(regal::Target::Call(regal::RelativePlace {
+                            location: *location,
+                            place: regal::TargetPlace::Return,
+                        })))
+                }),
             };
             let mut reachable = false;
             let mut reached = false;
             for from_target in targets {
-                let result = algebra::solve(&self.equations, &to_target, |var| if var == &from_target { Either::Left(0) } else { Either::Right(var.clone()) });
+                let result = algebra::solve(&self.equations, &to_target, |var| {
+                    if var == &from_target {
+                        Either::Left(0)
+                    } else {
+                        Either::Right(var.clone())
+                    }
+                });
                 reachable |= !result.is_empty();
                 for mut r in result {
                     reached |= r.simplify();
                 }
             }
-            !reachable || reached
+            if !reachable {
+                warn!("Found unreproducible edge {from_weight} -> {to_weight}");
+            }
+            reached
         })
     }
 }
@@ -120,26 +169,32 @@ impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
         let mut arg_map = HashMap::new();
 
         let return_node = g.add_node(Node::Return(None));
-        let return_arg_nodes = body.return_arg_deps.iter().enumerate().map(|(i, _)| g.add_node(Node::Argument(ArgNum::from_usize(i)))).collect::<Vec<_>>();
+        let return_arg_nodes = body
+            .return_arg_deps
+            .iter()
+            .enumerate()
+            .map(|(i, _)| g.add_node(Node::Argument(ArgNum::from_usize(i))))
+            .collect::<Vec<_>>();
 
-        let mut add_dep_edges = |target_id, idx, deps: &HashSet<regal::Target<DisplayViaDebug<Location>>>| {
-            for d in deps {
-                use regal::Target;
-                let from = match d {
-                    Target::Call(c) => node_map[&c],
-                    Target::Argument(a) => *arg_map
-                        .entry(*a)
-                        .or_insert_with(|| g.add_node(Node::Argument(*a))),
-                };
-                g.add_edge(
-                    from,
-                    target_id,
-                    Edge {
-                        target_index: ArgNum::from_usize(idx),
-                    },
-                );
-            }
-        };
+        let mut add_dep_edges =
+            |target_id, idx, deps: &HashSet<regal::Target<DisplayViaDebug<Location>>>| {
+                for d in deps {
+                    use regal::Target;
+                    let from = match d {
+                        Target::Call(c) => node_map[&c],
+                        Target::Argument(a) => *arg_map
+                            .entry(*a)
+                            .or_insert_with(|| g.add_node(Node::Argument(*a))),
+                    };
+                    g.add_edge(
+                        from,
+                        target_id,
+                        Edge {
+                            target_index: ArgNum::from_usize(idx),
+                        },
+                    );
+                }
+            };
 
         for (n, call) in body.calls.iter() {
             let new_id = node_map[n];
@@ -164,14 +219,31 @@ pub struct Inliner<'tcx, 'g, 's> {
     gli: GLI<'g>,
 }
 
-fn to_global_equations<'g>(eqs: &Equations<DisplayViaDebug<Location>>, body_id: BodyId, gli: GLI<'g>) -> Equations<GlobalLocation<'g>> {
-    eqs.iter().map(|eq| eq.map_bases(|target| target.map_location(|place| regal::RelativePlace {
-        place: place.place,
-        location: gli.globalize_location(*place.location, body_id)
-    }))).collect()
+fn to_global_equations<'g>(
+    eqs: &Equations<DisplayViaDebug<Location>>,
+    body_id: BodyId,
+    gli: GLI<'g>,
+) -> Equations<GlobalLocation<'g>> {
+    eqs.iter()
+        .map(|eq| {
+            eq.map_bases(|target| {
+                target.map_location(|place| regal::RelativePlace {
+                    place: place.place,
+                    location: gli.globalize_location(*place.location, body_id),
+                })
+            })
+        })
+        .collect()
 }
 
-fn to_global_graph<'g>(ProcedureGraph { graph: proc_g, equations: local_eq }: &ProcedureGraph, gli: GLI<'g>, body_id: BodyId) -> InlinedGraph<'g> {
+fn to_global_graph<'g>(
+    ProcedureGraph {
+        graph: proc_g,
+        equations: local_eq,
+    }: &ProcedureGraph,
+    gli: GLI<'g>,
+    body_id: BodyId,
+) -> InlinedGraph<'g> {
     let mut gwr = InlinedGraph::default();
     gwr.equations = to_global_equations(local_eq, body_id, gli);
     let g = &mut gwr.graph;
@@ -220,26 +292,68 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         self.get_inlined_graph(hir.body_owned_by(hir.local_def_id_to_hir_id(def_id)))
     }
 
-    fn relativize_eqs<'a>(equations: &'a Equations<GlobalLocation<'g>>, gli: GliAt<'g>) -> impl Iterator<Item=Equation<GlobalLocation<'g>>> + 'a {
-        equations.iter().map(move |eq| eq.map_bases(|base| base.map_location(|place| regal::RelativePlace {
-            place: place.place,
-            location: gli.relativize(place.location)
-        })))
+    fn relativize_eqs<'a>(
+        equations: &'a Equations<GlobalLocation<'g>>,
+        gli: GliAt<'g>,
+    ) -> impl Iterator<Item = Equation<GlobalLocation<'g>>> + 'a {
+        equations.iter().map(move |eq| {
+            eq.map_bases(|base| {
+                base.map_location(|place| regal::RelativePlace {
+                    place: place.place,
+                    location: gli.relativize(place.location),
+                })
+            })
+        })
     }
 
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
         let proc_g = self.get_procedure_graph(body_id);
         let mut gwr = to_global_graph(proc_g, self.gli, body_id);
         let g = &mut gwr.graph;
+        let eqs = &mut gwr.equations;
         let targets = g
             .node_references()
             .filter_map(|(id, n)| match n {
-                Node::Call((location, function))
+                Node::Call((location, function)) => {
                     if self
                         .recurse_selector
-                        .should_inline(self.tcx, function.as_local()?) =>
-                {
-                    Some((id, function.as_local()?, *location))
+                        .should_inline(self.tcx, function.as_local()?)
+                    {
+                        Some((id, function.as_local()?, *location))
+                    } else {
+                        let fn_sig = self.tcx.fn_sig(function).skip_binder();
+                        let writeables = std::iter::once(regal::TargetPlace::Return)
+                            .chain(fn_sig.inputs().iter().enumerate().filter_map(|(i, t)| {
+                                t.is_mutable_ptr().then(|| {
+                                    regal::TargetPlace::Argument(regal::ArgumentIndex::from_usize(
+                                        i,
+                                    ))
+                                })
+                            }))
+                            .collect::<Vec<_>>();
+                        let mk_term = |tp| {
+                            algebra::Term::new_base(regal::Target::Call(regal::RelativePlace {
+                                place: tp,
+                                location: *location,
+                            }))
+                        };
+                        eqs.extend(writeables.iter().flat_map(|write| {
+                            (0..fn_sig.inputs().len() as usize)
+                                .map(|t| 
+                                    regal::TargetPlace::Argument(
+                                        regal::ArgumentIndex::from_usize(t),
+                                    )
+                                )
+                                .filter(move |read| read != write)
+                                .map(|read| {
+                                    Equality::new(
+                                        mk_term(write.clone()).add_unknown(),
+                                        mk_term(read),
+                                    )
+                                })
+                        }));
+                        None
+                    }
                 }
                 _ => None,
             })
@@ -256,9 +370,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
             let grw_to_inline = self.get_inlined_graph_by_def_id(def_id);
             assert!(root_location.is_at_root());
-            gwr.equations.extend(
-                Self::relativize_eqs(&grw_to_inline.equations, self.gli.at(root_location.location(), body_id))
-            );
+            gwr.equations.extend(Self::relativize_eqs(
+                &grw_to_inline.equations,
+                self.gli.at(root_location.location(), body_id),
+            ));
             let to_inline = &grw_to_inline.graph;
             let node_map = to_inline
                 .node_references()
@@ -279,17 +394,15 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 })
                 .collect::<HashMap<_, _>>();
 
-            let connect_to = |g: &mut GraphImpl<_>, source, target, weight: &Edge| {
-                match &node_map[&source] {
+            let connect_to =
+                |g: &mut GraphImpl<_>, source, target, weight: &Edge| match &node_map[&source] {
                     Node::Call(c) => {
                         g.add_edge(*c, target, weight.clone());
                     }
                     Node::Return(_) => unreachable!(),
                     Node::Argument(a) => {
                         for nidx in &argument_map[a] {
-                            let Edge {
-                                target_index: pidx,
-                            } = weight;
+                            let Edge { target_index: pidx } = weight;
                             g.add_edge(
                                 *nidx,
                                 target,
@@ -299,8 +412,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             );
                         }
                     }
-                }
-            };
+                };
 
             for (callee_id, typ) in node_map.iter() {
                 match typ {
@@ -319,16 +431,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 .map(|e| (e.target(), e.weight().clone()))
                                 .collect::<Vec<_>>()
                             {
-                                let Edge {
-                                    target_index: cidx,
-                                } = out;
+                                let Edge { target_index: cidx } = out;
                                 connect_to(
                                     g,
                                     parent.source(),
                                     target,
-                                    &Edge {
-                                        target_index: cidx,
-                                    },
+                                    &Edge { target_index: cidx },
                                 );
                             }
                         }
@@ -390,4 +498,3 @@ pub fn to_call_only_flow<'g, A: FnMut(ArgNum) -> GlobalLocation<'g>>(
         return_dependencies,
     }
 }
-

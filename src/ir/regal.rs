@@ -4,14 +4,16 @@ use flowistry::{
 };
 
 use crate::{
+    ana::algebra::Equality,
     mir,
     mir::{Field, Location, ProjectionElem},
     rust::{
+        rustc_ast,
         rustc_hir::{def_id::DefId, BodyId},
-        rustc_index::vec::IndexVec, rustc_ast
+        rustc_index::vec::IndexVec,
     },
     utils::{outfile_pls, AsFnAndArgs, DisplayViaDebug, LocationExt},
-    Either, HashMap, HashSet, TyCtxt, ana::algebra::Equality,
+    Either, HashMap, HashSet, TyCtxt,
 };
 
 use std::{
@@ -93,7 +95,7 @@ pub struct Call<D> {
     pub arguments: IndexVec<ArgumentIndex, D>,
 }
 
-impl <L> Call<Dependencies<L>> {
+impl<L> Call<Dependencies<L>> {
     pub fn map_locations<L0: std::hash::Hash + Eq, F: FnMut(&L) -> L0>(
         &self,
         mut f: F,
@@ -148,7 +150,10 @@ impl <L> Call<Dependencies<L>> {
     }
 }
 
-fn fmt_deps<L: Display>(deps: &Dependencies<L>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+fn fmt_deps<L: Display>(
+    deps: &Dependencies<L>,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
     f.write_char('{')?;
     let mut first_dep = true;
     for dep in deps {
@@ -346,7 +351,6 @@ impl Body<DisplayViaDebug<Location>> {
                     };
                     places.into_iter().flat_map(
                         move |(abstract_target_place, concrete_target_place)| {
-                            
                             // The below code is an alternate implementation
                             // that includes children in the resolution
 
@@ -376,11 +380,11 @@ impl Body<DisplayViaDebug<Location>> {
                             place_resolver
                                 .try_resolve(arg, concrete_target_place)
                                 .into_iter()
-                                .map(move |target_term|
-                                    Dependency {
-                                        target_term: target_term.replace_base(abstract_target_place.clone()),
-                                        target,
-                                    })
+                                .map(move |target_term| Dependency {
+                                    target_term: target_term
+                                        .replace_base(abstract_target_place.clone()),
+                                    target,
+                                })
                         },
                     )
                 })
@@ -436,10 +440,10 @@ impl Body<DisplayViaDebug<Location>> {
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct RelativePlace<L> {
     pub location: L,
-    pub place: TargetPlace
+    pub place: TargetPlace,
 }
 
-impl <L:Display> Display for RelativePlace<L> {
+impl<L: Display> Display for RelativePlace<L> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} @ {}", self.location, self.place)
     }
@@ -447,19 +451,22 @@ impl <L:Display> Display for RelativePlace<L> {
 
 pub type Dependencies2<L> = HashSet<Target<L>>;
 
-fn fmt_deps2<L: Display>(deps: &Dependencies2<L>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_char('{')?;
-            let mut first_dep = true;
-            for dep in deps {
-                if first_dep {
-                    first_dep = false;
-                } else {
-                    f.write_str(", ")?;
-                }
-                write!(f, "{dep}")?;
-            }
-            f.write_char('}')
+fn fmt_deps2<L: Display>(
+    deps: &Dependencies2<L>,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    f.write_char('{')?;
+    let mut first_dep = true;
+    for dep in deps {
+        if first_dep {
+            first_dep = false;
+        } else {
+            f.write_str(", ")?;
         }
+        write!(f, "{dep}")?;
+    }
+    f.write_char('}')
+}
 
 impl<L: Display> Display for Call<Dependencies2<L>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -488,7 +495,6 @@ pub struct Body2<L> {
 
 impl<L: Display + Ord> Display for Body2<L> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-       
         let mut ordered = self.calls.iter().collect::<Vec<_>>();
         ordered.sort_by_key(|t| t.0);
         for (loc, call) in ordered {
@@ -512,20 +518,32 @@ impl<L: Display + Ord> Display for Body2<L> {
     }
 }
 
-impl Body2<DisplayViaDebug<Location>> { 
+impl Body2<DisplayViaDebug<Location>> {
     pub fn construct(
         flow_analysis: &df::FlowResults<'_, '_, '_>,
         place_resolver: &algebra::PlaceResolver,
     ) -> Self {
         let body = flow_analysis.analysis.body;
-        let mut place_table: HashMap<mir::Local, Vec<Target<RelativePlace<DisplayViaDebug<Location>>>>> = body.args_iter().enumerate().map(|(idx, l)| (l, vec![Target::Argument(ArgumentIndex::from_usize(idx))])).collect();
+        let mut place_table: HashMap<
+            mir::Local,
+            Vec<Target<RelativePlace<DisplayViaDebug<Location>>>>,
+        > = body
+            .args_iter()
+            .enumerate()
+            .map(|(idx, l)| (l, vec![Target::Argument(ArgumentIndex::from_usize(idx))]))
+            .collect();
         let mut dependencies_for = |location: DisplayViaDebug<_>, arg| {
             let ana = flow_analysis.state_at(*location);
             ana.deps(arg)
                 .map(|&(dep_loc, _dep_place)| {
                     let dep_loc = DisplayViaDebug(dep_loc);
                     if dep_loc.is_real(body) {
-                        let mk_rp = |place| Target::Call(RelativePlace { location: dep_loc, place });
+                        let mk_rp = |place| {
+                            Target::Call(RelativePlace {
+                                location: dep_loc,
+                                place,
+                            })
+                        };
                         let (operands, target_ret) =
                             if let mir::TerminatorKind::Call {
                                 args, destination, ..
@@ -538,18 +556,20 @@ impl Body2<DisplayViaDebug<Location>> {
 
                         for (idx, place) in flowistry::mir::utils::arg_places(operands.as_slice()) {
                             assert!(place.projection.is_empty());
-                            place_table.entry(place.local).or_insert_with(Vec::new).push(mk_rp(TargetPlace::Argument(ArgumentIndex::from_usize(idx))));
+                            place_table
+                                .entry(place.local)
+                                .or_insert_with(Vec::new)
+                                .push(mk_rp(TargetPlace::Argument(ArgumentIndex::from_usize(idx))));
                         }
                         let target_ret = target_ret.unwrap().0;
                         assert!(target_ret.projection.is_empty());
-                        place_table.entry(target_ret.local).or_insert_with(Vec::new).push(mk_rp(TargetPlace::Return));
-                        Target::Call(
-                            dep_loc
-                        )
+                        place_table
+                            .entry(target_ret.local)
+                            .or_insert_with(Vec::new)
+                            .push(mk_rp(TargetPlace::Return));
+                        Target::Call(dep_loc)
                     } else {
-                        Target::Argument(ArgumentIndex::from_usize(
-                            dep_loc.statement_index - 1,
-                        ))
+                        Target::Argument(ArgumentIndex::from_usize(dep_loc.statement_index - 1))
                     }
                 })
                 .collect()
@@ -595,7 +615,11 @@ impl Body2<DisplayViaDebug<Location>> {
             .collect();
 
         let equations = algebra::rebase_simplify(place_resolver.equations().iter(), |base| {
-            place_table.get(base).cloned().map(Either::Left).unwrap_or(Either::Right(*base))
+            place_table
+                .get(base)
+                .cloned()
+                .map(Either::Left)
+                .unwrap_or(Either::Right(*base))
         });
         Self {
             calls,
@@ -635,4 +659,3 @@ pub fn compute2_from_body_id(
     write!(&mut out, "{}", r).unwrap();
     r
 }
-

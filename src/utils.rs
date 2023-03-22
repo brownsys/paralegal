@@ -10,17 +10,14 @@ use crate::{
         ast,
         hir::{self, def_id::DefId, hir_id::HirId, BodyId},
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
+        rustc_data_structures::fx::{FxHashMap, FxHashSet},
         rustc_span::symbol::Ident,
         ty,
-        rustc_data_structures::fx::{FxHashMap, FxHashSet},
     },
-    Either, HashSet, Symbol, TyCtxt, HashMap
+    Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
-use std::{
-    borrow::Cow,
-    default::Default
-};
+use std::{borrow::Cow, default::Default};
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
@@ -750,4 +747,3 @@ impl<K, V> SparseMatrix<K, V> {
         changed
     }
 }
-

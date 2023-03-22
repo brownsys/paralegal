@@ -141,9 +141,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
         if self.opts.dbg.dump_call_only_flow() {
             outfile_pls(format!("{}.call-only-flow.gv", target.name()))
-                .and_then(|mut file| {
-                    dbg::call_only_flow_dot::dump(tcx, &flow, &mut file)
-                })
+                .and_then(|mut file| dbg::call_only_flow_dot::dump(tcx, &flow, &mut file))
                 .unwrap_or_else(|err| {
                     error!("Could not write transitive graph dump, reason: {err}")
                 })

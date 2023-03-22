@@ -10,22 +10,23 @@ use crate::{
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
         ty::{subst::GenericArgKind, ClosureKind, TyCtxt, TyKind},
     },
-    ty, Symbol,
-    utils::{SparseMatrix}
+    ty,
+    utils::SparseMatrix,
+    Symbol,
 };
 
 use flowistry::{
+    extensions::{is_extension_active, ContextMode, MutabilityMode, RecurseSelector},
+    indexed::{impls::LocationDomain, IndexMatrix, IndexSet, IndexedDomain, RefSet},
     infoflow::mutation::{ModularMutationVisitor, MutationStatus},
     mir::{
-        borrowck_facts::{get_body_with_borrowck_facts, CachedSimplifedBodyWithFacts},
-        engine::AnalysisResults,
         aliases::Aliases,
+        borrowck_facts::{get_body_with_borrowck_facts, CachedSimplifedBodyWithFacts},
         control_dependencies::ControlDependencies,
         engine,
-        utils::{OperandExt, PlaceExt, BodyExt},
+        engine::AnalysisResults,
+        utils::{BodyExt, OperandExt, PlaceExt},
     },
-    extensions::{RecurseSelector,is_extension_active, ContextMode, MutabilityMode},
-    indexed::{impls::LocationDomain, IndexMatrix, IndexSet, IndexedDomain, RefSet},
 };
 
 pub type FlowResults<'a, 'tcx, 'g> = engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g>>;
