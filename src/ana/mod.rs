@@ -1,7 +1,7 @@
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use crate::{
-    ana::inline3::to_call_only_flow,
+    ana::inline4::to_call_only_flow,
     consts,
     dbg::{self, locations_of_body},
     desc::{self, *},
@@ -39,7 +39,7 @@ use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 pub mod algebra;
 pub mod df;
 pub mod inline;
-mod inline3;
+mod inline4;
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
     /// Driver function. Performs the data collection via visit, then calls
@@ -61,7 +61,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
         target: FnToAnalyze,
         gli: GLI<'g>,
-        inliner: &inline3::Inliner<'tcx, 'g, '_>,
+        inliner: &inline4::Inliner<'tcx, 'g, '_>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let reset_lvl =
             matches!(self.opts.debug, Some(Some(ref s)) if s.as_str() == target.name().as_str())
@@ -506,7 +506,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             marked_objects: self.marked_objects.clone(),
         };
 
-        let inliner = inline3::Inliner::new(self.tcx, gli, &recurse_selector);
+        let inliner = inline4::Inliner::new(self.tcx, gli, &recurse_selector);
 
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         crate::sah::HashVerifications::with(|hash_verifications| {

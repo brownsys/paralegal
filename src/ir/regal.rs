@@ -435,8 +435,8 @@ impl Body<DisplayViaDebug<Location>> {
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct RelativePlace<L> {
-    location: L,
-    place: TargetPlace
+    pub location: L,
+    pub place: TargetPlace
 }
 
 impl <L:Display> Display for RelativePlace<L> {
@@ -447,12 +447,69 @@ impl <L:Display> Display for RelativePlace<L> {
 
 pub type Dependencies2<L> = HashSet<Target<L>>;
 
+fn fmt_deps2<L: Display>(deps: &Dependencies2<L>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_char('{')?;
+            let mut first_dep = true;
+            for dep in deps {
+                if first_dep {
+                    first_dep = false;
+                } else {
+                    f.write_str(", ")?;
+                }
+                write!(f, "{dep}")?;
+            }
+            f.write_char('}')
+        }
+
+impl<L: Display> Display for Call<Dependencies2<L>> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_char('(')?;
+        let mut first = true;
+        for arg in self.arguments.iter() {
+            if first {
+                first = false;
+            } else {
+                f.write_str(", ")?;
+            }
+            fmt_deps2(arg, f)?;
+        }
+        write!(f, ")   {:?}", self.function)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct Body2<L> {
     pub calls: HashMap<L, Call<Dependencies2<L>>>,
     pub return_deps: Dependencies2<L>,
     pub return_arg_deps: Vec<Dependencies2<L>>,
     pub equations: Vec<algebra::Equality<Target<RelativePlace<L>>, DisplayViaDebug<Field>>>,
+}
+
+impl<L: Display + Ord> Display for Body2<L> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+       
+        let mut ordered = self.calls.iter().collect::<Vec<_>>();
+        ordered.sort_by_key(|t| t.0);
+        for (loc, call) in ordered {
+            writeln!(f, "{:<6}: {}", format!("{}", loc), call)?
+        }
+        write!(f, "return: ")?;
+        fmt_deps2(&self.return_deps, f)?;
+        writeln!(f)?;
+        write!(f, "return args: (")?;
+        let mut first_arg = true;
+        for arg in &self.return_arg_deps {
+            if first_arg {
+                first_arg = false;
+            } else {
+                f.write_str(", ")?;
+            }
+            fmt_deps2(arg, f)?;
+        }
+        f.write_char(')')?;
+        Ok(())
+    }
 }
 
 impl Body2<DisplayViaDebug<Location>> { 
@@ -547,5 +604,35 @@ impl Body2<DisplayViaDebug<Location>> {
             equations,
         }
     }
+}
+
+pub fn compute2_from_body_id(
+    body_id: BodyId,
+    tcx: TyCtxt,
+    gli: GLI,
+) -> Body2<DisplayViaDebug<Location>> {
+    let hir = tcx.hir();
+    let target_name = hir.name(hir.body_owner(body_id));
+    let local_def_id = tcx.hir().body_owner_def_id(body_id);
+    let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
+    let body = body_with_facts.simplified_body();
+    let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts, &NeverInline);
+    mir::pretty::write_mir_fn(
+        tcx,
+        body,
+        &mut |_, _| Ok(()),
+        &mut outfile_pls(&format!("{}.mir", target_name)).unwrap(),
+    )
+    .unwrap();
+    let ref mut states_out = outfile_pls(&format!("{}.df", target_name)).unwrap();
+    for l in body.all_locations() {
+        writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
+    }
+    let place_resolver = algebra::PlaceResolver::construct(tcx, body);
+    let r = Body2::construct(&flow, &place_resolver);
+    let mut out = outfile_pls(&format!("{}.regal", target_name)).unwrap();
+    use std::io::Write;
+    write!(&mut out, "{}", r).unwrap();
+    r
 }
 
