@@ -518,7 +518,7 @@ impl Body2<DisplayViaDebug<Location>> {
         place_resolver: &algebra::PlaceResolver,
     ) -> Self {
         let body = flow_analysis.analysis.body;
-        let mut place_table: HashMap<mir::Local, Target<RelativePlace<DisplayViaDebug<Location>>>> = body.args_iter().enumerate().map(|(idx, l)| (l, Target::Argument(ArgumentIndex::from_usize(idx)))).collect();
+        let mut place_table: HashMap<mir::Local, Vec<Target<RelativePlace<DisplayViaDebug<Location>>>>> = body.args_iter().enumerate().map(|(idx, l)| (l, vec![Target::Argument(ArgumentIndex::from_usize(idx))])).collect();
         let mut dependencies_for = |location: DisplayViaDebug<_>, arg| {
             let ana = flow_analysis.state_at(*location);
             ana.deps(arg)
@@ -538,11 +538,11 @@ impl Body2<DisplayViaDebug<Location>> {
 
                         for (idx, place) in flowistry::mir::utils::arg_places(operands.as_slice()) {
                             assert!(place.projection.is_empty());
-                            assert!(place_table.insert(place.local, mk_rp(TargetPlace::Argument(ArgumentIndex::from_usize(idx)))).is_some());
+                            place_table.entry(place.local).or_insert_with(Vec::new).push(mk_rp(TargetPlace::Argument(ArgumentIndex::from_usize(idx))));
                         }
                         let target_ret = target_ret.unwrap().0;
                         assert!(target_ret.projection.is_empty());
-                        assert!(place_table.insert(target_ret.local, mk_rp(TargetPlace::Return)).is_some());
+                        place_table.entry(target_ret.local).or_insert_with(Vec::new).push(mk_rp(TargetPlace::Return));
                         Target::Call(
                             dep_loc
                         )

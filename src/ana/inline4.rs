@@ -6,7 +6,7 @@ use petgraph::{
 
 use crate::{
     hir::BodyId,
-    ir::{flows::CallOnlyFlow, global_location::IsGlobalLocation, regal, GlobalLocation, GLI},
+    ir::{flows::CallOnlyFlow, global_location::IsGlobalLocation, regal, GlobalLocation, GLI, GliAt},
     mir::Location,
     rust::hir::def_id::{DefId, LocalDefId},
     utils::DisplayViaDebug,
@@ -14,7 +14,7 @@ use crate::{
     HashMap, HashSet, TyCtxt, ana::algebra, Either
 };
 
-use super::inline::{InlineSelector};
+use super::{inline::{InlineSelector}, algebra::Equality};
 
 type ArgNum = regal::ArgumentIndex;
 
@@ -76,7 +76,11 @@ impl <'g> InlinedGraph<'g> {
         self.graph.retain_edges(|graph, idx| {
             let (from, to) = graph.edge_endpoints(idx).unwrap();
             let Edge{ target_index } = graph.edge_weight(idx).unwrap();
-            let to_target = graph.node_weight(to).unwrap().into_target_with(|&(location, did)| regal::RelativePlace { location, place: regal::TargetPlace::Argument(*target_index)}).unwrap();
+            let to_target = if let Some(to_target) = graph.node_weight(to).unwrap().into_target_with(|&(location, did)| regal::RelativePlace { location, place: regal::TargetPlace::Argument(*target_index)}) {
+                to_target
+            } else {
+                return true
+            };
             let targets = match graph.node_weight(from).unwrap() {
                 Node::Argument(a) => Either::Right(std::iter::once(regal::Target::Argument(*a))),
                 Node::Return(_) => unreachable!(),
@@ -98,7 +102,7 @@ impl <'g> InlinedGraph<'g> {
                     reached |= r.simplify();
                 }
             }
-            reachable && !reached
+            !reachable || reached
         })
     }
 }
@@ -160,13 +164,16 @@ pub struct Inliner<'tcx, 'g, 's> {
     gli: GLI<'g>,
 }
 
-fn to_global_equations<'g>(eqs: &Equations<DisplayViaDebug<Location>>, gli: GLI<'g>) -> Equations<GlobalLocation<'g>> {
-    todo!()
+fn to_global_equations<'g>(eqs: &Equations<DisplayViaDebug<Location>>, body_id: BodyId, gli: GLI<'g>) -> Equations<GlobalLocation<'g>> {
+    eqs.iter().map(|eq| eq.map_bases(|target| target.map_location(|place| regal::RelativePlace {
+        place: place.place,
+        location: gli.globalize_location(*place.location, body_id)
+    }))).collect()
 }
 
 fn to_global_graph<'g>(ProcedureGraph { graph: proc_g, equations: local_eq }: &ProcedureGraph, gli: GLI<'g>, body_id: BodyId) -> InlinedGraph<'g> {
     let mut gwr = InlinedGraph::default();
-    gwr.equations = to_global_equations(local_eq, gli);
+    gwr.equations = to_global_equations(local_eq, body_id, gli);
     let g = &mut gwr.graph;
     let node_map = proc_g
         .node_references()
@@ -213,8 +220,11 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         self.get_inlined_graph(hir.body_owned_by(hir.local_def_id_to_hir_id(def_id)))
     }
 
-    fn relativize_eqs(&self, equations: &Equations<GlobalLocation<'g>>) -> impl Iterator<Item=Equation<GlobalLocation<'g>>> {
-        std::iter::once(todo!())
+    fn relativize_eqs<'a>(equations: &'a Equations<GlobalLocation<'g>>, gli: GliAt<'g>) -> impl Iterator<Item=Equation<GlobalLocation<'g>>> + 'a {
+        equations.iter().map(move |eq| eq.map_bases(|base| base.map_location(|place| regal::RelativePlace {
+            place: place.place,
+            location: gli.relativize(place.location)
+        })))
     }
 
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
@@ -245,8 +255,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             }
 
             let grw_to_inline = self.get_inlined_graph_by_def_id(def_id);
+            assert!(root_location.is_at_root());
             gwr.equations.extend(
-                self.relativize_eqs(&grw_to_inline.equations)
+                Self::relativize_eqs(&grw_to_inline.equations, self.gli.at(root_location.location(), body_id))
             );
             let to_inline = &grw_to_inline.graph;
             let node_map = to_inline

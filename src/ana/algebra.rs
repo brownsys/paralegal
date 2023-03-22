@@ -1,3 +1,4 @@
+
 use crate::{
     either::Either,
     ir::regal::TargetPlace,
@@ -165,6 +166,14 @@ impl<B, F: Copy> Equality<B, F> {
     pub fn bases(&self) -> [&B; 2] {
         [self.lhs.base(), self.rhs.base()]
     }
+
+    pub fn map_bases<B0, G: FnMut(&B) -> B0>(&self, mut f: G) -> Equality<B0, F> 
+    {
+        Equality {
+            lhs: self.lhs.replace_base(f(self.lhs.base())),
+            rhs: self.rhs.replace_base(f(self.rhs.base())),
+        }
+    }
 }
 
 impl<B, F: Copy> Equality<B, F> {}
@@ -173,7 +182,8 @@ impl<B, F: Copy> Equality<B, F> {}
 
 pub fn rebase_simplify<
     GetEq: std::borrow::Borrow<Equality<B, F>>,
-    I: Fn(&B) -> Either<N, V>,
+    NIt: IntoIterator<Item=N>,
+    I: Fn(&B) -> Either<NIt, V>,
     It: Iterator<Item=GetEq>,
     N: Display + Clone,
     B: Clone + Hash + Eq + Display,
@@ -194,8 +204,13 @@ pub fn rebase_simplify<
     let mut handle_eq = |mut eq: Equality<_,_>, add_intermediate: &mut dyn FnMut(V, Term<_,_>)| {
         let il = inspect(eq.lhs.base());
         let ir =  inspect(eq.rhs.base());
-        if let (Either::Left(newl), Either::Left(newr)) = (il.clone(), ir.clone()) {
-            add_final(Equality { lhs: eq.lhs.replace_base(newl), rhs: eq.rhs.replace_base(newr) });
+        if il.is_left() && ir.is_left() {
+            let rv = ir.left().unwrap().into_iter().collect::<Vec<_>>();
+            for newl in il.left().unwrap() {
+                for newr in rv.iter() {
+                    add_final(Equality { lhs: eq.lhs.replace_base(newl.clone()), rhs: eq.rhs.replace_base(newr.clone()) });
+                }
+            }
         } else {
             if let Either::Right(v) = il {
                 let mut eq_clone = eq.clone();
@@ -250,7 +265,7 @@ pub fn rebase_simplify<
 pub fn solve<
     B: Clone + Hash + Eq + Display,
     F: Eq + Hash + Clone + Copy + Display,
-    V: Clone + Eq + Hash + Debug,
+    V: Clone + Eq + Hash + Display,
     B0,
     I: Fn(&B) -> Either<B0, V>,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
@@ -289,7 +304,7 @@ pub fn solve<
         let all_matching = find_matching(&intermediate_target);
         if all_matching.is_empty() {
             debug!(
-                "No matching equation for intermediate target {:?} from {:?}",
+                "No matching equation for intermediate target {} from {}",
                 intermediate_target, target
             );
         }
@@ -310,7 +325,7 @@ pub fn solve<
     debug!("Found the intermediates");
     for (k, vs) in intermediates.iter() {
         debug!(
-            "  {k:?}: {}",
+            "  {k}: {}",
             Print(|f: &mut std::fmt::Formatter| {
                 let mut first = true;
                 for term in vs {
@@ -326,11 +341,20 @@ pub fn solve<
         );
     }
     let mut solutions = vec![];
-    let mut targets = intermediates[target].iter().cloned().collect::<Vec<_>>();
+    let matching_intermediate = intermediates.get(target);
+    if matching_intermediate.is_none() {
+        warn!("No intermediate found for {target}");
+    }
+    let mut targets = matching_intermediate.into_iter().flat_map(|v| v.iter().cloned()).collect::<Vec<_>>();
+    let mut seen = HashSet::new();
     while let Some(intermediate_target) = targets.pop() {
         match inspect(intermediate_target.base()) {
             Either::Left(base) => solutions.push(intermediate_target.replace_base(base)),
+            Either::Right(v) if seen.contains(&v) => {
+                warn!("Aborting search on recursive visit to {v}")
+            }
             Either::Right(var) => {
+                seen.insert(var.clone());
                 if let Some(next_eq) = intermediates.get(&var) {
                     targets.extend(next_eq.iter().cloned().filter_map(|term| {
                         let mut to_sub = intermediate_target.clone();
@@ -338,7 +362,7 @@ pub fn solve<
                         to_sub.simplify().then_some(to_sub)
                     }))
                 } else {
-                    debug!("No follow up equation found for {var:?} on the way from {target:?}");
+                    debug!("No follow up equation found for {var} on the way from {target}");
                 }
             }
         }
