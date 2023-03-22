@@ -5,8 +5,7 @@ use flowistry::{
 
 use crate::{
     ana::algebra::Equality,
-    mir,
-    mir::{Field, Location, ProjectionElem},
+    mir::{self, Field, Location, ProjectionElem},
     rust::{
         rustc_ast,
         rustc_hir::{def_id::DefId, BodyId},
@@ -514,6 +513,11 @@ impl<L: Display + Ord> Display for Body2<L> {
             fmt_deps2(arg, f)?;
         }
         f.write_char(')')?;
+        writeln!(f)?;
+        writeln!(f, "equations:")?;
+        for eq in self.equations.iter() {
+            writeln!(f, "  {eq}")?;
+        }
         Ok(())
     }
 }
@@ -532,41 +536,12 @@ impl Body2<DisplayViaDebug<Location>> {
             .enumerate()
             .map(|(idx, l)| (l, vec![Target::Argument(ArgumentIndex::from_usize(idx))]))
             .collect();
-        let mut dependencies_for = |location: DisplayViaDebug<_>, arg| {
+        let dependencies_for = |location: DisplayViaDebug<_>, arg| {
             let ana = flow_analysis.state_at(*location);
             ana.deps(arg)
                 .map(|&(dep_loc, _dep_place)| {
                     let dep_loc = DisplayViaDebug(dep_loc);
                     if dep_loc.is_real(body) {
-                        let mk_rp = |place| {
-                            Target::Call(RelativePlace {
-                                location: dep_loc,
-                                place,
-                            })
-                        };
-                        let (operands, target_ret) =
-                            if let mir::TerminatorKind::Call {
-                                args, destination, ..
-                            } = &body.stmt_at(*dep_loc).right().unwrap().kind
-                            {
-                                (args, destination)
-                            } else {
-                                unreachable!()
-                            };
-
-                        for (idx, place) in flowistry::mir::utils::arg_places(operands.as_slice()) {
-                            assert!(place.projection.is_empty());
-                            place_table
-                                .entry(place.local)
-                                .or_insert_with(Vec::new)
-                                .push(mk_rp(TargetPlace::Argument(ArgumentIndex::from_usize(idx))));
-                        }
-                        let target_ret = target_ret.unwrap().0;
-                        assert!(target_ret.projection.is_empty());
-                        place_table
-                            .entry(target_ret.local)
-                            .or_insert_with(Vec::new)
-                            .push(mk_rp(TargetPlace::Return));
                         Target::Call(dep_loc)
                     } else {
                         Target::Argument(ArgumentIndex::from_usize(dep_loc.statement_index - 1))
@@ -580,6 +555,38 @@ impl Body2<DisplayViaDebug<Location>> {
             .filter_map(|(bb, bbdat)| {
                 let (function, simple_args, _) = bbdat.terminator().as_fn_and_args().ok()?;
                 let bbloc = DisplayViaDebug(body.terminator_loc(bb));
+
+                let mk_rp = |place| {
+                    Target::Call(RelativePlace {
+                        location: bbloc,
+                        place,
+                    })
+                };
+
+                let (operands, target_ret) =
+                    if let mir::TerminatorKind::Call {
+                        args, destination, ..
+                    } = &body.stmt_at(*bbloc).right().unwrap().kind
+                    {
+                        (args, destination)
+                    } else {
+                        unreachable!()
+                    };
+
+                for (idx, place) in flowistry::mir::utils::arg_places(operands.as_slice()) {
+                    assert!(place.projection.is_empty());
+                    place_table
+                        .entry(place.local)
+                        .or_insert_with(Vec::new)
+                        .push(mk_rp(TargetPlace::Argument(ArgumentIndex::from_usize(idx))));
+                }
+                let target_ret = target_ret.unwrap().0;
+                assert!(target_ret.projection.is_empty());
+                place_table
+                    .entry(target_ret.local)
+                    .or_insert_with(Vec::new)
+                    .push(mk_rp(TargetPlace::Return));
+
                 let arguments = IndexVec::from_raw(
                     simple_args
                         .into_iter()
@@ -614,6 +621,34 @@ impl Body2<DisplayViaDebug<Location>> {
             })
             .collect();
 
+        debug!(
+            "Equations before simplify:\n{}",
+            crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+                for eq in place_resolver.equations().iter() {
+                    writeln!(f, "  {eq}")?;
+                }
+                Ok(())
+            })
+        );
+        debug!(
+            "And place table\n{}",
+            crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+                for (k, v) in place_table.iter() {
+                    write!(f, "  {k:?}: ")?;
+                    let mut first = true;
+                    for t in v {
+                        if first {
+                            first = false;
+                        } else {
+                            f.write_str(", ")?;
+                        }
+                        t.fmt(f)?;
+                    }
+                    writeln!(f)?;
+                }
+                Ok(())
+            })
+        );
         let equations = algebra::rebase_simplify(place_resolver.equations().iter(), |base| {
             place_table
                 .get(base)
@@ -621,6 +656,15 @@ impl Body2<DisplayViaDebug<Location>> {
                 .map(Either::Left)
                 .unwrap_or(Either::Right(*base))
         });
+        debug!(
+            "Equations after simplify:\n{}",
+            crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+                for eq in equations.iter() {
+                    writeln!(f, "  {eq}")?;
+                }
+                Ok(())
+            })
+        );
         Self {
             calls,
             return_deps,

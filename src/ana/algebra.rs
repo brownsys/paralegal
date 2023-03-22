@@ -193,7 +193,7 @@ pub fn rebase_simplify<
     N: Display + Clone,
     B: Clone + Hash + Eq + Display,
     F: Eq + Hash + Clone + Copy + Display,
-    V: Clone + Eq + Hash + Debug,
+    V: Clone + Eq + Hash + Display,
 >(
     equations: It,
     inspect: I,
@@ -246,14 +246,32 @@ pub fn rebase_simplify<
     for eq in equations {
         handle_eq(eq.borrow().clone(), &mut add_intermediate);
     }
-
+    debug!(
+        "Found the intermediates\n{}",
+        crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+            for (k, v) in intermediates.iter() {
+                write!(f, "  {k}: ")?;
+                let mut first = true;
+                for t in v {
+                    if first {
+                        first = false;
+                    } else {
+                        f.write_str(", ")?;
+                    }
+                    t.fmt(f)?;
+                }
+                writeln!(f)?;
+            }
+            Ok(())
+        })
+    );
     while let Some((v, terms)) = intermediates.keys().next().cloned().and_then(|k| {
         let v = intermediates.remove(&k)?;
         Some((k, v))
     }) {
         if terms.len() < 2 {
             warn!(
-                "Found fewer than two terms for {v:?}: {}",
+                "Found fewer than two terms for {v}: {}",
                 Print(|f: &mut std::fmt::Formatter<'_>| {
                     let mut first = true;
                     for t in terms.iter() {
@@ -275,6 +293,9 @@ pub fn rebase_simplify<
                     rhs,
                 };
                 handle_eq(eq, &mut |v, term| {
+                    if !intermediates.contains_key(&v) {
+                        debug!("Abandoning term {term} because {v} is already handled");
+                    }
                     intermediates.get_mut(&v).map(|s| s.insert(term));
                 });
             }

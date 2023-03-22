@@ -32,7 +32,7 @@ pub enum Node<C> {
     Call(C),
 }
 
-impl std::fmt::Display for Node<(GlobalLocation<'_>, DefId)> {
+impl<D: std::fmt::Display> std::fmt::Display for Node<(D, DefId)> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Node::Return(n) => {
@@ -98,6 +98,15 @@ impl<C> Node<C> {
 
 impl<'g> InlinedGraph<'g> {
     fn prune_impossible_edges<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
+        debug!(
+            "Equations for pruning are:\n{}",
+            crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+                for eq in self.equations.iter() {
+                    writeln!(f, "  {eq}")?;
+                }
+                Ok(())
+            })
+        );
         self.graph.retain_edges(|graph, idx| {
             let (from, to) = graph.edge_endpoints(idx).unwrap();
             let Edge { target_index } = graph.edge_weight(idx).unwrap();
@@ -159,6 +168,15 @@ impl<'g> InlinedGraph<'g> {
 impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
     fn from(body: regal::Body2<DisplayViaDebug<Location>>) -> Self {
         let mut gwr = ProcedureGraph::default();
+        debug!(
+            "Equations for body are:\n{}",
+            crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+                for eq in body.equations.iter() {
+                    writeln!(f, "  {eq}")?;
+                }
+                Ok(())
+            })
+        );
         gwr.equations = body.equations;
         let g = &mut gwr.graph;
         let node_map = body
@@ -206,6 +224,16 @@ impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
         for (deps, node) in body.return_arg_deps.iter().zip(return_arg_nodes.iter()) {
             add_dep_edges(*node, 0, deps);
         }
+
+        debug!(
+            "All nodes are:\n{}",
+            crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+                for n in g.node_references() {
+                    writeln!(f, "  {:?}: {}", n.0, n.1)?;
+                }
+                Ok(())
+            })
+        );
 
         gwr
     }
@@ -263,6 +291,15 @@ fn to_global_graph<'g>(
             e.weight().clone(),
         );
     }
+    debug!(
+        "All initial global nodes are:\n{}",
+        crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+            for n in g.node_references() {
+                writeln!(f, "  {:?}: {}", n.0, n.1)?;
+            }
+            Ok(())
+        })
+    );
     gwr
 }
 
@@ -314,13 +351,13 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let targets = g
             .node_references()
             .filter_map(|(id, n)| match n {
-                Node::Call((location, function)) => {
-                    if self
-                        .recurse_selector
-                        .should_inline(self.tcx, function.as_local()?)
-                    {
+                Node::Call((location, function)) => match function.as_local() {
+                    Some(local_id) if self.recurse_selector.should_inline(self.tcx, local_id) => {
+                        debug!("Inlining {function:?}");
                         Some((id, function.as_local()?, *location))
-                    } else {
+                    }
+                    _ => {
+                        debug!("Abstracting {function:?}");
                         let fn_sig = self.tcx.fn_sig(function).skip_binder();
                         let writeables = std::iter::once(regal::TargetPlace::Return)
                             .chain(fn_sig.inputs().iter().enumerate().filter_map(|(i, t)| {
@@ -339,11 +376,11 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         };
                         eqs.extend(writeables.iter().flat_map(|write| {
                             (0..fn_sig.inputs().len() as usize)
-                                .map(|t| 
-                                    regal::TargetPlace::Argument(
-                                        regal::ArgumentIndex::from_usize(t),
-                                    )
-                                )
+                                .map(|t| {
+                                    regal::TargetPlace::Argument(regal::ArgumentIndex::from_usize(
+                                        t,
+                                    ))
+                                })
                                 .filter(move |read| read != write)
                                 .map(|read| {
                                     Equality::new(
@@ -354,8 +391,11 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         }));
                         None
                     }
+                },
+                _ => {
+                    debug!("Is other node {n}");
+                    None
                 }
-                _ => None,
             })
             .collect::<Vec<_>>();
         for (idx, def_id, root_location) in targets {
