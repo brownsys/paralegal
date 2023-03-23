@@ -608,8 +608,9 @@ impl Body2<DisplayViaDebug<Location>> {
             debug!("Reachable values for {arg:?} are {reachable_values:?}");
             reachable_values
                 .into_iter()
-                .filter(|p| !is_mut_arg || p != &&arg)
-                .flat_map(|place| ana.deps(*place))
+                .flat_map(|p| non_transitive_aliases.children(*p))
+                .filter(|p| !is_mut_arg || p != &arg)
+                .flat_map(|place| ana.deps(place))
                 .map(|&(dep_loc, _dep_place)| {
                     let dep_loc = DisplayViaDebug(dep_loc);
                     if dep_loc.is_real(body) {

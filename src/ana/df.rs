@@ -71,7 +71,7 @@ impl<'tcx> Display for FlowDomain<'tcx> {
 
 impl<'tcx> FlowDomain<'tcx> {
     pub fn deps(&self, at: Place<'tcx>) -> impl Iterator<Item = &Dependency<'tcx>> {
-        self.matrix()[&at].iter()
+        self.matrix().row(&at).into_iter()
     }
     fn override_(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
         self.overrides.set(row, at)

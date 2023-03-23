@@ -10,7 +10,7 @@ fn callee(x: i32) -> i32 {
     source()
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 fn with_return(x: i32) {
     receiver(callee(x));
 }
@@ -18,7 +18,7 @@ fn with_return(x: i32) {
 #[dfpp::label(there, arguments = [0])]
 fn receiver(x: i32) {}
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 fn without_return() {
     callee_2(source());
 }
@@ -27,7 +27,7 @@ fn callee_2(x: i32) {
     receiver(x);
 }
 
-//#[dfpp::analyze]
+#[dfpp::analyze]
 fn on_mut_var() {
     let mut x = 4;
     modify_it(&mut x);
