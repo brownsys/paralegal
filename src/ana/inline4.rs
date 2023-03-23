@@ -12,13 +12,15 @@ use crate::{
     ir::{
         flows::CallOnlyFlow,
         global_location::IsGlobalLocation,
-        regal::{self, TargetPlace},
+        regal::{self, SimpleLocation, TargetPlace},
         GliAt, GlobalLocation, GLI,
     },
     mir,
     mir::Location,
     outfile_pls,
     rust::hir::def_id::{DefId, LocalDefId},
+    rust::rustc_index::vec::IndexVec,
+    ty,
     utils::{body_name_pls, DisplayViaDebug},
     Either, HashMap, HashSet, TyCtxt,
 };
@@ -32,7 +34,7 @@ type Node<C> = regal::SimpleLocation<C>;
 impl<C> Node<C> {
     fn map_call<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Node<C0> {
         match self {
-            Node::Return(r) => Node::Return(*r),
+            Node::Return => Node::Return,
             Node::Argument(a) => Node::Argument(*a),
             Node::Call(c) => Node::Call(f(c)),
         }
@@ -75,7 +77,7 @@ type InlinedGraph<'g> = GraphWithResolver<GlobalLocation<'g>>;
 impl<C> Node<C> {
     fn into_target_with<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Option<regal::Target<C0>> {
         match self {
-            Node::Return(_) => None,
+            Node::Return => None,
             Node::Argument(a) => Some(regal::Target::Argument(*a)),
             Node::Call(c) => Some(regal::Target::Call(f(c))),
         }
@@ -106,7 +108,7 @@ impl<'g> InlinedGraph<'g> {
                 Node::Argument(a) => {
                     Either::Right(std::iter::once(regal::SimpleLocation::Argument(*a)))
                 }
-                Node::Return(_) => unreachable!(),
+                Node::Return => unreachable!(),
                 Node::Call((location, did)) => Either::Left({
                     let args = tcx.fn_sig(did).skip_binder().inputs().len();
                     (0..args)
@@ -163,15 +165,15 @@ impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
             .iter()
             .map(|(loc, call)| (*loc, g.add_node(Node::Call((*loc, call.function)))))
             .collect::<HashMap<_, _>>();
-        let mut arg_map = HashMap::new();
+        let mut arg_map = IndexVec::from_raw(
+            body.return_arg_deps
+                .iter()
+                .enumerate()
+                .map(|(i, _)| g.add_node(SimpleLocation::Argument(ArgNum::from_usize(i))))
+                .collect(),
+        );
 
-        let return_node = g.add_node(Node::Return(None));
-        let return_arg_nodes = body
-            .return_arg_deps
-            .iter()
-            .enumerate()
-            .map(|(i, _)| g.add_node(Node::Return(Some(ArgNum::from_usize(i)))))
-            .collect::<Vec<_>>();
+        let return_node = g.add_node(Node::Return);
 
         let mut add_dep_edges =
             |target_id, idx, deps: &HashSet<regal::Target<DisplayViaDebug<Location>>>| {
@@ -179,9 +181,7 @@ impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
                     use regal::Target;
                     let from = match d {
                         Target::Call(c) => node_map[&c],
-                        Target::Argument(a) => *arg_map
-                            .entry(*a)
-                            .or_insert_with(|| g.add_node(Node::Argument(*a))),
+                        Target::Argument(a) => arg_map[*a],
                     };
                     g.add_edge(
                         from,
@@ -200,8 +200,8 @@ impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
             }
         }
         add_dep_edges(return_node, 0, &body.return_deps);
-        for (deps, node) in body.return_arg_deps.iter().zip(return_arg_nodes.iter()) {
-            add_dep_edges(*node, 0, deps);
+        for (idx, deps) in body.return_arg_deps.iter().enumerate() {
+            add_dep_edges(arg_map[ArgNum::from_usize(idx)], 0, deps);
         }
 
         debug!(
@@ -320,16 +320,25 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         place: place.place,
                         location: gli.relativize(place.location),
                     },
-                    Argument(aidx) | Return(Some(aidx)) => regal::RelativePlace {
+                    Argument(aidx) => regal::RelativePlace {
                         location: gli.as_global_location(),
                         place: regal::TargetPlace::Argument(*aidx),
                     },
-                    Return(None) => regal::RelativePlace {
+                    Return => regal::RelativePlace {
                         location: gli.as_global_location(),
                         place: regal::TargetPlace::Return,
                     },
                 })
             })
+        })
+    }
+
+    fn writeable_arguments<'tc>(
+        fn_sig: &ty::FnSig<'tc>,
+    ) -> impl Iterator<Item = regal::ArgumentIndex> + 'tc {
+        fn_sig.inputs().iter().enumerate().filter_map(|(i, t)| {
+            t.is_mutable_ptr()
+                .then(|| regal::ArgumentIndex::from_usize(i))
         })
     }
 
@@ -360,13 +369,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         debug!("Abstracting {function:?}");
                         let fn_sig = self.tcx.fn_sig(function).skip_binder();
                         let writeables = std::iter::once(regal::TargetPlace::Return)
-                            .chain(fn_sig.inputs().iter().enumerate().filter_map(|(i, t)| {
-                                t.is_mutable_ptr().then(|| {
-                                    regal::TargetPlace::Argument(regal::ArgumentIndex::from_usize(
-                                        i,
-                                    ))
-                                })
-                            }))
+                            .chain(
+                                Self::writeable_arguments(&fn_sig)
+                                    .map(regal::TargetPlace::Argument),
+                            )
                             .collect::<Vec<_>>();
                         let mk_term = |tp| {
                             algebra::Term::new_base(regal::SimpleLocation::Call(
@@ -401,14 +407,15 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             })
             .collect::<Vec<_>>();
         for (idx, def_id, root_location) in targets {
-            let mut argument_map = HashMap::new();
+            let inline_sig = self.tcx.fn_sig(def_id).skip_binder();
+            let num_args = inline_sig.inputs().len();
+            let mut argument_map: HashMap<_, _> = (0..num_args)
+                .map(|a| (ArgNum::from_usize(a), vec![]))
+                .collect();
 
             for e in g.edges_directed(idx, pg::Incoming) {
                 let arg_num = e.weight().target_index;
-                argument_map
-                    .entry(arg_num)
-                    .or_insert_with(|| vec![])
-                    .push(e.source());
+                argument_map.get_mut(&arg_num).unwrap().push(e.source());
             }
 
             let grw_to_inline = self.get_inlined_graph_by_def_id(def_id);
@@ -432,32 +439,39 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             let connect_to =
                 |g: &mut GraphImpl<_>, source, target, weight: &Edge| match &node_map[&source] {
                     Node::Call(c) => {
+                        debug!("  adding edge to {}", g.node_weight(*c).unwrap());
                         g.add_edge(*c, target, weight.clone());
                     }
-                    Node::Return(_) => unreachable!(),
+                    Node::Return => unreachable!(),
                     Node::Argument(a) => {
+                        debug!("  found argument");
                         for nidx in argument_map.get(a).into_iter().flat_map(|s| s.into_iter()) {
+                            debug!("  adding edge to {}", g.node_weight(*nidx).unwrap());
                             g.add_edge(*nidx, target, weight.clone());
                         }
                     }
                 };
 
             for (callee_id, typ) in node_map.iter() {
+                debug!(
+                    "Handling node {}",
+                    to_inline.node_weight(*callee_id).unwrap()
+                );
                 match typ {
                     Node::Call(new_id) => {
-                        for parent in to_inline.edges_directed(*callee_id, pg::Incoming) {
-                            connect_to(g, parent.source(), *new_id, parent.weight())
+                        for edge in to_inline.edges_directed(*callee_id, pg::Incoming) {
+                            connect_to(g, edge.source(), *new_id, edge.weight())
                         }
                     }
-                    Node::Argument(_) => (),
-                    Node::Return(a) => {
-                        for parent in to_inline.edges_directed(*callee_id, pg::Incoming) {
+                    Node::Return | Node::Argument(_) => {
+                        for edge in to_inline.edges_directed(*callee_id, pg::Incoming) {
+                            debug!("  for incoming edge {:?}", edge.id());
                             for (target, out) in g
                                 .edges_directed(idx, pg::Outgoing)
                                 .map(|e| (e.target(), e.weight().clone()))
                                 .collect::<Vec<_>>()
                             {
-                                connect_to(g, parent.source(), target, &out);
+                                connect_to(g, edge.source(), target, &out);
                             }
                         }
                     }
@@ -513,7 +527,7 @@ pub fn to_call_only_flow<'g, A: FnMut(ArgNum) -> GlobalLocation<'g>>(
             }
             input_deps[aidx].insert(match g.node_weight(e.source()).unwrap() {
                 Node::Call(c) => c.0,
-                Node::Return(_) => unreachable!(),
+                Node::Return => unreachable!(),
                 Node::Argument(a) => mk_arg(*a),
             });
         }
@@ -526,7 +540,7 @@ pub fn to_call_only_flow<'g, A: FnMut(ArgNum) -> GlobalLocation<'g>>(
     for (idx, n) in g.node_references() {
         match n {
             Node::Argument(_) => (),
-            Node::Return(_) => {
+            Node::Return => {
                 for d in get_dependencies(idx)
                     .input_deps
                     .iter()

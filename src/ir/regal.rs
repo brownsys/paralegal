@@ -490,7 +490,7 @@ impl<L: Display> Display for Call<Dependencies2<L>> {
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum SimpleLocation<C> {
-    Return(Option<ArgumentIndex>),
+    Return,
     Argument(ArgumentIndex),
     Call(C),
 }
@@ -501,7 +501,7 @@ impl<L> SimpleLocation<L> {
         match self {
             Argument(a) => Argument(*a),
             Call(l) => Call(f(l)),
-            Return(r) => Return(*r),
+            Return => Return,
         }
     }
 }
@@ -510,13 +510,7 @@ impl<D: std::fmt::Display> std::fmt::Display for SimpleLocation<(D, DefId)> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use SimpleLocation::*;
         match self {
-            Return(n) => {
-                f.write_str("ret")?;
-                if let Some(n) = n {
-                    write!(f, "{n:?}")?;
-                }
-                Ok(())
-            }
+            Return => f.write_str("ret"),
             Argument(a) => write!(f, "{a:?}"),
             Call((gloc, did)) => write!(f, "{gloc} ({did:?})"),
         }
@@ -527,13 +521,7 @@ impl<D: std::fmt::Display> std::fmt::Display for SimpleLocation<RelativePlace<D>
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use SimpleLocation::*;
         match self {
-            Return(n) => {
-                f.write_str("ret")?;
-                if let Some(n) = n {
-                    write!(f, "{n:?}")?;
-                }
-                Ok(())
-            }
+            Return => f.write_str("ret"),
             Argument(a) => write!(f, "{a:?}"),
             Call(c) => write!(f, "{c}"),
         }
@@ -603,7 +591,7 @@ impl Body2<DisplayViaDebug<Location>> {
                     ],
                 )
             })
-            .chain([(mir::RETURN_PLACE, vec![SimpleLocation::Return(None)])])
+            .chain([(mir::RETURN_PLACE, vec![SimpleLocation::Return])])
             .collect();
         let dependencies_for = |location: DisplayViaDebug<_>, arg, is_mut_arg| {
             use rustc_ast::Mutability;
