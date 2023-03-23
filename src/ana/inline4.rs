@@ -27,27 +27,7 @@ use super::{algebra::Equality, inline::InlineSelector};
 
 type ArgNum = regal::ArgumentIndex;
 
-pub enum Node<C> {
-    Return(Option<ArgNum>),
-    Argument(ArgNum),
-    Call(C),
-}
-
-impl<D: std::fmt::Display> std::fmt::Display for Node<(D, DefId)> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Node::Return(n) => {
-                f.write_char('r')?;
-                if let Some(n) = n {
-                    write!(f, "{n:?}")?;
-                }
-                Ok(())
-            }
-            Node::Argument(a) => write!(f, "a{a:?}"),
-            Node::Call((gloc, did)) => write!(f, "{gloc} ({did:?})"),
-        }
-    }
-}
+type Node<C> = regal::SimpleLocation<C>;
 
 impl<C> Node<C> {
     fn map_call<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Node<C0> {
@@ -71,9 +51,8 @@ impl std::fmt::Display for Edge {
 }
 
 pub type Equation<L> =
-    algebra::Equality<regal::Target<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>;
-pub type Equations<L> =
-    Vec<algebra::Equality<regal::Target<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>>;
+    algebra::Equality<Node<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>;
+pub type Equations<L> = Vec<Equation<L>>;
 pub type GraphImpl<L> = pg::StableDiGraph<Node<(L, DefId)>, Edge>;
 
 pub struct GraphWithResolver<L> {
@@ -118,35 +97,34 @@ impl<'g> InlinedGraph<'g> {
             let (from, to) = graph.edge_endpoints(idx).unwrap();
             let Edge { target_index } = graph.edge_weight(idx).unwrap();
             let to_weight = graph.node_weight(to).unwrap();
-            let to_target = if let Some(to_target) =
-                to_weight.into_target_with(|&(location, did)| regal::RelativePlace {
-                    location,
-                    place: regal::TargetPlace::Argument(*target_index),
-                }) {
-                to_target
-            } else {
-                return true;
-            };
+            let to_target = to_weight.map_location(|&(location, did)| regal::RelativePlace {
+                location,
+                place: regal::TargetPlace::Argument(*target_index),
+            });
             let from_weight = graph.node_weight(from).unwrap();
             let targets = match from_weight {
-                Node::Argument(a) => Either::Right(std::iter::once(regal::Target::Argument(*a))),
+                Node::Argument(a) => {
+                    Either::Right(std::iter::once(regal::SimpleLocation::Argument(*a)))
+                }
                 Node::Return(_) => unreachable!(),
                 Node::Call((location, did)) => Either::Left({
                     let args = tcx.fn_sig(did).skip_binder().inputs().len();
                     (0..args)
                         .into_iter()
                         .map(|a| {
-                            regal::Target::Call(regal::RelativePlace {
+                            regal::SimpleLocation::Call(regal::RelativePlace {
                                 location: *location,
                                 place: regal::TargetPlace::Argument(
                                     regal::ArgumentIndex::from_usize(a),
                                 ),
                             })
                         })
-                        .chain(std::iter::once(regal::Target::Call(regal::RelativePlace {
-                            location: *location,
-                            place: regal::TargetPlace::Return,
-                        })))
+                        .chain(std::iter::once(regal::SimpleLocation::Call(
+                            regal::RelativePlace {
+                                location: *location,
+                                place: regal::TargetPlace::Return,
+                            },
+                        )))
                 }),
             };
             let mut reachable = false;
@@ -336,17 +314,21 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     ) -> impl Iterator<Item = Equation<GlobalLocation<'g>>> + 'a {
         equations.iter().map(move |eq| {
             eq.map_bases(|base| {
-                use regal::Target::*;
-                match base {
-                    Call(place) => Call(regal::RelativePlace {
+                use regal::SimpleLocation::*;
+                Call(match base {
+                    Call(place) => regal::RelativePlace {
                         place: place.place,
                         location: gli.relativize(place.location),
-                    }),
-                    Argument(aidx) => Call(regal::RelativePlace {
+                    },
+                    Argument(aidx) | Return(Some(aidx)) => regal::RelativePlace {
                         location: gli.as_global_location(),
                         place: regal::TargetPlace::Argument(*aidx),
-                    }),
-                }
+                    },
+                    Return(None) => regal::RelativePlace {
+                        location: gli.as_global_location(),
+                        place: regal::TargetPlace::Return,
+                    },
+                })
             })
         })
     }
@@ -387,10 +369,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             }))
                             .collect::<Vec<_>>();
                         let mk_term = |tp| {
-                            algebra::Term::new_base(regal::Target::Call(regal::RelativePlace {
-                                place: tp,
-                                location: *location,
-                            }))
+                            algebra::Term::new_base(regal::SimpleLocation::Call(
+                                regal::RelativePlace {
+                                    place: tp,
+                                    location: *location,
+                                },
+                            ))
                         };
                         eqs.extend(writeables.iter().flat_map(|write| {
                             (0..fn_sig.inputs().len() as usize)
@@ -505,7 +489,12 @@ fn dump_dot_graph<L: std::fmt::Display, W: std::io::Write>(
     g: &GraphWithResolver<L>,
 ) -> std::io::Result<()> {
     use petgraph::dot::*;
-    write!(w, "{}", Dot::new(&g.graph,))
+    write!(
+        w,
+        "{}",
+        Dot::with_attr_getters(&g.graph, &[], &|_, _| "".to_string(), &|_, _| "shape=box"
+            .to_string(),)
+    )
 }
 
 pub fn to_call_only_flow<'g, A: FnMut(ArgNum) -> GlobalLocation<'g>>(

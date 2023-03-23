@@ -378,7 +378,9 @@ impl DataSource {
 /// A representation of something that can receive data from the flow.
 ///
 /// [`Self::as_argument`] is provided for convenience of matching.
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize, Debug,
+)]
 pub enum DataSink {
     Argument { function: CallSite, arg_slot: usize },
     Return,

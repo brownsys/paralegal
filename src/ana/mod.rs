@@ -229,7 +229,10 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 )
             }
 
+            debug!("Adding dependencies from {loc}");
+
             for (arg_slot, arg_deps) in deps.input_deps.iter().enumerate() {
+                debug!("  on argument {arg_slot}");
                 // This will be the target of any flow we register
                 let to = if loc.is_at_root()
                     && matches!(
@@ -247,6 +250,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     }
                 };
                 for dep in arg_deps.iter() {
+                    debug!("    to {dep}");
                     flows.add_data_flow(
                         Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))),
                         to.clone(),
@@ -458,10 +462,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     }
                 };
                 for dep in arg_deps.iter() {
-                    flows.add_data_flow(
-                        Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))),
-                        to.clone(),
-                    );
+                    let src = dep.as_data_source(tcx, |l| l.is_real(controller_body));
+                    flows.add_data_flow(Cow::Owned(src), to.clone());
                 }
             }
         }

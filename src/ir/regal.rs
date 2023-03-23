@@ -488,12 +488,63 @@ impl<L: Display> Display for Call<Dependencies2<L>> {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum SimpleLocation<C> {
+    Return(Option<ArgumentIndex>),
+    Argument(ArgumentIndex),
+    Call(C),
+}
+
+impl<L> SimpleLocation<L> {
+    pub fn map_location<L0, F: FnMut(&L) -> L0>(&self, mut f: F) -> SimpleLocation<L0> {
+        use SimpleLocation::*;
+        match self {
+            Argument(a) => Argument(*a),
+            Call(l) => Call(f(l)),
+            Return(r) => Return(*r),
+        }
+    }
+}
+
+impl<D: std::fmt::Display> std::fmt::Display for SimpleLocation<(D, DefId)> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use SimpleLocation::*;
+        match self {
+            Return(n) => {
+                f.write_str("ret")?;
+                if let Some(n) = n {
+                    write!(f, "{n:?}")?;
+                }
+                Ok(())
+            }
+            Argument(a) => write!(f, "{a:?}"),
+            Call((gloc, did)) => write!(f, "{gloc} ({did:?})"),
+        }
+    }
+}
+
+impl<D: std::fmt::Display> std::fmt::Display for SimpleLocation<RelativePlace<D>> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use SimpleLocation::*;
+        match self {
+            Return(n) => {
+                f.write_str("ret")?;
+                if let Some(n) = n {
+                    write!(f, "{n:?}")?;
+                }
+                Ok(())
+            }
+            Argument(a) => write!(f, "{a:?}"),
+            Call(c) => write!(f, "{c}"),
+        }
+    }
+}
 #[derive(Debug)]
 pub struct Body2<L> {
     pub calls: HashMap<L, Call<Dependencies2<L>>>,
     pub return_deps: Dependencies2<L>,
     pub return_arg_deps: Vec<Dependencies2<L>>,
-    pub equations: Vec<algebra::Equality<Target<RelativePlace<L>>, DisplayViaDebug<Field>>>,
+    pub equations: Vec<algebra::Equality<SimpleLocation<RelativePlace<L>>, DisplayViaDebug<Field>>>,
 }
 
 impl<L: Display + Ord> Display for Body2<L> {
@@ -539,11 +590,20 @@ impl Body2<DisplayViaDebug<Location>> {
             crate::ana::non_transitive_aliases::compute(tcx, def_id, body_with_facts);
         let mut place_table: HashMap<
             mir::Local,
-            Vec<Target<RelativePlace<DisplayViaDebug<Location>>>>,
+            Vec<SimpleLocation<RelativePlace<DisplayViaDebug<Location>>>>,
         > = body
             .args_iter()
             .enumerate()
-            .map(|(idx, l)| (l, vec![Target::Argument(ArgumentIndex::from_usize(idx))]))
+            .map(|(idx, l)| {
+                (
+                    l,
+                    vec![
+                        SimpleLocation::Argument(ArgumentIndex::from_usize(idx)),
+                        //SimpleLocation::Return(Some(ArgumentIndex::from_usize(idx)))
+                    ],
+                )
+            })
+            .chain([(mir::RETURN_PLACE, vec![SimpleLocation::Return(None)])])
             .collect();
         let dependencies_for = |location: DisplayViaDebug<_>, arg, is_mut_arg| {
             use rustc_ast::Mutability;
@@ -578,7 +638,7 @@ impl Body2<DisplayViaDebug<Location>> {
                 let bbloc = DisplayViaDebug(body.terminator_loc(bb));
 
                 let mk_rp = |place| {
-                    Target::Call(RelativePlace {
+                    SimpleLocation::Call(RelativePlace {
                         location: bbloc,
                         place,
                     })
