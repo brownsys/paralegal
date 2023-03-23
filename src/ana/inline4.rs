@@ -325,7 +325,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
     fn relativize_eqs<'a>(
         equations: &'a Equations<GlobalLocation<'g>>,
-        gli: GliAt<'g>,
+        gli: &'a GliAt<'g>,
     ) -> impl Iterator<Item = Equation<GlobalLocation<'g>>> + 'a {
         equations.iter().map(move |eq| {
             eq.map_bases(|base| {
@@ -404,9 +404,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
             let grw_to_inline = self.get_inlined_graph_by_def_id(def_id);
             assert!(root_location.is_at_root());
+            let gli_here = self.gli.at(root_location.location(), body_id);
             gwr.equations.extend(Self::relativize_eqs(
                 &grw_to_inline.equations,
-                self.gli.at(root_location.location(), body_id),
+                &gli_here,
             ));
             let to_inline = &grw_to_inline.graph;
             let node_map = to_inline
@@ -416,11 +417,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         callee_id,
                         node.map_call(|(location, function)| {
                             g.add_node(Node::Call((
-                                self.gli.global_location_from_relative(
-                                    *location,
-                                    root_location.location(),
-                                    body_id,
-                                ),
+                                gli_here.relativize(*location),
                                 *function,
                             )))
                         }),
@@ -436,13 +433,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     Node::Return(_) => unreachable!(),
                     Node::Argument(a) => {
                         for nidx in &argument_map[a] {
-                            let Edge { target_index: pidx } = weight;
                             g.add_edge(
                                 *nidx,
                                 target,
-                                Edge {
-                                    target_index: *pidx,
-                                },
+                                weight.clone(),
                             );
                         }
                     }
@@ -457,27 +451,26 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     }
                     Node::Argument(_) => (),
                     Node::Return(a) => {
-                        let target_place =
-                            a.map_or(regal::TargetPlace::Return, regal::TargetPlace::Argument);
                         for parent in to_inline.edges_directed(*callee_id, pg::Incoming) {
                             for (target, out) in g
                                 .edges_directed(idx, pg::Outgoing)
                                 .map(|e| (e.target(), e.weight().clone()))
                                 .collect::<Vec<_>>()
                             {
-                                let Edge { target_index: cidx } = out;
                                 connect_to(
                                     g,
                                     parent.source(),
                                     target,
-                                    &Edge { target_index: cidx },
+                                    &out,
                                 );
                             }
                         }
                     }
                 }
             }
+            g.remove_node(idx);
         }
+
         gwr.prune_impossible_edges(self.tcx);
         gwr
     }
