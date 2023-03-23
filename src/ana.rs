@@ -34,7 +34,7 @@ use crate::{
     ir::*,
     rust::*,
     sah::HashVerifications,
-    utils::{PlaceExt, *},
+    utils::{PlaceExt, *, self},
     Either, HashMap, HashSet,
 };
 
@@ -1414,7 +1414,8 @@ impl DfppErrorInfo {
         &self, 
         tcx: TyCtxt<'tcx>, 
         b: BodyId,
-        ctrl_body_w_facts: &CachedSimplifedBodyWithFacts<'tcx>
+        ctrl_body_w_facts: &CachedSimplifedBodyWithFacts<'tcx>, 
+        error_msg_name: &String
     ) {
         if self.erroneous_locations.is_empty() && self.missing_labels_locations.is_empty() {
             println!("\x1b[92mHooray! Found no privacy violations!\x1b[0m");
@@ -1422,7 +1423,8 @@ impl DfppErrorInfo {
             let transitive_flow_matrix =
                 flowistry::infoflow::compute_flow(tcx, b, ctrl_body_w_facts);
             println!(
-                "\x1b[31mFound violation of policy \"\x1b[91mright_to_be_forgotten\x1b[31m\" in target {:?}:\x1b[0m",
+                "\x1b[31mFound violation of policy \"\x1b[91m{:?}\x1b[31m\" in target {:?}:\x1b[0m",
+                error_msg_name.as_str(),
                 self.ctrl,
             );
             Self::print_locations(&self.erroneous_locations, &ctrl_body_w_facts);
@@ -1471,6 +1473,12 @@ impl DfppErrorInfo {
                 println!("\x1b[92mReaches the line: \x1b[0m");
                 Self::print_locations(&vec![label_pair.location], &ctrl_body_w_facts);
             }
+
+            for label_pair in &self.missing_labels_locations {
+                println!("\x1b[92mHere are entities in your program that can apply the label {}:\x1b[0m", label_pair.label);
+                // let label_locations = find_locations_with_label(&label_pair.label, tcx);
+                // Self::print_locations(&label_locations, &ctrl_body_w_facts);
+            }
         }
     }
 }
@@ -1516,8 +1524,6 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         }
     }
 
-// COMMENT BACK IN //
-
     fn get_error_information_json(&self) -> Option<DfppErrorInfo> {
         if self.opts.err_pass {
             let json_output = fs::read_to_string(self.opts.frg_error_info.clone()).unwrap();
@@ -1531,6 +1537,38 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             None
         }
     }
+
+    fn find_locations_with_label(&self, label: &String) -> Vec<Ident> {
+        let objs_w_label: Vec<_> = self.marked_objects
+            .as_ref()
+            .borrow()
+            .iter()
+            .filter(|elt| {
+                let elt_annotations = &elt.1.0;
+                let elt_labels: Vec<_> = elt_annotations
+                    .iter()
+                    .filter_map(|annotation| {
+                        match annotation {
+                            Annotation::Label(la) => Some(la.label),
+                            _ => None
+                        }
+                    })
+                    .collect();
+                elt_labels.iter().fold(false, |acc, l| acc || (l == label.into()))
+            })
+            .collect();
+
+        let ids_w_labels: Vec<Ident> = objs_w_label
+            .iter()
+            .map(|o|{
+                let hir: &HirId = o.0;
+                let body_id = self.tcx.hir().body_owned_by(*hir);
+                utils::body_name_pls(self.tcx, body_id)
+            })
+            .collect();
+        ids_w_labels
+    }
+
     /// Does the function named by this id have the `dfpp::analyze` annotation
     fn should_analyze_function(&self, ident: HirId) -> bool {
         self.tcx
@@ -1624,7 +1662,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             if id.name.as_str() != em.ctrl {
                 return None;
             } else {
-                em.print_error_msg(tcx, b, controller_body_with_facts);
+                em.print_error_msg(tcx, b, controller_body_with_facts, &"right_to_be_forgotten".to_owned());
             }
             exit(0);
         }      
