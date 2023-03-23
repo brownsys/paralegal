@@ -308,37 +308,33 @@ pub fn rebase_simplify<
 pub fn solve<
     B: Clone + Hash + Eq + Display,
     F: Eq + Hash + Clone + Copy + Display,
-    V: Clone + Eq + Hash + Display,
-    B0,
-    I: Fn(&B) -> Either<B0, V>,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
 >(
     equations: &[GetEq],
-    target: &V,
-    inspect: I,
-) -> Vec<Term<B0, F>> {
+    from: &B,
+    to: &B,
+) -> Vec<Vec<TermS<F>>> {
+    if from == to {
+        return vec![vec![]];
+    }
     let mut eqs_with_bases = equations
         .iter()
         .map(|e| {
             (
-                e.borrow()
-                    .bases()
-                    .into_iter()
-                    .filter_map(|b| inspect(b).right())
-                    .collect::<Vec<_>>(),
+                e.borrow().bases().into_iter().collect::<Vec<_>>(),
                 e.borrow(),
             )
         })
         .collect::<Vec<_>>();
-    let mut intermediates: HashMap<V, HashSet<Term<B, F>>> = HashMap::new();
-    let mut find_matching = |target: &V| {
+    let mut intermediates: HashMap<B, HashSet<Term<B, F>>> = HashMap::new();
+    let mut find_matching = |target: &B| {
         eqs_with_bases
             .drain_filter(|(bases, _eq)| bases.contains(&target))
             .map(|(_, eq)| eq)
             .collect::<Vec<_>>()
     };
 
-    let mut targets = vec![target.clone()];
+    let mut targets = vec![from.clone()];
 
     while let Some(intermediate_target) = targets.pop() {
         if intermediates.contains_key(&intermediate_target) {
@@ -348,16 +344,16 @@ pub fn solve<
         if all_matching.is_empty() {
             debug!(
                 "No matching equation for intermediate target {} from {}",
-                intermediate_target, target
+                intermediate_target, from
             );
         }
         for mut matching in all_matching.into_iter().cloned() {
-            if inspect(matching.lhs.base()).right() != Some(intermediate_target.clone()) {
+            if matching.lhs.base() != &intermediate_target {
                 matching.swap()
             }
             matching.rearrange_left_to_right();
-            if let Either::Right(v) = inspect(matching.rhs.base()) {
-                targets.push(v);
+            if matching.rhs.base() != to {
+                targets.push(matching.rhs.base().clone());
             }
             intermediates
                 .entry(intermediate_target.clone())
@@ -384,9 +380,9 @@ pub fn solve<
         );
     }
     let mut solutions = vec![];
-    let matching_intermediate = intermediates.get(target);
+    let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
-        warn!("No intermediate found for {target}");
+        warn!("No intermediate found for {from}");
     }
     let mut targets = matching_intermediate
         .into_iter()
@@ -394,22 +390,21 @@ pub fn solve<
         .collect::<Vec<_>>();
     let mut seen = HashSet::new();
     while let Some(intermediate_target) = targets.pop() {
-        match inspect(intermediate_target.base()) {
-            Either::Left(base) => solutions.push(intermediate_target.replace_base(base)),
-            Either::Right(v) if seen.contains(&v) => {
-                warn!("Aborting search on recursive visit to {v}")
-            }
-            Either::Right(var) => {
-                seen.insert(var.clone());
-                if let Some(next_eq) = intermediates.get(&var) {
-                    targets.extend(next_eq.iter().cloned().filter_map(|term| {
-                        let mut to_sub = intermediate_target.clone();
-                        to_sub.sub(term);
-                        to_sub.simplify().then_some(to_sub)
-                    }))
-                } else {
-                    debug!("No follow up equation found for {var} on the way from {target}");
-                }
+        let var = intermediate_target.base();
+        if var == to {
+            solutions.push(intermediate_target.terms);
+        } else if seen.contains(var) {
+            warn!("Aborting search on recursive visit to {var}")
+        } else {
+            seen.insert(var.clone());
+            if let Some(next_eq) = intermediates.get(&var) {
+                targets.extend(next_eq.iter().cloned().filter_map(|term| {
+                    let mut to_sub = intermediate_target.clone();
+                    to_sub.sub(term);
+                    to_sub.simplify().then_some(to_sub)
+                }))
+            } else {
+                debug!("No follow up equation found for {var} on the way from {from}");
             }
         }
     }
@@ -525,6 +520,10 @@ impl<B, F: Copy> Term<B, F> {
             base: self.base.clone(),
             terms: self.terms.iter().map(|f| f.map_field(&mut g)).collect(),
         }
+    }
+
+    pub fn from_raw(base: B, terms: Vec<TermS<F>>) -> Self {
+        Self { base, terms }
     }
 }
 
@@ -695,12 +694,16 @@ impl PlaceResolver {
         }
     }
 
-    pub fn resolve(&self, from: Place, to: Place) -> Term<(), DisplayViaDebug<Field>> {
+    pub fn resolve(&self, from: Place, to: Place) -> Vec<TermS<DisplayViaDebug<Field>>> {
         self.try_resolve(from, to)
             .unwrap_or_else(|| panic!("Could not resolve {from:?} to {to:?}"))
     }
 
-    pub fn try_resolve(&self, from: Place, to: Place) -> Option<Term<(), DisplayViaDebug<Field>>> {
+    pub fn try_resolve(
+        &self,
+        from: Place,
+        to: Place,
+    ) -> Option<Vec<TermS<DisplayViaDebug<Field>>>> {
         let target_term = MirTerm::from(to);
         let target = DisplayViaDebug(self.variable_generator.borrow_mut().generate());
         let source_term = MirTerm::from(from);
@@ -724,17 +727,11 @@ impl PlaceResolver {
         for eq in equations.iter() {
             debug!("  {eq}");
         }
-        let mut results = solve(&equations, &source, |&local| {
-            if local == target {
-                Either::Left(())
-            } else {
-                Either::Right(local)
-            }
-        });
+        let mut results = solve(&equations, &source, &target);
         assert!(results.len() <= 1);
         let ret = results.pop();
         if let Some(res) = ret.as_ref() {
-            debug!("Resolved to {}", res.replace_base(DisplayViaDebug(target)));
+            debug!("Resolved to {}", Term::from_raw(0, res.clone()));
         } else {
             debug!("No resolution found");
         }

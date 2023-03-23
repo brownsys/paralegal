@@ -4,7 +4,7 @@ use flowistry::{
 };
 
 use crate::{
-    ana::algebra::Equality,
+    ana::algebra::{Equality, Term},
     mir::{self, Field, Location, ProjectionElem},
     rust::{
         rustc_ast,
@@ -16,6 +16,7 @@ use crate::{
 };
 
 use std::{
+    borrow::Cow,
     cell::RefCell,
     fmt::{Display, Write},
     rc::Rc,
@@ -379,9 +380,11 @@ impl Body<DisplayViaDebug<Location>> {
                             place_resolver
                                 .try_resolve(arg, concrete_target_place)
                                 .into_iter()
-                                .map(move |target_term| Dependency {
-                                    target_term: target_term
-                                        .replace_base(abstract_target_place.clone()),
+                                .map(move |terms| Dependency {
+                                    target_term: Term::from_raw(
+                                        abstract_target_place.clone(),
+                                        terms,
+                                    ),
                                     target,
                                 })
                         },
@@ -649,13 +652,21 @@ impl Body2<DisplayViaDebug<Location>> {
                 Ok(())
             })
         );
-        let equations = algebra::rebase_simplify(place_resolver.equations().iter(), |base| {
-            place_table
-                .get(base)
-                .cloned()
-                .map(Either::Left)
-                .unwrap_or(Either::Right(*base))
-        });
+        let equations = algebra::rebase_simplify(
+            place_resolver.equations().iter().map(Cow::Borrowed).chain(
+                place_table
+                    .keys()
+                    .map(|k| DisplayViaDebug(*k))
+                    .map(|k| Cow::Owned(Equality::new(Term::new_base(k), Term::new_base(k)))),
+            ),
+            |base| {
+                place_table
+                    .get(base)
+                    .cloned()
+                    .map(Either::Left)
+                    .unwrap_or(Either::Right(*base))
+            },
+        );
         debug!(
             "Equations after simplify:\n{}",
             crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {

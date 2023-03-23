@@ -7,7 +7,7 @@ use petgraph::{
 };
 
 use crate::{
-    ana::algebra,
+    ana::algebra::{self, Term},
     hir::BodyId,
     ir::{
         flows::CallOnlyFlow,
@@ -145,16 +145,10 @@ impl<'g> InlinedGraph<'g> {
             let mut reachable = false;
             let mut reached = false;
             for from_target in targets {
-                let result = algebra::solve(&self.equations, &to_target, |var| {
-                    if var == &from_target {
-                        Either::Left(0)
-                    } else {
-                        Either::Right(var.clone())
-                    }
-                });
+                let result = algebra::solve(&self.equations, &to_target, &from_target);
                 reachable |= !result.is_empty();
                 for mut r in result {
-                    reached |= r.simplify();
+                    reached |= Term::from_raw(0, r).simplify();
                 }
             }
             if !reachable {
