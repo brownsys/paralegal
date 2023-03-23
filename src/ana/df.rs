@@ -257,6 +257,8 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             // Union dependencies into all conflicting places of the mutated place
             let mut mutable_conflicts = Cow::Borrowed(all_aliases.conflicts(mutated));
 
+            debug!("Mutable conflicts {mutable_conflicts:?}");
+
             // Remove any conflicts that aren't actually mutable, e.g. if x : &T ends up
             // as an alias of y: &mut T. See test function_lifetime_alias_mut for an example.
             let ignore_mut =

@@ -596,15 +596,17 @@ impl Body2<DisplayViaDebug<Location>> {
         let dependencies_for = |location: DisplayViaDebug<_>, arg, is_mut_arg| {
             use rustc_ast::Mutability;
             let ana = flow_analysis.state_at(*location);
-            non_transitive_aliases
+            let reachable_values = non_transitive_aliases
                 .reachable_values(
                     arg,
-                    if is_mut_arg {
+                    if false && is_mut_arg {
                         Mutability::Mut
                     } else {
                         Mutability::Not
                     },
-                )
+                );
+            debug!("Reachable values for {arg:?} are {reachable_values:?}");
+            reachable_values
                 .into_iter()
                 .filter(|p| !is_mut_arg || p != &&arg)
                 .flat_map(|place| ana.deps(*place))
@@ -762,6 +764,7 @@ pub fn compute2_from_body_id(
 ) -> Body2<DisplayViaDebug<Location>> {
     let hir = tcx.hir();
     let target_name = hir.name(hir.body_owner(body_id));
+    debug!("Analyzing function {target_name}");
     let local_def_id = tcx.hir().body_owner_def_id(body_id);
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();

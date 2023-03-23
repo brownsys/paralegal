@@ -26,15 +26,14 @@ impl<B: Display, F: Display + Copy> Display for Term<B, F> {
             match t {
                 RefOf => f.write_str("&("),
                 DerefOf => f.write_str("*("),
-                MemberOf(_) => f.write_char('('),
                 ContainsAt(field) => write!(f, "{{ .{} = ", field),
-                Downcast(..) => f.write_char('('),
                 Upcast(v, s) => write!(f, "(#{s}"),
                 Unknown => write!(f, "(?"),
+                _ => f.write_char('('),
             }?
         }
         write!(f, "{}", self.base)?;
-        for t in self.terms.iter().rev() {
+        for t in self.terms.iter() {
             match t {
                 MemberOf(field) => write!(f, ".{})", field),
                 ContainsAt(_) => f.write_str(" }"),
@@ -382,7 +381,7 @@ pub fn solve<
     let mut solutions = vec![];
     let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
-        warn!("No intermediate found for {from}");
+        debug!("No intermediate found for {from}");
     }
     let mut targets = matching_intermediate
         .into_iter()
@@ -394,7 +393,7 @@ pub fn solve<
         if var == to {
             solutions.push(intermediate_target.terms);
         } else if seen.contains(var) {
-            warn!("Aborting search on recursive visit to {var}")
+            debug!("Aborting search on recursive visit to {var}")
         } else {
             seen.insert(var.clone());
             if let Some(next_eq) = intermediates.get(&var) {
