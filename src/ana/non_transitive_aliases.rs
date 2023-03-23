@@ -1,16 +1,13 @@
-
-use crate::{
-    Either, TyCtxt,
-    rust::{
-    hir::def_id::LocalDefId,
-    rustc_borrowck::{BodyWithBorrowckFacts, self},
-    mir::{Terminator, TerminatorKind},
-}};
-use flowistry::mir::{
-    aliases::Aliases,
-    borrowck_facts::CachedSimplifedBodyWithFacts
-};
 use crate::ty::RegionVid;
+use crate::{
+    rust::{
+        hir::def_id::LocalDefId,
+        mir::{Terminator, TerminatorKind},
+        rustc_borrowck::{self, BodyWithBorrowckFacts},
+    },
+    Either, TyCtxt,
+};
+use flowistry::mir::{aliases::Aliases, borrowck_facts::CachedSimplifedBodyWithFacts};
 extern crate polonius_engine;
 
 /// For some reason I can't find a canonical place where the `LocationIndex`
@@ -63,14 +60,11 @@ impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
 
 pub fn compute<'tcx>(
     tcx: TyCtxt<'tcx>,
-     def_id: LocalDefId,
+    def_id: LocalDefId,
     body_with_facts: &'tcx CachedSimplifedBodyWithFacts<'tcx>,
 ) -> Aliases<'tcx, 'tcx> {
     let selector = ConstraintSelector::location_based(body_with_facts.body_with_facts());
-    Aliases::build_with_fact_selection(
-        tcx,
-        def_id.to_def_id(),
-        body_with_facts,
-        |r1, r2, idx| selector.select(r1, r2, idx),
-    )
+    Aliases::build_with_fact_selection(tcx, def_id.to_def_id(), body_with_facts, |r1, r2, idx| {
+        selector.select(r1, r2, idx)
+    })
 }

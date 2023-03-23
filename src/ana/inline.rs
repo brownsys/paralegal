@@ -484,9 +484,6 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     }
 }
 
-
-
-
 /// A memoizing helper for resolving dependencies of a [`Place`] during
 /// [`GlobalFlowConstructor::compute_call_only_flow`].
 ///

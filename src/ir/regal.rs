@@ -5,13 +5,13 @@ use flowistry::{
 
 use crate::{
     ana::algebra::{Equality, Term},
+    hir::def_id::LocalDefId,
     mir::{self, Field, Location, ProjectionElem},
     rust::{
         rustc_ast,
         rustc_hir::{def_id::DefId, BodyId},
         rustc_index::vec::IndexVec,
     },
-    hir::def_id::LocalDefId,
     utils::{outfile_pls, AsFnAndArgs, DisplayViaDebug, LocationExt},
     Either, HashMap, HashSet, TyCtxt,
 };
@@ -535,7 +535,8 @@ impl Body2<DisplayViaDebug<Location>> {
         body_with_facts: &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
     ) -> Self {
         let body = flow_analysis.analysis.body;
-        let non_transitive_aliases = crate::ana::non_transitive_aliases::compute(tcx, def_id, body_with_facts);
+        let non_transitive_aliases =
+            crate::ana::non_transitive_aliases::compute(tcx, def_id, body_with_facts);
         let mut place_table: HashMap<
             mir::Local,
             Vec<Target<RelativePlace<DisplayViaDebug<Location>>>>,
@@ -544,10 +545,20 @@ impl Body2<DisplayViaDebug<Location>> {
             .enumerate()
             .map(|(idx, l)| (l, vec![Target::Argument(ArgumentIndex::from_usize(idx))]))
             .collect();
-        let dependencies_for = |location: DisplayViaDebug<_>, arg| {
+        let dependencies_for = |location: DisplayViaDebug<_>, arg, is_mut_arg| {
+            use rustc_ast::Mutability;
             let ana = flow_analysis.state_at(*location);
-            non_transitive_aliases.reachable_values(arg, rustc_ast::Mutability::Not)
+            non_transitive_aliases
+                .reachable_values(
+                    arg,
+                    if is_mut_arg {
+                        Mutability::Mut
+                    } else {
+                        Mutability::Not
+                    },
+                )
                 .into_iter()
+                .filter(|p| !is_mut_arg || p != &&arg)
                 .flat_map(|place| ana.deps(*place))
                 .map(|&(dep_loc, _dep_place)| {
                     let dep_loc = DisplayViaDebug(dep_loc);
@@ -601,7 +612,9 @@ impl Body2<DisplayViaDebug<Location>> {
                     simple_args
                         .into_iter()
                         .map(|arg| {
-                            arg.map_or_else(Dependencies2::default, |a| dependencies_for(bbloc, a))
+                            arg.map_or_else(Dependencies2::default, |a| {
+                                dependencies_for(bbloc, a, false)
+                            })
                         })
                         .collect(),
                 );
@@ -614,18 +627,20 @@ impl Body2<DisplayViaDebug<Location>> {
                 ))
             })
             .collect();
-        let mut return_arg_deps: IndexVec<mir::Local, _> =
-            IndexVec::from_raw(body.args_iter().map(|_| HashSet::new()).collect());
+        let mut return_arg_deps: Vec<(mir::Place<'tcx>, _)> = body
+            .args_iter()
+            .map(|a| (a.into(), HashSet::new()))
+            .collect();
         let return_deps = body
             .all_returns()
             .map(DisplayViaDebug)
             .flat_map(|loc| {
-                return_arg_deps.iter_enumerated_mut().for_each(|(i, s)| {
-                    for d in dependencies_for(loc, i.into()) {
+                return_arg_deps.iter_mut().for_each(|(i, s)| {
+                    for d in dependencies_for(loc, *i, true) {
                         s.insert(d);
                     }
                 });
-                dependencies_for(loc, mir::Place::return_place())
+                dependencies_for(loc, mir::Place::return_place(), false)
                     .clone()
                     .into_iter()
             })
@@ -686,7 +701,7 @@ impl Body2<DisplayViaDebug<Location>> {
         Self {
             calls,
             return_deps,
-            return_arg_deps: return_arg_deps.raw,
+            return_arg_deps: return_arg_deps.into_iter().map(|(_, s)| s).collect(),
             equations,
         }
     }

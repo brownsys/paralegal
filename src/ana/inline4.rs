@@ -3,7 +3,7 @@ use std::fmt::Write;
 use flowistry::cached::Cache;
 use petgraph::{
     prelude as pg,
-    visit::{EdgeRef, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences},
+    visit::{EdgeRef, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences, NodeRef},
 };
 
 use crate::{
@@ -17,8 +17,9 @@ use crate::{
     },
     mir,
     mir::Location,
+    outfile_pls,
     rust::hir::def_id::{DefId, LocalDefId},
-    utils::DisplayViaDebug,
+    utils::{body_name_pls, DisplayViaDebug},
     Either, HashMap, HashSet, TyCtxt,
 };
 
@@ -61,6 +62,12 @@ impl<C> Node<C> {
 #[derive(Clone)]
 pub struct Edge {
     target_index: ArgNum,
+}
+
+impl std::fmt::Display for Edge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.target_index)
+    }
 }
 
 pub type Equation<L> =
@@ -185,7 +192,7 @@ impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
             .return_arg_deps
             .iter()
             .enumerate()
-            .map(|(i, _)| g.add_node(Node::Argument(ArgNum::from_usize(i))))
+            .map(|(i, _)| g.add_node(Node::Return(Some(ArgNum::from_usize(i)))))
             .collect::<Vec<_>>();
 
         let mut add_dep_edges =
@@ -329,10 +336,17 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     ) -> impl Iterator<Item = Equation<GlobalLocation<'g>>> + 'a {
         equations.iter().map(move |eq| {
             eq.map_bases(|base| {
-                base.map_location(|place| regal::RelativePlace {
-                    place: place.place,
-                    location: gli.relativize(place.location),
-                })
+                use regal::Target::*;
+                match base {
+                    Call(place) => Call(regal::RelativePlace {
+                        place: place.place,
+                        location: gli.relativize(place.location),
+                    }),
+                    Argument(aidx) => Call(regal::RelativePlace {
+                        location: gli.as_global_location(),
+                        place: regal::TargetPlace::Argument(*aidx),
+                    }),
+                }
             })
         })
     }
@@ -340,6 +354,16 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
         let proc_g = self.get_procedure_graph(body_id);
         let mut gwr = to_global_graph(proc_g, self.gli, body_id);
+
+        dump_dot_graph(
+            outfile_pls(format!(
+                "{}.pre-inline.gv",
+                body_name_pls(self.tcx, body_id)
+            ))
+            .unwrap(),
+            &gwr,
+        )
+        .unwrap();
         let g = &mut gwr.graph;
         let eqs = &mut gwr.equations;
         let targets = g
@@ -396,8 +420,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             let mut argument_map = HashMap::new();
 
             for e in g.edges_directed(idx, pg::Incoming) {
+                let arg_num = e.weight().target_index;
                 argument_map
-                    .entry(e.weight().target_index)
+                    .entry(arg_num)
                     .or_insert_with(|| vec![])
                     .push(e.source());
             }
@@ -405,10 +430,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             let grw_to_inline = self.get_inlined_graph_by_def_id(def_id);
             assert!(root_location.is_at_root());
             let gli_here = self.gli.at(root_location.location(), body_id);
-            gwr.equations.extend(Self::relativize_eqs(
-                &grw_to_inline.equations,
-                &gli_here,
-            ));
+            gwr.equations
+                .extend(Self::relativize_eqs(&grw_to_inline.equations, &gli_here));
             let to_inline = &grw_to_inline.graph;
             let node_map = to_inline
                 .node_references()
@@ -416,10 +439,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     (
                         callee_id,
                         node.map_call(|(location, function)| {
-                            g.add_node(Node::Call((
-                                gli_here.relativize(*location),
-                                *function,
-                            )))
+                            g.add_node(Node::Call((gli_here.relativize(*location), *function)))
                         }),
                     )
                 })
@@ -432,12 +452,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     }
                     Node::Return(_) => unreachable!(),
                     Node::Argument(a) => {
-                        for nidx in &argument_map[a] {
-                            g.add_edge(
-                                *nidx,
-                                target,
-                                weight.clone(),
-                            );
+                        for nidx in argument_map.get(a).into_iter().flat_map(|s| s.into_iter()) {
+                            g.add_edge(*nidx, target, weight.clone());
                         }
                     }
                 };
@@ -457,12 +473,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 .map(|e| (e.target(), e.weight().clone()))
                                 .collect::<Vec<_>>()
                             {
-                                connect_to(
-                                    g,
-                                    parent.source(),
-                                    target,
-                                    &out,
-                                );
+                                connect_to(g, parent.source(), target, &out);
                             }
                         }
                     }
@@ -470,10 +481,31 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             }
             g.remove_node(idx);
         }
-
+        dump_dot_graph(
+            outfile_pls(format!("{}.inlined.gv", body_name_pls(self.tcx, body_id))).unwrap(),
+            &gwr,
+        )
+        .unwrap();
         gwr.prune_impossible_edges(self.tcx);
+        dump_dot_graph(
+            outfile_pls(format!(
+                "{}.inlined-pruned.gv",
+                body_name_pls(self.tcx, body_id)
+            ))
+            .unwrap(),
+            &gwr,
+        )
+        .unwrap();
         gwr
     }
+}
+
+fn dump_dot_graph<L: std::fmt::Display, W: std::io::Write>(
+    mut w: W,
+    g: &GraphWithResolver<L>,
+) -> std::io::Result<()> {
+    use petgraph::dot::*;
+    write!(w, "{}", Dot::new(&g.graph,))
 }
 
 pub fn to_call_only_flow<'g, A: FnMut(ArgNum) -> GlobalLocation<'g>>(
