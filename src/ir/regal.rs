@@ -11,6 +11,7 @@ use crate::{
         rustc_hir::{def_id::DefId, BodyId},
         rustc_index::vec::IndexVec,
     },
+    hir::def_id::LocalDefId,
     utils::{outfile_pls, AsFnAndArgs, DisplayViaDebug, LocationExt},
     Either, HashMap, HashSet, TyCtxt,
 };
@@ -526,11 +527,15 @@ impl<L: Display + Ord> Display for Body2<L> {
 }
 
 impl Body2<DisplayViaDebug<Location>> {
-    pub fn construct(
-        flow_analysis: &df::FlowResults<'_, '_, '_>,
+    pub fn construct<'tcx>(
+        flow_analysis: &df::FlowResults<'_, 'tcx, '_>,
         place_resolver: &algebra::PlaceResolver,
+        tcx: TyCtxt<'tcx>,
+        def_id: LocalDefId,
+        body_with_facts: &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
     ) -> Self {
         let body = flow_analysis.analysis.body;
+        let non_transitive_aliases = crate::ana::non_transitive_aliases::compute(tcx, def_id, body_with_facts);
         let mut place_table: HashMap<
             mir::Local,
             Vec<Target<RelativePlace<DisplayViaDebug<Location>>>>,
@@ -541,7 +546,9 @@ impl Body2<DisplayViaDebug<Location>> {
             .collect();
         let dependencies_for = |location: DisplayViaDebug<_>, arg| {
             let ana = flow_analysis.state_at(*location);
-            ana.deps(arg)
+            non_transitive_aliases.reachable_values(arg, rustc_ast::Mutability::Not)
+                .into_iter()
+                .flat_map(|place| ana.deps(*place))
                 .map(|&(dep_loc, _dep_place)| {
                     let dep_loc = DisplayViaDebug(dep_loc);
                     if dep_loc.is_real(body) {
@@ -708,7 +715,7 @@ pub fn compute2_from_body_id(
         writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
     }
     let place_resolver = algebra::PlaceResolver::construct(tcx, body);
-    let r = Body2::construct(&flow, &place_resolver);
+    let r = Body2::construct(&flow, &place_resolver, tcx, local_def_id, body_with_facts);
     let mut out = outfile_pls(&format!("{}.regal", target_name)).unwrap();
     use std::io::Write;
     write!(&mut out, "{}", r).unwrap();

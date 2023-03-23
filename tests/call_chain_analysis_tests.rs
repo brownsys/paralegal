@@ -39,9 +39,9 @@ macro_rules! define_test {
 define_test!(without_return graph {
     let src_fn = graph.function("source");
     let ctrl = graph.ctrl("without_return");
-    let src = ctrl.call_sites(&src_fn).pop().unwrap();
+    let src = ctrl.call_site(&src_fn);
     let dest_fn = graph.function("receiver");
-    let dest_sink = ctrl.call_sites(&dest_fn).pop().unwrap();
+    let dest_sink = ctrl.call_site(&dest_fn);
     let dest = dest_sink.input().pop().unwrap();
 
     assert!(src.flows_to(&dest));
@@ -50,9 +50,9 @@ define_test!(without_return graph {
 define_test!(with_return graph {
     let src_fn = graph.function("source");
     let ctrl = graph.ctrl("with_return");
-    let src = ctrl.call_sites(&src_fn).pop().unwrap();
+    let src = ctrl.call_site(&src_fn);
     let dest_fn = graph.function("receiver");
-    let dest_sink = ctrl.call_sites(&dest_fn).pop().unwrap();
+    let dest_sink = ctrl.call_site(&dest_fn);
     let dest = dest_sink.input().pop().unwrap();
 
     assert!(src.flows_to(&dest));
@@ -61,9 +61,9 @@ define_test!(with_return graph {
 define_test!(on_mut_var graph {
     let src_fn = graph.function("source");
     let ctrl = graph.ctrl("on_mut_var");
-    let src = ctrl.call_sites(&src_fn).pop().unwrap();
+    let src = ctrl.call_site(&src_fn);
     let dest_fn = graph.function("receiver");
-    let dest_sink = ctrl.call_sites(&dest_fn).pop().unwrap();
+    let dest_sink = ctrl.call_site(&dest_fn);
     let dest = dest_sink.input().pop().unwrap();
 
     assert!(src.flows_to(&dest));

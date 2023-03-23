@@ -194,7 +194,8 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             if !transitive {
                 return;
             }
-            let reachable_values = all_aliases.reachable_values(place, Mutability::Not);
+            //let reachable_values = all_aliases.reachable_values(place, Mutability::Not);
+            let reachable_values = all_aliases.children(place);
             let provenance = place
                 .refs_in_projection()
                 .into_iter()

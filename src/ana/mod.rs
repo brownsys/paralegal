@@ -40,6 +40,7 @@ pub mod algebra;
 pub mod df;
 pub mod inline;
 mod inline4;
+pub mod non_transitive_aliases;
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
     /// Driver function. Performs the data collection via visit, then calls

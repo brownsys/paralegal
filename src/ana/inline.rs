@@ -40,7 +40,6 @@ use hir::{
     BodyId,
 };
 use mir::{Location, Place, Terminator, TerminatorKind};
-use rustc_borrowck::BodyWithBorrowckFacts;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
@@ -485,57 +484,8 @@ impl<'tcx, 'g, 'a, P: InlineSelector + Clone> GlobalFlowConstructor<'tcx, 'g, 'a
     }
 }
 
-use ty::RegionVid;
 
-extern crate polonius_engine;
 
-/// For some reason I can't find a canonical place where the `LocationIndex`
-/// type from [`rustc_borrowck`] is exported. So instead I alias it here using
-/// the [`polonius_engine::FactTypes`] trait through which it *must* be
-/// exported.
-///
-/// Some of our type signatures need to refer to this type which this alias
-/// makes easier.
-type LocationIndex = <rustc_borrowck::consumers::RustcFacts as polonius_engine::FactTypes>::Point;
-
-/// The constraint selector is essentially a closure. The function that it
-/// encapsulates is [`Self::select`] and it is constructed with
-/// [`Self::location_based`].
-///
-/// This type, as a selector, is handed to
-/// [`flowistry::mir::aliases::Aliases::build_with_fact_selection`]. This is
-/// done during construction of the [`CallOnlyFlow`] where we require a
-/// non-transitive alias analysis. This struct facilitates this by severing
-/// lifetime entailments over function calls which makes the alias analysis
-/// non-transitive with respect to function calls.
-struct ConstraintSelector<'tcx, 'a> {
-    body_with_facts: &'a BodyWithBorrowckFacts<'tcx>,
-}
-
-impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
-    /// Now the only constructor for this type
-    fn location_based(body_with_facts: &'a BodyWithBorrowckFacts<'tcx>) -> Self {
-        Self { body_with_facts }
-    }
-
-    /// Selects whether to keep a fact from `BodyWithBorrowckFacts.all_facts.subset_base`
-    fn select(&self, _: RegionVid, _: RegionVid, idx: LocationIndex) -> bool {
-        use rustc_borrowck::consumers::RichLocation;
-        let rich_loc = self.body_with_facts.location_table.to_location(idx);
-        let loc = match rich_loc {
-            RichLocation::Mid(l) => l,
-            RichLocation::Start(l) => l,
-        };
-        let stmt = self.body_with_facts.body.stmt_at(loc);
-        !matches!(
-            stmt,
-            Either::Right(Terminator {
-                kind: TerminatorKind::Call { .. },
-                ..
-            })
-        )
-    }
-}
 
 /// A memoizing helper for resolving dependencies of a [`Place`] during
 /// [`GlobalFlowConstructor::compute_call_only_flow`].
@@ -599,13 +549,7 @@ impl<'tcx> DependencyFlatteningHelper<'tcx> {
         body_with_facts: &'tcx CachedSimplifedBodyWithFacts<'tcx>,
     ) -> &Aliases<'tcx, 'tcx> {
         self.memoized_analyses.entry(def_id).or_insert_with(|| {
-            let selector = ConstraintSelector::location_based(body_with_facts.body_with_facts());
-            Aliases::build_with_fact_selection(
-                self.tcx,
-                def_id.to_def_id(),
-                body_with_facts,
-                |r1, r2, idx| selector.select(r1, r2, idx),
-            )
+            super::non_transitive_aliases::compute(self.tcx, def_id, body_with_facts)
         })
     }
 
