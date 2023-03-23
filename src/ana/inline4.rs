@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use flowistry::cached::Cache;
+use flowistry::{cached::Cache, mir::borrowck_facts};
 use petgraph::{
     prelude as pg,
     visit::{EdgeRef, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences, NodeRef},
@@ -21,7 +21,7 @@ use crate::{
     rust::hir::def_id::{DefId, LocalDefId},
     rust::rustc_index::vec::IndexVec,
     ty,
-    utils::{body_name_pls, DisplayViaDebug},
+    utils::{body_name_pls, DisplayViaDebug, AsFnAndArgs},
     Either, HashMap, HashSet, TyCtxt,
 };
 
@@ -344,6 +344,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
         let proc_g = self.get_procedure_graph(body_id);
+        let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
         let mut gwr = to_global_graph(proc_g, self.gli, body_id);
 
         dump_dot_graph(
@@ -363,7 +364,31 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 Node::Call((location, function)) => match function.as_local() {
                     Some(local_id) if self.recurse_selector.should_inline(self.tcx, local_id) => {
                         debug!("Inlining {function:?}");
-                        Some((id, function.as_local()?, *location))
+                        Some((id, local_id, *location, false))
+                    }
+                    _ if Some(*function) == self.tcx.lang_items().from_generator_fn() => {
+                        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
+                        let body = body_with_facts.simplified_body();
+                        let mut args = body.stmt_at(location.innermost_location_and_body().0)
+                            .right()
+                            .expect("Expected terminator")
+                            .as_fn_and_args()
+                            .unwrap()
+                            .1;
+                        let closure = args
+                            .pop()
+                            .expect("Expected one closure argument")
+                            .expect("Expected non-const closure argument");
+                        debug_assert!(args.is_empty(), "Expected only one argument");
+                        debug_assert!(closure.projection.is_empty());
+                        let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                            body.local_decls[closure.local].ty.kind()
+                        {
+                            *gid
+                        } else {
+                            unreachable!("Expected Generator")
+                        };
+                        Some((id, closure_fn.as_local().unwrap(), *location, true))
                     }
                     _ => {
                         debug!("Abstracting {function:?}");
@@ -406,9 +431,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 }
             })
             .collect::<Vec<_>>();
-        for (idx, def_id, root_location) in targets {
-            let inline_sig = self.tcx.fn_sig(def_id).skip_binder();
-            let num_args = inline_sig.inputs().len();
+        for (idx, def_id, root_location, is_async_closure) in targets {
+            let num_args = if is_async_closure {
+                1 as usize
+            } else {
+                self.tcx.fn_sig(def_id).skip_binder().inputs().len()
+            };
             let mut argument_map: HashMap<_, _> = (0..num_args)
                 .map(|a| (ArgNum::from_usize(a), vec![]))
                 .collect();

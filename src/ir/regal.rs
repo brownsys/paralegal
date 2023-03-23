@@ -13,7 +13,7 @@ use crate::{
         rustc_index::vec::IndexVec,
     },
     utils::{outfile_pls, AsFnAndArgs, DisplayViaDebug, LocationExt},
-    Either, HashMap, HashSet, TyCtxt,
+    Either, HashMap, HashSet, TyCtxt, Symbol
 };
 
 use std::{
@@ -764,9 +764,13 @@ pub fn compute2_from_body_id(
     gli: GLI,
 ) -> Body2<DisplayViaDebug<Location>> {
     let hir = tcx.hir();
-    let target_name = hir.name(hir.body_owner(body_id));
-    debug!("Analyzing function {target_name}");
     let local_def_id = tcx.hir().body_owner_def_id(body_id);
+    let target_name = if tcx.is_closure(local_def_id.to_def_id()) {
+        Symbol::intern("{closure}")
+    } else {
+        hir.name(hir.body_owner(body_id))
+    };
+    debug!("Analyzing function {target_name}");
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
     let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts, &NeverInline);
