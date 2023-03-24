@@ -604,7 +604,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                         .iter()
                         .enumerate()
                         .zip(ops.iter())
-                        .filter_map(|((i, field), op)| {
+                        .filter_map(|((i, _field), op)| {
                             let place = op.place()?;
                             // let field = mir::ProjectionElem::Field(
                             //     Field::from_usize(i),
@@ -621,6 +621,26 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                     op.place()
                         .map(|p| MirTerm::from(p).add_contains_at(DisplayViaDebug(i.into())))
                 })) as Box<_>,
+                AggregateKind::Generator(gen_id, _, _) => {
+                    // I think this is the proper way to do this but the fields
+                    // were sometimes empty and I don't know why so I'm doing
+                    // the hacky thing below instead
+                    // let gen_def =
+                    // self.tcx.generator_layout(*gen_id).unwrap();
+                    // debug!("variant fields {:?}", gen_def);
+                    // let variant = gen_def.variant_fields.raw.first().unwrap();
+                    // assert_eq!(variant.len(), ops.len());
+                    // let it = variant.iter_enumerated().zip(ops).filter_map(|((field, _), op)| {
+                    //     Some(MirTerm::from(op.place()?).add_contains_at(DisplayViaDebug(field)))
+                    // });
+                    let it = ops.iter().enumerate().filter_map(|(i, op)| {
+                        Some(
+                            MirTerm::from(op.place()?)
+                                .add_contains_at(DisplayViaDebug(Field::from_usize(i))),
+                        )
+                    });
+                    Box::new(it) as Box<_>
+                }
                 _ => {
                     debug!("Unhandled rvalue {rvalue:?}");
                     Box::new(std::iter::empty()) as Box<_>

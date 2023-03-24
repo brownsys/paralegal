@@ -21,7 +21,7 @@ use crate::{
     rust::hir::def_id::{DefId, LocalDefId},
     rust::rustc_index::vec::IndexVec,
     ty,
-    utils::{body_name_pls, DisplayViaDebug, AsFnAndArgs},
+    utils::{body_name_pls, AsFnAndArgs, DisplayViaDebug},
     Either, HashMap, HashSet, TyCtxt,
 };
 
@@ -367,9 +367,11 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         Some((id, local_id, *location, false))
                     }
                     _ if Some(*function) == self.tcx.lang_items().from_generator_fn() => {
-                        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
+                        let body_with_facts =
+                            borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
                         let body = body_with_facts.simplified_body();
-                        let mut args = body.stmt_at(location.innermost_location_and_body().0)
+                        let mut args = body
+                            .stmt_at(location.innermost_location_and_body().0)
                             .right()
                             .expect("Expected terminator")
                             .as_fn_and_args()

@@ -12,8 +12,8 @@ use crate::{
         rustc_hir::{def_id::DefId, BodyId},
         rustc_index::vec::IndexVec,
     },
-    utils::{outfile_pls, AsFnAndArgs, DisplayViaDebug, LocationExt},
-    Either, HashMap, HashSet, TyCtxt, Symbol
+    utils::{body_name_pls, outfile_pls, AsFnAndArgs, DisplayViaDebug, LocationExt},
+    Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
 use std::{
@@ -596,15 +596,14 @@ impl Body2<DisplayViaDebug<Location>> {
         let dependencies_for = |location: DisplayViaDebug<_>, arg, is_mut_arg| {
             use rustc_ast::Mutability;
             let ana = flow_analysis.state_at(*location);
-            let reachable_values = non_transitive_aliases
-                .reachable_values(
-                    arg,
-                    if false && is_mut_arg {
-                        Mutability::Mut
-                    } else {
-                        Mutability::Not
-                    },
-                );
+            let reachable_values = non_transitive_aliases.reachable_values(
+                arg,
+                if false && is_mut_arg {
+                    Mutability::Mut
+                } else {
+                    Mutability::Not
+                },
+            );
             debug!("Reachable values for {arg:?} are {reachable_values:?}");
             reachable_values
                 .into_iter()
@@ -763,13 +762,8 @@ pub fn compute2_from_body_id(
     tcx: TyCtxt,
     gli: GLI,
 ) -> Body2<DisplayViaDebug<Location>> {
-    let hir = tcx.hir();
     let local_def_id = tcx.hir().body_owner_def_id(body_id);
-    let target_name = if tcx.is_closure(local_def_id.to_def_id()) {
-        Symbol::intern("{closure}")
-    } else {
-        hir.name(hir.body_owner(body_id))
-    };
+    let target_name = body_name_pls(tcx, body_id);
     debug!("Analyzing function {target_name}");
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
