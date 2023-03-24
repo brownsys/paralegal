@@ -25,7 +25,7 @@ use flowistry::{
         control_dependencies::ControlDependencies,
         engine,
         engine::AnalysisResults,
-        utils::{BodyExt, OperandExt, PlaceExt},
+        utils::{BodyExt, OperandExt, PlaceExt, PlaceRelation},
     },
 };
 
@@ -283,8 +283,21 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             debug!("    with deps {input_location_deps:?}");
 
             for place in mutable_conflicts.into_owned().into_iter() {
+                let normalized = all_aliases.normalize(place);
+                // I am unsure if this is the right place to do this. I am using
+                // `configurable_of` with `deref_means_disjoint == true` so this
+                // propagates 
+                let relation_to_mutated = PlaceRelation::configurable_of(place, mutated, false);
+                if relation_to_mutated == PlaceRelation::Disjoint {
+                    debug!("Mutable conflicts {place:?} and {mutated:?} are disjoint");
+                };
+                if !transitive && relation_to_mutated == PlaceRelation::Super {
+                    debug!("  {place:?} was found to be super place of {mutated:?}");
+                    let old = state.matrix().row(&normalized).clone();
+                    state.union_after(normalized, Cow::Owned(old));
+                }
                 state.union_after(
-                    all_aliases.normalize(place),
+                    normalized,
                     Cow::Borrowed(&input_location_deps),
                 );
             }

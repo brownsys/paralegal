@@ -139,7 +139,7 @@ impl<'g> InlinedGraph<'g> {
                 }
             }
             if !reachable {
-                warn!("Found unreproducible edge {from_weight} -> {to_weight}");
+                debug!("Found unreproducible edge {from_weight} -> {to_weight}");
             }
             reached
         })
@@ -165,7 +165,7 @@ impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
             .iter()
             .map(|(loc, call)| (*loc, g.add_node(Node::Call((*loc, call.function)))))
             .collect::<HashMap<_, _>>();
-        let mut arg_map = IndexVec::from_raw(
+        let arg_map = IndexVec::from_raw(
             body.return_arg_deps
                 .iter()
                 .enumerate()
@@ -203,16 +203,6 @@ impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
         for (idx, deps) in body.return_arg_deps.iter().enumerate() {
             add_dep_edges(arg_map[ArgNum::from_usize(idx)], 0, deps);
         }
-
-        debug!(
-            "All nodes are:\n{}",
-            crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-                for n in g.node_references() {
-                    writeln!(f, "  {:?}: {}", n.0, n.1)?;
-                }
-                Ok(())
-            })
-        );
 
         gwr
     }
@@ -270,15 +260,6 @@ fn to_global_graph<'g>(
             e.weight().clone(),
         );
     }
-    debug!(
-        "All initial global nodes are:\n{}",
-        crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-            for n in g.node_references() {
-                writeln!(f, "  {:?}: {}", n.0, n.1)?;
-            }
-            Ok(())
-        })
-    );
     gwr
 }
 

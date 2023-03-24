@@ -596,19 +596,25 @@ impl Body2<DisplayViaDebug<Location>> {
         let dependencies_for = |location: DisplayViaDebug<_>, arg, is_mut_arg| {
             use rustc_ast::Mutability;
             let ana = flow_analysis.state_at(*location);
-            let reachable_values = non_transitive_aliases.reachable_values(
-                arg,
-                if false && is_mut_arg {
+            let mutability = if false && is_mut_arg {
                     Mutability::Mut
                 } else {
                     Mutability::Not
-                },
+                };
+            // Not sure this is necessary anymore because I changed the analysis
+            // to transitively propagate in cases where a subplace is modified
+            let reachable_values = non_transitive_aliases.reachable_values(
+                arg,
+                mutability,
             );
             debug!("Reachable values for {arg:?} are {reachable_values:?}");
-            reachable_values
+            debug!("  Transitive reachable values are {:?}", flow_analysis.analysis.aliases.reachable_values(arg, mutability));
+            let deps = reachable_values
                 .into_iter()
                 .flat_map(|p| non_transitive_aliases.children(*p))
-                .filter(|p| !is_mut_arg || p != &arg)
+                // Commenting out this filter because reachable values doesn't
+                // always contain all relevant subplaces
+                //.filter(|p| !is_mut_arg || p != &arg)
                 .flat_map(|place| ana.deps(place))
                 .map(|&(dep_loc, _dep_place)| {
                     let dep_loc = DisplayViaDebug(dep_loc);
@@ -618,7 +624,9 @@ impl Body2<DisplayViaDebug<Location>> {
                         Target::Argument(ArgumentIndex::from_usize(dep_loc.statement_index - 1))
                     }
                 })
-                .collect()
+                .collect();
+            debug!("  Registering dependencies {deps:?}");
+            deps
         };
         let calls = body
             .basic_blocks()
@@ -681,11 +689,13 @@ impl Body2<DisplayViaDebug<Location>> {
             .args_iter()
             .map(|a| (a.into(), HashSet::new()))
             .collect();
+        debug!("Return arguments are {return_arg_deps:?}");
         let return_deps = body
             .all_returns()
             .map(DisplayViaDebug)
             .flat_map(|loc| {
                 return_arg_deps.iter_mut().for_each(|(i, s)| {
+                    debug!("Return arg dependencies for {i:?} at {loc}");
                     for d in dependencies_for(loc, *i, true) {
                         s.insert(d);
                     }

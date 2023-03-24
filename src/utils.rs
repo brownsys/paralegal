@@ -470,7 +470,7 @@ pub fn places_read<'tcx>(
                         location,
                     ),
                     Err(e) => {
-                        warn!("handle_aggregate_assign threw {e}");
+                        debug!("handle_aggregate_assign threw {e}");
                         vis.visit_rvalue(&a.1, location);
                     }
                 }

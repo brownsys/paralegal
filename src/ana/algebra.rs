@@ -269,7 +269,7 @@ pub fn rebase_simplify<
         Some((k, v))
     }) {
         if terms.len() < 2 {
-            warn!(
+            debug!(
                 "Found fewer than two terms for {v}: {}",
                 Print(|f: &mut std::fmt::Formatter<'_>| {
                     let mut first = true;

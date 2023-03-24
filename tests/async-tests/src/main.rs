@@ -48,10 +48,6 @@ async fn inlineable_async_dp_user_data(user_data: &mut UserData) {
     dp_user_data(user_data)
 }
 
-async fn arity2_inlineable_async_dp_user_data(_: &mut UserData, user_data: &mut UserData) {
-    dp_user_data(user_data)
-}
-
 
 
 #[dfpp::label{ sink, arguments = [0] }]
@@ -96,6 +92,14 @@ async fn inlining_crate_local_async_fns() {
     send_user_data(&user_data);
 }
 
+
+
+
+
+async fn arity2_inlineable_async_dp_user_data(_: &mut UserData, user_data: &mut UserData) {
+    dp_user_data(user_data)
+}
+
 #[dfpp::analyze]
 async fn no_inlining_overtaint() {
     let mut ud1 = get_user_data();
@@ -104,6 +108,10 @@ async fn no_inlining_overtaint() {
     send_user_data(&ud1);
     send_user_data2(&ud2);
 }
+
+
+
+
 
 async fn send_both(ud1: &UserData, ud2: &UserData) {
     send_user_data(&ud1);
