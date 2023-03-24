@@ -747,3 +747,28 @@ impl<K, V> SparseMatrix<K, V> {
         changed
     }
 }
+
+pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilter, f: F) -> R {
+    let reset_level = log::max_level();
+    log::set_max_level(filter);
+    let r = f();
+    log::set_max_level(reset_level);
+    r
+}
+
+pub fn write_sep<
+    E,
+    I: IntoIterator<Item=E>,
+    F: FnMut(E, &mut std::fmt::Formatter<'_>) -> std::fmt::Result,
+>(fmt: &mut std::fmt::Formatter<'_>, sep: &str, it: I, mut f: F) -> std::fmt::Result {
+    let mut first = true;
+    for e in it {
+        if first {
+            first = false;
+        } else {
+            fmt.write_str(sep)?;
+        }
+        f(e, fmt)?;
+    }
+    Ok(())
+}

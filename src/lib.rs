@@ -126,6 +126,13 @@ pub struct Args {
     dbg: DbgArgs,
 }
 
+impl Args {
+    pub fn debug_output_direct_target(&self) -> Option<&str> {
+        let s = self.debug.as_ref()?.as_ref()?;
+        (s != "").then_some(&s)
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct ModelCtrl {
     /// A JSON file from which to load additional annotations. Whereas normally

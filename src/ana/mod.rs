@@ -4,11 +4,11 @@ use crate::{
     ana::inline4::to_call_only_flow,
     consts,
     dbg::{self, locations_of_body},
-    desc::{self, *},
+    desc::*,
     ir::*,
     rust::*,
     sah::HashVerifications,
-    utils::{PlaceExt, *},
+    utils::*,
     Either, HashMap, HashSet,
 };
 
@@ -64,13 +64,6 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         gli: GLI<'g>,
         inliner: &inline4::Inliner<'tcx, 'g, '_>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
-        let reset_lvl =
-            matches!(self.opts.debug, Some(Some(ref s)) if s.as_str() == target.name().as_str())
-                .then(|| {
-                    let lvl = log::max_level();
-                    log::set_max_level(log::LevelFilter::Debug);
-                    lvl
-                });
         let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
         fn register_call_site<'tcx>(
@@ -264,9 +257,6 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 DataSink::Return,
             );
         }
-        if let Some(reset_lvl) = reset_lvl {
-            log::set_max_level(reset_lvl);
-        }
         Ok((Identifier::new(target.name()), flows))
     }
 
@@ -280,13 +270,6 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         target: FnToAnalyze,
         gli: GLI<'g>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
-        let reset_lvl =
-            matches!(self.opts.debug, Some(Some(ref s)) if s.as_str() == target.name().as_str())
-                .then(|| {
-                    let lvl = log::max_level();
-                    log::set_max_level(log::LevelFilter::Debug);
-                    lvl
-                });
         let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
         fn register_call_site<'tcx>(
@@ -473,9 +456,6 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 DataSink::Return,
             );
         }
-        if let Some(reset_lvl) = reset_lvl {
-            log::set_max_level(reset_lvl);
-        }
         Ok((Identifier::new(target.name()), flows))
     }
 
@@ -503,6 +483,18 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             })
             .collect::<HashMap<_, _>>();
 
+        if let Some(s) = self.opts.debug_output_direct_target() {
+            assert!(
+                targets.iter().any(|target| target.name().as_str() == s),
+                "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
+                Print(|f: &mut std::fmt::Formatter<'_>| {
+                    write_sep(f, ", ", targets.iter(), |t, f| {
+                        f.write_str(t.name().as_str())
+                    })
+                })
+            )
+        }
+
         let recurse_selector = SkipAnnotatedFunctionSelector {
             marked_objects: self.marked_objects.clone(),
         };
@@ -514,13 +506,17 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             targets
                 .drain(..)
                 .map(|desc| {
-                    self.handle_target2(
-                        hash_verifications,
-                        &mut call_site_annotations,
-                        &interesting_fn_defs,
-                        desc,
-                        gli,
-                        &inliner,
+                    let target_name = desc.name();
+                    with_reset_level_if_target(self.opts, target_name, ||
+
+                        self.handle_target2(
+                            hash_verifications,
+                            &mut call_site_annotations,
+                            &interesting_fn_defs,
+                            desc,
+                            gli,
+                            &inliner,
+                        )
                     )
                 })
                 .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()
@@ -579,6 +575,14 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             .iter()
             .find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span))
             .map(|t| t.1 .0 .0.as_slice())
+    }
+}
+
+fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
+    if matches!(opts.debug_output_direct_target(), Some(s) if target.as_str() == s) {
+        with_temporary_logging_level(log::LevelFilter::Debug, f)
+    } else {
+        f()
     }
 }
 
