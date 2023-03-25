@@ -1,3 +1,17 @@
+//! The place algebra
+//! 
+//! This module defines the algebra for reasoning about relations of
+//! abstract locations in memory.
+//! 
+//! To run [`solve`], which can tell you how two memory locations relate, you
+//! need a fact base made up of a set of [`Equality`] equations. Equations
+//! comprise of [`Term`]s which in turn are a base with [`Operator`]s layered
+//! around.
+//! 
+//! For instance to extract a fact base from an MIR body use
+//! [`extract_equations`]. 
+
+
 use crate::{
     either::Either,
     ir::regal::TargetPlace,
@@ -11,15 +25,18 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+/// Terms in the projection algebra
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Term<B, F: Copy> {
+    /// The base of the term
     base: B,
-    terms: Vec<TermS<F>>,
+    /// Operators applied to the term (in reverse order)
+    terms: Vec<Operator<F>>,
 }
 
 impl<B: Display, F: Display + Copy> Display for Term<B, F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use TermS::*;
+        use Operator::*;
         for t in self.terms.iter().rev() {
             match t {
                 RefOf => f.write_str("&("),
@@ -54,8 +71,9 @@ impl Display for TargetPlace {
 
 type VariantIdx = usize;
 
+/// An operator in the projection algebra.
 #[derive(Clone, Eq, Hash, Debug, Copy, PartialEq)]
-pub enum TermS<F: Copy> {
+pub enum Operator<F: Copy> {
     RefOf,
     DerefOf,
     MemberOf(F),
@@ -65,17 +83,23 @@ pub enum TermS<F: Copy> {
     Unknown,
 }
 
+/// Relationship of two [`Operator`]s. Used in [`Operator::cancel`].
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
 pub enum Cancel<F> {
+    /// Both operators were field-related but did not reference the same field
     NonOverlappingField(F, F),
+    /// Both operators were variant cast related but did not reference the same variant
     NonOverlappingVariant(VariantIdx, VariantIdx),
+    /// The operators canceled
     Cancels,
+    /// The operators did not cancel
     Remains,
 }
 
-impl<F: Copy> TermS<F> {
+impl<F: Copy> Operator<F> {
+    /// Each operator has a dual, this flips this operator to that respective dual.
     pub fn flip(self) -> Self {
-        use TermS::*;
+        use Operator::*;
         match self {
             RefOf => DerefOf,
             DerefOf => RefOf,
@@ -87,11 +111,35 @@ impl<F: Copy> TermS<F> {
         }
     }
 
+    /// Determine for two term segments whether they cancel each other (for
+    /// instance `*&x => x`) or not. It also reports if the two segments do not
+    /// unify, which can be the case for fields and variant casts.
+    /// 
+    /// I've been thinking about this and I think for fields the order here
+    /// might actually matter. (And I think it would still be reorder safe). 
+    /// Say you do `a.f = b.g`. This statement is perfectly valid and it makes
+    /// sense. If you reorder it you get `a = { .f: b.g }` and that (currently)
+    /// cancels with `NonOverlappingField` because you get `ContainsAt(.f,
+    /// MemberOf(b, .g))`.
+    /// 
+    /// In the opposite case you have something like `a = { g: b }.f` this is
+    /// obviously nonsense and not present in surface syntax but can be the
+    /// result of substitution for instance for `x.g = b; a = x.f`. There will
+    /// probably be other equations that describe what happens at `x.f` but this
+    /// particular one when substituted is obviously useless. However note the
+    /// order here is different. This is `MemberOf(ContainsAt(.g, b), .f)`. This
+    /// one should eliminate.
+    /// 
+    /// I had one fear about this which is "what happens when you reorder to the
+    /// other side, doesn't the order change from the first one to the second?"
+    /// turns out its fine, because the reordering will flip both segments and
+    /// thus maintain the order. This is why I think adding this is not just
+    /// safe but actually more sound.
     pub fn cancel(self, other: Self) -> Cancel<F>
     where
         F: PartialEq,
     {
-        use TermS::*;
+        use Operator::*;
         match (self, other) {
             (Unknown, _) | (_, Unknown) => Cancel::Remains,
             (MemberOf(f), ContainsAt(g)) | (ContainsAt(g), MemberOf(f)) if f != g => {
@@ -105,8 +153,9 @@ impl<F: Copy> TermS<F> {
         }
     }
 
-    pub fn map_field<F0: Copy, G: FnMut(F) -> F0>(self, mut g: G) -> TermS<F0> {
-        use TermS::*;
+    /// Apply a function to the field, creating a new operator
+    pub fn map_field<F0: Copy, G: FnMut(F) -> F0>(self, mut g: G) -> Operator<F0> {
+        use Operator::*;
         match self {
             RefOf => RefOf,
             DerefOf => DerefOf,
@@ -119,6 +168,7 @@ impl<F: Copy> TermS<F> {
     }
 }
 
+/// An equation in the algebra
 #[derive(Clone, Debug)]
 pub struct Equality<B, F: Copy> {
     lhs: Term<B, F>,
@@ -131,6 +181,8 @@ impl<B: Display, F: Display + Copy> Display for Equality<B, F> {
     }
 }
 
+/// The Eq instance is special, because it is order independent with respect
+/// to the left and right hand side.
 impl<B: std::cmp::PartialEq, F: std::cmp::PartialEq + Copy> std::cmp::PartialEq for Equality<B, F> {
     fn eq(&self, other: &Self) -> bool {
         // Using an unpack here so compiler warns in case a new field is ever added
@@ -141,6 +193,8 @@ impl<B: std::cmp::PartialEq, F: std::cmp::PartialEq + Copy> std::cmp::PartialEq 
 
 impl<B: Eq, F: Eq + Copy> Eq for Equality<B, F> {}
 
+/// The Hash instance is special, because it is order independent with respect
+/// to the left and right hand side.
 impl<B: Hash, F: Hash + Copy> Hash for Equality<B, F> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let mut l = std::collections::hash_map::DefaultHasher::new();
@@ -154,16 +208,24 @@ impl<B: Hash, F: Hash + Copy> Hash for Equality<B, F> {
 }
 
 impl<B, F: Copy> Equality<B, F> {
+    /// Create a new equation
     pub fn new(lhs: Term<B, F>, rhs: Term<B, F>) -> Self {
         Self { lhs, rhs }
     }
 
+    /// Rearrange the equation, moving all operators from the left hand side to
+    /// the right hand side term, [`Operator::flip`]ing them in the process.
+    /// 
+    /// After calling this function it is guaranteed that `self.lhs.is_base() == true`
+    /// 
+    /// If you want to rearrange from right to left use [`Equality::swap`]
     pub fn rearrange_left_to_right(&mut self) {
         self.rhs
             .terms
-            .extend(self.lhs.terms.drain(..).rev().map(TermS::flip));
+            .extend(self.lhs.terms.drain(..).rev().map(Operator::flip));
     }
 
+    /// Swap the left and right hand side terms
     pub fn swap(&mut self) {
         std::mem::swap(&mut self.lhs, &mut self.rhs)
     }
@@ -172,6 +234,8 @@ impl<B, F: Copy> Equality<B, F> {
         [self.lhs.base(), self.rhs.base()]
     }
 
+    /// Apply a function to each base, creating a new equation with a
+    /// potentially different base type.
     pub fn map_bases<B0, G: FnMut(&B) -> B0>(&self, mut f: G) -> Equality<B0, F> {
         Equality {
             lhs: self.lhs.replace_base(f(self.lhs.base())),
@@ -180,8 +244,17 @@ impl<B, F: Copy> Equality<B, F> {
     }
 }
 
-impl<B, F: Copy> Equality<B, F> {}
-
+/// A heavy lifter. This is a partial solver. Given a fact base (set of
+/// equations) and a way to convert from the type of the base `B` to a new base
+/// `N` this function will substitute, expand and simplify the entire fact base
+/// to a new fact base with the new base type.
+/// 
+/// When considering any equation the bases are `inspect`ed. If it converts to a
+/// new base `N` it will remain untouched, if it converts to a variable `V` the
+/// variable will be substituted with each other equation that mentions the same
+/// variable. This process continues until a newly substituted term's base is
+/// not a variable. If there are no other equations for a given variable the
+/// equation is abandoned. Variables are not recursively expanded to themselves.
 pub fn rebase_simplify<
     GetEq: std::borrow::Borrow<Equality<B, F>>,
     NIt: IntoIterator<Item = N>,
@@ -302,6 +375,14 @@ pub fn rebase_simplify<
     finals
 }
 
+/// Solve for the relationship of two bases.
+/// 
+/// Returns all terms `t` such that `from = t(to)`. If no terms are returned the
+/// two bases are not related (memory non interference).
+/// 
+/// If you need to instead solve for the relationship of two terms `t1`, `t2`, generate two
+/// new bases `x`, `y` then extend the fact base with the equations `x = t1`,
+/// `y = t2` and solve for `x` and `y` instead.
 pub fn solve<
     B: Clone + Hash + Eq + Display,
     F: Eq + Hash + Clone + Copy + Display,
@@ -310,7 +391,7 @@ pub fn solve<
     equations: &[GetEq],
     from: &B,
     to: &B,
-) -> Vec<Vec<TermS<F>>> {
+) -> Vec<Vec<Operator<F>>> {
     if from == to {
         return vec![vec![]];
     }
@@ -409,10 +490,6 @@ pub fn solve<
 }
 
 impl<B, F: Copy> Term<B, F> {
-    pub fn kind(&self) -> TermS<F> {
-        self.terms[0]
-    }
-
     pub fn is_base(&self) -> bool {
         self.terms.is_empty()
     }
@@ -425,37 +502,37 @@ impl<B, F: Copy> Term<B, F> {
     }
 
     pub fn add_deref_of(mut self) -> Self {
-        self.terms.push(TermS::DerefOf);
+        self.terms.push(Operator::DerefOf);
         self
     }
 
     pub fn add_ref_of(mut self) -> Self {
-        self.terms.push(TermS::RefOf);
+        self.terms.push(Operator::RefOf);
         self
     }
 
     pub fn add_member_of(mut self, field: F) -> Self {
-        self.terms.push(TermS::MemberOf(field));
+        self.terms.push(Operator::MemberOf(field));
         self
     }
 
     pub fn add_contains_at(mut self, field: F) -> Self {
-        self.terms.push(TermS::ContainsAt(field));
+        self.terms.push(Operator::ContainsAt(field));
         self
     }
 
     pub fn add_downcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
-        self.terms.push(TermS::Downcast(symbol, idx));
+        self.terms.push(Operator::Downcast(symbol, idx));
         self
     }
 
     pub fn add_upcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
-        self.terms.push(TermS::Upcast(symbol, idx));
+        self.terms.push(Operator::Upcast(symbol, idx));
         self
     }
 
     pub fn add_unknown(mut self) -> Self {
-        self.terms.push(TermS::Unknown);
+        self.terms.push(Operator::Unknown);
         self
     }
 
@@ -519,7 +596,7 @@ impl<B, F: Copy> Term<B, F> {
         }
     }
 
-    pub fn from_raw(base: B, terms: Vec<TermS<F>>) -> Self {
+    pub fn from_raw(base: B, terms: Vec<Operator<F>>) -> Self {
         Self { base, terms }
     }
 }
@@ -657,6 +734,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
     }
 }
 
+/// Extract a fact base from the statements in an MIR body.
 pub fn extract_equations<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> HashSet<MirEquation> {
     use mir::visit::Visitor;
     let mut extractor = Extractor::new(tcx);

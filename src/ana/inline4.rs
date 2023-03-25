@@ -99,10 +99,21 @@ impl<L> Default for GraphWithResolver<L> {
     }
 }
 
+/// A graph describing the relationships of call sites, arguments and return
+/// values for a single analyzed function.
 type ProcedureGraph = GraphWithResolver<DisplayViaDebug<Location>>;
+/// A graph describing the relationship of call sites, arguments and return
+/// values for an analyzed functions with certain called functions inlined/expanded,
 type InlinedGraph<'g> = GraphWithResolver<GlobalLocation<'g>>;
 
 impl<'g> InlinedGraph<'g> {
+    /// For each edge in this graph query the set of equations to determine if
+    /// it is memory-plausible e.g. if there exists an argument `a` to the
+    /// target and a return `r` from the source such that either `a` can be
+    /// reached from `r` or `r` can be reached from `a`. 
+    /// 
+    /// The simples example is where `r == a` a more complex example could be
+    /// that `r = *a.foo`.
     fn prune_impossible_edges<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
         debug!(
             "Equations for pruning are:\n{}",
