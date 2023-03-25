@@ -14,7 +14,7 @@ use crate::{
         rustc_span::symbol::Ident,
         ty,
     },
-    Either, HashMap, HashSet, Symbol, TyCtxt,
+    Either, HashSet, Symbol, TyCtxt,
 };
 
 use std::{borrow::Cow, default::Default};
@@ -758,9 +758,14 @@ pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilte
 
 pub fn write_sep<
     E,
-    I: IntoIterator<Item=E>,
+    I: IntoIterator<Item = E>,
     F: FnMut(E, &mut std::fmt::Formatter<'_>) -> std::fmt::Result,
->(fmt: &mut std::fmt::Formatter<'_>, sep: &str, it: I, mut f: F) -> std::fmt::Result {
+>(
+    fmt: &mut std::fmt::Formatter<'_>,
+    sep: &str,
+    it: I,
+    mut f: F,
+) -> std::fmt::Result {
     let mut first = true;
     for e in it {
         if first {

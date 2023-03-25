@@ -1,12 +1,4 @@
-use crate::{
-    consts, dbg,
-    desc::*,
-    ir::*,
-    rust::*,
-    sah::HashVerifications,
-    utils::{PlaceExt, *},
-    Either, HashMap, HashSet,
-};
+use crate::{consts, desc::*, rust::*, utils::*, HashMap};
 
 use hir::{
     def_id::DefId,
@@ -14,22 +6,9 @@ use hir::{
     intravisit::{self, FnKind},
     BodyId,
 };
-use mir::{Location, Place, Terminator, TerminatorKind};
-use rustc_borrowck::BodyWithBorrowckFacts;
-use rustc_hir::def_id::LocalDefId;
 use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
-use std::{borrow::Cow, cell::RefCell, rc::Rc};
-
-use flowistry::{
-    indexed::IndexSet,
-    infoflow::{FlowAnalysis, FlowDomain, NonTransitiveFlowDomain},
-    mir::{
-        aliases::Aliases,
-        borrowck_facts::{self, CachedSimplifedBodyWithFacts},
-        engine::AnalysisResults,
-    },
-};
+use std::{cell::RefCell, rc::Rc};
 
 /// Values of this type can be matched against Rust attributes
 pub type AttrMatchT = Vec<Symbol>;

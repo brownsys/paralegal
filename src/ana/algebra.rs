@@ -7,8 +7,6 @@ use crate::{
 };
 
 use std::{
-    borrow::Cow,
-    cell::RefCell,
     fmt::{Debug, Display, Write},
     hash::{Hash, Hasher},
 };
@@ -27,7 +25,7 @@ impl<B: Display, F: Display + Copy> Display for Term<B, F> {
                 RefOf => f.write_str("&("),
                 DerefOf => f.write_str("*("),
                 ContainsAt(field) => write!(f, "{{ .{} = ", field),
-                Upcast(v, s) => write!(f, "(#{s}"),
+                Upcast(_, s) => write!(f, "(#{s}"),
                 Unknown => write!(f, "(?"),
                 _ => f.write_char('('),
             }?
@@ -37,7 +35,7 @@ impl<B: Display, F: Display + Copy> Display for Term<B, F> {
             match t {
                 MemberOf(field) => write!(f, ".{})", field),
                 ContainsAt(_) => f.write_str(" }"),
-                Downcast(v, s) => write!(f, " #{s})"),
+                Downcast(_, s) => write!(f, " #{s})"),
                 _ => f.write_char(')'),
             }?
         }
@@ -538,7 +536,7 @@ impl<B> Term<B, Field> {
     }
 }
 
-type MirEquation = Equality<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
+pub type MirEquation = Equality<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
 
 struct Extractor<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -577,7 +575,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
         &mut self,
         place: &mir::Place<'tcx>,
         rvalue: &mir::Rvalue<'tcx>,
-        location: mir::Location,
+        _location: mir::Location,
     ) {
         let lhs = MirTerm::from(place);
         use mir::{AggregateKind, Rvalue::*};
@@ -596,7 +594,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
             )
                 as Box<_>,
             Aggregate(box kind, ops) => match kind {
-                AggregateKind::Adt(def_id, idx, substs, _, _) => {
+                AggregateKind::Adt(def_id, idx, _, _, _) => {
                     let adt_def = self.tcx.adt_def(*def_id);
                     let variant = adt_def.variant(*idx);
                     let iter = variant
@@ -621,7 +619,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                     op.place()
                         .map(|p| MirTerm::from(p).add_contains_at(DisplayViaDebug(i.into())))
                 })) as Box<_>,
-                AggregateKind::Generator(gen_id, _, _) => {
+                AggregateKind::Generator(_gen_id, _, _) => {
                     // I think this is the proper way to do this but the fields
                     // were sometimes empty and I don't know why so I'm doing
                     // the hacky thing below instead
@@ -659,101 +657,9 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
     }
 }
 
-struct VariableGenerator<T>(T);
-
-impl<T> VariableGenerator<T> {
-    pub fn new(t: T) -> Self {
-        Self(t)
-    }
-
-    pub fn generate(&mut self) -> T
-    where
-        T: std::ops::Add<usize, Output = T> + Copy,
-    {
-        let t = self.0.clone();
-        self.0 = self.0 + 1;
-        t
-    }
-}
-
-impl<T: From<usize>> Default for VariableGenerator<T> {
-    fn default() -> Self {
-        Self::new(0.into())
-    }
-}
-
-pub struct PlaceResolver {
-    equations: Vec<MirEquation>,
-    variable_generator: RefCell<VariableGenerator<Local>>,
-}
-
-impl PlaceResolver {
-    pub fn equations(&self) -> &[MirEquation] {
-        &self.equations
-    }
-
-    pub fn construct<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> Self {
-        use mir::visit::Visitor;
-        let mut extractor = Extractor::new(tcx);
-        extractor.visit_body(body);
-        let equations = extractor.equations.into_iter().collect();
-
-        let variable_generator = RefCell::new(VariableGenerator::new(mir::Local::from_usize(
-            body.local_decls.len(),
-        )));
-        debug!("Equations {:?}", equations);
-        debug!(
-            "Generating variables from {:?}",
-            variable_generator.borrow().0
-        );
-
-        Self {
-            equations,
-            variable_generator,
-        }
-    }
-
-    pub fn resolve(&self, from: Place, to: Place) -> Vec<TermS<DisplayViaDebug<Field>>> {
-        self.try_resolve(from, to)
-            .unwrap_or_else(|| panic!("Could not resolve {from:?} to {to:?}"))
-    }
-
-    pub fn try_resolve(
-        &self,
-        from: Place,
-        to: Place,
-    ) -> Option<Vec<TermS<DisplayViaDebug<Field>>>> {
-        let target_term = MirTerm::from(to);
-        let target = DisplayViaDebug(self.variable_generator.borrow_mut().generate());
-        let source_term = MirTerm::from(from);
-        let source = DisplayViaDebug(self.variable_generator.borrow_mut().generate());
-        let equations = self
-            .equations
-            .iter()
-            .map(Cow::Borrowed)
-            .chain([
-                Cow::Owned(Equality {
-                    rhs: Term::new_base(target),
-                    lhs: target_term,
-                }),
-                Cow::Owned(Equality {
-                    rhs: Term::new_base(source),
-                    lhs: source_term,
-                }),
-            ])
-            .collect::<Vec<_>>();
-        debug!("Equations for resolution from {from:?} to {to:?} are:");
-        for eq in equations.iter() {
-            debug!("  {eq}");
-        }
-        let mut results = solve(&equations, &source, &target);
-        assert!(results.len() <= 1);
-        let ret = results.pop();
-        if let Some(res) = ret.as_ref() {
-            debug!("Resolved to {}", Term::from_raw(0, res.clone()));
-        } else {
-            debug!("No resolution found");
-        }
-        ret
-    }
+pub fn extract_equations<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> HashSet<MirEquation> {
+    use mir::visit::Visitor;
+    let mut extractor = Extractor::new(tcx);
+    extractor.visit_body(body);
+    extractor.equations
 }

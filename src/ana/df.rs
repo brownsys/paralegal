@@ -1,31 +1,27 @@
-use std::{borrow::Cow, cell::RefCell, fmt::Display, ops::Index, rc::Rc};
+use std::{borrow::Cow, fmt::Display, rc::Rc};
 
 use crate::{
-    ir::global_location::{GliAt, GlobalLocation, IsGlobalLocation, GLI},
-    mir,
+    ir::global_location::{GliAt, GLI},
     rust::{
         mir::{visit::Visitor, *},
-        rustc_data_structures::fx::{FxHashMap as HashMap, FxHashSet as HashSet},
+        rustc_data_structures::fx::FxHashSet as HashSet,
         rustc_hir::{def_id::DefId, BodyId},
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
-        ty::{subst::GenericArgKind, ClosureKind, TyCtxt, TyKind},
     },
-    ty,
     utils::SparseMatrix,
-    Symbol,
+    TyCtxt,
 };
 
 use flowistry::{
-    extensions::{is_extension_active, ContextMode, MutabilityMode, RecurseSelector},
-    indexed::{impls::LocationDomain, IndexMatrix, IndexSet, IndexedDomain, RefSet},
+    extensions::{is_extension_active, MutabilityMode},
+    indexed::{impls::LocationDomain, IndexedDomain},
     infoflow::mutation::{ModularMutationVisitor, MutationStatus},
     mir::{
         aliases::Aliases,
-        borrowck_facts::{get_body_with_borrowck_facts, CachedSimplifedBodyWithFacts},
+        borrowck_facts::CachedSimplifedBodyWithFacts,
         control_dependencies::ControlDependencies,
         engine,
-        engine::AnalysisResults,
-        utils::{BodyExt, OperandExt, PlaceExt, PlaceRelation},
+        utils::{BodyExt, PlaceExt, PlaceRelation},
     },
 };
 
@@ -85,11 +81,6 @@ impl<'tcx> FlowDomain<'tcx> {
     fn union_after(&mut self, row: Place<'tcx>, from: Cow<LocationSet<'tcx>>) -> bool {
         self.overrides.union_row(&row, from)
     }
-    fn from_location_domain(dom: &Rc<LocationDomain>) -> Self {
-        Self {
-            ..Default::default()
-        }
-    }
     fn include(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
         self.override_(row, at)
     }
@@ -118,8 +109,6 @@ pub struct FlowAnalysis<'a, 'tcx, 'g> {
     pub control_dependencies: ControlDependencies,
     pub aliases: Aliases<'a, 'tcx>,
     pub gli: GLI<'g>,
-    recurse_cache: RefCell<HashMap<BodyId, FlowResults<'a, 'tcx, 'g>>>,
-    recurse_selector: &'a dyn RecurseSelector,
 }
 
 impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
@@ -138,9 +127,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         body: &'a Body<'tcx>,
         aliases: Aliases<'a, 'tcx>,
         control_dependencies: ControlDependencies,
-        recurse_selector: &'a dyn RecurseSelector,
     ) -> Self {
-        let recurse_cache = RefCell::new(HashMap::default());
         FlowAnalysis {
             tcx,
             gli,
@@ -148,8 +135,6 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             body,
             aliases,
             control_dependencies,
-            recurse_cache,
-            recurse_selector,
         }
     }
 
@@ -166,11 +151,9 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         mutated: Place<'tcx>,
         inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
         location: Location,
-        mutation_status: MutationStatus,
         transitive: bool,
     ) {
         debug!("  Applying mutation to {mutated:?} with inputs {inputs:?}");
-        let location_domain = self.location_domain();
 
         let all_aliases = &self.aliases;
         let mutated_aliases = all_aliases.aliases(mutated);
@@ -286,7 +269,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
                 let normalized = all_aliases.normalize(place);
                 // I am unsure if this is the right place to do this. I am using
                 // `configurable_of` with `deref_means_disjoint == true` so this
-                // propagates 
+                // propagates
                 let relation_to_mutated = PlaceRelation::configurable_of(place, mutated, false);
                 if relation_to_mutated == PlaceRelation::Disjoint {
                     debug!("Mutable conflicts {place:?} and {mutated:?} are disjoint");
@@ -296,10 +279,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
                     let old = state.matrix().row(&normalized).clone();
                     state.union_after(normalized, Cow::Owned(old));
                 }
-                state.union_after(
-                    normalized,
-                    Cow::Borrowed(&input_location_deps),
-                );
+                state.union_after(normalized, Cow::Borrowed(&input_location_deps));
             }
         }
     }
@@ -343,7 +323,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
              mutation_status: MutationStatus| {
-                self.transfer_function(state, mutated, inputs, location, mutation_status, true)
+                self.transfer_function(state, mutated, inputs, location, true)
             },
         )
         .visit_statement(statement, location);
@@ -366,7 +346,6 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
                     mutated,
                     inputs,
                     location,
-                    mutation_status,
                     !matches!(&terminator.kind, TerminatorKind::Call { .. }),
                 )
             },
@@ -388,7 +367,6 @@ pub fn compute_flow_internal<'a, 'tcx, 'g>(
     gli: GLI<'g>,
     body_id: BodyId,
     body_with_facts: &'a CachedSimplifedBodyWithFacts<'tcx>,
-    recurse_selector: &'a dyn RecurseSelector,
 ) -> FlowResults<'a, 'tcx, 'g> {
     flowistry::infoflow::BODY_STACK.with(|body_stack| {
     body_stack.borrow_mut().push(body_id);
@@ -410,7 +388,7 @@ pub fn compute_flow_internal<'a, 'tcx, 'g>(
     let results = {
       //block_timer!("Flow");
 
-      let analysis = FlowAnalysis::new(tcx, gli, def_id, body, aliases, control_dependencies, recurse_selector);
+      let analysis = FlowAnalysis::new(tcx, gli, def_id, body, aliases, control_dependencies);
       engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
       // analysis.into_engine(tcx, body).iterate_to_fixpoint()
     };

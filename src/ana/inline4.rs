@@ -1,9 +1,7 @@
-use std::fmt::Write;
-
 use flowistry::{cached::Cache, mir::borrowck_facts};
 use petgraph::{
     prelude as pg,
-    visit::{EdgeRef, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences, NodeRef},
+    visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences},
 };
 
 use crate::{
@@ -12,7 +10,7 @@ use crate::{
     ir::{
         flows::CallOnlyFlow,
         global_location::IsGlobalLocation,
-        regal::{self, SimpleLocation, TargetPlace},
+        regal::{self, SimpleLocation},
         GliAt, GlobalLocation, GLI,
     },
     mir,
@@ -25,7 +23,37 @@ use crate::{
     Either, HashMap, HashSet, TyCtxt,
 };
 
-use super::{algebra::Equality, inline::InlineSelector};
+/// This essentially describes a closure that determines for a given
+/// [`LocalDefId`] if it should be inlined. Originally this was in fact done by
+/// passing a closure, but it couldn't properly satisfy the type checker,
+/// because the selector has to be stored in `fluid_let` variable, which is a
+/// dynamically scoped variable. This means that the type needs to be valid for
+/// a static lifetime, which I believe closures are not.
+///
+/// In particular the way that this works is that values of this interface are
+/// then wrapped with [`RecurseSelector`], which is a flowistry interface that
+/// satisfies [`flowistry::extensions::RecurseSelector`]. The wrapper then
+/// simply dispatches to the [`InlineSelector`].
+///
+/// The reason for the two tiers of selectors is that
+///
+/// - Flowistry is a separate crate and so I wanted a way to control it that
+///   decouples from the specifics of dfpp
+/// - We use the selectors to skip functions with annotations, but I wanted to
+///   keep the construction of inlined flow graphs agnostic to any notion of
+///   annotations. Those are handled by the [`CollectingVisitor`]
+///
+/// The only implementation currently in use for this is
+/// [`SkipAnnotatedFunctionSelector`].
+pub trait InlineSelector: 'static {
+    fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool;
+}
+
+impl<T: InlineSelector> InlineSelector for std::rc::Rc<T> {
+    fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool {
+        self.as_ref().should_inline(tcx, did)
+    }
+}
 
 type ArgNum = regal::ArgumentIndex;
 
@@ -74,16 +102,6 @@ impl<L> Default for GraphWithResolver<L> {
 type ProcedureGraph = GraphWithResolver<DisplayViaDebug<Location>>;
 type InlinedGraph<'g> = GraphWithResolver<GlobalLocation<'g>>;
 
-impl<C> Node<C> {
-    fn into_target_with<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Option<regal::Target<C0>> {
-        match self {
-            Node::Return => None,
-            Node::Argument(a) => Some(regal::Target::Argument(*a)),
-            Node::Call(c) => Some(regal::Target::Call(f(c))),
-        }
-    }
-}
-
 impl<'g> InlinedGraph<'g> {
     fn prune_impossible_edges<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
         debug!(
@@ -99,7 +117,7 @@ impl<'g> InlinedGraph<'g> {
             let (from, to) = graph.edge_endpoints(idx).unwrap();
             let Edge { target_index } = graph.edge_weight(idx).unwrap();
             let to_weight = graph.node_weight(to).unwrap();
-            let to_target = to_weight.map_location(|&(location, did)| regal::RelativePlace {
+            let to_target = to_weight.map_location(|&(location, _did)| regal::RelativePlace {
                 location,
                 place: regal::TargetPlace::Argument(*target_index),
             });
@@ -134,7 +152,7 @@ impl<'g> InlinedGraph<'g> {
             for from_target in targets {
                 let result = algebra::solve(&self.equations, &to_target, &from_target);
                 reachable |= !result.is_empty();
-                for mut r in result {
+                for r in result {
                     reached |= Term::from_raw(0, r).simplify();
                 }
             }
@@ -146,8 +164,8 @@ impl<'g> InlinedGraph<'g> {
     }
 }
 
-impl From<regal::Body2<DisplayViaDebug<Location>>> for ProcedureGraph {
-    fn from(body: regal::Body2<DisplayViaDebug<Location>>) -> Self {
+impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
+    fn from(body: regal::Body<DisplayViaDebug<Location>>) -> Self {
         let mut gwr = ProcedureGraph::default();
         debug!(
             "Equations for body are:\n{}",
@@ -276,7 +294,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
     fn get_procedure_graph(&self, body_id: BodyId) -> &ProcedureGraph {
         self.base_memo.get(body_id, |bid| {
-            regal::compute2_from_body_id(bid, self.tcx, self.gli).into()
+            regal::compute_from_body_id(bid, self.tcx, self.gli).into()
         })
     }
 
@@ -399,7 +417,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 })
                                 .filter(move |read| read != write)
                                 .map(|read| {
-                                    Equality::new(
+                                    algebra::Equality::new(
                                         mk_term(write.clone()).add_unknown(),
                                         mk_term(read),
                                     )
