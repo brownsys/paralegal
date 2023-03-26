@@ -1,3 +1,17 @@
+//! The [`Inliner`]. The 30s summary of what this does is 
+//! 1. It starts from single-procedure analyses ([`regal::Body`])
+//! 2. Turns them into graphs ([`ProcedureGraph`])
+//! 3. Turns locations into global locations in both the graph and in the
+//!    equations ([`InlinedGraph`])
+//! 4. Inlines callees that are (un)marked. In the graphs the nodes are are
+//!    replaced by the callee graph, reconnecting incoming and outgoing edges at
+//!    the boundary. Callee locations are relativized ([`GliAt::relativize`]).
+//!    Callee equations also have the bases rewritten
+//!    ([`Inliner::relativize_eqs`]) before being added to the caller equations.
+//! 5. Use the equations from place analysis prune edges
+//!    ([`InlinedGraph::prune_impossible_edges`]) using the accumulated set of
+//!    equations
+
 use flowistry::{cached::Cache, mir::borrowck_facts};
 use petgraph::{
     prelude as pg,
@@ -80,11 +94,14 @@ impl std::fmt::Display for Edge {
     }
 }
 
+/// Common, parameterized equation type used by the [`GraphResolver`]s
 pub type Equation<L> =
     algebra::Equality<Node<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>;
 pub type Equations<L> = Vec<Equation<L>>;
+/// Common, parameterized graph type used in this module
 pub type GraphImpl<L> = pg::StableDiGraph<Node<(L, DefId)>, Edge>;
 
+/// A graph and the associated set of extracted or accumulated equations
 pub struct GraphWithResolver<L> {
     graph: GraphImpl<L>,
     equations: Equations<L>,
@@ -237,14 +254,19 @@ impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
     }
 }
 
+/// Essentially just a bunch of caches of analyses.
 pub struct Inliner<'tcx, 'g, 's> {
+    /// Memoized graphs created from single-procedure analyses
     base_memo: Cache<BodyId, ProcedureGraph>,
+    /// Memoized graphs that have all their callees inlined
     inline_memo: Cache<BodyId, InlinedGraph<'g>>,
+    /// Selects which callees to inline.
     recurse_selector: &'s dyn InlineSelector,
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
 }
 
+/// Globalize all locations mentioned in these equations.
 fn to_global_equations<'g>(
     eqs: &Equations<DisplayViaDebug<Location>>,
     body_id: BodyId,
@@ -262,6 +284,9 @@ fn to_global_equations<'g>(
         .collect()
 }
 
+/// Does a naïve transformation from a [`ProcedureGraph`] into a
+/// [`InlinedGraph`]. It just globalizes the locations, it does not actually
+/// perform inlining (despite what the name of the returned type might suggest).
 fn to_global_graph<'g>(
     ProcedureGraph {
         graph: proc_g,
@@ -303,16 +328,21 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
+    /// Compute a procedure graph for this `body_id` (memoized). Actual
+    /// computation performed by [`regal::compute_from_body_id`] and
+    /// [`ProcedureGraph::from`]
     fn get_procedure_graph(&self, body_id: BodyId) -> &ProcedureGraph {
         self.base_memo.get(body_id, |bid| {
             regal::compute_from_body_id(bid, self.tcx, self.gli).into()
         })
     }
 
+    /// Compute an inlined graph for this `body_id` (memoized)
     pub fn get_inlined_graph(&self, body_id: BodyId) -> &InlinedGraph<'g> {
         self.inline_memo.get(body_id, |bid| self.inline_graph(bid))
     }
 
+    /// Convenience wrapper around [`Self::get_inlined_graph`]
     fn get_inlined_graph_by_def_id(&self, def_id: LocalDefId) -> &InlinedGraph<'g> {
         let hir = self.tcx.hir();
         self.get_inlined_graph(hir.body_owned_by(hir.local_def_id_to_hir_id(def_id)))
@@ -352,6 +382,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         })
     }
 
+    /// In spite of the name of this function it not only inlines the graph but
+    /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
+    /// it ([`to_global_graph`]).
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
         let proc_g = self.get_procedure_graph(body_id);
         let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
@@ -551,6 +584,8 @@ fn dump_dot_graph<L: std::fmt::Display, W: std::io::Write>(
     )
 }
 
+/// Turn the output of the inliner into the format the rest of the dfpp pipeline
+/// understands.
 pub fn to_call_only_flow<'g, A: FnMut(ArgNum) -> GlobalLocation<'g>>(
     InlinedGraph { graph: g, .. }: &InlinedGraph<'g>,
     mut mk_arg: A,

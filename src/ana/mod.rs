@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::{
-    ana::inline4::to_call_only_flow, dbg, desc::*, ir::*, rust::*, sah::HashVerifications,
+    ana::inline::to_call_only_flow, dbg, desc::*, ir::*, rust::*, sah::HashVerifications,
     utils::*, Either, HashMap, HashSet, Symbol,
 };
 
@@ -15,7 +15,7 @@ use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 
 pub mod algebra;
 pub mod df;
-mod inline4;
+mod inline;
 pub mod non_transitive_aliases;
 
 impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
@@ -31,14 +31,14 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
     /// Perform the analysis for one `#[dfpp::analyze]` annotated function and
     /// return the representation suitable for emitting into Forge.
-    fn handle_target2<'g>(
+    fn handle_target<'g>(
         &self,
         _hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
         target: FnToAnalyze,
         gli: GLI<'g>,
-        inliner: &inline4::Inliner<'tcx, 'g, '_>,
+        inliner: &inline::Inliner<'tcx, 'g, '_>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
@@ -276,7 +276,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             marked_objects: self.marked_objects.clone(),
         };
 
-        let inliner = inline4::Inliner::new(self.tcx, gli, &recurse_selector);
+        let inliner = inline::Inliner::new(self.tcx, gli, &recurse_selector);
 
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         crate::sah::HashVerifications::with(|hash_verifications| {
@@ -285,7 +285,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 .map(|desc| {
                     let target_name = desc.name();
                     with_reset_level_if_target(self.opts, target_name, || {
-                        self.handle_target2(
+                        self.handle_target(
                             hash_verifications,
                             &mut call_site_annotations,
                             &interesting_fn_defs,
@@ -354,6 +354,9 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
     }
 }
 
+/// A higher order function that increases the logging level if the `target`
+/// matches the one selected with the `debug` flag on the command line (and
+/// reset it afterward).
 fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
     if matches!(opts.debug_output_direct_target(), Some(s) if target.as_str() == s) {
         with_temporary_logging_level(log::LevelFilter::Debug, f)
@@ -369,7 +372,7 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
 struct SkipAnnotatedFunctionSelector {
     marked_objects: crate::discover::MarkedObjects,
 }
-impl inline4::InlineSelector for SkipAnnotatedFunctionSelector {
+impl inline::InlineSelector for SkipAnnotatedFunctionSelector {
     fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool {
         self.marked_objects
             .as_ref()
