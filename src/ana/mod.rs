@@ -75,7 +75,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
         debug!("Handling target {}", target.name());
 
-        let flow = to_call_only_flow(inliner.get_inlined_graph(target.body_id), |a| {
+        let flow = to_call_only_flow(inliner.get_inlined_graph(target.body_id).unwrap(), |a| {
             gli.globalize_location(
                 Location {
                     block: mir::BasicBlock::from_usize(
