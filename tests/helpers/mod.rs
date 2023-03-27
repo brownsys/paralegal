@@ -14,7 +14,7 @@ use rustc_middle::mir;
 
 use either::Either;
 
-use dfpp::outfile_pls;
+use dfpp::utils::outfile_pls;
 use std::borrow::Cow;
 use std::io::prelude::*;
 
