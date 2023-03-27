@@ -361,9 +361,9 @@ pub struct RawGlobalLocation(Box<GlobalLocationS<RawGlobalLocation>>);
 impl<'g> From<&'_ GlobalLocation<'g>> for RawGlobalLocation {
     fn from(other: &GlobalLocation<'g>) -> Self {
         RawGlobalLocation(Box::new(GlobalLocationS {
-            function: other.function(),
+            function: other.outermost_function(),
             next: other.next().map(|o| o.into()),
-            location: other.location(),
+            location: other.outermost_location(),
         }))
     }
 }

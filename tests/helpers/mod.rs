@@ -220,7 +220,7 @@ impl GetCallSites for (mir::Location, hir::BodyId) {
         g: &'a SerializableCallOnlyFlow,
     ) -> HashSet<&'a RawGlobalLocation> {
         g.all_locations_iter()
-            .filter(move |l| l.innermost_location_and_body() == *self)
+            .filter(move |l| l.innermost_location_and_function() == *self)
             .collect()
     }
 }
@@ -237,7 +237,7 @@ impl MatchCallSite for RawGlobalLocation {
 
 impl MatchCallSite for (mir::Location, hir::BodyId) {
     fn match_(&self, call_site: &RawGlobalLocation) -> bool {
-        *self == call_site.innermost_location_and_body()
+        *self == call_site.innermost_location_and_function()
     }
 }
 

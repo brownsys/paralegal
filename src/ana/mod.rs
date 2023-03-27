@@ -125,7 +125,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             // It's important to look at the innermost location. It's easy to
             // use `location()` and `function()` on a global location instead
             // but that is the outermost call site, not the location for the actual call.
-            let (inner_location, inner_body_id) = loc.innermost_location_and_body();
+            let (inner_location, inner_body_id) = loc.innermost_location_and_function();
             // We need to make sure to fetch the body again here, because we
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.
@@ -209,7 +209,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 // This will be the target of any flow we register
                 let to = if loc.is_at_root()
                     && matches!(
-                        inner_body.stmt_at(loc.location()),
+                        inner_body.stmt_at(loc.outermost_location()),
                         Either::Right(mir::Terminator {
                             kind: mir::TerminatorKind::Return,
                             ..

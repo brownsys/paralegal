@@ -174,6 +174,7 @@ pub struct Body<L> {
     pub return_deps: Dependencies<L>,
     pub return_arg_deps: Vec<Dependencies<L>>,
     pub equations: Vec<algebra::Equality<SimpleLocation<RelativePlace<L>>, DisplayViaDebug<Field>>>,
+    pub control_dependencies: df::ControlDependencies,
 }
 
 impl<L: Display + Ord> Display for Body<L> {
@@ -208,7 +209,7 @@ impl<L: Display + Ord> Display for Body<L> {
 
 impl Body<DisplayViaDebug<Location>> {
     pub fn construct<'tcx, I: IntoIterator<Item = algebra::MirEquation>>(
-        flow_analysis: &df::FlowResults<'_, 'tcx, '_>,
+        flow_analysis: df::FlowResults<'_, 'tcx, '_>,
         equations: I,
         tcx: TyCtxt<'tcx>,
         def_id: LocalDefId,
@@ -409,6 +410,7 @@ impl Body<DisplayViaDebug<Location>> {
             return_deps,
             return_arg_deps: return_arg_deps.into_iter().map(|(_, s)| s).collect(),
             equations,
+            control_dependencies: flow_analysis.analysis.control_dependencies,
         }
     }
 }
@@ -436,7 +438,7 @@ pub fn compute_from_body_id(
         writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
     }
     let equations = algebra::extract_equations(tcx, body);
-    let r = Body::construct(&flow, equations, tcx, local_def_id, body_with_facts);
+    let r = Body::construct(flow, equations, tcx, local_def_id, body_with_facts);
     let mut out = outfile_pls(&format!("{}.regal", target_name)).unwrap();
     use std::io::Write;
     write!(&mut out, "{}", r).unwrap();

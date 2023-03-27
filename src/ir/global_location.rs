@@ -98,11 +98,11 @@ pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>)
 impl<'tcx> std::cmp::PartialOrd for GlobalLocation<'tcx> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         use std::cmp::Ordering;
-        if self.function() != other.function() {
-            return self.function().hir_id.partial_cmp(&other.function().hir_id);
+        if self.outermost_function() != other.outermost_function() {
+            return self.outermost_function().hir_id.partial_cmp(&other.outermost_function().hir_id);
         }
 
-        if self.location() == other.location() {
+        if self.outermost_location() == other.outermost_location() {
             match (self.next(), other.next()) {
                 (Some(my_next), Some(other_next)) => my_next.partial_cmp(other_next),
                 (None, None) => Some(Ordering::Equal),
@@ -110,7 +110,7 @@ impl<'tcx> std::cmp::PartialOrd for GlobalLocation<'tcx> {
                 _ => Some(Ordering::Greater),
             }
         } else {
-            self.location().partial_cmp(&other.location())
+            self.outermost_location().partial_cmp(&other.outermost_location())
         }
     }
 }
@@ -128,11 +128,11 @@ pub trait IsGlobalLocation: Sized {
     /// wrapper layer and lets us operate on the payload.
     fn as_global_location_s(&self) -> &GlobalLocationS<Self>;
     /// Get the `function` field of the underlying location.
-    fn function(&self) -> BodyId {
+    fn outermost_function(&self) -> BodyId {
         self.as_global_location_s().function
     }
     /// Get the `location` field of the underlying location.
-    fn location(&self) -> mir::Location {
+    fn outermost_location(&self) -> mir::Location {
         self.as_global_location_s().location
     }
     /// Get the `next` field of the underlying location.
@@ -154,17 +154,26 @@ pub trait IsGlobalLocation: Sized {
     }
     /// Get the `location` and `function` field of the last location in the
     /// chain of `next()` locations.
-    fn innermost_location_and_body(&self) -> (mir::Location, BodyId) {
+    fn innermost_location_and_function(&self) -> (mir::Location, BodyId) {
         self.next().map_or_else(
-            || (self.location(), self.function()),
-            |other| other.innermost_location_and_body(),
+            || (self.outermost_location(), self.outermost_function()),
+            |other| other.innermost_location_and_function(),
         )
     }
+
+    fn innermost_location(&self) -> mir::Location {
+        self.innermost_location_and_function().0
+    }
+
+    fn innermost_function(&self) -> BodyId {
+        self.innermost_location_and_function().1
+    }
+
     /// It this location is top-level (i.e. `self.next() == None`), then return
     /// the `location` field.
     fn as_local(self) -> Option<mir::Location> {
         if self.next().is_none() {
-            Some(self.location())
+            Some(self.outermost_location())
         } else {
             None
         }
@@ -182,9 +191,9 @@ pub trait IsGlobalLocation: Sized {
         tcx: TyCtxt,
         is_real_location: F,
     ) -> DataSource {
-        let (dep_loc, dep_fun) = self.innermost_location_and_body();
+        let (dep_loc, dep_fun) = self.innermost_location_and_function();
         if self.is_at_root() && !is_real_location(dep_loc) {
-            DataSource::Argument(self.location().statement_index - 1)
+            DataSource::Argument(self.outermost_location().statement_index - 1)
         } else {
             DataSource::FunctionCall(CallSite {
                 called_from: Identifier::new(body_name_pls(tcx, dep_fun).name),

@@ -415,7 +415,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
                         let body = body_with_facts.simplified_body();
                         let mut args = body
-                            .stmt_at(location.innermost_location_and_body().0)
+                            .stmt_at(location.innermost_location_and_function().0)
                             .right()
                             .expect("Expected terminator")
                             .as_fn_and_args()
@@ -501,7 +501,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             }
 
             assert!(root_location.is_at_root());
-            let gli_here = self.gli.at(root_location.location(), body_id);
+            let gli_here = self.gli.at(root_location.outermost_location(), body_id);
             gwr.equations
                 .extend(Self::relativize_eqs(&grw_to_inline.equations, &gli_here));
             let to_inline = &grw_to_inline.graph;

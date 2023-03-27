@@ -187,7 +187,7 @@ pub mod call_only_flow_dot {
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
             use std::fmt::Write;
             let (loc, body_id) = if let Some(n) = n {
-                n.innermost_location_and_body()
+                n.innermost_location_and_function()
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
@@ -206,8 +206,8 @@ pub mod call_only_flow_dot {
                         write!(
                             s,
                             "@{:?}:{}",
-                            l.location().block,
-                            l.location().statement_index
+                            l.outermost_location().block,
+                            l.outermost_location().statement_index
                         )?;
                     }
                 };
@@ -332,8 +332,8 @@ fn format_global_location<T: IsGlobalLocation>(
         write!(
             f,
             "{:?}[{}]",
-            next.location().block,
-            next.location().statement_index
+            next.outermost_location().block,
+            next.outermost_location().statement_index
         )?;
     }
     Ok(())
@@ -379,7 +379,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                         .flat_map(|s| s.iter().cloned()),
                 )
             })
-            .map(|l| l.innermost_location_and_body().1)
+            .map(|l| l.innermost_location_and_function().1)
             .collect::<HashSet<crate::rust::hir::BodyId>>()
             .into_iter()
             .map(|bid| {

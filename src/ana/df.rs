@@ -19,11 +19,12 @@ use flowistry::{
     mir::{
         aliases::Aliases,
         borrowck_facts::CachedSimplifedBodyWithFacts,
-        control_dependencies::ControlDependencies,
         engine,
         utils::{BodyExt, PlaceExt, PlaceRelation},
     },
 };
+
+pub use flowistry::mir::control_dependencies::ControlDependencies;
 
 pub type FlowResults<'a, 'tcx, 'g> = engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g>>;
 
