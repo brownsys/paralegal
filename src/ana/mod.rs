@@ -1,8 +1,12 @@
+//! Data-and control flow analyzer and inliner.
+//!
+//!
+
 use std::borrow::Cow;
 
 use crate::{
-    ana::inline::to_call_only_flow, dbg, desc::*, ir::*, rust::*, sah::HashVerifications,
-    utils::*, Either, HashMap, HashSet, Symbol,
+    ana::inline::to_call_only_flow, dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*,
+    Either, HashMap, HashSet, Symbol, LogLevelConfig,
 };
 
 use hir::def_id::DefId;
@@ -63,7 +67,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         let controller_body_with_facts =
             borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
 
-        if self.opts.dbg.dump_ctrl_mir {
+        if self.opts.dbg().dump_ctrl_mir() {
             mir::graphviz::write_mir_fn_graphviz(
                 tcx,
                 controller_body_with_facts.simplified_body(),
@@ -101,7 +105,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             flows.add_types(types);
         }
 
-        if self.opts.dbg.dump_serialized_non_transitive_graph {
+        if self.opts.dbg().dump_serialized_non_transitive_graph() {
             dbg::write_non_transitive_graph_and_body(
                 tcx,
                 &flow,
@@ -109,7 +113,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             );
         }
 
-        if self.opts.dbg.dump_call_only_flow() {
+        if self.opts.dbg().dump_call_only_flow() {
             outfile_pls(format!("{}.call-only-flow.gv", target.name()))
                 .and_then(|mut file| dbg::call_only_flow_dot::dump(tcx, &flow, &mut file))
                 .unwrap_or_else(|err| {
@@ -260,7 +264,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             })
             .collect::<HashMap<_, _>>();
 
-        if let Some(s) = self.opts.debug_output_direct_target() {
+        if let LogLevelConfig::Targeted(s) = self.opts.debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
                 "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
@@ -358,7 +362,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 /// matches the one selected with the `debug` flag on the command line (and
 /// reset it afterward).
 fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
-    if matches!(opts.debug_output_direct_target(), Some(s) if target.as_str() == s) {
+    if matches!(opts.debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
         with_temporary_logging_level(log::LevelFilter::Debug, f)
     } else {
         f()

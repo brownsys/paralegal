@@ -1,3 +1,7 @@
+//! MIR visitor ([`CollectingVisitor`]) that discovers and stores all items of interest.
+//!
+//! Items of interest is anything annotated with one of the `dfpp::`
+//! annotations.
 use crate::{consts, desc::*, rust::*, utils::*, HashMap};
 
 use hir::{

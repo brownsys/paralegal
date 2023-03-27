@@ -1,4 +1,4 @@
-//! The [`Inliner`]. The 30s summary of what this does is 
+//! The [`Inliner`]. The 30s summary of what this does is
 //! 1. It starts from single-procedure analyses ([`regal::Body`])
 //! 2. Turns them into graphs ([`ProcedureGraph`])
 //! 3. Turns locations into global locations in both the graph and in the
@@ -29,11 +29,10 @@ use crate::{
     },
     mir,
     mir::Location,
-    outfile_pls,
     rust::hir::def_id::{DefId, LocalDefId},
     rust::rustc_index::vec::IndexVec,
     ty,
-    utils::{body_name_pls, AsFnAndArgs, DisplayViaDebug, RecursionBreakingCache},
+    utils::{body_name_pls, outfile_pls, AsFnAndArgs, DisplayViaDebug, RecursionBreakingCache},
     Either, HashMap, HashSet, TyCtxt,
 };
 
@@ -127,8 +126,8 @@ impl<'g> InlinedGraph<'g> {
     /// For each edge in this graph query the set of equations to determine if
     /// it is memory-plausible e.g. if there exists an argument `a` to the
     /// target and a return `r` from the source such that either `a` can be
-    /// reached from `r` or `r` can be reached from `a`. 
-    /// 
+    /// reached from `r` or `r` can be reached from `a`.
+    ///
     /// The simples example is where `r == a` a more complex example could be
     /// that `r = *a.foo`.
     fn prune_impossible_edges<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
@@ -479,7 +478,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             })
             .collect::<Vec<_>>();
         for (idx, def_id, root_location, is_async_closure) in targets {
-            let grw_to_inline = if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id) {
+            let grw_to_inline = if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id)
+            {
                 callee_graph
             } else {
                 // Breaking recursion. This can only happen if we are trying to

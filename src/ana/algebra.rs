@@ -1,16 +1,15 @@
 //! The place algebra
-//! 
+//!
 //! This module defines the algebra for reasoning about relations of
 //! abstract locations in memory.
-//! 
+//!
 //! To run [`solve`], which can tell you how two memory locations relate, you
 //! need a fact base made up of a set of [`Equality`] equations. Equations
 //! comprise of [`Term`]s which in turn are a base with [`Operator`]s layered
 //! around.
-//! 
+//!
 //! For instance to extract a fact base from an MIR body use
-//! [`extract_equations`]. 
-
+//! [`extract_equations`].
 
 use crate::{
     either::Either,
@@ -114,14 +113,14 @@ impl<F: Copy> Operator<F> {
     /// Determine for two term segments whether they cancel each other (for
     /// instance `*&x => x`) or not. It also reports if the two segments do not
     /// unify, which can be the case for fields and variant casts.
-    /// 
+    ///
     /// I've been thinking about this and I think for fields the order here
-    /// might actually matter. (And I think it would still be reorder safe). 
+    /// might actually matter. (And I think it would still be reorder safe).
     /// Say you do `a.f = b.g`. This statement is perfectly valid and it makes
     /// sense. If you reorder it you get `a = { .f: b.g }` and that (currently)
     /// cancels with `NonOverlappingField` because you get `ContainsAt(.f,
     /// MemberOf(b, .g))`.
-    /// 
+    ///
     /// In the opposite case you have something like `a = { g: b }.f` this is
     /// obviously nonsense and not present in surface syntax but can be the
     /// result of substitution for instance for `x.g = b; a = x.f`. There will
@@ -129,7 +128,7 @@ impl<F: Copy> Operator<F> {
     /// particular one when substituted is obviously useless. However note the
     /// order here is different. This is `MemberOf(ContainsAt(.g, b), .f)`. This
     /// one should eliminate.
-    /// 
+    ///
     /// I had one fear about this which is "what happens when you reorder to the
     /// other side, doesn't the order change from the first one to the second?"
     /// turns out its fine, because the reordering will flip both segments and
@@ -215,9 +214,9 @@ impl<B, F: Copy> Equality<B, F> {
 
     /// Rearrange the equation, moving all operators from the left hand side to
     /// the right hand side term, [`Operator::flip`]ing them in the process.
-    /// 
+    ///
     /// After calling this function it is guaranteed that `self.lhs.is_base() == true`
-    /// 
+    ///
     /// If you want to rearrange from right to left use [`Equality::swap`]
     pub fn rearrange_left_to_right(&mut self) {
         self.rhs
@@ -248,7 +247,7 @@ impl<B, F: Copy> Equality<B, F> {
 /// equations) and a way to convert from the type of the base `B` to a new base
 /// `N` this function will substitute, expand and simplify the entire fact base
 /// to a new fact base with the new base type.
-/// 
+///
 /// When considering any equation the bases are `inspect`ed. If it converts to a
 /// new base `N` it will remain untouched, if it converts to a variable `V` the
 /// variable will be substituted with each other equation that mentions the same
@@ -376,10 +375,10 @@ pub fn rebase_simplify<
 }
 
 /// Solve for the relationship of two bases.
-/// 
+///
 /// Returns all terms `t` such that `from = t(to)`. If no terms are returned the
 /// two bases are not related (memory non interference).
-/// 
+///
 /// If you need to instead solve for the relationship of two terms `t1`, `t2`, generate two
 /// new bases `x`, `y` then extend the fact base with the equations `x = t1`,
 /// `y = t2` and solve for `x` and `y` instead.

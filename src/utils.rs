@@ -14,10 +14,10 @@ use crate::{
         rustc_span::symbol::Ident,
         ty,
     },
-    Either, HashSet, Symbol, TyCtxt, HashMap
+    Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
-use std::{borrow::Cow, default::Default, pin::Pin, hash::Hash, cell::RefCell};
+use std::{borrow::Cow, cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
@@ -778,7 +778,6 @@ pub fn write_sep<
     Ok(())
 }
 
-
 /// This code is adapted from [`flowistry::cached::Cache`] but with a recursion
 /// breaking mechanism. This alters the [`Self::get`] method signature to return
 /// an [`Option`] of a reference. In particular the method will return [`None`]
@@ -788,31 +787,31 @@ pub struct RecursionBreakingCache<In, Out>(RefCell<HashMap<In, Option<Pin<Box<Ou
 
 impl<In, Out> RecursionBreakingCache<In, Out>
 where
-  In: Hash + Eq + Clone,
-  Out: Unpin,
+    In: Hash + Eq + Clone,
+    Out: Unpin,
 {
     /// Get or compute the value for this key. Returns `None` if called recursively.
-  pub fn get<'a>(&'a self, key: In, compute: impl FnOnce(In) -> Out) -> Option<&'a Out> {
-    if !self.0.borrow().contains_key(&key) {
-        self.0.borrow_mut().insert(key.clone(), None);
-      let out = Pin::new(Box::new(compute(key.clone())));
-      self.0.borrow_mut().insert(key.clone(), Some(out));
+    pub fn get<'a>(&'a self, key: In, compute: impl FnOnce(In) -> Out) -> Option<&'a Out> {
+        if !self.0.borrow().contains_key(&key) {
+            self.0.borrow_mut().insert(key.clone(), None);
+            let out = Pin::new(Box::new(compute(key.clone())));
+            self.0.borrow_mut().insert(key.clone(), Some(out));
+        }
+
+        let cache = self.0.borrow();
+        // Important here to first `unwrap` the `Option` created by `get`, then
+        // propagate the potential option stored in the map.
+        let entry = cache.get(&key).unwrap().as_ref()?;
+
+        // SAFETY: because the entry is pinned, it cannot move and this pointer will
+        // only be invalidated if Cache is dropped. The returned reference has a lifetime
+        // equal to Cache, so Cache cannot be dropped before this reference goes out of scope.
+        Some(unsafe { std::mem::transmute::<&'_ Out, &'a Out>(&**entry) })
     }
-
-    let cache = self.0.borrow();
-    // Important here to first `unwrap` the `Option` created by `get`, then
-    // propagate the potential option stored in the map.
-    let entry = cache.get(&key).unwrap().as_ref()?;
-
-    // SAFETY: because the entry is pinned, it cannot move and this pointer will
-    // only be invalidated if Cache is dropped. The returned reference has a lifetime
-    // equal to Cache, so Cache cannot be dropped before this reference goes out of scope.
-    Some(unsafe { std::mem::transmute::<&'_ Out, &'a Out>(&**entry) })
-  }
 }
 
 impl<In, Out> Default for RecursionBreakingCache<In, Out> {
-  fn default() -> Self {
-    Self(RefCell::new(HashMap::default()))
-  }
+    fn default() -> Self {
+        Self(RefCell::new(HashMap::default()))
+    }
 }
