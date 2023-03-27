@@ -356,20 +356,16 @@ pub struct BodyIdProxy2(#[serde(with = "BodyIdProxy")] pub hir::BodyId);
 ///
 /// For information on the meaning of this struct see [`GlobalLocation`]
 #[derive(Deserialize, Serialize, PartialEq, Eq, Hash)]
-pub struct RawGlobalLocation(Box<GlobalLocationS<RawGlobalLocation>>);
+pub struct RawGlobalLocation(Vec<GlobalLocationS>);
 
 impl<'g> From<&'_ GlobalLocation<'g>> for RawGlobalLocation {
     fn from(other: &GlobalLocation<'g>) -> Self {
-        RawGlobalLocation(Box::new(GlobalLocationS {
-            function: other.outermost_function(),
-            next: other.next().map(|o| o.into()),
-            location: other.outermost_location(),
-        }))
+        RawGlobalLocation(other.to_owned())
     }
 }
 
 impl IsGlobalLocation for RawGlobalLocation {
-    fn as_global_location_s(&self) -> &GlobalLocationS<RawGlobalLocation> {
+    fn as_slice(& self) -> & [GlobalLocationS] {
         &self.0
     }
 }

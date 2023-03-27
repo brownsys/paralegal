@@ -11,7 +11,7 @@
 use flowistry::indexed::IndexedDomain;
 
 use crate::{
-    ir::{CallOnlyFlow, GlobalLocation, IsGlobalLocation},
+    ir::{CallOnlyFlow, GlobalLocation, IsGlobalLocation, GlobalLocationS},
     rust::{
         mir,
         TyCtxt,
@@ -71,7 +71,7 @@ pub mod call_only_flow_dot {
     use std::collections::HashSet;
 
     use crate::{
-        ir::{CallOnlyFlow, GlobalLocation, IsGlobalLocation},
+        ir::{CallOnlyFlow, GlobalLocation, IsGlobalLocation, GlobalLocationS},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
         utils::{AsFnAndArgs, LocationExt},
@@ -186,8 +186,8 @@ pub mod call_only_flow_dot {
 
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
             use std::fmt::Write;
-            let (loc, body_id) = if let Some(n) = n {
-                n.innermost_location_and_function()
+            let GlobalLocationS { location: loc, function: body_id} = if let Some(n) = n {
+                n.innermost()
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
@@ -309,8 +309,8 @@ pub mod call_only_flow_dot {
 }
 
 impl<'g> GlobalLocation<'g> {
-    pub fn iter(self) -> impl Iterator<Item = GlobalLocation<'g>> {
-        std::iter::successors(Some(self), |l| l.next().cloned())
+    pub fn iter(&self) -> impl Iterator<Item = GlobalLocationS> + '_ {
+        self.as_slice().iter().copied()
     }
 }
 
@@ -320,7 +320,7 @@ fn format_global_location<T: IsGlobalLocation>(
     t: &T,
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result {
-    let mut v = std::iter::successors(Some(t), |l| l.next()).collect::<Vec<_>>();
+    let mut v = t.as_slice().to_vec();
     v.reverse();
     let mut is_first = true;
     while let Some(next) = v.pop() {
@@ -332,8 +332,8 @@ fn format_global_location<T: IsGlobalLocation>(
         write!(
             f,
             "{:?}[{}]",
-            next.outermost_location().block,
-            next.outermost_location().statement_index
+            next.location.block,
+            next.location.statement_index
         )?;
     }
     Ok(())
@@ -379,7 +379,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                         .flat_map(|s| s.iter().cloned()),
                 )
             })
-            .map(|l| l.innermost_location_and_function().1)
+            .map(|l| l.innermost_function())
             .collect::<HashSet<crate::rust::hir::BodyId>>()
             .into_iter()
             .map(|bid| {

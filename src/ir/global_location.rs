@@ -80,6 +80,7 @@
 //! serializable version is an owned `Box` and as such would be moved with these
 //! function calls.
 
+
 use crate::desc::{CallSite, DataSource, Identifier};
 use crate::rust::rustc_arena;
 use crate::rust::*;
@@ -92,26 +93,25 @@ use rustc_data_structures::{intern::Interned, sharded::ShardedHashMap};
 ///
 /// To construct these values use [`GLI::globalize_location`] and
 /// [`GLI::global_location_from_relative`].
+/// 
+/// INVARIANT: self.0.len() > 0
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
-pub struct GlobalLocation<'g>(Interned<'g, GlobalLocationS<GlobalLocation<'g>>>);
+pub struct GlobalLocation<'g>(Interned<'g, Vec<GlobalLocationS>>);
+
 
 impl<'tcx> std::cmp::PartialOrd for GlobalLocation<'tcx> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        use std::cmp::Ordering;
-        if self.outermost_function() != other.outermost_function() {
-            return self.outermost_function().hir_id.partial_cmp(&other.outermost_function().hir_id);
+
+        for (slf, othr) in self.as_slice().iter().zip(other.as_slice().iter()) {
+            if slf.function != othr.function {
+                return slf.function.hir_id.partial_cmp(&othr.function.hir_id);
+            }
+            if slf.location == othr.location {
+                return slf.location.partial_cmp(&othr.location);
+            }
         }
 
-        if self.outermost_location() == other.outermost_location() {
-            match (self.next(), other.next()) {
-                (Some(my_next), Some(other_next)) => my_next.partial_cmp(other_next),
-                (None, None) => Some(Ordering::Equal),
-                (None, _) => Some(Ordering::Less),
-                _ => Some(Ordering::Greater),
-            }
-        } else {
-            self.outermost_location().partial_cmp(&other.outermost_location())
-        }
+        self.as_slice().len().partial_cmp(&other.as_slice().len())
     }
 }
 
@@ -122,57 +122,36 @@ impl<'tcx> std::cmp::Ord for GlobalLocation<'tcx> {
 }
 
 pub trait IsGlobalLocation: Sized {
-    /// Every kind of a global location works as a newtype wrapper that feeds
-    /// itself as the generic argument to `GlobalLocationS`, the actual payload,
-    /// thus closing the type-level recursion. This method takes away that
-    /// wrapper layer and lets us operate on the payload.
-    fn as_global_location_s(&self) -> &GlobalLocationS<Self>;
+    fn outermost(&self) -> GlobalLocationS {
+        *self.as_slice().first().unwrap()
+    }
     /// Get the `function` field of the underlying location.
     fn outermost_function(&self) -> BodyId {
-        self.as_global_location_s().function
+        self.outermost().function
     }
     /// Get the `location` field of the underlying location.
     fn outermost_location(&self) -> mir::Location {
-        self.as_global_location_s().location
+        self.outermost().location
     }
     /// Get the `next` field of the underlying location.
-    fn next(&self) -> Option<&Self> {
-        self.as_global_location_s().next.as_ref()
-    }
-    /// Return the second-to-last location in the chain of `next()` locations.
-    /// Returns `None` if this location has no `next()` location.
-    fn parent(&self) -> Option<&Self> {
-        if let Some(n) = self.next() {
-            if n.next().is_none() {
-                Some(self)
-            } else {
-                n.parent()
-            }
-        } else {
-            None
-        }
-    }
-    /// Get the `location` and `function` field of the last location in the
-    /// chain of `next()` locations.
-    fn innermost_location_and_function(&self) -> (mir::Location, BodyId) {
-        self.next().map_or_else(
-            || (self.outermost_location(), self.outermost_function()),
-            |other| other.innermost_location_and_function(),
-        )
+    fn as_slice(&self) -> & [GlobalLocationS];
+
+    fn innermost(&self) -> GlobalLocationS {
+        *self.as_slice().last().unwrap()
     }
 
     fn innermost_location(&self) -> mir::Location {
-        self.innermost_location_and_function().0
+        self.innermost().location
     }
 
     fn innermost_function(&self) -> BodyId {
-        self.innermost_location_and_function().1
+        self.innermost().function
     }
 
     /// It this location is top-level (i.e. `self.next() == None`), then return
     /// the `location` field.
     fn as_local(self) -> Option<mir::Location> {
-        if self.next().is_none() {
+        if self.is_at_root() {
             Some(self.outermost_location())
         } else {
             None
@@ -181,7 +160,7 @@ pub trait IsGlobalLocation: Sized {
     /// This location is at the top level (e.g. not-nested e.g. `self.next() ==
     /// None`).
     fn is_at_root(&self) -> bool {
-        self.next().is_none()
+        self.as_slice().len() == 1
     }
 
     /// Create a Forge friendly descriptor for this location as a source of data
@@ -191,7 +170,7 @@ pub trait IsGlobalLocation: Sized {
         tcx: TyCtxt,
         is_real_location: F,
     ) -> DataSource {
-        let (dep_loc, dep_fun) = self.innermost_location_and_function();
+        let GlobalLocationS { location: dep_loc, function: dep_fun } = self.innermost();
         if self.is_at_root() && !is_real_location(dep_loc) {
             DataSource::Argument(self.outermost_location().statement_index - 1)
         } else {
@@ -212,11 +191,33 @@ pub trait IsGlobalLocation: Sized {
             })
         }
     }
+
+    fn relative_to(&self, other: &Self) -> RelativeTo<&[GlobalLocationS]> {
+        use std::cmp::Ordering;
+        let elements_match = self.as_slice().iter().zip(other.as_slice().iter()).all(|(a, b)| a == b);
+
+        if elements_match {
+            match self.as_slice().len().cmp(&other.as_slice().len()) {
+                Ordering::Equal => RelativeTo::Same,
+                Ordering::Greater => RelativeTo::Nested(&self.as_slice()[other.as_slice().len()..]),
+                Ordering::Less => RelativeTo::Parent,
+            }
+        } else {
+            RelativeTo::Disjoint
+        }
+    }
+}
+
+pub enum RelativeTo<T> {
+    Same,
+    Disjoint, 
+    Nested(T),
+    Parent,
 }
 
 impl<'g> IsGlobalLocation for GlobalLocation<'g> {
-    fn as_global_location_s(&self) -> &GlobalLocationS<Self> {
-        self.0 .0
+    fn as_slice(&self) -> & [GlobalLocationS] {
+        self.0.as_slice()
     }
 }
 
@@ -226,15 +227,14 @@ impl<'g> GlobalLocation<'g> {
     /// locations `g1` and `g2`, `g1.stable_id() == g2.stable_id()` iff `g1 ==
     /// g2`.
     pub fn stable_id(self) -> usize {
-        self.0 .0 as *const GlobalLocationS<GlobalLocation<'g>> as usize
+        self.0 .0 as *const Vec<GlobalLocationS> as usize
+    }
+
+    pub fn to_owned(&self) -> Vec<GlobalLocationS> {
+        self.0.0.clone()
     }
 }
 
-impl<'g> std::borrow::Borrow<GlobalLocationS<GlobalLocation<'g>>> for GlobalLocation<'g> {
-    fn borrow(&self) -> &GlobalLocationS<GlobalLocation<'g>> {
-        self.0 .0
-    }
-}
 
 /// The payload type of a global location. You will probably want to operate on
 /// the interned wrapper type [`GlobalLocation`], which gives access to the same
@@ -256,19 +256,14 @@ impl<'g> std::borrow::Borrow<GlobalLocationS<GlobalLocation<'g>>> for GlobalLoca
 /// operate directly on the wrapper types and also na way that works with any
 /// global location type (both [`GlobalLocation`] as well as the serializable
 /// [`crate::serializers::RawGlobalLocation`])
-#[derive(PartialEq, Eq, Hash, Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct GlobalLocationS<Inner> {
+#[derive(PartialEq, Eq, Hash, Debug, Clone, serde::Deserialize, serde::Serialize, Copy)]
+pub struct GlobalLocationS {
     /// The id of the body in which this location is located.
     #[serde(with = "crate::serializers::BodyIdProxy")]
     pub function: BodyId,
     /// The location itself
     #[serde(with = "crate::serializers::ser_loc")]
     pub location: mir::Location,
-    /// If `next.is_some()` then this contains the next link in the call chain.
-    /// This means that [`self.location`] refers to a [`mir::Terminator`] and that
-    /// this terminator is [`mir::TerminatorKind::Call`]. The next link in the
-    /// chain (the payload of the `Some`) is a location in called function.
-    pub next: Option<Inner>,
 }
 
 /// The interner for `GlobalLocation`s. You should never have to use this
@@ -288,12 +283,12 @@ pub struct GlobalLocationS<Inner> {
 /// `'g`*, but have a different pointer value and thus do not compare equal with
 /// later interned locations or have the same hash.
 pub struct GlobalLocationInterner<'g> {
-    arena: &'g rustc_arena::TypedArena<GlobalLocationS<GlobalLocation<'g>>>,
-    known_locations: ShardedHashMap<&'g GlobalLocationS<GlobalLocation<'g>>, ()>,
+    arena: &'g rustc_arena::TypedArena<Vec<GlobalLocationS>>,
+    known_locations: ShardedHashMap<&'g Vec<GlobalLocationS>, ()>,
 }
 
 impl<'g> GlobalLocationInterner<'g> {
-    fn intern_location(&'g self, loc: GlobalLocationS<GlobalLocation<'g>>) -> GlobalLocation<'g> {
+    fn intern_location(&'g self, loc: Vec<GlobalLocationS>) -> GlobalLocation<'g> {
         GlobalLocation(Interned::new_unchecked(
             self.known_locations
                 .intern(loc, |loc| self.arena.alloc(loc)),
@@ -302,7 +297,7 @@ impl<'g> GlobalLocationInterner<'g> {
     /// Construct a new interner.
     ///
     /// We have to take the arena by reference because the lifetime of the reference ensures it outlives the interner and is not mutated altered.
-    pub fn new(arena: &'g rustc_arena::TypedArena<GlobalLocationS<GlobalLocation<'g>>>) -> Self {
+    pub fn new(arena: &'g rustc_arena::TypedArena<Vec<GlobalLocationS>>) -> Self {
         GlobalLocationInterner {
             arena,
             known_locations: ShardedHashMap::default(),
@@ -327,11 +322,11 @@ impl<'g> GLI<'g> {
         location: mir::Location,
         next: Option<GlobalLocation<'g>>,
     ) -> GlobalLocation<'g> {
-        self.0.intern_location(GlobalLocationS {
-            function,
-            location,
-            next,
-        })
+        let mut v = vec![GlobalLocationS { function, location }];
+        if let Some(others) = next {
+            v.extend_from_slice(others.as_slice())
+        }
+        self.0.intern_location(v)
     }
     /// Create a top-level [`GlobalLocation`] (e.g. a non-nested call)
     ///

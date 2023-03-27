@@ -5,7 +5,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 use dfpp::{
     desc::{DataSink, Identifier, ProgramDescription},
-    ir::IsGlobalLocation,
+    ir::{IsGlobalLocation, GlobalLocationS},
     serializers::{Bodies, RawGlobalLocation},
     HashSet, Symbol,
 };
@@ -214,13 +214,13 @@ impl GetCallSites for RawGlobalLocation {
     }
 }
 
-impl GetCallSites for (mir::Location, hir::BodyId) {
+impl GetCallSites for GlobalLocationS {
     fn get_call_sites<'a>(
         &'a self,
         g: &'a SerializableCallOnlyFlow,
     ) -> HashSet<&'a RawGlobalLocation> {
         g.all_locations_iter()
-            .filter(move |l| l.innermost_location_and_function() == *self)
+            .filter(move |l| l.innermost() == *self)
             .collect()
     }
 }
@@ -235,9 +235,9 @@ impl MatchCallSite for RawGlobalLocation {
     }
 }
 
-impl MatchCallSite for (mir::Location, hir::BodyId) {
+impl MatchCallSite for GlobalLocationS {
     fn match_(&self, call_site: &RawGlobalLocation) -> bool {
-        *self == call_site.innermost_location_and_function()
+        *self == call_site.innermost()
     }
 }
 
@@ -358,7 +358,7 @@ impl G {
     }
 
     /// Return all call sites for functions with names matching `pattern`.
-    pub fn function_calls(&self, pattern: &str) -> HashSet<(mir::Location, hir::BodyId)> {
+    pub fn function_calls(&self, pattern: &str) -> HashSet<GlobalLocationS> {
         self.body
             .0
             .iter()
@@ -367,13 +367,13 @@ impl G {
                      .0
                     .iter()
                     .filter(|s| s.1.contains(pattern))
-                    .map(|s| (s.0, *bid))
+                    .map(|s| GlobalLocationS { function: *bid, location: s.0 })
             })
             .collect()
     }
 
     /// Like `function_calls` but requires that only one such call is found.
-    pub fn function_call(&self, pattern: &str) -> (mir::Location, hir::BodyId) {
+    pub fn function_call(&self, pattern: &str) -> GlobalLocationS {
         let v = self.function_calls(pattern);
         assert!(
             v.len() == 1,

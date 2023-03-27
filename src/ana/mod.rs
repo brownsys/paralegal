@@ -125,7 +125,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             // It's important to look at the innermost location. It's easy to
             // use `location()` and `function()` on a global location instead
             // but that is the outermost call site, not the location for the actual call.
-            let (inner_location, inner_body_id) = loc.innermost_location_and_function();
+            let GlobalLocationS {location: inner_location, function: inner_body_id } = loc.innermost();
             // We need to make sure to fetch the body again here, because we
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.
