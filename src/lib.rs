@@ -85,7 +85,7 @@ use frg::ToForge;
 pub struct DfppPlugin;
 
 /// Top level argument structure. This is only used for parsing. The actual
-/// configuration of dfpp [`Args`] which is stored in `args`. `cargo_args` is
+/// configuration of dfpp [`struct@Args`] which is stored in `args`. `cargo_args` is
 /// forwarded and `_progname` is only to comply with the calling convention of
 /// `cargo` (it passes the program name as first argument).
 #[derive(clap::Parser)]
