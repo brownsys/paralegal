@@ -33,7 +33,7 @@ use crate::{
     rust::hir::def_id::{DefId, LocalDefId},
     rust::rustc_index::vec::IndexVec,
     ty,
-    utils::{body_name_pls, AsFnAndArgs, DisplayViaDebug},
+    utils::{body_name_pls, AsFnAndArgs, DisplayViaDebug, RecursionBreakingCache},
     Either, HashMap, HashSet, TyCtxt,
 };
 
@@ -258,8 +258,10 @@ impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
 pub struct Inliner<'tcx, 'g, 's> {
     /// Memoized graphs created from single-procedure analyses
     base_memo: Cache<BodyId, ProcedureGraph>,
-    /// Memoized graphs that have all their callees inlined
-    inline_memo: Cache<BodyId, InlinedGraph<'g>>,
+    /// Memoized graphs that have all their callees inlined. Unlike `base_memo`
+    /// this has to be recursion breaking, since a function may call itself
+    /// (possibly transitively).
+    inline_memo: RecursionBreakingCache<BodyId, InlinedGraph<'g>>,
     /// Selects which callees to inline.
     recurse_selector: &'s dyn InlineSelector,
     tcx: TyCtxt<'tcx>,
@@ -338,12 +340,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     }
 
     /// Compute an inlined graph for this `body_id` (memoized)
-    pub fn get_inlined_graph(&self, body_id: BodyId) -> &InlinedGraph<'g> {
+    pub fn get_inlined_graph(&self, body_id: BodyId) -> Option<&InlinedGraph<'g>> {
         self.inline_memo.get(body_id, |bid| self.inline_graph(bid))
     }
 
     /// Convenience wrapper around [`Self::get_inlined_graph`]
-    fn get_inlined_graph_by_def_id(&self, def_id: LocalDefId) -> &InlinedGraph<'g> {
+    fn get_inlined_graph_by_def_id(&self, def_id: LocalDefId) -> Option<&InlinedGraph<'g>> {
         let hir = self.tcx.hir();
         self.get_inlined_graph(hir.body_owned_by(hir.local_def_id_to_hir_id(def_id)))
     }
@@ -477,6 +479,13 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             })
             .collect::<Vec<_>>();
         for (idx, def_id, root_location, is_async_closure) in targets {
+            let grw_to_inline = if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id) {
+                callee_graph
+            } else {
+                // Breaking recursion. This can only happen if we are trying to
+                // inline ourself, so we simply skip.
+                continue;
+            };
             let num_args = if is_async_closure {
                 1 as usize
             } else {
@@ -491,7 +500,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 argument_map.get_mut(&arg_num).unwrap().push(e.source());
             }
 
-            let grw_to_inline = self.get_inlined_graph_by_def_id(def_id);
             assert!(root_location.is_at_root());
             let gli_here = self.gli.at(root_location.location(), body_id);
             gwr.equations
