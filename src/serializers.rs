@@ -365,7 +365,7 @@ impl<'g> From<&'_ GlobalLocation<'g>> for RawGlobalLocation {
 }
 
 impl IsGlobalLocation for RawGlobalLocation {
-    fn as_slice(& self) -> & [GlobalLocationS] {
+    fn as_slice(&self) -> &[GlobalLocationS] {
         &self.0
     }
 }

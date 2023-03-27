@@ -19,11 +19,14 @@ use petgraph::{
 };
 
 use crate::{
-    ana::algebra::{self, Term},
+    ana::{
+        algebra::{self, Term},
+        df,
+    },
     hir::BodyId,
     ir::{
         flows::CallOnlyFlow,
-        global_location::IsGlobalLocation,
+        global_location::{self, IsGlobalLocation},
         regal::{self, SimpleLocation},
         GliAt, GlobalLocation, GLI,
     },
@@ -82,14 +85,19 @@ impl<C> Node<C> {
     }
 }
 
-#[derive(Clone)]
-pub struct Edge {
-    target_index: ArgNum,
+#[derive(Clone, Eq, PartialEq, Hash, Copy)]
+pub enum Edge {
+    Data(ArgNum),
+    Control,
 }
 
 impl std::fmt::Display for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.target_index)
+        if let Edge::Data(idx) = self {
+            write!(f, "{}", idx)
+        } else {
+            f.write_str("ctrl")
+        }
     }
 }
 
@@ -142,7 +150,11 @@ impl<'g> InlinedGraph<'g> {
         );
         self.graph.retain_edges(|graph, idx| {
             let (from, to) = graph.edge_endpoints(idx).unwrap();
-            let Edge { target_index } = graph.edge_weight(idx).unwrap();
+            let target_index = if let Edge::Data(target_index) = graph.edge_weight(idx).unwrap() {
+                target_index
+            } else {
+                return true;
+            };
             let to_weight = graph.node_weight(to).unwrap();
             let to_target = to_weight.map_location(|&(location, _did)| regal::RelativePlace {
                 location,
@@ -228,25 +240,28 @@ impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
                         Target::Call(c) => node_map[&c],
                         Target::Argument(a) => arg_map[*a],
                     };
-                    g.add_edge(
-                        from,
-                        target_id,
-                        Edge {
-                            target_index: ArgNum::from_usize(idx),
-                        },
-                    );
+                    g.add_edge(from, target_id, idx);
                 }
             };
 
         for (n, call) in body.calls.iter() {
             let new_id = node_map[n];
             for (idx, deps) in call.arguments.iter().enumerate() {
-                add_dep_edges(new_id, idx, deps)
+                add_dep_edges(new_id, Edge::Data(ArgNum::from_usize(idx)), deps)
             }
+            add_dep_edges(new_id, Edge::Control, &call.ctrl_deps);
         }
-        add_dep_edges(return_node, 0, &body.return_deps);
+        add_dep_edges(
+            return_node,
+            Edge::Data(ArgNum::from_usize(0)),
+            &body.return_deps,
+        );
         for (idx, deps) in body.return_arg_deps.iter().enumerate() {
-            add_dep_edges(arg_map[ArgNum::from_usize(idx)], 0, deps);
+            add_dep_edges(
+                arg_map[ArgNum::from_usize(idx)],
+                Edge::Data(ArgNum::from_usize(0)),
+                deps,
+            );
         }
 
         gwr
@@ -334,7 +349,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// [`ProcedureGraph::from`]
     fn get_procedure_graph(&self, body_id: BodyId) -> &ProcedureGraph {
         self.base_memo.get(body_id, |bid| {
-            regal::compute_from_body_id(bid, self.tcx, self.gli).into()
+            let regal_body = regal::compute_from_body_id(bid, self.tcx, self.gli);
+            regal_body.into()
         })
     }
 
@@ -389,7 +405,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
         let proc_g = self.get_procedure_graph(body_id);
         let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
-        let mut gwr = to_global_graph(proc_g, self.gli, body_id);
+        let mut gwr = to_global_graph(&proc_g, self.gli, body_id);
 
         dump_dot_graph(
             outfile_pls(format!(
@@ -492,11 +508,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 self.tcx.fn_sig(def_id).skip_binder().inputs().len()
             };
             let mut argument_map: HashMap<_, _> = (0..num_args)
-                .map(|a| (ArgNum::from_usize(a), vec![]))
+                .map(|a| (Edge::Data(ArgNum::from_usize(a)), vec![]))
+                .chain([(Edge::Control, vec![])])
                 .collect();
 
             for e in g.edges_directed(idx, pg::Incoming) {
-                let arg_num = e.weight().target_index;
+                let arg_num = e.weight();
                 argument_map.get_mut(&arg_num).unwrap().push(e.source());
             }
 
@@ -526,7 +543,11 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     Node::Return => unreachable!(),
                     Node::Argument(a) => {
                         debug!("  found argument");
-                        for nidx in argument_map.get(a).into_iter().flat_map(|s| s.into_iter()) {
+                        for nidx in argument_map
+                            .get(&Edge::Data(*a))
+                            .into_iter()
+                            .flat_map(|s| s.into_iter())
+                        {
                             debug!("  adding edge to {}", g.node_weight(*nidx).unwrap());
                             g.add_edge(*nidx, target, weight.clone());
                         }
@@ -592,54 +613,64 @@ fn dump_dot_graph<L: std::fmt::Display, W: std::io::Write>(
     )
 }
 
-/// Turn the output of the inliner into the format the rest of the dfpp pipeline
-/// understands.
-pub fn to_call_only_flow<'g, A: FnMut(ArgNum) -> GlobalLocation<'g>>(
-    InlinedGraph { graph: g, .. }: &InlinedGraph<'g>,
-    mut mk_arg: A,
-) -> crate::ir::CallOnlyFlow<GlobalLocation<'g>> {
-    let mut location_dependencies = HashMap::new();
-    let mut return_dependencies = HashSet::new();
+impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
+    /// Turn the output of the inliner into the format the rest of the dfpp pipeline
+    /// understands.
+    pub fn to_call_only_flow<A: FnMut(ArgNum) -> GlobalLocation<'g>>(
+        &self,
+        InlinedGraph { graph: g, .. }: &InlinedGraph<'g>,
+        mut mk_arg: A,
+    ) -> crate::ir::CallOnlyFlow<GlobalLocation<'g>> {
+        let mut location_dependencies = HashMap::new();
+        let mut return_dependencies = HashSet::new();
 
-    let mut get_dependencies = |n| {
-        let mut input_deps = vec![];
-        for e in g.edges_directed(n, pg::Incoming) {
-            let aidx = e.weight().target_index.as_usize();
-            if aidx >= input_deps.len() {
-                input_deps.resize_with(aidx + 1, HashSet::new);
+        let mut get_dependencies = |n| {
+            let mut input_deps = vec![];
+            let mut ctrl_deps = HashSet::new();
+            for e in g.edges_directed(n, pg::Incoming) {
+                let target = if let Edge::Data(a) = e.weight() {
+                    let aidx = a.as_usize();
+                    if aidx >= input_deps.len() {
+                        input_deps.resize_with(aidx + 1, HashSet::new);
+                    }
+                    &mut input_deps[aidx]
+                } else {
+                    &mut ctrl_deps
+                };
+
+                target.insert(match g.node_weight(e.source()).unwrap() {
+                    Node::Call(c) => c.0,
+                    Node::Return => unreachable!(),
+                    Node::Argument(a) => mk_arg(*a),
+                });
             }
-            input_deps[aidx].insert(match g.node_weight(e.source()).unwrap() {
-                Node::Call(c) => c.0,
-                Node::Return => unreachable!(),
-                Node::Argument(a) => mk_arg(*a),
-            });
-        }
-        crate::ir::CallDeps {
-            input_deps,
-            ctrl_deps: HashSet::new(),
-        }
-    };
+            crate::ir::CallDeps {
+                input_deps,
+                ctrl_deps,
+            }
+        };
 
-    for (idx, n) in g.node_references() {
-        match n {
-            Node::Argument(_) => (),
-            Node::Return => {
-                for d in get_dependencies(idx)
-                    .input_deps
-                    .iter()
-                    .flat_map(HashSet::iter)
-                {
-                    return_dependencies.insert(*d);
+        for (idx, n) in g.node_references() {
+            match n {
+                Node::Argument(_) => (),
+                Node::Return => {
+                    for d in get_dependencies(idx)
+                        .input_deps
+                        .iter()
+                        .flat_map(HashSet::iter)
+                    {
+                        return_dependencies.insert(*d);
+                    }
                 }
+                Node::Call((loc, _)) => assert!(location_dependencies
+                    .insert(*loc, get_dependencies(idx))
+                    .is_none()),
             }
-            Node::Call((loc, _)) => assert!(location_dependencies
-                .insert(*loc, get_dependencies(idx))
-                .is_none()),
         }
-    }
 
-    CallOnlyFlow {
-        location_dependencies,
-        return_dependencies,
+        CallOnlyFlow {
+            location_dependencies,
+            return_dependencies,
+        }
     }
 }

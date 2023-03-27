@@ -80,7 +80,6 @@
 //! serializable version is an owned `Box` and as such would be moved with these
 //! function calls.
 
-
 use crate::desc::{CallSite, DataSource, Identifier};
 use crate::rust::rustc_arena;
 use crate::rust::*;
@@ -93,15 +92,13 @@ use rustc_data_structures::{intern::Interned, sharded::ShardedHashMap};
 ///
 /// To construct these values use [`GLI::globalize_location`] and
 /// [`GLI::global_location_from_relative`].
-/// 
+///
 /// INVARIANT: self.0.len() > 0
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct GlobalLocation<'g>(Interned<'g, Vec<GlobalLocationS>>);
 
-
 impl<'tcx> std::cmp::PartialOrd for GlobalLocation<'tcx> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-
         for (slf, othr) in self.as_slice().iter().zip(other.as_slice().iter()) {
             if slf.function != othr.function {
                 return slf.function.hir_id.partial_cmp(&othr.function.hir_id);
@@ -134,7 +131,7 @@ pub trait IsGlobalLocation: Sized {
         self.outermost().location
     }
     /// Get the `next` field of the underlying location.
-    fn as_slice(&self) -> & [GlobalLocationS];
+    fn as_slice(&self) -> &[GlobalLocationS];
 
     fn innermost(&self) -> GlobalLocationS {
         *self.as_slice().last().unwrap()
@@ -170,7 +167,10 @@ pub trait IsGlobalLocation: Sized {
         tcx: TyCtxt,
         is_real_location: F,
     ) -> DataSource {
-        let GlobalLocationS { location: dep_loc, function: dep_fun } = self.innermost();
+        let GlobalLocationS {
+            location: dep_loc,
+            function: dep_fun,
+        } = self.innermost();
         if self.is_at_root() && !is_real_location(dep_loc) {
             DataSource::Argument(self.outermost_location().statement_index - 1)
         } else {
@@ -191,32 +191,15 @@ pub trait IsGlobalLocation: Sized {
             })
         }
     }
-
-    fn relative_to(&self, other: &Self) -> RelativeTo<&[GlobalLocationS]> {
-        use std::cmp::Ordering;
-        let elements_match = self.as_slice().iter().zip(other.as_slice().iter()).all(|(a, b)| a == b);
-
-        if elements_match {
-            match self.as_slice().len().cmp(&other.as_slice().len()) {
-                Ordering::Equal => RelativeTo::Same,
-                Ordering::Greater => RelativeTo::Nested(&self.as_slice()[other.as_slice().len()..]),
-                Ordering::Less => RelativeTo::Parent,
-            }
-        } else {
-            RelativeTo::Disjoint
-        }
-    }
 }
 
-pub enum RelativeTo<T> {
-    Same,
-    Disjoint, 
-    Nested(T),
-    Parent,
+pub fn iter_parents<L: IsGlobalLocation>(l: &L) -> impl Iterator<Item = &[GlobalLocationS]> {
+    let slc = l.as_slice();
+    (1..slc.len()).map(|i| &slc[0..i])
 }
 
 impl<'g> IsGlobalLocation for GlobalLocation<'g> {
-    fn as_slice(&self) -> & [GlobalLocationS] {
+    fn as_slice(&self) -> &[GlobalLocationS] {
         self.0.as_slice()
     }
 }
@@ -231,10 +214,9 @@ impl<'g> GlobalLocation<'g> {
     }
 
     pub fn to_owned(&self) -> Vec<GlobalLocationS> {
-        self.0.0.clone()
+        self.0 .0.clone()
     }
 }
-
 
 /// The payload type of a global location. You will probably want to operate on
 /// the interned wrapper type [`GlobalLocation`], which gives access to the same
@@ -326,6 +308,11 @@ impl<'g> GLI<'g> {
         if let Some(others) = next {
             v.extend_from_slice(others.as_slice())
         }
+        self.0.intern_location(v)
+    }
+
+    pub fn from_vec(self, v: Vec<GlobalLocationS>) -> GlobalLocation<'g> {
+        assert!(!v.is_empty());
         self.0.intern_location(v)
     }
     /// Create a top-level [`GlobalLocation`] (e.g. a non-nested call)

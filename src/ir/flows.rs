@@ -1,8 +1,6 @@
 use crate::{HashMap, HashSet};
 
-
 use serde::{Deserialize, Serialize};
-
 
 /// Coarse grained, [`Place`](mir::Place) abstracted version of a
 /// [`GlobalFlowGraph`].

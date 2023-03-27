@@ -16,7 +16,7 @@ use crate::{
         rustc_hir::{def_id::DefId, BodyId},
         rustc_index::vec::IndexVec,
     },
-    utils::{body_name_pls, outfile_pls, AsFnAndArgs, DisplayViaDebug, LocationExt},
+    utils::{body_name_pls, outfile_pls, places_read, AsFnAndArgs, DisplayViaDebug, LocationExt},
     Either, HashMap, HashSet, TyCtxt,
 };
 
@@ -71,6 +71,7 @@ impl<L: Display> Display for Target<L> {
 pub struct Call<D> {
     pub function: DefId,
     pub arguments: IndexVec<ArgumentIndex, D>,
+    pub ctrl_deps: D,
 }
 
 struct NeverInline;
@@ -174,7 +175,6 @@ pub struct Body<L> {
     pub return_deps: Dependencies<L>,
     pub return_arg_deps: Vec<Dependencies<L>>,
     pub equations: Vec<algebra::Equality<SimpleLocation<RelativePlace<L>>, DisplayViaDebug<Field>>>,
-    pub control_dependencies: df::ControlDependencies,
 }
 
 impl<L: Display + Ord> Display for Body<L> {
@@ -216,6 +216,7 @@ impl Body<DisplayViaDebug<Location>> {
         body_with_facts: &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
     ) -> Self {
         let body = flow_analysis.analysis.body;
+        let ctrl_ana = &flow_analysis.analysis.control_dependencies;
         let non_transitive_aliases =
             crate::ana::non_transitive_aliases::compute(tcx, def_id, body_with_facts);
         let mut place_table: HashMap<
@@ -321,11 +322,33 @@ impl Body<DisplayViaDebug<Location>> {
                         })
                         .collect(),
                 );
+                let ctrl_deps = ctrl_ana
+                    .dependent_on(bb)
+                    .into_iter()
+                    .flat_map(|s| s.iter())
+                    .flat_map(|block| {
+                        let terminator = body.basic_blocks()[block].terminator();
+                        if let mir::TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
+                            discr.place().map(|discr_place| {
+                                dependencies_for(
+                                    DisplayViaDebug(body.terminator_loc(block)),
+                                    discr_place,
+                                    false,
+                                )
+                            })
+                        } else {
+                            None
+                        }
+                        .into_iter()
+                        .flatten()
+                    })
+                    .collect();
                 Some((
                     bbloc,
                     Call {
                         function,
                         arguments,
+                        ctrl_deps,
                     },
                 ))
             })
@@ -410,7 +433,6 @@ impl Body<DisplayViaDebug<Location>> {
             return_deps,
             return_arg_deps: return_arg_deps.into_iter().map(|(_, s)| s).collect(),
             equations,
-            control_dependencies: flow_analysis.analysis.control_dependencies,
         }
     }
 }

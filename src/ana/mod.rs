@@ -5,8 +5,8 @@
 use std::borrow::Cow;
 
 use crate::{
-    ana::inline::to_call_only_flow, dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*,
-    Either, HashMap, HashSet, Symbol, LogLevelConfig,
+    dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*, Either, HashMap, HashSet,
+    LogLevelConfig, Symbol,
 };
 
 use hir::def_id::DefId;
@@ -79,20 +79,21 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
         debug!("Handling target {}", target.name());
 
-        let flow = to_call_only_flow(inliner.get_inlined_graph(target.body_id).unwrap(), |a| {
-            gli.globalize_location(
-                Location {
-                    block: mir::BasicBlock::from_usize(
-                        controller_body_with_facts
-                            .simplified_body()
-                            .basic_blocks()
-                            .len(),
-                    ),
-                    statement_index: a.as_usize() + 1,
-                },
-                target.body_id,
-            )
-        });
+        let flow =
+            inliner.to_call_only_flow(inliner.get_inlined_graph(target.body_id).unwrap(), |a| {
+                gli.globalize_location(
+                    Location {
+                        block: mir::BasicBlock::from_usize(
+                            controller_body_with_facts
+                                .simplified_body()
+                                .basic_blocks()
+                                .len(),
+                        ),
+                        statement_index: a.as_usize() + 1,
+                    },
+                    target.body_id,
+                )
+            });
 
         // Register annotations on argument types for this controller.
         let controller_body = &controller_body_with_facts.simplified_body();
@@ -125,7 +126,10 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             // It's important to look at the innermost location. It's easy to
             // use `location()` and `function()` on a global location instead
             // but that is the outermost call site, not the location for the actual call.
-            let GlobalLocationS {location: inner_location, function: inner_body_id } = loc.innermost();
+            let GlobalLocationS {
+                location: inner_location,
+                function: inner_body_id,
+            } = loc.innermost();
             // We need to make sure to fetch the body again here, because we
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.

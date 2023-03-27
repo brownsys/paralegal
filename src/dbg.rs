@@ -11,11 +11,8 @@
 use flowistry::indexed::IndexedDomain;
 
 use crate::{
-    ir::{CallOnlyFlow, GlobalLocation, IsGlobalLocation, GlobalLocationS},
-    rust::{
-        mir,
-        TyCtxt,
-    },
+    ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
+    rust::{mir, TyCtxt},
     utils::body_name_pls,
     HashMap, HashSet,
 };
@@ -71,7 +68,7 @@ pub mod call_only_flow_dot {
     use std::collections::HashSet;
 
     use crate::{
-        ir::{CallOnlyFlow, GlobalLocation, IsGlobalLocation, GlobalLocationS},
+        ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
         utils::{AsFnAndArgs, LocationExt},
@@ -186,7 +183,10 @@ pub mod call_only_flow_dot {
 
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
             use std::fmt::Write;
-            let GlobalLocationS { location: loc, function: body_id} = if let Some(n) = n {
+            let GlobalLocationS {
+                location: loc,
+                function: body_id,
+            } = if let Some(n) = n {
                 n.innermost()
             } else {
                 return dot::LabelText::LabelStr("return".into());
@@ -332,8 +332,7 @@ fn format_global_location<T: IsGlobalLocation>(
         write!(
             f,
             "{:?}[{}]",
-            next.location.block,
-            next.location.statement_index
+            next.location.block, next.location.statement_index
         )?;
     }
     Ok(())
@@ -344,8 +343,6 @@ impl<'g> std::fmt::Display for GlobalLocation<'g> {
         format_global_location(self, f)
     }
 }
-
-
 
 use crate::serializers::{Bodies, BodyProxy, SerializableCallOnlyFlow};
 

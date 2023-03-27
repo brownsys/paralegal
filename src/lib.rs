@@ -63,9 +63,9 @@ pub use either::Either;
 
 pub use rustc_span::Symbol;
 
-mod args;
 mod ana;
 pub mod ann_parse;
+mod args;
 pub mod dbg;
 pub mod desc;
 mod discover;
@@ -77,7 +77,7 @@ pub mod serializers;
 pub mod utils;
 pub mod consts;
 
-pub use args::{Args, DbgArgs, AnalysisCtrl, ModelCtrl};
+pub use args::{AnalysisCtrl, Args, DbgArgs, ModelCtrl};
 
 use frg::ToForge;
 

@@ -5,7 +5,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 use dfpp::{
     desc::{DataSink, Identifier, ProgramDescription},
-    ir::{IsGlobalLocation, GlobalLocationS},
+    ir::{GlobalLocationS, IsGlobalLocation},
     serializers::{Bodies, RawGlobalLocation},
     HashSet, Symbol,
 };
@@ -367,7 +367,10 @@ impl G {
                      .0
                     .iter()
                     .filter(|s| s.1.contains(pattern))
-                    .map(|s| GlobalLocationS { function: *bid, location: s.0 })
+                    .map(|s| GlobalLocationS {
+                        function: *bid,
+                        location: s.0,
+                    })
             })
             .collect()
     }
