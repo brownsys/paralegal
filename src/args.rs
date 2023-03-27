@@ -1,4 +1,4 @@
-
+//! Command line arguments and parsing.
 
 /// Top level command line arguments
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]

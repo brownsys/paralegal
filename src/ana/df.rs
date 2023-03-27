@@ -322,7 +322,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
             |mutated: Place<'tcx>,
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
-             mutation_status: MutationStatus| {
+             _mutation_status: MutationStatus| {
                 self.transfer_function(state, mutated, inputs, location, true)
             },
         )
@@ -340,7 +340,7 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
             |mutated: Place<'tcx>,
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
-             mutation_status: MutationStatus| {
+             _mutation_status: MutationStatus| {
                 self.transfer_function(
                     state,
                     mutated,
