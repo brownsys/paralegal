@@ -73,6 +73,7 @@ use frg::ToForge;
 pub struct DfppPlugin;
 
 #[derive(clap::Parser)]
+#[clap(version = concat!(crate_version!(), "  (commit # ", env!("COMMIT_HASH"), ")"))]
 struct ArgWrapper {
     /// This argument doesn't do anything, but when cargo invokes `cargo-dfpp`
     /// it always provides "dfpp" as the first argument and since we parse with
