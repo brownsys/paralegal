@@ -3,6 +3,7 @@ name = "dfpp"
 version = "0.0.1"
 edition = "2021"
 publish = false
+description = "A linter for user-defined privacy properties for Rust code"
 
 [package.metadata.rust-analyzer]
 rustc_private = true
