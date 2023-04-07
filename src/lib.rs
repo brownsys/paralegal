@@ -208,7 +208,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         } else {
             log::LevelFilter::Warn
         };
-        let lvl = log::LevelFilter::Debug;
+        //let lvl = log::LevelFilter::Debug;
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
             //.with_module_level("flowistry", log::LevelFilter::Error)

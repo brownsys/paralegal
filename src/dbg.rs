@@ -13,7 +13,7 @@ use flowistry::indexed::IndexedDomain;
 use crate::{
     ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
     rust::{mir, TyCtxt},
-    utils::body_name_pls,
+    utils::{body_name_pls, write_sep},
     HashMap, HashSet,
 };
 extern crate dot;
@@ -320,21 +320,13 @@ fn format_global_location<T: IsGlobalLocation>(
     t: &T,
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result {
-    let mut v = t.as_slice().to_vec();
-    v.reverse();
-    let mut is_first = true;
-    while let Some(next) = v.pop() {
-        if is_first {
-            is_first = false;
-        } else {
-            write!(f, "@")?;
-        }
+    write_sep(f, "@", t.as_slice(), |elem, f| {
         write!(
             f,
             "{:?}[{}]",
-            next.location.block, next.location.statement_index
-        )?;
-    }
+            elem.location.block, elem.location.statement_index
+        )
+    })?;
     Ok(())
 }
 

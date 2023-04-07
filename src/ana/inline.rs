@@ -203,7 +203,7 @@ impl<'g> InlinedGraph<'g> {
                 };
                 let mut reached = false;
                 for from_target in targets {
-                    if matches!((to_target, from_target), (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) if c1.location.as_slice().get(0..=1) == c2.location.as_slice().get(0..=1)) {
+                    if matches!((to_target, from_target), (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) if c1.location.outermost() == c2.location.outermost()) {
                         reached = true;
                         break
                     } else if let Some(solver) = solver.as_ref() {
