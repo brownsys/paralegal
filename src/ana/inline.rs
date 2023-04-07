@@ -38,7 +38,7 @@ use crate::{
     utils::{
         body_name_pls, outfile_pls, time, AsFnAndArgs, DisplayViaDebug, RecursionBreakingCache,
     },
-    Either, HashMap, HashSet, TyCtxt,
+    Either, HashMap, HashSet, TyCtxt, Symbol
 };
 
 /// This essentially describes a closure that determines for a given
@@ -140,7 +140,7 @@ impl<'g> InlinedGraph<'g> {
     ///
     /// The simples example is where `r == a` a more complex example could be
     /// that `r = *a.foo`.
-    fn prune_impossible_edges<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
+    fn prune_impossible_edges<'tcx>(&mut self, name: Symbol, tcx: TyCtxt<'tcx>) {
         time("Impossible Edge Pruning", || {
             debug!(
                 "Equations for pruning are:\n{}",
@@ -152,7 +152,9 @@ impl<'g> InlinedGraph<'g> {
                 })
             );
             let solver = true.then(|| {
-                algebra::MemoizedSolution::construct(self.equations.iter().map(|e| e.clone()))
+                let solver = algebra::MemoizedSolution::construct(self.equations.iter().map(|e| e.clone()));
+                algebra::dump_dot_graph(&mut outfile_pls(&format!("{name}.eqgraph.gv")).unwrap(), &solver).unwrap();
+                solver
             });
             self.graph.retain_edges(|graph, idx| {
                 let (from, to) = graph.edge_endpoints(idx).unwrap();
@@ -605,7 +607,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             &gwr,
         )
         .unwrap();
-        gwr.prune_impossible_edges(self.tcx);
+        gwr.prune_impossible_edges(body_name_pls(self.tcx, body_id).name, self.tcx);
         dump_dot_graph(
             outfile_pls(format!(
                 "{}.inlined-pruned.gv",

@@ -17,7 +17,7 @@ use crate::{
     either::Either,
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
-    utils::{DisplayViaDebug, Print},
+    utils::{DisplayViaDebug, Print, write_sep, outfile_pls},
     HashMap, HashSet, Symbol, TyCtxt,
 };
 
@@ -35,29 +35,37 @@ pub struct Term<B, F: Copy> {
     terms: Vec<Operator<F>>,
 }
 
+fn display_term_pieces<F:Display + Copy, B:Display>(
+    f: &mut std::fmt::Formatter<'_>,
+    terms: &[Operator<F>],
+    base: &B,
+) -> std::fmt::Result {
+    use Operator::*;
+    for t in terms.iter().rev() {
+        match t {
+            RefOf => f.write_str("&("),
+            DerefOf => f.write_str("*("),
+            ContainsAt(field) => write!(f, "{{ .{} = ", field),
+            Upcast(_, s) => write!(f, "(#{s}"),
+            Unknown => write!(f, "(?"),
+            _ => f.write_char('('),
+        }?
+    }
+    write!(f, "{}", base)?;
+    for t in terms.iter() {
+        match t {
+            MemberOf(field) => write!(f, ".{})", field),
+            ContainsAt(_) => f.write_str(" }"),
+            Downcast(_, s) => write!(f, " #{s})"),
+            _ => f.write_char(')'),
+        }?
+    }
+    Ok(())
+}
+
 impl<B: Display, F: Display + Copy> Display for Term<B, F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use Operator::*;
-        for t in self.terms.iter().rev() {
-            match t {
-                RefOf => f.write_str("&("),
-                DerefOf => f.write_str("*("),
-                ContainsAt(field) => write!(f, "{{ .{} = ", field),
-                Upcast(_, s) => write!(f, "(#{s}"),
-                Unknown => write!(f, "(?"),
-                _ => f.write_char('('),
-            }?
-        }
-        write!(f, "{}", self.base)?;
-        for t in self.terms.iter() {
-            match t {
-                MemberOf(field) => write!(f, ".{})", field),
-                ContainsAt(_) => f.write_str(" }"),
-                Downcast(_, s) => write!(f, " #{s})"),
-                _ => f.write_char(')'),
-            }?
-        }
-        Ok(())
+        display_term_pieces(f, &self.terms, &self.base)
     }
 }
 
@@ -386,8 +394,24 @@ pub fn rebase_simplify<
     finals
 }
 
+struct MemoEdge<F: Copy>(HashSet<Vec<Operator<F>>>);
+
+impl <F: Copy> Default for MemoEdge<F> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl <F: Copy + Display> Display for MemoEdge<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_char('{')?;
+        write_sep(f, ", ", self.0.iter(), |elem, f| display_term_pieces(f, elem, &0))?;
+        f.write_char('}')
+    }
+}
+
 type MemoizedSolutionImpl<B, F> =
-    petgraph::prelude::GraphMap<B, HashSet<Vec<Operator<F>>>, petgraph::Directed>;
+    petgraph::prelude::GraphMap<B, MemoEdge<F>, petgraph::Directed>;
 pub struct MemoizedSolution<B, F: Copy>(MemoizedSolutionImpl<B, F>);
 
 impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Copy + Display>
@@ -396,8 +420,8 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Cop
     pub fn get(&self, from: B, to: B) -> Option<(&HashSet<Vec<Operator<F>>>, bool)> {
         self.0
             .edge_weight(from, to)
-            .map(|e| (e, true))
-            .or_else(|| self.0.edge_weight(to, from).map(|e| (e, false)))
+            .map(|e| (&e.0, true))
+            .or_else(|| self.0.edge_weight(to, from).map(|e| (&e.0, false)))
     }
 
     pub fn construct<I: Iterator<Item = Equality<B, F>>>(it: I) -> Self {
@@ -412,14 +436,16 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Cop
                 graph
                     .edge_weight_mut(to, from)
                     .unwrap()
+                    .0
                     .insert(delta.into_iter().map(|o| o.flip()).collect())
             } else {
                 if !graph.contains_edge(from, to) {
-                    graph.add_edge(from, to, HashSet::new());
+                    graph.add_edge(from, to, Default::default());
                 }
                 graph
                     .edge_weight_mut(from, to)
                     .unwrap()
+                    .0
                     .insert(delta)
             }
         }
@@ -428,44 +454,43 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Cop
             let rn = *eq.rhs.base();
             let ln = *eq.lhs.base();
             eq.rearrange_left_to_right();
-            insert_edge(&mut graph, ln, rn, eq.rhs.terms);
-            queue.extend([rn, ln]);
+            if insert_edge(&mut graph, ln, rn, eq.rhs.terms) {
+                queue.extend([rn, ln]);
+            }
         }
 
-        while let Some(from) = queue.iter().next().cloned().map(|elem| {
+        while let Some(middle) = queue.iter().next().cloned().map(|elem| {
             queue.remove(&elem);
             elem
         }) {
             let g_ref = &graph;
             let new_edges = graph
-                .edges(from)
+                .edges(middle)
                 .flat_map(|(in_from, in_to, from_weights)| {
-                    if in_from == in_to {
+                    let (from, from_flip_needed) = if in_to == middle {
+                        (in_from, false)
+                    } else {
+                        assert_eq!(in_from, middle);
+                        (in_to, true)
+                    };
+                    if in_from == in_to || from == middle {
                         return Either::Right(std::iter::empty());
                     }
-                    let (next, from_flip_needed) = if in_from == from {
-                        (in_to, false)
-                    } else {
-                        assert_eq!(in_to, from);
-                        (in_from, true)
-                    };
-                    Either::Left(from_weights.iter().flat_map(move |from_weight| {
+                    Either::Left(from_weights.0.iter().flat_map(move |from_weight| {
                         g_ref
-                            .edges(next)
+                            .edges(middle)
                             .flat_map(move |(out_from, out_to, to_weights)| {
-                                if out_from == out_to
-                                    || (out_to == next && out_from == from)
-                                    || (out_to == from && out_from == next)
+                                let (next, to_flip_needed) = if out_from == middle {
+                                    (out_to, false)
+                                } else {
+                                    assert_eq!(out_to, middle);
+                                    (out_from, true)
+                                };
+                                if out_from == out_to || next == middle 
                                 {
                                     return Either::Right(std::iter::empty());
                                 }
-                                let (last, to_flip_needed) = if out_from == next {
-                                    (out_to, false)
-                                } else {
-                                    assert_eq!(out_to, next);
-                                    (out_from, true)
-                                };
-                                Either::Left(to_weights.iter().filter_map(move |to_weight| {
+                                Either::Left(to_weights.0.iter().filter_map(move |to_weight| {
                                     let mut new_terms = if from_flip_needed {
                                         from_weight.iter().cloned().map(Operator::flip).collect()
                                     } else {
@@ -478,7 +503,7 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Cop
                                     };
                                     let mut t = Term::from_raw(DisplayViaDebug(()), new_terms);
                                     t.simplify().then_some(
-                                        (from, last, t.terms)
+                                        (from, next, t.terms)
                                     )
 
                                 }))
@@ -494,6 +519,19 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Cop
         }
         Self(graph)
     }
+}
+
+pub fn dump_dot_graph<B: Display + petgraph::graphmap::NodeTrait, F: Display + Copy, W: std::io::Write>(
+    mut w: W,
+    g: &MemoizedSolution<B, F>,
+) -> std::io::Result<()> {
+    use petgraph::dot::*;
+    write!(
+        w,
+        "{}",
+        Dot::with_attr_getters(&g.0, &[], &|_, _| "".to_string(), &|_, _| "shape=box"
+            .to_string(),)
+    )
 }
 
 /// Solve for the relationship of two bases.
