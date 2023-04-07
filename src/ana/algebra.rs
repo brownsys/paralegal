@@ -402,19 +402,13 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display, F: Eq + Hash + Copy + Disp
 
     pub fn construct<I: Iterator<Item = Equality<B, F>>>(it: I) -> Self {
         let mut graph: MemoizedSolutionImpl<B, F> = petgraph::prelude::GraphMap::default();
-        let mut queue = HashSet::new();
-        for mut eq in it {
-            let rn = *eq.rhs.base();
-            let ln = *eq.lhs.base();
-            eq.rearrange_left_to_right();
-            queue.insert(((rn, ln), eq.rhs.terms));
-        }
-
-        while let Some(((from, to), delta)) = queue.iter().next().cloned().map(|elem| {
-            queue.remove(&elem);
-            elem
-        }) {
-            let is_update = if graph.contains_edge(to, from) {
+        fn insert_edge<B: petgraph::graphmap::NodeTrait, F: Copy + Hash + Eq>(
+            graph: &mut MemoizedSolutionImpl<B, F>,
+            from: B,
+            to: B,
+            delta: Vec<Operator<F>>,
+        ) -> bool {
+            if graph.contains_edge(to, from) {
                 graph
                     .edge_weight_mut(to, from)
                     .unwrap()
@@ -427,52 +421,69 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display, F: Eq + Hash + Copy + Disp
                     .edge_weight_mut(from, to)
                     .unwrap()
                     .insert(delta.clone())
-            };
-            if is_update {
-                for (in_from, in_to, from_weights) in graph.edges(from) {
-                    if in_from == in_to
-                        || (in_from == from && in_to == to)
-                        || (in_to == from && in_from == to)
-                    {
-                        continue;
+            }
+        }
+        let mut queue = HashSet::new();
+        for mut eq in it {
+            let rn = *eq.rhs.base();
+            let ln = *eq.lhs.base();
+            eq.rearrange_left_to_right();
+            insert_edge(&mut graph, ln, rn, eq.rhs.terms);
+            queue.extend([rn, ln]);
+        }
+
+        while let Some(from) = queue.iter().next().cloned().map(|elem| {
+            queue.remove(&elem);
+            elem
+        }) {
+            let g_ref = &graph;
+            let new_edges = graph
+                .edges(from)
+                .flat_map(|(in_from, in_to, from_weights)| {
+                    if in_from == in_to {
+                        return Either::Right(std::iter::empty());
                     }
-                    let (new_from, from_flip_needed) = if in_from != from {
+                    let (next, from_flip_needed) = if in_from != from {
                         (in_from, false)
                     } else {
                         (in_to, true)
                     };
-                    for from_weight in from_weights {
-                        for (out_from, out_to, to_weights) in graph.edges(to) {
-                            if out_from == out_to
-                                || (out_to == to && out_from == from)
-                                || (out_to == from && out_from == to)
-                            {
-                                continue;
-                            }
-                            let (new_to, to_flip_needed) = if out_to != to {
-                                (out_to, false)
-                            } else {
-                                (out_from, true)
-                            };
-                            for to_weight in to_weights {
-                                let mut new_terms = if from_flip_needed {
-                                    from_weight.iter().cloned().map(Operator::flip).collect()
-                                } else {
-                                    from_weight.clone()
-                                };
-                                new_terms.extend(delta.iter());
-                                if to_flip_needed {
-                                    new_terms.extend(to_weight);
-                                } else {
-                                    new_terms.extend(to_weight.iter().map(|e| e.flip()));
-                                };
-                                let mut t = Term::from_raw(DisplayViaDebug(()), new_terms);
-                                if t.simplify() {
-                                    queue.insert(((new_from, new_to), t.terms));
+                    Either::Left(from_weights.iter().flat_map(move |from_weight| {
+                        g_ref
+                            .edges(next)
+                            .flat_map(move |(out_from, out_to, to_weights)| {
+                                if out_from == out_to
+                                    || (out_to == next && out_from == from)
+                                    || (out_to == from && out_from == next)
+                                {
+                                    return Either::Right(std::iter::empty());
                                 }
-                            }
-                        }
-                    }
+                                let (last, to_flip_needed) = if out_to != next {
+                                    (out_to, false)
+                                } else {
+                                    (out_from, true)
+                                };
+                                Either::Left(to_weights.iter().map(move |to_weight| {
+                                    let mut new_terms = if from_flip_needed {
+                                        from_weight.iter().cloned().map(Operator::flip).collect()
+                                    } else {
+                                        from_weight.clone()
+                                    };
+                                    if to_flip_needed {
+                                        new_terms.extend(to_weight.iter().map(|e| e.flip()));
+                                    } else {
+                                        new_terms.extend(to_weight);
+                                    };
+                                    let t = Term::from_raw(DisplayViaDebug(()), new_terms);
+                                    (from, last, t)
+                                }))
+                            })
+                    }))
+                })
+                .collect::<Vec<_>>();
+            for (from, last, mut terms) in new_edges {
+                if terms.simplify() && insert_edge(&mut graph, from, last, terms.terms) {
+                    queue.extend([from, last]);
                 }
             }
         }
