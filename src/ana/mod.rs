@@ -144,8 +144,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             let (terminator, (defid, _, _)) = match inner_body
                 .stmt_at(inner_location)
                 .right()
-                .ok_or("not a terminator")
-                .and_then(|t| Ok((t, t.as_fn_and_args()?)))
+                .ok_or("not a terminator".to_owned())
+                .and_then(|t| Ok((t, t.as_fn_and_args().map_err(|e| format!("{e:?}"))?)))
             {
                 Ok(term) => term,
                 Err(err) => {

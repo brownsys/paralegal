@@ -17,6 +17,7 @@ extern crate lazy_static;
 extern crate simple_logger;
 #[macro_use]
 extern crate log;
+extern crate humantime;
 
 extern crate petgraph;
 
@@ -220,6 +221,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 log::LevelFilter::Warn
             });
         }
+        warn!("Debug configuration was {:?}", plugin_args.debug());
         let opts = Box::leak(Box::new(plugin_args));
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }

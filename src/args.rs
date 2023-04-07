@@ -30,6 +30,7 @@ pub struct Args {
 
 /// How a specific logging level was configured. (currently only used for the
 /// `--debug` level)
+#[derive(Debug)]
 pub enum LogLevelConfig<'a> {
     /// Logging for this level is only enabled for a specific target function
     Targeted(&'a str),

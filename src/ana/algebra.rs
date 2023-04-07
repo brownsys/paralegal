@@ -11,6 +11,8 @@
 //! For instance to extract a fact base from an MIR body use
 //! [`extract_equations`].
 
+use petgraph::visit::IntoEdges;
+
 use crate::{
     either::Either,
     ir::regal::TargetPlace,
@@ -293,11 +295,13 @@ pub fn rebase_simplify<
             if let Either::Right(v) = il {
                 let mut eq_clone = eq.clone();
                 eq_clone.rearrange_left_to_right();
+                assert!(eq_clone.lhs.is_base());
                 add_intermediate(v, eq_clone.rhs);
             }
             if let Either::Right(v) = ir {
                 eq.swap();
                 eq.rearrange_left_to_right();
+                assert!(eq.lhs.is_base());
                 add_intermediate(v, eq.rhs);
             }
         }
@@ -338,6 +342,11 @@ pub fn rebase_simplify<
         let v = intermediates.remove(&k)?;
         Some((k, v))
     }) {
+        debug!(
+            "handling {v} ({} terms, {} combinations)",
+            terms.len(),
+            terms.len() * terms.len()
+        );
         if terms.len() < 2 {
             debug!(
                 "Found fewer than two terms for {v}: {}",
@@ -361,17 +370,114 @@ pub fn rebase_simplify<
                     lhs: lhs.clone(),
                     rhs,
                 };
-                handle_eq(eq, &mut |v, term| {
-                    if !intermediates.contains_key(&v) {
-                        debug!("Abandoning term {term} because {v} is already handled");
+                handle_eq(eq, &mut |v, mut term| {
+                    if let Some(s) = intermediates.get_mut(&v) {
+                        if term.simplify() {
+                            s.insert(term);
+                        }
+                    } else {
+                        //debug!("Abandoning term {term} because {v} is already handled");
                     }
-                    intermediates.get_mut(&v).map(|s| s.insert(term));
                 });
             }
         }
     }
 
     finals
+}
+
+type MemoizedSolutionImpl<B, F> =
+    petgraph::prelude::GraphMap<B, HashSet<Vec<Operator<F>>>, petgraph::Directed>;
+pub struct MemoizedSolution<B, F: Copy>(MemoizedSolutionImpl<B, F>);
+
+impl<B: petgraph::graphmap::NodeTrait + Eq + Display, F: Eq + Hash + Copy + Display>
+    MemoizedSolution<B, F>
+{
+    pub fn get(&self, from: B, to: B) -> Option<(&HashSet<Vec<Operator<F>>>, bool)> {
+        self.0
+            .edge_weight(from, to)
+            .map(|e| (e, true))
+            .or_else(|| self.0.edge_weight(to, from).map(|e| (e, false)))
+    }
+
+    pub fn construct<I: Iterator<Item = Equality<B, F>>>(it: I) -> Self {
+        let mut graph: MemoizedSolutionImpl<B, F> = petgraph::prelude::GraphMap::default();
+        let mut queue = HashSet::new();
+        for mut eq in it {
+            let rn = *eq.rhs.base();
+            let ln = *eq.lhs.base();
+            eq.rearrange_left_to_right();
+            queue.insert(((rn, ln), eq.rhs.terms));
+        }
+
+        while let Some(((from, to), delta)) = queue.iter().next().cloned().map(|elem| {
+            queue.remove(&elem);
+            elem
+        }) {
+            let is_update = if graph.contains_edge(to, from) {
+                graph
+                    .edge_weight_mut(to, from)
+                    .unwrap()
+                    .insert(delta.iter().map(|o| o.flip()).collect())
+            } else {
+                if !graph.contains_edge(from, to) {
+                    graph.add_edge(from, to, HashSet::new());
+                }
+                graph
+                    .edge_weight_mut(from, to)
+                    .unwrap()
+                    .insert(delta.clone())
+            };
+            if is_update {
+                for (in_from, in_to, from_weights) in graph.edges(from) {
+                    if in_from == in_to
+                        || (in_from == from && in_to == to)
+                        || (in_to == from && in_from == to)
+                    {
+                        continue;
+                    }
+                    let (new_from, from_flip_needed) = if in_from != from {
+                        (in_from, false)
+                    } else {
+                        (in_to, true)
+                    };
+                    for from_weight in from_weights {
+                        for (out_from, out_to, to_weights) in graph.edges(to) {
+                            if out_from == out_to
+                                || (out_to == to && out_from == from)
+                                || (out_to == from && out_from == to)
+                            {
+                                continue;
+                            }
+                            let (new_to, to_flip_needed) = if out_to != to {
+                                (out_to, false)
+                            } else {
+                                (out_from, true)
+                            };
+                            for to_weight in to_weights {
+                                let mut new_terms = if from_flip_needed {
+                                    from_weight.iter().cloned().map(Operator::flip).collect()
+                                } else {
+                                    from_weight.clone()
+                                };
+                                new_terms.extend(delta.iter());
+                                if to_flip_needed {
+                                    new_terms.extend(to_weight);
+                                } else {
+                                    new_terms.extend(to_weight.iter().map(|e| e.flip()));
+                                };
+                                let mut t = Term::from_raw(DisplayViaDebug(()), new_terms);
+                                if t.simplify() {
+                                    queue.insert(((new_from, new_to), t.terms));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Self(graph)
+    }
 }
 
 /// Solve for the relationship of two bases.
@@ -559,11 +665,9 @@ impl<B, F: Copy> Term<B, F> {
             if let Some(next) = it.peek().cloned() {
                 match i.cancel(next) {
                     Cancel::NonOverlappingField(f, g) => {
-                        debug!("Rejecting {self} because fields {f} != {g}");
                         valid = false;
                     }
                     Cancel::NonOverlappingVariant(v1, v2) => {
-                        debug!("Rejecting {self} because variants {v1} != {v2}");
                         valid = false;
                     }
                     Cancel::Cancels => {

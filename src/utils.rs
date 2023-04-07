@@ -147,7 +147,7 @@ pub trait AsFnAndArgs<'tcx> {
             SimplifiedArguments<'tcx>,
             Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         ),
-        &'static str,
+        AsFnAndArgsErr<'tcx>,
     >;
 }
 
@@ -160,10 +160,18 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
             SimplifiedArguments<'tcx>,
             Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         ),
-        &'static str,
+        AsFnAndArgsErr<'tcx>,
     > {
         self.kind.as_fn_and_args()
     }
+}
+
+#[derive(Debug)]
+pub enum AsFnAndArgsErr<'tcx> {
+    NotAConstant,
+    NotFunctionType(ty::TyKind<'tcx>),
+    NotValueLevelConstant(ty::Const<'tcx>),
+    NotAFunctionCall,
 }
 
 impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
@@ -175,7 +183,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
             SimplifiedArguments<'tcx>,
             Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         ),
-        &'static str,
+        AsFnAndArgsErr<'tcx>,
     > {
         match self {
             mir::TerminatorKind::Call {
@@ -184,15 +192,19 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
                 destination,
                 ..
             } => {
-                let defid = match func.constant().ok_or("Not a constant")? {
-                    mir::Constant {
-                        literal: mir::ConstantKind::Val(_, ty),
-                        ..
-                    } => match ty.kind() {
-                        ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),
-                        _ => Err("Not function type"),
+                let defid = match func.constant().ok_or(AsFnAndArgsErr::NotAConstant)? {
+                    mir::Constant { literal, .. } => match literal {
+                        mir::ConstantKind::Val(_, ty)
+                        | mir::ConstantKind::Ty(ty::Const(
+                            crate::rust::rustc_data_structures::intern::Interned(
+                                ty::ConstS { ty, .. },
+                                _,
+                            ),
+                        )) => match ty.kind() {
+                            ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),
+                            _ => Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone())),
+                        },
                     },
-                    _ => Err("Not value level constant"),
                 }?;
                 Ok((
                     defid,
@@ -200,7 +212,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
                     *destination,
                 ))
             }
-            _ => Err("Not a function call"),
+            _ => Err(AsFnAndArgsErr::NotAFunctionCall),
         }
     }
 }
@@ -814,4 +826,12 @@ impl<In, Out> Default for RecursionBreakingCache<In, Out> {
     fn default() -> Self {
         Self(RefCell::new(HashMap::default()))
     }
+}
+
+pub fn time<R, F: FnOnce() -> R>(msg: &str, f: F) -> R {
+    info!("Starting {msg}");
+    let time = std::time::Instant::now();
+    let r = f();
+    info!("{msg} took {}", humantime::format_duration(time.elapsed()));
+    r
 }
