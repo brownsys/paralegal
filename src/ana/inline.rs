@@ -203,20 +203,19 @@ impl<'g> InlinedGraph<'g> {
                                 },
                             )))
                     }),
-                };
-                let mut reached = false;
-                for from_target in targets {
-                    if let Some(solver) = solver.as_ref() {
+                }.collect::<HashSet<_>>();
+                if let Some(solver) = solver.as_ref() {
+                    let mut reached = false;
+                    for from_target in targets {
                         if solver.reachable(to_target, from_target) {
                             reached = true;
                             break;
                         }
-                    } else if algebra::solve_reachable(&self.equations, &to_target, &from_target) {
-                        reached = true;
-                        break;
-                    }
+                    } 
+                    reached
+                } else {
+                    algebra::solve_reachable(&self.equations, &to_target, |to| targets.contains(to))
                 }
-                reached
             })
         })
     }

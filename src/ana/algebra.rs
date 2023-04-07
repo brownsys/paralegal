@@ -675,7 +675,7 @@ pub fn solve<
     to: &B,
 ) -> Vec<Vec<Operator<F>>> {
     let mut solutions = vec![];
-    solve_with(equations, from, to, |solution| {
+    solve_with(equations, from, |found| found == to, |solution| {
         solutions.push(solution);
         true
     });
@@ -686,10 +686,11 @@ pub fn solve_reachable<
     B: Clone + Hash + Eq + Display,
     F: Eq + Hash + Clone + Copy + Display,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
+    IsTarget: FnMut(&B) -> bool,
 >(
     equations: &[GetEq],
     from: &B,
-    to: &B,
+    to: IsTarget,
 ) -> bool {
     let mut reachable = false;
     solve_with(equations, from, to, |solution| {
@@ -704,13 +705,14 @@ fn solve_with<
     F: Eq + Hash + Clone + Copy + Display,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
     RegisterFinal: FnMut(Vec<Operator<F>>) -> bool,
+    IsTarget: FnMut(&B) -> bool,
 >(
     equations: &[GetEq],
     from: &B,
-    to: &B,
+    mut is_target: IsTarget,
     mut register_final: RegisterFinal,
 ) {
-    if from == to {
+    if is_target(from) {
         register_final(vec![]);
         return;
     }
@@ -749,7 +751,7 @@ fn solve_with<
                 matching.swap()
             }
             matching.rearrange_left_to_right();
-            if matching.rhs.base() != to {
+            if !is_target(matching.rhs.base()) {
                 targets.push(matching.rhs.base().clone());
             }
             intermediates
@@ -787,7 +789,7 @@ fn solve_with<
     let mut seen = HashSet::new();
     while let Some(intermediate_target) = targets.pop() {
         let var = intermediate_target.base();
-        if var == to {
+        if is_target(var) {
             if !register_final(intermediate_target.terms) {
                 return;
             }
