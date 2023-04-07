@@ -390,7 +390,7 @@ type MemoizedSolutionImpl<B, F> =
     petgraph::prelude::GraphMap<B, HashSet<Vec<Operator<F>>>, petgraph::Directed>;
 pub struct MemoizedSolution<B, F: Copy>(MemoizedSolutionImpl<B, F>);
 
-impl<B: petgraph::graphmap::NodeTrait + Eq + Display, F: Eq + Hash + Copy + Display>
+impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Copy + Display>
     MemoizedSolution<B, F>
 {
     pub fn get(&self, from: B, to: B) -> Option<(&HashSet<Vec<Operator<F>>>, bool)> {
@@ -412,7 +412,7 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display, F: Eq + Hash + Copy + Disp
                 graph
                     .edge_weight_mut(to, from)
                     .unwrap()
-                    .insert(delta.iter().map(|o| o.flip()).collect())
+                    .insert(delta.into_iter().map(|o| o.flip()).collect())
             } else {
                 if !graph.contains_edge(from, to) {
                     graph.add_edge(from, to, HashSet::new());
@@ -420,7 +420,7 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display, F: Eq + Hash + Copy + Disp
                 graph
                     .edge_weight_mut(from, to)
                     .unwrap()
-                    .insert(delta.clone())
+                    .insert(delta)
             }
         }
         let mut queue = HashSet::new();
@@ -443,10 +443,11 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display, F: Eq + Hash + Copy + Disp
                     if in_from == in_to {
                         return Either::Right(std::iter::empty());
                     }
-                    let (next, from_flip_needed) = if in_from != from {
-                        (in_from, false)
+                    let (next, from_flip_needed) = if in_from == from {
+                        (in_to, false)
                     } else {
-                        (in_to, true)
+                        assert_eq!(in_to, from);
+                        (in_from, true)
                     };
                     Either::Left(from_weights.iter().flat_map(move |from_weight| {
                         g_ref
@@ -458,12 +459,13 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display, F: Eq + Hash + Copy + Disp
                                 {
                                     return Either::Right(std::iter::empty());
                                 }
-                                let (last, to_flip_needed) = if out_to != next {
+                                let (last, to_flip_needed) = if out_from == next {
                                     (out_to, false)
                                 } else {
+                                    assert_eq!(out_to, next);
                                     (out_from, true)
                                 };
-                                Either::Left(to_weights.iter().map(move |to_weight| {
+                                Either::Left(to_weights.iter().filter_map(move |to_weight| {
                                     let mut new_terms = if from_flip_needed {
                                         from_weight.iter().cloned().map(Operator::flip).collect()
                                     } else {
@@ -474,15 +476,18 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display, F: Eq + Hash + Copy + Disp
                                     } else {
                                         new_terms.extend(to_weight);
                                     };
-                                    let t = Term::from_raw(DisplayViaDebug(()), new_terms);
-                                    (from, last, t)
+                                    let mut t = Term::from_raw(DisplayViaDebug(()), new_terms);
+                                    t.simplify().then_some(
+                                        (from, last, t.terms)
+                                    )
+
                                 }))
                             })
                     }))
                 })
                 .collect::<Vec<_>>();
-            for (from, last, mut terms) in new_edges {
-                if terms.simplify() && insert_edge(&mut graph, from, last, terms.terms) {
+            for (from, last, terms) in new_edges {
+                if insert_edge(&mut graph, from, last, terms) {
                     queue.extend([from, last]);
                 }
             }
