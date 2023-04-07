@@ -175,6 +175,9 @@ impl<'g> InlinedGraph<'g> {
                     place: regal::TargetPlace::Argument(*target_index),
                 });
                 let from_weight = graph.node_weight(from).unwrap();
+                if matches!((to_weight, from_weight), (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) if c1.0.outermost() == c2.0.outermost()) {
+                    return true;
+                }
                 info!("Checking edge {from_weight} -> {to_weight}");
                 let targets = match from_weight {
                     Node::Argument(a) => {
@@ -203,10 +206,7 @@ impl<'g> InlinedGraph<'g> {
                 };
                 let mut reached = false;
                 for from_target in targets {
-                    if matches!((to_target, from_target), (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) if c1.location.outermost() == c2.location.outermost()) {
-                        reached = true;
-                        break
-                    } else if let Some(solver) = solver.as_ref() {
+                    if let Some(solver) = solver.as_ref() {
                         if solver.reachable(to_target, from_target) {
                             reached = true;
                             break;
