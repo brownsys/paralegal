@@ -38,7 +38,7 @@ use crate::{
     utils::{
         body_name_pls, outfile_pls, time, AsFnAndArgs, DisplayViaDebug, RecursionBreakingCache,
     },
-    Either, HashMap, HashSet, TyCtxt, Symbol
+    Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
 /// This essentially describes a closure that determines for a given
@@ -151,9 +151,14 @@ impl<'g> InlinedGraph<'g> {
                     Ok(())
                 })
             );
-            let solver = true.then(|| {
-                let solver = algebra::MemoizedSolution::construct(self.equations.iter().map(|e| e.clone()));
-                algebra::dump_dot_graph(&mut outfile_pls(&format!("{name}.eqgraph.gv")).unwrap(), &solver).unwrap();
+            let solver = false.then(|| {
+                let solver =
+                    algebra::MemoizedSolution::construct(self.equations.iter().map(|e| e.clone()));
+                algebra::dump_dot_graph(
+                    &mut outfile_pls(&format!("{name}.eqgraph.gv")).unwrap(),
+                    &solver,
+                )
+                .unwrap();
                 solver
             });
             self.graph.retain_edges(|graph, idx| {
@@ -196,23 +201,20 @@ impl<'g> InlinedGraph<'g> {
                             )))
                     }),
                 };
-                let mut reachable = false;
                 let mut reached = false;
                 for from_target in targets {
-                    if let Some(solver) = solver.as_ref() {
-                        reached |= solver
-                            .get(to_target, from_target)
-                            .map_or(false, |s| !s.0.is_empty());
-                    } else {
-                        let result = algebra::solve(&self.equations, &to_target, &from_target);
-                        reachable |= !result.is_empty();
-                        for r in result {
-                            reached |= Term::from_raw(0, r).simplify();
+                    if matches!((to_target, from_target), (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) if c1.location.as_slice().get(0..=1) == c2.location.as_slice().get(0..=1)) {
+                        reached = true;
+                        break
+                    } else if let Some(solver) = solver.as_ref() {
+                        if solver.reachable(to_target, from_target) {
+                            reached = true;
+                            break;
                         }
+                    } else if algebra::solve_reachable(&self.equations, &to_target, &from_target) {
+                        reached = true;
+                        break;
                     }
-                }
-                if !reachable {
-                    debug!("Found unreproducible edge {from_weight} -> {to_weight}");
                 }
                 reached
             })

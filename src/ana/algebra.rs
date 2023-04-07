@@ -17,7 +17,7 @@ use crate::{
     either::Either,
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
-    utils::{DisplayViaDebug, Print, write_sep, outfile_pls},
+    utils::{outfile_pls, write_sep, DisplayViaDebug, Print},
     HashMap, HashSet, Symbol, TyCtxt,
 };
 
@@ -35,7 +35,7 @@ pub struct Term<B, F: Copy> {
     terms: Vec<Operator<F>>,
 }
 
-fn display_term_pieces<F:Display + Copy, B:Display>(
+fn display_term_pieces<F: Display + Copy, B: Display>(
     f: &mut std::fmt::Formatter<'_>,
     terms: &[Operator<F>],
     base: &B,
@@ -394,70 +394,185 @@ pub fn rebase_simplify<
     finals
 }
 
-struct MemoEdge<F: Copy>(HashSet<Vec<Operator<F>>>);
+struct MemoEdge<F: Copy>(Vec<Vec<Operator<F>>>);
 
-impl <F: Copy> Default for MemoEdge<F> {
+fn partial_cmp_terms<'a, F: Copy + Eq>(
+    mut left: &'a [Operator<F>],
+    mut right: &'a [Operator<F>],
+) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering::*;
+    let greater = left.len() > right.len();
+    if !greater {
+        std::mem::swap(&mut left, &mut right);
+    }
+    let mut matches = false;
+    for i in 0..(left.len() - right.len()) {
+        if left[i..].iter().zip(right.iter()).all(|(l, r)| l == r) {
+            matches = true;
+            break;
+        }
+    }
+    if !matches {
+        None
+    } else {
+        Some(if left.len() == right.len() {
+            Equal
+        } else if greater {
+            Greater
+        } else {
+            Less
+        })
+    }
+}
+
+impl<F: Copy + Eq> MemoEdge<F> {
+    fn insert(&mut self, e: Vec<Operator<F>>) -> bool {
+        let mut insert = true;
+        for i in self.0.iter() {
+            match partial_cmp_terms(&i, &e) {
+                Some(std::cmp::Ordering::Equal) | Some(std::cmp::Ordering::Less) => {
+                    insert = false;
+                    break;
+                }
+                _ => (),
+            }
+        }
+        if insert {
+            self.0.push(e);
+        }
+        insert
+    }
+}
+
+impl<F: Copy> Default for MemoEdge<F> {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl <F: Copy + Display> Display for MemoEdge<F> {
+impl<F: Copy + Display> Display for MemoEdge<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char('{')?;
-        write_sep(f, ", ", self.0.iter(), |elem, f| display_term_pieces(f, elem, &0))?;
+        write_sep(f, ", ", self.0.iter(), |elem, f| {
+            display_term_pieces(f, elem, &0)
+        })?;
         f.write_char('}')
     }
 }
 
-type MemoizedSolutionImpl<B, F> =
-    petgraph::prelude::GraphMap<B, MemoEdge<F>, petgraph::Directed>;
-pub struct MemoizedSolution<B, F: Copy>(MemoizedSolutionImpl<B, F>);
+type MemoizedSolutionImpl<B, F> = petgraph::prelude::GraphMap<B, MemoEdge<F>, petgraph::Directed>;
+pub struct MemoizedSolution<B, F: Copy> {
+    graph: MemoizedSolutionImpl<B, F>,
+    on_demand: bool,
+}
 
 impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Copy + Display>
     MemoizedSolution<B, F>
 {
-    pub fn get(&self, from: B, to: B) -> Option<(&HashSet<Vec<Operator<F>>>, bool)> {
-        self.0
-            .edge_weight(from, to)
-            .map(|e| (&e.0, true))
-            .or_else(|| self.0.edge_weight(to, from).map(|e| (&e.0, false)))
+    fn insert_edge(
+        graph: &mut MemoizedSolutionImpl<B, F>,
+        from: B,
+        to: B,
+        delta: Vec<Operator<F>>,
+    ) -> bool {
+        if graph.contains_edge(to, from) {
+            graph
+                .edge_weight_mut(to, from)
+                .unwrap()
+                .insert(delta.into_iter().map(|o| o.flip()).collect())
+        } else {
+            if !graph.contains_edge(from, to) {
+                graph.add_edge(from, to, Default::default());
+            }
+            graph.edge_weight_mut(from, to).unwrap().insert(delta)
+        }
+    }
+    pub fn reachable(&self, from: B, to: B) -> bool {
+        if self.on_demand {
+            for path in
+                petgraph::algo::all_simple_paths::<Vec<_>, _>(&self.graph, from, to, 0, None)
+            {
+                let mut it = path.into_iter().peekable();
+                let mut prior_terms = vec![Term::new_base(0)];
+                let mut next_terms = vec![];
+                while let Some(this) = it.next() {
+                    if let Some(next) = it.peek() {
+                        let iters = self
+                            .graph
+                            .edge_weight(this, *next)
+                            .into_iter()
+                            .map(|e| (e, false))
+                            .chain(
+                                self.graph
+                                    .edge_weight(*next, this)
+                                    .into_iter()
+                                    .map(|e| (e, true)),
+                            )
+                            .collect::<Vec<_>>();
+                        for (weights, flip) in iters {
+                            for w in &weights.0[1..] {
+                                for p in &prior_terms {
+                                    let mut c = p.clone();
+                                    if flip {
+                                        c.terms.extend(w.iter().cloned().map(Operator::flip))
+                                    } else {
+                                        c.terms.extend(w)
+                                    }
+                                    if c.simplify() {
+                                        next_terms.push(c)
+                                    }
+                                }
+                            }
+                            if let Some(w) = weights.0.get(0) {
+                                prior_terms.retain_mut(|t| {
+                                    if flip {
+                                        t.terms.extend(w.iter().cloned().map(Operator::flip));
+                                    } else {
+                                        t.terms.extend(w);
+                                    }
+                                    t.simplify()
+                                })
+                            }
+                        }
+                        prior_terms.extend(next_terms.drain(..));
+                    }
+                }
+                if !prior_terms.is_empty() {
+                    return true;
+                }
+            }
+            false
+        } else {
+            self.graph
+                .edge_weight(from, to)
+                .map(|e| (&e.0, true))
+                .or_else(|| self.graph.edge_weight(to, from).map(|e| (&e.0, false)))
+                .map_or(false, |e| !e.0.is_empty())
+        }
     }
 
-    pub fn construct<I: Iterator<Item = Equality<B, F>>>(it: I) -> Self {
+    fn initial<I: Iterator<Item = Equality<B, F>>>(it: I) -> MemoizedSolutionImpl<B, F> {
         let mut graph: MemoizedSolutionImpl<B, F> = petgraph::prelude::GraphMap::default();
-        fn insert_edge<B: petgraph::graphmap::NodeTrait, F: Copy + Hash + Eq>(
-            graph: &mut MemoizedSolutionImpl<B, F>,
-            from: B,
-            to: B,
-            delta: Vec<Operator<F>>,
-        ) -> bool {
-            if graph.contains_edge(to, from) {
-                graph
-                    .edge_weight_mut(to, from)
-                    .unwrap()
-                    .0
-                    .insert(delta.into_iter().map(|o| o.flip()).collect())
-            } else {
-                if !graph.contains_edge(from, to) {
-                    graph.add_edge(from, to, Default::default());
-                }
-                graph
-                    .edge_weight_mut(from, to)
-                    .unwrap()
-                    .0
-                    .insert(delta)
-            }
-        }
-        let mut queue = HashSet::new();
+
         for mut eq in it {
             let rn = *eq.rhs.base();
             let ln = *eq.lhs.base();
             eq.rearrange_left_to_right();
-            if insert_edge(&mut graph, ln, rn, eq.rhs.terms) {
-                queue.extend([rn, ln]);
-            }
+            Self::insert_edge(&mut graph, ln, rn, eq.rhs.terms);
         }
+        graph
+    }
+
+    fn construct_on_demand<I: Iterator<Item = Equality<B, F>>>(it: I) -> Self {
+        Self {
+            graph: Self::initial(it),
+            on_demand: true,
+        }
+    }
+
+    pub fn construct<I: Iterator<Item = Equality<B, F>>>(it: I) -> Self {
+        let mut graph = Self::initial(it);
+        let mut queue = graph.nodes().collect::<HashSet<_>>();
 
         while let Some(middle) = queue.iter().next().cloned().map(|elem| {
             queue.remove(&elem);
@@ -486,8 +601,7 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Cop
                                     assert_eq!(out_to, middle);
                                     (out_from, true)
                                 };
-                                if out_from == out_to || next == middle 
-                                {
+                                if out_from == out_to || next == middle {
                                     return Either::Right(std::iter::empty());
                                 }
                                 Either::Left(to_weights.0.iter().filter_map(move |to_weight| {
@@ -502,26 +616,34 @@ impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Cop
                                         new_terms.extend(to_weight);
                                     };
                                     let mut t = Term::from_raw(DisplayViaDebug(()), new_terms);
-                                    t.simplify().then_some(
-                                        (from, next, t.terms)
-                                    )
-
+                                    t.simplify().then_some((from, next, t.terms))
                                 }))
                             })
                     }))
                 })
                 .collect::<Vec<_>>();
             for (from, last, terms) in new_edges {
-                if insert_edge(&mut graph, from, last, terms) {
+                if Self::insert_edge(&mut graph, from, last, terms.clone()) {
+                    debug!(
+                        "Adding edge {from} -> {last} with {}",
+                        Term::from_raw(0, terms)
+                    );
                     queue.extend([from, last]);
                 }
             }
         }
-        Self(graph)
+        Self {
+            graph,
+            on_demand: false,
+        }
     }
 }
 
-pub fn dump_dot_graph<B: Display + petgraph::graphmap::NodeTrait, F: Display + Copy, W: std::io::Write>(
+pub fn dump_dot_graph<
+    B: Display + petgraph::graphmap::NodeTrait,
+    F: Display + Copy,
+    W: std::io::Write,
+>(
     mut w: W,
     g: &MemoizedSolution<B, F>,
 ) -> std::io::Result<()> {
@@ -529,7 +651,7 @@ pub fn dump_dot_graph<B: Display + petgraph::graphmap::NodeTrait, F: Display + C
     write!(
         w,
         "{}",
-        Dot::with_attr_getters(&g.0, &[], &|_, _| "".to_string(), &|_, _| "shape=box"
+        Dot::with_attr_getters(&g.graph, &[], &|_, _| "".to_string(), &|_, _| "shape=box"
             .to_string(),)
     )
 }
@@ -542,6 +664,7 @@ pub fn dump_dot_graph<B: Display + petgraph::graphmap::NodeTrait, F: Display + C
 /// If you need to instead solve for the relationship of two terms `t1`, `t2`, generate two
 /// new bases `x`, `y` then extend the fact base with the equations `x = t1`,
 /// `y = t2` and solve for `x` and `y` instead.
+///
 pub fn solve<
     B: Clone + Hash + Eq + Display,
     F: Eq + Hash + Clone + Copy + Display,
@@ -551,8 +674,45 @@ pub fn solve<
     from: &B,
     to: &B,
 ) -> Vec<Vec<Operator<F>>> {
+    let mut solutions = vec![];
+    solve_with(equations, from, to, |solution| {
+        solutions.push(solution);
+        true
+    });
+    solutions
+}
+
+pub fn solve_reachable<
+    B: Clone + Hash + Eq + Display,
+    F: Eq + Hash + Clone + Copy + Display,
+    GetEq: std::borrow::Borrow<Equality<B, F>>,
+>(
+    equations: &[GetEq],
+    from: &B,
+    to: &B,
+) -> bool {
+    let mut reachable = false;
+    solve_with(equations, from, to, |solution| {
+        reachable = true;
+        false
+    });
+    reachable
+}
+
+fn solve_with<
+    B: Clone + Hash + Eq + Display,
+    F: Eq + Hash + Clone + Copy + Display,
+    GetEq: std::borrow::Borrow<Equality<B, F>>,
+    RegisterFinal: FnMut(Vec<Operator<F>>) -> bool,
+>(
+    equations: &[GetEq],
+    from: &B,
+    to: &B,
+    mut register_final: RegisterFinal,
+) {
     if from == to {
-        return vec![vec![]];
+        register_final(vec![]);
+        return;
     }
     let mut eqs_with_bases = equations
         .iter()
@@ -616,7 +776,6 @@ pub fn solve<
             })
         );
     }
-    let mut solutions = vec![];
     let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
         debug!("No intermediate found for {from}");
@@ -629,7 +788,9 @@ pub fn solve<
     while let Some(intermediate_target) = targets.pop() {
         let var = intermediate_target.base();
         if var == to {
-            solutions.push(intermediate_target.terms);
+            if !register_final(intermediate_target.terms) {
+                return;
+            }
         } else if seen.contains(var) {
             debug!("Aborting search on recursive visit to {var}")
         } else {
@@ -645,7 +806,6 @@ pub fn solve<
             }
         }
     }
-    solutions
 }
 
 impl<B, F: Copy> Term<B, F> {
