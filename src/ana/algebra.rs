@@ -100,7 +100,8 @@ pub enum Cancel<F> {
     /// Both operators were variant cast related but did not reference the same variant
     NonOverlappingVariant(VariantIdx, VariantIdx),
     /// The operators canceled
-    Cancels,
+    CancelBoth,
+    CancelOne,
     /// The operators did not cancel
     Remains,
 }
@@ -150,6 +151,7 @@ impl<F: Copy> Operator<F> {
     {
         use Operator::*;
         match (self, other) {
+            (Unknown, Unknown) => Cancel::CancelOne,
             (Unknown, _) | (_, Unknown) => Cancel::Remains,
             (MemberOf(f), ContainsAt(g)) | (ContainsAt(g), MemberOf(f)) if f != g => {
                 Cancel::NonOverlappingField(f, g)
@@ -157,7 +159,7 @@ impl<F: Copy> Operator<F> {
             (Downcast(_, v1), Upcast(_, v2)) | (Upcast(_, v2), Downcast(_, v1)) if v1 != v2 => {
                 Cancel::NonOverlappingVariant(v1, v2)
             }
-            _ if self == other.flip() => Cancel::Cancels,
+            _ if self == other.flip() => Cancel::CancelOne,
             _ => Cancel::Remains,
         }
     }
@@ -353,8 +355,15 @@ pub fn rebase_simplify<
         debug!(
             "handling {v} ({} terms, {} combinations)",
             terms.len(),
-            terms.len() * terms.len()
+            terms.len() * terms.len() / 2
         );
+        if terms.len() > 10000 {
+            info!("Found more than 10000 terms, some of them are\n{}", Print(|f: &mut std::fmt::Formatter<'_>| {
+                write_sep(
+                    f, "\n", terms.iter().take(100), |elem, f| write!(f, "{}", elem)
+                )
+            }))
+        }
         if terms.len() < 2 {
             debug!(
                 "Found fewer than two terms for {v}: {}",
@@ -886,8 +895,11 @@ impl<B, F: Copy> Term<B, F> {
                     Cancel::NonOverlappingVariant(v1, v2) => {
                         valid = false;
                     }
-                    Cancel::Cancels => {
+                    Cancel::CancelBoth => {
                         it.next();
+                        continue;
+                    }
+                    Cancel::CancelOne => {
                         continue;
                     }
                     _ => (),

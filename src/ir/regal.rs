@@ -239,7 +239,8 @@ impl Body<DisplayViaDebug<Location>> {
         def_id: LocalDefId,
         body_with_facts: &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
     ) -> Self {
-        time("Regal Body Construction", || {
+        let name = body_name_pls(tcx, def_id).name;
+        time(&format!("Regal Body Construction of {name}"), || {
             let body = flow_analysis.analysis.body;
             let ctrl_ana = &flow_analysis.analysis.control_dependencies;
             let non_transitive_aliases =
@@ -448,7 +449,7 @@ impl Body<DisplayViaDebug<Location>> {
                     Ok(())
                 })
             );
-            let equations = time("Equation Simplification", || {
+            let equations = time(&format!("Equation Simplification of {name}"), || {
                 algebra::rebase_simplify(
                     equations.into_iter().map(Cow::Owned).chain(
                         place_table.keys().map(|k| DisplayViaDebug(*k)).map(|k| {

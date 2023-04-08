@@ -141,7 +141,7 @@ impl<'g> InlinedGraph<'g> {
     /// The simples example is where `r == a` a more complex example could be
     /// that `r = *a.foo`.
     fn prune_impossible_edges<'tcx>(&mut self, name: Symbol, tcx: TyCtxt<'tcx>) {
-        time("Impossible Edge Pruning", || {
+        time(&format!("Edge Pruning for {name}"), || {
             debug!(
                 "Equations for pruning are:\n{}",
                 crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
@@ -178,7 +178,7 @@ impl<'g> InlinedGraph<'g> {
                 if matches!((to_weight, from_weight), (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) if c1.0.outermost() == c2.0.outermost()) {
                     return true;
                 }
-                info!("Checking edge {from_weight} -> {to_weight}");
+                debug!("Checking edge {from_weight} -> {to_weight}");
                 let targets = match from_weight {
                     Node::Argument(a) => {
                         Either::Right(std::iter::once(regal::SimpleLocation::Argument(*a)))

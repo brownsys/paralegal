@@ -8,7 +8,7 @@ use crate::{
     desc::Identifier,
     rust::{
         ast,
-        hir::{self, def_id::DefId, hir_id::HirId, BodyId},
+        hir::{self, def_id::{LocalDefId, DefId}, hir_id::HirId, BodyId},
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_data_structures::fx::{FxHashMap, FxHashSet},
         rustc_span::symbol::Ident,
@@ -366,10 +366,33 @@ pub fn extract_places<'tcx>(
     places
 }
 
+pub trait IntoLocalDefId {
+    fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId;
+}
+
+impl IntoLocalDefId for LocalDefId {
+    fn into_local_def_id(self, _tcx: TyCtxt) -> LocalDefId {
+        self
+    }
+}
+
+impl IntoLocalDefId for BodyId {
+    fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
+        tcx.hir().body_owner_def_id(self)
+    }
+}
+
+impl IntoLocalDefId for HirId {
+    fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
+        tcx.hir().local_def_id(self)
+    }
+}
+
 /// Get the name of the function for this body as an `Ident`.
-pub fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
+pub fn body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Ident {
     let map = tcx.hir();
-    let node = map.find_by_def_id(map.body_owner_def_id(body_id)).unwrap();
+    let def_id = id.into_local_def_id(tcx);
+    let node = map.find_by_def_id(def_id).unwrap();
     node.ident()
         .or_else(|| {
             matches!(
@@ -380,7 +403,7 @@ pub fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
                 })
             )
             .then(|| {
-                map.get(map.enclosing_body_owner(map.body_owner(body_id)))
+                map.get(map.enclosing_body_owner(map.local_def_id_to_hir_id(def_id)))
                     .ident()
                     .map(|id| Ident::from_str(&(id.as_str().to_string() + "_closure")))
             })
