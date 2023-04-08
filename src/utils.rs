@@ -8,7 +8,12 @@ use crate::{
     desc::Identifier,
     rust::{
         ast,
-        hir::{self, def_id::{LocalDefId, DefId}, hir_id::HirId, BodyId},
+        hir::{
+            self,
+            def_id::{DefId, LocalDefId},
+            hir_id::HirId,
+            BodyId,
+        },
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_data_structures::fx::{FxHashMap, FxHashSet},
         rustc_span::symbol::Ident,

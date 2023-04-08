@@ -316,71 +316,76 @@ pub fn rebase_simplify<
             }
         }
     };
-
+    let mut queue = vec![];
     let mut intermediates: HashMap<V, HashSet<Term<B, F>>> = HashMap::default();
-    let mut add_intermediate = |k, mut v: Term<_, _>| {
+    let mut add_intermediate = |k: V, mut v: Term<_, _>| {
         if v.simplify() {
             intermediates
-                .entry(k)
-                .or_insert_with(HashSet::default)
+                .entry(k.clone())
+                .or_insert_with(|| {
+                    queue.push(k);
+                    HashSet::default()
+                })
                 .insert(v);
         }
     };
     for eq in equations {
         handle_eq(eq.borrow().clone(), &mut add_intermediate);
     }
-    debug!(
-        "Found the intermediates\n{}",
-        crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-            for (k, v) in intermediates.iter() {
-                write!(f, "  {k}: ")?;
-                let mut first = true;
-                for t in v {
-                    if first {
-                        first = false;
-                    } else {
-                        f.write_str(", ")?;
-                    }
-                    t.fmt(f)?;
-                }
-                writeln!(f)?;
-            }
-            Ok(())
-        })
-    );
-    while let Some((v, terms)) = intermediates.keys().next().cloned().and_then(|k| {
-        let v = intermediates.remove(&k)?;
-        Some((k, v))
-    }) {
+    debug!("Found {} intermediates", intermediates.len());
+    // debug!(
+    //     "Found the intermediates\n{}",
+    //     crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+    //         for (k, v) in intermediates.iter() {
+    //             write!(f, "  {k}: ")?;
+    //             let mut first = true;
+    //             for t in v {
+    //                 if first {
+    //                     first = false;
+    //                 } else {
+    //                     f.write_str(", ")?;
+    //                 }
+    //                 t.fmt(f)?;
+    //             }
+    //             writeln!(f)?;
+    //         }
+    //         Ok(())
+    //     })
+    // );
+    while let Some(v) = queue.pop() {
+        let terms = intermediates.remove(&v).unwrap();
         debug!(
             "handling {v} ({} terms, {} combinations)",
             terms.len(),
             terms.len() * terms.len() / 2
         );
         if terms.len() > 10000 {
-            info!("Found more than 10000 terms, some of them are\n{}", Print(|f: &mut std::fmt::Formatter<'_>| {
-                write_sep(
-                    f, "\n", terms.iter().take(100), |elem, f| write!(f, "{}", elem)
-                )
-            }))
-        }
-        if terms.len() < 2 {
-            debug!(
-                "Found fewer than two terms for {v}: {}",
+            info!(
+                "Found more than 10000 terms, some of them are\n{}",
                 Print(|f: &mut std::fmt::Formatter<'_>| {
-                    let mut first = true;
-                    for t in terms.iter() {
-                        if first {
-                            first = false;
-                        } else {
-                            f.write_str(", ")?;
-                        }
-                        t.fmt(f)?;
-                    }
-                    Ok(())
+                    write_sep(f, "\n", terms.iter().take(100), |elem, f| {
+                        write!(f, "{}", elem)
+                    })
                 })
-            );
+            )
         }
+        // if terms.len() < 2 {
+        //     debug!(
+        //         "Found fewer than two terms for {v}: {}",
+        //         Print(|f: &mut std::fmt::Formatter<'_>| {
+        //             let mut first = true;
+        //             for t in terms.iter() {
+        //                 if first {
+        //                     first = false;
+        //                 } else {
+        //                     f.write_str(", ")?;
+        //                 }
+        //                 t.fmt(f)?;
+        //             }
+        //             Ok(())
+        //         })
+        //     );
+        // }
         for (idx, lhs) in terms.iter().enumerate() {
             for rhs in terms.iter().skip(idx + 1).cloned() {
                 let eq = Equality {
@@ -684,10 +689,15 @@ pub fn solve<
     to: &B,
 ) -> Vec<Vec<Operator<F>>> {
     let mut solutions = vec![];
-    solve_with(equations, from, |found| found == to, |solution| {
-        solutions.push(solution);
-        true
-    });
+    solve_with(
+        equations,
+        from,
+        |found| found == to,
+        |solution| {
+            solutions.push(solution);
+            true
+        },
+    );
     solutions
 }
 
@@ -749,12 +759,12 @@ fn solve_with<
             continue;
         }
         let all_matching = find_matching(&intermediate_target);
-        if all_matching.is_empty() {
-            debug!(
-                "No matching equation for intermediate target {} from {}",
-                intermediate_target, from
-            );
-        }
+        // if all_matching.is_empty() {
+        //     debug!(
+        //         "No matching equation for intermediate target {} from {}",
+        //         intermediate_target, from
+        //     );
+        // }
         for mut matching in all_matching.into_iter().cloned() {
             if matching.lhs.base() != &intermediate_target {
                 matching.swap()
@@ -769,24 +779,25 @@ fn solve_with<
                 .insert(matching.rhs);
         }
     }
-    debug!("Found the intermediates");
-    for (k, vs) in intermediates.iter() {
-        debug!(
-            "  {k}: {}",
-            Print(|f: &mut std::fmt::Formatter| {
-                let mut first = true;
-                for term in vs {
-                    if first {
-                        first = false;
-                    } else {
-                        f.write_str(" || ")?;
-                    }
-                    write!(f, "{}", term)?;
-                }
-                Ok(())
-            })
-        );
-    }
+    debug!("Found {} intermedaites", intermediates.len());
+    // debug!("Found the intermediates");
+    // for (k, vs) in intermediates.iter() {
+    //     debug!(
+    //         "  {k}: {}",
+    //         Print(|f: &mut std::fmt::Formatter| {
+    //             let mut first = true;
+    //             for term in vs {
+    //                 if first {
+    //                     first = false;
+    //                 } else {
+    //                     f.write_str(" || ")?;
+    //                 }
+    //                 write!(f, "{}", term)?;
+    //             }
+    //             Ok(())
+    //         })
+    //     );
+    // }
     let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
         debug!("No intermediate found for {from}");
@@ -803,7 +814,7 @@ fn solve_with<
                 return;
             }
         } else if seen.contains(var) {
-            debug!("Aborting search on recursive visit to {var}")
+            //debug!("Aborting search on recursive visit to {var}")
         } else {
             seen.insert(var.clone());
             if let Some(next_eq) = intermediates.get(&var) {
@@ -813,7 +824,7 @@ fn solve_with<
                     to_sub.simplify().then_some(to_sub)
                 }))
             } else {
-                debug!("No follow up equation found for {var} on the way from {from}");
+                //debug!("No follow up equation found for {var} on the way from {from}");
             }
         }
     }

@@ -36,7 +36,8 @@ use crate::{
     rust::rustc_index::vec::IndexVec,
     ty,
     utils::{
-        body_name_pls, outfile_pls, time, AsFnAndArgs, DisplayViaDebug, RecursionBreakingCache,
+        body_name_pls, outfile_pls, time, write_sep, AsFnAndArgs, DisplayViaDebug,
+        RecursionBreakingCache,
     },
     Either, HashMap, HashSet, Symbol, TyCtxt,
 };
@@ -73,7 +74,7 @@ impl<T: InlineSelector> InlineSelector for std::rc::Rc<T> {
     }
 }
 
-type ArgNum = regal::ArgumentIndex;
+type ArgNum = u32;
 
 type Node<C> = regal::SimpleLocation<C>;
 
@@ -87,19 +88,120 @@ impl<C> Node<C> {
     }
 }
 
+#[derive(Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Copy)]
+struct TinyBitSet(u16);
+
+impl TinyBitSet {
+    /// Creates a new, empty bitset.
+    pub fn new_empty() -> Self {
+        Self(0)
+    }
+
+    /// Sets the `index`th bit.
+    pub fn set(&mut self, index: u32) {
+        self.0 |= 1_u16.checked_shl(index).unwrap_or(0);
+    }
+
+    /// Unsets the `index`th bit.
+    pub fn clear(&mut self, index: u32) {
+        self.0 &= !1_u16.checked_shl(index).unwrap_or(0);
+    }
+
+    /// Sets the `i`th to `j`th bits.
+    pub fn set_range(&mut self, range: std::ops::Range<u32>) {
+        use std::ops::Not;
+        let bits = u16::MAX
+            .checked_shl(range.end - range.start)
+            .unwrap_or(0)
+            .not()
+            .checked_shl(range.start)
+            .unwrap_or(0);
+        self.0 |= bits;
+    }
+
+    /// Is the set empty?
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Returns the domain size of the bitset.
+    pub fn within_domain(&self, index: u32) -> bool {
+        index < 16
+    }
+
+    pub fn count(&self) -> u32 {
+        self.0.count_ones()
+    }
+
+    /// Returns if the `index`th bit is set.
+    pub fn contains(&self, index: u32) -> Option<bool> {
+        self.within_domain(index)
+            .then(|| ((self.0.checked_shr(index).unwrap_or(1)) & 1) == 1)
+    }
+
+    pub fn iter_set_in_domain(&self) -> impl Iterator<Item = u32> + '_ {
+        (0..16).filter(|i| self.contains(*i).unwrap_or(false))
+    }
+
+    pub fn into_iter_set_in_domain(self) -> impl Iterator<Item = u32> {
+        (0..16).filter(move |i| self.contains(*i).unwrap_or(false))
+    }
+}
+
 #[derive(Clone, Eq, PartialEq, Hash, Copy)]
-pub enum Edge {
-    Data(ArgNum),
+pub struct Edge {
+    data: TinyBitSet,
+    control: bool,
+}
+
+impl Edge {
+    pub fn is_empty(self) -> bool {
+        !self.control && self.data.is_empty()
+    }
+    pub fn add_type(&mut self, t: EdgeType) {
+        match t {
+            EdgeType::Control => self.control = true,
+            EdgeType::Data(i) => self.data.set(i),
+        }
+    }
+    pub fn empty() -> Self {
+        Self {
+            control: false,
+            data: TinyBitSet::new_empty(),
+        }
+    }
+    pub fn merge(&mut self, other: Self) {
+        self.control |= other.control;
+        self.data.0 |= other.data.0;
+    }
+    pub fn into_types_iter(self) -> impl Iterator<Item = EdgeType> {
+        self.data
+            .into_iter_set_in_domain()
+            .map(EdgeType::Data)
+            .chain(self.control.then_some(EdgeType::Control))
+    }
+}
+
+#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+pub enum EdgeType {
+    Data(u32),
     Control,
 }
 
 impl std::fmt::Display for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Edge::Data(idx) = self {
-            write!(f, "{}", idx)
-        } else {
-            f.write_str("ctrl")
-        }
+        write_sep(
+            f,
+            ", ",
+            self.data
+                .iter_set_in_domain()
+                .map(Either::Left)
+                .chain(self.control.then_some(Either::Right(()))),
+            |elem, f| match elem {
+                Either::Left(i) => write!(f, "arg{i}"),
+                Either::Right(()) => write!(f, "ctrl"),
+            },
+        )
     }
 }
 
@@ -108,7 +210,7 @@ pub type Equation<L> =
     algebra::Equality<Node<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>;
 pub type Equations<L> = Vec<Equation<L>>;
 /// Common, parameterized graph type used in this module
-pub type GraphImpl<L> = pg::StableDiGraph<Node<(L, DefId)>, Edge>;
+pub type GraphImpl<L> = pg::GraphMap<Node<(L, DefId)>, Edge, pg::Directed>;
 
 /// A graph and the associated set of extracted or accumulated equations
 pub struct GraphWithResolver<L> {
@@ -116,10 +218,10 @@ pub struct GraphWithResolver<L> {
     equations: Equations<L>,
 }
 
-impl<L> Default for GraphWithResolver<L> {
+impl<L: Copy + Ord + std::hash::Hash> Default for GraphWithResolver<L> {
     fn default() -> Self {
         Self {
-            graph: pg::StableDiGraph::new(),
+            graph: pg::GraphMap::new(),
             equations: vec![],
         }
     }
@@ -142,81 +244,82 @@ impl<'g> InlinedGraph<'g> {
     /// that `r = *a.foo`.
     fn prune_impossible_edges<'tcx>(&mut self, name: Symbol, tcx: TyCtxt<'tcx>) {
         time(&format!("Edge Pruning for {name}"), || {
-            debug!(
-                "Equations for pruning are:\n{}",
-                crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-                    for eq in self.equations.iter() {
-                        writeln!(f, "  {eq}")?;
-                    }
-                    Ok(())
+            info!("Have {} equations for pruning", self.equations.len());
+            // debug!(
+            //     "Equations for pruning are:\n{}",
+            //     crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+            //         for eq in self.equations.iter() {
+            //             writeln!(f, "  {eq}")?;
+            //         }
+            //         Ok(())
+            //     })
+            // );
+            // false.then(|| {
+            //     let solver =
+            //         algebra::MemoizedSolution::construct(self.equations.iter().map(|e| e.clone()));
+            //     algebra::dump_dot_graph(
+            //         &mut outfile_pls(&format!("{name}.eqgraph.gv")).unwrap(),
+            //         &solver,
+            //     )
+            //     .unwrap();
+            //     solver
+            // });
+
+            //info!("Pruning over {num_edges} of {} edges", self.graph.edge_count());
+            let mut count = 0;
+            let edges_to_prune = self.graph.all_edges().filter_map(|(from, to, weight)| {
+                (!matches!((to, from), (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) if c1.0.outermost() == c2.0.outermost())).then(|| {
+                    count += weight.data.count() as usize;
+                    (from, to)
                 })
-            );
-            let solver = false.then(|| {
-                let solver =
-                    algebra::MemoizedSolution::construct(self.equations.iter().map(|e| e.clone()));
-                algebra::dump_dot_graph(
-                    &mut outfile_pls(&format!("{name}.eqgraph.gv")).unwrap(),
-                    &solver,
-                )
-                .unwrap();
-                solver
-            });
-            self.graph.retain_edges(|graph, idx| {
-                let (from, to) = graph.edge_endpoints(idx).unwrap();
-                let target_index = if let Edge::Data(target_index) = graph.edge_weight(idx).unwrap()
-                {
-                    target_index
-                } else {
-                    return true;
-                };
-                let to_weight = graph.node_weight(to).unwrap();
-                let to_target = to_weight.map_location(|&(location, _did)| regal::RelativePlace {
-                    location,
-                    place: regal::TargetPlace::Argument(*target_index),
-                });
-                let from_weight = graph.node_weight(from).unwrap();
-                if matches!((to_weight, from_weight), (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) if c1.0.outermost() == c2.0.outermost()) {
-                    return true;
-                }
-                debug!("Checking edge {from_weight} -> {to_weight}");
-                let targets = match from_weight {
-                    Node::Argument(a) => {
-                        Either::Right(std::iter::once(regal::SimpleLocation::Argument(*a)))
-                    }
-                    Node::Return => unreachable!(),
-                    Node::Call((location, did)) => Either::Left({
-                        let args = tcx.fn_sig(did).skip_binder().inputs().len();
-                        (0..args)
-                            .into_iter()
-                            .map(|a| {
-                                regal::SimpleLocation::Call(regal::RelativePlace {
-                                    location: *location,
-                                    place: regal::TargetPlace::Argument(
-                                        regal::ArgumentIndex::from_usize(a),
-                                    ),
-                                })
-                            })
-                            .chain(std::iter::once(regal::SimpleLocation::Call(
-                                regal::RelativePlace {
-                                    location: *location,
-                                    place: regal::TargetPlace::Return,
-                                },
-                            )))
-                    }),
-                }.collect::<HashSet<_>>();
-                if let Some(solver) = solver.as_ref() {
-                    let mut reached = false;
-                    for from_target in targets {
-                        if solver.reachable(to_target, from_target) {
-                            reached = true;
-                            break;
+            }).collect::<Vec<_>>();
+
+            info!("Pruning over {count} edges");
+
+            for (from, to) in edges_to_prune {
+                let weight = &mut self.graph[(from, to)];
+                for idx in weight.data.into_iter_set_in_domain() {
+                    let to_target = to.map_location(|&(location, _did)| regal::RelativePlace {
+                        location,
+                        place: regal::TargetPlace::Argument(idx.into()),
+                    });
+                    // This can be optimized (directly create function)
+                    let targets = match from {
+                        Node::Argument(a) => {
+                            Either::Right(std::iter::once(regal::SimpleLocation::Argument(a)))
                         }
-                    } 
-                    reached
-                } else {
-                    algebra::solve_reachable(&self.equations, &to_target, |to| targets.contains(to))
+                        Node::Return => unreachable!(),
+                        Node::Call((location, did)) => Either::Left({
+                            let args = tcx.fn_sig(did).skip_binder().inputs().len();
+                            (0..args)
+                                .into_iter()
+                                .map(move |a| {
+                                    regal::SimpleLocation::Call(regal::RelativePlace {
+                                        location: location,
+                                        place: regal::TargetPlace::Argument(
+                                            regal::ArgumentIndex::from_usize(a),
+                                        ),
+                                    })
+                                })
+                                .chain(std::iter::once(regal::SimpleLocation::Call(
+                                    regal::RelativePlace {
+                                        location: location,
+                                        place: regal::TargetPlace::Return,
+                                    },
+                                )))
+                        }),
+                    }
+                    .collect::<HashSet<_>>();
+                    if !algebra::solve_reachable(&self.equations, &to_target, |to| {
+                        targets.contains(to)
+                    }) {
+                        weight.data.clear(idx)
+                    }
                 }
-            })
+                if weight.is_empty() {
+                    self.graph.remove_edge(from, to);
+                }
+            }
         })
     }
 }
@@ -236,51 +339,56 @@ impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
             );
             gwr.equations = body.equations;
             let g = &mut gwr.graph;
-            let node_map = body
+            let call_map = body
                 .calls
                 .iter()
-                .map(|(loc, call)| (*loc, g.add_node(Node::Call((*loc, call.function)))))
+                .map(|(loc, call)| (loc, call.function))
                 .collect::<HashMap<_, _>>();
-            let arg_map = IndexVec::from_raw(
-                body.return_arg_deps
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| g.add_node(SimpleLocation::Argument(ArgNum::from_usize(i))))
-                    .collect(),
-            );
+            // let node_map = body
+            //     .calls
+            //     .iter()
+            //     .map(|(loc, call)| (*loc, g.add_node(Node::Call((*loc, call.function)))))
+            //     .collect::<HashMap<_, _>>();
+            // let arg_map = IndexVec::from_raw(
+            //     body.return_arg_deps
+            //         .iter()
+            //         .enumerate()
+            //         .map(|(i, _)| g.add_node(SimpleLocation::Argument(ArgNum::from_usize(i))))
+            //         .collect(),
+            // );
 
             let return_node = g.add_node(Node::Return);
 
             let mut add_dep_edges =
-                |target_id, idx, deps: &HashSet<regal::Target<DisplayViaDebug<Location>>>| {
+                |to, idx, deps: &HashSet<regal::Target<DisplayViaDebug<Location>>>| {
                     for d in deps {
                         use regal::Target;
                         let from = match d {
-                            Target::Call(c) => *node_map.get(c).unwrap_or_else(|| {
-                                panic!("Could not find {c} in node map\n{node_map:?}")
-                            }),
-                            Target::Argument(a) => arg_map[*a],
+                            Target::Call(c) => regal::SimpleLocation::Call((*c, call_map[c])),
+                            Target::Argument(a) => regal::SimpleLocation::Argument(*a),
                         };
-                        g.add_edge(from, target_id, idx);
+                        if g.contains_edge(from, to) {
+                            g[(from, to)].add_type(idx)
+                        } else {
+                            let mut edge = Edge::empty();
+                            edge.add_type(idx);
+                            g.add_edge(from, to, edge);
+                        }
                     }
                 };
 
-            for (n, call) in body.calls.iter() {
-                let new_id = node_map[n];
+            for (&loc, call) in body.calls.iter() {
+                let n = SimpleLocation::Call((loc, call.function));
                 for (idx, deps) in call.arguments.iter().enumerate() {
-                    add_dep_edges(new_id, Edge::Data(ArgNum::from_usize(idx)), deps)
+                    add_dep_edges(n, EdgeType::Data(idx as u32), deps)
                 }
-                add_dep_edges(new_id, Edge::Control, &call.ctrl_deps);
+                add_dep_edges(n, EdgeType::Control, &call.ctrl_deps);
             }
-            add_dep_edges(
-                return_node,
-                Edge::Data(ArgNum::from_usize(0)),
-                &body.return_deps,
-            );
+            add_dep_edges(return_node, EdgeType::Data(0 as u32), &body.return_deps);
             for (idx, deps) in body.return_arg_deps.iter().enumerate() {
                 add_dep_edges(
-                    arg_map[ArgNum::from_usize(idx)],
-                    Edge::Data(ArgNum::from_usize(0)),
+                    SimpleLocation::Argument(idx.into()),
+                    EdgeType::Data(0_u32),
                     deps,
                 );
             }
@@ -530,13 +638,14 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 self.tcx.fn_sig(def_id).skip_binder().inputs().len()
             };
             let mut argument_map: HashMap<_, _> = (0..num_args)
-                .map(|a| (Edge::Data(ArgNum::from_usize(a)), vec![]))
-                .chain([(Edge::Control, vec![])])
+                .map(|a| (EdgeType::Data(a as u32), vec![]))
+                .chain([(EdgeType::Control, vec![])])
                 .collect();
 
             for e in g.edges_directed(idx, pg::Incoming) {
-                let arg_num = e.weight();
-                argument_map.get_mut(&arg_num).unwrap().push(e.source());
+                for arg_num in e.weight().into_types_iter() {
+                    argument_map.get_mut(&arg_num).unwrap().push(e.source());
+                }
             }
 
             assert!(root_location.is_at_root());
@@ -544,51 +653,41 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             gwr.equations
                 .extend(Self::relativize_eqs(&grw_to_inline.equations, &gli_here));
             let to_inline = &grw_to_inline.graph;
-            let node_map = to_inline
-                .node_references()
-                .map(|(callee_id, node)| {
-                    (
-                        callee_id,
-                        node.map_call(|(location, function)| {
-                            g.add_node(Node::Call((gli_here.relativize(*location), *function)))
-                        }),
-                    )
-                })
-                .collect::<HashMap<_, _>>();
 
-            let connect_to =
-                |g: &mut GraphImpl<_>, source, target, weight: &Edge| match &node_map[&source] {
-                    Node::Call(c) => {
-                        debug!("  adding edge to {}", g.node_weight(*c).unwrap());
-                        g.add_edge(*c, target, weight.clone());
+            let connect_to = |g: &mut GraphImpl<_>, source, target, weight: &Edge| {
+                let mut add_edge = |source| {
+                    if g.contains_edge(source, target) {
+                        g[(source, target)].merge(*weight)
+                    } else {
+                        g.add_edge(source, target, *weight);
                     }
+                };
+                match source {
+                    Node::Call((loc, did)) => add_edge(Node::Call((gli_here.relativize(loc), did))),
                     Node::Return => unreachable!(),
                     Node::Argument(a) => {
-                        debug!("  found argument");
                         for nidx in argument_map
-                            .get(&Edge::Data(*a))
+                            .get(&EdgeType::Data(a.as_usize() as u32))
                             .into_iter()
                             .flat_map(|s| s.into_iter())
                         {
-                            debug!("  adding edge to {}", g.node_weight(*nidx).unwrap());
-                            g.add_edge(*nidx, target, weight.clone());
+                            add_edge(*nidx)
                         }
                     }
-                };
+                }
+            };
 
-            for (callee_id, typ) in node_map.iter() {
-                debug!(
-                    "Handling node {}",
-                    to_inline.node_weight(*callee_id).unwrap()
-                );
+            for (callee_id, old) in to_inline.node_references() {
+                let typ = old
+                    .map_call(|(location, function)| (gli_here.relativize(*location), *function));
                 match typ {
                     Node::Call(new_id) => {
-                        for edge in to_inline.edges_directed(*callee_id, pg::Incoming) {
-                            connect_to(g, edge.source(), *new_id, edge.weight())
+                        for edge in to_inline.edges_directed(callee_id, pg::Incoming) {
+                            connect_to(g, edge.source(), typ, edge.weight())
                         }
                     }
                     Node::Return | Node::Argument(_) => {
-                        for edge in to_inline.edges_directed(*callee_id, pg::Incoming) {
+                        for edge in to_inline.edges_directed(callee_id, pg::Incoming) {
                             debug!("  for incoming edge {:?}", edge.id());
                             for (target, out) in g
                                 .edges_directed(idx, pg::Outgoing)
@@ -622,7 +721,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     }
 }
 
-fn dump_dot_graph<L: std::fmt::Display, W: std::io::Write>(
+fn dump_dot_graph<L: std::fmt::Display + std::hash::Hash + Eq + Ord + Copy, W: std::io::Write>(
     mut w: W,
     g: &GraphWithResolver<L>,
 ) -> std::io::Result<()> {
@@ -650,21 +749,23 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             let mut input_deps = vec![];
             let mut ctrl_deps = HashSet::new();
             for e in g.edges_directed(n, pg::Incoming) {
-                let target = if let Edge::Data(a) = e.weight() {
-                    let aidx = a.as_usize();
-                    if aidx >= input_deps.len() {
-                        input_deps.resize_with(aidx + 1, HashSet::new);
-                    }
-                    &mut input_deps[aidx]
-                } else {
-                    &mut ctrl_deps
-                };
+                for w in e.weight().into_types_iter() {
+                    let target = if let EdgeType::Data(a) = w {
+                        let aidx = a as usize;
+                        if aidx >= input_deps.len() {
+                            input_deps.resize_with(aidx + 1, HashSet::new);
+                        }
+                        &mut input_deps[aidx]
+                    } else {
+                        &mut ctrl_deps
+                    };
 
-                target.insert(match g.node_weight(e.source()).unwrap() {
-                    Node::Call(c) => c.0,
-                    Node::Return => unreachable!(),
-                    Node::Argument(a) => mk_arg(*a),
-                });
+                    target.insert(match e.source() {
+                        Node::Call(c) => c.0,
+                        Node::Return => unreachable!(),
+                        Node::Argument(a) => mk_arg(a.as_usize() as u32),
+                    });
+                }
             }
             crate::ir::CallDeps {
                 input_deps,

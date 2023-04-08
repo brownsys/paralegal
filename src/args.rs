@@ -50,8 +50,7 @@ impl std::fmt::Display for LogLevelConfig<'_> {
     }
 }
 
-
-impl <'a> LogLevelConfig<'a> {
+impl<'a> LogLevelConfig<'a> {
     pub fn is_enabled(&self) -> bool {
         matches!(self, LogLevelConfig::Targeted(..) | LogLevelConfig::Enabled)
     }
@@ -61,7 +60,9 @@ impl Args {
     /// Returns the configuration specified for the `--debug` option
     pub fn debug(&self) -> Cow<'_, LogLevelConfig<'_>> {
         Cow::Owned(match &self.debug_target {
-            Some(target) if !target.is_empty() => LogLevelConfig::Targeted(Cow::Borrowed(target.as_str())),
+            Some(target) if !target.is_empty() => {
+                LogLevelConfig::Targeted(Cow::Borrowed(target.as_str()))
+            }
             _ if self.debug => LogLevelConfig::Enabled,
             _ => LogLevelConfig::Disabled,
         })

@@ -89,7 +89,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                                 .basic_blocks()
                                 .len(),
                         ),
-                        statement_index: a.as_usize() + 1,
+                        statement_index: a as usize + 1,
                     },
                     target.body_id,
                 )

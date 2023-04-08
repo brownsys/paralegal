@@ -211,7 +211,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         //let lvl = log::LevelFilter::Debug;
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
-            //.with_module_level("flowistry", log::LevelFilter::Error)
+            .with_module_level("flowistry", log::LevelFilter::Error)
             .without_timestamps()
             .init()
             .unwrap();
@@ -222,7 +222,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 log::LevelFilter::Warn
             });
         }
-        warn!("Debug configuration was {:?}", plugin_args.debug());
         let opts = Box::leak(Box::new(plugin_args));
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }
