@@ -717,6 +717,21 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             &gwr,
         )
         .unwrap();
+        let potential_targets = gwr
+            .graph
+            .nodes()
+            .filter(|n| !matches!(n, SimpleLocation::Call(_)))
+            .flat_map(|n| gwr.graph.neighbors(n).chain([n]))
+            .map(|l| l.map_location(|l| l.0))
+            .collect::<HashSet<_>>();
+        gwr.equations = algebra::rebase_simplify(gwr.equations.into_iter(), |b| {
+            let generic_b: SimpleLocation<GlobalLocation<'g>> = b.map_location(|l| l.location);
+            if potential_targets.contains(&generic_b) {
+                Either::Left([*b])
+            } else {
+                Either::Right(*b)
+            }
+        });
         gwr
     }
 }
