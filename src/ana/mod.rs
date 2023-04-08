@@ -268,7 +268,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             })
             .collect::<HashMap<_, _>>();
 
-        if let LogLevelConfig::Targeted(s) = self.opts.debug() {
+        if let LogLevelConfig::Targeted(s) = &*self.opts.debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
                 "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
@@ -366,7 +366,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 /// matches the one selected with the `debug` flag on the command line (and
 /// reset it afterward).
 fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
-    if matches!(opts.debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
+    if matches!(&*opts.debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
         with_temporary_logging_level(log::LevelFilter::Debug, f)
     } else {
         f()

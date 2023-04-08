@@ -215,7 +215,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .without_timestamps()
             .init()
             .unwrap();
-        if matches!(plugin_args.debug(), LogLevelConfig::Targeted(..)) {
+        if matches!(*plugin_args.debug(), LogLevelConfig::Targeted(..)) {
             log::set_max_level(if plugin_args.verbose() {
                 log::LevelFilter::Info
             } else {

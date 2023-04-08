@@ -1,5 +1,7 @@
 //! Command line arguments and parsing.
 
+use std::borrow::Cow;
+
 /// Top level command line arguments
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 pub struct Args {
@@ -12,8 +14,10 @@ pub struct Args {
     /// output globally. You may instead pass the name of a specific target
     /// function and then only during analysis of that function the debug output
     /// is enabled.
-    #[clap(long, env = "DFPP_DEBUG", min_values = 0, max_values = 1, default_value_t = LogLevelConfig::Disabled, default_missing_value = "")]
-    debug: LogLevelConfig,
+    #[clap(long, env = "DFPP_DEBUG")]
+    debug: bool,
+    #[clap(long, env = "DFPP_DEBUG_TARGET")]
+    debug_target: Option<String>,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
@@ -30,34 +34,24 @@ pub struct Args {
 
 /// How a specific logging level was configured. (currently only used for the
 /// `--debug` level)
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum LogLevelConfig {
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub enum LogLevelConfig<'a> {
     /// Logging for this level is only enabled for a specific target function
-    Targeted(String),
+    Targeted(Cow<'a, str>),
     /// Logging for this level is not directly enabled
     Disabled,
     /// Logging for this level was directly enabled
     Enabled,
 }
 
-impl std::fmt::Display for LogLevelConfig {
+impl std::fmt::Display for LogLevelConfig<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
 }
 
-impl std::str::FromStr for LogLevelConfig {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, String> {
-        Ok(if s.is_empty() {
-            LogLevelConfig::Enabled
-        } else {
-            LogLevelConfig::Targeted(s.to_string())
-        })
-    }
-}
 
-impl LogLevelConfig {
+impl <'a> LogLevelConfig<'a> {
     pub fn is_enabled(&self) -> bool {
         matches!(self, LogLevelConfig::Targeted(..) | LogLevelConfig::Enabled)
     }
@@ -65,8 +59,12 @@ impl LogLevelConfig {
 
 impl Args {
     /// Returns the configuration specified for the `--debug` option
-    pub fn debug(&self) -> &LogLevelConfig {
-        &self.debug
+    pub fn debug(&self) -> Cow<'_, LogLevelConfig<'_>> {
+        Cow::Owned(match &self.debug_target {
+            Some(target) if !target.is_empty() => LogLevelConfig::Targeted(Cow::Borrowed(target.as_str())),
+            _ if self.debug => LogLevelConfig::Enabled,
+            _ => LogLevelConfig::Disabled,
+        })
     }
     pub fn dbg(&self) -> &DbgArgs {
         &self.dbg
