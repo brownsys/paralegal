@@ -536,6 +536,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let proc_g = self.get_procedure_graph(body_id);
         let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
         let mut gwr = to_global_graph(&proc_g, self.gli, body_id);
+        let name = body_name_pls(self.tcx, body_id).name;
 
         dump_dot_graph(
             outfile_pls(format!(
@@ -546,168 +547,170 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             &gwr,
         )
         .unwrap();
-        let g = &mut gwr.graph;
-        let eqs = &mut gwr.equations;
-        let targets = g
-            .node_references()
-            .filter_map(|(id, n)| match n {
-                Node::Call((location, function)) => match function.as_local() {
-                    Some(local_id) if self.recurse_selector.should_inline(self.tcx, local_id) => {
-                        debug!("Inlining {function:?}");
-                        Some((id, local_id, *location, false))
-                    }
-                    _ if Some(*function) == self.tcx.lang_items().from_generator_fn() => {
-                        let body_with_facts =
-                            borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
-                        let body = body_with_facts.simplified_body();
-                        let mut args = body
-                            .stmt_at(location.innermost_location())
-                            .right()
-                            .expect("Expected terminator")
-                            .as_fn_and_args()
-                            .unwrap()
-                            .1;
-                        let closure = args
-                            .pop()
-                            .expect("Expected one closure argument")
-                            .expect("Expected non-const closure argument");
-                        debug_assert!(args.is_empty(), "Expected only one argument");
-                        debug_assert!(closure.projection.is_empty());
-                        let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
-                            body.local_decls[closure.local].ty.kind()
-                        {
-                            *gid
-                        } else {
-                            unreachable!("Expected Generator")
-                        };
-                        Some((id, closure_fn.as_local().unwrap(), *location, true))
-                    }
+        time(&format!("Inlining subgraphs into {name}"), ||{
+            let g = &mut gwr.graph;
+            let eqs = &mut gwr.equations;
+            let targets = g
+                .node_references()
+                .filter_map(|(id, n)| match n {
+                    Node::Call((location, function)) => match function.as_local() {
+                        Some(local_id) if self.recurse_selector.should_inline(self.tcx, local_id) => {
+                            debug!("Inlining {function:?}");
+                            Some((id, local_id, *location, false))
+                        }
+                        _ if Some(*function) == self.tcx.lang_items().from_generator_fn() => {
+                            let body_with_facts =
+                                borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
+                            let body = body_with_facts.simplified_body();
+                            let mut args = body
+                                .stmt_at(location.innermost_location())
+                                .right()
+                                .expect("Expected terminator")
+                                .as_fn_and_args()
+                                .unwrap()
+                                .1;
+                            let closure = args
+                                .pop()
+                                .expect("Expected one closure argument")
+                                .expect("Expected non-const closure argument");
+                            debug_assert!(args.is_empty(), "Expected only one argument");
+                            debug_assert!(closure.projection.is_empty());
+                            let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                                body.local_decls[closure.local].ty.kind()
+                            {
+                                *gid
+                            } else {
+                                unreachable!("Expected Generator")
+                            };
+                            Some((id, closure_fn.as_local().unwrap(), *location, true))
+                        }
+                        _ => {
+                            debug!("Abstracting {function:?}");
+                            let fn_sig = self.tcx.fn_sig(function).skip_binder();
+                            let writeables = std::iter::once(regal::TargetPlace::Return)
+                                .chain(
+                                    Self::writeable_arguments(&fn_sig)
+                                        .map(regal::TargetPlace::Argument),
+                                )
+                                .collect::<Vec<_>>();
+                            let mk_term = |tp| {
+                                algebra::Term::new_base(regal::SimpleLocation::Call(
+                                    regal::RelativePlace {
+                                        place: tp,
+                                        location: *location,
+                                    },
+                                ))
+                            };
+                            eqs.extend(writeables.iter().flat_map(|write| {
+                                (0..fn_sig.inputs().len() as usize)
+                                    .map(|t| {
+                                        regal::TargetPlace::Argument(regal::ArgumentIndex::from_usize(
+                                            t,
+                                        ))
+                                    })
+                                    .filter(move |read| read != write)
+                                    .map(|read| {
+                                        algebra::Equality::new(
+                                            mk_term(write.clone()).add_unknown(),
+                                            mk_term(read),
+                                        )
+                                    })
+                            }));
+                            None
+                        }
+                    },
                     _ => {
-                        debug!("Abstracting {function:?}");
-                        let fn_sig = self.tcx.fn_sig(function).skip_binder();
-                        let writeables = std::iter::once(regal::TargetPlace::Return)
-                            .chain(
-                                Self::writeable_arguments(&fn_sig)
-                                    .map(regal::TargetPlace::Argument),
-                            )
-                            .collect::<Vec<_>>();
-                        let mk_term = |tp| {
-                            algebra::Term::new_base(regal::SimpleLocation::Call(
-                                regal::RelativePlace {
-                                    place: tp,
-                                    location: *location,
-                                },
-                            ))
-                        };
-                        eqs.extend(writeables.iter().flat_map(|write| {
-                            (0..fn_sig.inputs().len() as usize)
-                                .map(|t| {
-                                    regal::TargetPlace::Argument(regal::ArgumentIndex::from_usize(
-                                        t,
-                                    ))
-                                })
-                                .filter(move |read| read != write)
-                                .map(|read| {
-                                    algebra::Equality::new(
-                                        mk_term(write.clone()).add_unknown(),
-                                        mk_term(read),
-                                    )
-                                })
-                        }));
+                        debug!("Is other node {n}");
                         None
                     }
-                },
-                _ => {
-                    debug!("Is other node {n}");
-                    None
+                })
+                .collect::<Vec<_>>();
+            for (idx, def_id, root_location, is_async_closure) in targets {
+                let grw_to_inline = if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id)
+                {
+                    callee_graph
+                } else {
+                    // Breaking recursion. This can only happen if we are trying to
+                    // inline ourself, so we simply skip.
+                    continue;
+                };
+                let num_args = if is_async_closure {
+                    1 as usize
+                } else {
+                    self.tcx.fn_sig(def_id).skip_binder().inputs().len()
+                };
+                let mut argument_map: HashMap<_, _> = (0..num_args)
+                    .map(|a| (EdgeType::Data(a as u32), vec![]))
+                    .chain([(EdgeType::Control, vec![])])
+                    .collect();
+
+                for e in g.edges_directed(idx, pg::Incoming) {
+                    for arg_num in e.weight().into_types_iter() {
+                        argument_map.get_mut(&arg_num).unwrap().push(e.source());
+                    }
                 }
-            })
-            .collect::<Vec<_>>();
-        for (idx, def_id, root_location, is_async_closure) in targets {
-            let grw_to_inline = if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id)
-            {
-                callee_graph
-            } else {
-                // Breaking recursion. This can only happen if we are trying to
-                // inline ourself, so we simply skip.
-                continue;
-            };
-            let num_args = if is_async_closure {
-                1 as usize
-            } else {
-                self.tcx.fn_sig(def_id).skip_binder().inputs().len()
-            };
-            let mut argument_map: HashMap<_, _> = (0..num_args)
-                .map(|a| (EdgeType::Data(a as u32), vec![]))
-                .chain([(EdgeType::Control, vec![])])
-                .collect();
 
-            for e in g.edges_directed(idx, pg::Incoming) {
-                for arg_num in e.weight().into_types_iter() {
-                    argument_map.get_mut(&arg_num).unwrap().push(e.source());
-                }
-            }
+                assert!(root_location.is_at_root());
+                let gli_here = self.gli.at(root_location.outermost_location(), body_id);
+                gwr.equations
+                    .extend(Self::relativize_eqs(&grw_to_inline.equations, &gli_here));
+                let to_inline = &grw_to_inline.graph;
 
-            assert!(root_location.is_at_root());
-            let gli_here = self.gli.at(root_location.outermost_location(), body_id);
-            gwr.equations
-                .extend(Self::relativize_eqs(&grw_to_inline.equations, &gli_here));
-            let to_inline = &grw_to_inline.graph;
-
-            let connect_to = |g: &mut GraphImpl<_>, source, target, weight: &Edge| {
-                let mut add_edge = |source| {
-                    if g.contains_edge(source, target) {
-                        g[(source, target)].merge(*weight)
-                    } else {
-                        g.add_edge(source, target, *weight);
+                let connect_to = |g: &mut GraphImpl<_>, source, target, weight: &Edge| {
+                    let mut add_edge = |source| {
+                        if g.contains_edge(source, target) {
+                            g[(source, target)].merge(*weight)
+                        } else {
+                            g.add_edge(source, target, *weight);
+                        }
+                    };
+                    match source {
+                        Node::Call((loc, did)) => add_edge(Node::Call((gli_here.relativize(loc), did))),
+                        Node::Return => unreachable!(),
+                        Node::Argument(a) => {
+                            for nidx in argument_map
+                                .get(&EdgeType::Data(a.as_usize() as u32))
+                                .into_iter()
+                                .flat_map(|s| s.into_iter())
+                            {
+                                add_edge(*nidx)
+                            }
+                        }
                     }
                 };
-                match source {
-                    Node::Call((loc, did)) => add_edge(Node::Call((gli_here.relativize(loc), did))),
-                    Node::Return => unreachable!(),
-                    Node::Argument(a) => {
-                        for nidx in argument_map
-                            .get(&EdgeType::Data(a.as_usize() as u32))
-                            .into_iter()
-                            .flat_map(|s| s.into_iter())
-                        {
-                            add_edge(*nidx)
-                        }
-                    }
-                }
-            };
 
-            for (callee_id, old) in to_inline.node_references() {
-                let typ = old
-                    .map_call(|(location, function)| (gli_here.relativize(*location), *function));
-                match typ {
-                    Node::Call(new_id) => {
-                        for edge in to_inline.edges_directed(callee_id, pg::Incoming) {
-                            connect_to(g, edge.source(), typ, edge.weight())
+                for (callee_id, old) in to_inline.node_references() {
+                    let typ = old
+                        .map_call(|(location, function)| (gli_here.relativize(*location), *function));
+                    match typ {
+                        Node::Call(_) => {
+                            for edge in to_inline.edges_directed(callee_id, pg::Incoming) {
+                                connect_to(g, edge.source(), typ, edge.weight())
+                            }
                         }
-                    }
-                    Node::Return | Node::Argument(_) => {
-                        for edge in to_inline.edges_directed(callee_id, pg::Incoming) {
-                            debug!("  for incoming edge {:?}", edge.id());
-                            for (target, out) in g
-                                .edges_directed(idx, pg::Outgoing)
-                                .map(|e| (e.target(), e.weight().clone()))
-                                .collect::<Vec<_>>()
-                            {
-                                connect_to(g, edge.source(), target, &out);
+                        Node::Return | Node::Argument(_) => {
+                            for edge in to_inline.edges_directed(callee_id, pg::Incoming) {
+                                debug!("  for incoming edge {:?}", edge.id());
+                                for (target, out) in g
+                                    .edges_directed(idx, pg::Outgoing)
+                                    .map(|e| (e.target(), e.weight().clone()))
+                                    .collect::<Vec<_>>()
+                                {
+                                    connect_to(g, edge.source(), target, &out);
+                                }
                             }
                         }
                     }
                 }
+                g.remove_node(idx);
             }
-            g.remove_node(idx);
-        }
+        });
         dump_dot_graph(
             outfile_pls(format!("{}.inlined.gv", body_name_pls(self.tcx, body_id))).unwrap(),
             &gwr,
         )
         .unwrap();
-        gwr.prune_impossible_edges(body_name_pls(self.tcx, body_id).name, self.tcx);
+        gwr.prune_impossible_edges(name, self.tcx);
         dump_dot_graph(
             outfile_pls(format!(
                 "{}.inlined-pruned.gv",
@@ -717,22 +720,28 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             &gwr,
         )
         .unwrap();
-        let potential_targets = gwr
-            .graph
-            .nodes()
-            .filter(|n| !matches!(n, SimpleLocation::Call(_)))
-            .flat_map(|n| gwr.graph.neighbors(n).chain([n]))
-            .map(|l| l.map_location(|l| l.0))
-            .collect::<HashSet<_>>();
-        gwr.equations = algebra::rebase_simplify(gwr.equations.into_iter(), |b| {
-            let generic_b: SimpleLocation<GlobalLocation<'g>> = b.map_location(|l| l.location);
-            if potential_targets.contains(&generic_b) {
-                Either::Left([*b])
-            } else {
-                Either::Right(*b)
-            }
-        });
-        gwr
+        if false {
+            time(&format!("Reducing equations to potential targets for {name}"), || {
+                let potential_targets = gwr
+                    .graph
+                    .nodes()
+                    .filter(|n| !matches!(n, SimpleLocation::Call(_)))
+                    .flat_map(|n| gwr.graph.neighbors(n).chain([n]))
+                    .map(|l| l.map_location(|l| l.0))
+                    .collect::<HashSet<_>>();
+                gwr.equations = algebra::rebase_simplify(gwr.equations.into_iter(), |b| {
+                    let generic_b: SimpleLocation<GlobalLocation<'g>> = b.map_location(|l| l.location);
+                    if potential_targets.contains(&generic_b) {
+                        Either::Left([*b])
+                    } else {
+                        Either::Right(*b)
+                    }
+                });
+                gwr
+            })
+        } else {
+            gwr
+        }
     }
 }
 

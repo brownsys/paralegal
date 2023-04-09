@@ -45,7 +45,7 @@ fn display_term_pieces<F: Display + Copy, B: Display>(
         match t {
             RefOf => f.write_str("&("),
             DerefOf => f.write_str("*("),
-            ContainsAt(field) => write!(f, "{{ .{} = ", field),
+            ContainsAt(field) => write!(f, "{{ .{}: ", field),
             Upcast(_, s) => write!(f, "(#{s}"),
             Unknown => write!(f, "(?"),
             _ => f.write_char('('),
@@ -119,6 +119,10 @@ impl<F: Copy> Operator<F> {
             Upcast(s, v) => Downcast(s, v),
             Unknown => Unknown,
         }
+    }
+
+    pub fn is_unknown(self) -> bool {
+        matches!(self, Operator::Unknown)
     }
 
     /// Determine for two term segments whether they cancel each other (for
@@ -830,6 +834,19 @@ fn solve_with<
     }
 }
 
+fn vec_drop_range<T>(v: &mut Vec<T>, r: std::ops::Range<usize>) {
+    let ptr = v.as_mut_ptr();
+    for i in r.clone() {
+        unsafe {
+            drop(ptr.add(i))
+        }
+    }
+    unsafe {
+        std::ptr::copy(ptr.add(r.end), ptr.add(r.start), v.len() - r.end);
+        v.set_len(v.len() - r.len());
+    }
+}
+
 impl<B, F: Copy> Term<B, F> {
     pub fn is_base(&self) -> bool {
         self.terms.is_empty()
@@ -897,6 +914,8 @@ impl<B, F: Copy> Term<B, F> {
         let old_terms = std::mem::replace(&mut self.terms, Vec::with_capacity(l));
         let mut it = old_terms.into_iter().peekable();
         let mut valid = true;
+        let mut after_first_unknown = None;
+        let mut after_last_unknown = None;
         while let Some(i) = it.next() {
             if let Some(next) = it.peek().cloned() {
                 match i.cancel(next) {
@@ -917,6 +936,16 @@ impl<B, F: Copy> Term<B, F> {
                 }
             }
             self.terms.push(i);
+            if i.is_unknown() {
+                if after_first_unknown.is_none() {
+                    &mut after_first_unknown
+                } else {
+                    &mut after_last_unknown
+                }.insert(self.terms.len());
+            }
+        }
+        if let (Some(from), Some(to)) = (after_first_unknown, after_last_unknown) {
+            vec_drop_range(&mut self.terms, from..to);
         }
         valid
     }

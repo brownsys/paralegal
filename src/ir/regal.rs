@@ -449,7 +449,8 @@ impl Body<DisplayViaDebug<Location>> {
                     Ok(())
                 })
             );
-            let equations = time(&format!("Equation Simplification of {name}"), || {
+            let num_eqs = equations.len();
+            let equations = time(&format!("Simplification  of {num_eqs} equations for {name}"), || {
                 algebra::rebase_simplify(
                     equations.into_iter().map(Cow::Owned).chain(
                         place_table.keys().map(|k| DisplayViaDebug(*k)).map(|k| {
