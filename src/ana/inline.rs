@@ -259,6 +259,24 @@ pub struct InlinedGraph<'g> {
 
 
 impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
+    fn edge_has_been_pruned_before(from: Node<(GlobalLocation<'g>, DefId)>, to: Node<(GlobalLocation<'g>, DefId)>) -> bool {
+        match (to, from) {
+            (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) => c1.0.outermost() == c2.0.outermost(),
+            (SimpleLocation::Call(c), _) 
+            | (_, SimpleLocation::Call(c)) => c.0.is_at_root(),
+            _ => true
+        }
+    }
+
+    fn find_prunable_edges(graph: &InlinedGraph<'g>) -> HashSet<(Node<(GlobalLocation<'g>, DefId)>, Node<(GlobalLocation<'g>, DefId)>)> {
+        let graph = &graph.graph;
+        graph.all_edges().filter_map(|(from, to, _)| {
+            (!Self::edge_has_been_pruned_before(from, to)).then(|| {
+                (from, to)
+            })
+        }).collect()
+    }
+
     /// For each edge in this graph query the set of equations to determine if
     /// it is memory-plausible e.g. if there exists an argument `a` to the
     /// target and a return `r` from the source such that either `a` can be
@@ -266,7 +284,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     ///
     /// The simples example is where `r == a` a more complex example could be
     /// that `r = *a.foo`.
-    fn prune_impossible_edges(&self, graph: &mut InlinedGraph<'g>, name: Symbol) {
+    fn prune_impossible_edges(&self, graph: &mut InlinedGraph<'g>, name: Symbol, edges_to_prune: &HashSet<(Node<(GlobalLocation<'g>, DefId)>, Node<(GlobalLocation<'g>, DefId)>)>) {
         time(&format!("Edge Pruning for {name}"), || {
             let InlinedGraph { graph, equations } = graph;
             info!("Have {} equations for pruning", equations.len());
@@ -289,55 +307,43 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             //     .unwrap();
             //     solver
             // });
+            info!("Pruning over {} edges",     
+                edges_to_prune.into_iter().filter_map(|&(a, b)| Some(graph.edge_weight(a, b)?.count())).count()
+            );
 
-            //info!("Pruning over {num_edges} of {} edges", self.graph.edge_count());
-            let mut count = 0;
-            let edges_to_prune = graph.all_edges().filter_map(|(from, to, weight)| {
-                match (to, from) {
-                    (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) => c1.0.outermost() != c2.0.outermost(),
-                    (SimpleLocation::Call(c), _) => !c.0.is_at_root(),
-                    (_, SimpleLocation::Call(c)) => !c.0.is_at_root(),
-                    _ => false
-                }.then(|| {
-                    count += weight.data.count() as usize;
-                    (from, to)
-                })
-            }).collect::<Vec<_>>();
-
-            info!("Pruning over {count} edges");
-
-            for (from, to) in edges_to_prune {
-                let weight = &mut graph[(from, to)];
-                for idx in weight.data.into_iter_set_in_domain() {
-                    let to_target = self.node_to_local(&to, idx);
-                    // This can be optimized (directly create function)
-                    let targets = match from {
-                        Node::Argument(a) => {
-                            Either::Right(std::iter::once(GlobalLocal::at_root((a.as_usize() + 1).into())))
+            for &(from, to) in edges_to_prune {
+                if let Some(weight) = graph.edge_weight_mut(from, to) {
+                    for idx in weight.data.into_iter_set_in_domain() {
+                        let to_target = self.node_to_local(&to, idx);
+                        // This can be optimized (directly create function)
+                        let targets = match from {
+                            Node::Argument(a) => {
+                                Either::Right(std::iter::once(GlobalLocal::at_root((a.as_usize() + 1).into())))
+                            }
+                            Node::Return => unreachable!(),
+                            Node::Call((location, did)) => Either::Left({
+                                let call = self.get_call(location);
+                                let parent = location.parent(self.gli);
+                                call.argument_locals().chain([call.return_to]).map(move |local| {
+                                    if let Some(parent) = parent {
+                                        GlobalLocal::relative(local, parent)
+                                    } else {
+                                        GlobalLocal::at_root(local)
+                                    }
+                                })
+                            }),
                         }
-                        Node::Return => unreachable!(),
-                        Node::Call((location, did)) => Either::Left({
-                            let call = self.get_call(location);
-                            let parent = location.parent(self.gli);
-                            call.argument_locals().chain([call.return_to]).map(move |local| {
-                                if let Some(parent) = parent {
-                                    GlobalLocal::relative(local, parent)
-                                } else {
-                                    GlobalLocal::at_root(local)
-                                }
-                            })
-                        }),
+                        .collect::<HashSet<_>>();
+                        if !algebra::solve_reachable(&equations, &to_target, |to| {
+                            targets.contains(to)
+                        }) {
+                            debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
+                            weight.data.clear(idx)
+                        }
                     }
-                    .collect::<HashSet<_>>();
-                    if !algebra::solve_reachable(&equations, &to_target, |to| {
-                        targets.contains(to)
-                    }) {
-                        debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
-                        weight.data.clear(idx)
+                    if weight.is_empty() {
+                        graph.remove_edge(from, to);
                     }
-                }
-                if weight.is_empty() {
-                    graph.remove_edge(from, to);
                 }
             }
         })
@@ -555,6 +561,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             &gwr,
         )
         .unwrap();
+        let mut queue_for_pruning = HashSet::new();
         time(&format!("Inlining subgraphs into {name}"), ||{
             let g = &mut gwr.graph;
             let eqs = &mut gwr.equations;
@@ -681,9 +688,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     );
                 let to_inline = &grw_to_inline.graph;
 
-                let connect_to = |g: &mut GraphImpl<_>, source, target, weight: Edge| {
-                    let mut add_edge = |source| {
+                let mut connect_to = |g: &mut GraphImpl<_>, source, target, weight: Edge, pruning_required| {
+                    let mut add_edge = |source, register_for_pruning| {
                         debug!("Connecting {source} -> {target}");
+                        if register_for_pruning {
+                            queue_for_pruning.insert((source, target));
+                        }
                         if let Some(prior_weight) = g.edge_weight_mut(source, target) {
                             prior_weight.merge(weight)
                         } else {
@@ -691,7 +701,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         }
                     };
                     match source {
-                        Node::Call((loc, did)) => add_edge(Node::Call((gli_here.relativize(loc), did))),
+                        Node::Call((loc, did)) => add_edge(Node::Call((gli_here.relativize(loc), did)), pruning_required),
                         Node::Return => unreachable!(),
                         Node::Argument(a) => {
                             for nidx in argument_map
@@ -699,7 +709,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 .into_iter()
                                 .flat_map(|s| s.into_iter())
                             {
-                                add_edge(*nidx)
+                                add_edge(*nidx, true)
                             }
                         }
                     }
@@ -713,7 +723,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     for edge in to_inline.edges_directed(old, pg::Incoming) {
                         match new {
                             Node::Call(_) => {
-                                connect_to(g, edge.source(), new, *edge.weight())
+                                connect_to(g, edge.source(), new, *edge.weight(), false)
                             }
                             Node::Return | Node::Argument(_) => {
                                 for (target, out) in g
@@ -721,7 +731,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                     .map(|e| (e.target(), e.weight().clone()))
                                     .collect::<Vec<_>>()
                                 {
-                                    connect_to(g, edge.source(), target, out);
+                                    connect_to(g, edge.source(), target, out, true);
                                 }
                             }
                         }
@@ -735,7 +745,13 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             &gwr,
         )
         .unwrap();
-        self.prune_impossible_edges(&mut gwr, name);
+        let edges_to_prune = if false {
+            Self::find_prunable_edges(&gwr)
+        } else {
+            queue_for_pruning.retain(|&(from, to)| !Self::edge_has_been_pruned_before(from, to));
+            queue_for_pruning
+        };
+        self.prune_impossible_edges(&mut gwr, name, &edges_to_prune);
         dump_dot_graph(
             outfile_pls(format!(
                 "{}.inlined-pruned.gv",
