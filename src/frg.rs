@@ -6,11 +6,14 @@
 
 extern crate pretty;
 
-use crate::{desc::CallSite, HashSet};
+use std::hash::Hash;
+
+use crate::{utils::short_hash_pls, HashSet};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
-    Annotation, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription, Relation,
+    Annotation, CallSite, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription,
+    Relation,
 };
 
 use self::name::Qualifier;
@@ -203,10 +206,9 @@ fn call_site_as_forge<'b, A, D: DocAllocator<'b, A>>(
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.text(format!(
-            "{}_b{}_i{}",
+            "{}_{:x}",
             self.function.as_str(),
-            self.location.block.as_usize(),
-            self.location.statement_index,
+            short_hash_pls(&self.location),
         ))
     }
 }

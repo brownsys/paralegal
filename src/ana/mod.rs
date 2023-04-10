@@ -164,11 +164,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     continue;
                 }
             };
-            let call_site = CallSite {
-                called_from: Identifier::new(body_name_pls(tcx, inner_body_id).name),
-                location: inner_location,
-                function: identifier_for_fn(tcx, defid),
-            };
+            let call_site = CallSite::new(loc, defid, tcx);
             // Propagate annotations on the function object to the call site
             register_call_site(
                 tcx,

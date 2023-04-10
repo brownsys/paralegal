@@ -16,10 +16,7 @@
 use serde::Deserialize;
 
 use crate::{
-    ir::{
-        format_global_location, CallDeps, CallOnlyFlow, GlobalLocation, GlobalLocationS,
-        IsGlobalLocation,
-    },
+    ir::{CallDeps, CallOnlyFlow, GlobalLocation, RawGlobalLocation},
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
@@ -349,35 +346,6 @@ pub struct BodyIdProxy {
 /// structure.
 #[derive(Serialize, Deserialize)]
 pub struct BodyIdProxy2(#[serde(with = "BodyIdProxy")] pub hir::BodyId);
-
-/// A serializable non-interned version of [`GlobalLocation`].
-///
-/// Thanks to the [`IsGlobalLocation`] trait you can use this the same way as a
-/// [`GlobalLocation`]. Though be aware that this struct is significantly larger
-/// in memory as it contains a singly-linked list of call chains that is not
-/// interned.
-///
-/// For information on the meaning of this struct see [`GlobalLocation`]
-#[derive(Deserialize, Serialize, PartialEq, Eq, Hash)]
-pub struct RawGlobalLocation(Vec<GlobalLocationS>);
-
-impl<'g> From<&'_ GlobalLocation<'g>> for RawGlobalLocation {
-    fn from(other: &GlobalLocation<'g>) -> Self {
-        RawGlobalLocation(other.to_owned())
-    }
-}
-
-impl std::fmt::Display for RawGlobalLocation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        format_global_location(self, f)
-    }
-}
-
-impl IsGlobalLocation for RawGlobalLocation {
-    fn as_slice(&self) -> &[GlobalLocationS] {
-        &self.0
-    }
-}
 
 impl<'g> Serialize for GlobalLocation<'g> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

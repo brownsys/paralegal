@@ -48,6 +48,9 @@ pub mod rust {
 
     pub use rustc_middle::dep_graph::DepGraph;
     pub use ty::TyCtxt;
+
+    pub use hir::def_id::{DefId, LocalDefId};
+    pub use mir::Location;
 }
 
 use args::LogLevelConfig;
@@ -81,6 +84,8 @@ pub mod consts;
 pub use args::{AnalysisCtrl, Args, DbgArgs, ModelCtrl};
 
 use frg::ToForge;
+
+use crate::utils::outfile_pls;
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -151,16 +156,13 @@ impl rustc_driver::Callbacks for Callbacks {
         let result_path = compiler
             .build_output_filenames(&*compiler.session(), &[])
             .with_extension("analysis_result");
-        let mut outf = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&result_path)
-            .unwrap();
+        let mut outf = outfile_pls(&result_path).unwrap();
         let doc_alloc = pretty::BoxAllocator;
         let doc: DocBuilder<_, ()> = desc.as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();
-        println!("Wrote analysis result to {}", &result_path.display());
+        let mut outf_2 = outfile_pls(self.opts.result_path()).unwrap();
+        doc.render(100, &mut outf_2).unwrap();
+        warn!("Due to potential overwrite issues with --result-path (with multiple targets in a crate) outputs were written to {} and {}", self.opts.result_path().display(), &result_path.display());
         rustc_driver::Compilation::Stop
     }
 }

@@ -590,6 +590,18 @@ fn handle_aggregate_assign<'tcx>(
         .project_deeper(rest_project, tcx))
 }
 
+pub fn short_hash_pls<T: Hash>(t: T) -> u64 {
+    // Six digits in hex
+    hash_pls(t) % 0x1_000_000
+}
+
+pub fn hash_pls<T: Hash>(t: T) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::default();
+    t.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Creates an `Identifier` for this `HirId`
 pub fn identifier_for_hid(tcx: TyCtxt, hid: HirId) -> Identifier {
     Identifier::new(tcx.item_name(tcx.hir().local_def_id(hid).to_def_id()))
@@ -597,7 +609,7 @@ pub fn identifier_for_hid(tcx: TyCtxt, hid: HirId) -> Identifier {
 
 /// Creates an `Identifier` for this `DefId`
 pub fn identifier_for_fn(tcx: TyCtxt, p: DefId) -> Identifier {
-    Identifier::new(tcx.item_name(p))
+    Identifier::from_str(&format!("{}_{:x}", tcx.item_name(p), short_hash_pls(p),))
 }
 
 /// Extension trait for [`TyCtxt`]

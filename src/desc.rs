@@ -8,7 +8,15 @@
 
 use std::hash::Hash;
 
-use crate::{mir, serde, HashMap, HashSet, Symbol};
+use crate::{
+    ir::GlobalLocation,
+    ir::{IsGlobalLocation, RawGlobalLocation},
+    mir,
+    rust::DefId,
+    serde,
+    utils::identifier_for_fn,
+    HashMap, HashSet, Symbol, TyCtxt,
+};
 
 pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
@@ -332,26 +340,27 @@ impl<X, Y> Relation<X, Y> {
     }
 }
 
-/// XXX This representation is outdated and can lead to collisions. We need
-/// something that is closer to a
 /// [`GlobalLocation`](crate::ir::GlobalLocation).
-#[derive(
-    Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Debug, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Hash, Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CallSite {
-    #[serde(with = "crate::serializers::ser_loc")]
-    pub location: mir::Location,
-    pub called_from: Function,
+    pub location: RawGlobalLocation,
     pub function: Function,
+}
+
+impl CallSite {
+    pub fn new<L: IsGlobalLocation>(loc: &L, function: DefId, tcx: TyCtxt<'_>) -> Self {
+        Self {
+            location: loc.as_raw(),
+            function: identifier_for_fn(tcx, function),
+        }
+    }
 }
 
 /// A representation of something that can emit data into the flow.
 ///
 /// Convenience match functions are provided (for use e.g. in
 /// [`Iterator::filter_map`]) with [`Self::as_function_call`] and [`Self::as_argument`].
-#[derive(
-    Hash, Eq, PartialEq, Ord, PartialOrd, Clone, serde::Serialize, serde::Deserialize, Debug,
-)]
+#[derive(Hash, Eq, PartialEq, Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub enum DataSource {
     /// The result of a function call in the controller body. Can be the return
     /// value or a mutable argument that was passed to the call.
@@ -378,9 +387,7 @@ impl DataSource {
 /// A representation of something that can receive data from the flow.
 ///
 /// [`Self::as_argument`] is provided for convenience of matching.
-#[derive(
-    Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize, Debug,
-)]
+#[derive(Hash, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub enum DataSink {
     Argument { function: CallSite, arg_slot: usize },
     Return,
