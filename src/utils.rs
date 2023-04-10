@@ -799,7 +799,7 @@ pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilte
 pub fn write_sep<
     E,
     I: IntoIterator<Item = E>,
-    F: FnMut(E, &mut std::fmt::Formatter<'_>) -> std::fmt::Result,
+    F: FnMut(E, & mut std::fmt::Formatter<'_>) -> std::fmt::Result,
 >(
     fmt: &mut std::fmt::Formatter<'_>,
     sep: &str,

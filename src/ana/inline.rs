@@ -205,36 +205,53 @@ impl std::fmt::Display for Edge {
     }
 }
 
-/// Common, parameterized equation type used by the [`GraphResolver`]s
-pub type Equation<L> =
-    algebra::Equality<Node<regal::RelativePlace<L>>, DisplayViaDebug<mir::Field>>;
-pub type Equations<L> = Vec<Equation<L>>;
-/// Common, parameterized graph type used in this module
-pub type GraphImpl<L> = pg::GraphMap<Node<(L, DefId)>, Edge, pg::Directed>;
-
-/// A graph and the associated set of extracted or accumulated equations
-pub struct GraphWithResolver<L> {
-    graph: GraphImpl<L>,
-    equations: Equations<L>,
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
+pub struct GlobalLocal<'g> {
+    local: mir::Local,
+    location: Option<GlobalLocation<'g>>
 }
 
-impl<L: Copy + Ord + std::hash::Hash> Default for GraphWithResolver<L> {
-    fn default() -> Self {
+impl <'g> GlobalLocal<'g> {
+    pub fn at_root(local: mir::Local) -> Self {
         Self {
-            graph: pg::GraphMap::new(),
-            equations: vec![],
+            local,
+            location: None
+        }
+    }
+
+    pub fn relative(local: mir::Local, location: GlobalLocation<'g>) -> Self {
+        Self {
+            local,
+            location: Some(location)
         }
     }
 }
 
-/// A graph describing the relationships of call sites, arguments and return
-/// values for a single analyzed function.
-type ProcedureGraph = GraphWithResolver<DisplayViaDebug<Location>>;
-/// A graph describing the relationship of call sites, arguments and return
-/// values for an analyzed functions with certain called functions inlined/expanded,
-type InlinedGraph<'g> = GraphWithResolver<GlobalLocation<'g>>;
+impl std::fmt::Display for GlobalLocal<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} @ ", self.local)?;
+        if let Some(loc) = self.location {
+            write!(f, "{}", loc)
+        } else {
+            f.write_str("root")
+        }
+    }
+}
 
-impl<'g> InlinedGraph<'g> {
+/// Common, parameterized equation type used by the [`GraphResolver`]s
+pub type Equation<L> =
+    algebra::Equality<L, DisplayViaDebug<mir::Field>>;
+pub type Equations<L> = Vec<Equation<L>>;
+/// Common, parameterized graph type used in this module
+pub type GraphImpl<L> = pg::GraphMap<Node<(L, DefId)>, Edge, pg::Directed>;
+
+pub struct InlinedGraph<'g> {
+    graph: GraphImpl<GlobalLocation<'g>>,
+    equations: Equations<GlobalLocal<'g>>,
+}
+
+
+impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// For each edge in this graph query the set of equations to determine if
     /// it is memory-plausible e.g. if there exists an argument `a` to the
     /// target and a return `r` from the source such that either `a` can be
@@ -242,9 +259,10 @@ impl<'g> InlinedGraph<'g> {
     ///
     /// The simples example is where `r == a` a more complex example could be
     /// that `r = *a.foo`.
-    fn prune_impossible_edges<'tcx>(&mut self, name: Symbol, tcx: TyCtxt<'tcx>) {
+    fn prune_impossible_edges(&self, graph: &mut InlinedGraph<'g>, name: Symbol) {
         time(&format!("Edge Pruning for {name}"), || {
-            info!("Have {} equations for pruning", self.equations.len());
+            let InlinedGraph { graph, equations } = graph;
+            info!("Have {} equations for pruning", equations.len());
             // debug!(
             //     "Equations for pruning are:\n{}",
             //     crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
@@ -267,7 +285,7 @@ impl<'g> InlinedGraph<'g> {
 
             //info!("Pruning over {num_edges} of {} edges", self.graph.edge_count());
             let mut count = 0;
-            let edges_to_prune = self.graph.all_edges().filter_map(|(from, to, weight)| {
+            let edges_to_prune = graph.all_edges().filter_map(|(from, to, weight)| {
                 (!matches!((to, from), (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) if c1.0.outermost() == c2.0.outermost())).then(|| {
                     count += weight.data.count() as usize;
                     (from, to)
@@ -277,57 +295,46 @@ impl<'g> InlinedGraph<'g> {
             info!("Pruning over {count} edges");
 
             for (from, to) in edges_to_prune {
-                let weight = &mut self.graph[(from, to)];
+                let weight = &mut graph[(from, to)];
                 for idx in weight.data.into_iter_set_in_domain() {
-                    let to_target = to.map_location(|&(location, _did)| regal::RelativePlace {
-                        location,
-                        place: regal::TargetPlace::Argument(idx.into()),
-                    });
+                    let to_target = self.node_to_locals(&to, idx);
                     // This can be optimized (directly create function)
                     let targets = match from {
                         Node::Argument(a) => {
-                            Either::Right(std::iter::once(regal::SimpleLocation::Argument(a)))
+                            Either::Right(std::iter::once(GlobalLocal::at_root((a.as_usize() + 1).into())))
                         }
                         Node::Return => unreachable!(),
                         Node::Call((location, did)) => Either::Left({
-                            let args = tcx.fn_sig(did).skip_binder().inputs().len();
-                            (0..args)
-                                .into_iter()
-                                .map(move |a| {
-                                    regal::SimpleLocation::Call(regal::RelativePlace {
-                                        location: location,
-                                        place: regal::TargetPlace::Argument(
-                                            regal::ArgumentIndex::from_usize(a),
-                                        ),
-                                    })
-                                })
-                                .chain(std::iter::once(regal::SimpleLocation::Call(
-                                    regal::RelativePlace {
-                                        location: location,
-                                        place: regal::TargetPlace::Return,
-                                    },
-                                )))
+                            let call = self.get_call(location);
+                            let parent = location.parent(self.gli);
+                            call.argument_locals().chain([call.return_to]).map(move |local| {
+                                if let Some(parent) = parent {
+                                    GlobalLocal::relative(local, parent)
+                                } else {
+                                    GlobalLocal::at_root(local)
+                                }
+                            })
                         }),
                     }
                     .collect::<HashSet<_>>();
-                    if !algebra::solve_reachable(&self.equations, &to_target, |to| {
+                    if !algebra::solve_reachable(&equations, &to_target, |to| {
                         targets.contains(to)
                     }) {
                         weight.data.clear(idx)
                     }
                 }
                 if weight.is_empty() {
-                    self.graph.remove_edge(from, to);
+                    graph.remove_edge(from, to);
                 }
             }
         })
     }
 }
 
-impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
-    fn from(body: regal::Body<DisplayViaDebug<Location>>) -> Self {
+
+impl <'g> InlinedGraph<'g> {
+    fn from_body(gli: GLI<'g>, body_id: BodyId, body: &regal::Body<DisplayViaDebug<Location>>) -> Self {
         time("Graph Construction From Regal Body", || {
-            let mut gwr = ProcedureGraph::default();
             debug!(
                 "Equations for body are:\n{}",
                 crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
@@ -337,7 +344,11 @@ impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
                     Ok(())
                 })
             );
-            gwr.equations = body.equations;
+            let equations = to_global_equations(&body.equations, body_id, gli);
+            let mut gwr = InlinedGraph {
+                equations,
+                graph: Default::default(),
+            };
             let g = &mut gwr.graph;
             let call_map = body
                 .calls
@@ -364,7 +375,7 @@ impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
                     for d in deps {
                         use regal::Target;
                         let from = match d {
-                            Target::Call(c) => regal::SimpleLocation::Call((*c, call_map[c])),
+                            Target::Call(c) => regal::SimpleLocation::Call((gli.globalize_location(**c, body_id), call_map[c])),
                             Target::Argument(a) => regal::SimpleLocation::Argument(*a),
                         };
                         if g.contains_edge(from, to) {
@@ -378,9 +389,11 @@ impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
                 };
 
             for (&loc, call) in body.calls.iter() {
-                let n = SimpleLocation::Call((loc, call.function));
+                let n = SimpleLocation::Call((gli.globalize_location(*loc, body_id), call.function));
                 for (idx, deps) in call.arguments.iter().enumerate() {
-                    add_dep_edges(n, EdgeType::Data(idx as u32), deps)
+                    if let Some((_, deps)) = deps {
+                        add_dep_edges(n, EdgeType::Data(idx as u32), deps)
+                    }
                 }
                 add_dep_edges(n, EdgeType::Control, &call.ctrl_deps);
             }
@@ -398,10 +411,12 @@ impl From<regal::Body<DisplayViaDebug<Location>>> for ProcedureGraph {
     }
 }
 
+type BodyCache = Cache<BodyId, regal::Body<DisplayViaDebug<Location>>>;
+
 /// Essentially just a bunch of caches of analyses.
 pub struct Inliner<'tcx, 'g, 's> {
     /// Memoized graphs created from single-procedure analyses
-    base_memo: Cache<BodyId, ProcedureGraph>,
+    base_memo: BodyCache,
     /// Memoized graphs that have all their callees inlined. Unlike `base_memo`
     /// this has to be recursion breaking, since a function may call itself
     /// (possibly transitively).
@@ -414,54 +429,23 @@ pub struct Inliner<'tcx, 'g, 's> {
 
 /// Globalize all locations mentioned in these equations.
 fn to_global_equations<'g>(
-    eqs: &Equations<DisplayViaDebug<Location>>,
+    eqs: &Equations<DisplayViaDebug<mir::Local>>,
     body_id: BodyId,
     gli: GLI<'g>,
-) -> Equations<GlobalLocation<'g>> {
+) -> Equations<GlobalLocal<'g>> {
     eqs.iter()
         .map(|eq| {
             eq.map_bases(|target| {
-                target.map_location(|place| regal::RelativePlace {
-                    place: place.place,
-                    location: gli.globalize_location(*place.location, body_id),
-                })
+                GlobalLocal {
+                    local: **target,
+                    location: None
+                }
             })
         })
         .collect()
 }
 
-/// Does a naïve transformation from a [`ProcedureGraph`] into a
-/// [`InlinedGraph`]. It just globalizes the locations, it does not actually
-/// perform inlining (despite what the name of the returned type might suggest).
-fn to_global_graph<'g>(
-    ProcedureGraph {
-        graph: proc_g,
-        equations: local_eq,
-    }: &ProcedureGraph,
-    gli: GLI<'g>,
-    body_id: BodyId,
-) -> InlinedGraph<'g> {
-    let mut gwr = InlinedGraph::default();
-    gwr.equations = to_global_equations(local_eq, body_id, gli);
-    let g = &mut gwr.graph;
-    let node_map = proc_g
-        .node_references()
-        .map(|(n, w)| {
-            (
-                n,
-                g.add_node(w.map_call(|(loc, id)| (gli.globalize_location(**loc, body_id), *id))),
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    for e in proc_g.edge_references() {
-        g.add_edge(
-            node_map[&e.source()],
-            node_map[&e.target()],
-            e.weight().clone(),
-        );
-    }
-    gwr
-}
+
 
 impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     pub fn new(tcx: TyCtxt<'tcx>, gli: GLI<'g>, recurse_selector: &'s dyn InlineSelector) -> Self {
@@ -477,10 +461,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// Compute a procedure graph for this `body_id` (memoized). Actual
     /// computation performed by [`regal::compute_from_body_id`] and
     /// [`ProcedureGraph::from`]
-    fn get_procedure_graph(&self, body_id: BodyId) -> &ProcedureGraph {
+    fn get_procedure_graph(&self, body_id: BodyId) -> &regal::Body<DisplayViaDebug<Location>> {
         self.base_memo.get(body_id, |bid| {
-            let regal_body = regal::compute_from_body_id(bid, self.tcx, self.gli);
-            regal_body.into()
+            regal::compute_from_body_id(bid, self.tcx, self.gli)
         })
     }
 
@@ -496,28 +479,38 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     }
 
     fn relativize_eqs<'a>(
-        equations: &'a Equations<GlobalLocation<'g>>,
+        equations: &'a Equations<GlobalLocal<'g>>,
         gli: &'a GliAt<'g>,
-    ) -> impl Iterator<Item = Equation<GlobalLocation<'g>>> + 'a {
+    ) -> impl Iterator<Item = Equation<GlobalLocal<'g>>> + 'a {
         equations.iter().map(move |eq| {
             eq.map_bases(|base| {
-                use regal::SimpleLocation::*;
-                Call(match base {
-                    Call(place) => regal::RelativePlace {
-                        place: place.place,
-                        location: gli.relativize(place.location),
-                    },
-                    Argument(aidx) => regal::RelativePlace {
-                        location: gli.as_global_location(),
-                        place: regal::TargetPlace::Argument(*aidx),
-                    },
-                    Return => regal::RelativePlace {
-                        location: gli.as_global_location(),
-                        place: regal::TargetPlace::Return,
-                    },
-                })
+                GlobalLocal {
+                    local: base.local,
+                    location: Some(base.location.map_or_else( || gli.as_global_location(), |prior| gli.relativize(prior)))
+                }
             })
         })
+    }
+
+    fn get_call(&self, loc: GlobalLocation<'g>) -> &regal::Call<regal::Dependencies<DisplayViaDebug<mir::Location>>> {
+        let body = self.get_procedure_graph(loc.innermost_function());
+        &body.calls[&DisplayViaDebug(loc.innermost_location())]
+    }
+
+    fn node_to_locals(&self, node: &Node<(GlobalLocation<'g>, DefId)>, idx: ArgNum) -> GlobalLocal<'g> {
+        match node {
+            SimpleLocation::Return => GlobalLocal::at_root(mir::RETURN_PLACE),
+            SimpleLocation::Argument(idx) => GlobalLocal::at_root((idx.as_usize() + 1).into()),
+            SimpleLocation::Call((loc, _)) => {
+                let call = self.get_call(*loc);
+                let pure_local = call.arguments[(idx as usize).into()].as_ref().map(|i| i.0).unwrap();
+                if let Some(parent) = loc.parent(self.gli) {
+                    GlobalLocal::relative(pure_local, parent)
+                } else {
+                    GlobalLocal::at_root(pure_local)
+                }
+            }
+        }
     }
 
     fn writeable_arguments<'tc>(
@@ -533,9 +526,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
     /// it ([`to_global_graph`]).
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
-        let proc_g = self.get_procedure_graph(body_id);
+        let mut gwr = InlinedGraph::from_body(self.gli, body_id, self.get_procedure_graph(body_id));
         let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
-        let mut gwr = to_global_graph(&proc_g, self.gli, body_id);
         let name = body_name_pls(self.tcx, body_id).name;
 
         dump_dot_graph(
@@ -585,33 +577,26 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             Some((id, closure_fn.as_local().unwrap(), *location, true))
                         }
                         _ => {
+                            let local_as_global = GlobalLocal::at_root;
+                            let call = self.get_call(*location);
                             debug!("Abstracting {function:?}");
                             let fn_sig = self.tcx.fn_sig(function).skip_binder();
-                            let writeables = std::iter::once(regal::TargetPlace::Return)
-                                .chain(
-                                    Self::writeable_arguments(&fn_sig)
-                                        .map(regal::TargetPlace::Argument),
-                                )
-                                .collect::<Vec<_>>();
+                            let writeables = 
+                                Self::writeable_arguments(&fn_sig)
+                                    .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
+                                    .chain([call.return_to])
+                                    .map(local_as_global)
+                                    .collect::<Vec<_>>();
                             let mk_term = |tp| {
-                                algebra::Term::new_base(regal::SimpleLocation::Call(
-                                    regal::RelativePlace {
-                                        place: tp,
-                                        location: *location,
-                                    },
-                                ))
+                                algebra::Term::new_base(tp)
                             };
-                            eqs.extend(writeables.iter().flat_map(|write| {
-                                (0..fn_sig.inputs().len() as usize)
-                                    .map(|t| {
-                                        regal::TargetPlace::Argument(regal::ArgumentIndex::from_usize(
-                                            t,
-                                        ))
-                                    })
-                                    .filter(move |read| read != write)
-                                    .map(|read| {
+                            eqs.extend(writeables.iter().flat_map(|&write| {
+                                call.argument_locals()
+                                    .map(local_as_global)
+                                    .filter(move |read| *read != write)
+                                    .map(move |read| {
                                         algebra::Equality::new(
-                                            mk_term(write.clone()).add_unknown(),
+                                            mk_term(write).add_unknown(),
                                             mk_term(read),
                                         )
                                     })
@@ -679,18 +664,16 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     }
                 };
 
-                for (callee_id, old) in to_inline.node_references() {
-                    let typ = old
+                for (old) in to_inline.nodes() {
+                    let new = old
                         .map_call(|(location, function)| (gli_here.relativize(*location), *function));
-                    match typ {
-                        Node::Call(_) => {
-                            for edge in to_inline.edges_directed(callee_id, pg::Incoming) {
-                                connect_to(g, edge.source(), typ, edge.weight())
+                    g.add_node(new);
+                    for edge in to_inline.edges_directed(old, pg::Incoming) {
+                        match new {
+                            Node::Call(_) => {
+                                connect_to(g, edge.source(), new, edge.weight())
                             }
-                        }
-                        Node::Return | Node::Argument(_) => {
-                            for edge in to_inline.edges_directed(callee_id, pg::Incoming) {
-                                debug!("  for incoming edge {:?}", edge.id());
+                            Node::Return | Node::Argument(_) => {
                                 for (target, out) in g
                                     .edges_directed(idx, pg::Outgoing)
                                     .map(|e| (e.target(), e.weight().clone()))
@@ -710,7 +693,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             &gwr,
         )
         .unwrap();
-        gwr.prune_impossible_edges(name, self.tcx);
+        self.prune_impossible_edges(&mut gwr, name);
         dump_dot_graph(
             outfile_pls(format!(
                 "{}.inlined-pruned.gv",
@@ -721,33 +704,40 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         )
         .unwrap();
         if false {
-            time(&format!("Reducing equations to potential targets for {name}"), || {
-                let potential_targets = gwr
-                    .graph
-                    .nodes()
-                    .filter(|n| !matches!(n, SimpleLocation::Call(_)))
-                    .flat_map(|n| gwr.graph.neighbors(n).chain([n]))
-                    .map(|l| l.map_location(|l| l.0))
-                    .collect::<HashSet<_>>();
-                gwr.equations = algebra::rebase_simplify(gwr.equations.into_iter(), |b| {
-                    let generic_b: SimpleLocation<GlobalLocation<'g>> = b.map_location(|l| l.location);
-                    if potential_targets.contains(&generic_b) {
-                        Either::Left([*b])
-                    } else {
-                        Either::Right(*b)
-                    }
-                });
-                gwr
-            })
+            // time(&format!("Reducing equations to potential targets for {name}"), || {
+            //     let potential_targets = gwr
+            //         .graph
+            //         .nodes()
+            //         .filter(|n| !matches!(n, SimpleLocation::Call(_)))
+            //         .flat_map(|n| gwr.graph.neighbors(n).chain([n]))
+            //         .map(|l| 
+            //             match l {
+            //                 SimpleLocation::Return => GlobalLocal::at_root(mir::RETURN_PLACE),
+            //                 SimpleLocation::Argument(idx) => GlobalLocal::at_root(idx.as_usize().into()),
+            //                 SimpleLocation::Call((loc, _)) => self.
+            //             }
+            //         )
+            //         .collect::<HashSet<_>>();
+            //     gwr.equations = algebra::rebase_simplify(gwr.equations.into_iter(), |b| {
+            //         let generic_b: SimpleLocation<GlobalLocation<'g>> = b.map_location(|l| l.location);
+            //         if potential_targets.contains(&generic_b) {
+            //             Either::Left([*b])
+            //         } else {
+            //             Either::Right(*b)
+            //         }
+            //     });
+            //     gwr
+            // })
+            gwr
         } else {
             gwr
         }
     }
 }
 
-fn dump_dot_graph<L: std::fmt::Display + std::hash::Hash + Eq + Ord + Copy, W: std::io::Write>(
+fn dump_dot_graph<W: std::io::Write>(
     mut w: W,
-    g: &GraphWithResolver<L>,
+    g: &InlinedGraph,
 ) -> std::io::Result<()> {
     use petgraph::dot::*;
     write!(

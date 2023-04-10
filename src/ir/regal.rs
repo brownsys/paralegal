@@ -18,7 +18,7 @@ use crate::{
     },
     utils::{
         body_name_pls, outfile_pls, places_read, time, AsFnAndArgs, AsFnAndArgsErr,
-        DisplayViaDebug, LocationExt,
+        DisplayViaDebug, LocationExt, write_sep,
     },
     Either, HashMap, HashSet, TyCtxt,
 };
@@ -73,8 +73,15 @@ impl<L: Display> Display for Target<L> {
 #[derive(Debug)]
 pub struct Call<D> {
     pub function: DefId,
-    pub arguments: IndexVec<ArgumentIndex, D>,
+    pub arguments: IndexVec<ArgumentIndex, Option<(mir::Local, D)>>,
+    pub return_to: mir::Local,
     pub ctrl_deps: D,
+}
+
+impl <D> Call<D> {
+    pub fn argument_locals(&self) -> impl Iterator<Item=mir::Local> + '_ {
+        self.arguments.iter().filter_map(|a| a.as_ref().map(|i| i.0))
+    }
 }
 
 struct NeverInline;
@@ -119,17 +126,16 @@ fn fmt_deps<L: Display>(
 impl<L: Display> Display for Call<Dependencies<L>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char('(')?;
-        let mut first = true;
-        for arg in self.arguments.iter() {
-            if first {
-                first = false;
+        write_sep(f, ", ", self.arguments.iter(), |elem, f| 
+            if let Some(deps) = elem {
+                fmt_deps(&deps.1, f)
             } else {
-                f.write_str(", ")?;
+                f.write_str("{}")
             }
-            fmt_deps(arg, f)?;
-        }
-        write!(f, ")   {:?}", self.function)?;
-        Ok(())
+        )?;
+        write!(f, ") ctrl:")?;
+        fmt_deps(&self.ctrl_deps, f)?;
+        write!(f, " {:?}", self.function)
     }
 }
 
@@ -177,7 +183,7 @@ pub struct Body<L> {
     pub calls: HashMap<L, Call<Dependencies<L>>>,
     pub return_deps: Dependencies<L>,
     pub return_arg_deps: Vec<Dependencies<L>>,
-    pub equations: Vec<algebra::Equality<SimpleLocation<RelativePlace<L>>, DisplayViaDebug<Field>>>,
+    pub equations: Vec<algebra::Equality<DisplayViaDebug<mir::Local>, DisplayViaDebug<Field>>>,
 }
 
 impl<L: Display + Ord> Display for Body<L> {
@@ -262,7 +268,7 @@ impl Body<DisplayViaDebug<Location>> {
                 })
                 .chain([(mir::RETURN_PLACE, vec![SimpleLocation::Return])])
                 .collect();
-            let dependencies_for = |location: DisplayViaDebug<_>, arg, is_mut_arg| {
+            let dependencies_for = |location: DisplayViaDebug<_>, arg, is_mut_arg| -> Dependencies<DisplayViaDebug<_>> {
                 use rustc_ast::Mutability;
                 let ana = flow_analysis.state_at(*location);
                 let mutability = if false && is_mut_arg {
@@ -306,7 +312,7 @@ impl Body<DisplayViaDebug<Location>> {
                 .basic_blocks()
                 .iter_enumerated()
                 .filter_map(|(bb, bbdat)| {
-                    let (function, simple_args, _) = match bbdat.terminator().as_fn_and_args() {
+                    let (function, simple_args, ret) = match bbdat.terminator().as_fn_and_args() {
                         Ok(p) => p,
                         Err(AsFnAndArgsErr::NotAFunctionCall) => return None,
                         Err(e) => panic!("{e:?}"),
@@ -330,36 +336,23 @@ impl Body<DisplayViaDebug<Location>> {
                             unreachable!()
                         };
 
-                    for (idx, place) in flowistry::mir::utils::arg_places(operands.as_slice()) {
-                        use crate::rust::rustc_index::vec::Idx;
-                        let local = if place.projection.is_empty() {
-                            place.local
-                        } else {
-                            next_new_local.increment_by(1);
-                            call_argument_equations.insert(Equality::new(
-                                Term::new_base(DisplayViaDebug(next_new_local)),
-                                Term::from(place),
-                            ));
-                            next_new_local
-                        };
-                        place_table
-                            .entry(local)
-                            .or_insert_with(Vec::new)
-                            .push(mk_rp(TargetPlace::Argument(ArgumentIndex::from_usize(idx))));
-                    }
-                    let target_ret = target_ret.unwrap().0;
-                    assert!(target_ret.projection.is_empty());
-                    place_table
-                        .entry(target_ret.local)
-                        .or_insert_with(Vec::new)
-                        .push(mk_rp(TargetPlace::Return));
-
                     let arguments = IndexVec::from_raw(
                         simple_args
                             .into_iter()
-                            .map(|arg| {
-                                arg.map_or_else(Dependencies::default, |a| {
-                                    dependencies_for(bbloc, a, false)
+                            .map(|arg| { 
+                                arg.map(|a| {
+                                    let local = if a.projection.is_empty() {
+                                        a.local
+                                    } else {
+                                        use crate::rust::rustc_index::vec::Idx;
+                                        next_new_local.increment_by(1);
+                                        call_argument_equations.insert(Equality::new(
+                                            Term::new_base(DisplayViaDebug(next_new_local)),
+                                            Term::from(a),
+                                        ));
+                                        next_new_local
+                                    };
+                                    (local, dependencies_for(bbloc, a, false))
                                 })
                             })
                             .collect(),
@@ -385,12 +378,15 @@ impl Body<DisplayViaDebug<Location>> {
                             .flatten()
                         })
                         .collect();
+                    let return_place = ret.unwrap().0;
+                    assert!(return_place.projection.is_empty());
                     Some((
                         bbloc,
                         Call {
                             function,
                             arguments,
                             ctrl_deps,
+                            return_to: return_place.local
                         },
                     ))
                 })
@@ -450,31 +446,6 @@ impl Body<DisplayViaDebug<Location>> {
                 })
             );
             let num_eqs = equations.len();
-            let equations = time(&format!("Simplification  of {num_eqs} equations for {name}"), || {
-                algebra::rebase_simplify(
-                    equations.into_iter().map(Cow::Owned).chain(
-                        place_table.keys().map(|k| DisplayViaDebug(*k)).map(|k| {
-                            Cow::Owned(Equality::new(Term::new_base(k), Term::new_base(k)))
-                        }),
-                    ),
-                    |base| {
-                        place_table
-                            .get(base)
-                            .cloned()
-                            .map(Either::Left)
-                            .unwrap_or(Either::Right(*base))
-                    },
-                )
-            });
-            debug!(
-                "Equations after simplify:\n{}",
-                crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-                    for eq in equations.iter() {
-                        writeln!(f, "  {eq}")?;
-                    }
-                    Ok(())
-                })
-            );
             Self {
                 calls,
                 return_deps,

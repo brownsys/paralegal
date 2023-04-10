@@ -216,6 +216,14 @@ impl<'g> GlobalLocation<'g> {
     pub fn to_owned(&self) -> Vec<GlobalLocationS> {
         self.0 .0.clone()
     }
+
+    pub fn parent(self, gli: GLI<'g>) -> Option<Self> {
+        if self.is_at_root() {
+            None
+        } else {
+            Some(gli.from_vec(self.as_slice().split_last().unwrap().1.to_vec()))
+        }
+    }
 }
 
 /// The payload type of a global location. You will probably want to operate on
