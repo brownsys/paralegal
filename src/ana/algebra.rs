@@ -837,9 +837,7 @@ fn solve_with<
 fn vec_drop_range<T>(v: &mut Vec<T>, r: std::ops::Range<usize>) {
     let ptr = v.as_mut_ptr();
     for i in r.clone() {
-        unsafe {
-            drop(ptr.add(i))
-        }
+        unsafe { drop(ptr.add(i)) }
     }
     unsafe {
         std::ptr::copy(ptr.add(r.end), ptr.add(r.start), v.len() - r.end);
@@ -941,7 +939,8 @@ impl<B, F: Copy> Term<B, F> {
                     &mut after_first_unknown
                 } else {
                     &mut after_last_unknown
-                }.insert(self.terms.len());
+                }
+                .insert(self.terms.len());
             }
         }
         if let (Some(from), Some(to)) = (after_first_unknown, after_last_unknown) {

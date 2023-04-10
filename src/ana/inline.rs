@@ -36,7 +36,7 @@ use crate::{
     rust::rustc_index::vec::IndexVec,
     ty,
     utils::{
-        body_name_pls, outfile_pls, time, write_sep, AsFnAndArgs, DisplayViaDebug,
+        body_name_pls, outfile_pls, time, write_sep, AsFnAndArgs, DfppBodyExt, DisplayViaDebug,
         RecursionBreakingCache,
     },
     Either, HashMap, HashSet, Symbol, TyCtxt,
@@ -181,11 +181,7 @@ impl Edge {
             .chain(self.control.then_some(EdgeType::Control))
     }
     pub fn count(self) -> u32 {
-        self.data.count() + if self.control {
-            1
-        } else {
-            0
-        }
+        self.data.count() + if self.control { 1 } else { 0 }
     }
 }
 
@@ -215,21 +211,21 @@ impl std::fmt::Display for Edge {
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
 pub struct GlobalLocal<'g> {
     local: mir::Local,
-    location: Option<GlobalLocation<'g>>
+    location: Option<GlobalLocation<'g>>,
 }
 
-impl <'g> GlobalLocal<'g> {
+impl<'g> GlobalLocal<'g> {
     pub fn at_root(local: mir::Local) -> Self {
         Self {
             local,
-            location: None
+            location: None,
         }
     }
 
     pub fn relative(local: mir::Local, location: GlobalLocation<'g>) -> Self {
         Self {
             local,
-            location: Some(location)
+            location: Some(location),
         }
     }
 }
@@ -246,8 +242,7 @@ impl std::fmt::Display for GlobalLocal<'_> {
 }
 
 /// Common, parameterized equation type used by the [`GraphResolver`]s
-pub type Equation<L> =
-    algebra::Equality<L, DisplayViaDebug<mir::Field>>;
+pub type Equation<L> = algebra::Equality<L, DisplayViaDebug<mir::Field>>;
 pub type Equations<L> = Vec<Equation<L>>;
 /// Common, parameterized graph type used in this module
 pub type GraphImpl<L> = pg::GraphMap<Node<(L, DefId)>, Edge, pg::Directed>;
@@ -257,24 +252,33 @@ pub struct InlinedGraph<'g> {
     equations: Equations<GlobalLocal<'g>>,
 }
 
-
 impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
-    fn edge_has_been_pruned_before(from: Node<(GlobalLocation<'g>, DefId)>, to: Node<(GlobalLocation<'g>, DefId)>) -> bool {
+    fn edge_has_been_pruned_before(
+        from: Node<(GlobalLocation<'g>, DefId)>,
+        to: Node<(GlobalLocation<'g>, DefId)>,
+    ) -> bool {
         match (to, from) {
-            (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) => c1.0.outermost() == c2.0.outermost(),
-            (SimpleLocation::Call(c), _) 
-            | (_, SimpleLocation::Call(c)) => c.0.is_at_root(),
-            _ => true
+            (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) => {
+                c1.0.outermost() == c2.0.outermost()
+            }
+            (SimpleLocation::Call(c), _) | (_, SimpleLocation::Call(c)) => c.0.is_at_root(),
+            _ => true,
         }
     }
 
-    fn find_prunable_edges(graph: &InlinedGraph<'g>) -> HashSet<(Node<(GlobalLocation<'g>, DefId)>, Node<(GlobalLocation<'g>, DefId)>)> {
+    fn find_prunable_edges(
+        graph: &InlinedGraph<'g>,
+    ) -> HashSet<(
+        Node<(GlobalLocation<'g>, DefId)>,
+        Node<(GlobalLocation<'g>, DefId)>,
+    )> {
         let graph = &graph.graph;
-        graph.all_edges().filter_map(|(from, to, _)| {
-            (!Self::edge_has_been_pruned_before(from, to)).then(|| {
-                (from, to)
+        graph
+            .all_edges()
+            .filter_map(|(from, to, _)| {
+                (!Self::edge_has_been_pruned_before(from, to)).then(|| (from, to))
             })
-        }).collect()
+            .collect()
     }
 
     /// For each edge in this graph query the set of equations to determine if
@@ -284,7 +288,15 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     ///
     /// The simples example is where `r == a` a more complex example could be
     /// that `r = *a.foo`.
-    fn prune_impossible_edges(&self, graph: &mut InlinedGraph<'g>, name: Symbol, edges_to_prune: &HashSet<(Node<(GlobalLocation<'g>, DefId)>, Node<(GlobalLocation<'g>, DefId)>)>) {
+    fn prune_impossible_edges(
+        &self,
+        graph: &mut InlinedGraph<'g>,
+        name: Symbol,
+        edges_to_prune: &HashSet<(
+            Node<(GlobalLocation<'g>, DefId)>,
+            Node<(GlobalLocation<'g>, DefId)>,
+        )>,
+    ) {
         time(&format!("Edge Pruning for {name}"), || {
             let InlinedGraph { graph, equations } = graph;
             info!("Have {} equations for pruning", equations.len());
@@ -307,8 +319,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             //     .unwrap();
             //     solver
             // });
-            info!("Pruning over {} edges",     
-                edges_to_prune.into_iter().filter_map(|&(a, b)| Some(graph.edge_weight(a, b)?.count())).count()
+            info!(
+                "Pruning over {} edges",
+                edges_to_prune
+                    .into_iter()
+                    .filter_map(|&(a, b)| Some(graph.edge_weight(a, b)?.count()))
+                    .count()
             );
 
             for &(from, to) in edges_to_prune {
@@ -317,20 +333,22 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         let to_target = self.node_to_local(&to, idx);
                         // This can be optimized (directly create function)
                         let targets = match from {
-                            Node::Argument(a) => {
-                                Either::Right(std::iter::once(GlobalLocal::at_root((a.as_usize() + 1).into())))
-                            }
+                            Node::Argument(a) => Either::Right(std::iter::once(
+                                GlobalLocal::at_root((a.as_usize() + 1).into()),
+                            )),
                             Node::Return => unreachable!(),
                             Node::Call((location, did)) => Either::Left({
                                 let call = self.get_call(location);
                                 let parent = location.parent(self.gli);
-                                call.argument_locals().chain([call.return_to]).map(move |local| {
-                                    if let Some(parent) = parent {
-                                        GlobalLocal::relative(local, parent)
-                                    } else {
-                                        GlobalLocal::at_root(local)
-                                    }
-                                })
+                                call.argument_locals()
+                                    .chain([call.return_to])
+                                    .map(move |local| {
+                                        if let Some(parent) = parent {
+                                            GlobalLocal::relative(local, parent)
+                                        } else {
+                                            GlobalLocal::at_root(local)
+                                        }
+                                    })
                             }),
                         }
                         .collect::<HashSet<_>>();
@@ -350,9 +368,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     }
 }
 
-
-impl <'g> InlinedGraph<'g> {
-    fn from_body(gli: GLI<'g>, body_id: BodyId, body: &regal::Body<DisplayViaDebug<Location>>) -> Self {
+impl<'g> InlinedGraph<'g> {
+    fn from_body(
+        gli: GLI<'g>,
+        body_id: BodyId,
+        body: &regal::Body<DisplayViaDebug<Location>>,
+    ) -> Self {
         time("Graph Construction From Regal Body", || {
             debug!(
                 "Equations for body are:\n{}",
@@ -394,7 +415,10 @@ impl <'g> InlinedGraph<'g> {
                     for d in deps {
                         use regal::Target;
                         let from = match d {
-                            Target::Call(c) => regal::SimpleLocation::Call((gli.globalize_location(**c, body_id), call_map[c])),
+                            Target::Call(c) => regal::SimpleLocation::Call((
+                                gli.globalize_location(**c, body_id),
+                                call_map[c],
+                            )),
                             Target::Argument(a) => regal::SimpleLocation::Argument(*a),
                         };
                         if g.contains_edge(from, to) {
@@ -408,7 +432,8 @@ impl <'g> InlinedGraph<'g> {
                 };
 
             for (&loc, call) in body.calls.iter() {
-                let n = SimpleLocation::Call((gli.globalize_location(*loc, body_id), call.function));
+                let n =
+                    SimpleLocation::Call((gli.globalize_location(*loc, body_id), call.function));
                 for (idx, deps) in call.arguments.iter().enumerate() {
                     if let Some((_, deps)) = deps {
                         add_dep_edges(n, EdgeType::Data(idx as u32), deps)
@@ -454,11 +479,9 @@ fn to_global_equations<'g>(
 ) -> Equations<GlobalLocal<'g>> {
     eqs.iter()
         .map(|eq| {
-            eq.map_bases(|target| {
-                GlobalLocal {
-                    local: **target,
-                    location: None
-                }
+            eq.map_bases(|target| GlobalLocal {
+                local: **target,
+                location: None,
             })
         })
         .collect()
@@ -504,27 +527,38 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         gli: &'a GliAt<'g>,
     ) -> impl Iterator<Item = Equation<GlobalLocal<'g>>> + 'a {
         equations.iter().map(move |eq| {
-            eq.map_bases(|base| {
-                GlobalLocal {
-                    local: base.local,
-                    location: Some(base.location.map_or_else( || gli.as_global_location(), |prior| gli.relativize(prior)))
-                }
+            eq.map_bases(|base| GlobalLocal {
+                local: base.local,
+                location: Some(
+                    base.location
+                        .map_or_else(|| gli.as_global_location(), |prior| gli.relativize(prior)),
+                ),
             })
         })
     }
 
-    fn get_call(&self, loc: GlobalLocation<'g>) -> &regal::Call<regal::Dependencies<DisplayViaDebug<mir::Location>>> {
+    fn get_call(
+        &self,
+        loc: GlobalLocation<'g>,
+    ) -> &regal::Call<regal::Dependencies<DisplayViaDebug<mir::Location>>> {
         let body = self.get_procedure_graph(loc.innermost_function());
         &body.calls[&DisplayViaDebug(loc.innermost_location())]
     }
 
-    fn node_to_local(&self, node: &Node<(GlobalLocation<'g>, DefId)>, idx: ArgNum) -> GlobalLocal<'g> {
+    fn node_to_local(
+        &self,
+        node: &Node<(GlobalLocation<'g>, DefId)>,
+        idx: ArgNum,
+    ) -> GlobalLocal<'g> {
         match node {
             SimpleLocation::Return => GlobalLocal::at_root(mir::RETURN_PLACE),
             SimpleLocation::Argument(idx) => GlobalLocal::at_root(arg_num_to_local(*idx)),
             SimpleLocation::Call((loc, _)) => {
                 let call = self.get_call(*loc);
-                let pure_local = call.arguments[(idx as usize).into()].as_ref().map(|i| i.0).unwrap();
+                let pure_local = call.arguments[(idx as usize).into()]
+                    .as_ref()
+                    .map(|i| i.0)
+                    .unwrap();
                 if let Some(parent) = loc.parent(self.gli) {
                     GlobalLocal::relative(pure_local, parent)
                 } else {
@@ -562,23 +596,27 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         )
         .unwrap();
         let mut queue_for_pruning = HashSet::new();
-        time(&format!("Inlining subgraphs into {name}"), ||{
+        time(&format!("Inlining subgraphs into {name}"), || {
             let g = &mut gwr.graph;
             let eqs = &mut gwr.equations;
             let targets = g
                 .node_references()
                 .filter_map(|(id, n)| match n {
                     Node::Call((location, function)) => match function.as_local() {
-                        Some(local_id) if self.recurse_selector.should_inline(self.tcx, local_id) => {
+                        Some(local_id)
+                            if self.recurse_selector.should_inline(self.tcx, local_id) =>
+                        {
                             debug!("Inlining {function:?}");
                             Some((id, local_id, *location, None))
                         }
                         _ if Some(*function) == self.tcx.lang_items().from_generator_fn() => {
-                            let body_with_facts =
-                                borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
+                            let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(
+                                self.tcx,
+                                local_def_id,
+                            );
                             let body = body_with_facts.simplified_body();
                             let mut args = body
-                                .stmt_at(location.innermost_location())
+                                .stmt_at_better_err(location.innermost_location())
                                 .right()
                                 .expect("Expected terminator")
                                 .as_fn_and_args()
@@ -604,15 +642,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             let call = self.get_call(*location);
                             debug!("Abstracting {function:?}");
                             let fn_sig = self.tcx.fn_sig(function).skip_binder();
-                            let writeables = 
-                                Self::writeable_arguments(&fn_sig)
-                                    .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
-                                    .chain([call.return_to])
-                                    .map(local_as_global)
-                                    .collect::<Vec<_>>();
-                            let mk_term = |tp| {
-                                algebra::Term::new_base(tp)
-                            };
+                            let writeables = Self::writeable_arguments(&fn_sig)
+                                .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
+                                .chain([call.return_to])
+                                .map(local_as_global)
+                                .collect::<Vec<_>>();
+                            let mk_term = |tp| algebra::Term::new_base(tp);
                             eqs.extend(writeables.iter().flat_map(|&write| {
                                 call.argument_locals()
                                     .map(local_as_global)
@@ -634,14 +669,14 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 })
                 .collect::<Vec<_>>();
             for (idx, def_id, root_location, is_async_closure) in targets {
-                let grw_to_inline = if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id)
-                {
-                    callee_graph
-                } else {
-                    // Breaking recursion. This can only happen if we are trying to
-                    // inline ourself, so we simply skip.
-                    continue;
-                };
+                let grw_to_inline =
+                    if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id) {
+                        callee_graph
+                    } else {
+                        // Breaking recursion. This can only happen if we are trying to
+                        // inline ourself, so we simply skip.
+                        continue;
+                    };
                 let num_args = if is_async_closure.is_some() {
                     1 as usize
                 } else {
@@ -661,65 +696,73 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 assert!(root_location.is_at_root());
                 let call = &proc_g.calls[&DisplayViaDebug(root_location.outermost_location())];
                 let gli_here = self.gli.at(root_location.outermost_location(), body_id);
-                gwr.equations
-                    .extend(
-                        Self::relativize_eqs(&grw_to_inline.equations, &gli_here)
-                        .chain(
-                            if let Some(closure) = is_async_closure {
-                                assert!(closure.projection.is_empty());
-                                Either::Right(std::iter::once(
-                                    (closure.local, arg_num_to_local(0_usize.into()))
-                                ))
-                            } else {
-                                Either::Left((0..num_args).filter_map(|a| {
-                                    let a = a.into();
-                                    let actual_param = call.arguments[a].as_ref()?.0;
-                                    Some((actual_param, arg_num_to_local(a)))
-                                }))
-                            }.into_iter()
-                            .chain([(call.return_to, mir::RETURN_PLACE)])
-                            .map(|(actual_param, formal_param)| {
-                                algebra::Equality::new(
-                                    Term::new_base(GlobalLocal::at_root(actual_param)),
-                                    Term::new_base(GlobalLocal::relative(formal_param, root_location)),
-                                )
-                            })
-                        )
-                    );
+                gwr.equations.extend(
+                    Self::relativize_eqs(&grw_to_inline.equations, &gli_here).chain(
+                        if let Some(closure) = is_async_closure {
+                            assert!(closure.projection.is_empty());
+                            Either::Right(std::iter::once((
+                                closure.local,
+                                arg_num_to_local(0_usize.into()),
+                            )))
+                        } else {
+                            Either::Left((0..num_args).filter_map(|a| {
+                                let a = a.into();
+                                let actual_param = call.arguments[a].as_ref()?.0;
+                                Some((actual_param, arg_num_to_local(a)))
+                            }))
+                        }
+                        .into_iter()
+                        .chain([(call.return_to, mir::RETURN_PLACE)])
+                        .map(|(actual_param, formal_param)| {
+                            algebra::Equality::new(
+                                Term::new_base(GlobalLocal::at_root(actual_param)),
+                                Term::new_base(GlobalLocal::relative(formal_param, root_location)),
+                            )
+                        }),
+                    ),
+                );
                 let to_inline = &grw_to_inline.graph;
 
-                let mut connect_to = |g: &mut GraphImpl<_>, source, target, weight: Edge, pruning_required| {
-                    let mut add_edge = |source, register_for_pruning| {
-                        debug!("Connecting {source} -> {target}");
-                        if register_for_pruning {
-                            queue_for_pruning.insert((source, target));
-                        }
-                        if let Some(prior_weight) = g.edge_weight_mut(source, target) {
-                            prior_weight.merge(weight)
-                        } else {
-                            g.add_edge(source, target, weight);
-                        }
-                    };
-                    match source {
-                        Node::Call((loc, did)) => add_edge(Node::Call((gli_here.relativize(loc), did)), pruning_required),
-                        Node::Return => unreachable!(),
-                        Node::Argument(a) => {
-                            for nidx in argument_map
-                                .get(&EdgeType::Data(a.as_usize() as u32))
-                                .into_iter()
-                                .flat_map(|s| s.into_iter())
-                            {
-                                add_edge(*nidx, true)
+                let mut connect_to =
+                    |g: &mut GraphImpl<_>, source, target, weight: Edge, pruning_required| {
+                        let mut add_edge = |source, register_for_pruning| {
+                            debug!("Connecting {source} -> {target}");
+                            if register_for_pruning {
+                                queue_for_pruning.insert((source, target));
+                            }
+                            if let Some(prior_weight) = g.edge_weight_mut(source, target) {
+                                prior_weight.merge(weight)
+                            } else {
+                                g.add_edge(source, target, weight);
+                            }
+                        };
+                        match source {
+                            Node::Call((loc, did)) => add_edge(
+                                Node::Call((gli_here.relativize(loc), did)),
+                                pruning_required,
+                            ),
+                            Node::Return => unreachable!(),
+                            Node::Argument(a) => {
+                                for nidx in argument_map
+                                    .get(&EdgeType::Data(a.as_usize() as u32))
+                                    .into_iter()
+                                    .flat_map(|s| s.into_iter())
+                                {
+                                    add_edge(*nidx, true)
+                                }
                             }
                         }
-                    }
-                };
+                    };
 
                 for (old) in to_inline.nodes() {
-                    let new = old
-                        .map_call(|(location, function)| (gli_here.relativize(*location), *function));
+                    let new = old.map_call(|(location, function)| {
+                        (gli_here.relativize(*location), *function)
+                    });
                     g.add_node(new);
-                    debug!("Handling {old} (now {new}) {} incoming edges", to_inline.edges_directed(old, pg::Incoming).count());
+                    debug!(
+                        "Handling {old} (now {new}) {} incoming edges",
+                        to_inline.edges_directed(old, pg::Incoming).count()
+                    );
                     for edge in to_inline.edges_directed(old, pg::Incoming) {
                         match new {
                             Node::Call(_) => {
@@ -768,7 +811,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             //         .nodes()
             //         .filter(|n| !matches!(n, SimpleLocation::Call(_)))
             //         .flat_map(|n| gwr.graph.neighbors(n).chain([n]))
-            //         .map(|l| 
+            //         .map(|l|
             //             match l {
             //                 SimpleLocation::Return => GlobalLocal::at_root(mir::RETURN_PLACE),
             //                 SimpleLocation::Argument(idx) => GlobalLocal::at_root(idx.as_usize().into()),
@@ -793,10 +836,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     }
 }
 
-fn dump_dot_graph<W: std::io::Write>(
-    mut w: W,
-    g: &InlinedGraph,
-) -> std::io::Result<()> {
+fn dump_dot_graph<W: std::io::Write>(mut w: W, g: &InlinedGraph) -> std::io::Result<()> {
     use petgraph::dot::*;
     write!(
         w,

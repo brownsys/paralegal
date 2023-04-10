@@ -122,6 +122,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 })
         }
 
+        let check_realness = |l: mir::Location| l.is_real(controller_body);
+
         for (loc, deps) in flow.location_dependencies.iter() {
             // It's important to look at the innermost location. It's easy to
             // use `location()` and `function()` on a global location instead
@@ -142,7 +144,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 continue;
             }
             let (terminator, (defid, _, _)) = match inner_body
-                .stmt_at(inner_location)
+                .stmt_at_better_err(inner_location)
                 .right()
                 .ok_or("not a terminator".to_owned())
                 .and_then(|t| Ok((t, t.as_fn_and_args().map_err(|e| format!("{e:?}"))?)))
@@ -201,7 +203,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             // Add ctrl flows to callsite.
             for dep in deps.ctrl_deps.iter() {
                 flows.add_ctrl_flow(
-                    Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(inner_body))),
+                    Cow::Owned(dep.as_data_source(tcx, check_realness)),
                     call_site.clone(),
                 )
             }
@@ -213,7 +215,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 // This will be the target of any flow we register
                 let to = if loc.is_at_root()
                     && matches!(
-                        inner_body.stmt_at(loc.outermost_location()),
+                        inner_body.stmt_at_better_err(loc.outermost_location()),
                         Either::Right(mir::Terminator {
                             kind: mir::TerminatorKind::Return,
                             ..
@@ -229,7 +231,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 for dep in arg_deps.iter() {
                     debug!("    to {dep}");
                     flows.add_data_flow(
-                        Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))),
+                        Cow::Owned(dep.as_data_source(tcx, check_realness)),
                         to.clone(),
                     );
                 }
@@ -237,7 +239,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         }
         for dep in flow.return_dependencies.iter() {
             flows.add_data_flow(
-                Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))),
+                Cow::Owned(dep.as_data_source(tcx, check_realness)),
                 DataSink::Return,
             );
         }

@@ -16,11 +16,14 @@
 use serde::Deserialize;
 
 use crate::{
-    ir::{CallDeps, CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
+    ir::{
+        format_global_location, CallDeps, CallOnlyFlow, GlobalLocation, GlobalLocationS,
+        IsGlobalLocation,
+    },
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
-    utils::{extract_places, read_places_with_provenance},
+    utils::{extract_places, read_places_with_provenance, DfppBodyExt},
     Either, HashMap, HashSet, Symbol,
 };
 
@@ -205,7 +208,7 @@ impl BodyProxy {
                     (
                         loc,
                         stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
-                        read_places_with_provenance(loc, &body.stmt_at(loc), tcx)
+                        read_places_with_provenance(loc, &body.stmt_at_better_err(loc), tcx)
                             .map(|p| Symbol::intern(&format!("{p:?}")))
                             .collect(),
                     )
@@ -361,6 +364,12 @@ pub struct RawGlobalLocation(Vec<GlobalLocationS>);
 impl<'g> From<&'_ GlobalLocation<'g>> for RawGlobalLocation {
     fn from(other: &GlobalLocation<'g>) -> Self {
         RawGlobalLocation(other.to_owned())
+    }
+}
+
+impl std::fmt::Display for RawGlobalLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        format_global_location(self, f)
     }
 }
 

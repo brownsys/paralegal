@@ -120,6 +120,51 @@ impl<'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
     }
 }
 
+pub trait DfppBodyExt<'tcx> {
+    fn stmt_at_better_err(
+        &self,
+        l: mir::Location,
+    ) -> Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>> {
+        self.maybe_stmt_at(l).unwrap()
+    }
+    fn maybe_stmt_at(
+        &self,
+        l: mir::Location,
+    ) -> Result<Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>, StmtAtErr<'_, 'tcx>>;
+}
+
+#[derive(Debug)]
+pub enum StmtAtErr<'a, 'tcx> {
+    BasicBlockOutOfBound(mir::BasicBlock, &'a mir::Body<'tcx>),
+    StatementIndexOutOfBounds(usize, &'a mir::BasicBlockData<'tcx>),
+}
+
+impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
+    fn maybe_stmt_at(
+        &self,
+        l: mir::Location,
+    ) -> Result<Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>, StmtAtErr<'_, 'tcx>> {
+        let Location {
+            block,
+            statement_index,
+        } = l;
+        let block_data = self
+            .basic_blocks()
+            .get(block)
+            .ok_or_else(|| StmtAtErr::BasicBlockOutOfBound(block, &self))?;
+        if statement_index == block_data.statements.len() {
+            Ok(Either::Right(block_data.terminator()))
+        } else if let Some(stmt) = block_data.statements.get(statement_index) {
+            Ok(Either::Left(stmt))
+        } else {
+            Err(StmtAtErr::StatementIndexOutOfBounds(
+                statement_index,
+                block_data,
+            ))
+        }
+    }
+}
+
 /// A simplified version of the argument list that is stored in a
 /// `TerminatorKind::Call`.
 ///
@@ -357,7 +402,7 @@ pub fn extract_places<'tcx>(
     let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| {
         places.insert(*p);
     });
-    match body.stmt_at(l) {
+    match body.stmt_at_better_err(l) {
         Either::Right(mir::Terminator {
             kind: mir::TerminatorKind::Call { func, args, .. },
             ..
@@ -799,7 +844,7 @@ pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilte
 pub fn write_sep<
     E,
     I: IntoIterator<Item = E>,
-    F: FnMut(E, & mut std::fmt::Formatter<'_>) -> std::fmt::Result,
+    F: FnMut(E, &mut std::fmt::Formatter<'_>) -> std::fmt::Result,
 >(
     fmt: &mut std::fmt::Formatter<'_>,
     sep: &str,

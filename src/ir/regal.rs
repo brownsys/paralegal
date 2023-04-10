@@ -17,8 +17,8 @@ use crate::{
         rustc_index::vec::IndexVec,
     },
     utils::{
-        body_name_pls, outfile_pls, places_read, time, AsFnAndArgs, AsFnAndArgsErr,
-        DisplayViaDebug, LocationExt, write_sep,
+        body_name_pls, outfile_pls, places_read, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
+        DfppBodyExt, DisplayViaDebug, LocationExt,
     },
     Either, HashMap, HashSet, TyCtxt,
 };
@@ -78,9 +78,11 @@ pub struct Call<D> {
     pub ctrl_deps: D,
 }
 
-impl <D> Call<D> {
-    pub fn argument_locals(&self) -> impl Iterator<Item=mir::Local> + '_ {
-        self.arguments.iter().filter_map(|a| a.as_ref().map(|i| i.0))
+impl<D> Call<D> {
+    pub fn argument_locals(&self) -> impl Iterator<Item = mir::Local> + '_ {
+        self.arguments
+            .iter()
+            .filter_map(|a| a.as_ref().map(|i| i.0))
     }
 }
 
@@ -126,13 +128,13 @@ fn fmt_deps<L: Display>(
 impl<L: Display> Display for Call<Dependencies<L>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char('(')?;
-        write_sep(f, ", ", self.arguments.iter(), |elem, f| 
+        write_sep(f, ", ", self.arguments.iter(), |elem, f| {
             if let Some(deps) = elem {
                 fmt_deps(&deps.1, f)
             } else {
                 f.write_str("{}")
             }
-        )?;
+        })?;
         write!(f, ") ctrl:")?;
         fmt_deps(&self.ctrl_deps, f)?;
         write!(f, " {:?}", self.function)
@@ -268,7 +270,10 @@ impl Body<DisplayViaDebug<Location>> {
                 })
                 .chain([(mir::RETURN_PLACE, vec![SimpleLocation::Return])])
                 .collect();
-            let dependencies_for = |location: DisplayViaDebug<_>, arg, is_mut_arg| -> Dependencies<DisplayViaDebug<_>> {
+            let dependencies_for = |location: DisplayViaDebug<_>,
+                                    arg,
+                                    is_mut_arg|
+             -> Dependencies<DisplayViaDebug<_>> {
                 use rustc_ast::Mutability;
                 let ana = flow_analysis.state_at(*location);
                 let mutability = if false && is_mut_arg {
@@ -319,27 +324,10 @@ impl Body<DisplayViaDebug<Location>> {
                     };
                     let bbloc = DisplayViaDebug(body.terminator_loc(bb));
 
-                    let mk_rp = |place| {
-                        SimpleLocation::Call(RelativePlace {
-                            location: bbloc,
-                            place,
-                        })
-                    };
-
-                    let (operands, target_ret) =
-                        if let mir::TerminatorKind::Call {
-                            args, destination, ..
-                        } = &body.stmt_at(*bbloc).right().unwrap().kind
-                        {
-                            (args, destination)
-                        } else {
-                            unreachable!()
-                        };
-
                     let arguments = IndexVec::from_raw(
                         simple_args
                             .into_iter()
-                            .map(|arg| { 
+                            .map(|arg| {
                                 arg.map(|a| {
                                     let local = if a.projection.is_empty() {
                                         a.local
@@ -386,7 +374,7 @@ impl Body<DisplayViaDebug<Location>> {
                             function,
                             arguments,
                             ctrl_deps,
-                            return_to: return_place.local
+                            return_to: return_place.local,
                         },
                     ))
                 })

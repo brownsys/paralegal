@@ -117,7 +117,7 @@ impl rustc_driver::Callbacks for Callbacks {
 
     fn after_parsing<'tcx>(
         &mut self,
-        _compiler: &rustc_interface::interface::Compiler,
+        compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         let external_annotations: HashMap<_, _> =
@@ -148,19 +148,19 @@ impl rustc_driver::Callbacks for Callbacks {
             .unwrap();
         }
         info!("All elems walked");
+        let result_path = compiler
+            .build_output_filenames(&*compiler.session(), &[])
+            .with_extension("analysis_result");
         let mut outf = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
-            .open(&self.opts.result_path())
+            .open(&result_path)
             .unwrap();
         let doc_alloc = pretty::BoxAllocator;
         let doc: DocBuilder<_, ()> = desc.as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();
-        info!(
-            "Wrote analysis result to {}",
-            &self.opts.result_path().canonicalize().unwrap().display()
-        );
+        println!("Wrote analysis result to {}", &result_path.display());
         rustc_driver::Compilation::Stop
     }
 }

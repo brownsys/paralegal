@@ -43,3 +43,5 @@ name = "cargo-dfpp"
 [[bin]]
 name = "dfpp"
 
+[profile.release]
+debug = true

@@ -71,7 +71,7 @@ pub mod call_only_flow_dot {
         ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{AsFnAndArgs, LocationExt},
+        utils::{AsFnAndArgs, DfppBodyExt, LocationExt},
         Either,
     };
 
@@ -214,7 +214,7 @@ pub mod call_only_flow_dot {
                 let stmt = if !loc.is_real(body) {
                     None
                 } else {
-                    Some(body.stmt_at(loc))
+                    Some(body.stmt_at_better_err(loc))
                 };
                 let typ = if let Some(ref stmt) = stmt {
                     if stmt.is_left() {
@@ -311,28 +311,6 @@ pub mod call_only_flow_dot {
 impl<'g> GlobalLocation<'g> {
     pub fn iter(&self) -> impl Iterator<Item = GlobalLocationS> + '_ {
         self.as_slice().iter().copied()
-    }
-}
-
-/// Formatting for global locations that works independent of whether it is an
-/// interned or inlined location.
-fn format_global_location<T: IsGlobalLocation>(
-    t: &T,
-    f: &mut std::fmt::Formatter<'_>,
-) -> std::fmt::Result {
-    write_sep(f, "@", t.as_slice(), |elem, f| {
-        write!(
-            f,
-            "{:?}[{}]",
-            elem.location.block, elem.location.statement_index
-        )
-    })?;
-    Ok(())
-}
-
-impl<'g> std::fmt::Display for GlobalLocation<'g> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        format_global_location(self, f)
     }
 }
 
