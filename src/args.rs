@@ -108,15 +108,26 @@ impl ModelCtrl {
 /// Arguments that control the flow analysis
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 pub struct AnalysisCtrl {
-    /// Disables all recursive analysis (both dfpps inlining as well as
+    /// Disables all recursive analysis (both dfpp's inlining as well as
     /// Flowistry's recursive analysis)
     #[clap(long, env)]
     no_recursive_analysis: bool,
-    /// Make flowistry use a recursive analysis strategy. We turn this off by
-    /// default, because we perform the recursion by ourselves and doing it
-    /// twice has lead to bugs.
     #[clap(long, env)]
-    recursive_flowistry: bool,
+    no_pruning: bool,
+    #[clap(long, env)]
+    remove_inconsequential_calls: bool,
+}
+
+impl AnalysisCtrl {
+    pub fn use_recursive_analysis(&self) -> bool {
+        !self.no_recursive_analysis
+    }
+    pub fn use_pruning(&self) -> bool {
+        !self.no_pruning
+    }
+    pub fn remove_inconsequential_calls(&self) -> bool {
+        self.remove_inconsequential_calls
+    }
 }
 
 /// Arguments that control the output of debug information or output to be

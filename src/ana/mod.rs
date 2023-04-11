@@ -280,9 +280,10 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
         let recurse_selector = SkipAnnotatedFunctionSelector {
             marked_objects: self.marked_objects.clone(),
+            tcx,
         };
 
-        let inliner = inline::Inliner::new(self.tcx, gli, &recurse_selector);
+        let inliner = inline::Inliner::new(self.tcx, gli, &recurse_selector, self.opts.anactrl());
 
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         crate::sah::HashVerifications::with(|hash_verifications| {
@@ -375,15 +376,20 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
 /// inlining for all `LocalDefId` values that are found in the map of
 /// `self.marked_objects` i.e. all those functions that have annotations.
 #[derive(Clone)]
-struct SkipAnnotatedFunctionSelector {
+struct SkipAnnotatedFunctionSelector<'tcx> {
     marked_objects: crate::discover::MarkedObjects,
+    tcx: TyCtxt<'tcx>,
 }
-impl inline::InlineSelector for SkipAnnotatedFunctionSelector {
-    fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool {
+impl<'tcx> inline::Oracle<'tcx> for SkipAnnotatedFunctionSelector<'tcx> {
+    fn should_inline(&self, did: LocalDefId) -> bool {
         self.marked_objects
             .as_ref()
             .borrow()
-            .get(&tcx.hir().local_def_id_to_hir_id(did))
+            .get(&self.tcx.hir().local_def_id_to_hir_id(did))
             .map_or(true, |anns| anns.0.is_empty())
+    }
+
+    fn is_semantically_meaningful(&self, did: DefId) -> bool {
+        matches!(did.as_local(), Some(l) if self.should_inline(l))
     }
 }

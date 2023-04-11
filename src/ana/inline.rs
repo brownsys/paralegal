@@ -15,7 +15,7 @@
 use flowistry::{cached::Cache, mir::borrowck_facts};
 use petgraph::{
     prelude as pg,
-    visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences},
+    visit::{EdgeRef, IntoEdgeReferences, IntoNeighborsDirected, IntoNodeReferences},
 };
 
 use crate::{
@@ -39,7 +39,7 @@ use crate::{
         body_name_pls, outfile_pls, time, write_sep, AsFnAndArgs, DfppBodyExt, DisplayViaDebug,
         RecursionBreakingCache,
     },
-    Either, HashMap, HashSet, Symbol, TyCtxt,
+    AnalysisCtrl, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
 /// This essentially describes a closure that determines for a given
@@ -64,13 +64,17 @@ use crate::{
 ///
 /// The only implementation currently in use for this is
 /// [`SkipAnnotatedFunctionSelector`].
-pub trait InlineSelector: 'static {
-    fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool;
+pub trait Oracle<'tcx> {
+    fn should_inline(&self, did: LocalDefId) -> bool;
+    fn is_semantically_meaningful(&self, did: DefId) -> bool;
 }
 
-impl<T: InlineSelector> InlineSelector for std::rc::Rc<T> {
-    fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool {
-        self.as_ref().should_inline(tcx, did)
+impl<'tcx, T: Oracle<'tcx>> Oracle<'tcx> for std::rc::Rc<T> {
+    fn should_inline(&self, did: LocalDefId) -> bool {
+        self.as_ref().should_inline(did)
+    }
+    fn is_semantically_meaningful(&self, did: DefId) -> bool {
+        self.as_ref().is_semantically_meaningful(did)
     }
 }
 
@@ -276,7 +280,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         graph
             .all_edges()
             .filter_map(|(from, to, _)| {
-                (!Self::edge_has_been_pruned_before(from, to)).then(|| (from, to))
+                (!Inliner::edge_has_been_pruned_before(from, to)).then(|| (from, to))
             })
             .collect()
     }
@@ -465,10 +469,11 @@ pub struct Inliner<'tcx, 'g, 's> {
     /// this has to be recursion breaking, since a function may call itself
     /// (possibly transitively).
     inline_memo: RecursionBreakingCache<BodyId, InlinedGraph<'g>>,
-    /// Selects which callees to inline.
-    recurse_selector: &'s dyn InlineSelector,
+    /// Makes choices base on labels
+    oracle: &'s dyn Oracle<'tcx>,
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
+    ana_ctrl: &'static AnalysisCtrl,
 }
 
 /// Globalize all locations mentioned in these equations.
@@ -491,14 +496,33 @@ fn arg_num_to_local(a: regal::ArgumentIndex) -> mir::Local {
     (a.as_usize() + 1).into()
 }
 
+fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
+    g: &mut pg::GraphMap<N, Edge, D>,
+    source: N,
+    target: N,
+    weight: Edge,
+) {
+    if let Some(prior_weight) = g.edge_weight_mut(source, target) {
+        prior_weight.merge(weight)
+    } else {
+        g.add_edge(source, target, weight);
+    }
+}
+
 impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
-    pub fn new(tcx: TyCtxt<'tcx>, gli: GLI<'g>, recurse_selector: &'s dyn InlineSelector) -> Self {
+    pub fn new(
+        tcx: TyCtxt<'tcx>,
+        gli: GLI<'g>,
+        recurse_selector: &'s dyn Oracle<'tcx>,
+        ana_ctrl: &'static AnalysisCtrl,
+    ) -> Self {
         Self {
             tcx,
             gli,
-            recurse_selector,
+            oracle: recurse_selector,
             base_memo: Default::default(),
             inline_memo: Default::default(),
+            ana_ctrl,
         }
     }
 
@@ -583,6 +607,30 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
         let proc_g = self.get_procedure_graph(body_id);
         let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g);
+
+        if self.ana_ctrl.remove_inconsequential_calls() {
+            let g = &mut gwr.graph;
+            for n in g.nodes()
+                .filter(|&n| 
+                    // The node has to be not semantically meaningful (e.g. no
+                    // label), and it has to have neighbors before and after,
+                    // because otherwise it's likely an I/O data source or sink
+                    matches!(n, SimpleLocation::Call((_, defid)) 
+                        if !self.oracle.is_semantically_meaningful(defid) 
+                            && g.neighbors_directed(n, pg::Direction::Incoming).next().is_some()
+                            && g.neighbors_directed(n, pg::Direction::Outgoing).next().is_some())).collect::<Vec<_>>() {
+                for from in g.neighbors_directed(n, pg::Direction::Incoming).collect::<Vec<_>>() {
+                    for (to, weight) in g.edges_directed(n, pg::Direction::Outgoing).map(|(_, to, weight)| (to, *weight)).collect::<Vec<_>>() {
+                        add_weighted_edge(g, from, to, weight)
+                    }
+                }
+                g.remove_node(n);
+            }
+        }
+
+        if !self.ana_ctrl.use_recursive_analysis() {
+            return gwr;
+        }
         let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
         let name = body_name_pls(self.tcx, body_id).name;
 
@@ -603,9 +651,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 .node_references()
                 .filter_map(|(id, n)| match n {
                     Node::Call((location, function)) => match function.as_local() {
-                        Some(local_id)
-                            if self.recurse_selector.should_inline(self.tcx, local_id) =>
-                        {
+                        Some(local_id) if self.oracle.should_inline(local_id) => {
                             debug!("Inlining {function:?}");
                             Some((id, local_id, *location, None))
                         }
@@ -730,11 +776,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             if register_for_pruning {
                                 queue_for_pruning.insert((source, target));
                             }
-                            if let Some(prior_weight) = g.edge_weight_mut(source, target) {
-                                prior_weight.merge(weight)
-                            } else {
-                                g.add_edge(source, target, weight);
-                            }
+                            add_weighted_edge(g, source, target, weight)
                         };
                         match source {
                             Node::Call((loc, did)) => add_edge(
@@ -788,51 +830,26 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             &gwr,
         )
         .unwrap();
-        let edges_to_prune = if false {
-            Self::find_prunable_edges(&gwr)
-        } else {
-            queue_for_pruning.retain(|&(from, to)| !Self::edge_has_been_pruned_before(from, to));
-            queue_for_pruning
-        };
-        self.prune_impossible_edges(&mut gwr, name, &edges_to_prune);
-        dump_dot_graph(
-            outfile_pls(format!(
-                "{}.inlined-pruned.gv",
-                body_name_pls(self.tcx, body_id)
-            ))
-            .unwrap(),
-            &gwr,
-        )
-        .unwrap();
-        if false {
-            // time(&format!("Reducing equations to potential targets for {name}"), || {
-            //     let potential_targets = gwr
-            //         .graph
-            //         .nodes()
-            //         .filter(|n| !matches!(n, SimpleLocation::Call(_)))
-            //         .flat_map(|n| gwr.graph.neighbors(n).chain([n]))
-            //         .map(|l|
-            //             match l {
-            //                 SimpleLocation::Return => GlobalLocal::at_root(mir::RETURN_PLACE),
-            //                 SimpleLocation::Argument(idx) => GlobalLocal::at_root(idx.as_usize().into()),
-            //                 SimpleLocation::Call((loc, _)) => self.
-            //             }
-            //         )
-            //         .collect::<HashSet<_>>();
-            //     gwr.equations = algebra::rebase_simplify(gwr.equations.into_iter(), |b| {
-            //         let generic_b: SimpleLocation<GlobalLocation<'g>> = b.map_location(|l| l.location);
-            //         if potential_targets.contains(&generic_b) {
-            //             Either::Left([*b])
-            //         } else {
-            //             Either::Right(*b)
-            //         }
-            //     });
-            //     gwr
-            // })
-            gwr
-        } else {
-            gwr
+        if self.ana_ctrl.use_pruning() {
+            let edges_to_prune = if false {
+                Self::find_prunable_edges(&gwr)
+            } else {
+                queue_for_pruning
+                    .retain(|&(from, to)| !Self::edge_has_been_pruned_before(from, to));
+                queue_for_pruning
+            };
+            self.prune_impossible_edges(&mut gwr, name, &edges_to_prune);
+            dump_dot_graph(
+                outfile_pls(format!(
+                    "{}.inlined-pruned.gv",
+                    body_name_pls(self.tcx, body_id)
+                ))
+                .unwrap(),
+                &gwr,
+            )
+            .unwrap();
         }
+        gwr
     }
 }
 
