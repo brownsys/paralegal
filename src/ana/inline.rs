@@ -37,7 +37,7 @@ use crate::{
     ty,
     utils::{
         body_name_pls, outfile_pls, time, write_sep, AsFnAndArgs, DfppBodyExt, DisplayViaDebug,
-        RecursionBreakingCache,
+        RecursionBreakingCache, short_hash_pls,
     },
     AnalysisCtrl, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
@@ -359,7 +359,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         if !algebra::solve_reachable(&equations, &to_target, |to| {
                             targets.contains(to)
                         }) {
-                            debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
+                            info!("Found unreproducible edge {from} -> {to} (idx {idx})");
                             weight.data.clear(idx)
                         }
                     }
@@ -512,6 +512,7 @@ fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
 fn no_significant_edge<N: petgraph::graphmap::NodeTrait>(
     g: &pg::GraphMap<N, Edge, pg::Directed>,
     n: N,
+    policy: crate::args::InconsequentialCallRemovalPolicy,
 ) -> bool {
     
                     // XXX verify that if the incoming edge is ctrl,
@@ -521,10 +522,10 @@ fn no_significant_edge<N: petgraph::graphmap::NodeTrait>(
     }
     let mut has_data = false;
     for (_, _, e) in g.edges_directed(n, pg::Direction::Outgoing) {
-        if e.control {
+        if e.control && !policy.remove_ctrl_flow_source() {
             return false;
         }
-        if !e.data.is_empty() {
+        if !e.data.is_empty() || e.control {
             has_data = true;
         }
     }
@@ -629,8 +630,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
         let proc_g = self.get_procedure_graph(body_id);
         let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g);
+        let ref body_name = format!("{}_{:x}", body_name_pls(self.tcx, body_id), short_hash_pls(body_id));
 
-        if self.ana_ctrl.remove_inconsequential_calls() {
+        let remove_calls_policy = self.ana_ctrl.remove_inconsequential_calls();
+        if remove_calls_policy.is_enabled() {
             let g = &mut gwr.graph;
             for n in g.nodes()
                 .filter(|&n| 
@@ -641,7 +644,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         if !self.oracle.is_semantically_meaningful(defid)
                             && Some(defid) != self.tcx.lang_items().from_generator_fn() 
                             && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))
-                            && no_significant_edge(g, n))).collect::<Vec<_>>() {
+                            && no_significant_edge(g, n, remove_calls_policy))).collect::<Vec<_>>() {
                 for from in g.neighbors_directed(n, pg::Direction::Incoming).collect::<Vec<_>>() {
                     for (to, weight) in g.edges_directed(n, pg::Direction::Outgoing).map(|(_, to, weight)| (to, *weight)).collect::<Vec<_>>() {
                         add_weighted_edge(g, from, to, weight)
@@ -660,7 +663,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         dump_dot_graph(
             outfile_pls(format!(
                 "{}.pre-inline.gv",
-                body_name_pls(self.tcx, body_id)
+                body_name,
             ))
             .unwrap(),
             &gwr,
@@ -849,7 +852,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             }
         });
         dump_dot_graph(
-            outfile_pls(format!("{}.inlined.gv", body_name_pls(self.tcx, body_id))).unwrap(),
+            outfile_pls(format!("{}.inlined.gv", body_name)).unwrap(),
             &gwr,
         )
         .unwrap();
@@ -865,7 +868,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             dump_dot_graph(
                 outfile_pls(format!(
                     "{}.inlined-pruned.gv",
-                    body_name_pls(self.tcx, body_id)
+                    body_name
                 ))
                 .unwrap(),
                 &gwr,

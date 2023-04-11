@@ -117,7 +117,23 @@ pub struct AnalysisCtrl {
     #[clap(long, env)]
     no_pruning: bool,
     #[clap(long, env)]
-    remove_inconsequential_calls: bool,
+    remove_inconsequential_calls: Option<String>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum InconsequentialCallRemovalPolicy {
+    Conservative,
+    Aggressive,
+    Disabled
+}
+
+impl InconsequentialCallRemovalPolicy {
+    pub fn is_enabled(self) -> bool {
+        !matches!(self, InconsequentialCallRemovalPolicy::Disabled)
+    }
+    pub fn remove_ctrl_flow_source(self) -> bool {
+        matches!(self, InconsequentialCallRemovalPolicy::Aggressive)
+    }
 }
 
 impl AnalysisCtrl {
@@ -127,8 +143,20 @@ impl AnalysisCtrl {
     pub fn use_pruning(&self) -> bool {
         !self.no_pruning
     }
-    pub fn remove_inconsequential_calls(&self) -> bool {
-        self.remove_inconsequential_calls
+    pub fn remove_inconsequential_calls(&self) -> InconsequentialCallRemovalPolicy {
+        use InconsequentialCallRemovalPolicy::*;
+        if let Some(s) =  self.remove_inconsequential_calls.as_ref() {
+            match s.as_str() {
+                "conservative" => Conservative,
+                "aggressive" => Aggressive,
+                _ => {
+                    error!("Could not parse inconsequential call removal policy '{s}', defaulting to 'conservative'.");
+                    Conservative
+                }
+            }
+        } else {
+            Disabled
+        }
     }
 }
 
