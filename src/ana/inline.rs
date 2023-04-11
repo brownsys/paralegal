@@ -617,6 +617,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     // because otherwise it's likely an I/O data source or sink
                     matches!(n, SimpleLocation::Call((_, defid)) 
                         if !self.oracle.is_semantically_meaningful(defid)
+                            && Some(defid) != self.tcx.lang_items().from_generator_fn() 
                             && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))
                             && g.neighbors_directed(n, pg::Direction::Incoming).next().is_some()
                             && g.neighbors_directed(n, pg::Direction::Outgoing).next().is_some())).collect::<Vec<_>>() {
