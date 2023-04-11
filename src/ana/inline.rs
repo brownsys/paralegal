@@ -509,6 +509,28 @@ fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
     }
 }
 
+fn no_significant_edge<N: petgraph::graphmap::NodeTrait>(
+    g: &pg::GraphMap<N, Edge, pg::Directed>,
+    n: N,
+) -> bool {
+    
+                    // XXX verify that if the incoming edge is ctrl,
+                    // it's still safe to remove
+    if !g.edges_directed(n, pg::Direction::Incoming).filter(|(_, _, e)| !e.data.is_empty()).next().is_some() {
+        return false;
+    }
+    let mut has_data = false;
+    for (_, _, e) in g.edges_directed(n, pg::Direction::Outgoing) {
+        if e.control {
+            return false;
+        }
+        if !e.data.is_empty() {
+            has_data = true;
+        }
+    }
+    has_data
+}
+
 impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
@@ -619,8 +641,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         if !self.oracle.is_semantically_meaningful(defid)
                             && Some(defid) != self.tcx.lang_items().from_generator_fn() 
                             && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))
-                            && g.neighbors_directed(n, pg::Direction::Incoming).next().is_some()
-                            && g.neighbors_directed(n, pg::Direction::Outgoing).next().is_some())).collect::<Vec<_>>() {
+                            && no_significant_edge(g, n))).collect::<Vec<_>>() {
                 for from in g.neighbors_directed(n, pg::Direction::Incoming).collect::<Vec<_>>() {
                     for (to, weight) in g.edges_directed(n, pg::Direction::Outgoing).map(|(_, to, weight)| (to, *weight)).collect::<Vec<_>>() {
                         add_weighted_edge(g, from, to, weight)

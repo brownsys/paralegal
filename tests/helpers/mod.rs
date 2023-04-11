@@ -90,9 +90,26 @@ pub fn install_dfpp() -> bool {
 /// The result is suitable for reading with
 /// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
 pub fn run_dfpp_with_graph_dump() -> bool {
+    run_dfpp_with_graph_dump_and::<_, &str>([])
+}
+
+/// Run dfpp in the current directory, passing the
+/// `--dump-serialized-non-transitive-graph` flag, which dumps a
+/// [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow) for each controller.
+///
+/// The result is suitable for reading with
+/// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
+/// 
+/// Allows for additional arguments to be passed to dfpp
+pub fn run_dfpp_with_graph_dump_and<I, S>(extra: I) -> bool 
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     std::process::Command::new("cargo")
         .arg("dfpp")
         .arg("--dump-serialized-non-transitive-graph")
+        .args(extra)
         .status()
         .unwrap()
         .success()
@@ -263,6 +280,32 @@ impl G {
         self.predecessors_configurable(n, EdgeSelection::Both)
     }
 
+    pub fn connects_none_configurable<From: MatchCallSite>(&self, n: &From, dir: EdgeSelection) -> bool {
+        self.graph.location_dependencies.iter().all(|(c, deps)|
+            (!n.match_(c) || 
+                dir.use_data()
+                    .then_some(deps.input_deps.iter())
+                    .into_iter()
+                    .flatten()
+                    .chain(dir.use_control().then_some([&deps.ctrl_deps].into_iter()).into_iter().flatten())
+                    .all(|d| d.is_empty())
+            ) &&
+            dir.use_data()
+                .then_some(deps.input_deps.iter())
+                .into_iter()
+                .flatten()
+                .chain(
+                    dir.use_control().then_some([&deps.ctrl_deps].into_iter()).into_iter().flatten()
+                )
+                .flat_map(|d| d.iter())
+                .all(|d| !n.match_(d))
+        )
+    }
+
+    pub fn connects_none<From: MatchCallSite>(&self, n: &From) -> bool {
+        self.connects_none_configurable(n, EdgeSelection::Both)
+    }
+
     fn predecessors_configurable(
         &self,
         n: &RawGlobalLocation,
@@ -298,6 +341,14 @@ impl G {
         to: &To,
     ) -> bool {
         self.connects_configurable(from, to, EdgeSelection::Data)
+    }
+
+    pub fn connects_ctrl<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+    ) -> bool {
+        self.connects_configurable(from, to, EdgeSelection::Control)
     }
 
     /// Is there any path (using directed edges) from `from` to `to`.
