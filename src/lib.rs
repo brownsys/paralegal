@@ -155,7 +155,7 @@ impl rustc_driver::Callbacks for Callbacks {
         info!("All elems walked");
         let result_path = compiler
             .build_output_filenames(&*compiler.session(), &[])
-            .with_extension("analysis_result");
+            .with_extension("ana.frg");
         let mut outf = outfile_pls(&result_path).unwrap();
         let doc_alloc = pretty::BoxAllocator;
         let doc: DocBuilder<_, ()> = desc.as_forge(&doc_alloc);
