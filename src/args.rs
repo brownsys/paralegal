@@ -109,9 +109,11 @@ impl ModelCtrl {
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 pub struct AnalysisCtrl {
     /// Disables all recursive analysis (both dfpp's inlining as well as
-    /// Flowistry's recursive analysis)
+    /// Flowistry's recursive analysis).
+    /// 
+    /// Also implies --no-pruning, because pruning only makes sense after inlining
     #[clap(long, env)]
-    no_recursive_analysis: bool,
+    no_cross_function_analysis: bool,
     #[clap(long, env)]
     no_pruning: bool,
     #[clap(long, env)]
@@ -120,7 +122,7 @@ pub struct AnalysisCtrl {
 
 impl AnalysisCtrl {
     pub fn use_recursive_analysis(&self) -> bool {
-        !self.no_recursive_analysis
+        !self.no_cross_function_analysis
     }
     pub fn use_pruning(&self) -> bool {
         !self.no_pruning
