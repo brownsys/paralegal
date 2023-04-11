@@ -390,6 +390,6 @@ impl<'tcx> inline::Oracle<'tcx> for SkipAnnotatedFunctionSelector<'tcx> {
     }
 
     fn is_semantically_meaningful(&self, did: DefId) -> bool {
-        matches!(did.as_local(), Some(l) if self.should_inline(l))
+        matches!(did.as_local(), Some(l) if !self.should_inline(l))
     }
 }

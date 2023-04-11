@@ -616,7 +616,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     // label), and it has to have neighbors before and after,
                     // because otherwise it's likely an I/O data source or sink
                     matches!(n, SimpleLocation::Call((_, defid)) 
-                        if !self.oracle.is_semantically_meaningful(defid) 
+                        if !self.oracle.is_semantically_meaningful(defid)
+                            && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))
                             && g.neighbors_directed(n, pg::Direction::Incoming).next().is_some()
                             && g.neighbors_directed(n, pg::Direction::Outgoing).next().is_some())).collect::<Vec<_>>() {
                 for from in g.neighbors_directed(n, pg::Direction::Incoming).collect::<Vec<_>>() {
