@@ -79,8 +79,11 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
         debug!("Handling target {}", target.name());
 
-        let flow =
-            inliner.to_call_only_flow(inliner.get_inlined_graph(target.body_id).unwrap(), |a| {
+        let flow = {
+            let w = 6;
+            let i = inliner.get_inlined_graph(target.body_id).unwrap();
+            info!("Graph statistics for {}\n  {:<w$} graph nodes\n  {:<w$} graph edges\n  {:<w$} inlined functions\n  {:<w$} max call stack depth", target.name(), i.vertex_count(), i.edge_count(), i.inlined_functions_count(), i.max_call_stack_depth());
+            inliner.to_call_only_flow(i, |a| {
                 gli.globalize_location(
                     Location {
                         block: mir::BasicBlock::from_usize(
@@ -93,7 +96,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     },
                     target.body_id,
                 )
-            });
+            })
+        };
 
         // Register annotations on argument types for this controller.
         let controller_body = &controller_body_with_facts.simplified_body();
@@ -286,7 +290,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         let inliner = inline::Inliner::new(self.tcx, gli, &recurse_selector, self.opts.anactrl());
 
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
-        crate::sah::HashVerifications::with(|hash_verifications| {
+        let result = crate::sah::HashVerifications::with(|hash_verifications| {
             targets
                 .drain(..)
                 .map(|desc| {
@@ -318,7 +322,12 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                         )
                         .collect(),
                 })
-        })
+        });
+        info!(
+            "Total number of analyzed functions {}",
+            inliner.cache_size()
+        );
+        result
     }
 
     fn annotated_subtypes(&self, ty: ty::Ty) -> HashSet<TypeDescriptor> {

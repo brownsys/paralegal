@@ -904,6 +904,9 @@ where
     In: Hash + Eq + Clone,
     Out: Unpin,
 {
+    pub fn size(&self) -> usize {
+        self.0.borrow().len()
+    }
     /// Get or compute the value for this key. Returns `None` if called recursively.
     pub fn get<'a>(&'a self, key: In, compute: impl FnOnce(In) -> Out) -> Option<&'a Out> {
         if !self.0.borrow().contains_key(&key) {

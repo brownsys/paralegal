@@ -12,6 +12,8 @@
 //!    ([`InlinedGraph::prune_impossible_edges`]) using the accumulated set of
 //!    equations
 
+use std::cell::RefCell;
+
 use flowistry::{cached::Cache, mir::borrowck_facts};
 use petgraph::{
     prelude as pg,
@@ -254,6 +256,29 @@ pub type GraphImpl<L> = pg::GraphMap<Node<(L, DefId)>, Edge, pg::Directed>;
 pub struct InlinedGraph<'g> {
     graph: GraphImpl<GlobalLocation<'g>>,
     equations: Equations<GlobalLocal<'g>>,
+    num_inlined: usize,
+    max_call_stack_depth: usize,
+}
+
+impl<'g> InlinedGraph<'g> {
+    pub fn vertex_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.graph
+            .all_edges()
+            .map(|(_, _, w)| w.count() as usize)
+            .sum()
+    }
+
+    pub fn inlined_functions_count(&self) -> usize {
+        self.num_inlined
+    }
+
+    pub fn max_call_stack_depth(&self) -> usize {
+        self.max_call_stack_depth
+    }
 }
 
 type EdgeSet<'g> = HashSet<(
@@ -304,7 +329,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         edges_to_prune: &EdgeSet<'g>,
     ) {
         time(&format!("Edge Pruning for {name}"), || {
-            let InlinedGraph { graph, equations } = graph;
+            let InlinedGraph {
+                graph, equations, ..
+            } = graph;
             info!("Have {} equations for pruning", equations.len());
             // debug!(
             //     "Equations for pruning are:\n{}",
@@ -394,6 +421,8 @@ impl<'g> InlinedGraph<'g> {
             let mut gwr = InlinedGraph {
                 equations,
                 graph: Default::default(),
+                num_inlined: 0,
+                max_call_stack_depth: 0,
             };
             let g = &mut gwr.graph;
             let call_map = body
@@ -555,6 +584,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
+    pub fn cache_size(&self) -> usize {
+        self.inline_memo.size()
+    }
+
     /// Compute a procedure graph for this `body_id` (memoized). Actual
     /// computation performed by [`regal::compute_from_body_id`] and
     /// [`ProcedureGraph::from`]
@@ -673,8 +706,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let name = body_name_pls(self.tcx, body_id).name;
         let mut queue_for_pruning = HashSet::new();
         time(&format!("Inlining subgraphs into {name}"), || {
-            let g = &mut gwr.graph;
-            let eqs = &mut gwr.equations;
+            let InlinedGraph {
+                graph: g,
+                equations: eqs,
+                num_inlined,
+                max_call_stack_depth,
+            } = gwr;
             let targets = g
                 .node_references()
                 .filter_map(|(id, n)| match n {
@@ -751,6 +788,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         // inline ourself, so we simply skip.
                         continue;
                     };
+                *num_inlined += 1 + grw_to_inline.inlined_functions_count();
+                *max_call_stack_depth =
+                    (*max_call_stack_depth).max(grw_to_inline.max_call_stack_depth() + 1);
                 let num_args = if is_async_closure.is_some() {
                     1 as usize
                 } else {

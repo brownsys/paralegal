@@ -298,7 +298,6 @@ impl<B, F: Copy> Equality<B, F> {
     }
 }
 
-
 fn partial_cmp_terms<'a, F: Copy + Eq>(
     mut left: &'a [Operator<F>],
     mut right: &'a [Operator<F>],
@@ -327,7 +326,6 @@ fn partial_cmp_terms<'a, F: Copy + Eq>(
         })
     }
 }
-
 
 /// Solve for the relationship of two bases.
 ///
