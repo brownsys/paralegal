@@ -17,8 +17,8 @@ use crate::{
         rustc_index::vec::IndexVec,
     },
     utils::{
-        body_name_pls, outfile_pls, places_read, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
-        DfppBodyExt, DisplayViaDebug, LocationExt,
+        body_name_pls, dump_file_pls, outfile_pls, places_read, time, write_sep, AsFnAndArgs,
+        AsFnAndArgsErr, DfppBodyExt, DisplayViaDebug, IntoLocalDefId, LocationExt,
     },
     Either, HashMap, HashSet, TyCtxt,
 };
@@ -129,14 +129,16 @@ impl<L: Display> Display for Call<Dependencies<L>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char('(')?;
         write_sep(f, ", ", self.arguments.iter(), |elem, f| {
-            if let Some(deps) = elem {
-                fmt_deps(&deps.1, f)
+            if let Some((place, deps)) = elem {
+                fmt_deps(&deps, f)?;
+                write!(f, " with {place:?}")
             } else {
                 f.write_str("{}")
             }
         })?;
         write!(f, ") ctrl:")?;
         fmt_deps(&self.ctrl_deps, f)?;
+        write!(f, " return:{:?}", self.return_to)?;
         write!(f, " {:?}", self.function)
     }
 }
@@ -253,23 +255,7 @@ impl Body<DisplayViaDebug<Location>> {
             let ctrl_ana = &flow_analysis.analysis.control_dependencies;
             let non_transitive_aliases =
                 crate::ana::non_transitive_aliases::compute(tcx, def_id, body_with_facts);
-            let mut place_table: HashMap<
-                mir::Local,
-                Vec<SimpleLocation<RelativePlace<DisplayViaDebug<Location>>>>,
-            > = body
-                .args_iter()
-                .enumerate()
-                .map(|(idx, l)| {
-                    (
-                        l,
-                        vec![
-                            SimpleLocation::Argument(ArgumentIndex::from_usize(idx)),
-                            //SimpleLocation::Return(Some(ArgumentIndex::from_usize(idx)))
-                        ],
-                    )
-                })
-                .chain([(mir::RETURN_PLACE, vec![SimpleLocation::Return])])
-                .collect();
+
             let dependencies_for = |location: DisplayViaDebug<_>,
                                     arg,
                                     is_mut_arg|
@@ -405,35 +391,6 @@ impl Body<DisplayViaDebug<Location>> {
                 .chain(call_argument_equations)
                 .collect::<Vec<_>>();
 
-            debug!(
-                "Equations before simplify:\n{}",
-                crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-                    for eq in equations.iter() {
-                        writeln!(f, "  {eq}")?;
-                    }
-                    Ok(())
-                })
-            );
-            debug!(
-                "And place table\n{}",
-                crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-                    for (k, v) in place_table.iter() {
-                        write!(f, "  {k:?}: ")?;
-                        let mut first = true;
-                        for t in v {
-                            if first {
-                                first = false;
-                            } else {
-                                f.write_str(", ")?;
-                            }
-                            t.fmt(f)?;
-                        }
-                        writeln!(f)?;
-                    }
-                    Ok(())
-                })
-            );
-            let num_eqs = equations.len();
             Self {
                 calls,
                 return_deps,
@@ -449,9 +406,8 @@ pub fn compute_from_body_id(
     tcx: TyCtxt,
     gli: GLI,
 ) -> Body<DisplayViaDebug<Location>> {
-    let local_def_id = tcx.hir().body_owner_def_id(body_id);
-    let target_name = body_name_pls(tcx, body_id);
-    info!("Analyzing function {target_name}");
+    let local_def_id = body_id.into_local_def_id(tcx);
+    info!("Analyzing function {}", body_name_pls(tcx, body_id));
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
     let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts);
@@ -459,16 +415,16 @@ pub fn compute_from_body_id(
         tcx,
         body,
         &mut |_, _| Ok(()),
-        &mut outfile_pls(&format!("{}.mir", target_name)).unwrap(),
+        &mut dump_file_pls(tcx, body_id, "mir").unwrap(),
     )
     .unwrap();
-    let ref mut states_out = outfile_pls(&format!("{}.df", target_name)).unwrap();
+    let ref mut states_out = dump_file_pls(tcx, body_id, "df").unwrap();
     for l in body.all_locations() {
         writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
     }
     let equations = algebra::extract_equations(tcx, body);
     let r = Body::construct(flow, equations, tcx, local_def_id, body_with_facts);
-    let mut out = outfile_pls(&format!("{}.regal", target_name)).unwrap();
+    let mut out = dump_file_pls(tcx, body_id, "regal").unwrap();
     use std::io::Write;
     write!(&mut out, "{}", r).unwrap();
     r

@@ -99,9 +99,9 @@ pub fn run_dfpp_with_graph_dump() -> bool {
 ///
 /// The result is suitable for reading with
 /// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
-/// 
+///
 /// Allows for additional arguments to be passed to dfpp
-pub fn run_dfpp_with_graph_dump_and<I, S>(extra: I) -> bool 
+pub fn run_dfpp_with_graph_dump_and<I, S>(extra: I) -> bool
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
@@ -280,26 +280,39 @@ impl G {
         self.predecessors_configurable(n, EdgeSelection::Both)
     }
 
-    pub fn connects_none_configurable<From: MatchCallSite>(&self, n: &From, dir: EdgeSelection) -> bool {
-        self.graph.location_dependencies.iter().all(|(c, deps)|
-            (!n.match_(c) || 
-                dir.use_data()
+    pub fn connects_none_configurable<From: MatchCallSite>(
+        &self,
+        n: &From,
+        dir: EdgeSelection,
+    ) -> bool {
+        self.graph.location_dependencies.iter().all(|(c, deps)| {
+            (!n.match_(c)
+                || dir
+                    .use_data()
                     .then_some(deps.input_deps.iter())
                     .into_iter()
                     .flatten()
-                    .chain(dir.use_control().then_some([&deps.ctrl_deps].into_iter()).into_iter().flatten())
-                    .all(|d| d.is_empty())
-            ) &&
-            dir.use_data()
-                .then_some(deps.input_deps.iter())
-                .into_iter()
-                .flatten()
-                .chain(
-                    dir.use_control().then_some([&deps.ctrl_deps].into_iter()).into_iter().flatten()
-                )
-                .flat_map(|d| d.iter())
-                .all(|d| !n.match_(d))
-        )
+                    .chain(
+                        dir.use_control()
+                            .then_some([&deps.ctrl_deps].into_iter())
+                            .into_iter()
+                            .flatten(),
+                    )
+                    .all(|d| d.is_empty()))
+                && dir
+                    .use_data()
+                    .then_some(deps.input_deps.iter())
+                    .into_iter()
+                    .flatten()
+                    .chain(
+                        dir.use_control()
+                            .then_some([&deps.ctrl_deps].into_iter())
+                            .into_iter()
+                            .flatten(),
+                    )
+                    .flat_map(|d| d.iter())
+                    .all(|d| !n.match_(d))
+        })
     }
 
     pub fn connects_none<From: MatchCallSite>(&self, n: &From) -> bool {

@@ -36,8 +36,8 @@ use crate::{
     rust::rustc_index::vec::IndexVec,
     ty,
     utils::{
-        body_name_pls, outfile_pls, time, write_sep, AsFnAndArgs, DfppBodyExt, DisplayViaDebug,
-        RecursionBreakingCache, short_hash_pls,
+        body_name_pls, dump_file_pls, outfile_pls, short_hash_pls, time, write_sep, AsFnAndArgs,
+        DfppBodyExt, DisplayViaDebug, IntoLocalDefId, Print, RecursionBreakingCache,
     },
     AnalysisCtrl, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
@@ -256,6 +256,11 @@ pub struct InlinedGraph<'g> {
     equations: Equations<GlobalLocal<'g>>,
 }
 
+type EdgeSet<'g> = HashSet<(
+    Node<(GlobalLocation<'g>, DefId)>,
+    Node<(GlobalLocation<'g>, DefId)>,
+)>;
+
 impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn edge_has_been_pruned_before(
         from: Node<(GlobalLocation<'g>, DefId)>,
@@ -296,10 +301,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         &self,
         graph: &mut InlinedGraph<'g>,
         name: Symbol,
-        edges_to_prune: &HashSet<(
-            Node<(GlobalLocation<'g>, DefId)>,
-            Node<(GlobalLocation<'g>, DefId)>,
-        )>,
+        edges_to_prune: &EdgeSet<'g>,
     ) {
         time(&format!("Edge Pruning for {name}"), || {
             let InlinedGraph { graph, equations } = graph;
@@ -359,7 +361,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         if !algebra::solve_reachable(&equations, &to_target, |to| {
                             targets.contains(to)
                         }) {
-                            info!("Found unreproducible edge {from} -> {to} (idx {idx})");
+                            debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
                             weight.data.clear(idx)
                         }
                     }
@@ -514,10 +516,14 @@ fn no_significant_edge<N: petgraph::graphmap::NodeTrait>(
     n: N,
     policy: crate::args::InconsequentialCallRemovalPolicy,
 ) -> bool {
-    
-                    // XXX verify that if the incoming edge is ctrl,
-                    // it's still safe to remove
-    if !g.edges_directed(n, pg::Direction::Incoming).filter(|(_, _, e)| !e.data.is_empty()).next().is_some() {
+    // XXX verify that if the incoming edge is ctrl,
+    // it's still safe to remove
+    if !g
+        .edges_directed(n, pg::Direction::Incoming)
+        .filter(|(_, _, e)| !e.data.is_empty())
+        .next()
+        .is_some()
+    {
         return false;
     }
     let mut has_data = false;
@@ -624,51 +630,47 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         })
     }
 
-    /// In spite of the name of this function it not only inlines the graph but
-    /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
-    /// it ([`to_global_graph`]).
-    fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
-        let proc_g = self.get_procedure_graph(body_id);
-        let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g);
-        let ref body_name = format!("{}_{:x}", body_name_pls(self.tcx, body_id), short_hash_pls(body_id));
-
+    fn remove_inconsequential_calls(&self, gwr: &mut InlinedGraph<'g>) {
         let remove_calls_policy = self.ana_ctrl.remove_inconsequential_calls();
-        if remove_calls_policy.is_enabled() {
-            let g = &mut gwr.graph;
-            for n in g.nodes()
-                .filter(|&n| 
-                    // The node has to be not semantically meaningful (e.g. no
-                    // label), and it has to have neighbors before and after,
-                    // because otherwise it's likely an I/O data source or sink
-                    matches!(n, SimpleLocation::Call((_, defid)) 
-                        if !self.oracle.is_semantically_meaningful(defid)
-                            && Some(defid) != self.tcx.lang_items().from_generator_fn() 
-                            && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))
-                            && no_significant_edge(g, n, remove_calls_policy))).collect::<Vec<_>>() {
-                for from in g.neighbors_directed(n, pg::Direction::Incoming).collect::<Vec<_>>() {
-                    for (to, weight) in g.edges_directed(n, pg::Direction::Outgoing).map(|(_, to, weight)| (to, *weight)).collect::<Vec<_>>() {
-                        add_weighted_edge(g, from, to, weight)
-                    }
+        let g = &mut gwr.graph;
+        for n in g
+            .nodes()
+            .filter(|&n| 
+                // The node has to be not semantically meaningful (e.g. no
+                // label), and it has to have neighbors before and after,
+                // because otherwise it's likely an I/O data source or sink
+                matches!(n, SimpleLocation::Call((loc, defid)) 
+                    if loc.is_at_root()
+                        && !self.oracle.is_semantically_meaningful(defid)
+                        && Some(defid) != self.tcx.lang_items().from_generator_fn() 
+                        && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))
+                        && no_significant_edge(g, n, remove_calls_policy)))
+            .collect::<Vec<_>>()
+        {
+            for from in g
+                .neighbors_directed(n, pg::Direction::Incoming)
+                .collect::<Vec<_>>()
+            {
+                for (to, weight) in g
+                    .edges_directed(n, pg::Direction::Outgoing)
+                    .map(|(_, to, weight)| (to, *weight))
+                    .collect::<Vec<_>>()
+                {
+                    add_weighted_edge(g, from, to, weight)
                 }
-                g.remove_node(n);
             }
+            g.remove_node(n);
         }
+    }
 
-        if !self.ana_ctrl.use_recursive_analysis() {
-            return gwr;
-        }
-        let local_def_id = self.tcx.hir().body_owner_def_id(body_id);
+    fn perform_subfunction_inlining(
+        &self,
+        proc_g: &regal::Body<DisplayViaDebug<Location>>,
+        gwr: &mut InlinedGraph<'g>,
+        body_id: BodyId,
+    ) -> EdgeSet<'g> {
+        let local_def_id = body_id.into_local_def_id(self.tcx);
         let name = body_name_pls(self.tcx, body_id).name;
-
-        dump_dot_graph(
-            outfile_pls(format!(
-                "{}.pre-inline.gv",
-                body_name,
-            ))
-            .unwrap(),
-            &gwr,
-        )
-        .unwrap();
         let mut queue_for_pruning = HashSet::new();
         time(&format!("Inlining subgraphs into {name}"), || {
             let g = &mut gwr.graph;
@@ -851,26 +853,60 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 g.remove_node(idx);
             }
         });
+        queue_for_pruning
+    }
+
+    /// In spite of the name of this function it not only inlines the graph but
+    /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
+    /// it ([`to_global_graph`]).
+    fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
+        let proc_g = self.get_procedure_graph(body_id);
+        let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g);
+
+        let name = body_name_pls(self.tcx, body_id).name;
+
         dump_dot_graph(
-            outfile_pls(format!("{}.inlined.gv", body_name)).unwrap(),
+            dump_file_pls(self.tcx, body_id, "pre-inline.gv").unwrap(),
+            &gwr,
+        )
+        .unwrap();
+        let mut eqout = dump_file_pls(self.tcx, body_id, "local.eqs").unwrap();
+        for eq in &gwr.equations {
+            use std::io::Write;
+            writeln!(eqout, "{eq}").unwrap();
+        }
+
+        let queue_for_pruning = if self.ana_ctrl.use_recursive_analysis() {
+            Some(self.perform_subfunction_inlining(&proc_g, &mut gwr, body_id))
+        } else {
+            None
+        };
+
+        if self.ana_ctrl.remove_inconsequential_calls().is_enabled() {
+            self.remove_inconsequential_calls(&mut gwr);
+        }
+
+        let mut eqout = dump_file_pls(self.tcx, body_id, "global.eqs").unwrap();
+        for eq in &gwr.equations {
+            use std::io::Write;
+            writeln!(eqout, "{eq}").unwrap();
+        }
+        dump_dot_graph(
+            dump_file_pls(self.tcx, body_id, "inlined.gv").unwrap(),
             &gwr,
         )
         .unwrap();
         if self.ana_ctrl.use_pruning() {
-            let edges_to_prune = if false {
-                Self::find_prunable_edges(&gwr)
-            } else {
+            let edges_to_prune = if let Some(mut queue_for_pruning) = queue_for_pruning {
                 queue_for_pruning
                     .retain(|&(from, to)| !Self::edge_has_been_pruned_before(from, to));
                 queue_for_pruning
+            } else {
+                Self::find_prunable_edges(&gwr)
             };
             self.prune_impossible_edges(&mut gwr, name, &edges_to_prune);
             dump_dot_graph(
-                outfile_pls(format!(
-                    "{}.inlined-pruned.gv",
-                    body_name
-                ))
-                .unwrap(),
+                dump_file_pls(self.tcx, body_id, "inlined-pruned.gv").unwrap(),
                 &gwr,
             )
             .unwrap();

@@ -110,7 +110,7 @@ impl ModelCtrl {
 pub struct AnalysisCtrl {
     /// Disables all recursive analysis (both dfpp's inlining as well as
     /// Flowistry's recursive analysis).
-    /// 
+    ///
     /// Also implies --no-pruning, because pruning only makes sense after inlining
     #[clap(long, env)]
     no_cross_function_analysis: bool,
@@ -124,7 +124,7 @@ pub struct AnalysisCtrl {
 pub enum InconsequentialCallRemovalPolicy {
     Conservative,
     Aggressive,
-    Disabled
+    Disabled,
 }
 
 impl InconsequentialCallRemovalPolicy {
@@ -145,7 +145,7 @@ impl AnalysisCtrl {
     }
     pub fn remove_inconsequential_calls(&self) -> InconsequentialCallRemovalPolicy {
         use InconsequentialCallRemovalPolicy::*;
-        if let Some(s) =  self.remove_inconsequential_calls.as_ref() {
+        if let Some(s) = self.remove_inconsequential_calls.as_ref() {
             match s.as_str() {
                 "conservative" => Conservative,
                 "aggressive" => Aggressive,

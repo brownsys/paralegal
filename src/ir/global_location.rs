@@ -124,7 +124,7 @@ pub fn format_global_location<T: IsGlobalLocation>(
     t: &T,
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result {
-    write_sep(f, "@", t.as_slice(), |elem, f| {
+    write_sep(f, "@", t.as_slice().iter().rev(), |elem, f| {
         write!(
             f,
             "{:?}[{}]",

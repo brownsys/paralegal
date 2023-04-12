@@ -462,6 +462,23 @@ pub fn body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Ident {
         .unwrap()
 }
 
+pub fn unique_and_terse_body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Symbol {
+    let def_id = id.into_local_def_id(tcx);
+    let ident = body_name_pls(tcx, def_id);
+    Symbol::intern(&format!("{}_{:x}", ident.name, short_hash_pls(def_id)))
+}
+
+pub fn dump_file_pls<I: IntoLocalDefId>(
+    tcx: TyCtxt,
+    id: I,
+    ext: &str,
+) -> std::io::Result<std::fs::File> {
+    outfile_pls(&format!(
+        "{}.{ext}",
+        unique_and_terse_body_name_pls(tcx, id)
+    ))
+}
+
 /// Give me this file as writable (possibly creating or overwriting it).
 ///
 /// This is just a common pattern of how we want to open files we're writing

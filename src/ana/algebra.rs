@@ -48,6 +48,7 @@ fn display_term_pieces<F: Display + Copy, B: Display>(
             ContainsAt(field) => write!(f, "{{ .{}: ", field),
             Upcast(_, s) => write!(f, "(#{s}"),
             Unknown => write!(f, "(?"),
+            ArrayWith => f.write_char('['),
             _ => f.write_char('('),
         }?
     }
@@ -57,6 +58,8 @@ fn display_term_pieces<F: Display + Copy, B: Display>(
             MemberOf(field) => write!(f, ".{})", field),
             ContainsAt(_) => f.write_str(" }"),
             Downcast(_, s) => write!(f, " #{s})"),
+            ArrayWith => f.write_char(']'),
+            IndexOf => write!(f, "[])"),
             _ => f.write_char(')'),
         }?
     }
@@ -87,9 +90,28 @@ pub enum Operator<F: Copy> {
     DerefOf,
     MemberOf(F),
     ContainsAt(F),
+    IndexOf,
+    ArrayWith,
     Downcast(Option<Symbol>, VariantIdx),
     Upcast(Option<Symbol>, VariantIdx),
     Unknown,
+}
+
+impl<F: Copy + std::fmt::Display> std::fmt::Display for Operator<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Operator::*;
+        match self {
+            RefOf => f.write_char('&'),
+            DerefOf => f.write_char('*'),
+            Unknown => f.write_char('?'),
+            MemberOf(m) => write!(f, ".{m}"),
+            ContainsAt(m) => write!(f, "@{m}"),
+            Downcast(_, s) => write!(f, "#{s:?}"),
+            Upcast(_, s) => write!(f, "^{s:?}"),
+            IndexOf => f.write_str("$"),
+            ArrayWith => f.write_str("[]"),
+        }
+    }
 }
 
 /// Relationship of two [`Operator`]s. Used in [`Operator::cancel`].
@@ -106,6 +128,19 @@ pub enum Cancel<F> {
     Remains,
 }
 
+impl<F: Copy + std::fmt::Display> std::fmt::Display for Cancel<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Cancel::*;
+        match self {
+            NonOverlappingField(f1, f2) => write!(f, "f{f1} != f{f2}"),
+            NonOverlappingVariant(v1, v2) => write!(f, "#{v1} != #{v2}"),
+            CancelBoth => f.write_str("cancel both"),
+            CancelOne => f.write_str("cancel one"),
+            Remains => f.write_str("remains"),
+        }
+    }
+}
+
 impl<F: Copy> Operator<F> {
     /// Each operator has a dual, this flips this operator to that respective dual.
     pub fn flip(self) -> Self {
@@ -118,6 +153,8 @@ impl<F: Copy> Operator<F> {
             Downcast(s, v) => Upcast(s, v),
             Upcast(s, v) => Downcast(s, v),
             Unknown => Unknown,
+            ArrayWith => IndexOf,
+            IndexOf => ArrayWith,
         }
     }
 
@@ -179,6 +216,8 @@ impl<F: Copy> Operator<F> {
             Upcast(s, v) => Upcast(s, v),
             Downcast(s, v) => Downcast(s, v),
             Unknown => Unknown,
+            IndexOf => IndexOf,
+            ArrayWith => ArrayWith,
         }
     }
 }
@@ -716,7 +755,7 @@ pub fn solve_reachable<
     to: IsTarget,
 ) -> bool {
     let mut reachable = false;
-    solve_with(equations, from, to, |solution| {
+    solve_with(equations, from, to, |_| {
         reachable = true;
         false
     });
@@ -758,6 +797,8 @@ fn solve_with<
 
     let mut targets = vec![from.clone()];
 
+    let mut saw_target = false;
+
     while let Some(intermediate_target) = targets.pop() {
         if intermediates.contains_key(&intermediate_target) {
             continue;
@@ -773,6 +814,7 @@ fn solve_with<
             if matching.lhs.base() != &intermediate_target {
                 matching.swap()
             }
+            saw_target |= is_target(matching.rhs.base());
             matching.rearrange_left_to_right();
             if !is_target(matching.rhs.base()) {
                 targets.push(matching.rhs.base().clone());
@@ -783,25 +825,21 @@ fn solve_with<
                 .insert(matching.rhs);
         }
     }
-    debug!("Found {} intermedaites", intermediates.len());
-    // debug!("Found the intermediates");
-    // for (k, vs) in intermediates.iter() {
-    //     debug!(
-    //         "  {k}: {}",
-    //         Print(|f: &mut std::fmt::Formatter| {
-    //             let mut first = true;
-    //             for term in vs {
-    //                 if first {
-    //                     first = false;
-    //                 } else {
-    //                     f.write_str(" || ")?;
-    //                 }
-    //                 write!(f, "{}", term)?;
-    //             }
-    //             Ok(())
-    //         })
-    //     );
-    // }
+    debug!(
+        "Found the intermediates\n{}",
+        Print(|fmt: &mut std::fmt::Formatter<'_>| {
+            for (k, vs) in intermediates.iter() {
+                write!(fmt, "  {k}: ")?;
+                write_sep(fmt, " || ", vs, Display::fmt)?;
+                fmt.write_str("\n")?;
+            }
+            Ok(())
+        })
+    );
+    if !saw_target {
+        debug!("Never saw final target, abandoning solving early");
+        return;
+    }
     let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
         debug!("No intermediate found for {from}");
@@ -817,9 +855,7 @@ fn solve_with<
             if !register_final(intermediate_target.terms) {
                 return;
             }
-        } else if seen.contains(var) {
-            //debug!("Aborting search on recursive visit to {var}")
-        } else {
+        } else if !seen.contains(var) {
             seen.insert(var.clone());
             if let Some(next_eq) = intermediates.get(&var) {
                 targets.extend(next_eq.iter().cloned().filter_map(|term| {
@@ -828,7 +864,7 @@ fn solve_with<
                     to_sub.simplify().then_some(to_sub)
                 }))
             } else {
-                //debug!("No follow up equation found for {var} on the way from {from}");
+                debug!("No follow up equation found for {var} on the way from {from}");
             }
         }
     }
@@ -892,6 +928,16 @@ impl<B, F: Copy> Term<B, F> {
         self
     }
 
+    pub fn add_index_of(mut self) -> Self {
+        self.terms.push(Operator::IndexOf);
+        self
+    }
+
+    pub fn add_array_with(mut self) -> Self {
+        self.terms.push(Operator::ArrayWith);
+        self
+    }
+
     pub fn base(&self) -> &B {
         &self.base
     }
@@ -916,7 +962,8 @@ impl<B, F: Copy> Term<B, F> {
         let mut after_last_unknown = None;
         while let Some(i) = it.next() {
             if let Some(next) = it.peek().cloned() {
-                match i.cancel(next) {
+                let cancel = i.cancel(next);
+                match cancel {
                     Cancel::NonOverlappingField(f, g) => {
                         valid = false;
                     }
@@ -935,7 +982,7 @@ impl<B, F: Copy> Term<B, F> {
             }
             self.terms.push(i);
             if i.is_unknown() {
-                if after_first_unknown.is_none() {
+                let _ = if after_first_unknown.is_none() {
                     &mut after_first_unknown
                 } else {
                     &mut after_last_unknown
@@ -1027,8 +1074,17 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
         let lhs = MirTerm::from(place);
         use mir::{AggregateKind, Rvalue::*};
         let rhs_s = match rvalue {
-            Use(op) | UnaryOp(_, op) => Box::new(op.place().into_iter().map(|p| p.into()))
+            Use(op) | UnaryOp(_, op) | Cast(_, op, _) 
+            | ShallowInitBox(op, _) // XXX Not sure this is correct
+            => Box::new(op.place().into_iter().map(|p| p.into()))
                 as Box<dyn Iterator<Item = MirTerm>>,
+            Repeat(..) // safe because it can only ever be populated by constants
+            | ThreadLocalRef(..) // This accesses a global variable and thus cannot be tracked
+            | NullaryOp(_, _) // Computes a type level constant from thin air
+            => Box::new(std::iter::empty()) as Box<_>,
+            AddressOf(_, p) // XXX Not sure this is correct but I just want to be safe. The result is a pointer so I don't know how we deal with that
+            | Discriminant(p) | Len(p) // This is a weaker (implicit flows) sort of relationship but it is a relationship non the less so I'm adding them here
+            => Box::new(std::iter::once(MirTerm::from(p).add_unknown())), 
             Ref(_, _, p) => {
                 let term = MirTerm::from(p).add_ref_of();
                 Box::new(std::iter::once(term)) as Box<_>
@@ -1062,6 +1118,19 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                         });
                     Box::new(iter) as Box<_>
                 }
+                AggregateKind::Closure(def_id, _) => {
+                    // XXX This is a speculative way of handling this. Instead
+                    // we should look up actual field info but I wasn't able to
+                    // find a function that retrieves a closure's layout
+                    let it = ops.iter().enumerate().filter_map(|(i, op)| {
+                        let place = op.place()?;
+                        Some(
+                            MirTerm::from(place)
+                                .add_contains_at(DisplayViaDebug(i.into()))
+                        )
+                    });
+                    Box::new(it) as Box<_>
+                }
                 AggregateKind::Tuple => Box::new(ops.iter().enumerate().filter_map(|(i, op)| {
                     op.place()
                         .map(|p| MirTerm::from(p).add_contains_at(DisplayViaDebug(i.into())))
@@ -1086,16 +1155,15 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                     });
                     Box::new(it) as Box<_>
                 }
-                _ => {
-                    debug!("Unhandled rvalue {rvalue:?}");
-                    Box::new(std::iter::empty()) as Box<_>
+                AggregateKind::Array(_) => {
+                    let it = ops.iter().filter_map(|op| {
+                        Some(
+                            MirTerm::from(op.place()?).add_index_of()
+                        )
+                    });
+                    Box::new(it) as Box<_>
                 }
             },
-
-            other => {
-                debug!("Unhandled rvalue {other:?}");
-                Box::new(std::iter::empty()) as Box<_>
-            }
         };
         self.equations.extend(rhs_s.map(|rhs| Equality {
             lhs: lhs.clone(),

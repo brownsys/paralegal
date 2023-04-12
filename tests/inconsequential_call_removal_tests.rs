@@ -10,7 +10,10 @@ const CRATE_DIR: &str = "tests/inconsequential-call-removal-tests";
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = *helpers::DFPP_INSTALLED
-        && with_current_directory(CRATE_DIR, || { run_dfpp_with_graph_dump_and(["--remove-inconsequential-calls", "conservative"]) }).map_or_else(
+        && with_current_directory(CRATE_DIR, || {
+            run_dfpp_with_graph_dump_and(["--remove-inconsequential-calls", "conservative"])
+        })
+        .map_or_else(
             |e| {
                 println!("io err {}", e);
                 false
