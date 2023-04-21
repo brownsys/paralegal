@@ -24,6 +24,8 @@ use crate::{
 
 use std::{borrow::Cow, cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
+pub mod resolve;
+
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
 /// [`matches_path`](#method.matches_path) is interesting if you want to check

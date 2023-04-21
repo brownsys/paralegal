@@ -325,25 +325,11 @@ impl<'tcx> CollectingVisitor<'tcx> {
                                 .filter(|kv| kv.1 .1 == ObjectType::Type)
                                 .map(|(k, v)| (identifier_for_item(tcx, *k), v.clone())),
                         )
-                        .chain(self.external_annotations.iter().map(|(did, markers)| {
-                            (
-                                identifier_for_item(tcx, *did),
-                                (
-                                    markers
-                                        .into_iter()
-                                        .map(|marker| Annotation::Label(marker.clone()))
-                                        .collect(),
-                                    if tcx.def_kind(did).is_fn_like() {
-                                        ObjectType::Function(
-                                            tcx.fn_sig(did).skip_binder().inputs().len(),
-                                        )
-                                    } else {
-                                        // XXX add an actual match here
-                                        ObjectType::Type
-                                    },
-                                ),
-                            )
-                        }))
+                        .chain(self.external_annotations.iter()
+                            .map(|(did, (anns, typ))|
+                                (identifier_for_item(tcx, did), (anns.iter().cloned().map(Annotation::Label).collect() , typ.clone()))
+                        )
+                        )
                         .collect(),
                 })
         });

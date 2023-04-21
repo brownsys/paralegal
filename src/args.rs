@@ -21,6 +21,9 @@ pub struct Args {
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
+    /// Emit warnings instead of aborting the analysis on sanity checks
+    #[clap(long, env = "DFPP_RELAXED")]
+    relaxed: bool,
     /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis")]
     anactrl: AnalysisCtrl,
@@ -81,6 +84,9 @@ impl Args {
     }
     pub fn verbose(&self) -> bool {
         self.verbose
+    }
+    pub fn relaxed(&self) -> bool {
+        self.relaxed
     }
 }
 

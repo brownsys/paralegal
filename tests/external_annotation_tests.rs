@@ -6,7 +6,7 @@ mod helpers;
 use helpers::*;
 
 fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::io::Result<A> {
-    with_current_directory("tests/forge-tests", f)
+    with_current_directory("tests/external-annotation-tests", f)
 }
 
 lazy_static! {

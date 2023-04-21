@@ -1,7 +1,7 @@
-[["std::vec::Vec"]]
+[["alloc::vec::Vec"]]
 marker = "type_marker"
 
-[["std::vec::Vec::new"]]
+[["alloc::vec::Vec::new"]]
 marker = "function_marker"
 
 [["std::vec::Vec::push"]]

@@ -6,3 +6,4 @@ flow-graph.json
 
 # Local cargo configuration
 .cargo/config.toml
+*.eqs

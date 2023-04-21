@@ -2,7 +2,7 @@
 //!
 //! Items of interest is anything annotated with one of the `dfpp::`
 //! annotations.
-use crate::{consts, desc::*, rust::*, utils::*, Either, HashMap};
+use crate::{consts, desc::*, rust::*, utils::{*, self}, Either, HashMap, args::Args};
 
 use hir::{
     def_id::{self, DefId},
@@ -54,7 +54,7 @@ pub struct CollectingVisitor<'tcx> {
     pub external_annotations: ExternalMarkers,
 }
 
-pub type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
+pub type ExternalMarkers = HashMap<DefId, (Vec<MarkerAnnotation>, ObjectType)>;
 
 /// A function we will be targeting to analyze with
 /// [`CollectingVisitor::handle_target`].
@@ -70,84 +70,139 @@ impl FnToAnalyze {
     }
 }
 
-fn resolve_external_markers(tcx: TyCtxt, markers: &crate::RawExternalMarkers) -> ExternalMarkers {
-    struct Value<'a> {
-        table: HashMap<&'a str, Value<'a>>,
-        value: Option<&'a [MarkerAnnotation]>,
-    }
-    impl<'a> Value<'a> {
-        fn get(&self, key: &str) -> Option<&Value<'a>> {
-            self.table.get(key)
-        }
-        fn new() -> Self {
-            Self {
-                table: HashMap::new(),
-                value: None,
-            }
-        }
-    }
-    let mut map = Value::new();
-
-    for (path, ann) in markers {
-        let segments = path.split("::");
-        let mut tab_ref = &mut map;
-        for segment in segments {
-            tab_ref = tab_ref.table.entry(segment).or_insert_with(Value::new);
-        }
-
-        assert!(tab_ref.value.replace(ann).is_none())
-    }
-
-    fn resolve_map_in_module<'b, 'v: 'b, 'tcx: 'b, 'r: 'b>(
-        tcx: TyCtxt<'tcx>,
-        module: DefId,
-        v: &'r Value<'v>,
-    ) -> impl Iterator<Item = (DefId, Vec<MarkerAnnotation>)> + 'b {
-        v.value
-            .map(|v| (module, v.iter().cloned().collect()))
-            .into_iter()
-            .chain(
-                (!v.table.is_empty())
-                    .then(|| {
-                        Box::new(
-                            tcx.module_children(module)
-                                .into_iter()
-                                .filter_map(|child| {
-                                    let v = v.table.get(child.ident.as_str())?;
-                                    let module = match child.res {
-                                        hir::def::Res::Def(_, did) => did,
-                                        _ => unreachable!(),
-                                    };
-                                    Some((module, v))
-                                })
-                                .flat_map(move |(module, v)| resolve_map_in_module(tcx, module, v)),
-                        )
-                            as Box<dyn Iterator<Item = (DefId, Vec<MarkerAnnotation>)> + 'b>
-                    })
-                    .into_iter()
-                    .flatten(),
-            )
-    }
-
-    let final_map = tcx
-        .crates(())
+fn resolve_external_markers(opts: &Args, tcx: TyCtxt, markers: &crate::RawExternalMarkers) -> ExternalMarkers {
+    use hir::def::Res;
+    let new_map : ExternalMarkers = markers
         .into_iter()
-        .filter_map(|c| {
-            let name = tcx.crate_name(*c);
-            let crate_map = map.get(name.as_str())?;
-            Some((
-                DefId {
-                    krate: *c,
-                    index: def_id::CRATE_DEF_INDEX,
+        .filter_map(|(path, marker)| {
+            let segment_vec = path.split("::").collect::<Vec<_>>();
+            let res = utils::resolve::def_path_res(tcx, &segment_vec);
+            let (did, typ) = match res {
+                Res::Def(kind, did) => Some((did, 
+                    if kind.is_fn_like() {
+                        ObjectType::Function(
+                            tcx.fn_sig(did).skip_binder().inputs().len(),
+                        )
+                    } else {
+                        // XXX add an actual match here
+                        ObjectType::Type
+                    }
+                )),
+                other if opts.relaxed() => {
+                    warn!("{path} did not resolve to an item ({other:?})");
+                    None
                 },
-                crate_map,
-            ))
+                other => panic!("{path} did not resolve to an item ({other:?})"),
+            }?;
+            Some((did, (marker.clone(), typ)))
         })
-        .flat_map(|(module, map)| resolve_map_in_module(tcx, module, map))
-        .collect::<ExternalMarkers>();
-    assert_eq!(final_map.len(), markers.len());
-    final_map
+        .collect();
+    assert_eq!(new_map.len(), markers.len());
+    new_map
 }
+
+// fn resolve_external_markers_old(tcx: TyCtxt, markers: &crate::RawExternalMarkers) -> ExternalMarkers {
+//     struct Value<'a> {
+//         table: HashMap<&'a str, Value<'a>>,
+//         value: Option<&'a [MarkerAnnotation]>,
+//     }
+//     impl<'a> Value<'a> {
+//         fn get(&self, key: &str) -> Option<&Value<'a>> {
+//             self.table.get(key)
+//         }
+//         fn new() -> Self {
+//             Self {
+//                 table: HashMap::new(),
+//                 value: None,
+//             }
+//         }
+//     }
+//     let mut map = Value::new();
+
+//     for (path, ann) in markers {
+//         let segments = path.split("::");
+//         let mut tab_ref = &mut map;
+//         for segment in segments {
+//             tab_ref = tab_ref.table.entry(segment).or_insert_with(Value::new);
+//         }
+
+//         assert!(tab_ref.value.replace(ann).is_none())
+//     }
+
+//     fn resolve_map_in_module<'b, 'v: 'b, 'tcx: 'b, 'r: 'b>(
+//         tcx: TyCtxt<'tcx>,
+//         module: DefId,
+//         v: &'r Value<'v>,
+//     ) -> impl Iterator<Item = (DefId, Vec<MarkerAnnotation>)> + 'b {
+//         let parent = module;
+//         let clone_val = |v: &[_]| v.iter().cloned().collect::<Vec<_>>();
+//         v.value
+//             .map(|v| (module, clone_val(v)))
+//             .into_iter()
+//             .chain({
+//                 use hir::def::DefKind;
+//                 match tcx.def_kind(module) {
+//                     _ if v.table.is_empty() => Box::new(std::iter::empty()) as Box<dyn Iterator<Item = (DefId, Vec<MarkerAnnotation>)> + 'b>,
+//                     DefKind::Mod =>
+//                         Box::new(
+//                             tcx.module_children(module)
+//                                 .into_iter()
+//                                 .filter_map(move |child| {
+//                                     let module = match child.res {
+//                                         hir::def::Res::Def(_, did) => did,
+//                                         _ => unreachable!(),
+//                                     };
+//                                     debug!("Seeing child {} of {} (is {:?})", tcx.def_path_str(module), tcx.item_name(parent), tcx.def_kind(module));
+//                                     let v = v.table.get(child.ident.as_str())?;
+//                                     Some((module, v))
+//                                 })
+//                                 .flat_map(move |(module, v)| resolve_map_in_module(tcx, module, v)),
+//                         ) as Box<_>,
+//                     DefKind::Struct | DefKind::Enum => {
+//                         debug!("Saw {} impls for {} ({:?})", tcx.all_impls(module).count(), tcx.item_name(module), tcx.def_kind(module));
+//                         Box::new(tcx.all_impls(module)
+//                             .flat_map(move |impl_| {
+//                                 let items = tcx.associated_items(impl_);
+//                                 debug!("Handling impl {}", tcx.item_name(impl_));
+//                                 v.table.iter()
+//                                     .filter_map(move |(name, val)| {
+//                                         let mut it = items.filter_by_name_unhygienic(Symbol::intern(name));
+//                                         let my_item = it.next()?;
+//                                         assert!(it.next().is_none());
+//                                         assert!(val.table.is_empty());
+//                                         let my_val = val.value?;
+//                                         Some((my_item.def_id, clone_val(my_val)))
+//                                     })
+//                             })) as Box<_>
+//                     }
+//                     other => {
+//                         let name = tcx.item_name(module);
+//                         warn!("Unsupported def kind {other:?} for {name}");
+//                         Box::new(std::iter::empty()) as Box<_>
+//                     },
+//                 }
+//             })
+//     }
+
+//     let final_map = tcx
+//         .crates(())
+//         .into_iter()
+//         .filter_map(|c| {
+//             let name = tcx.crate_name(*c);
+//             let crate_map = map.get(name.as_str())?;
+//             Some((
+//                 DefId {
+//                     krate: *c,
+//                     index: def_id::CRATE_DEF_INDEX,
+//                 },
+//                 crate_map,
+//             ))
+//         })
+//         .flat_map(|(module, map)| resolve_map_in_module(tcx, module, map))
+//         .collect::<ExternalMarkers>();
+//     assert_eq!(final_map.len(), markers.len());
+//     final_map
+// }
 
 impl<'tcx> CollectingVisitor<'tcx> {
     pub(crate) fn new(
@@ -155,7 +210,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         opts: &'static crate::Args,
         external_annotations: &crate::RawExternalMarkers,
     ) -> Self {
-        let external_annotations = resolve_external_markers(tcx, external_annotations);
+        let external_annotations = resolve_external_markers(opts, tcx, external_annotations);
         Self {
             tcx,
             opts,
