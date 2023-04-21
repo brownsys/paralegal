@@ -2,10 +2,10 @@
 //!
 //! Items of interest is anything annotated with one of the `dfpp::`
 //! annotations.
-use crate::{consts, desc::*, rust::*, utils::*, HashMap};
+use crate::{consts, desc::*, rust::*, utils::*, Either, HashMap};
 
 use hir::{
-    def_id::DefId,
+    def_id::{self, DefId},
     hir_id::HirId,
     intravisit::{self, FnKind},
     BodyId,
@@ -34,7 +34,7 @@ pub type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)
 /// discovery phase [`Self::analyze`] is used to drive the
 /// actual analysis. All of this is conveniently encapsulated in the
 /// [`Self::run`] method.
-pub struct CollectingVisitor<'tcx, 'a> {
+pub struct CollectingVisitor<'tcx> {
     /// Reference to rust compiler queries.
     pub tcx: TyCtxt<'tcx>,
     /// Command line arguments.
@@ -51,8 +51,10 @@ pub struct CollectingVisitor<'tcx, 'a> {
     pub functions_to_analyze: Vec<FnToAnalyze>,
 
     /// Annotations that are to be placed on external functions and types.
-    pub external_annotations: &'a AnnotationMap,
+    pub external_annotations: ExternalMarkers,
 }
+
+pub type ExternalMarkers = HashMap<DefId, Vec<LabelAnnotation>>;
 
 /// A function we will be targeting to analyze with
 /// [`CollectingVisitor::handle_target`].
@@ -68,12 +70,95 @@ impl FnToAnalyze {
     }
 }
 
-impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
+fn resolve_external_markers(tcx: TyCtxt, markers: &crate::RawExternalMarkers) -> ExternalMarkers {
+    enum Value<'a> {
+        Table(Box<HashMap<&'a str, Value<'a>>>),
+        V(&'a [LabelAnnotation]),
+        Uninit,
+    }
+    impl<'a> Value<'a> {
+        fn get(&self, key: &str) -> Option<&Value<'a>> {
+            match self {
+                Value::Table(t) => t.get(key),
+                _ => None,
+            }
+        }
+    }
+    let mut map = Value::Table(Default::default());
+
+    for (path, ann) in markers {
+        let segments = path.split("::");
+        let mut tab_ref = &mut map;
+        for segment in segments {
+            let tab = match tab_ref {
+                Value::V(_) => unreachable!(),
+                Value::Uninit => {
+                    *tab_ref = Value::Table(Default::default());
+                    match tab_ref {
+                        Value::Table(tab) => tab,
+                        _ => unreachable!(),
+                    }
+                }
+                Value::Table(tab) => tab,
+            };
+            tab_ref = tab.entry(segment).or_insert_with(|| Value::Uninit);
+        }
+        assert!(matches!(tab_ref, Value::Uninit));
+        *tab_ref = Value::V(ann)
+    }
+
+    fn resolve_map_in_module<'b, 'v: 'b, 'tcx: 'b, 'r: 'b>(
+        tcx: TyCtxt<'tcx>,
+        module: DefId,
+        v: &'r Value<'v>,
+    ) -> impl Iterator<Item = (DefId, Vec<LabelAnnotation>)> + 'b {
+        match v {
+            Value::Uninit => unreachable!(),
+            Value::V(anns) => Box::new(std::iter::once((module, anns.iter().cloned().collect())))
+                as Box<dyn Iterator<Item = (DefId, Vec<LabelAnnotation>)> + 'b>,
+            Value::Table(tab) => Box::new(
+                tcx.module_children(module)
+                    .into_iter()
+                    .filter_map(|child| {
+                        let v = tab.get(child.ident.as_str())?;
+                        let module = match child.res {
+                            hir::def::Res::Def(_, did) => did,
+                            _ => unreachable!(),
+                        };
+                        Some((module, v))
+                    })
+                    .flat_map(move |(module, v)| resolve_map_in_module(tcx, module, v)),
+            ) as Box<_>,
+        }
+    }
+
+    let final_map = tcx
+        .crates(())
+        .into_iter()
+        .filter_map(|c| {
+            let name = tcx.crate_name(*c);
+            let crate_map = map.get(name.as_str())?;
+            Some((
+                DefId {
+                    krate: *c,
+                    index: def_id::CRATE_DEF_INDEX,
+                },
+                crate_map,
+            ))
+        })
+        .flat_map(|(module, map)| resolve_map_in_module(tcx, module, map))
+        .collect::<ExternalMarkers>();
+    assert_eq!(final_map.len(), markers.len());
+    final_map
+}
+
+impl<'tcx> CollectingVisitor<'tcx> {
     pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         opts: &'static crate::Args,
-        external_annotations: &'a AnnotationMap,
+        external_annotations: &crate::RawExternalMarkers,
     ) -> Self {
+        let external_annotations = resolve_external_markers(tcx, external_annotations);
         Self {
             tcx,
             opts,
@@ -110,7 +195,7 @@ fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
         .unwrap() as usize
 }
 
-impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
+impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
 
     fn nested_visit_map(&mut self) -> Self::Map {
@@ -150,9 +235,9 @@ impl<'tcx, 'a> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'a> {
                     .insert(id, (sink_matches, ObjectType::Function(decl.inputs.len())))
                     .is_none()
             } else {
-                // I'm restricting the Ctor here to `Unit`, because in that case
-                // the annotation ends up on the synthesized constructor (for
-                // some reason).
+                // I'm restricting the Ctor in the second set of patterns to
+                // `Unit`, because in that case the annotation ends up on the
+                // synthesized constructor (for some reason).
                 match node {
                     hir::Node::Ty(_)
                     | hir::Node::Item(hir::Item {

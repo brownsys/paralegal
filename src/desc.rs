@@ -14,7 +14,7 @@ use crate::{
     mir,
     rust::DefId,
     serde,
-    utils::identifier_for_fn,
+    utils::identifier_for_item,
     HashMap, HashSet, Symbol, TyCtxt,
 };
 
@@ -351,7 +351,7 @@ impl CallSite {
     pub fn new<L: IsGlobalLocation>(loc: &L, function: DefId, tcx: TyCtxt<'_>) -> Self {
         Self {
             location: loc.as_raw(),
-            function: identifier_for_fn(tcx, function),
+            function: identifier_for_item(tcx, function),
         }
     }
 }

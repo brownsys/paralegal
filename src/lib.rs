@@ -12,6 +12,7 @@ extern crate clap;
 extern crate ordermap;
 extern crate rustc_plugin;
 extern crate serde;
+extern crate toml;
 #[macro_use]
 extern crate lazy_static;
 extern crate simple_logger;
@@ -115,6 +116,8 @@ struct Callbacks {
     opts: &'static Args,
 }
 
+type RawExternalMarkers = HashMap<String, Vec<desc::LabelAnnotation>>;
+
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
         config.override_queries = Some(borrowck_facts::override_queries);
@@ -125,9 +128,9 @@ impl rustc_driver::Callbacks for Callbacks {
         compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        let external_annotations: HashMap<_, _> =
+        let external_annotations =
             if let Some(annotation_file) = self.opts.modelctrl().external_annotations() {
-                serde_json::from_reader(&mut std::fs::File::open(annotation_file).unwrap()).unwrap()
+                toml::from_str(&std::fs::read_to_string(annotation_file).unwrap()).unwrap()
             } else {
                 HashMap::new()
             };
@@ -139,7 +142,6 @@ impl rustc_driver::Callbacks for Callbacks {
                 discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run()
             })
             .unwrap();
-        desc.annotations.extend(external_annotations);
         if self.opts.dbg().dump_serialized_flow_graph() {
             serde_json::to_writer(
                 &mut std::fs::OpenOptions::new()

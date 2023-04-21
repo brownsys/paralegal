@@ -619,14 +619,41 @@ pub fn hash_pls<T: Hash>(t: T) -> u64 {
     hasher.finish()
 }
 
-/// Creates an `Identifier` for this `HirId`
-pub fn identifier_for_hid(tcx: TyCtxt, hid: HirId) -> Identifier {
-    Identifier::new(tcx.item_name(tcx.hir().local_def_id(hid).to_def_id()))
+pub trait IntoDefId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId;
 }
 
-/// Creates an `Identifier` for this `DefId`
-pub fn identifier_for_fn(tcx: TyCtxt, p: DefId) -> Identifier {
-    Identifier::from_str(&format!("{}_{:x}", tcx.item_name(p), short_hash_pls(p),))
+impl IntoDefId for DefId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        self
+    }
+}
+
+impl IntoDefId for LocalDefId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        self.to_def_id()
+    }
+}
+
+impl IntoDefId for HirId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        tcx.hir().local_def_id(self).to_def_id()
+    }
+}
+
+impl<D: Copy + IntoDefId> IntoDefId for &'_ D {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        (*self).into_def_id(tcx)
+    }
+}
+
+/// Creates an `Identifier` for this `HirId`
+pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
+    Identifier::from_str(&format!(
+        "{}_{:x}",
+        tcx.item_name(did.into_def_id(tcx)),
+        short_hash_pls(did),
+    ))
 }
 
 /// Extension trait for [`TyCtxt`]

@@ -22,7 +22,7 @@ pub mod df;
 mod inline;
 pub mod non_transitive_aliases;
 
-impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
+impl<'tcx> CollectingVisitor<'tcx> {
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
@@ -311,15 +311,39 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     controllers,
                     annotations: call_site_annotations
                         .into_iter()
-                        .map(|(k, v)| (identifier_for_fn(tcx, k), (v.0, ObjectType::Function(v.1))))
+                        .map(|(k, v)| {
+                            (
+                                identifier_for_item(tcx, k),
+                                (v.0, ObjectType::Function(v.1)),
+                            )
+                        })
                         .chain(
                             self.marked_objects
                                 .as_ref()
                                 .borrow()
                                 .iter()
                                 .filter(|kv| kv.1 .1 == ObjectType::Type)
-                                .map(|(k, v)| (identifier_for_hid(tcx, *k), v.clone())),
+                                .map(|(k, v)| (identifier_for_item(tcx, *k), v.clone())),
                         )
+                        .chain(self.external_annotations.iter().map(|(did, markers)| {
+                            (
+                                identifier_for_item(tcx, *did),
+                                (
+                                    markers
+                                        .into_iter()
+                                        .map(|marker| Annotation::Label(marker.clone()))
+                                        .collect(),
+                                    if tcx.def_kind(did).is_fn_like() {
+                                        ObjectType::Function(
+                                            tcx.fn_sig(did).skip_binder().inputs().len(),
+                                        )
+                                    } else {
+                                        // XXX add an actual match here
+                                        ObjectType::Type
+                                    },
+                                ),
+                            )
+                        }))
                         .collect(),
                 })
         });
@@ -347,7 +371,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                                 .as_ref()
                                 .borrow()
                                 .contains_key(&self.tcx.hir().local_def_id_to_hir_id(ldef))
-                        }) || self.external_annotations.contains_key(&item_name)
+                        }) || self.external_annotations.contains_key(&def)
                         {
                             Some(item_name)
                         } else {
