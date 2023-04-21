@@ -54,7 +54,7 @@ pub struct CollectingVisitor<'tcx> {
     pub external_annotations: ExternalMarkers,
 }
 
-pub type ExternalMarkers = HashMap<DefId, Vec<LabelAnnotation>>;
+pub type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 
 /// A function we will be targeting to analyze with
 /// [`CollectingVisitor::handle_target`].
@@ -71,65 +71,62 @@ impl FnToAnalyze {
 }
 
 fn resolve_external_markers(tcx: TyCtxt, markers: &crate::RawExternalMarkers) -> ExternalMarkers {
-    enum Value<'a> {
-        Table(Box<HashMap<&'a str, Value<'a>>>),
-        V(&'a [LabelAnnotation]),
-        Uninit,
+    struct Value<'a> {
+        table: HashMap<&'a str, Value<'a>>,
+        value: Option<&'a [MarkerAnnotation]>,
     }
     impl<'a> Value<'a> {
         fn get(&self, key: &str) -> Option<&Value<'a>> {
-            match self {
-                Value::Table(t) => t.get(key),
-                _ => None,
+            self.table.get(key)
+        }
+        fn new() -> Self {
+            Self {
+                table: HashMap::new(),
+                value: None,
             }
         }
     }
-    let mut map = Value::Table(Default::default());
+    let mut map = Value::new();
 
     for (path, ann) in markers {
         let segments = path.split("::");
         let mut tab_ref = &mut map;
         for segment in segments {
-            let tab = match tab_ref {
-                Value::V(_) => unreachable!(),
-                Value::Uninit => {
-                    *tab_ref = Value::Table(Default::default());
-                    match tab_ref {
-                        Value::Table(tab) => tab,
-                        _ => unreachable!(),
-                    }
-                }
-                Value::Table(tab) => tab,
-            };
-            tab_ref = tab.entry(segment).or_insert_with(|| Value::Uninit);
+            tab_ref = tab_ref.table.entry(segment).or_insert_with(Value::new);
         }
-        assert!(matches!(tab_ref, Value::Uninit));
-        *tab_ref = Value::V(ann)
+
+        assert!(tab_ref.value.replace(ann).is_none())
     }
 
     fn resolve_map_in_module<'b, 'v: 'b, 'tcx: 'b, 'r: 'b>(
         tcx: TyCtxt<'tcx>,
         module: DefId,
         v: &'r Value<'v>,
-    ) -> impl Iterator<Item = (DefId, Vec<LabelAnnotation>)> + 'b {
-        match v {
-            Value::Uninit => unreachable!(),
-            Value::V(anns) => Box::new(std::iter::once((module, anns.iter().cloned().collect())))
-                as Box<dyn Iterator<Item = (DefId, Vec<LabelAnnotation>)> + 'b>,
-            Value::Table(tab) => Box::new(
-                tcx.module_children(module)
-                    .into_iter()
-                    .filter_map(|child| {
-                        let v = tab.get(child.ident.as_str())?;
-                        let module = match child.res {
-                            hir::def::Res::Def(_, did) => did,
-                            _ => unreachable!(),
-                        };
-                        Some((module, v))
+    ) -> impl Iterator<Item = (DefId, Vec<MarkerAnnotation>)> + 'b {
+        v.value
+            .map(|v| (module, v.iter().cloned().collect()))
+            .into_iter()
+            .chain(
+                (!v.table.is_empty())
+                    .then(|| {
+                        Box::new(
+                            tcx.module_children(module)
+                                .into_iter()
+                                .filter_map(|child| {
+                                    let v = v.table.get(child.ident.as_str())?;
+                                    let module = match child.res {
+                                        hir::def::Res::Def(_, did) => did,
+                                        _ => unreachable!(),
+                                    };
+                                    Some((module, v))
+                                })
+                                .flat_map(move |(module, v)| resolve_map_in_module(tcx, module, v)),
+                        )
+                            as Box<dyn Iterator<Item = (DefId, Vec<MarkerAnnotation>)> + 'b>
                     })
-                    .flat_map(move |(module, v)| resolve_map_in_module(tcx, module, v)),
-            ) as Box<_>,
-        }
+                    .into_iter()
+                    .flatten(),
+            )
     }
 
     let final_map = tcx
@@ -185,7 +182,7 @@ fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
     *anns
         .iter()
         .flat_map(|a| match a {
-            Annotation::Label(LabelAnnotation { refinement, .. }) => {
+            Annotation::Label(MarkerAnnotation { refinement, .. }) => {
                 Box::new(refinement.on_argument().iter()) as Box<dyn Iterator<Item = &u16>>
             }
             Annotation::Exception(_) => Box::new(std::iter::once(&0)),

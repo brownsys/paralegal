@@ -414,7 +414,7 @@ impl ProgramDescription {
             .values()
             .flat_map(|v| v.0.iter())
             .filter_map(Annotation::as_label_ann)
-            .map(|a| a.label)
+            .map(|a| a.marker)
             .chain(std::iter::once(crate::Symbol::intern(
                 name::EXCEPTIONS_LABEL,
             )))
@@ -541,7 +541,7 @@ impl ProgramDescription {
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
                             .into_iter(),
-                            std::iter::once(Identifier::new(a.label).as_forge(alloc)),
+                            std::iter::once(Identifier::new(a.marker).as_forge(alloc)),
                         )
                     })
             }))
@@ -889,7 +889,7 @@ where
                                                         label.refinement.on_argument().iter().map(|i| 
                                                             (
                                                                 std::iter::once(FormalParameter { position: *i, function: *ident }.as_forge(alloc)), 
-                                                                std::iter::once(ident.as_forge(alloc).append("->").append(label.label.as_str())))))
+                                                                std::iter::once(ident.as_forge(alloc).append("->").append(label.marker.as_str())))))
                                                     
                                             )   
                                     )

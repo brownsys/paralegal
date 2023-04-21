@@ -116,7 +116,7 @@ struct Callbacks {
     opts: &'static Args,
 }
 
-type RawExternalMarkers = HashMap<String, Vec<desc::LabelAnnotation>>;
+type RawExternalMarkers = HashMap<String, Vec<desc::MarkerAnnotation>>;
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {

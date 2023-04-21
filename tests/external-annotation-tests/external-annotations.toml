@@ -1,0 +1,13 @@
+[["std::vec::Vec"]]
+marker = "type_marker"
+
+[["std::vec::Vec::new"]]
+marker = "function_marker"
+
+[["std::vec::Vec::push"]]
+marker = "argument_marker"
+on_argument = [0]
+
+[["std::vec::Vec::push"]]
+marker = "return_marker"
+on_return = true

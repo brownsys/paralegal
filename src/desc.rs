@@ -14,7 +14,7 @@ use crate::{
     mir,
     rust::DefId,
     serde,
-    utils::identifier_for_item,
+    utils::{identifier_for_item, TinyBitSet},
     HashMap, HashSet, Symbol, TyCtxt,
 };
 
@@ -29,13 +29,13 @@ pub type Function = Identifier;
 /// [`Self::as_otype_ann`] and [`Self::as_exception_annotation`] are provided. These are particularly useful in conjunction with e.g. [`Iterator::filter_map`]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub enum Annotation {
-    Label(LabelAnnotation),
+    Label(MarkerAnnotation),
     OType(Vec<TypeDescriptor>),
     Exception(ExceptionAnnotation),
 }
 
 impl Annotation {
-    pub fn as_label_ann(&self) -> Option<&LabelAnnotation> {
+    pub fn as_label_ann(&self) -> Option<&MarkerAnnotation> {
         match self {
             Annotation::Label(l) => Some(l),
             _ => None,
@@ -68,46 +68,53 @@ pub struct ExceptionAnnotation {
 
 /// A label annotation and its refinements.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LabelAnnotation {
+pub struct MarkerAnnotation {
     /// The (unchanged) name of the label as provided by the user
     #[serde(with = "crate::serializers::ser_sym")]
-    pub label: Symbol,
-    pub refinement: AnnotationRefinement,
+    pub marker: Symbol,
+    #[serde(flatten)]
+    pub refinement: MarkerRefinement,
+}
+
+fn const_false() -> bool {
+    false
 }
 
 /// Refinements in the label targeting. The default (no refinement provided) is
 /// `on_argument == vec![]` and `on_return == false`, which is also what is
 /// returned from [`Self::empty`].
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct AnnotationRefinement {
+pub struct MarkerRefinement {
+    #[serde(default)]
     on_argument: Vec<u16>,
+    #[serde(default = "const_false")]
     on_return: bool,
 }
 
 /// Refinements as the parser discovers them. Are then merged onto the aggregate [`AnnotationRefinement`] with [`AnnotationRefinement::merge_kind`].
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
-pub enum AnnotationRefinementKind {
+pub enum MarkerRefinementKind {
     /// Corresponds to [`AnnotationRefinement::on_argument`]
     Argument(Vec<u16>),
     /// Corresponds to [`AnnotationRefinement::on_return`]
     Return,
 }
 
-impl AnnotationRefinement {
+impl MarkerRefinement {
     /// The default, empty aggregate refinement `Self { on_argument: vec![],
     /// on_return: false }`
     pub fn empty() -> Self {
         Self {
-            on_argument: vec![],
+            on_argument: Default::default(),
             on_return: false,
         }
     }
 
     /// Merge the aggregate refinement with another discovered refinement and
     /// check that they do not overwrite each other.
-    pub fn merge_kind(mut self, k: AnnotationRefinementKind) -> Result<Self, String> {
+    pub fn merge_kind(mut self, k: MarkerRefinementKind) -> Result<Self, String> {
         match k {
-            AnnotationRefinementKind::Argument(a) => {
+            MarkerRefinementKind::Argument(a) => {
                 if self.on_argument.is_empty() {
                     self.on_argument = a;
                     Ok(self)
@@ -118,7 +125,7 @@ impl AnnotationRefinement {
                     ))
                 }
             }
-            AnnotationRefinementKind::Return => {
+            MarkerRefinementKind::Return => {
                 if !self.on_return {
                     self.on_return = true;
                     Ok(self)

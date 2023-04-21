@@ -17,7 +17,7 @@ use std::cell::RefCell;
 use flowistry::{cached::Cache, mir::borrowck_facts};
 use petgraph::{
     prelude as pg,
-    visit::{EdgeRef, IntoEdgeReferences, IntoNeighborsDirected, IntoNodeReferences},
+    visit::{EdgeRef, IntoNodeReferences},
 };
 
 use crate::{
@@ -28,18 +28,17 @@ use crate::{
     hir::BodyId,
     ir::{
         flows::CallOnlyFlow,
-        global_location::{self, IsGlobalLocation},
+        global_location::IsGlobalLocation,
         regal::{self, SimpleLocation},
         GliAt, GlobalLocation, GLI,
     },
     mir,
     mir::Location,
     rust::hir::def_id::{DefId, LocalDefId},
-    rust::rustc_index::vec::IndexVec,
     ty,
     utils::{
         body_name_pls, dump_file_pls, outfile_pls, short_hash_pls, time, write_sep, AsFnAndArgs,
-        DfppBodyExt, DisplayViaDebug, IntoLocalDefId, Print, RecursionBreakingCache,
+        DfppBodyExt, DisplayViaDebug, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
     },
     AnalysisCtrl, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
@@ -94,66 +93,6 @@ impl<C> Node<C> {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Copy)]
-struct TinyBitSet(u16);
-
-impl TinyBitSet {
-    /// Creates a new, empty bitset.
-    pub fn new_empty() -> Self {
-        Self(0)
-    }
-
-    /// Sets the `index`th bit.
-    pub fn set(&mut self, index: u32) {
-        self.0 |= 1_u16.checked_shl(index).unwrap_or(0);
-    }
-
-    /// Unsets the `index`th bit.
-    pub fn clear(&mut self, index: u32) {
-        self.0 &= !1_u16.checked_shl(index).unwrap_or(0);
-    }
-
-    /// Sets the `i`th to `j`th bits.
-    pub fn set_range(&mut self, range: std::ops::Range<u32>) {
-        use std::ops::Not;
-        let bits = u16::MAX
-            .checked_shl(range.end - range.start)
-            .unwrap_or(0)
-            .not()
-            .checked_shl(range.start)
-            .unwrap_or(0);
-        self.0 |= bits;
-    }
-
-    /// Is the set empty?
-    pub fn is_empty(&self) -> bool {
-        self.0 == 0
-    }
-
-    /// Returns the domain size of the bitset.
-    pub fn within_domain(&self, index: u32) -> bool {
-        index < 16
-    }
-
-    pub fn count(&self) -> u32 {
-        self.0.count_ones()
-    }
-
-    /// Returns if the `index`th bit is set.
-    pub fn contains(&self, index: u32) -> Option<bool> {
-        self.within_domain(index)
-            .then(|| ((self.0.checked_shr(index).unwrap_or(1)) & 1) == 1)
-    }
-
-    pub fn iter_set_in_domain(&self) -> impl Iterator<Item = u32> + '_ {
-        (0..16).filter(|i| self.contains(*i).unwrap_or(false))
-    }
-
-    pub fn into_iter_set_in_domain(self) -> impl Iterator<Item = u32> {
-        (0..16).filter(move |i| self.contains(*i).unwrap_or(false))
-    }
-}
-
 #[derive(Clone, Eq, PartialEq, Hash, Copy)]
 pub struct Edge {
     data: TinyBitSet,
@@ -178,7 +117,7 @@ impl Edge {
     }
     pub fn merge(&mut self, other: Self) {
         self.control |= other.control;
-        self.data.0 |= other.data.0;
+        self.data |= other.data;
     }
     pub fn into_types_iter(self) -> impl Iterator<Item = EdgeType> {
         self.data

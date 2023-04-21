@@ -11,8 +11,8 @@
 use crate::{
     consts,
     desc::{
-        AnnotationRefinement, AnnotationRefinementKind, ExceptionAnnotation, Identifier,
-        LabelAnnotation, TypeDescriptor,
+        ExceptionAnnotation, Identifier, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind,
+        TypeDescriptor,
     },
     rust::*,
     Symbol,
@@ -251,7 +251,7 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
 /// Is not guaranteed to consume the entire input if does not match. You may
 /// want to call [`nom::combinator::eof`] afterwards to guarantee all input has
 /// been consumed.
-fn refinements_parser(i: I) -> R<AnnotationRefinement> {
+fn refinements_parser(i: I) -> R<MarkerRefinement> {
     nom::combinator::map_res(
         // nom::multi::separated_list0(
         //     assert_token(TokenKind::Comma),
@@ -261,25 +261,24 @@ fn refinements_parser(i: I) -> R<AnnotationRefinement> {
                     assert_identifier(*consts::ARG_SYM),
                     assert_token(TokenKind::Eq),
                 )),
-                nom::combinator::map(integer_list, AnnotationRefinementKind::Argument),
+                nom::combinator::map(integer_list, MarkerRefinementKind::Argument),
             ),
             nom::combinator::value(
-                AnnotationRefinementKind::Return,
+                MarkerRefinementKind::Return,
                 assert_identifier(*consts::RETURN_SYM),
             ),
         )),
         //),
         |refinements| {
-            vec![refinements].into_iter().try_fold(
-                AnnotationRefinement::empty(),
-                AnnotationRefinement::merge_kind,
-            )
+            vec![refinements]
+                .into_iter()
+                .try_fold(MarkerRefinement::empty(), MarkerRefinement::merge_kind)
         },
     )(i)
 }
 
 /// Parser for a [`LabelAnnotation`]
-pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> LabelAnnotation {
+pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> MarkerAnnotation {
     use rustc_ast::*;
     use token::*;
     match ann {
@@ -289,9 +288,9 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> LabelAnnotation {
                 let (i, cont) = nom::combinator::opt(assert_token(TokenKind::Comma))(i)?;
                 let (i, refinement) = nom::combinator::cond(cont.is_some(), refinements_parser)(i)?;
                 let (_, _) = nom::combinator::eof(i)?;
-                Ok(LabelAnnotation {
-                    label,
-                    refinement: refinement.unwrap_or_else(AnnotationRefinement::empty),
+                Ok(MarkerAnnotation {
+                    marker: label,
+                    refinement: refinement.unwrap_or_else(MarkerRefinement::empty),
                 })
             };
             p(I::from_stream(stream))
