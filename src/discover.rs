@@ -70,6 +70,8 @@ impl FnToAnalyze {
     }
 }
 
+/// Given the TOML of external annotations we have parsed, resolve the paths
+/// (keys of the map) to [`DefId`]s.
 fn resolve_external_markers(opts: &Args, tcx: TyCtxt, markers: &crate::RawExternalMarkers) -> ExternalMarkers {
     use hir::def::Res;
     let new_map : ExternalMarkers = markers

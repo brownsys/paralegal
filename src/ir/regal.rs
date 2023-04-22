@@ -20,7 +20,7 @@ use crate::{
         body_name_pls, dump_file_pls, outfile_pls, places_read, time, write_sep, AsFnAndArgs,
         AsFnAndArgsErr, DfppBodyExt, DisplayViaDebug, IntoLocalDefId, LocationExt,
     },
-    Either, HashMap, HashSet, TyCtxt,
+    Either, HashMap, HashSet, TyCtxt, DbgArgs,
 };
 
 use std::{
@@ -402,6 +402,7 @@ impl Body<DisplayViaDebug<Location>> {
 }
 
 pub fn compute_from_body_id(
+    dbg_opts: &DbgArgs,
     body_id: BodyId,
     tcx: TyCtxt,
     gli: GLI,
@@ -411,21 +412,28 @@ pub fn compute_from_body_id(
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
     let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts);
-    mir::pretty::write_mir_fn(
-        tcx,
-        body,
-        &mut |_, _| Ok(()),
-        &mut dump_file_pls(tcx, body_id, "mir").unwrap(),
-    )
-    .unwrap();
-    let ref mut states_out = dump_file_pls(tcx, body_id, "df").unwrap();
-    for l in body.all_locations() {
-        writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
+    if dbg_opts.dump_callee_mir() {
+        mir::pretty::write_mir_fn(
+            tcx,
+            body,
+            &mut |_, _| Ok(()),
+            &mut dump_file_pls(tcx, body_id, "mir").unwrap(),
+        )
+        .unwrap();
+    }
+    if dbg_opts.dump_dataflow_analysis_result() {
+        use std::io::Write;
+        let ref mut states_out = dump_file_pls(tcx, body_id, "df").unwrap();
+        for l in body.all_locations() {
+            writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
+        }
     }
     let equations = algebra::extract_equations(tcx, body);
     let r = Body::construct(flow, equations, tcx, local_def_id, body_with_facts);
-    let mut out = dump_file_pls(tcx, body_id, "regal").unwrap();
-    use std::io::Write;
-    write!(&mut out, "{}", r).unwrap();
+    if dbg_opts.dump_regal_ir() {
+        let mut out = dump_file_pls(tcx, body_id, "regal").unwrap();
+        use std::io::Write;
+        write!(&mut out, "{}", r).unwrap();
+    }
     r
 }

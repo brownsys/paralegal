@@ -40,7 +40,7 @@ use crate::{
         body_name_pls, dump_file_pls, outfile_pls, short_hash_pls, time, write_sep, AsFnAndArgs,
         DfppBodyExt, DisplayViaDebug, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
     },
-    AnalysisCtrl, Either, HashMap, HashSet, Symbol, TyCtxt,
+    AnalysisCtrl, Either, HashMap, HashSet, Symbol, TyCtxt, DbgArgs,
 };
 
 /// This essentially describes a closure that determines for a given
@@ -444,6 +444,7 @@ pub struct Inliner<'tcx, 'g, 's> {
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     ana_ctrl: &'static AnalysisCtrl,
+    dbg_ctrl: &'static DbgArgs,
 }
 
 /// Globalize all locations mentioned in these equations.
@@ -512,6 +513,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         gli: GLI<'g>,
         recurse_selector: &'s dyn Oracle<'tcx>,
         ana_ctrl: &'static AnalysisCtrl,
+        dbg_ctrl: &'static DbgArgs,
     ) -> Self {
         Self {
             tcx,
@@ -520,6 +522,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             base_memo: Default::default(),
             inline_memo: Default::default(),
             ana_ctrl,
+            dbg_ctrl
         }
     }
 
@@ -532,7 +535,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// [`ProcedureGraph::from`]
     fn get_procedure_graph(&self, body_id: BodyId) -> &regal::Body<DisplayViaDebug<Location>> {
         self.base_memo.get(body_id, |bid| {
-            regal::compute_from_body_id(bid, self.tcx, self.gli)
+            regal::compute_from_body_id(self.dbg_ctrl, bid, self.tcx, self.gli)
         })
     }
 
@@ -843,16 +846,19 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g);
 
         let name = body_name_pls(self.tcx, body_id).name;
-
-        dump_dot_graph(
-            dump_file_pls(self.tcx, body_id, "pre-inline.gv").unwrap(),
-            &gwr,
-        )
-        .unwrap();
-        let mut eqout = dump_file_pls(self.tcx, body_id, "local.eqs").unwrap();
-        for eq in &gwr.equations {
-            use std::io::Write;
-            writeln!(eqout, "{eq}").unwrap();
+        if self.dbg_ctrl.dump_pre_inline_graph() {
+            dump_dot_graph(
+                dump_file_pls(self.tcx, body_id, "pre-inline.gv").unwrap(),
+                &gwr,
+            )
+            .unwrap();
+        }
+        if self.dbg_ctrl.dump_local_equations() {
+            let mut eqout = dump_file_pls(self.tcx, body_id, "local.eqs").unwrap();
+            for eq in &gwr.equations {
+                use std::io::Write;
+                writeln!(eqout, "{eq}").unwrap();
+            }
         }
 
         let queue_for_pruning = if self.ana_ctrl.use_recursive_analysis() {
@@ -865,16 +871,20 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             self.remove_inconsequential_calls(&mut gwr);
         }
 
-        let mut eqout = dump_file_pls(self.tcx, body_id, "global.eqs").unwrap();
-        for eq in &gwr.equations {
-            use std::io::Write;
-            writeln!(eqout, "{eq}").unwrap();
+        if self.dbg_ctrl.dump_global_equations() {
+            let mut eqout = dump_file_pls(self.tcx, body_id, "global.eqs").unwrap();
+            for eq in &gwr.equations {
+                use std::io::Write;
+                writeln!(eqout, "{eq}").unwrap();
+            }
         }
-        dump_dot_graph(
-            dump_file_pls(self.tcx, body_id, "inlined.gv").unwrap(),
-            &gwr,
-        )
-        .unwrap();
+        if self.dbg_ctrl.dump_inlined_graph() {
+            dump_dot_graph(
+                dump_file_pls(self.tcx, body_id, "inlined.gv").unwrap(),
+                &gwr,
+            )
+            .unwrap();
+        }
         if self.ana_ctrl.use_pruning() {
             let edges_to_prune = if let Some(mut queue_for_pruning) = queue_for_pruning {
                 queue_for_pruning
@@ -884,11 +894,13 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 Self::find_prunable_edges(&gwr)
             };
             self.prune_impossible_edges(&mut gwr, name, &edges_to_prune);
-            dump_dot_graph(
-                dump_file_pls(self.tcx, body_id, "inlined-pruned.gv").unwrap(),
-                &gwr,
-            )
-            .unwrap();
+            if self.dbg_ctrl.dump_inlined_pruned_graph() {
+                dump_dot_graph(
+                    dump_file_pls(self.tcx, body_id, "inlined-pruned.gv").unwrap(),
+                    &gwr,
+                )
+                .unwrap();
+            }
         }
         gwr
     }

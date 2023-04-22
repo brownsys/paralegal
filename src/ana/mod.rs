@@ -287,7 +287,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             tcx,
         };
 
-        let inliner = inline::Inliner::new(self.tcx, gli, &recurse_selector, self.opts.anactrl());
+        let inliner = inline::Inliner::new(self.tcx, gli, &recurse_selector, self.opts.anactrl(), self.opts.dbg());
 
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         let result = crate::sah::HashVerifications::with(|hash_verifications| {
