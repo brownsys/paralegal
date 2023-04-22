@@ -351,7 +351,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         if maybe_item_name.is_none() {
                             info!("Could not find item name for type {ty:?}");
                         }
-                        let item_name = Identifier::new(maybe_item_name?);
+                        let item_name = identifier_for_item(self.tcx, def); 
                         if def.as_local().map_or(false, |ldef| {
                             self.marked_objects
                                 .as_ref()

@@ -597,7 +597,7 @@ impl<'g> CtrlRef<'g> {
                         ctrl: Cow::Borrowed(self),
                     }),
             )
-            .filter(|ref_| ref_.function.ident == ref_.call_site.function)
+            .filter(|ref_| ref_.call_site.function.as_str().starts_with(ref_.function.ident.as_str()))
             .collect();
         all.dedup_by_key(|r| r.call_site);
         all
