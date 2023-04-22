@@ -85,8 +85,8 @@ fn const_false() -> bool {
 /// returned from [`Self::empty`].
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct MarkerRefinement {
-    #[serde(default)]
-    on_argument: Vec<u16>,
+    #[serde(default, with = "crate::utils::tiny_bitset::pretty")]
+    on_argument: TinyBitSet,
     #[serde(default = "const_false")]
     on_return: bool,
 }
@@ -95,7 +95,7 @@ pub struct MarkerRefinement {
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub enum MarkerRefinementKind {
     /// Corresponds to [`AnnotationRefinement::on_argument`]
-    Argument(Vec<u16>),
+    Argument(#[serde(with = "crate::utils::tiny_bitset::pretty")] TinyBitSet),
     /// Corresponds to [`AnnotationRefinement::on_return`]
     Return,
 }
@@ -136,8 +136,8 @@ impl MarkerRefinement {
         }
     }
 
-    pub fn on_argument(&self) -> &[u16] {
-        &self.on_argument
+    pub fn on_argument(&self) -> TinyBitSet {
+        self.on_argument
     }
 
     pub fn on_return(&self) -> bool {

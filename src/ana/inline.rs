@@ -40,7 +40,7 @@ use crate::{
         body_name_pls, dump_file_pls, outfile_pls, short_hash_pls, time, write_sep, AsFnAndArgs,
         DfppBodyExt, DisplayViaDebug, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
     },
-    AnalysisCtrl, Either, HashMap, HashSet, Symbol, TyCtxt,
+    AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
 /// This essentially describes a closure that determines for a given
@@ -142,7 +142,7 @@ impl std::fmt::Display for Edge {
             f,
             ", ",
             self.data
-                .iter_set_in_domain()
+                .into_iter_set_in_domain()
                 .map(Either::Left)
                 .chain(self.control.then_some(Either::Right(()))),
             |elem, f| match elem {
@@ -444,6 +444,7 @@ pub struct Inliner<'tcx, 'g, 's> {
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     ana_ctrl: &'static AnalysisCtrl,
+    dbg_ctrl: &'static DbgArgs,
 }
 
 /// Globalize all locations mentioned in these equations.
@@ -479,6 +480,11 @@ fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
     }
 }
 
+/// Check that this edge is not "significant" in this graph as defined by the
+/// policy provided.
+///
+/// See what significance means in the documentation of
+/// [`InconsequentialCallRemovalPolicy`](crate::args::InconsequentialCallRemovalPolicy)
 fn no_significant_edge<N: petgraph::graphmap::NodeTrait>(
     g: &pg::GraphMap<N, Edge, pg::Directed>,
     n: N,
@@ -512,6 +518,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         gli: GLI<'g>,
         recurse_selector: &'s dyn Oracle<'tcx>,
         ana_ctrl: &'static AnalysisCtrl,
+        dbg_ctrl: &'static DbgArgs,
     ) -> Self {
         Self {
             tcx,
@@ -520,9 +527,11 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             base_memo: Default::default(),
             inline_memo: Default::default(),
             ana_ctrl,
+            dbg_ctrl,
         }
     }
 
+    /// How many (unique) functions we have analyzed
     pub fn cache_size(&self) -> usize {
         self.inline_memo.size()
     }
@@ -532,7 +541,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// [`ProcedureGraph::from`]
     fn get_procedure_graph(&self, body_id: BodyId) -> &regal::Body<DisplayViaDebug<Location>> {
         self.base_memo.get(body_id, |bid| {
-            regal::compute_from_body_id(bid, self.tcx, self.gli)
+            regal::compute_from_body_id(self.dbg_ctrl, bid, self.tcx, self.gli)
         })
     }
 
@@ -547,6 +556,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         self.get_inlined_graph(hir.body_owned_by(hir.local_def_id_to_hir_id(def_id)))
     }
 
+    /// Make the set of equations relative to the call site described by `gli`
     fn relativize_eqs<'a>(
         equations: &'a Equations<GlobalLocal<'g>>,
         gli: &'a GliAt<'g>,
@@ -562,6 +572,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         })
     }
 
+    /// Get the `regal` call description for the call site at a specific location.
     fn get_call(
         &self,
         loc: GlobalLocation<'g>,
@@ -570,6 +581,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         &body.calls[&DisplayViaDebug(loc.innermost_location())]
     }
 
+    /// Calculate the global local that corresponds to input index `idx` at this `node`.
+    ///
+    /// If the node is not a [`SimpleLocation::Call`], then the index is ignored.
     fn node_to_local(
         &self,
         node: &Node<(GlobalLocation<'g>, DefId)>,
@@ -635,22 +649,26 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
+    /// Inline crate-local, non-marked called functions and return a set of
+    /// newly inserted edges that cross those function boundaries to be
+    /// inspected for pruning.
+    ///
+    /// Note that the edges in the set are not guaranteed to exist in the graph.
     fn perform_subfunction_inlining(
         &self,
         proc_g: &regal::Body<DisplayViaDebug<Location>>,
-        gwr: &mut InlinedGraph<'g>,
+        InlinedGraph {
+            graph: g,
+            equations: eqs,
+            num_inlined,
+            max_call_stack_depth,
+        }: &mut InlinedGraph<'g>,
         body_id: BodyId,
     ) -> EdgeSet<'g> {
         let local_def_id = body_id.into_local_def_id(self.tcx);
         let name = body_name_pls(self.tcx, body_id).name;
         let mut queue_for_pruning = HashSet::new();
         time(&format!("Inlining subgraphs into {name}"), || {
-            let InlinedGraph {
-                graph: g,
-                equations: eqs,
-                num_inlined,
-                max_call_stack_depth,
-            } = gwr;
             let targets = g
                 .node_references()
                 .filter_map(|(id, n)| match n {
@@ -749,7 +767,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 assert!(root_location.is_at_root());
                 let call = &proc_g.calls[&DisplayViaDebug(root_location.outermost_location())];
                 let gli_here = self.gli.at(root_location.outermost_location(), body_id);
-                gwr.equations.extend(
+                eqs.extend(
                     Self::relativize_eqs(&grw_to_inline.equations, &gli_here).chain(
                         if let Some(closure) = is_async_closure {
                             assert!(closure.projection.is_empty());
@@ -803,7 +821,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         }
                     };
 
-                for (old) in to_inline.nodes() {
+                for old in to_inline.nodes() {
                     let new = old.map_call(|(location, function)| {
                         (gli_here.relativize(*location), *function)
                     });
@@ -843,16 +861,19 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g);
 
         let name = body_name_pls(self.tcx, body_id).name;
-
-        dump_dot_graph(
-            dump_file_pls(self.tcx, body_id, "pre-inline.gv").unwrap(),
-            &gwr,
-        )
-        .unwrap();
-        let mut eqout = dump_file_pls(self.tcx, body_id, "local.eqs").unwrap();
-        for eq in &gwr.equations {
-            use std::io::Write;
-            writeln!(eqout, "{eq}").unwrap();
+        if self.dbg_ctrl.dump_pre_inline_graph() {
+            dump_dot_graph(
+                dump_file_pls(self.tcx, body_id, "pre-inline.gv").unwrap(),
+                &gwr,
+            )
+            .unwrap();
+        }
+        if self.dbg_ctrl.dump_local_equations() {
+            let mut eqout = dump_file_pls(self.tcx, body_id, "local.eqs").unwrap();
+            for eq in &gwr.equations {
+                use std::io::Write;
+                writeln!(eqout, "{eq}").unwrap();
+            }
         }
 
         let queue_for_pruning = if self.ana_ctrl.use_recursive_analysis() {
@@ -865,16 +886,20 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             self.remove_inconsequential_calls(&mut gwr);
         }
 
-        let mut eqout = dump_file_pls(self.tcx, body_id, "global.eqs").unwrap();
-        for eq in &gwr.equations {
-            use std::io::Write;
-            writeln!(eqout, "{eq}").unwrap();
+        if self.dbg_ctrl.dump_global_equations() {
+            let mut eqout = dump_file_pls(self.tcx, body_id, "global.eqs").unwrap();
+            for eq in &gwr.equations {
+                use std::io::Write;
+                writeln!(eqout, "{eq}").unwrap();
+            }
         }
-        dump_dot_graph(
-            dump_file_pls(self.tcx, body_id, "inlined.gv").unwrap(),
-            &gwr,
-        )
-        .unwrap();
+        if self.dbg_ctrl.dump_inlined_graph() {
+            dump_dot_graph(
+                dump_file_pls(self.tcx, body_id, "inlined.gv").unwrap(),
+                &gwr,
+            )
+            .unwrap();
+        }
         if self.ana_ctrl.use_pruning() {
             let edges_to_prune = if let Some(mut queue_for_pruning) = queue_for_pruning {
                 queue_for_pruning
@@ -884,11 +909,13 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 Self::find_prunable_edges(&gwr)
             };
             self.prune_impossible_edges(&mut gwr, name, &edges_to_prune);
-            dump_dot_graph(
-                dump_file_pls(self.tcx, body_id, "inlined-pruned.gv").unwrap(),
-                &gwr,
-            )
-            .unwrap();
+            if self.dbg_ctrl.dump_inlined_pruned_graph() {
+                dump_dot_graph(
+                    dump_file_pls(self.tcx, body_id, "inlined-pruned.gv").unwrap(),
+                    &gwr,
+                )
+                .unwrap();
+            }
         }
         gwr
     }

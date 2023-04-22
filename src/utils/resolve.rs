@@ -1,7 +1,11 @@
-use crate::{ty, hir, TyCtxt, Symbol, ast, DefId};
-use ty::{IntTy, UintTy, FloatTy, fast_reject::SimplifiedTypeGen::*};
+use crate::{ast, hir, ty, DefId, Symbol, TyCtxt};
 use ast::Mutability;
-use hir::{def::{Res, DefKind}, def_id::CrateNum, PrimTy};
+use hir::{
+    def::{DefKind, Res},
+    def_id::CrateNum,
+    PrimTy,
+};
+use ty::{fast_reject::SimplifiedTypeGen::*, FloatTy, IntTy, UintTy};
 
 /// Lifted from `clippy_utils`
 pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
@@ -64,7 +68,7 @@ pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
         [base, first, ref path @ ..] => (base, first, path),
         [primitive] => {
             return PrimTy::from_name(Symbol::intern(primitive)).map_or(Res::Err, Res::PrimTy);
-        },
+        }
         _ => return Res::Err,
     };
     let starts = find_primitive(tcx, base)

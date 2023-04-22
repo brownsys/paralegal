@@ -287,7 +287,13 @@ impl<'tcx> CollectingVisitor<'tcx> {
             tcx,
         };
 
-        let inliner = inline::Inliner::new(self.tcx, gli, &recurse_selector, self.opts.anactrl());
+        let inliner = inline::Inliner::new(
+            self.tcx,
+            gli,
+            &recurse_selector,
+            self.opts.anactrl(),
+            self.opts.dbg(),
+        );
 
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         let result = crate::sah::HashVerifications::with(|hash_verifications| {
@@ -325,11 +331,15 @@ impl<'tcx> CollectingVisitor<'tcx> {
                                 .filter(|kv| kv.1 .1 == ObjectType::Type)
                                 .map(|(k, v)| (identifier_for_item(tcx, *k), v.clone())),
                         )
-                        .chain(self.external_annotations.iter()
-                            .map(|(did, (anns, typ))|
-                                (identifier_for_item(tcx, did), (anns.iter().cloned().map(Annotation::Label).collect() , typ.clone()))
-                        )
-                        )
+                        .chain(self.external_annotations.iter().map(|(did, (anns, typ))| {
+                            (
+                                identifier_for_item(tcx, did),
+                                (
+                                    anns.iter().cloned().map(Annotation::Label).collect(),
+                                    typ.clone(),
+                                ),
+                            )
+                        }))
                         .collect(),
                 })
         });

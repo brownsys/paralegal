@@ -2,7 +2,14 @@
 //!
 //! Items of interest is anything annotated with one of the `dfpp::`
 //! annotations.
-use crate::{consts, desc::*, rust::*, utils::{*, self}, Either, HashMap, args::Args};
+use crate::{
+    args::Args,
+    consts,
+    desc::*,
+    rust::*,
+    utils::{self, *},
+    Either, HashMap,
+};
 
 use hir::{
     def_id::{self, DefId},
@@ -70,28 +77,33 @@ impl FnToAnalyze {
     }
 }
 
-fn resolve_external_markers(opts: &Args, tcx: TyCtxt, markers: &crate::RawExternalMarkers) -> ExternalMarkers {
+/// Given the TOML of external annotations we have parsed, resolve the paths
+/// (keys of the map) to [`DefId`]s.
+fn resolve_external_markers(
+    opts: &Args,
+    tcx: TyCtxt,
+    markers: &crate::RawExternalMarkers,
+) -> ExternalMarkers {
     use hir::def::Res;
-    let new_map : ExternalMarkers = markers
+    let new_map: ExternalMarkers = markers
         .into_iter()
         .filter_map(|(path, marker)| {
             let segment_vec = path.split("::").collect::<Vec<_>>();
             let res = utils::resolve::def_path_res(tcx, &segment_vec);
             let (did, typ) = match res {
-                Res::Def(kind, did) => Some((did, 
+                Res::Def(kind, did) => Some((
+                    did,
                     if kind.is_fn_like() {
-                        ObjectType::Function(
-                            tcx.fn_sig(did).skip_binder().inputs().len(),
-                        )
+                        ObjectType::Function(tcx.fn_sig(did).skip_binder().inputs().len())
                     } else {
                         // XXX add an actual match here
                         ObjectType::Type
-                    }
+                    },
                 )),
                 other if opts.relaxed() => {
                     warn!("{path} did not resolve to an item ({other:?})");
                     None
-                },
+                }
                 other => panic!("{path} did not resolve to an item ({other:?})"),
             }?;
             Some((did, (marker.clone(), typ)))
@@ -234,13 +246,13 @@ impl<'tcx> CollectingVisitor<'tcx> {
 /// Confusingly named this function actually computed the highest index
 /// mentioned in any `on_argument` refinement in the provided annotation slice.
 fn obj_type_for_stmt_ann(anns: &[Annotation]) -> usize {
-    *anns
-        .iter()
+    anns.iter()
         .flat_map(|a| match a {
             Annotation::Label(MarkerAnnotation { refinement, .. }) => {
-                Box::new(refinement.on_argument().iter()) as Box<dyn Iterator<Item = &u16>>
+                Box::new(refinement.on_argument().into_iter_set_in_domain())
+                    as Box<dyn Iterator<Item = u32>>
             }
-            Annotation::Exception(_) => Box::new(std::iter::once(&0)),
+            Annotation::Exception(_) => Box::new(std::iter::once(0)),
             _ => panic!("Unsupported annotation type for statement annotation"),
         })
         .max()
