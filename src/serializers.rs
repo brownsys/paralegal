@@ -1,4 +1,4 @@
-//! JSON serializers, most used for debugging output in [`crate::dbg`].
+//! [`serde`] serializers, most used for JSON debugging output in [`crate::dbg`].
 //!
 //! The proxy structs are foreign serializers for their non-proxy counterparts,
 //! see <https://serde.rs/remote-derive.html> for more information. As a naming

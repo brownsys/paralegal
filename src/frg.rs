@@ -530,19 +530,21 @@ impl ProgramDescription {
                                             &function.function == id
                                                 && a.refinement
                                                     .on_argument()
-                                                    .contains(&(*arg_slot as u16))
+                                                    .is_set(*arg_slot as u32)
                                         )
                                     })
                                     .map(|s| s.as_forge(alloc)),
                             )
                             .chain([id.as_forge(alloc)])
-                            .chain(a.refinement.on_argument().iter().map(|slot| {
-                                FormalParameter {
-                                    function: *id,
-                                    position: *slot,
-                                }
-                                .as_forge(alloc)
-                            }))
+                            .chain(a.refinement.on_argument().into_iter_set_in_domain().map(
+                                |slot| {
+                                    FormalParameter {
+                                        function: *id,
+                                        position: slot as u16,
+                                    }
+                                    .as_forge(alloc)
+                                },
+                            ))
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
                             .into_iter(),
@@ -891,9 +893,9 @@ where
                                             .flat_map(|(ident, (anns, _))|
                                                 anns.iter().filter_map(Annotation::as_label_ann)
                                                     .flat_map(|label| 
-                                                        label.refinement.on_argument().iter().map(|i| 
+                                                        label.refinement.on_argument().into_iter_set_in_domain().map(|i| 
                                                             (
-                                                                std::iter::once(FormalParameter { position: *i, function: *ident }.as_forge(alloc)), 
+                                                                std::iter::once(FormalParameter { position: i as u16, function: *ident }.as_forge(alloc)), 
                                                                 std::iter::once(ident.as_forge(alloc).append("->").append(label.marker.as_str())))))
                                                     
                                             )   

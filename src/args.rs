@@ -1,5 +1,5 @@
 //! Command line arguments and parsing.
-//! 
+//!
 //! This module deliberately hides all of the struct fields we have here. The
 //! reason is that the fields and their types are used by [`clap`] as the names
 //! of the command line arguments. But we might want to change the names or
@@ -140,12 +140,12 @@ pub struct AnalysisCtrl {
     #[clap(long, env)]
     no_pruning: bool,
     /// Perform an aggressive removal of call sites.
-    /// 
+    ///
     /// "conservative": removes call sites that have inputs, outputs, no
     /// control flow influence and no markers
     /// "aggressive": removes call sites that have inputs, outputs (outputs
     /// could be control flow) and no markers
-    /// 
+    ///
     /// By default disabled entirely and no removal is performed
     #[clap(long, env)]
     remove_inconsequential_calls: Option<String>,

@@ -130,7 +130,16 @@ impl rustc_driver::Callbacks for Callbacks {
     ) -> rustc_driver::Compilation {
         let external_annotations =
             if let Some(annotation_file) = self.opts.modelctrl().external_annotations() {
-                toml::from_str(&std::fs::read_to_string(annotation_file).unwrap_or_else(|_| panic!("Could not open file {}/{}", std::env::current_dir().unwrap().display(), annotation_file.display()))).unwrap()
+                toml::from_str(
+                    &std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
+                        panic!(
+                            "Could not open file {}/{}",
+                            std::env::current_dir().unwrap().display(),
+                            annotation_file.display()
+                        )
+                    }),
+                )
+                .unwrap()
             } else {
                 HashMap::new()
             };

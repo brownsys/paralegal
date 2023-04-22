@@ -20,7 +20,7 @@ use crate::{
         body_name_pls, dump_file_pls, outfile_pls, places_read, time, write_sep, AsFnAndArgs,
         AsFnAndArgsErr, DfppBodyExt, DisplayViaDebug, IntoLocalDefId, LocationExt,
     },
-    Either, HashMap, HashSet, TyCtxt, DbgArgs,
+    DbgArgs, Either, HashMap, HashSet, TyCtxt,
 };
 
 use std::{

@@ -15,6 +15,7 @@ use crate::{
         TypeDescriptor,
     },
     rust::*,
+    utils::TinyBitSet,
     Symbol,
 };
 use ast::{token, tokenstream};
@@ -75,6 +76,8 @@ impl<'a> nom::InputLength for I<'a> {
     }
 }
 
+type Integer = u32;
+
 /// Parse any one token, returning the token.
 ///
 /// This is the basic primitive that all other parsers are built from.
@@ -123,11 +126,11 @@ pub fn lit<'a, A, F: Fn(&str) -> Result<A, String> + 'a>(
 }
 
 /// Parse an integer literal and return the integer.
-pub fn integer(i: I) -> R<u16> {
+pub fn integer(i: I) -> R<Integer> {
     lit(LitKind::Integer, |symbol: &str| {
         symbol
             .parse()
-            .map_err(|e: <u16 as std::str::FromStr>::Err| e.to_string())
+            .map_err(|e: <Integer as std::str::FromStr>::Err| e.to_string())
     })(i)
 }
 
@@ -195,11 +198,15 @@ pub fn dict<'a, K, V, P: Parser<I<'a>, K, Error<I<'a>>>, G: Parser<I<'a>, V, Err
 }
 
 /// Parse bracket-delimited, comma-separated integers, e.g. `[1,2,3]`.
-pub fn integer_list(i: I) -> R<Vec<u16>> {
+pub fn integer_list(i: I) -> R<Vec<Integer>> {
     delimited(
         nom::multi::separated_list0(assert_token(TokenKind::Comma), integer),
         Delimiter::Bracket,
     )(i)
+}
+
+pub fn tiny_bitset(i: I) -> R<TinyBitSet> {
+    nom::combinator::map(integer_list, TinyBitSet::from_iter)(i)
 }
 
 /// Parser for the payload of the `#[dfpp::output_type(...)]` annotation.
@@ -261,7 +268,7 @@ fn refinements_parser(i: I) -> R<MarkerRefinement> {
                     assert_identifier(*consts::ARG_SYM),
                     assert_token(TokenKind::Eq),
                 )),
-                nom::combinator::map(integer_list, MarkerRefinementKind::Argument),
+                nom::combinator::map(tiny_bitset, MarkerRefinementKind::Argument),
             ),
             nom::combinator::value(
                 MarkerRefinementKind::Return,

@@ -40,7 +40,7 @@ use crate::{
         body_name_pls, dump_file_pls, outfile_pls, short_hash_pls, time, write_sep, AsFnAndArgs,
         DfppBodyExt, DisplayViaDebug, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
     },
-    AnalysisCtrl, Either, HashMap, HashSet, Symbol, TyCtxt, DbgArgs,
+    AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
 /// This essentially describes a closure that determines for a given
@@ -142,7 +142,7 @@ impl std::fmt::Display for Edge {
             f,
             ", ",
             self.data
-                .iter_set_in_domain()
+                .into_iter_set_in_domain()
                 .map(Either::Left)
                 .chain(self.control.then_some(Either::Right(()))),
             |elem, f| match elem {
@@ -481,8 +481,8 @@ fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
 }
 
 /// Check that this edge is not "significant" in this graph as defined by the
-/// policy provided. 
-/// 
+/// policy provided.
+///
 /// See what significance means in the documentation of
 /// [`InconsequentialCallRemovalPolicy`](crate::args::InconsequentialCallRemovalPolicy)
 fn no_significant_edge<N: petgraph::graphmap::NodeTrait>(
@@ -527,7 +527,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             base_memo: Default::default(),
             inline_memo: Default::default(),
             ana_ctrl,
-            dbg_ctrl
+            dbg_ctrl,
         }
     }
 
@@ -581,6 +581,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         &body.calls[&DisplayViaDebug(loc.innermost_location())]
     }
 
+    /// Calculate the global local that corresponds to input index `idx` at this `node`.
+    ///
+    /// If the node is not a [`SimpleLocation::Call`], then the index is ignored.
     fn node_to_local(
         &self,
         node: &Node<(GlobalLocation<'g>, DefId)>,
@@ -649,7 +652,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// Inline crate-local, non-marked called functions and return a set of
     /// newly inserted edges that cross those function boundaries to be
     /// inspected for pruning.
-    /// 
+    ///
     /// Note that the edges in the set are not guaranteed to exist in the graph.
     fn perform_subfunction_inlining(
         &self,
@@ -659,7 +662,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             equations: eqs,
             num_inlined,
             max_call_stack_depth,
-        } : &mut InlinedGraph<'g>,
+        }: &mut InlinedGraph<'g>,
         body_id: BodyId,
     ) -> EdgeSet<'g> {
         let local_def_id = body_id.into_local_def_id(self.tcx);
