@@ -26,8 +26,10 @@ use std::{borrow::Cow, cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
 pub mod resolve;
 
-pub mod tiny_bitset;
+mod print;
+pub use print::*;
 
+pub mod tiny_bitset;
 pub use tiny_bitset::TinyBitSet;
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
@@ -127,12 +129,14 @@ impl<'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
 }
 
 pub trait DfppBodyExt<'tcx> {
+    /// Same as [`mir::Body::stmt_at`] but throws descriptive errors.
     fn stmt_at_better_err(
         &self,
         l: mir::Location,
     ) -> Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>> {
         self.maybe_stmt_at(l).unwrap()
     }
+    /// Non-panicking version of [`mir::Body::stmt_at`] with descriptive errors.
     fn maybe_stmt_at(
         &self,
         l: mir::Location,
@@ -422,6 +426,8 @@ pub fn extract_places<'tcx>(
     places
 }
 
+/// A trait for types that can be converted into a [`mir::LocalDefId`] via
+/// [`TyCtxt`]. 
 pub trait IntoLocalDefId {
     fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId;
 }
@@ -444,7 +450,18 @@ impl IntoLocalDefId for HirId {
     }
 }
 
-/// Get the name of the function for this body as an `Ident`.
+impl <D: Copy + IntoLocalDefId> IntoLocalDefId for &'_ D {
+    fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
+        (*self).into_local_def_id(tcx)
+    }
+}
+
+/// Get the name of the function for this body as an `Ident`. This handles such
+/// cases correctly where the function in question has no proper name, as is the
+/// case for closures.
+/// 
+/// You should probably use [`unique_and_terse_body_name_pls`] instead, as it
+/// avoids name clashes.
 pub fn body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Ident {
     let map = tcx.hir();
     let def_id = id.into_local_def_id(tcx);
@@ -468,12 +485,17 @@ pub fn body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Ident {
         .unwrap()
 }
 
+/// Gives a string name for this i that is free of name clashes, as it
+/// includes a hash of the id.
 pub fn unique_and_terse_body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Symbol {
     let def_id = id.into_local_def_id(tcx);
     let ident = body_name_pls(tcx, def_id);
     Symbol::intern(&format!("{}_{:x}", ident.name, short_hash_pls(def_id)))
 }
 
+/// Create a file for dumping an `ext` kind of output for `id`. The name of the
+/// resulting file avoids clashes but is also descriptive (uses the resolved
+/// name of `id`).
 pub fn dump_file_pls<I: IntoLocalDefId>(
     tcx: TyCtxt,
     id: I,
@@ -613,11 +635,13 @@ fn handle_aggregate_assign<'tcx>(
         .project_deeper(rest_project, tcx))
 }
 
+/// Create a hash for this object that is no longer than six hex digits
 pub fn short_hash_pls<T: Hash>(t: T) -> u64 {
     // Six digits in hex
     hash_pls(t) % 0x1_000_000
 }
 
+/// Calculate a hash for this object
 pub fn hash_pls<T: Hash>(t: T) -> u64 {
     use std::hash::Hasher;
     let mut hasher = std::collections::hash_map::DefaultHasher::default();
@@ -625,6 +649,7 @@ pub fn hash_pls<T: Hash>(t: T) -> u64 {
     hasher.finish()
 }
 
+/// Brother to [`IntoLocalDefId`], converts the id type to a [`DefId`] using [`TyCtxt`]
 pub trait IntoDefId {
     fn into_def_id(self, tcx: TyCtxt) -> DefId;
 }
@@ -687,67 +712,6 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     }
 }
 
-/// A simple utility type that lets you split off a part of a struct and operate
-/// on it separately while being assured that as soon as the `Split` goes out of
-/// scope the separate part is merged back onto the main struct.
-///
-/// The [`Splittable`](./trait.Splittable.html) trait governs which part is the
-/// main one and which is the split.
-/// [`split()`](./trait.Splittable.html#method.split) is called on construction
-/// and [`merge()`](./trait.Splittable.html#method.merge) when this struct goes
-/// out of scope.
-///
-/// You can construct a `Split` easily using `into()`.
-///
-/// ## Usage
-///
-/// Usually you would construct the `Split` using `into()`, then obtain the two
-/// contained parts with [`as_components`](#method.as_components). At the end of
-/// the scope the split-off component is merged back automatically into the main
-/// type in the `Drop` implementation for `Split`.
-pub struct Split<'a, T: Splittable> {
-    main: &'a mut T,
-    inner: std::mem::MaybeUninit<T::Splitted>,
-}
-
-impl<'a, T: Splittable> Split<'a, T> {
-    /// Obtain a mutable reference to both the main type and it's split-off part
-    pub fn as_components(&mut self) -> (&mut T, &mut T::Splitted) {
-        (self.main, unsafe { self.inner.assume_init_mut() })
-    }
-}
-
-/// A type where a part of it can be moved out and merged back in. Usually this
-/// would be implemented by having a field on `Self` that is
-/// `Option<Self::Splitted>` or `MaybeUninit<Self::Splitted>`. For an example
-/// see
-/// [`FunctionInliner`](../ana/struct.FunctionInliner.html#structfield.under_construction)
-pub trait Splittable: Sized {
-    type Splitted;
-    /// Move a part of this type out so it can be accessed independently.
-    fn split(&mut self) -> Self::Splitted;
-    /// Merge the moved-out part back into `self`
-    fn merge(&mut self, inner: Self::Splitted);
-}
-
-impl<'a, T: Splittable> From<&'a mut T> for Split<'a, T> {
-    //! The canonical way to construct a [`Split`]
-    fn from(main: &'a mut T) -> Self {
-        let inner = std::mem::MaybeUninit::new(main.split());
-        Split { main, inner }
-    }
-}
-
-impl<'a, T: Splittable> Drop for Split<'a, T> {
-    //! Merges `self.inner` back onto `self.main`.
-    //!
-    //! Essentially does `<T as Splittable>::merge(self.main, self.inner)`
-    fn drop(&mut self) {
-        let inner_moved = std::mem::replace(&mut self.inner, std::mem::MaybeUninit::uninit());
-        self.main.merge(unsafe { inner_moved.assume_init() });
-    }
-}
-
 /// A struct that can be used to apply a [`FnMut`] to every [`Place`] in a MIR
 /// object via the [`MutVisitor`](mir::visit::MutVisitor) trait. Crucial
 /// difference to [`PlaceVisitor`] is that this function can alter the place
@@ -778,37 +742,7 @@ macro_rules! sym_vec {
     };
 }
 
-use std::fmt::{Debug, Display};
 
-#[derive(Hash, Eq, Ord, PartialEq, PartialOrd, Clone, Copy)]
-pub struct DisplayViaDebug<T>(pub T);
-
-impl<T: Debug> Display for DisplayViaDebug<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <T as Debug>::fmt(&self.0, f)
-    }
-}
-
-impl<T: Debug> Debug for DisplayViaDebug<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl<T> std::ops::Deref for DisplayViaDebug<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-pub struct Print<F>(pub F);
-
-impl<F: Fn(&mut std::fmt::Formatter<'_>) -> std::fmt::Result> Display for Print<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        (&self.0)(f)
-    }
-}
 
 type SparseMatrixImpl<K, V> = FxHashMap<K, FxHashSet<V>>;
 
@@ -903,27 +837,7 @@ pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilte
     r
 }
 
-pub fn write_sep<
-    E,
-    I: IntoIterator<Item = E>,
-    F: FnMut(E, &mut std::fmt::Formatter<'_>) -> std::fmt::Result,
->(
-    fmt: &mut std::fmt::Formatter<'_>,
-    sep: &str,
-    it: I,
-    mut f: F,
-) -> std::fmt::Result {
-    let mut first = true;
-    for e in it {
-        if first {
-            first = false;
-        } else {
-            fmt.write_str(sep)?;
-        }
-        f(e, fmt)?;
-    }
-    Ok(())
-}
+
 
 /// This code is adapted from [`flowistry::cached::Cache`] but with a recursion
 /// breaking mechanism. This alters the [`Self::get`] method signature to return
