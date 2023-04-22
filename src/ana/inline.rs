@@ -480,6 +480,11 @@ fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
     }
 }
 
+/// Check that this edge is not "significant" in this graph as defined by the
+/// policy provided. 
+/// 
+/// See what significance means in the documentation of
+/// [`InconsequentialCallRemovalPolicy`](crate::args::InconsequentialCallRemovalPolicy)
 fn no_significant_edge<N: petgraph::graphmap::NodeTrait>(
     g: &pg::GraphMap<N, Edge, pg::Directed>,
     n: N,
@@ -526,6 +531,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
+    /// How many (unique) functions we have analyzed
     pub fn cache_size(&self) -> usize {
         self.inline_memo.size()
     }
@@ -550,6 +556,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         self.get_inlined_graph(hir.body_owned_by(hir.local_def_id_to_hir_id(def_id)))
     }
 
+    /// Make the set of equations relative to the call site described by `gli`
     fn relativize_eqs<'a>(
         equations: &'a Equations<GlobalLocal<'g>>,
         gli: &'a GliAt<'g>,
@@ -565,6 +572,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         })
     }
 
+    /// Get the `regal` call description for the call site at a specific location.
     fn get_call(
         &self,
         loc: GlobalLocation<'g>,
@@ -638,22 +646,26 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
+    /// Inline crate-local, non-marked called functions and return a set of
+    /// newly inserted edges that cross those function boundaries to be
+    /// inspected for pruning.
+    /// 
+    /// Note that the edges in the set are not guaranteed to exist in the graph.
     fn perform_subfunction_inlining(
         &self,
         proc_g: &regal::Body<DisplayViaDebug<Location>>,
-        gwr: &mut InlinedGraph<'g>,
+        InlinedGraph {
+            graph: g,
+            equations: eqs,
+            num_inlined,
+            max_call_stack_depth,
+        } : &mut InlinedGraph<'g>,
         body_id: BodyId,
     ) -> EdgeSet<'g> {
         let local_def_id = body_id.into_local_def_id(self.tcx);
         let name = body_name_pls(self.tcx, body_id).name;
         let mut queue_for_pruning = HashSet::new();
         time(&format!("Inlining subgraphs into {name}"), || {
-            let InlinedGraph {
-                graph: g,
-                equations: eqs,
-                num_inlined,
-                max_call_stack_depth,
-            } = gwr;
             let targets = g
                 .node_references()
                 .filter_map(|(id, n)| match n {
@@ -752,7 +764,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 assert!(root_location.is_at_root());
                 let call = &proc_g.calls[&DisplayViaDebug(root_location.outermost_location())];
                 let gli_here = self.gli.at(root_location.outermost_location(), body_id);
-                gwr.equations.extend(
+                eqs.extend(
                     Self::relativize_eqs(&grw_to_inline.equations, &gli_here).chain(
                         if let Some(closure) = is_async_closure {
                             assert!(closure.projection.is_empty());
@@ -806,7 +818,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         }
                     };
 
-                for (old) in to_inline.nodes() {
+                for old in to_inline.nodes() {
                     let new = old.map_call(|(location, function)| {
                         (gli_here.relativize(*location), *function)
                     });
