@@ -1,4 +1,5 @@
 use crate::ty::RegionVid;
+use crate::utils::DfppBodyExt;
 use crate::{
     rust::{
         hir::def_id::LocalDefId,
@@ -47,7 +48,7 @@ impl<'a, 'tcx> ConstraintSelector<'tcx, 'a> {
             RichLocation::Mid(l) => l,
             RichLocation::Start(l) => l,
         };
-        let stmt = self.body_with_facts.body.stmt_at(loc);
+        let stmt = self.body_with_facts.body.stmt_at_better_err(loc);
         !matches!(
             stmt,
             Either::Right(Terminator {

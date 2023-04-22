@@ -21,6 +21,9 @@ pub struct Args {
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
+    /// Emit warnings instead of aborting the analysis on sanity checks
+    #[clap(long, env = "DFPP_RELAXED")]
+    relaxed: bool,
     /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis")]
     anactrl: AnalysisCtrl,
@@ -82,6 +85,9 @@ impl Args {
     pub fn verbose(&self) -> bool {
         self.verbose
     }
+    pub fn relaxed(&self) -> bool {
+        self.relaxed
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
@@ -108,15 +114,56 @@ impl ModelCtrl {
 /// Arguments that control the flow analysis
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 pub struct AnalysisCtrl {
-    /// Disables all recursive analysis (both dfpps inlining as well as
-    /// Flowistry's recursive analysis)
+    /// Disables all recursive analysis (both dfpp's inlining as well as
+    /// Flowistry's recursive analysis).
+    ///
+    /// Also implies --no-pruning, because pruning only makes sense after inlining
     #[clap(long, env)]
-    no_recursive_analysis: bool,
-    /// Make flowistry use a recursive analysis strategy. We turn this off by
-    /// default, because we perform the recursion by ourselves and doing it
-    /// twice has lead to bugs.
+    no_cross_function_analysis: bool,
     #[clap(long, env)]
-    recursive_flowistry: bool,
+    no_pruning: bool,
+    #[clap(long, env)]
+    remove_inconsequential_calls: Option<String>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum InconsequentialCallRemovalPolicy {
+    Conservative,
+    Aggressive,
+    Disabled,
+}
+
+impl InconsequentialCallRemovalPolicy {
+    pub fn is_enabled(self) -> bool {
+        !matches!(self, InconsequentialCallRemovalPolicy::Disabled)
+    }
+    pub fn remove_ctrl_flow_source(self) -> bool {
+        matches!(self, InconsequentialCallRemovalPolicy::Aggressive)
+    }
+}
+
+impl AnalysisCtrl {
+    pub fn use_recursive_analysis(&self) -> bool {
+        !self.no_cross_function_analysis
+    }
+    pub fn use_pruning(&self) -> bool {
+        !self.no_pruning
+    }
+    pub fn remove_inconsequential_calls(&self) -> InconsequentialCallRemovalPolicy {
+        use InconsequentialCallRemovalPolicy::*;
+        if let Some(s) = self.remove_inconsequential_calls.as_ref() {
+            match s.as_str() {
+                "conservative" => Conservative,
+                "aggressive" => Aggressive,
+                _ => {
+                    error!("Could not parse inconsequential call removal policy '{s}', defaulting to 'conservative'.");
+                    Conservative
+                }
+            }
+        } else {
+            Disabled
+        }
+    }
 }
 
 /// Arguments that control the output of debug information or output to be

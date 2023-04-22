@@ -48,6 +48,7 @@ fn display_term_pieces<F: Display + Copy, B: Display>(
             ContainsAt(field) => write!(f, "{{ .{}: ", field),
             Upcast(_, s) => write!(f, "(#{s}"),
             Unknown => write!(f, "(?"),
+            ArrayWith => f.write_char('['),
             _ => f.write_char('('),
         }?
     }
@@ -57,6 +58,8 @@ fn display_term_pieces<F: Display + Copy, B: Display>(
             MemberOf(field) => write!(f, ".{})", field),
             ContainsAt(_) => f.write_str(" }"),
             Downcast(_, s) => write!(f, " #{s})"),
+            ArrayWith => f.write_char(']'),
+            IndexOf => write!(f, "[])"),
             _ => f.write_char(')'),
         }?
     }
@@ -87,9 +90,28 @@ pub enum Operator<F: Copy> {
     DerefOf,
     MemberOf(F),
     ContainsAt(F),
+    IndexOf,
+    ArrayWith,
     Downcast(Option<Symbol>, VariantIdx),
     Upcast(Option<Symbol>, VariantIdx),
     Unknown,
+}
+
+impl<F: Copy + std::fmt::Display> std::fmt::Display for Operator<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Operator::*;
+        match self {
+            RefOf => f.write_char('&'),
+            DerefOf => f.write_char('*'),
+            Unknown => f.write_char('?'),
+            MemberOf(m) => write!(f, ".{m}"),
+            ContainsAt(m) => write!(f, "@{m}"),
+            Downcast(_, s) => write!(f, "#{s:?}"),
+            Upcast(_, s) => write!(f, "^{s:?}"),
+            IndexOf => f.write_str("$"),
+            ArrayWith => f.write_str("[]"),
+        }
+    }
 }
 
 /// Relationship of two [`Operator`]s. Used in [`Operator::cancel`].
@@ -106,6 +128,19 @@ pub enum Cancel<F> {
     Remains,
 }
 
+impl<F: Copy + std::fmt::Display> std::fmt::Display for Cancel<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Cancel::*;
+        match self {
+            NonOverlappingField(f1, f2) => write!(f, "f{f1} != f{f2}"),
+            NonOverlappingVariant(v1, v2) => write!(f, "#{v1} != #{v2}"),
+            CancelBoth => f.write_str("cancel both"),
+            CancelOne => f.write_str("cancel one"),
+            Remains => f.write_str("remains"),
+        }
+    }
+}
+
 impl<F: Copy> Operator<F> {
     /// Each operator has a dual, this flips this operator to that respective dual.
     pub fn flip(self) -> Self {
@@ -118,6 +153,8 @@ impl<F: Copy> Operator<F> {
             Downcast(s, v) => Upcast(s, v),
             Upcast(s, v) => Downcast(s, v),
             Unknown => Unknown,
+            ArrayWith => IndexOf,
+            IndexOf => ArrayWith,
         }
     }
 
@@ -179,6 +216,8 @@ impl<F: Copy> Operator<F> {
             Upcast(s, v) => Upcast(s, v),
             Downcast(s, v) => Downcast(s, v),
             Unknown => Unknown,
+            IndexOf => IndexOf,
+            ArrayWith => ArrayWith,
         }
     }
 }
@@ -259,161 +298,6 @@ impl<B, F: Copy> Equality<B, F> {
     }
 }
 
-/// A heavy lifter. This is a partial solver. Given a fact base (set of
-/// equations) and a way to convert from the type of the base `B` to a new base
-/// `N` this function will substitute, expand and simplify the entire fact base
-/// to a new fact base with the new base type.
-///
-/// When considering any equation the bases are `inspect`ed. If it converts to a
-/// new base `N` it will remain untouched, if it converts to a variable `V` the
-/// variable will be substituted with each other equation that mentions the same
-/// variable. This process continues until a newly substituted term's base is
-/// not a variable. If there are no other equations for a given variable the
-/// equation is abandoned. Variables are not recursively expanded to themselves.
-pub fn rebase_simplify<
-    GetEq: std::borrow::Borrow<Equality<B, F>>,
-    NIt: IntoIterator<Item = N>,
-    I: Fn(&B) -> Either<NIt, V>,
-    It: Iterator<Item = GetEq>,
-    N: Display + Clone,
-    B: Clone + Hash + Eq + Display,
-    F: Eq + Hash + Clone + Copy + Display,
-    V: Clone + Eq + Hash + Display,
->(
-    equations: It,
-    inspect: I,
-) -> Vec<Equality<N, F>> {
-    let mut finals = vec![];
-    let mut add_final = |mut eq: Equality<_, _>| {
-        eq.rearrange_left_to_right();
-        if eq.rhs.simplify() {
-            finals.push(eq);
-        }
-    };
-
-    let mut handle_eq = |mut eq: Equality<_, _>,
-                         add_intermediate: &mut dyn FnMut(V, Term<_, _>)| {
-        let il = inspect(eq.lhs.base());
-        let ir = inspect(eq.rhs.base());
-        if il.is_left() && ir.is_left() {
-            let rv = ir.left().unwrap().into_iter().collect::<Vec<_>>();
-            for newl in il.left().unwrap() {
-                for newr in rv.iter() {
-                    add_final(Equality {
-                        lhs: eq.lhs.replace_base(newl.clone()),
-                        rhs: eq.rhs.replace_base(newr.clone()),
-                    });
-                }
-            }
-        } else {
-            if let Either::Right(v) = il {
-                let mut eq_clone = eq.clone();
-                eq_clone.rearrange_left_to_right();
-                assert!(eq_clone.lhs.is_base());
-                add_intermediate(v, eq_clone.rhs);
-            }
-            if let Either::Right(v) = ir {
-                eq.swap();
-                eq.rearrange_left_to_right();
-                assert!(eq.lhs.is_base());
-                add_intermediate(v, eq.rhs);
-            }
-        }
-    };
-    let mut queue = vec![];
-    let mut intermediates: HashMap<V, HashSet<Term<B, F>>> = HashMap::default();
-    let mut add_intermediate = |k: V, mut v: Term<_, _>| {
-        if v.simplify() {
-            intermediates
-                .entry(k.clone())
-                .or_insert_with(|| {
-                    queue.push(k);
-                    HashSet::default()
-                })
-                .insert(v);
-        }
-    };
-    for eq in equations {
-        handle_eq(eq.borrow().clone(), &mut add_intermediate);
-    }
-    debug!("Found {} intermediates", intermediates.len());
-    // debug!(
-    //     "Found the intermediates\n{}",
-    //     crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-    //         for (k, v) in intermediates.iter() {
-    //             write!(f, "  {k}: ")?;
-    //             let mut first = true;
-    //             for t in v {
-    //                 if first {
-    //                     first = false;
-    //                 } else {
-    //                     f.write_str(", ")?;
-    //                 }
-    //                 t.fmt(f)?;
-    //             }
-    //             writeln!(f)?;
-    //         }
-    //         Ok(())
-    //     })
-    // );
-    while let Some(v) = queue.pop() {
-        let terms = intermediates.remove(&v).unwrap();
-        debug!(
-            "handling {v} ({} terms, {} combinations)",
-            terms.len(),
-            terms.len() * terms.len() / 2
-        );
-        if terms.len() > 10000 {
-            info!(
-                "Found more than 10000 terms, some of them are\n{}",
-                Print(|f: &mut std::fmt::Formatter<'_>| {
-                    write_sep(f, "\n", terms.iter().take(100), |elem, f| {
-                        write!(f, "{}", elem)
-                    })
-                })
-            )
-        }
-        // if terms.len() < 2 {
-        //     debug!(
-        //         "Found fewer than two terms for {v}: {}",
-        //         Print(|f: &mut std::fmt::Formatter<'_>| {
-        //             let mut first = true;
-        //             for t in terms.iter() {
-        //                 if first {
-        //                     first = false;
-        //                 } else {
-        //                     f.write_str(", ")?;
-        //                 }
-        //                 t.fmt(f)?;
-        //             }
-        //             Ok(())
-        //         })
-        //     );
-        // }
-        for (idx, lhs) in terms.iter().enumerate() {
-            for rhs in terms.iter().skip(idx + 1).cloned() {
-                let eq = Equality {
-                    lhs: lhs.clone(),
-                    rhs,
-                };
-                handle_eq(eq, &mut |v, mut term| {
-                    if let Some(s) = intermediates.get_mut(&v) {
-                        if term.simplify() {
-                            s.insert(term);
-                        }
-                    } else {
-                        //debug!("Abandoning term {term} because {v} is already handled");
-                    }
-                });
-            }
-        }
-    }
-
-    finals
-}
-
-struct MemoEdge<F: Copy>(Vec<Vec<Operator<F>>>);
-
 fn partial_cmp_terms<'a, F: Copy + Eq>(
     mut left: &'a [Operator<F>],
     mut right: &'a [Operator<F>],
@@ -441,237 +325,6 @@ fn partial_cmp_terms<'a, F: Copy + Eq>(
             Less
         })
     }
-}
-
-impl<F: Copy + Eq> MemoEdge<F> {
-    fn insert(&mut self, e: Vec<Operator<F>>) -> bool {
-        let mut insert = true;
-        for i in self.0.iter() {
-            match partial_cmp_terms(&i, &e) {
-                Some(std::cmp::Ordering::Equal) | Some(std::cmp::Ordering::Less) => {
-                    insert = false;
-                    break;
-                }
-                _ => (),
-            }
-        }
-        if insert {
-            self.0.push(e);
-        }
-        insert
-    }
-}
-
-impl<F: Copy> Default for MemoEdge<F> {
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
-
-impl<F: Copy + Display> Display for MemoEdge<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_char('{')?;
-        write_sep(f, ", ", self.0.iter(), |elem, f| {
-            display_term_pieces(f, elem, &0)
-        })?;
-        f.write_char('}')
-    }
-}
-
-type MemoizedSolutionImpl<B, F> = petgraph::prelude::GraphMap<B, MemoEdge<F>, petgraph::Directed>;
-pub struct MemoizedSolution<B, F: Copy> {
-    graph: MemoizedSolutionImpl<B, F>,
-    on_demand: bool,
-}
-
-impl<B: petgraph::graphmap::NodeTrait + Eq + Display + Debug, F: Eq + Hash + Copy + Display>
-    MemoizedSolution<B, F>
-{
-    fn insert_edge(
-        graph: &mut MemoizedSolutionImpl<B, F>,
-        from: B,
-        to: B,
-        delta: Vec<Operator<F>>,
-    ) -> bool {
-        if graph.contains_edge(to, from) {
-            graph
-                .edge_weight_mut(to, from)
-                .unwrap()
-                .insert(delta.into_iter().map(|o| o.flip()).collect())
-        } else {
-            if !graph.contains_edge(from, to) {
-                graph.add_edge(from, to, Default::default());
-            }
-            graph.edge_weight_mut(from, to).unwrap().insert(delta)
-        }
-    }
-    pub fn reachable(&self, from: B, to: B) -> bool {
-        if self.on_demand {
-            for path in
-                petgraph::algo::all_simple_paths::<Vec<_>, _>(&self.graph, from, to, 0, None)
-            {
-                let mut it = path.into_iter().peekable();
-                let mut prior_terms = vec![Term::new_base(0)];
-                let mut next_terms = vec![];
-                while let Some(this) = it.next() {
-                    if let Some(next) = it.peek() {
-                        let iters = self
-                            .graph
-                            .edge_weight(this, *next)
-                            .into_iter()
-                            .map(|e| (e, false))
-                            .chain(
-                                self.graph
-                                    .edge_weight(*next, this)
-                                    .into_iter()
-                                    .map(|e| (e, true)),
-                            )
-                            .collect::<Vec<_>>();
-                        for (weights, flip) in iters {
-                            for w in &weights.0[1..] {
-                                for p in &prior_terms {
-                                    let mut c = p.clone();
-                                    if flip {
-                                        c.terms.extend(w.iter().cloned().map(Operator::flip))
-                                    } else {
-                                        c.terms.extend(w)
-                                    }
-                                    if c.simplify() {
-                                        next_terms.push(c)
-                                    }
-                                }
-                            }
-                            if let Some(w) = weights.0.get(0) {
-                                prior_terms.retain_mut(|t| {
-                                    if flip {
-                                        t.terms.extend(w.iter().cloned().map(Operator::flip));
-                                    } else {
-                                        t.terms.extend(w);
-                                    }
-                                    t.simplify()
-                                })
-                            }
-                        }
-                        prior_terms.extend(next_terms.drain(..));
-                    }
-                }
-                if !prior_terms.is_empty() {
-                    return true;
-                }
-            }
-            false
-        } else {
-            self.graph
-                .edge_weight(from, to)
-                .map(|e| (&e.0, true))
-                .or_else(|| self.graph.edge_weight(to, from).map(|e| (&e.0, false)))
-                .map_or(false, |e| !e.0.is_empty())
-        }
-    }
-
-    fn initial<I: Iterator<Item = Equality<B, F>>>(it: I) -> MemoizedSolutionImpl<B, F> {
-        let mut graph: MemoizedSolutionImpl<B, F> = petgraph::prelude::GraphMap::default();
-
-        for mut eq in it {
-            let rn = *eq.rhs.base();
-            let ln = *eq.lhs.base();
-            eq.rearrange_left_to_right();
-            Self::insert_edge(&mut graph, ln, rn, eq.rhs.terms);
-        }
-        graph
-    }
-
-    fn construct_on_demand<I: Iterator<Item = Equality<B, F>>>(it: I) -> Self {
-        Self {
-            graph: Self::initial(it),
-            on_demand: true,
-        }
-    }
-
-    pub fn construct<I: Iterator<Item = Equality<B, F>>>(it: I) -> Self {
-        let mut graph = Self::initial(it);
-        let mut queue = graph.nodes().collect::<HashSet<_>>();
-
-        while let Some(middle) = queue.iter().next().cloned().map(|elem| {
-            queue.remove(&elem);
-            elem
-        }) {
-            let g_ref = &graph;
-            let new_edges = graph
-                .edges(middle)
-                .flat_map(|(in_from, in_to, from_weights)| {
-                    let (from, from_flip_needed) = if in_to == middle {
-                        (in_from, false)
-                    } else {
-                        assert_eq!(in_from, middle);
-                        (in_to, true)
-                    };
-                    if in_from == in_to || from == middle {
-                        return Either::Right(std::iter::empty());
-                    }
-                    Either::Left(from_weights.0.iter().flat_map(move |from_weight| {
-                        g_ref
-                            .edges(middle)
-                            .flat_map(move |(out_from, out_to, to_weights)| {
-                                let (next, to_flip_needed) = if out_from == middle {
-                                    (out_to, false)
-                                } else {
-                                    assert_eq!(out_to, middle);
-                                    (out_from, true)
-                                };
-                                if out_from == out_to || next == middle {
-                                    return Either::Right(std::iter::empty());
-                                }
-                                Either::Left(to_weights.0.iter().filter_map(move |to_weight| {
-                                    let mut new_terms = if from_flip_needed {
-                                        from_weight.iter().cloned().map(Operator::flip).collect()
-                                    } else {
-                                        from_weight.clone()
-                                    };
-                                    if to_flip_needed {
-                                        new_terms.extend(to_weight.iter().map(|e| e.flip()));
-                                    } else {
-                                        new_terms.extend(to_weight);
-                                    };
-                                    let mut t = Term::from_raw(DisplayViaDebug(()), new_terms);
-                                    t.simplify().then_some((from, next, t.terms))
-                                }))
-                            })
-                    }))
-                })
-                .collect::<Vec<_>>();
-            for (from, last, terms) in new_edges {
-                if Self::insert_edge(&mut graph, from, last, terms.clone()) {
-                    debug!(
-                        "Adding edge {from} -> {last} with {}",
-                        Term::from_raw(0, terms)
-                    );
-                    queue.extend([from, last]);
-                }
-            }
-        }
-        Self {
-            graph,
-            on_demand: false,
-        }
-    }
-}
-
-pub fn dump_dot_graph<
-    B: Display + petgraph::graphmap::NodeTrait,
-    F: Display + Copy,
-    W: std::io::Write,
->(
-    mut w: W,
-    g: &MemoizedSolution<B, F>,
-) -> std::io::Result<()> {
-    use petgraph::dot::*;
-    write!(
-        w,
-        "{}",
-        Dot::with_attr_getters(&g.graph, &[], &|_, _| "".to_string(), &|_, _| "shape=box"
-            .to_string(),)
-    )
 }
 
 /// Solve for the relationship of two bases.
@@ -716,7 +369,7 @@ pub fn solve_reachable<
     to: IsTarget,
 ) -> bool {
     let mut reachable = false;
-    solve_with(equations, from, to, |solution| {
+    solve_with(equations, from, to, |_| {
         reachable = true;
         false
     });
@@ -758,6 +411,8 @@ fn solve_with<
 
     let mut targets = vec![from.clone()];
 
+    let mut saw_target = false;
+
     while let Some(intermediate_target) = targets.pop() {
         if intermediates.contains_key(&intermediate_target) {
             continue;
@@ -773,6 +428,7 @@ fn solve_with<
             if matching.lhs.base() != &intermediate_target {
                 matching.swap()
             }
+            saw_target |= is_target(matching.rhs.base());
             matching.rearrange_left_to_right();
             if !is_target(matching.rhs.base()) {
                 targets.push(matching.rhs.base().clone());
@@ -783,25 +439,21 @@ fn solve_with<
                 .insert(matching.rhs);
         }
     }
-    debug!("Found {} intermedaites", intermediates.len());
-    // debug!("Found the intermediates");
-    // for (k, vs) in intermediates.iter() {
-    //     debug!(
-    //         "  {k}: {}",
-    //         Print(|f: &mut std::fmt::Formatter| {
-    //             let mut first = true;
-    //             for term in vs {
-    //                 if first {
-    //                     first = false;
-    //                 } else {
-    //                     f.write_str(" || ")?;
-    //                 }
-    //                 write!(f, "{}", term)?;
-    //             }
-    //             Ok(())
-    //         })
-    //     );
-    // }
+    debug!(
+        "Found the intermediates\n{}",
+        Print(|fmt: &mut std::fmt::Formatter<'_>| {
+            for (k, vs) in intermediates.iter() {
+                write!(fmt, "  {k}: ")?;
+                write_sep(fmt, " || ", vs, Display::fmt)?;
+                fmt.write_str("\n")?;
+            }
+            Ok(())
+        })
+    );
+    if !saw_target {
+        debug!("Never saw final target, abandoning solving early");
+        return;
+    }
     let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
         debug!("No intermediate found for {from}");
@@ -817,9 +469,7 @@ fn solve_with<
             if !register_final(intermediate_target.terms) {
                 return;
             }
-        } else if seen.contains(var) {
-            //debug!("Aborting search on recursive visit to {var}")
-        } else {
+        } else if !seen.contains(var) {
             seen.insert(var.clone());
             if let Some(next_eq) = intermediates.get(&var) {
                 targets.extend(next_eq.iter().cloned().filter_map(|term| {
@@ -828,7 +478,7 @@ fn solve_with<
                     to_sub.simplify().then_some(to_sub)
                 }))
             } else {
-                //debug!("No follow up equation found for {var} on the way from {from}");
+                debug!("No follow up equation found for {var} on the way from {from}");
             }
         }
     }
@@ -837,9 +487,7 @@ fn solve_with<
 fn vec_drop_range<T>(v: &mut Vec<T>, r: std::ops::Range<usize>) {
     let ptr = v.as_mut_ptr();
     for i in r.clone() {
-        unsafe {
-            drop(ptr.add(i))
-        }
+        unsafe { drop(ptr.add(i)) }
     }
     unsafe {
         std::ptr::copy(ptr.add(r.end), ptr.add(r.start), v.len() - r.end);
@@ -894,6 +542,16 @@ impl<B, F: Copy> Term<B, F> {
         self
     }
 
+    pub fn add_index_of(mut self) -> Self {
+        self.terms.push(Operator::IndexOf);
+        self
+    }
+
+    pub fn add_array_with(mut self) -> Self {
+        self.terms.push(Operator::ArrayWith);
+        self
+    }
+
     pub fn base(&self) -> &B {
         &self.base
     }
@@ -918,7 +576,8 @@ impl<B, F: Copy> Term<B, F> {
         let mut after_last_unknown = None;
         while let Some(i) = it.next() {
             if let Some(next) = it.peek().cloned() {
-                match i.cancel(next) {
+                let cancel = i.cancel(next);
+                match cancel {
                     Cancel::NonOverlappingField(f, g) => {
                         valid = false;
                     }
@@ -937,11 +596,12 @@ impl<B, F: Copy> Term<B, F> {
             }
             self.terms.push(i);
             if i.is_unknown() {
-                if after_first_unknown.is_none() {
+                let _ = if after_first_unknown.is_none() {
                     &mut after_first_unknown
                 } else {
                     &mut after_last_unknown
-                }.insert(self.terms.len());
+                }
+                .insert(self.terms.len());
             }
         }
         if let (Some(from), Some(to)) = (after_first_unknown, after_last_unknown) {
@@ -1028,8 +688,17 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
         let lhs = MirTerm::from(place);
         use mir::{AggregateKind, Rvalue::*};
         let rhs_s = match rvalue {
-            Use(op) | UnaryOp(_, op) => Box::new(op.place().into_iter().map(|p| p.into()))
+            Use(op) | UnaryOp(_, op) | Cast(_, op, _) 
+            | ShallowInitBox(op, _) // XXX Not sure this is correct
+            => Box::new(op.place().into_iter().map(|p| p.into()))
                 as Box<dyn Iterator<Item = MirTerm>>,
+            Repeat(..) // safe because it can only ever be populated by constants
+            | ThreadLocalRef(..) // This accesses a global variable and thus cannot be tracked
+            | NullaryOp(_, _) // Computes a type level constant from thin air
+            => Box::new(std::iter::empty()) as Box<_>,
+            AddressOf(_, p) // XXX Not sure this is correct but I just want to be safe. The result is a pointer so I don't know how we deal with that
+            | Discriminant(p) | Len(p) // This is a weaker (implicit flows) sort of relationship but it is a relationship non the less so I'm adding them here
+            => Box::new(std::iter::once(MirTerm::from(p).add_unknown())), 
             Ref(_, _, p) => {
                 let term = MirTerm::from(p).add_ref_of();
                 Box::new(std::iter::once(term)) as Box<_>
@@ -1063,6 +732,19 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                         });
                     Box::new(iter) as Box<_>
                 }
+                AggregateKind::Closure(def_id, _) => {
+                    // XXX This is a speculative way of handling this. Instead
+                    // we should look up actual field info but I wasn't able to
+                    // find a function that retrieves a closure's layout
+                    let it = ops.iter().enumerate().filter_map(|(i, op)| {
+                        let place = op.place()?;
+                        Some(
+                            MirTerm::from(place)
+                                .add_contains_at(DisplayViaDebug(i.into()))
+                        )
+                    });
+                    Box::new(it) as Box<_>
+                }
                 AggregateKind::Tuple => Box::new(ops.iter().enumerate().filter_map(|(i, op)| {
                     op.place()
                         .map(|p| MirTerm::from(p).add_contains_at(DisplayViaDebug(i.into())))
@@ -1087,16 +769,15 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                     });
                     Box::new(it) as Box<_>
                 }
-                _ => {
-                    debug!("Unhandled rvalue {rvalue:?}");
-                    Box::new(std::iter::empty()) as Box<_>
+                AggregateKind::Array(_) => {
+                    let it = ops.iter().filter_map(|op| {
+                        Some(
+                            MirTerm::from(op.place()?).add_index_of()
+                        )
+                    });
+                    Box::new(it) as Box<_>
                 }
             },
-
-            other => {
-                debug!("Unhandled rvalue {other:?}");
-                Box::new(std::iter::empty()) as Box<_>
-            }
         };
         self.equations.extend(rhs_s.map(|rhs| Equality {
             lhs: lhs.clone(),

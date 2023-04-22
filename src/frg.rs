@@ -6,11 +6,14 @@
 
 extern crate pretty;
 
-use crate::{desc::CallSite, HashSet};
+use std::hash::Hash;
+
+use crate::{utils::short_hash_pls, HashSet};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
-    Annotation, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription, Relation,
+    Annotation, CallSite, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription,
+    Relation,
 };
 
 use self::name::Qualifier;
@@ -203,10 +206,9 @@ fn call_site_as_forge<'b, A, D: DocAllocator<'b, A>>(
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.text(format!(
-            "{}_b{}_i{}",
+            "{}_{:x}",
             self.function.as_str(),
-            self.location.block.as_usize(),
-            self.location.statement_index,
+            short_hash_pls(&self.location),
         ))
     }
 }
@@ -412,7 +414,7 @@ impl ProgramDescription {
             .values()
             .flat_map(|v| v.0.iter())
             .filter_map(Annotation::as_label_ann)
-            .map(|a| a.label)
+            .map(|a| a.marker)
             .chain(std::iter::once(crate::Symbol::intern(
                 name::EXCEPTIONS_LABEL,
             )))
@@ -544,7 +546,7 @@ impl ProgramDescription {
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
                             .into_iter(),
-                            std::iter::once(Identifier::new(a.label).as_forge(alloc)),
+                            std::iter::once(Identifier::new(a.marker).as_forge(alloc)),
                         )
                     })
             }))
@@ -892,7 +894,7 @@ where
                                                         label.refinement.on_argument().iter().map(|i| 
                                                             (
                                                                 std::iter::once(FormalParameter { position: *i, function: *ident }.as_forge(alloc)), 
-                                                                std::iter::once(ident.as_forge(alloc).append("->").append(label.label.as_str())))))
+                                                                std::iter::once(ident.as_forge(alloc).append("->").append(label.marker.as_str())))))
                                                     
                                             )   
                                     )

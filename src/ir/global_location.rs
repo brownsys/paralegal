@@ -118,7 +118,29 @@ impl<'tcx> std::cmp::Ord for GlobalLocation<'tcx> {
     }
 }
 
-pub trait IsGlobalLocation: Sized {
+/// Formatting for global locations that works independent of whether it is an
+/// interned or inlined location.
+pub fn format_global_location<T: IsGlobalLocation>(
+    t: &T,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    write_sep(f, "@", t.as_slice().iter().rev(), |elem, f| {
+        write!(
+            f,
+            "{:?}[{}]",
+            elem.location.block, elem.location.statement_index
+        )
+    })?;
+    Ok(())
+}
+
+impl<'g> std::fmt::Display for GlobalLocation<'g> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        format_global_location(self, f)
+    }
+}
+
+pub trait IsGlobalLocation: Sized + std::fmt::Display {
     fn outermost(&self) -> GlobalLocationS {
         *self.as_slice().first().unwrap()
     }
@@ -160,6 +182,10 @@ pub trait IsGlobalLocation: Sized {
         self.as_slice().len() == 1
     }
 
+    fn as_raw(&self) -> RawGlobalLocation {
+        RawGlobalLocation(self.as_slice().to_vec())
+    }
+
     /// Create a Forge friendly descriptor for this location as a source of data
     /// in a model flow.
     fn as_data_source<F: FnOnce(mir::Location) -> bool>(
@@ -171,24 +197,24 @@ pub trait IsGlobalLocation: Sized {
             location: dep_loc,
             function: dep_fun,
         } = self.innermost();
-        if self.is_at_root() && !is_real_location(dep_loc) {
+        let is_real_location = is_real_location(dep_loc);
+        if self.is_at_root() && !is_real_location {
             DataSource::Argument(self.outermost_location().statement_index - 1)
         } else {
-            DataSource::FunctionCall(CallSite {
-                called_from: Identifier::new(body_name_pls(tcx, dep_fun).name),
-                location: dep_loc,
-                function: identifier_for_fn(
-                    tcx,
+            let terminator = 
                     tcx.body_for_body_id(dep_fun)
                         .simplified_body()
-                        .stmt_at(dep_loc)
+                        .maybe_stmt_at(dep_loc)
+                        .unwrap_or_else(|e|
+                            panic!("Could not convert {self} to data source with body {}. is at root: {}, is real: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun), self.is_at_root(), is_real_location)
+                        )
                         .right()
-                        .expect("not a terminator")
-                        .as_fn_and_args()
-                        .unwrap()
-                        .0,
-                ),
-            })
+                        .expect("not a terminator");
+            DataSource::FunctionCall(CallSite::new(
+                self,
+                terminator.as_fn_and_args().unwrap().0,
+                tcx,
+            ))
         }
     }
 }
@@ -215,6 +241,14 @@ impl<'g> GlobalLocation<'g> {
 
     pub fn to_owned(&self) -> Vec<GlobalLocationS> {
         self.0 .0.clone()
+    }
+
+    pub fn parent(self, gli: GLI<'g>) -> Option<Self> {
+        if self.is_at_root() {
+            None
+        } else {
+            Some(gli.from_vec(self.as_slice().split_last().unwrap().1.to_vec()))
+        }
     }
 }
 
@@ -246,6 +280,40 @@ pub struct GlobalLocationS {
     /// The location itself
     #[serde(with = "crate::serializers::ser_loc")]
     pub location: mir::Location,
+}
+/// A serializable non-interned version of [`GlobalLocation`].
+///
+/// Thanks to the [`IsGlobalLocation`] trait you can use this the same way as a
+/// [`GlobalLocation`]. Though be aware that this struct is significantly larger
+/// in memory as it contains a singly-linked list of call chains that is not
+/// interned.
+///
+/// For information on the meaning of this struct see [`GlobalLocation`]
+#[derive(serde::Deserialize, serde::Serialize, PartialEq, Eq, Hash, Clone, Debug)]
+pub struct RawGlobalLocation(Vec<GlobalLocationS>);
+
+impl<'g> From<&'_ GlobalLocation<'g>> for RawGlobalLocation {
+    fn from(other: &GlobalLocation<'g>) -> Self {
+        (*other).into()
+    }
+}
+
+impl<'g> From<GlobalLocation<'g>> for RawGlobalLocation {
+    fn from(other: GlobalLocation<'g>) -> Self {
+        RawGlobalLocation(other.to_owned())
+    }
+}
+
+impl std::fmt::Display for RawGlobalLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        format_global_location(self, f)
+    }
+}
+
+impl IsGlobalLocation for RawGlobalLocation {
+    fn as_slice(&self) -> &[GlobalLocationS] {
+        &self.0
+    }
 }
 
 /// The interner for `GlobalLocation`s. You should never have to use this

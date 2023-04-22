@@ -12,6 +12,7 @@ extern crate clap;
 extern crate ordermap;
 extern crate rustc_plugin;
 extern crate serde;
+extern crate toml;
 #[macro_use]
 extern crate lazy_static;
 extern crate simple_logger;
@@ -48,6 +49,9 @@ pub mod rust {
 
     pub use rustc_middle::dep_graph::DepGraph;
     pub use ty::TyCtxt;
+
+    pub use hir::def_id::{DefId, LocalDefId};
+    pub use mir::Location;
 }
 
 use args::LogLevelConfig;
@@ -82,6 +86,8 @@ pub use args::{AnalysisCtrl, Args, DbgArgs, ModelCtrl};
 
 use frg::ToForge;
 
+use crate::utils::outfile_pls;
+
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
 
@@ -110,6 +116,8 @@ struct Callbacks {
     opts: &'static Args,
 }
 
+type RawExternalMarkers = HashMap<String, Vec<desc::MarkerAnnotation>>;
+
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
         config.override_queries = Some(borrowck_facts::override_queries);
@@ -117,12 +125,12 @@ impl rustc_driver::Callbacks for Callbacks {
 
     fn after_parsing<'tcx>(
         &mut self,
-        _compiler: &rustc_interface::interface::Compiler,
+        compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        let external_annotations: HashMap<_, _> =
+        let external_annotations =
             if let Some(annotation_file) = self.opts.modelctrl().external_annotations() {
-                serde_json::from_reader(&mut std::fs::File::open(annotation_file).unwrap()).unwrap()
+                toml::from_str(&std::fs::read_to_string(annotation_file).unwrap_or_else(|_| panic!("Could not open file {}/{}", std::env::current_dir().unwrap().display(), annotation_file.display()))).unwrap()
             } else {
                 HashMap::new()
             };
@@ -134,7 +142,6 @@ impl rustc_driver::Callbacks for Callbacks {
                 discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run()
             })
             .unwrap();
-        desc.annotations.extend(external_annotations);
         if self.opts.dbg().dump_serialized_flow_graph() {
             serde_json::to_writer(
                 &mut std::fs::OpenOptions::new()
@@ -148,19 +155,16 @@ impl rustc_driver::Callbacks for Callbacks {
             .unwrap();
         }
         info!("All elems walked");
-        let mut outf = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.opts.result_path())
-            .unwrap();
+        let result_path = compiler
+            .build_output_filenames(&*compiler.session(), &[])
+            .with_extension("ana.frg");
+        let mut outf = outfile_pls(&result_path).unwrap();
         let doc_alloc = pretty::BoxAllocator;
         let doc: DocBuilder<_, ()> = desc.as_forge(&doc_alloc);
         doc.render(100, &mut outf).unwrap();
-        info!(
-            "Wrote analysis result to {}",
-            &self.opts.result_path().canonicalize().unwrap().display()
-        );
+        let mut outf_2 = outfile_pls(self.opts.result_path()).unwrap();
+        doc.render(100, &mut outf_2).unwrap();
+        warn!("Due to potential overwrite issues with --result-path (with multiple targets in a crate) outputs were written to {} and {}", self.opts.result_path().display(), &result_path.display());
         rustc_driver::Compilation::Stop
     }
 }

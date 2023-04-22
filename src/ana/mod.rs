@@ -22,7 +22,7 @@ pub mod df;
 mod inline;
 pub mod non_transitive_aliases;
 
-impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
+impl<'tcx> CollectingVisitor<'tcx> {
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
@@ -79,8 +79,11 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
         debug!("Handling target {}", target.name());
 
-        let flow =
-            inliner.to_call_only_flow(inliner.get_inlined_graph(target.body_id).unwrap(), |a| {
+        let flow = {
+            let w = 6;
+            let i = inliner.get_inlined_graph(target.body_id).unwrap();
+            info!("Graph statistics for {}\n  {:<w$} graph nodes\n  {:<w$} graph edges\n  {:<w$} inlined functions\n  {:<w$} max call stack depth", target.name(), i.vertex_count(), i.edge_count(), i.inlined_functions_count(), i.max_call_stack_depth());
+            inliner.to_call_only_flow(i, |a| {
                 gli.globalize_location(
                     Location {
                         block: mir::BasicBlock::from_usize(
@@ -93,7 +96,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     },
                     target.body_id,
                 )
-            });
+            })
+        };
 
         // Register annotations on argument types for this controller.
         let controller_body = &controller_body_with_facts.simplified_body();
@@ -122,6 +126,8 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 })
         }
 
+        let check_realness = |l: mir::Location| l.is_real(controller_body);
+
         for (loc, deps) in flow.location_dependencies.iter() {
             // It's important to look at the innermost location. It's easy to
             // use `location()` and `function()` on a global location instead
@@ -142,7 +148,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 continue;
             }
             let (terminator, (defid, _, _)) = match inner_body
-                .stmt_at(inner_location)
+                .stmt_at_better_err(inner_location)
                 .right()
                 .ok_or("not a terminator".to_owned())
                 .and_then(|t| Ok((t, t.as_fn_and_args().map_err(|e| format!("{e:?}"))?)))
@@ -162,11 +168,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     continue;
                 }
             };
-            let call_site = CallSite {
-                called_from: Identifier::new(body_name_pls(tcx, inner_body_id).name),
-                location: inner_location,
-                function: identifier_for_fn(tcx, defid),
-            };
+            let call_site = CallSite::new(loc, defid, tcx);
             // Propagate annotations on the function object to the call site
             register_call_site(
                 tcx,
@@ -201,7 +203,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             // Add ctrl flows to callsite.
             for dep in deps.ctrl_deps.iter() {
                 flows.add_ctrl_flow(
-                    Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(inner_body))),
+                    Cow::Owned(dep.as_data_source(tcx, check_realness)),
                     call_site.clone(),
                 )
             }
@@ -213,7 +215,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 // This will be the target of any flow we register
                 let to = if loc.is_at_root()
                     && matches!(
-                        inner_body.stmt_at(loc.outermost_location()),
+                        inner_body.stmt_at_better_err(loc.outermost_location()),
                         Either::Right(mir::Terminator {
                             kind: mir::TerminatorKind::Return,
                             ..
@@ -229,7 +231,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                 for dep in arg_deps.iter() {
                     debug!("    to {dep}");
                     flows.add_data_flow(
-                        Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))),
+                        Cow::Owned(dep.as_data_source(tcx, check_realness)),
                         to.clone(),
                     );
                 }
@@ -237,7 +239,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         }
         for dep in flow.return_dependencies.iter() {
             flows.add_data_flow(
-                Cow::Owned(dep.as_data_source(tcx, |l| l.is_real(controller_body))),
+                Cow::Owned(dep.as_data_source(tcx, check_realness)),
                 DataSink::Return,
             );
         }
@@ -282,12 +284,13 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
 
         let recurse_selector = SkipAnnotatedFunctionSelector {
             marked_objects: self.marked_objects.clone(),
+            tcx,
         };
 
-        let inliner = inline::Inliner::new(self.tcx, gli, &recurse_selector);
+        let inliner = inline::Inliner::new(self.tcx, gli, &recurse_selector, self.opts.anactrl());
 
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
-        crate::sah::HashVerifications::with(|hash_verifications| {
+        let result = crate::sah::HashVerifications::with(|hash_verifications| {
             targets
                 .drain(..)
                 .map(|desc| {
@@ -308,18 +311,33 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                     controllers,
                     annotations: call_site_annotations
                         .into_iter()
-                        .map(|(k, v)| (identifier_for_fn(tcx, k), (v.0, ObjectType::Function(v.1))))
+                        .map(|(k, v)| {
+                            (
+                                identifier_for_item(tcx, k),
+                                (v.0, ObjectType::Function(v.1)),
+                            )
+                        })
                         .chain(
                             self.marked_objects
                                 .as_ref()
                                 .borrow()
                                 .iter()
                                 .filter(|kv| kv.1 .1 == ObjectType::Type)
-                                .map(|(k, v)| (identifier_for_hid(tcx, *k), v.clone())),
+                                .map(|(k, v)| (identifier_for_item(tcx, *k), v.clone())),
+                        )
+                        .chain(self.external_annotations.iter()
+                            .map(|(did, (anns, typ))|
+                                (identifier_for_item(tcx, did), (anns.iter().cloned().map(Annotation::Label).collect() , typ.clone()))
+                        )
                         )
                         .collect(),
                 })
-        })
+        });
+        info!(
+            "Total number of analyzed functions {}",
+            inliner.cache_size()
+        );
+        result
     }
 
     fn annotated_subtypes(&self, ty: ty::Ty) -> HashSet<TypeDescriptor> {
@@ -339,7 +357,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                                 .as_ref()
                                 .borrow()
                                 .contains_key(&self.tcx.hir().local_def_id_to_hir_id(ldef))
-                        }) || self.external_annotations.contains_key(&item_name)
+                        }) || self.external_annotations.contains_key(&def)
                         {
                             Some(item_name)
                         } else {
@@ -377,15 +395,20 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
 /// inlining for all `LocalDefId` values that are found in the map of
 /// `self.marked_objects` i.e. all those functions that have annotations.
 #[derive(Clone)]
-struct SkipAnnotatedFunctionSelector {
+struct SkipAnnotatedFunctionSelector<'tcx> {
     marked_objects: crate::discover::MarkedObjects,
+    tcx: TyCtxt<'tcx>,
 }
-impl inline::InlineSelector for SkipAnnotatedFunctionSelector {
-    fn should_inline(&self, tcx: TyCtxt, did: LocalDefId) -> bool {
+impl<'tcx> inline::Oracle<'tcx> for SkipAnnotatedFunctionSelector<'tcx> {
+    fn should_inline(&self, did: LocalDefId) -> bool {
         self.marked_objects
             .as_ref()
             .borrow()
-            .get(&tcx.hir().local_def_id_to_hir_id(did))
+            .get(&self.tcx.hir().local_def_id_to_hir_id(did))
             .map_or(true, |anns| anns.0.is_empty())
+    }
+
+    fn is_semantically_meaningful(&self, did: DefId) -> bool {
+        matches!(did.as_local(), Some(l) if !self.should_inline(l))
     }
 }

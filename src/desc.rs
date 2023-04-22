@@ -8,7 +8,15 @@
 
 use std::hash::Hash;
 
-use crate::{mir, serde, HashMap, HashSet, Symbol};
+use crate::{
+    ir::GlobalLocation,
+    ir::{IsGlobalLocation, RawGlobalLocation},
+    mir,
+    rust::DefId,
+    serde,
+    utils::{identifier_for_item, TinyBitSet},
+    HashMap, HashSet, Symbol, TyCtxt,
+};
 
 pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
@@ -21,13 +29,13 @@ pub type Function = Identifier;
 /// [`Self::as_otype_ann`] and [`Self::as_exception_annotation`] are provided. These are particularly useful in conjunction with e.g. [`Iterator::filter_map`]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub enum Annotation {
-    Label(LabelAnnotation),
+    Label(MarkerAnnotation),
     OType(Vec<TypeDescriptor>),
     Exception(ExceptionAnnotation),
 }
 
 impl Annotation {
-    pub fn as_label_ann(&self) -> Option<&LabelAnnotation> {
+    pub fn as_label_ann(&self) -> Option<&MarkerAnnotation> {
         match self {
             Annotation::Label(l) => Some(l),
             _ => None,
@@ -60,46 +68,53 @@ pub struct ExceptionAnnotation {
 
 /// A label annotation and its refinements.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LabelAnnotation {
+pub struct MarkerAnnotation {
     /// The (unchanged) name of the label as provided by the user
     #[serde(with = "crate::serializers::ser_sym")]
-    pub label: Symbol,
-    pub refinement: AnnotationRefinement,
+    pub marker: Symbol,
+    #[serde(flatten)]
+    pub refinement: MarkerRefinement,
+}
+
+fn const_false() -> bool {
+    false
 }
 
 /// Refinements in the label targeting. The default (no refinement provided) is
 /// `on_argument == vec![]` and `on_return == false`, which is also what is
 /// returned from [`Self::empty`].
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct AnnotationRefinement {
+pub struct MarkerRefinement {
+    #[serde(default)]
     on_argument: Vec<u16>,
+    #[serde(default = "const_false")]
     on_return: bool,
 }
 
 /// Refinements as the parser discovers them. Are then merged onto the aggregate [`AnnotationRefinement`] with [`AnnotationRefinement::merge_kind`].
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
-pub enum AnnotationRefinementKind {
+pub enum MarkerRefinementKind {
     /// Corresponds to [`AnnotationRefinement::on_argument`]
     Argument(Vec<u16>),
     /// Corresponds to [`AnnotationRefinement::on_return`]
     Return,
 }
 
-impl AnnotationRefinement {
+impl MarkerRefinement {
     /// The default, empty aggregate refinement `Self { on_argument: vec![],
     /// on_return: false }`
     pub fn empty() -> Self {
         Self {
-            on_argument: vec![],
+            on_argument: Default::default(),
             on_return: false,
         }
     }
 
     /// Merge the aggregate refinement with another discovered refinement and
     /// check that they do not overwrite each other.
-    pub fn merge_kind(mut self, k: AnnotationRefinementKind) -> Result<Self, String> {
+    pub fn merge_kind(mut self, k: MarkerRefinementKind) -> Result<Self, String> {
         match k {
-            AnnotationRefinementKind::Argument(a) => {
+            MarkerRefinementKind::Argument(a) => {
                 if self.on_argument.is_empty() {
                     self.on_argument = a;
                     Ok(self)
@@ -110,7 +125,7 @@ impl AnnotationRefinement {
                     ))
                 }
             }
-            AnnotationRefinementKind::Return => {
+            MarkerRefinementKind::Return => {
                 if !self.on_return {
                     self.on_return = true;
                     Ok(self)
@@ -332,26 +347,27 @@ impl<X, Y> Relation<X, Y> {
     }
 }
 
-/// XXX This representation is outdated and can lead to collisions. We need
-/// something that is closer to a
 /// [`GlobalLocation`](crate::ir::GlobalLocation).
-#[derive(
-    Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Debug, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Hash, Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CallSite {
-    #[serde(with = "crate::serializers::ser_loc")]
-    pub location: mir::Location,
-    pub called_from: Function,
+    pub location: RawGlobalLocation,
     pub function: Function,
+}
+
+impl CallSite {
+    pub fn new<L: IsGlobalLocation>(loc: &L, function: DefId, tcx: TyCtxt<'_>) -> Self {
+        Self {
+            location: loc.as_raw(),
+            function: identifier_for_item(tcx, function),
+        }
+    }
 }
 
 /// A representation of something that can emit data into the flow.
 ///
 /// Convenience match functions are provided (for use e.g. in
 /// [`Iterator::filter_map`]) with [`Self::as_function_call`] and [`Self::as_argument`].
-#[derive(
-    Hash, Eq, PartialEq, Ord, PartialOrd, Clone, serde::Serialize, serde::Deserialize, Debug,
-)]
+#[derive(Hash, Eq, PartialEq, Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub enum DataSource {
     /// The result of a function call in the controller body. Can be the return
     /// value or a mutable argument that was passed to the call.
@@ -378,9 +394,7 @@ impl DataSource {
 /// A representation of something that can receive data from the flow.
 ///
 /// [`Self::as_argument`] is provided for convenience of matching.
-#[derive(
-    Hash, PartialEq, Eq, PartialOrd, Ord, Clone, serde::Serialize, serde::Deserialize, Debug,
-)]
+#[derive(Hash, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub enum DataSink {
     Argument { function: CallSite, arg_slot: usize },
     Return,

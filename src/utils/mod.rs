@@ -24,6 +24,8 @@ use crate::{
 
 use std::{borrow::Cow, cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
+pub mod resolve;
+
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
 /// [`matches_path`](#method.matches_path) is interesting if you want to check
@@ -116,6 +118,51 @@ impl<'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
         match self.unpack() {
             ty::subst::GenericArgKind::Type(t) => Some(t),
             _ => None,
+        }
+    }
+}
+
+pub trait DfppBodyExt<'tcx> {
+    fn stmt_at_better_err(
+        &self,
+        l: mir::Location,
+    ) -> Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>> {
+        self.maybe_stmt_at(l).unwrap()
+    }
+    fn maybe_stmt_at(
+        &self,
+        l: mir::Location,
+    ) -> Result<Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>, StmtAtErr<'_, 'tcx>>;
+}
+
+#[derive(Debug)]
+pub enum StmtAtErr<'a, 'tcx> {
+    BasicBlockOutOfBound(mir::BasicBlock, &'a mir::Body<'tcx>),
+    StatementIndexOutOfBounds(usize, &'a mir::BasicBlockData<'tcx>),
+}
+
+impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
+    fn maybe_stmt_at(
+        &self,
+        l: mir::Location,
+    ) -> Result<Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>, StmtAtErr<'_, 'tcx>> {
+        let Location {
+            block,
+            statement_index,
+        } = l;
+        let block_data = self
+            .basic_blocks()
+            .get(block)
+            .ok_or_else(|| StmtAtErr::BasicBlockOutOfBound(block, &self))?;
+        if statement_index == block_data.statements.len() {
+            Ok(Either::Right(block_data.terminator()))
+        } else if let Some(stmt) = block_data.statements.get(statement_index) {
+            Ok(Either::Left(stmt))
+        } else {
+            Err(StmtAtErr::StatementIndexOutOfBounds(
+                statement_index,
+                block_data,
+            ))
         }
     }
 }
@@ -357,7 +404,7 @@ pub fn extract_places<'tcx>(
     let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| {
         places.insert(*p);
     });
-    match body.stmt_at(l) {
+    match body.stmt_at_better_err(l) {
         Either::Right(mir::Terminator {
             kind: mir::TerminatorKind::Call { func, args, .. },
             ..
@@ -415,6 +462,23 @@ pub fn body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Ident {
             .flatten()
         })
         .unwrap()
+}
+
+pub fn unique_and_terse_body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Symbol {
+    let def_id = id.into_local_def_id(tcx);
+    let ident = body_name_pls(tcx, def_id);
+    Symbol::intern(&format!("{}_{:x}", ident.name, short_hash_pls(def_id)))
+}
+
+pub fn dump_file_pls<I: IntoLocalDefId>(
+    tcx: TyCtxt,
+    id: I,
+    ext: &str,
+) -> std::io::Result<std::fs::File> {
+    outfile_pls(&format!(
+        "{}.{ext}",
+        unique_and_terse_body_name_pls(tcx, id)
+    ))
 }
 
 /// Give me this file as writable (possibly creating or overwriting it).
@@ -545,14 +609,53 @@ fn handle_aggregate_assign<'tcx>(
         .project_deeper(rest_project, tcx))
 }
 
-/// Creates an `Identifier` for this `HirId`
-pub fn identifier_for_hid(tcx: TyCtxt, hid: HirId) -> Identifier {
-    Identifier::new(tcx.item_name(tcx.hir().local_def_id(hid).to_def_id()))
+pub fn short_hash_pls<T: Hash>(t: T) -> u64 {
+    // Six digits in hex
+    hash_pls(t) % 0x1_000_000
 }
 
-/// Creates an `Identifier` for this `DefId`
-pub fn identifier_for_fn(tcx: TyCtxt, p: DefId) -> Identifier {
-    Identifier::new(tcx.item_name(p))
+pub fn hash_pls<T: Hash>(t: T) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::default();
+    t.hash(&mut hasher);
+    hasher.finish()
+}
+
+pub trait IntoDefId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId;
+}
+
+impl IntoDefId for DefId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        self
+    }
+}
+
+impl IntoDefId for LocalDefId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        self.to_def_id()
+    }
+}
+
+impl IntoDefId for HirId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        tcx.hir().local_def_id(self).to_def_id()
+    }
+}
+
+impl<D: Copy + IntoDefId> IntoDefId for &'_ D {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        (*self).into_def_id(tcx)
+    }
+}
+
+/// Creates an `Identifier` for this `HirId`
+pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
+    Identifier::from_str(&format!(
+        "{}_{:x}",
+        tcx.item_name(did.into_def_id(tcx)),
+        short_hash_pls(did),
+    ))
 }
 
 /// Extension trait for [`TyCtxt`]
@@ -830,6 +933,9 @@ where
     In: Hash + Eq + Clone,
     Out: Unpin,
 {
+    pub fn size(&self) -> usize {
+        self.0.borrow().len()
+    }
     /// Get or compute the value for this key. Returns `None` if called recursively.
     pub fn get<'a>(&'a self, key: In, compute: impl FnOnce(In) -> Out) -> Option<&'a Out> {
         if !self.0.borrow().contains_key(&key) {
@@ -862,4 +968,117 @@ pub fn time<R, F: FnOnce() -> R>(msg: &str, f: F) -> R {
     let r = f();
     info!("{msg} took {}", humantime::format_duration(time.elapsed()));
     r
+}
+
+#[derive(
+    Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Copy, serde::Serialize, serde::Deserialize,
+)]
+pub struct TinyBitSet(u16);
+
+impl Default for TinyBitSet {
+    fn default() -> Self {
+        Self::new_empty()
+    }
+}
+
+impl std::fmt::Debug for TinyBitSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.iter_set_in_domain().collect::<Vec<_>>().fmt(f)
+    }
+}
+
+impl TinyBitSet {
+    /// Creates a new, empty bitset.
+    pub fn new_empty() -> Self {
+        Self(0)
+    }
+
+    /// Sets the `index`th bit.
+    pub fn set(&mut self, index: u32) {
+        self.0 |= 1_u16.checked_shl(index).unwrap_or(0);
+    }
+
+    /// Unsets the `index`th bit.
+    pub fn clear(&mut self, index: u32) {
+        self.0 &= !1_u16.checked_shl(index).unwrap_or(0);
+    }
+
+    /// Sets the `i`th to `j`th bits.
+    pub fn set_range(&mut self, range: std::ops::Range<u32>) {
+        use std::ops::Not;
+        let bits = u16::MAX
+            .checked_shl(range.end - range.start)
+            .unwrap_or(0)
+            .not()
+            .checked_shl(range.start)
+            .unwrap_or(0);
+        self.0 |= bits;
+    }
+
+    /// Is the set empty?
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Returns the domain size of the bitset.
+    pub fn within_domain(&self, index: u32) -> bool {
+        index < 16
+    }
+
+    pub fn count(&self) -> u32 {
+        self.0.count_ones()
+    }
+
+    /// Returns if the `index`th bit is set.
+    pub fn contains(&self, index: u32) -> Option<bool> {
+        self.within_domain(index)
+            .then(|| ((self.0.checked_shr(index).unwrap_or(1)) & 1) == 1)
+    }
+
+    pub fn iter_set_in_domain(&self) -> impl Iterator<Item = u32> + '_ {
+        (0..16).filter(|i| self.contains(*i).unwrap_or(false))
+    }
+
+    pub fn into_iter_set_in_domain(self) -> impl Iterator<Item = u32> {
+        (0..16).filter(move |i| self.contains(*i).unwrap_or(false))
+    }
+}
+
+impl std::ops::BitOrAssign for TinyBitSet {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0.bitor_assign(rhs.0)
+    }
+}
+
+impl std::ops::BitAndAssign for TinyBitSet {
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.0.bitand_assign(rhs.0)
+    }
+}
+
+impl std::ops::BitAnd for TinyBitSet {
+    type Output = Self;
+    fn bitand(self, rhs: Self) -> Self::Output {
+        TinyBitSet(self.0.bitand(rhs.0))
+    }
+}
+
+impl std::ops::BitOr for TinyBitSet {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self::Output {
+        TinyBitSet(self.0.bitor(rhs.0))
+    }
+}
+
+impl std::ops::BitXor for TinyBitSet {
+    type Output = Self;
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0.bitxor(rhs.0))
+    }
+}
+
+impl std::ops::BitXorAssign for TinyBitSet {
+    fn bitxor_assign(&mut self, rhs: Self) {
+        self.0.bitxor_assign(rhs.0)
+    }
 }
