@@ -444,12 +444,8 @@ impl ProgramDescription {
                     .0
                     .keys()
                     .chain(ctrl.types.0.keys())
-					.chain(
-                        ctrl.ctrl_flow
-                            .0
-                            .keys()
-                    )
-					.filter_map(|src| src.as_argument())
+                    .chain(ctrl.ctrl_flow.0.keys())
+                    .filter_map(|src| src.as_argument())
                     .map(move |position| FormalParameter {
                         function,
                         position: position as u16,

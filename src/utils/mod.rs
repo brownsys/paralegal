@@ -427,7 +427,7 @@ pub fn extract_places<'tcx>(
 }
 
 /// A trait for types that can be converted into a [`mir::LocalDefId`] via
-/// [`TyCtxt`]. 
+/// [`TyCtxt`].
 pub trait IntoLocalDefId {
     fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId;
 }
@@ -450,7 +450,7 @@ impl IntoLocalDefId for HirId {
     }
 }
 
-impl <D: Copy + IntoLocalDefId> IntoLocalDefId for &'_ D {
+impl<D: Copy + IntoLocalDefId> IntoLocalDefId for &'_ D {
     fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
         (*self).into_local_def_id(tcx)
     }
@@ -459,7 +459,7 @@ impl <D: Copy + IntoLocalDefId> IntoLocalDefId for &'_ D {
 /// Get the name of the function for this body as an `Ident`. This handles such
 /// cases correctly where the function in question has no proper name, as is the
 /// case for closures.
-/// 
+///
 /// You should probably use [`unique_and_terse_body_name_pls`] instead, as it
 /// avoids name clashes.
 pub fn body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Ident {
@@ -742,8 +742,6 @@ macro_rules! sym_vec {
     };
 }
 
-
-
 type SparseMatrixImpl<K, V> = FxHashMap<K, FxHashSet<V>>;
 
 #[derive(Debug, Clone)]
@@ -836,8 +834,6 @@ pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilte
     log::set_max_level(reset_level);
     r
 }
-
-
 
 /// This code is adapted from [`flowistry::cached::Cache`] but with a recursion
 /// breaking mechanism. This alters the [`Self::get`] method signature to return

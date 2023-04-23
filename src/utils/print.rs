@@ -1,4 +1,3 @@
-
 use std::fmt::{Debug, Display, Formatter, Result};
 
 pub struct Print<F: Fn(&mut Formatter<'_>) -> Result>(pub F);
@@ -8,11 +7,7 @@ impl<F: Fn(&mut Formatter<'_>) -> Result> Display for Print<F> {
         (&self.0)(f)
     }
 }
-pub fn write_sep<
-    E,
-    I: IntoIterator<Item = E>,
-    F: FnMut(E, &mut Formatter<'_>) -> Result,
->(
+pub fn write_sep<E, I: IntoIterator<Item = E>, F: FnMut(E, &mut Formatter<'_>) -> Result>(
     fmt: &mut Formatter<'_>,
     sep: &str,
     it: I,
@@ -29,7 +24,6 @@ pub fn write_sep<
     }
     Ok(())
 }
-
 
 #[derive(Hash, Eq, Ord, PartialEq, PartialOrd, Clone, Copy)]
 pub struct DisplayViaDebug<T>(pub T);
@@ -52,4 +46,3 @@ impl<T> std::ops::Deref for DisplayViaDebug<T> {
         &self.0
     }
 }
-
