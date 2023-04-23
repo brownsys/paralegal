@@ -12,7 +12,7 @@
 //!    ([`InlinedGraph::prune_impossible_edges`]) using the accumulated set of
 //!    equations
 
-use std::cell::RefCell;
+use std::{cell::RefCell, fmt::Write};
 
 use flowistry::{cached::Cache, mir::borrowck_facts};
 use petgraph::{
@@ -324,12 +324,40 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             }),
                         }
                         .collect::<HashSet<_>>();
-                        if !algebra::solve_reachable(&equations, &to_target, |to| {
-                            targets.contains(to)
-                        }) {
+                        debug!(
+                            "Solving for {to_target} to {}",
+                            Print(|f| {
+                                f.write_char('{')?;
+                                write_sep(f, ", ", &targets, std::fmt::Display::fmt)?;
+                                f.write_char('}')
+                            })
+                        );
+                        let mut is_reachable = false;
+                        algebra::solve_with(
+                            &equations,
+                            &to_target,
+                            |to| targets.contains(to),
+                            |term| {
+                                debug!(
+                                    "Found to be reachable via term {}",
+                                    Print(|f| algebra::display_term_pieces(f, &term, &0))
+                                );
+                                is_reachable = true;
+                                false
+                            },
+                        );
+
+                        if !is_reachable {
                             debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
                             weight.data.clear(idx)
                         }
+
+                        // if !algebra::solve_reachable(&equations, &to_target, |to| {
+                        //     targets.contains(to)
+                        // }) {
+                        //     debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
+                        //     weight.data.clear(idx)
+                        // }
                     }
                     if weight.is_empty() {
                         graph.remove_edge(from, to);

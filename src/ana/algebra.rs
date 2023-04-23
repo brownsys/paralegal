@@ -35,33 +35,39 @@ pub struct Term<B, F: Copy> {
     terms: Vec<Operator<F>>,
 }
 
-fn display_term_pieces<F: Display + Copy, B: Display>(
+pub fn display_term_pieces<F: Display + Copy, B: Display>(
     f: &mut std::fmt::Formatter<'_>,
     terms: &[Operator<F>],
     base: &B,
 ) -> std::fmt::Result {
     use Operator::*;
     for t in terms.iter().rev() {
+        if !matches!(t, ContainsAt(..) | ArrayWith) {
+            f.write_char('(')?;
+        }
         match t {
-            RefOf => f.write_str("&("),
-            DerefOf => f.write_str("*("),
+            RefOf => f.write_char('&'),
+            DerefOf => f.write_char('*'),
             ContainsAt(field) => write!(f, "{{ .{}: ", field),
-            Upcast(_, s) => write!(f, "(#{s}"),
-            Unknown => write!(f, "(?"),
+            Upcast(_, s) => write!(f, "#{s}"),
+            Unknown => f.write_char('?'),
             ArrayWith => f.write_char('['),
-            _ => f.write_char('('),
+            _ => Ok(()),
         }?
     }
     write!(f, "{}", base)?;
     for t in terms.iter() {
         match t {
-            MemberOf(field) => write!(f, ".{})", field),
+            MemberOf(field) => write!(f, ".{}", field),
             ContainsAt(_) => f.write_str(" }"),
-            Downcast(_, s) => write!(f, " #{s})"),
+            Downcast(_, s) => write!(f, " #{s}"),
             ArrayWith => f.write_char(']'),
-            IndexOf => write!(f, "[])"),
-            _ => f.write_char(')'),
-        }?
+            IndexOf => write!(f, "[]"),
+            _ => Ok(()),
+        }?;
+        if !matches!(t, ContainsAt(..) | ArrayWith) {
+            f.write_char(')')?;
+        }
     }
     Ok(())
 }
@@ -200,7 +206,7 @@ impl<F: Copy> Operator<F> {
             (Downcast(_, v1), Upcast(_, v2)) | (Upcast(_, v2), Downcast(_, v1)) if v1 != v2 => {
                 Cancel::NonOverlappingVariant(v1, v2)
             }
-            _ if self == other.flip() => Cancel::CancelOne,
+            _ if self == other.flip() => Cancel::CancelBoth,
             _ => Cancel::Remains,
         }
     }
@@ -376,7 +382,7 @@ pub fn solve_reachable<
     reachable
 }
 
-fn solve_with<
+pub fn solve_with<
     B: Clone + Hash + Eq + Display,
     F: Eq + Hash + Clone + Copy + Display,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
@@ -569,33 +575,40 @@ impl<B, F: Copy> Term<B, F> {
         B: Display,
     {
         let l = self.terms.len();
-        let old_terms = std::mem::replace(&mut self.terms, Vec::with_capacity(l));
-        let mut it = old_terms.into_iter().peekable();
+        if l < 2 {
+            return true;
+        }
         let mut valid = true;
+        let old_terms = std::mem::replace(&mut self.terms, Vec::with_capacity(l));
+        let mut it = old_terms.into_iter();
         let mut after_first_unknown = None;
         let mut after_last_unknown = None;
-        while let Some(i) = it.next() {
-            if let Some(next) = it.peek().cloned() {
-                let cancel = i.cancel(next);
-                match cancel {
-                    Cancel::NonOverlappingField(f, g) => {
-                        valid = false;
-                    }
-                    Cancel::NonOverlappingVariant(v1, v2) => {
-                        valid = false;
-                    }
-                    Cancel::CancelBoth => {
-                        it.next();
-                        continue;
-                    }
-                    Cancel::CancelOne => {
-                        continue;
-                    }
-                    _ => (),
+        self.terms.push(it.next().unwrap());
+        for op in it {
+            let prior = if let Some(last) = self.terms.last() {
+                *last
+            } else {
+                self.terms.push(op);
+                continue;
+            };
+            match prior.cancel(op) {
+                Cancel::NonOverlappingField(f, g) => {
+                    valid = false;
                 }
+                Cancel::NonOverlappingVariant(v1, v2) => {
+                    valid = false;
+                }
+                Cancel::CancelBoth => {
+                    self.terms.pop();
+                    continue;
+                }
+                Cancel::CancelOne => {
+                    continue;
+                }
+                _ => (),
             }
-            self.terms.push(i);
-            if i.is_unknown() {
+            self.terms.push(op);
+            if op.is_unknown() {
                 let _ = if after_first_unknown.is_none() {
                     &mut after_first_unknown
                 } else {
