@@ -91,11 +91,11 @@ define_test!(input_elimination_isnt_a_problem_statement : graph -> {
 });
 
 define_test!(no_inlining_overtaint : graph -> {
-    let get = graph.function_call(" get_user_data(");
-    let get2 = graph.function_call("get_user_data2");
-    let send = graph.function_call("send_user_data(");
-    let send2 = graph.function_call("send_user_data2");
-    let dp = graph.function_call(" dp_user_data");
+    let get = graph.function_call("get_user_data");
+    let get2 = graph.function_call("get2_user_data");
+    let send = graph.function_call("send_user_data");
+    let send2 = graph.function_call("send2_user_data");
+    let dp = graph.function_call("dp1_user_data");
 
     assert!(graph.connects(&get, &send));
     assert!(graph.connects(&get2, &send2));
