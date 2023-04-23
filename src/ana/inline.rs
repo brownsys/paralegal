@@ -665,6 +665,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }: &mut InlinedGraph<'g>,
         body_id: BodyId,
     ) -> EdgeSet<'g> {
+        let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
         let local_def_id = body_id.into_local_def_id(self.tcx);
         let name = body_name_pls(self.tcx, body_id).name;
         let mut queue_for_pruning = HashSet::new();
@@ -673,11 +674,16 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 .node_references()
                 .filter_map(|(id, n)| match n {
                     Node::Call((location, function)) => match function.as_local() {
-                        Some(local_id) if self.oracle.should_inline(local_id) => {
+                        Some(local_id)
+                            if recursive_analysis_enabled
+                                && self.oracle.should_inline(local_id) =>
+                        {
                             debug!("Inlining {function:?}");
                             Some((id, local_id, *location, None))
                         }
-                        _ if Some(*function) == self.tcx.lang_items().from_generator_fn() => {
+                        _ if recursive_analysis_enabled
+                            && Some(*function) == self.tcx.lang_items().from_generator_fn() =>
+                        {
                             let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(
                                 self.tcx,
                                 local_def_id,
@@ -876,11 +882,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             }
         }
 
-        let queue_for_pruning = if self.ana_ctrl.use_recursive_analysis() {
-            Some(self.perform_subfunction_inlining(&proc_g, &mut gwr, body_id))
-        } else {
-            None
-        };
+        let mut queue_for_pruning = self.perform_subfunction_inlining(&proc_g, &mut gwr, body_id);
 
         if self.ana_ctrl.remove_inconsequential_calls().is_enabled() {
             self.remove_inconsequential_calls(&mut gwr);
@@ -901,12 +903,18 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             .unwrap();
         }
         if self.ana_ctrl.use_pruning() {
-            let edges_to_prune = if let Some(mut queue_for_pruning) = queue_for_pruning {
-                queue_for_pruning
-                    .retain(|&(from, to)| !Self::edge_has_been_pruned_before(from, to));
-                queue_for_pruning
-            } else {
+            let strategy = self.ana_ctrl.pruning_strategy();
+            use crate::args::PruningStrategy;
+            let edges_to_prune = if matches!(strategy, PruningStrategy::NotPreviouslyPrunedEdges) {
                 Self::find_prunable_edges(&gwr)
+            } else {
+                if matches!(strategy, PruningStrategy::NewEdgesNotPreviouslyPruned) {
+                    queue_for_pruning
+                        .retain(|&(from, to)| !Self::edge_has_been_pruned_before(from, to));
+                } else {
+                    assert_eq!(strategy, PruningStrategy::NewEdges);
+                }
+                queue_for_pruning
             };
             self.prune_impossible_edges(&mut gwr, name, &edges_to_prune);
             if self.dbg_ctrl.dump_inlined_pruned_graph() {

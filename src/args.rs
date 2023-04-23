@@ -9,7 +9,7 @@
 //! allow us to change the name and default value of the argument without having
 //! to migrate the code using that argument.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, str::FromStr};
 
 /// Top level command line arguments
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
@@ -139,6 +139,8 @@ pub struct AnalysisCtrl {
     /// Essentially turns off cross-procedure field sensitivity.
     #[clap(long, env)]
     no_pruning: bool,
+    #[clap(long, env)]
+    pruning_strategy: Option<PruningStrategy>,
     /// Perform an aggressive removal of call sites.
     ///
     /// "conservative": removes call sites that have inputs, outputs, no
@@ -175,6 +177,33 @@ impl InconsequentialCallRemovalPolicy {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize, Debug)]
+pub enum PruningStrategy {
+    NewEdgesNotPreviouslyPruned,
+    NotPreviouslyPrunedEdges,
+    NewEdges,
+    NoPruning,
+}
+
+impl FromStr for PruningStrategy {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "minimal" => Ok(PruningStrategy::NewEdgesNotPreviouslyPruned),
+            "new-edges" => Ok(PruningStrategy::NewEdges),
+            "not-previously-pruned" => Ok(PruningStrategy::NotPreviouslyPrunedEdges),
+            "disabled" => Ok(PruningStrategy::NoPruning),
+            _ => Err(format!("Unknown pruning strategy '{s}'")),
+        }
+    }
+}
+
+impl PruningStrategy {
+    pub fn enabled(self) -> bool {
+        !matches!(self, PruningStrategy::NoPruning)
+    }
+}
+
 impl AnalysisCtrl {
     /// Are we recursing into (unmarked) called functions with the analysis?
     pub fn use_recursive_analysis(&self) -> bool {
@@ -183,8 +212,19 @@ impl AnalysisCtrl {
     /// Are we pruning with the projection algebra? (e.g. is cross function
     /// field-sensitivity enabled?)
     pub fn use_pruning(&self) -> bool {
-        !self.no_pruning
+        self.pruning_strategy().enabled()
     }
+
+    pub fn pruning_strategy(&self) -> PruningStrategy {
+        if self.no_pruning {
+            assert_eq!(self.pruning_strategy, None);
+            PruningStrategy::NoPruning
+        } else {
+            self.pruning_strategy
+                .unwrap_or(PruningStrategy::NewEdgesNotPreviouslyPruned)
+        }
+    }
+
     /// What policy wrt. call site removal are we following?
     pub fn remove_inconsequential_calls(&self) -> InconsequentialCallRemovalPolicy {
         use InconsequentialCallRemovalPolicy::*;
