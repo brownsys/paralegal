@@ -10,7 +10,7 @@ use crate::{
         df,
     },
     hir::def_id::LocalDefId,
-    mir::{self, Field, Location},
+    mir::{self, Field, HasLocalDecls, Location},
     rust::{
         rustc_ast,
         rustc_hir::{def_id::DefId, BodyId},
@@ -261,6 +261,7 @@ impl Body<DisplayViaDebug<Location>> {
                                     is_mut_arg|
              -> Dependencies<DisplayViaDebug<_>> {
                 use rustc_ast::Mutability;
+                debug!("Dependencies for {arg:?} at {location}");
                 let ana = flow_analysis.state_at(*location);
                 let mutability = if false && is_mut_arg {
                     Mutability::Mut
@@ -272,11 +273,11 @@ impl Body<DisplayViaDebug<Location>> {
                 let reachable_values = non_transitive_aliases.reachable_values(arg, mutability);
                 debug!("Reachable values for {arg:?} are {reachable_values:?}");
                 debug!(
-                    "  Transitive reachable values are {:?}",
-                    flow_analysis
-                        .analysis
-                        .aliases
-                        .reachable_values(arg, mutability)
+                    "  Children are {:?}",
+                    reachable_values
+                        .into_iter()
+                        .flat_map(|a| non_transitive_aliases.children(*a))
+                        .collect::<Vec<_>>()
                 );
                 let deps = reachable_values
                     .into_iter()
@@ -284,7 +285,7 @@ impl Body<DisplayViaDebug<Location>> {
                     // Commenting out this filter because reachable values doesn't
                     // always contain all relevant subplaces
                     //.filter(|p| !is_mut_arg || p != &arg)
-                    .flat_map(|place| ana.deps(place))
+                    .flat_map(|place| ana.deps(non_transitive_aliases.normalize(place)))
                     .map(|&(dep_loc, _dep_place)| {
                         let dep_loc = DisplayViaDebug(dep_loc);
                         if dep_loc.is_real(body) {
@@ -367,7 +368,34 @@ impl Body<DisplayViaDebug<Location>> {
                 .collect();
             let mut return_arg_deps: Vec<(mir::Place<'tcx>, _)> = body
                 .args_iter()
-                .map(|a| (a.into(), HashSet::new()))
+                .flat_map(|a| {
+                    let place = mir::Place::from(a);
+                    let local_decls = body.local_decls();
+                    let ty = place.ty(local_decls, tcx).ty;
+                    if ty.is_mutable_ptr() {
+                        Either::Left(
+                            Some(place.project_deeper(&[mir::PlaceElem::Deref], tcx)).into_iter(),
+                        )
+                    } else if ty.is_generator() {
+                        debug!(
+                            "{ty:?} is a generator with children {:?}",
+                            non_transitive_aliases.children(place)
+                        );
+                        Either::Right(
+                            non_transitive_aliases
+                                .children(place)
+                                .into_iter()
+                                .filter_map(|child| {
+                                    child.ty(local_decls, tcx).ty.is_mutable_ptr().then(|| {
+                                        child.project_deeper(&[mir::PlaceElem::Deref], tcx)
+                                    })
+                                }),
+                        )
+                    } else {
+                        Either::Left(None.into_iter())
+                    }
+                })
+                .map(|p| (p, HashSet::new()))
                 .collect();
             debug!("Return arguments are {return_arg_deps:?}");
             let return_deps = body
@@ -377,6 +405,7 @@ impl Body<DisplayViaDebug<Location>> {
                     return_arg_deps.iter_mut().for_each(|(i, s)| {
                         debug!("Return arg dependencies for {i:?} at {loc}");
                         for d in dependencies_for(loc, *i, true) {
+                            debug!("  adding {d}");
                             s.insert(d);
                         }
                     });
