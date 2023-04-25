@@ -3,14 +3,29 @@ use ast::Mutability;
 use hir::{
     def::{DefKind, Res},
     def_id::CrateNum,
+	def_id::LOCAL_CRATE,
+	def_id::LocalDefId,
     PrimTy,
+	ItemKind,
+	TraitItemRef,
+	Node,
+	ImplItemRef,
+	Mod,
 };
 use ty::{fast_reject::SimplifiedTypeGen::*, FloatTy, IntTy, UintTy};
 
 /// Lifted from `clippy_utils`
 pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
     fn item_child_by_name(tcx: TyCtxt<'_>, def_id: DefId, name: &str) -> Option<Res> {
-        match tcx.def_kind(def_id) {
+		if let Some(local_id) = def_id.as_local() {
+			local_item_children_by_name(tcx, local_id, name)
+		} else {
+			non_local_item_children_by_name(tcx, def_id, name)
+		}
+    }
+
+	fn non_local_item_children_by_name(tcx: TyCtxt<'_>, def_id: DefId, name: &str) -> Option<Res> {
+		match tcx.def_kind(def_id) {
             DefKind::Mod | DefKind::Enum | DefKind::Trait => tcx
                 .module_children(def_id)
                 .iter()
@@ -24,7 +39,46 @@ pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
                 .map(|assoc_def_id| Res::Def(tcx.def_kind(assoc_def_id), assoc_def_id)),
             _ => None,
         }
-    }
+	}
+
+	fn local_item_children_by_name(tcx: TyCtxt<'_>, local_id: LocalDefId, name: &str) -> Option<Res> {
+		let hir = tcx.hir();
+	
+		let root_mod;
+		let item_kind = match hir.find_by_def_id(local_id) {
+			Some(Node::Crate(r#mod)) => {
+				root_mod = ItemKind::Mod( Mod { 
+					spans: r#mod.spans.clone(), 
+					item_ids: r#mod.item_ids.clone() });
+				&root_mod
+			},
+			Some(Node::Item(item)) => &item.kind,
+			_ => return None,
+		};
+	
+		let res = |def_id: LocalDefId| {
+			Res::Def(tcx.def_kind(def_id), def_id.to_def_id())
+		};
+	
+		match item_kind {
+			ItemKind::Mod(r#mod) => r#mod
+				.item_ids
+				.iter()
+				.find(|&item_id| hir.item(*item_id).ident.name.as_str() == name)
+				.map(|&item_id| res(item_id.def_id)),
+			ItemKind::Impl(r#impl) => r#impl
+				.items
+				.iter()
+				.find(|item| item.ident.name.as_str() == name)
+				.map(|&ImplItemRef { id, .. }| res(id.def_id)),
+			ItemKind::Trait(.., trait_item_refs) => trait_item_refs
+				.iter()
+				.find(|item| item.ident.name.as_str() == name)
+				.map(|&TraitItemRef { id, .. }| res(id.def_id)),
+			_ => None,
+		}
+	}
+
     fn find_primitive<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> impl Iterator<Item = DefId> + 'tcx {
         let single = |ty| tcx.incoherent_impls(ty).iter().copied();
         let empty = || [].iter().copied();
@@ -71,8 +125,16 @@ pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
         }
         _ => return Res::Err,
     };
+
+	let local_crate = if tcx.crate_name(LOCAL_CRATE) == Symbol::intern(base) {
+        Some(LOCAL_CRATE.as_def_id())
+    } else {
+        None
+    };
+
     let starts = find_primitive(tcx, base)
         .chain(find_crate(tcx, base))
+		.chain(local_crate)
         .filter_map(|id| item_child_by_name(tcx, id, first));
 
     for first in starts {
