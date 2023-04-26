@@ -813,7 +813,7 @@ where
                             alloc.text(name::CTRL_FLOW).append(" = ").append(
                                 alloc.hardline().append(
                                     alloc
-                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                        .forge_relation_with_arity(3, self.controllers.iter().map(|(e, ctrl)| {
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(
@@ -845,7 +845,7 @@ where
                             alloc.text(name::TYPES).append(" = ").append(
                                 alloc.hardline().append(
                                     alloc
-                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                        .forge_relation_with_arity(3, self.controllers.iter().map(|(e, ctrl)| {
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(ctrl.make_types_relation(alloc, *e)),
