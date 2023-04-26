@@ -96,3 +96,7 @@ define_test!(field_sensitivity graph {
     assert!(!produce_usize.flows_to(&read_string.input()[0]));
     assert!(produce_string.flows_to(&read_string.input()[0]));
 });
+
+define_test!(unused_labels graph {
+    assert!(graph.has_marker("otherwise_unused"));
+});

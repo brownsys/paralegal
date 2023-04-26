@@ -315,22 +315,12 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()
                 .map(|controllers| ProgramDescription {
                     controllers,
-                    annotations: call_site_annotations
-                        .into_iter()
-                        .map(|(k, v)| {
-                            (
-                                identifier_for_item(tcx, k),
-                                (v.0, ObjectType::Function(v.1)),
-                            )
-                        })
-                        .chain(
-                            self.marked_objects
-                                .as_ref()
-                                .borrow()
-                                .iter()
-                                .filter(|kv| kv.1 .1 == ObjectType::Type)
-                                .map(|(k, v)| (identifier_for_item(tcx, *k), v.clone())),
-                        )
+                    annotations: self
+                        .marked_objects
+                        .as_ref()
+                        .borrow()
+                        .iter()
+                        .map(|(k, v)| (identifier_for_item(tcx, *k), v.clone()))
                         .chain(self.external_annotations.iter().map(|(did, (anns, typ))| {
                             (
                                 identifier_for_item(tcx, did),

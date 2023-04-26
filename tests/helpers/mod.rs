@@ -524,6 +524,15 @@ impl PreFrg {
             ctrl: &self.0.controllers[&ident],
         }
     }
+
+    pub fn has_marker(&self, marker: &str) -> bool {
+        let marker = Symbol::intern(marker);
+        self.0.annotations.values().any(|v| {
+            v.0.iter()
+                .filter_map(|a| a.as_label_ann())
+                .any(|m| m.marker == marker)
+        })
+    }
 }
 
 #[derive(Clone)]
