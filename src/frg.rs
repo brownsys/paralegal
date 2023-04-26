@@ -56,7 +56,11 @@ where
     A: 'a,
 {
     #[inline]
-    fn forge_relation<I, LIter, RIter>(&'a self, rel: I) -> DocBuilder<'a, Self, A>
+    fn forge_relation_with_arity<I, LIter, RIter>(
+        &'a self,
+        arity: usize,
+        rel: I,
+    ) -> DocBuilder<'a, Self, A>
     where
         I: IntoIterator<Item = (LIter, RIter)>,
         LIter: IntoIterator,
@@ -65,6 +69,7 @@ where
         RIter::Item: Pretty<'a, Self, A>,
         DocBuilder<'a, Self, A>: Clone,
     {
+        assert!(arity > 1);
         let mut prit = rel
             .into_iter()
             .filter_map(|(l, r)| {
@@ -85,8 +90,21 @@ where
         if prit.peek().is_some() {
             self.intersperse(prit, self.text(" +").append(self.hardline()))
         } else {
-            self.text("none->none")
+            self.intersperse(std::iter::repeat("none").take(arity), "->")
         }
+    }
+
+    #[inline]
+    fn forge_relation<I, LIter, RIter>(&'a self, rel: I) -> DocBuilder<'a, Self, A>
+    where
+        I: IntoIterator<Item = (LIter, RIter)>,
+        LIter: IntoIterator,
+        LIter::Item: Pretty<'a, Self, A>,
+        RIter: IntoIterator,
+        RIter::Item: Pretty<'a, Self, A>,
+        DocBuilder<'a, Self, A>: Clone,
+    {
+        self.forge_relation_with_arity(2, rel)
     }
 }
 
@@ -772,7 +790,7 @@ where
                             alloc.text(name::FLOW).append(" = ").append(
                                 alloc.hardline().append(
                                     alloc
-                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                        .forge_relation_with_arity(3, self.controllers.iter().map(|(e, ctrl)| {
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(alloc.hardline().append(
@@ -884,7 +902,7 @@ where
                             alloc.text(name::FORMAL_PARAMETER_ANNOTATION).append(" = ").append(
                                 alloc.hardline()
                                 .append(
-                                    alloc.forge_relation(
+                                    alloc.forge_relation_with_arity(3,
                                         self.annotations.iter()
                                             .flat_map(|(ident, (anns, _))|
                                                 anns.iter().filter_map(Annotation::as_label_ann)
