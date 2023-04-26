@@ -188,3 +188,40 @@ fn send_user_data(user_data: &UserData) {}
 fn main() {
     println!("Hello, world!");
 }
+
+#[dfpp::analyze]
+fn control_flow_tracking_for_non_fn_compound_conditions() {
+    let a_val = new_s();
+    let another_thing = input();
+    // This also works with a simpler condition (e.g. `false`) after the `&&`,
+    // but I want to avoid the potential of a compiler optimization getting
+    // clever and making this pass, hence the complexity.
+    if source() > 8 && another_thing < 9 {
+        read_t(&a_val);
+    }
+}
+
+#[dfpp::analyze]
+fn control_flow_tracking_for_compound_cond_with_fun() {
+    let a_val = new_s();
+    // This also works with a simpler condition (e.g. `false`) after the `&&`,
+    // but I want to avoid the potential of a compiler optimization getting
+    // clever and making this pass, hence the complexity.
+    if source() > 8 && input() < 9 {
+        read_t(&a_val);
+    }
+}
+
+
+
+#[dfpp::analyze]
+fn control_flow_tracking_overtaint() {
+    let early_val = input();
+    let late_val = source();
+    let a_val = new_s();
+    if early_val > 9 {
+        if late_val < 70 {
+            read_t(&a_val);
+        }
+    }
+}
