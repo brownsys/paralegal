@@ -678,6 +678,12 @@ impl<D: Copy + IntoDefId> IntoDefId for &'_ D {
     }
 }
 
+impl IntoDefId for BodyId {
+	fn into_def_id(self, tcx: TyCtxt) -> DefId {
+		tcx.hir().body_owner_def_id(self).into_def_id(tcx)
+	}
+}
+
 /// Creates an `Identifier` for this `HirId`
 pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
     Identifier::from_str(&format!(

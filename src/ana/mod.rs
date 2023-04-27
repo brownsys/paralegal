@@ -243,7 +243,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 DataSink::Return,
             );
         }
-        Ok((Identifier::new(target.name()), flows))
+        Ok((identifier_for_item(tcx, target.body_id), flows))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
