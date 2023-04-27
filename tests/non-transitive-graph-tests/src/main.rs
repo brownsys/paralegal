@@ -204,9 +204,6 @@ fn control_flow_tracking_for_non_fn_compound_conditions() {
 #[dfpp::analyze]
 fn control_flow_tracking_for_compound_cond_with_fun() {
     let a_val = new_s();
-    // This also works with a simpler condition (e.g. `false`) after the `&&`,
-    // but I want to avoid the potential of a compiler optimization getting
-    // clever and making this pass, hence the complexity.
     if source() > 8 && input() < 9 {
         read_t(&a_val);
     }

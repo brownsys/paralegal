@@ -1,6 +1,6 @@
 use flowistry::{
     extensions::RecurseSelector,
-    mir::{borrowck_facts, utils::BodyExt},
+    mir::{borrowck_facts, control_dependencies::ControlDependencies, utils::BodyExt},
 };
 
 use super::GLI;
@@ -14,11 +14,12 @@ use crate::{
     rust::{
         rustc_ast,
         rustc_hir::{def_id::DefId, BodyId},
+        rustc_index::bit_set::HybridBitSet,
         rustc_index::vec::IndexVec,
     },
     utils::{
         body_name_pls, dump_file_pls, outfile_pls, places_read, time, write_sep, AsFnAndArgs,
-        AsFnAndArgsErr, DfppBodyExt, DisplayViaDebug, IntoLocalDefId, LocationExt,
+        AsFnAndArgsErr, DfppBodyExt, DisplayViaDebug, IntoLocalDefId, LocationExt, Print,
     },
     DbgArgs, Either, HashMap, HashSet, TyCtxt,
 };
@@ -332,27 +333,7 @@ impl Body<DisplayViaDebug<Location>> {
                             })
                             .collect(),
                     );
-                    let ctrl_deps = ctrl_ana
-                        .dependent_on(bb)
-                        .into_iter()
-                        .flat_map(|s| s.iter())
-                        .flat_map(|block| {
-                            let terminator = body.basic_blocks()[block].terminator();
-                            if let mir::TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
-                                discr.place().map(|discr_place| {
-                                    dependencies_for(
-                                        DisplayViaDebug(body.terminator_loc(block)),
-                                        discr_place,
-                                        false,
-                                    )
-                                })
-                            } else {
-                                None
-                            }
-                            .into_iter()
-                            .flatten()
-                        })
-                        .collect();
+                    let ctrl_deps = recursive_ctrl_deps(ctrl_ana, bb, body, dependencies_for);
                     let return_place = ret.unwrap().0;
                     assert!(return_place.projection.is_empty());
                     Some((
@@ -428,6 +409,107 @@ impl Body<DisplayViaDebug<Location>> {
             }
         })
     }
+}
+
+/// Uhh, so this function is kinda ugly. It tries to make sure we're not missing
+/// control flow edges, but at the same time it also tries to preserve
+/// non-transitivity among control flow dependencies. What this means is that if
+/// you have a case like
+///
+/// ```
+/// let y = baz();
+/// if y {
+///   let x = foo();
+///   if x {
+///     bar(...);
+///   }
+/// }
+/// ```
+///
+/// Then `foo` will be a control dependency of `bar`, but `baz` will not.
+/// Instead that is only a transitive dependency because `baz` is a ctrl
+/// dependency of `foo`.
+///
+/// XXX: These semantics are what I believed we wanted, but we haven't discussed
+/// if this is the right thing to do.
+fn recursive_ctrl_deps<
+    'tcx,
+    F: FnMut(
+        DisplayViaDebug<Location>,
+        mir::Place<'tcx>,
+        bool,
+    ) -> Dependencies<DisplayViaDebug<Location>>,
+>(
+    ctrl_ana: &ControlDependencies,
+    bb: mir::BasicBlock,
+    body: &mir::Body<'tcx>,
+    mut dependencies_for: F,
+) -> Dependencies<DisplayViaDebug<Location>> {
+    debug!(
+        "Ctrl deps\n{}",
+        Print(|f| {
+            for (b, _) in body.basic_blocks().iter_enumerated() {
+                writeln!(f, "{b:?}: {:?}", ctrl_ana.dependent_on(b))?;
+            }
+            Ok(())
+        })
+    );
+    let mut seen = ctrl_ana
+        .dependent_on(bb)
+        .cloned()
+        .unwrap_or_else(|| HybridBitSet::new_empty(0));
+    debug!(
+        "Initial ctrl flow of {bb:?} depends on {:?}",
+        seen.iter().collect::<Vec<_>>()
+    );
+    let mut queue = seen.iter().collect::<Vec<_>>();
+    let mut dependencies = Dependencies::new();
+    while let Some(block) = queue.pop() {
+        let terminator = body.basic_blocks()[block].terminator();
+        if let mir::TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
+            if let Some(discr_place) = discr.place() {
+                let deps = dependencies_for(
+                    DisplayViaDebug(body.terminator_loc(block)),
+                    discr_place,
+                    false,
+                );
+                for d in &deps {
+                    if let Target::Call(loc) = d {
+                        seen.insert(loc.block);
+                    }
+                }
+                dependencies.extend(deps);
+
+                // This is where things go off the rails. 
+                //
+                // The reason this is so complicated is because rustc desugars
+                // `&&` and `||` in an annoying way. The details are explained
+                // in
+                // https://www.notion.so/justus-adam/Control-flow-with-non-fn-statement-does-not-create-the-ctrl_flow-relation-correctly-3993e8fd86d54f51bfa75fde447b81ec
+                let mut predecessor_queue = vec![block];
+                while let Some(block) = predecessor_queue.pop() {
+                        if let Some(mut transitives) = ctrl_ana.dependent_on(block).cloned() {
+                        debug!(
+                            "Transitive ctrl flow depends from {block:?} on {:?}",
+                            transitives.iter().collect::<Vec<_>>()
+                        );
+                        transitives.subtract(&seen);
+                        debug!(
+                            "Which is {:?} after subtracting seen",
+                            transitives.iter().collect::<Vec<_>>()
+                        );
+                        queue.extend(transitives.iter());
+                    } else {
+                        let preds = &body.predecessors()[block];
+                        predecessor_queue.extend(
+                            preds.into_iter().filter(|&&p| !seen.contains(p))
+                        )
+                    }
+                }
+            }
+        }
+    }
+    dependencies
 }
 
 pub fn compute_from_body_id(

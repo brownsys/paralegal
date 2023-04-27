@@ -423,7 +423,10 @@ impl G {
         typ: EdgeSelection,
     ) -> bool {
         for to in to.get_call_sites(&self.graph).iter() {
-            if self.predecessors_configurable(to, typ).any(|l| from.match_(l)) {
+            if self
+                .predecessors_configurable(to, typ)
+                .any(|l| from.match_(l))
+            {
                 return true;
             }
         }

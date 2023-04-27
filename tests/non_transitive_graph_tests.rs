@@ -147,11 +147,12 @@ define_test!(control_flow_tracking_overtaint: graph -> {
     assert!(graph.connects_ctrl(early_val, read));
 });
 
-
 define_test!(control_flow_tracking_for_non_fn_compound_conditions: graph -> {
     let cond_input = &graph.function_call("source");
     let other_cond = &graph.function_call("input");
     let read = &graph.function_call("read_t");
+    assert!(graph.connects(cond_input, read));
+    assert!(graph.connects(other_cond, read));
     assert!(graph.connects_ctrl(cond_input, read));
     assert!(graph.connects_ctrl(other_cond, read));
 });
