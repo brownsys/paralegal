@@ -686,9 +686,10 @@ impl IntoDefId for BodyId {
 
 /// Creates an `Identifier` for this `HirId`
 pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
+	let did = did.into_def_id(tcx);
     Identifier::from_str(&format!(
         "{}_{:x}",
-        tcx.item_name(did.into_def_id(tcx)),
+        tcx.item_name(did),
         short_hash_pls(did),
     ))
 }
