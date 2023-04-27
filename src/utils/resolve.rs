@@ -124,7 +124,7 @@ pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
         _ => return Res::Err,
     };
 
-    let local_crate = if tcx.crate_name(LOCAL_CRATE) == Symbol::intern(base) {
+    let local_crate = if tcx.crate_name(LOCAL_CRATE) == Symbol::intern(base) || base == "crate" {
         Some(LOCAL_CRATE.as_def_id())
     } else {
         None
