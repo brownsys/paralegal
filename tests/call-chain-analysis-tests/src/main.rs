@@ -88,3 +88,6 @@ fn field_sensitivity() {
 }
 
 fn main() {}
+
+#[dfpp::label(otherwise_unused)]
+fn unused() {}

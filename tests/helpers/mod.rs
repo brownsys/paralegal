@@ -392,13 +392,41 @@ impl G {
 
     /// Is there an edge between `from` and `to`. Equivalent to testing if
     /// `from` is in `g.predecessors(to)`.
+    pub fn connects_direct_data<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+    ) -> bool {
+        self.connects_direct_configurable(from, to, EdgeSelection::Data)
+    }
+
     pub fn connects_direct<From: MatchCallSite, To: GetCallSites>(
         &self,
         from: &From,
         to: &To,
     ) -> bool {
+        self.connects_direct_configurable(from, to, EdgeSelection::Both)
+    }
+
+    pub fn connects_direct_ctrl<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+    ) -> bool {
+        self.connects_direct_configurable(from, to, EdgeSelection::Control)
+    }
+
+    fn connects_direct_configurable<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+        typ: EdgeSelection,
+    ) -> bool {
         for to in to.get_call_sites(&self.graph).iter() {
-            if self.predecessors(to).any(|l| from.match_(l)) {
+            if self
+                .predecessors_configurable(to, typ)
+                .any(|l| from.match_(l))
+            {
                 return true;
             }
         }
@@ -523,6 +551,15 @@ impl PreFrg {
             ident,
             ctrl: &self.0.controllers[&ident],
         }
+    }
+
+    pub fn has_marker(&self, marker: &str) -> bool {
+        let marker = Symbol::intern(marker);
+        self.0.annotations.values().any(|v| {
+            v.0.iter()
+                .filter_map(|a| a.as_label_ann())
+                .any(|m| m.marker == marker)
+        })
     }
 }
 
