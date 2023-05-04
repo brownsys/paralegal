@@ -2,6 +2,7 @@
 
 extern crate smallvec;
 
+use hir::def::Res;
 use smallvec::SmallVec;
 
 use crate::{
@@ -682,6 +683,15 @@ impl IntoDefId for BodyId {
 	fn into_def_id(self, tcx: TyCtxt) -> DefId {
 		tcx.hir().body_owner_def_id(self).into_def_id(tcx)
 	}
+}
+
+impl IntoDefId for Res {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        match self {
+			Res::Def(_, did) => did,
+			_ => panic!("turning non-def res into DefId; res is: {:?}", self)
+		}
+    }
 }
 
 /// Creates an `Identifier` for this `HirId`

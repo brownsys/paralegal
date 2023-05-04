@@ -280,7 +280,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                 })
                 .or_else(|| {
                     a.match_extract(&consts::OTYPE_MARKER, |i| {
-                        Annotation::OType(crate::ann_parse::otype_ann_match(i))
+                        Annotation::OType(crate::ann_parse::otype_ann_match(i, tcx))
                     })
                 })
                 .or_else(|| {

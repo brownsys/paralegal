@@ -17,6 +17,7 @@ use crate::{
     rust::*,
     utils::TinyBitSet,
     Symbol,
+	utils,
 };
 use ast::{token, tokenstream};
 use token::*;
@@ -210,18 +211,26 @@ pub fn tiny_bitset(i: I) -> R<TinyBitSet> {
 }
 
 /// Parser for the payload of the `#[dfpp::output_type(...)]` annotation.
-pub(crate) fn otype_ann_match(ann: &ast::MacArgs) -> Vec<TypeDescriptor> {
+pub(crate) fn otype_ann_match(ann: &ast::MacArgs, tcx: TyCtxt) -> Vec<TypeDescriptor> {
     match ann {
-        ast::MacArgs::Delimited(_, _, stream) => {
-            let mut p = nom::multi::separated_list0(
+        ast::MacArgs::Delimited(_, _, stream) => {			
+			let mut p = nom::multi::separated_list0(
                 assert_token(TokenKind::Comma),
-                nom::combinator::map(identifier, Identifier::new),
+				nom::multi::separated_list0(
+					assert_token(TokenKind::ModSep), 
+					nom::combinator::map(identifier, |i| i.to_string()))
             );
             p(I::from_stream(stream))
                 .unwrap_or_else(|err: nom::Err<_>| {
                     panic!("parser failed on {ann:?} with error {err:?}")
                 })
                 .1
+				.into_iter()
+				.map(|strs| {
+					let segment_vec = strs.iter().map(AsRef::as_ref).collect::<Vec<&str>>();
+					utils::identifier_for_item(tcx, utils::resolve::def_path_res(tcx, &segment_vec))
+				})
+				.collect()
         }
         _ => panic!(),
     }
