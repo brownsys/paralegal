@@ -37,6 +37,7 @@ toml = "0.7"
 
 # This is just for pinning this dependency
 camino = "= 1.0.9"
+serial_test = "2.0.0"
 
 [[bin]]
 name = "cargo-dfpp"

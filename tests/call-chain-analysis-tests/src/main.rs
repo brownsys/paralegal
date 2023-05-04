@@ -28,7 +28,7 @@ fn callee_2(x: i32) {
 }
 
 #[dfpp::analyze]
-fn on_mut_var() {
+fn on_mut_var0() {
     let mut x = 4;
     modify_it(&mut x);
     receiver(x)

@@ -60,7 +60,7 @@ define_test!(with_return graph {
 
 define_test!(on_mut_var graph {
     let src_fn = graph.function("source");
-    let ctrl = graph.ctrl("on_mut_var");
+    let ctrl = graph.ctrl("on_mut_var0");
     let src = ctrl.call_site(&src_fn);
     let dest_fn = graph.function("receiver");
     let dest_sink = ctrl.call_site(&dest_fn);
