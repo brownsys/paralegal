@@ -1410,11 +1410,12 @@ impl DfppErrorInfo {
         }
     }
 
-    fn print_error_msg<'tcx>(
+    fn print_error_msg<'tcx, 'a>(
         &self, 
         tcx: TyCtxt<'tcx>, 
         b: BodyId,
         ctrl_body_w_facts: &CachedSimplifedBodyWithFacts<'tcx>, 
+        collecting_visitor: &CollectingVisitor<'tcx, 'a>,
         error_msg_name: &String
     ) {
         if self.erroneous_locations.is_empty() && self.missing_labels_locations.is_empty() {
@@ -1475,9 +1476,17 @@ impl DfppErrorInfo {
             }
 
             for label_pair in &self.missing_labels_locations {
-                println!("\x1b[92mHere are entities in your program that can apply the label {}:\x1b[0m", label_pair.label);
-                // let label_locations = find_locations_with_label(&label_pair.label, tcx);
-                // Self::print_locations(&label_locations, &ctrl_body_w_facts);
+                println!("\x1b[92mHere are entities in your program that can apply the label\x1b[0m {}:", label_pair.label);
+                let label_locations: Vec<(Ident, ObjectType)> = collecting_visitor.find_locations_with_label(&label_pair.label);
+
+                for id in label_locations {
+                    let otype = match id.1 {
+                        ObjectType::Function(_) => "function",
+                        ObjectType::Type => "type",
+                        ObjectType::Other => "other",
+                    };
+                    println!("\t{:?} ({})", id.0.as_str().to_owned(), otype);
+                }
             }
         }
     }
@@ -1538,10 +1547,12 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
         }
     }
 
-    fn find_locations_with_label(&self, label: &String) -> Vec<Ident> {
-        let objs_w_label: Vec<_> = self.marked_objects
+    fn find_locations_with_label(&self, label: &String) -> Vec<(Ident, ObjectType)> {
+        let objs_map = self.marked_objects
             .as_ref()
-            .borrow()
+            .borrow();
+
+        let objs_w_label: Vec<_> = objs_map
             .iter()
             .filter(|elt| {
                 let elt_annotations = &elt.1.0;
@@ -1554,16 +1565,17 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
                         }
                     })
                     .collect();
-                elt_labels.iter().fold(false, |acc, l| acc || (l == label.into()))
+                elt_labels.iter().fold(false, |acc, l: &Symbol| acc || (&l.to_ident_string() == label))
             })
             .collect();
 
-        let ids_w_labels: Vec<Ident> = objs_w_label
+        let ids_w_labels: Vec<(Ident, ObjectType)> = objs_w_label
             .iter()
             .map(|o|{
-                let hir: &HirId = o.0;
+                let hir: &HirId = &o.0;
+                let obj_type = (&o).1.1.clone();
                 let body_id = self.tcx.hir().body_owned_by(*hir);
-                utils::body_name_pls(self.tcx, body_id)
+                (utils::body_name_pls(self.tcx, body_id), obj_type)
             })
             .collect();
         ids_w_labels
@@ -1662,7 +1674,7 @@ impl<'tcx, 'a> CollectingVisitor<'tcx, 'a> {
             if id.name.as_str() != em.ctrl {
                 return None;
             } else {
-                em.print_error_msg(tcx, b, controller_body_with_facts, &"right_to_be_forgotten".to_owned());
+                em.print_error_msg(tcx, b, controller_body_with_facts, &self, &"right_to_be_forgotten".to_owned());
             }
             exit(0);
         }      
