@@ -2,19 +2,36 @@
 
 extern crate smallvec;
 
+use hir::def::Res;
 use smallvec::SmallVec;
 
 use crate::{
     desc::Identifier,
     rust::{
         ast,
-        hir::{self, def_id::DefId, hir_id::HirId, BodyId},
+        hir::{
+            self,
+            def_id::{DefId, LocalDefId},
+            hir_id::HirId,
+            BodyId,
+        },
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
+        rustc_data_structures::fx::{FxHashMap, FxHashSet},
         rustc_span::symbol::Ident,
         ty,
     },
-    Either, HashSet, Symbol, TyCtxt,
+    Either, HashMap, HashSet, Symbol, TyCtxt,
 };
+
+use std::{borrow::Cow, cell::RefCell, default::Default, hash::Hash, pin::Pin};
+
+pub mod resolve;
+
+mod print;
+pub use print::*;
+
+pub mod tiny_bitset;
+pub use tiny_bitset::TinyBitSet;
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
@@ -112,6 +129,53 @@ impl<'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
     }
 }
 
+pub trait DfppBodyExt<'tcx> {
+    /// Same as [`mir::Body::stmt_at`] but throws descriptive errors.
+    fn stmt_at_better_err(
+        &self,
+        l: mir::Location,
+    ) -> Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>> {
+        self.maybe_stmt_at(l).unwrap()
+    }
+    /// Non-panicking version of [`mir::Body::stmt_at`] with descriptive errors.
+    fn maybe_stmt_at(
+        &self,
+        l: mir::Location,
+    ) -> Result<Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>, StmtAtErr<'_, 'tcx>>;
+}
+
+#[derive(Debug)]
+pub enum StmtAtErr<'a, 'tcx> {
+    BasicBlockOutOfBound(mir::BasicBlock, &'a mir::Body<'tcx>),
+    StatementIndexOutOfBounds(usize, &'a mir::BasicBlockData<'tcx>),
+}
+
+impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
+    fn maybe_stmt_at(
+        &self,
+        l: mir::Location,
+    ) -> Result<Either<&mir::Statement<'tcx>, &mir::Terminator<'tcx>>, StmtAtErr<'_, 'tcx>> {
+        let Location {
+            block,
+            statement_index,
+        } = l;
+        let block_data = self
+            .basic_blocks()
+            .get(block)
+            .ok_or_else(|| StmtAtErr::BasicBlockOutOfBound(block, &self))?;
+        if statement_index == block_data.statements.len() {
+            Ok(Either::Right(block_data.terminator()))
+        } else if let Some(stmt) = block_data.statements.get(statement_index) {
+            Ok(Either::Left(stmt))
+        } else {
+            Err(StmtAtErr::StatementIndexOutOfBounds(
+                statement_index,
+                block_data,
+            ))
+        }
+    }
+}
+
 /// A simplified version of the argument list that is stored in a
 /// `TerminatorKind::Call`.
 ///
@@ -144,7 +208,7 @@ pub trait AsFnAndArgs<'tcx> {
             SimplifiedArguments<'tcx>,
             Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         ),
-        &'static str,
+        AsFnAndArgsErr<'tcx>,
     >;
 }
 
@@ -157,10 +221,18 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
             SimplifiedArguments<'tcx>,
             Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         ),
-        &'static str,
+        AsFnAndArgsErr<'tcx>,
     > {
         self.kind.as_fn_and_args()
     }
+}
+
+#[derive(Debug)]
+pub enum AsFnAndArgsErr<'tcx> {
+    NotAConstant,
+    NotFunctionType(ty::TyKind<'tcx>),
+    NotValueLevelConstant(ty::Const<'tcx>),
+    NotAFunctionCall,
 }
 
 impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
@@ -172,7 +244,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
             SimplifiedArguments<'tcx>,
             Option<(mir::Place<'tcx>, mir::BasicBlock)>,
         ),
-        &'static str,
+        AsFnAndArgsErr<'tcx>,
     > {
         match self {
             mir::TerminatorKind::Call {
@@ -181,15 +253,19 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
                 destination,
                 ..
             } => {
-                let defid = match func.constant().ok_or("Not a constant")? {
-                    mir::Constant {
-                        literal: mir::ConstantKind::Val(_, ty),
-                        ..
-                    } => match ty.kind() {
-                        ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),
-                        _ => Err("Not function type"),
+                let defid = match func.constant().ok_or(AsFnAndArgsErr::NotAConstant)? {
+                    mir::Constant { literal, .. } => match literal {
+                        mir::ConstantKind::Val(_, ty)
+                        | mir::ConstantKind::Ty(ty::Const(
+                            crate::rust::rustc_data_structures::intern::Interned(
+                                ty::ConstS { ty, .. },
+                                _,
+                            ),
+                        )) => match ty.kind() {
+                            ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),
+                            _ => Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone())),
+                        },
                     },
-                    _ => Err("Not value level constant"),
                 }?;
                 Ok((
                     defid,
@@ -197,7 +273,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
                     *destination,
                 ))
             }
-            _ => Err("Not a function call"),
+            _ => Err(AsFnAndArgsErr::NotAFunctionCall),
         }
     }
 }
@@ -337,7 +413,7 @@ pub fn extract_places<'tcx>(
     let mut vis = PlaceVisitor(|p: &mir::Place<'tcx>| {
         places.insert(*p);
     });
-    match body.stmt_at(l) {
+    match body.stmt_at_better_err(l) {
         Either::Right(mir::Terminator {
             kind: mir::TerminatorKind::Call { func, args, .. },
             ..
@@ -351,10 +427,46 @@ pub fn extract_places<'tcx>(
     places
 }
 
-/// Get the name of the function for this body as an `Ident`.
-pub fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
+/// A trait for types that can be converted into a [`mir::LocalDefId`] via
+/// [`TyCtxt`].
+pub trait IntoLocalDefId {
+    fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId;
+}
+
+impl IntoLocalDefId for LocalDefId {
+    fn into_local_def_id(self, _tcx: TyCtxt) -> LocalDefId {
+        self
+    }
+}
+
+impl IntoLocalDefId for BodyId {
+    fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
+        tcx.hir().body_owner_def_id(self)
+    }
+}
+
+impl IntoLocalDefId for HirId {
+    fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
+        tcx.hir().local_def_id(self)
+    }
+}
+
+impl<D: Copy + IntoLocalDefId> IntoLocalDefId for &'_ D {
+    fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
+        (*self).into_local_def_id(tcx)
+    }
+}
+
+/// Get the name of the function for this body as an `Ident`. This handles such
+/// cases correctly where the function in question has no proper name, as is the
+/// case for closures.
+///
+/// You should probably use [`unique_and_terse_body_name_pls`] instead, as it
+/// avoids name clashes.
+pub fn body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Ident {
     let map = tcx.hir();
-    let node = map.find_by_def_id(map.body_owner_def_id(body_id)).unwrap();
+    let def_id = id.into_local_def_id(tcx);
+    let node = map.find_by_def_id(def_id).unwrap();
     node.ident()
         .or_else(|| {
             matches!(
@@ -365,13 +477,35 @@ pub fn body_name_pls(tcx: TyCtxt, body_id: BodyId) -> Ident {
                 })
             )
             .then(|| {
-                map.get(map.enclosing_body_owner(map.body_owner(body_id)))
+                map.get(map.enclosing_body_owner(map.local_def_id_to_hir_id(def_id)))
                     .ident()
                     .map(|id| Ident::from_str(&(id.as_str().to_string() + "_closure")))
             })
             .flatten()
         })
         .unwrap()
+}
+
+/// Gives a string name for this i that is free of name clashes, as it
+/// includes a hash of the id.
+pub fn unique_and_terse_body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Symbol {
+    let def_id = id.into_local_def_id(tcx);
+    let ident = body_name_pls(tcx, def_id);
+    Symbol::intern(&format!("{}_{:x}", ident.name, short_hash_pls(def_id)))
+}
+
+/// Create a file for dumping an `ext` kind of output for `id`. The name of the
+/// resulting file avoids clashes but is also descriptive (uses the resolved
+/// name of `id`).
+pub fn dump_file_pls<I: IntoLocalDefId>(
+    tcx: TyCtxt,
+    id: I,
+    ext: &str,
+) -> std::io::Result<std::fs::File> {
+    outfile_pls(&format!(
+        "{}.{ext}",
+        unique_and_terse_body_name_pls(tcx, id)
+    ))
 }
 
 /// Give me this file as writable (possibly creating or overwriting it).
@@ -467,7 +601,7 @@ pub fn places_read<'tcx>(
                         location,
                     ),
                     Err(e) => {
-                        warn!("handle_aggregate_assign threw {e}");
+                        debug!("handle_aggregate_assign threw {e}");
                         vis.visit_rvalue(&a.1, location);
                     }
                 }
@@ -502,14 +636,72 @@ fn handle_aggregate_assign<'tcx>(
         .project_deeper(rest_project, tcx))
 }
 
-/// Creates an `Identifier` for this `HirId`
-pub fn identifier_for_hid(tcx: TyCtxt, hid: HirId) -> Identifier {
-    Identifier::new(tcx.item_name(tcx.hir().local_def_id(hid).to_def_id()))
+/// Create a hash for this object that is no longer than six hex digits
+pub fn short_hash_pls<T: Hash>(t: T) -> u64 {
+    // Six digits in hex
+    hash_pls(t) % 0x1_000_000
 }
 
-/// Creates an `Identifier` for this `DefId`
-pub fn identifier_for_fn(tcx: TyCtxt, p: DefId) -> Identifier {
-    Identifier::new(tcx.item_name(p))
+/// Calculate a hash for this object
+pub fn hash_pls<T: Hash>(t: T) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::default();
+    t.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Brother to [`IntoLocalDefId`], converts the id type to a [`DefId`] using [`TyCtxt`]
+pub trait IntoDefId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId;
+}
+
+impl IntoDefId for DefId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        self
+    }
+}
+
+impl IntoDefId for LocalDefId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        self.to_def_id()
+    }
+}
+
+impl IntoDefId for HirId {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        tcx.hir().local_def_id(self).to_def_id()
+    }
+}
+
+impl<D: Copy + IntoDefId> IntoDefId for &'_ D {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        (*self).into_def_id(tcx)
+    }
+}
+
+impl IntoDefId for BodyId {
+	fn into_def_id(self, tcx: TyCtxt) -> DefId {
+		tcx.hir().body_owner_def_id(self).into_def_id(tcx)
+	}
+}
+
+impl IntoDefId for Res {
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        match self {
+			Res::Def(_, did) => did,
+			_ => panic!("turning non-def res into DefId; res is: {:?}", self)
+		}
+    }
+}
+
+/// Creates an `Identifier` for this `HirId`
+pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
+	let did = did.into_def_id(tcx);
+    Identifier::from_str(&format!(
+        "{}_{:x}",
+        tcx.item_name(did),
+        short_hash_pls(did),
+    ))
 }
 
 /// Extension trait for [`TyCtxt`]
@@ -534,67 +726,6 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
             self,
             self.hir().body_owner_def_id(b),
         )
-    }
-}
-
-/// A simple utility type that lets you split off a part of a struct and operate
-/// on it separately while being assured that as soon as the `Split` goes out of
-/// scope the separate part is merged back onto the main struct.
-///
-/// The [`Splittable`](./trait.Splittable.html) trait governs which part is the
-/// main one and which is the split.
-/// [`split()`](./trait.Splittable.html#method.split) is called on construction
-/// and [`merge()`](./trait.Splittable.html#method.merge) when this struct goes
-/// out of scope.
-///
-/// You can construct a `Split` easily using `into()`.
-///
-/// ## Usage
-///
-/// Usually you would construct the `Split` using `into()`, then obtain the two
-/// contained parts with [`as_components`](#method.as_components). At the end of
-/// the scope the split-off component is merged back automatically into the main
-/// type in the `Drop` implementation for `Split`.
-pub struct Split<'a, T: Splittable> {
-    main: &'a mut T,
-    inner: std::mem::MaybeUninit<T::Splitted>,
-}
-
-impl<'a, T: Splittable> Split<'a, T> {
-    /// Obtain a mutable reference to both the main type and it's split-off part
-    pub fn as_components(&mut self) -> (&mut T, &mut T::Splitted) {
-        (self.main, unsafe { self.inner.assume_init_mut() })
-    }
-}
-
-/// A type where a part of it can be moved out and merged back in. Usually this
-/// would be implemented by having a field on `Self` that is
-/// `Option<Self::Splitted>` or `MaybeUninit<Self::Splitted>`. For an example
-/// see
-/// [`FunctionInliner`](../ana/struct.FunctionInliner.html#structfield.under_construction)
-pub trait Splittable: Sized {
-    type Splitted;
-    /// Move a part of this type out so it can be accessed independently.
-    fn split(&mut self) -> Self::Splitted;
-    /// Merge the moved-out part back into `self`
-    fn merge(&mut self, inner: Self::Splitted);
-}
-
-impl<'a, T: Splittable> From<&'a mut T> for Split<'a, T> {
-    //! The canonical way to construct a [`Split`]
-    fn from(main: &'a mut T) -> Self {
-        let inner = std::mem::MaybeUninit::new(main.split());
-        Split { main, inner }
-    }
-}
-
-impl<'a, T: Splittable> Drop for Split<'a, T> {
-    //! Merges `self.inner` back onto `self.main`.
-    //!
-    //! Essentially does `<T as Splittable>::merge(self.main, self.inner)`
-    fn drop(&mut self) {
-        let inner_moved = std::mem::replace(&mut self.inner, std::mem::MaybeUninit::uninit());
-        self.main.merge(unsafe { inner_moved.assume_init() });
     }
 }
 
@@ -626,4 +757,146 @@ macro_rules! sym_vec {
     ($($e:expr),*) => {
         vec![$(Symbol::intern($e)),*]
     };
+}
+
+type SparseMatrixImpl<K, V> = FxHashMap<K, FxHashSet<V>>;
+
+#[derive(Debug, Clone)]
+pub struct SparseMatrix<K, V> {
+    matrix: SparseMatrixImpl<K, V>,
+    empty_set: FxHashSet<V>,
+}
+
+impl<'a, Q: Eq + std::hash::Hash + ?Sized, K: Eq + std::hash::Hash + std::borrow::Borrow<Q>, V>
+    std::ops::Index<&'a Q> for SparseMatrix<K, V>
+{
+    type Output = <SparseMatrixImpl<K, V> as std::ops::Index<&'a Q>>::Output;
+    fn index(&self, index: &Q) -> &Self::Output {
+        &self.matrix[index]
+    }
+}
+
+impl<K, V> Default for SparseMatrix<K, V> {
+    fn default() -> Self {
+        Self {
+            matrix: Default::default(),
+            empty_set: Default::default(),
+        }
+    }
+}
+
+impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> PartialEq for SparseMatrix<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.matrix.eq(&other.matrix)
+    }
+}
+impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> Eq for SparseMatrix<K, V> {}
+
+impl<K, V> SparseMatrix<K, V> {
+    pub fn set(&mut self, k: K, v: V) -> bool
+    where
+        K: Eq + std::hash::Hash,
+        V: Eq + std::hash::Hash,
+    {
+        self.row_mut(k).insert(v)
+    }
+
+    pub fn rows(&self) -> impl Iterator<Item = (&K, &FxHashSet<V>)> {
+        self.matrix.iter()
+    }
+
+    pub fn row(&self, k: &K) -> &FxHashSet<V>
+    where
+        K: Eq + std::hash::Hash,
+    {
+        self.matrix.get(k).unwrap_or(&self.empty_set)
+    }
+
+    pub fn row_mut(&mut self, k: K) -> &mut FxHashSet<V>
+    where
+        K: Eq + std::hash::Hash,
+    {
+        self.matrix.entry(k).or_insert_with(HashSet::default)
+    }
+
+    pub fn has(&self, k: &K) -> bool
+    where
+        K: Eq + std::hash::Hash,
+    {
+        !self.matrix.get(k).map_or(true, HashSet::is_empty)
+    }
+
+    pub fn union_row(&mut self, k: &K, row: Cow<FxHashSet<V>>) -> bool
+    where
+        K: Eq + std::hash::Hash + Clone,
+        V: Eq + std::hash::Hash + Clone,
+    {
+        let mut changed = false;
+        if !self.has(k) {
+            changed = !row.is_empty();
+            self.matrix.insert(k.clone(), row.into_owned());
+        } else {
+            let set = self.row_mut(k.clone());
+            row.iter()
+                .for_each(|elem| changed |= set.insert(elem.clone()));
+        }
+        changed
+    }
+}
+
+pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilter, f: F) -> R {
+    let reset_level = log::max_level();
+    log::set_max_level(filter);
+    let r = f();
+    log::set_max_level(reset_level);
+    r
+}
+
+/// This code is adapted from [`flowistry::cached::Cache`] but with a recursion
+/// breaking mechanism. This alters the [`Self::get`] method signature to return
+/// an [`Option`] of a reference. In particular the method will return [`None`]
+/// if it is called *with the same key* while computing a construction function
+/// for that key.
+pub struct RecursionBreakingCache<In, Out>(RefCell<HashMap<In, Option<Pin<Box<Out>>>>>);
+
+impl<In, Out> RecursionBreakingCache<In, Out>
+where
+    In: Hash + Eq + Clone,
+    Out: Unpin,
+{
+    pub fn size(&self) -> usize {
+        self.0.borrow().len()
+    }
+    /// Get or compute the value for this key. Returns `None` if called recursively.
+    pub fn get<'a>(&'a self, key: In, compute: impl FnOnce(In) -> Out) -> Option<&'a Out> {
+        if !self.0.borrow().contains_key(&key) {
+            self.0.borrow_mut().insert(key.clone(), None);
+            let out = Pin::new(Box::new(compute(key.clone())));
+            self.0.borrow_mut().insert(key.clone(), Some(out));
+        }
+
+        let cache = self.0.borrow();
+        // Important here to first `unwrap` the `Option` created by `get`, then
+        // propagate the potential option stored in the map.
+        let entry = cache.get(&key).unwrap().as_ref()?;
+
+        // SAFETY: because the entry is pinned, it cannot move and this pointer will
+        // only be invalidated if Cache is dropped. The returned reference has a lifetime
+        // equal to Cache, so Cache cannot be dropped before this reference goes out of scope.
+        Some(unsafe { std::mem::transmute::<&'_ Out, &'a Out>(&**entry) })
+    }
+}
+
+impl<In, Out> Default for RecursionBreakingCache<In, Out> {
+    fn default() -> Self {
+        Self(RefCell::new(HashMap::default()))
+    }
+}
+
+pub fn time<R, F: FnOnce() -> R>(msg: &str, f: F) -> R {
+    info!("Starting {msg}");
+    let time = std::time::Instant::now();
+    let r = f();
+    info!("{msg} took {}", humantime::format_duration(time.elapsed()));
+    r
 }

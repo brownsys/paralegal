@@ -5,8 +5,8 @@ extern crate rustc_middle;
 extern crate rustc_span;
 use dfpp::{
     desc::{DataSink, Identifier, ProgramDescription},
-    ir::IsGlobalLocation,
-    serializers::{Bodies, RawGlobalLocation},
+    ir::{GlobalLocationS, IsGlobalLocation, RawGlobalLocation},
+    serializers::Bodies,
     HashSet, Symbol,
 };
 use hir::BodyId;
@@ -14,7 +14,7 @@ use rustc_middle::mir;
 
 use either::Either;
 
-use dfpp::outfile_pls;
+use dfpp::utils::outfile_pls;
 use std::borrow::Cow;
 use std::io::prelude::*;
 
@@ -90,9 +90,26 @@ pub fn install_dfpp() -> bool {
 /// The result is suitable for reading with
 /// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
 pub fn run_dfpp_with_graph_dump() -> bool {
+    run_dfpp_with_graph_dump_and::<_, &str>([])
+}
+
+/// Run dfpp in the current directory, passing the
+/// `--dump-serialized-non-transitive-graph` flag, which dumps a
+/// [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow) for each controller.
+///
+/// The result is suitable for reading with
+/// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
+///
+/// Allows for additional arguments to be passed to dfpp
+pub fn run_dfpp_with_graph_dump_and<I, S>(extra: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     std::process::Command::new("cargo")
         .arg("dfpp")
         .arg("--dump-serialized-non-transitive-graph")
+        .args(extra)
         .status()
         .unwrap()
         .success()
@@ -214,13 +231,13 @@ impl GetCallSites for RawGlobalLocation {
     }
 }
 
-impl GetCallSites for (mir::Location, hir::BodyId) {
+impl GetCallSites for GlobalLocationS {
     fn get_call_sites<'a>(
         &'a self,
         g: &'a SerializableCallOnlyFlow,
     ) -> HashSet<&'a RawGlobalLocation> {
         g.all_locations_iter()
-            .filter(move |l| l.innermost_location_and_body() == *self)
+            .filter(move |l| l.innermost() == *self)
             .collect()
     }
 }
@@ -235,9 +252,9 @@ impl MatchCallSite for RawGlobalLocation {
     }
 }
 
-impl MatchCallSite for (mir::Location, hir::BodyId) {
+impl MatchCallSite for GlobalLocationS {
     fn match_(&self, call_site: &RawGlobalLocation) -> bool {
-        *self == call_site.innermost_location_and_body()
+        *self == call_site.innermost()
     }
 }
 
@@ -261,6 +278,45 @@ impl G {
     /// Direct predecessor nodes of `n`
     fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
         self.predecessors_configurable(n, EdgeSelection::Both)
+    }
+
+    pub fn connects_none_configurable<From: MatchCallSite>(
+        &self,
+        n: &From,
+        dir: EdgeSelection,
+    ) -> bool {
+        self.graph.location_dependencies.iter().all(|(c, deps)| {
+            (!n.match_(c)
+                || dir
+                    .use_data()
+                    .then_some(deps.input_deps.iter())
+                    .into_iter()
+                    .flatten()
+                    .chain(
+                        dir.use_control()
+                            .then_some([&deps.ctrl_deps].into_iter())
+                            .into_iter()
+                            .flatten(),
+                    )
+                    .all(|d| d.is_empty()))
+                && dir
+                    .use_data()
+                    .then_some(deps.input_deps.iter())
+                    .into_iter()
+                    .flatten()
+                    .chain(
+                        dir.use_control()
+                            .then_some([&deps.ctrl_deps].into_iter())
+                            .into_iter()
+                            .flatten(),
+                    )
+                    .flat_map(|d| d.iter())
+                    .all(|d| !n.match_(d))
+        })
+    }
+
+    pub fn connects_none<From: MatchCallSite>(&self, n: &From) -> bool {
+        self.connects_none_configurable(n, EdgeSelection::Both)
     }
 
     fn predecessors_configurable(
@@ -300,6 +356,14 @@ impl G {
         self.connects_configurable(from, to, EdgeSelection::Data)
     }
 
+    pub fn connects_ctrl<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+    ) -> bool {
+        self.connects_configurable(from, to, EdgeSelection::Control)
+    }
+
     /// Is there any path (using directed edges) from `from` to `to`.
     pub fn connects_configurable<From: MatchCallSite, To: GetCallSites>(
         &self,
@@ -328,13 +392,41 @@ impl G {
 
     /// Is there an edge between `from` and `to`. Equivalent to testing if
     /// `from` is in `g.predecessors(to)`.
+    pub fn connects_direct_data<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+    ) -> bool {
+        self.connects_direct_configurable(from, to, EdgeSelection::Data)
+    }
+
     pub fn connects_direct<From: MatchCallSite, To: GetCallSites>(
         &self,
         from: &From,
         to: &To,
     ) -> bool {
+        self.connects_direct_configurable(from, to, EdgeSelection::Both)
+    }
+
+    pub fn connects_direct_ctrl<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+    ) -> bool {
+        self.connects_direct_configurable(from, to, EdgeSelection::Control)
+    }
+
+    fn connects_direct_configurable<From: MatchCallSite, To: GetCallSites>(
+        &self,
+        from: &From,
+        to: &To,
+        typ: EdgeSelection,
+    ) -> bool {
         for to in to.get_call_sites(&self.graph).iter() {
-            if self.predecessors(to).any(|l| from.match_(l)) {
+            if self
+                .predecessors_configurable(to, typ)
+                .any(|l| from.match_(l))
+            {
                 return true;
             }
         }
@@ -358,7 +450,7 @@ impl G {
     }
 
     /// Return all call sites for functions with names matching `pattern`.
-    pub fn function_calls(&self, pattern: &str) -> HashSet<(mir::Location, hir::BodyId)> {
+    pub fn function_calls(&self, pattern: &str) -> HashSet<GlobalLocationS> {
         self.body
             .0
             .iter()
@@ -367,13 +459,16 @@ impl G {
                      .0
                     .iter()
                     .filter(|s| s.1.contains(pattern))
-                    .map(|s| (s.0, *bid))
+                    .map(|s| GlobalLocationS {
+                        function: *bid,
+                        location: s.0,
+                    })
             })
             .collect()
     }
 
     /// Like `function_calls` but requires that only one such call is found.
-    pub fn function_call(&self, pattern: &str) -> (mir::Location, hir::BodyId) {
+    pub fn function_call(&self, pattern: &str) -> GlobalLocationS {
         let v = self.function_calls(pattern);
         assert!(
             v.len() == 1,
@@ -454,8 +549,21 @@ impl PreFrg {
         CtrlRef {
             graph: self,
             ident,
-            ctrl: &self.0.controllers[&ident],
+            ctrl: &self.0.controllers[&self.ctrl_hashed(name)],
         }
+    }
+
+	pub fn ctrl_hashed(&self, name: &str) -> Identifier {
+		self.0.controllers.iter().find(|(id, _)| id.as_str().starts_with(name)).unwrap().0.to_owned()
+	}
+
+    pub fn has_marker(&self, marker: &str) -> bool {
+        let marker = Symbol::intern(marker);
+        self.0.annotations.values().any(|v| {
+            v.0.iter()
+                .filter_map(|a| a.as_label_ann())
+                .any(|m| m.marker == marker)
+        })
     }
 }
 
@@ -530,7 +638,12 @@ impl<'g> CtrlRef<'g> {
                         ctrl: Cow::Borrowed(self),
                     }),
             )
-            .filter(|ref_| ref_.function.ident == ref_.call_site.function)
+            .filter(|ref_| {
+                ref_.call_site
+                    .function
+                    .as_str()
+                    .starts_with(ref_.function.ident.as_str())
+            })
             .collect();
         all.dedup_by_key(|r| r.call_site);
         all

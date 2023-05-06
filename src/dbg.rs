@@ -11,12 +11,9 @@
 use flowistry::indexed::IndexedDomain;
 
 use crate::{
-    ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation},
-    rust::{
-        mir::{self, Place},
-        TyCtxt,
-    },
-    utils::{self, body_name_pls, LocationExt},
+    ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
+    rust::{mir, TyCtxt},
+    utils::{body_name_pls, write_sep},
     HashMap, HashSet,
 };
 extern crate dot;
@@ -70,13 +67,11 @@ pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
     use std::collections::HashSet;
 
-    use flowistry::mir::utils::PlaceExt;
-
     use crate::{
-        ir::{CallOnlyFlow, GlobalFlowGraph, GlobalLocation, IsGlobalLocation, Translation},
+        ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{read_places_with_provenance, AsFnAndArgs, LocationExt, TyCtxtExt},
+        utils::{AsFnAndArgs, DfppBodyExt, LocationExt},
         Either,
     };
 
@@ -98,79 +93,6 @@ pub mod call_only_flow_dot {
         graph: &'g Flow,
         tcx: TyCtxt<'tcx>,
         detailed: bool,
-    }
-
-    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>> for G<'tcx, 'g, GlobalFlowGraph<'tcx, 'g>> {
-        fn nodes(&'a self) -> dot::Nodes<'a, N<'g>> {
-            self.graph
-                .location_states
-                .keys()
-                .chain(
-                    self.graph
-                        .location_states
-                        .values()
-                        .flat_map(|s| s.values().flat_map(|s| s.iter())),
-                )
-                .cloned()
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .map(Some)
-                .chain([None])
-                .collect::<Vec<_>>()
-                .into()
-        }
-
-        fn edges(&'a self) -> dot::Edges<'a, E<'g>> {
-            self.graph
-                .location_states
-                .iter()
-                .flat_map(|(&to, deps)| {
-                    let (loc, body) = to.innermost_location_and_body();
-                    let body_with_facts = self.tcx.body_for_body_id(body);
-                    if loc.is_real(body_with_facts.simplified_body()) {
-                        Some(
-                            read_places_with_provenance(
-                                loc,
-                                &body_with_facts.simplified_body().stmt_at(loc),
-                                self.tcx,
-                            )
-                            .flat_map(move |p| {
-                                match deps.resolve(
-                                    p.normalize(
-                                        self.tcx,
-                                        self.tcx
-                                            .hir()
-                                            .body_owner_def_id(to.innermost_location_and_body().1)
-                                            .to_def_id(),
-                                    ),
-                                ) {
-                                    Translation::Missing => panic!(),
-                                    Translation::Found((_, d)) => Box::new(d) as Box<dyn Iterator<Item=GlobalLocation<'g>>>,
-                                    Translation::Unchanged(u) => Box::new(u) as Box<_>,
-                                }
-                            }),
-                        )
-                    } else {
-                        None
-                    }
-                    .into_iter()
-                    .flatten()
-                    .map(Some)
-                    .map(move |from| E {
-                        from,
-                        to: Some(to),
-                        into: To::None,
-                    })
-                })
-                .collect::<Vec<_>>()
-                .into()
-        }
-        fn source(&'a self, edge: &E<'g>) -> N<'g> {
-            edge.from
-        }
-        fn target(&'a self, edge: &E<'g>) -> N<'g> {
-            edge.to
-        }
     }
 
     impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>>
@@ -261,8 +183,11 @@ pub mod call_only_flow_dot {
 
         fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
             use std::fmt::Write;
-            let (loc, body_id) = if let Some(n) = n {
-                n.innermost_location_and_body()
+            let GlobalLocationS {
+                location: loc,
+                function: body_id,
+            } = if let Some(n) = n {
+                n.innermost()
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
@@ -281,15 +206,15 @@ pub mod call_only_flow_dot {
                         write!(
                             s,
                             "@{:?}:{}",
-                            l.location().block,
-                            l.location().statement_index
+                            l.outermost_location().block,
+                            l.outermost_location().statement_index
                         )?;
                     }
                 };
                 let stmt = if !loc.is_real(body) {
                     None
                 } else {
-                    Some(body.stmt_at(loc))
+                    Some(body.stmt_at_better_err(loc))
                 };
                 let typ = if let Some(ref stmt) = stmt {
                     if stmt.is_left() {
@@ -383,156 +308,9 @@ pub mod call_only_flow_dot {
     }
 }
 
-pub struct PrintableGranularFlow<'a, 'g, 'tcx> {
-    pub flow: &'a GlobalFlowGraph<'tcx, 'g>,
-    pub tcx: TyCtxt<'tcx>,
-}
-
 impl<'g> GlobalLocation<'g> {
-    pub fn iter(self) -> impl Iterator<Item = GlobalLocation<'g>> {
-        std::iter::successors(Some(self), |l| l.next().cloned())
-    }
-}
-
-/// Formatting for global locations that works independent of whether it is an
-/// interned or inlined location.
-fn format_global_location<T: IsGlobalLocation>(
-    t: &T,
-    f: &mut std::fmt::Formatter<'_>,
-) -> std::fmt::Result {
-    let mut v = std::iter::successors(Some(t), |l| l.next()).collect::<Vec<_>>();
-    v.reverse();
-    let mut is_first = true;
-    while let Some(next) = v.pop() {
-        if is_first {
-            is_first = false;
-        } else {
-            write!(f, "@")?;
-        }
-        write!(
-            f,
-            "{:?}[{}]",
-            next.location().block,
-            next.location().statement_index
-        )?;
-    }
-    Ok(())
-}
-
-impl<'g> std::fmt::Display for GlobalLocation<'g> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        format_global_location(self, f)
-    }
-}
-
-/// A [`crate::ir::GlobalDepMatrix`] that can be `Display`ed with
-/// an indent.
-pub struct PrintableDependencyMatrix<'a, 'g, 'tcx>(&'a crate::ir::GlobalDepMatrix<'tcx, 'g>, usize);
-
-impl<'a, 'g, 'tcx> PrintableDependencyMatrix<'a, 'g, 'tcx> {
-    pub fn new(map: &'a crate::ir::GlobalDepMatrix<'tcx, 'g>, indent: usize) -> Self {
-        Self(map, indent)
-    }
-}
-
-impl<'a, 'g, 'tcx> std::fmt::Display for PrintableDependencyMatrix<'a, 'g, 'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        format_dependency_matrix(f, self.0.iter().map(|(k, v)| (*k, false, v)), self.1)
-    }
-}
-
-/// Helper function for the [`std::fmt::Display`] implementation on
-/// [`PrintableDependencyMatrix`]
-pub fn format_dependency_matrix<
-    'tcx,
-    'g,
-    I: IntoIterator<Item = (Place<'tcx>, bool, &'g HashSet<GlobalLocation<'g>>)>,
->(
-    f: &mut std::fmt::Formatter<'_>,
-    it: I,
-    indent: usize,
-) -> std::fmt::Result {
-    for (place, read, deps) in it {
-        write!(
-            f,
-            "{:>indent$}{:15} -> ",
-            if read { "> " } else { "" },
-            format!("{place:?}")
-        )?;
-        let mut is_first = true;
-        write!(f, "{{")?;
-        for dep in deps {
-            if !is_first {
-                write!(f, ", ")?;
-            } else {
-                is_first = false;
-            }
-            write!(f, "{dep}")?;
-        }
-        writeln!(f, "}}")?;
-    }
-    Ok(())
-}
-
-impl<'a, 'tcx, 'g> std::fmt::Debug for PrintableGranularFlow<'a, 'g, 'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut locs = self.flow.location_states.keys().collect::<Vec<_>>();
-        locs.sort();
-        for loc in locs {
-            let deps = &self.flow.location_states[loc];
-            write!(f, "  {}", loc)?;
-            let (inner_location, inner_body) = loc.innermost_location_and_body();
-            let body = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
-                self.tcx,
-                self.tcx.hir().body_owner_def_id(inner_body),
-            );
-            let places_read = if !inner_location.is_real(body.simplified_body()) {
-                write!(f, " is argument {}", inner_location.statement_index - 1)?;
-                HashSet::new()
-            } else if deps.is_translated() {
-                HashSet::new()
-            } else {
-                utils::read_places_with_provenance(
-                    inner_location,
-                    &body.simplified_body().stmt_at(inner_location),
-                    self.tcx,
-                )
-                .collect()
-            };
-            writeln!(f)?;
-            let empty_set = HashSet::new();
-            format_dependency_matrix(
-                f,
-                places_read
-                    .iter()
-                    .cloned()
-                    .map(|p| (p, true, deps.resolve_set(p).unwrap_or(&empty_set)))
-                    .chain({
-                        let mut keys = deps
-                            .matrix_raw()
-                            .keys()
-                            .cloned()
-                            .filter(|k| !places_read.contains(k))
-                            .collect::<Vec<_>>();
-                        keys.sort_by_key(|p| p.local);
-                        keys.into_iter()
-                            .map(|k| (k, false, deps.matrix_raw().get(&k).unwrap()))
-                    }),
-                6,
-            )?;
-            if let Some(m) = deps.translator() {
-                writeln!(f, "    Also translates places as")?;
-                for (k, v) in m.iter() {
-                    writeln!(
-                        f,
-                        "      {:15} -> {:15}",
-                        format!("{k:?}"),
-                        format!("{v:?}")
-                    )?;
-                }
-            }
-        }
-        Ok(())
+    pub fn iter(&self) -> impl Iterator<Item = GlobalLocationS> + '_ {
+        self.as_slice().iter().copied()
     }
 }
 
@@ -568,7 +346,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                         .flat_map(|s| s.iter().cloned()),
                 )
             })
-            .map(|l| l.innermost_location_and_body().1)
+            .map(|l| l.innermost_function())
             .collect::<HashSet<crate::rust::hir::BodyId>>()
             .into_iter()
             .map(|bid| {

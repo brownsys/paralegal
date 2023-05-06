@@ -105,6 +105,7 @@ fn get_user_data_with(data: Vec<i64>) -> UserData {
     return UserData { data };
 }
 
+#[dfpp::label(noinline)]
 fn get_other_data() -> Vec<i64> {
     return vec![1, 2, 3]
 }
@@ -186,4 +187,53 @@ fn send_user_data(user_data: &UserData) {}
 
 fn main() {
     println!("Hello, world!");
+}
+
+#[dfpp::analyze]
+fn control_flow_tracking_for_non_fn_compound_conditions() {
+    let a_val = new_s();
+    let another_thing = input();
+    // This also works with a simpler condition (e.g. `false`) after the `&&`,
+    // but I want to avoid the potential of a compiler optimization getting
+    // clever and making this pass, hence the complexity.
+    if source() > 8 && another_thing < 9 {
+        read_t(&a_val);
+    }
+}
+
+#[dfpp::analyze]
+fn control_flow_tracking_for_compound_cond_with_fun() {
+    let a_val = new_s();
+    if source() > 8 && input() < 9 {
+        read_t(&a_val);
+    }
+}
+
+
+
+#[dfpp::analyze]
+fn control_flow_tracking_overtaint() {
+    let early_val = input();
+    let late_val = source();
+    let a_val = new_s();
+    if early_val > 9 {
+        if late_val < 70 {
+            read_t(&a_val);
+        }
+    }
+}
+
+#[dfpp::analyze]
+fn and_desugaring_similar_pattern() {
+    let a_val = new_s();
+    let first_dep = input();
+    let mut second_dep : i32;
+    if first_dep == 8 {
+        second_dep = source();
+    } else {
+        second_dep = 0;
+    }
+    if second_dep > 9 {
+        read_t(&a_val);
+    }
 }

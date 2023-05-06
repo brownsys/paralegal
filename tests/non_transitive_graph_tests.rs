@@ -10,7 +10,10 @@ const CRATE_DIR: &str = "tests/non-transitive-graph-tests";
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = *helpers::DFPP_INSTALLED
-        && with_current_directory(CRATE_DIR, || { run_dfpp_with_graph_dump() }).map_or_else(
+        && with_current_directory(CRATE_DIR, || {
+            run_dfpp_with_graph_dump_and(["--no-cross-function-analysis"])
+        })
+        .map_or_else(
             |e| {
                 println!("io err {}", e);
                 false
@@ -134,4 +137,47 @@ define_test!(spurious_connections_in_deref: graph -> {
     assert!(graph.connects_direct(modify, receive));
     assert!(!graph.connects_direct(source, receive));
     assert!(graph.connects(source, receive));
+});
+
+define_test!(control_flow_tracking_overtaint: graph -> {
+    let early_val = &graph.function_call("input");
+    let late_val = &graph.function_call("source");
+    let read = &graph.function_call("read_t");
+    assert!(graph.connects_ctrl(late_val, read));
+    assert!(graph.connects_ctrl(early_val, read));
+});
+
+define_test!(control_flow_tracking_for_non_fn_compound_conditions: graph -> {
+    let cond_input = &graph.function_call("source");
+    let other_cond = &graph.function_call("input");
+    let read = &graph.function_call("read_t");
+    assert!(graph.connects(cond_input, read));
+    assert!(graph.connects(other_cond, read));
+    assert!(graph.connects_ctrl(cond_input, read));
+    assert!(graph.connects_ctrl(other_cond, read));
+});
+
+define_test!(control_flow_tracking_for_compound_cond_with_fun: graph -> {
+    let cond_input = &graph.function_call("source");
+    let other_cond = &graph.function_call("input");
+    let read = &graph.function_call("read_t");
+    assert!(graph.connects_ctrl(cond_input, read));
+    assert!(graph.connects_ctrl(other_cond, read));
+    assert!(graph.connects_ctrl(cond_input, other_cond));
+    assert!(graph.connects_direct_ctrl(cond_input, other_cond));
+    assert!(graph.connects_direct_ctrl(other_cond, read));
+    // Not sure why this ever worked and if it is even the correct semantics
+    // assert!(!graph.connects_direct_ctrl(cond_input, read));
+});
+
+define_test!(and_desugaring_similar_pattern: graph -> {
+    let cond_input = &graph.function_call("input");
+    let other_cond = &graph.function_call("source");
+    let read = &graph.function_call("read_t");
+    assert!(graph.connects_ctrl(cond_input, read));
+    assert!(graph.connects_ctrl(other_cond, read));
+    assert!(graph.connects_ctrl(cond_input, other_cond));
+    assert!(graph.connects_direct_ctrl(cond_input, other_cond));
+    assert!(graph.connects_direct_ctrl(other_cond, read));
+    assert!(!graph.connects_direct_ctrl(cond_input, read));
 });

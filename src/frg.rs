@@ -6,11 +6,14 @@
 
 extern crate pretty;
 
-use crate::{desc::CallSite, HashSet};
+use std::hash::Hash;
+
+use crate::{utils::short_hash_pls, HashSet};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
-    Annotation, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription, Relation,
+    Annotation, CallSite, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription,
+    Relation,
 };
 
 use self::name::Qualifier;
@@ -53,7 +56,11 @@ where
     A: 'a,
 {
     #[inline]
-    fn forge_relation<I, LIter, RIter>(&'a self, rel: I) -> DocBuilder<'a, Self, A>
+    fn forge_relation_with_arity<I, LIter, RIter>(
+        &'a self,
+        arity: usize,
+        rel: I,
+    ) -> DocBuilder<'a, Self, A>
     where
         I: IntoIterator<Item = (LIter, RIter)>,
         LIter: IntoIterator,
@@ -62,6 +69,7 @@ where
         RIter::Item: Pretty<'a, Self, A>,
         DocBuilder<'a, Self, A>: Clone,
     {
+        assert!(arity > 1);
         let mut prit = rel
             .into_iter()
             .filter_map(|(l, r)| {
@@ -82,8 +90,21 @@ where
         if prit.peek().is_some() {
             self.intersperse(prit, self.text(" +").append(self.hardline()))
         } else {
-            self.text("none->none")
+            self.intersperse(std::iter::repeat("none").take(arity), "->")
         }
+    }
+
+    #[inline]
+    fn forge_relation<I, LIter, RIter>(&'a self, rel: I) -> DocBuilder<'a, Self, A>
+    where
+        I: IntoIterator<Item = (LIter, RIter)>,
+        LIter: IntoIterator,
+        LIter::Item: Pretty<'a, Self, A>,
+        RIter: IntoIterator,
+        RIter::Item: Pretty<'a, Self, A>,
+        DocBuilder<'a, Self, A>: Clone,
+    {
+        self.forge_relation_with_arity(2, rel)
     }
 }
 
@@ -203,10 +224,9 @@ fn call_site_as_forge<'b, A, D: DocAllocator<'b, A>>(
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.text(format!(
-            "{}_b{}_i{}",
+            "{}_{:x}",
             self.function.as_str(),
-            self.location.block.as_usize(),
-            self.location.statement_index,
+            short_hash_pls(&self.location),
         ))
     }
 }
@@ -412,7 +432,7 @@ impl ProgramDescription {
             .values()
             .flat_map(|v| v.0.iter())
             .filter_map(Annotation::as_label_ann)
-            .map(|a| a.label)
+            .map(|a| a.marker)
             .chain(std::iter::once(crate::Symbol::intern(
                 name::EXCEPTIONS_LABEL,
             )))
@@ -442,6 +462,7 @@ impl ProgramDescription {
                     .0
                     .keys()
                     .chain(ctrl.types.0.keys())
+                    .chain(ctrl.ctrl_flow.0.keys())
                     .filter_map(|src| src.as_argument())
                     .map(move |position| FormalParameter {
                         function,
@@ -523,23 +544,25 @@ impl ProgramDescription {
                                             &function.function == id
                                                 && a.refinement
                                                     .on_argument()
-                                                    .contains(&(*arg_slot as u16))
+                                                    .is_set(*arg_slot as u32)
                                         )
                                     })
                                     .map(|s| s.as_forge(alloc)),
                             )
                             .chain([id.as_forge(alloc)])
-                            .chain(a.refinement.on_argument().iter().map(|slot| {
-                                FormalParameter {
-                                    function: *id,
-                                    position: *slot,
-                                }
-                                .as_forge(alloc)
-                            }))
+                            .chain(a.refinement.on_argument().into_iter_set_in_domain().map(
+                                |slot| {
+                                    FormalParameter {
+                                        function: *id,
+                                        position: slot as u16,
+                                    }
+                                    .as_forge(alloc)
+                                },
+                            ))
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
                             .into_iter(),
-                            std::iter::once(Identifier::new(a.label).as_forge(alloc)),
+                            std::iter::once(Identifier::new(a.marker).as_forge(alloc)),
                         )
                     })
             }))
@@ -767,7 +790,7 @@ where
                             alloc.text(name::FLOW).append(" = ").append(
                                 alloc.hardline().append(
                                     alloc
-                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                        .forge_relation_with_arity(3, self.controllers.iter().map(|(e, ctrl)| {
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(alloc.hardline().append(
@@ -790,7 +813,7 @@ where
                             alloc.text(name::CTRL_FLOW).append(" = ").append(
                                 alloc.hardline().append(
                                     alloc
-                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                        .forge_relation_with_arity(3, self.controllers.iter().map(|(e, ctrl)| {
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(
@@ -822,7 +845,7 @@ where
                             alloc.text(name::TYPES).append(" = ").append(
                                 alloc.hardline().append(
                                     alloc
-                                        .forge_relation(self.controllers.iter().map(|(e, ctrl)| {
+                                        .forge_relation_with_arity(3, self.controllers.iter().map(|(e, ctrl)| {
                                             (
                                                 std::iter::once(e.as_forge(alloc)),
                                                 std::iter::once(ctrl.make_types_relation(alloc, *e)),
@@ -879,15 +902,15 @@ where
                             alloc.text(name::FORMAL_PARAMETER_ANNOTATION).append(" = ").append(
                                 alloc.hardline()
                                 .append(
-                                    alloc.forge_relation(
+                                    alloc.forge_relation_with_arity(3,
                                         self.annotations.iter()
                                             .flat_map(|(ident, (anns, _))|
                                                 anns.iter().filter_map(Annotation::as_label_ann)
                                                     .flat_map(|label| 
-                                                        label.refinement.on_argument().iter().map(|i| 
+                                                        label.refinement.on_argument().into_iter_set_in_domain().map(|i| 
                                                             (
-                                                                std::iter::once(FormalParameter { position: *i, function: *ident }.as_forge(alloc)), 
-                                                                std::iter::once(ident.as_forge(alloc).append("->").append(label.label.as_str())))))
+                                                                std::iter::once(FormalParameter { position: i as u16, function: *ident }.as_forge(alloc)), 
+                                                                std::iter::once(ident.as_forge(alloc).append("->").append(label.marker.as_str())))))
                                                     
                                             )   
                                     )

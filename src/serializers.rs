@@ -1,4 +1,4 @@
-//! JSON serializers, most used for debugging output in [`crate::dbg`].
+//! [`serde`] serializers, most used for JSON debugging output in [`crate::dbg`].
 //!
 //! The proxy structs are foreign serializers for their non-proxy counterparts,
 //! see <https://serde.rs/remote-derive.html> for more information. As a naming
@@ -16,11 +16,11 @@
 use serde::Deserialize;
 
 use crate::{
-    ir::{CallDeps, CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
+    ir::{CallDeps, CallOnlyFlow, GlobalLocation, RawGlobalLocation},
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
-    utils::{extract_places, read_places_with_provenance},
+    utils::{extract_places, read_places_with_provenance, DfppBodyExt},
     Either, HashMap, HashSet, Symbol,
 };
 
@@ -205,7 +205,7 @@ impl BodyProxy {
                     (
                         loc,
                         stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
-                        read_places_with_provenance(loc, &body.stmt_at(loc), tcx)
+                        read_places_with_provenance(loc, &body.stmt_at_better_err(loc), tcx)
                             .map(|p| Symbol::intern(&format!("{p:?}")))
                             .collect(),
                     )
@@ -346,33 +346,6 @@ pub struct BodyIdProxy {
 /// structure.
 #[derive(Serialize, Deserialize)]
 pub struct BodyIdProxy2(#[serde(with = "BodyIdProxy")] pub hir::BodyId);
-
-/// A serializable non-interned version of [`GlobalLocation`].
-///
-/// Thanks to the [`IsGlobalLocation`] trait you can use this the same way as a
-/// [`GlobalLocation`]. Though be aware that this struct is significantly larger
-/// in memory as it contains a singly-linked list of call chains that is not
-/// interned.
-///
-/// For information on the meaning of this struct see [`GlobalLocation`]
-#[derive(Deserialize, Serialize, PartialEq, Eq, Hash)]
-pub struct RawGlobalLocation(Box<GlobalLocationS<RawGlobalLocation>>);
-
-impl<'g> From<&'_ GlobalLocation<'g>> for RawGlobalLocation {
-    fn from(other: &GlobalLocation<'g>) -> Self {
-        RawGlobalLocation(Box::new(GlobalLocationS {
-            function: other.function(),
-            next: other.next().map(|o| o.into()),
-            location: other.location(),
-        }))
-    }
-}
-
-impl IsGlobalLocation for RawGlobalLocation {
-    fn as_global_location_s(&self) -> &GlobalLocationS<RawGlobalLocation> {
-        &self.0
-    }
-}
 
 impl<'g> Serialize for GlobalLocation<'g> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
