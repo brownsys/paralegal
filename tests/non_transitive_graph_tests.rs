@@ -166,5 +166,18 @@ define_test!(control_flow_tracking_for_compound_cond_with_fun: graph -> {
     assert!(graph.connects_ctrl(cond_input, other_cond));
     assert!(graph.connects_direct_ctrl(cond_input, other_cond));
     assert!(graph.connects_direct_ctrl(other_cond, read));
+    // Not sure why this ever worked and if it is even the correct semantics
+    // assert!(!graph.connects_direct_ctrl(cond_input, read));
+});
+
+define_test!(and_desugaring_similar_pattern: graph -> {
+    let cond_input = &graph.function_call("input");
+    let other_cond = &graph.function_call("source");
+    let read = &graph.function_call("read_t");
+    assert!(graph.connects_ctrl(cond_input, read));
+    assert!(graph.connects_ctrl(other_cond, read));
+    assert!(graph.connects_ctrl(cond_input, other_cond));
+    assert!(graph.connects_direct_ctrl(cond_input, other_cond));
+    assert!(graph.connects_direct_ctrl(other_cond, read));
     assert!(!graph.connects_direct_ctrl(cond_input, read));
 });

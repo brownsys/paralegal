@@ -480,30 +480,75 @@ fn recursive_ctrl_deps<
                 }
                 dependencies.extend(deps);
 
+                if let Some(mut switch_deps) = ctrl_ana.dependent_on(block).cloned() {
+                    switch_deps.subtract(&seen);
+                    queue.extend(switch_deps.iter());
+                }
+
                 // This is where things go off the rails. 
                 //
                 // The reason this is so complicated is because rustc desugars
                 // `&&` and `||` in an annoying way. The details are explained
                 // in
                 // https://www.notion.so/justus-adam/Control-flow-with-non-fn-statement-does-not-create-the-ctrl_flow-relation-correctly-3993e8fd86d54f51bfa75fde447b81ec
-                let mut predecessor_queue = vec![block];
-                while let Some(block) = predecessor_queue.pop() {
-                        if let Some(mut transitives) = ctrl_ana.dependent_on(block).cloned() {
-                        debug!(
-                            "Transitive ctrl flow depends from {block:?} on {:?}",
-                            transitives.iter().collect::<Vec<_>>()
-                        );
-                        transitives.subtract(&seen);
-                        debug!(
-                            "Which is {:?} after subtracting seen",
-                            transitives.iter().collect::<Vec<_>>()
-                        );
-                        queue.extend(transitives.iter());
-                    } else {
-                        let preds = &body.predecessors()[block];
-                        predecessor_queue.extend(
-                            preds.into_iter().filter(|&&p| !seen.contains(p))
-                        )
+                let predecessors = &body.predecessors()[block];
+                if predecessors.len() > 1 {
+                    enum SetResult<A> {
+                        Uninit,
+                        Unequal,
+                        Set(A)
+                    }
+                    if let SetResult::Set(parent_deps) = {
+                        use mir::visit::Visitor;
+                        struct AssignsCheck<'tcx>{ 
+                            target: mir::Place<'tcx>,
+                            was_assigned: bool,
+                        }
+                        impl <'tcx> Visitor<'tcx> for AssignsCheck<'tcx> {
+                            fn visit_assign(&mut self,place: &mir::Place<'tcx>,_rvalue: &mir::Rvalue<'tcx>,_location:Location) {
+                                self.was_assigned |= *place == self.target;
+                            }
+                            fn visit_terminator(&mut self,terminator: &mir::Terminator<'tcx>,_location:Location) {
+                                match terminator.kind {
+                                    mir::TerminatorKind::Call { destination: Some((dest, _)), .. } => self.was_assigned |= dest == self.target,
+                                    _ => (),
+                                }
+                            }
+                        }
+
+                        dbg!(predecessors).iter().fold(SetResult::Uninit, |prev_deps, &block| {
+                            if matches!(prev_deps, SetResult::Unequal) {
+                                debug!("Already unequal");
+                                return SetResult::Unequal;
+                            }
+                            let ctrl_deps = if let Some(ctrl_deps) = ctrl_ana.dependent_on(block) {
+                                ctrl_deps
+                            } else {
+                                debug!("No Deps");
+                                return SetResult::Unequal;
+                            };
+                            let data = &body.basic_blocks()[block];
+                            let mut check = AssignsCheck {
+                                target: discr_place,
+                                was_assigned: false,
+                            };
+                            check.visit_basic_block_data(block, data);
+                            if !check.was_assigned {
+                                debug!("{discr_place:?} not assigned");
+                                return SetResult::Unequal;
+                            }
+                            match prev_deps { 
+                                SetResult::Uninit => SetResult::Set(ctrl_deps),
+                                SetResult::Set(other) if dbg!(!(dbg!(other).superset(dbg!(ctrl_deps)))) || dbg!(!ctrl_deps.superset(other)) => {
+                                    debug!("Unequal");
+                                    SetResult::Unequal
+                                },
+                                _ => prev_deps
+                            } 
+                        })
+                    } {
+                        debug!("Also exploring parents {parent_deps:?}");
+                        queue.extend(parent_deps.iter());
                     }
                 }
             }

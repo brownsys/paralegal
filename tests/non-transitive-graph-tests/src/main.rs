@@ -222,3 +222,18 @@ fn control_flow_tracking_overtaint() {
         }
     }
 }
+
+#[dfpp::analyze]
+fn and_desugaring_similar_pattern() {
+    let a_val = new_s();
+    let first_dep = input();
+    let mut second_dep : i32;
+    if first_dep == 8 {
+        second_dep = source();
+    } else {
+        second_dep = 0;
+    }
+    if second_dep > 9 {
+        read_t(&a_val);
+    }
+}
