@@ -465,6 +465,7 @@ fn recursive_ctrl_deps<
     let mut queue = seen.iter().collect::<Vec<_>>();
     let mut dependencies = Dependencies::new();
     while let Some(block) = queue.pop() {
+        seen.insert(block);
         let terminator = body.basic_blocks()[block].terminator();
         if let mir::TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
             if let Some(discr_place) = discr.place() {
@@ -516,7 +517,7 @@ fn recursive_ctrl_deps<
                             }
                         }
 
-                        dbg!(predecessors).iter().fold(SetResult::Uninit, |prev_deps, &block| {
+                        predecessors.iter().fold(SetResult::Uninit, |prev_deps, &block| {
                             if matches!(prev_deps, SetResult::Unequal) {
                                 debug!("Already unequal");
                                 return SetResult::Unequal;
@@ -539,7 +540,7 @@ fn recursive_ctrl_deps<
                             }
                             match prev_deps { 
                                 SetResult::Uninit => SetResult::Set(ctrl_deps),
-                                SetResult::Set(other) if dbg!(!(dbg!(other).superset(dbg!(ctrl_deps)))) || dbg!(!ctrl_deps.superset(other)) => {
+                                SetResult::Set(other) if !other.superset(ctrl_deps) || !ctrl_deps.superset(other) => {
                                     debug!("Unequal");
                                     SetResult::Unequal
                                 },
