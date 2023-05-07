@@ -476,13 +476,11 @@ pub fn body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Ident {
                 })
             )
             .then(|| {
-                map.get(map.enclosing_body_owner(map.local_def_id_to_hir_id(def_id)))
-                    .ident()
-                    .map(|id| Ident::from_str(&(id.as_str().to_string() + "_closure")))
+                let owner = map.enclosing_body_owner(map.local_def_id_to_hir_id(def_id));
+                Ident::from_str(&(body_name_pls(tcx, owner).to_string() + "_closure"))
             })
-            .flatten()
         })
-        .unwrap()
+        .unwrap_or_else(|| panic!("Node {node:?} could not be named"))
 }
 
 /// Gives a string name for this i that is free of name clashes, as it
@@ -689,7 +687,15 @@ pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> I
 	let did = did.into_def_id(tcx);
     Identifier::from_str(&format!(
         "{}_{:x}",
-        tcx.item_name(did),
+        tcx.opt_item_name(did)
+            .or_else(|| {
+                use hir::def::DefKind::*;
+                match tcx.def_kind(did) {
+                    OpaqueTy => Some(Symbol::intern("opaque")),
+                    _ => None
+                }
+            })
+            .unwrap_or_else(|| panic!("Could not name {} {:?}", tcx.def_path_debug_str(did), tcx.def_kind(did))),
         short_hash_pls(did),
     ))
 }

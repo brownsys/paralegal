@@ -33,6 +33,9 @@ pub struct Args {
     /// Emit warnings instead of aborting the analysis on sanity checks
     #[clap(long, env = "DFPP_RELAXED")]
     relaxed: bool,
+
+    #[clap(long, env = "DFPP_TARGET")]
+    target: Option<String>,
     /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis")]
     anactrl: AnalysisCtrl,
@@ -69,6 +72,9 @@ impl<'a> LogLevelConfig<'a> {
 }
 
 impl Args {
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_ref().map(|s| s.as_str())
+    }
     /// Returns the configuration specified for the `--debug` option
     pub fn debug(&self) -> Cow<'_, LogLevelConfig<'_>> {
         Cow::Owned(match &self.debug_target {
