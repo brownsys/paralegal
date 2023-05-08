@@ -363,6 +363,16 @@ impl CallSite {
     }
 }
 
+impl std::string::ToString for CallSite {
+    fn to_string(&self) -> String {
+        format!(
+            "cs_{}_{:x}",
+            self.function.as_str(),
+            crate::utils::short_hash_pls(&self.location),
+        )
+    }
+}
+
 /// A representation of something that can emit data into the flow.
 ///
 /// Convenience match functions are provided (for use e.g. in

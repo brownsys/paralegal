@@ -222,16 +222,12 @@ fn call_site_as_forge<'b, A, D: DocAllocator<'b, A>>(
     alloc: &'b D,
     function: &'b CallSite,
 ) -> DocBuilder<'b, D, A> {
-    alloc.text("`cs_").append(function.as_forge(alloc))
+    alloc.text("`").append(function.to_string())
 }
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
     fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
-        alloc.text(format!(
-            "{}_{:x}",
-            self.function.as_str(),
-            short_hash_pls(&self.location),
-        ))
+        call_site_as_forge(alloc, self)
     }
 }
 

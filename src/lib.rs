@@ -116,6 +116,12 @@ struct Callbacks {
 
 type RawExternalMarkers = HashMap<String, Vec<desc::MarkerAnnotation>>;
 
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct AdditionalInfo {
+    #[serde(with = "crate::serializers::serde_map_via_vec")]
+    pub call_sites: HashMap<String, desc::CallSite>,
+}
+
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
         config.override_queries = Some(borrowck_facts::override_queries);
@@ -169,6 +175,17 @@ impl rustc_driver::Callbacks for Callbacks {
                 doc.render(100, &mut outf)?;
                 let mut outf_2 = outfile_pls(self.opts.result_path())?;
                 doc.render(100, &mut outf_2)?;
+
+                let info_path = compiler.build_output_filenames(&*compiler.session(), &[])
+                    .with_extension("info.json");
+                let info = AdditionalInfo {
+                    call_sites: desc.all_call_sites().into_iter().map(|cs| (cs.to_string(), cs.clone())).collect()
+                };
+                serde_json::to_writer(outfile_pls(info_path)?, &info)?;
+
+                let info_path2 = self.opts.result_path().with_extension("info.json");
+
+                serde_json::to_writer(outfile_pls(info_path2)?, &info)?;
                 warn!("Due to potential overwrite issues with --result-path (with multiple targets in a crate) outputs were written to {} and {}", self.opts.result_path().display(), &result_path.display());
                 Ok::<_, std::io::Error>(rustc_driver::Compilation::Stop)
             })
