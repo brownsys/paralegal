@@ -284,6 +284,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
         let recurse_selector = SkipAnnotatedFunctionSelector {
             marked_objects: self.marked_objects.clone(),
+            external_annotations: &self.external_annotations,
             tcx,
         };
 
@@ -395,11 +396,13 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
 /// inlining for all `LocalDefId` values that are found in the map of
 /// `self.marked_objects` i.e. all those functions that have annotations.
 #[derive(Clone)]
-struct SkipAnnotatedFunctionSelector<'tcx> {
+struct SkipAnnotatedFunctionSelector<'tcx, 's> {
     marked_objects: crate::discover::MarkedObjects,
     tcx: TyCtxt<'tcx>,
+    external_annotations: &'s crate::discover::ExternalMarkers,
 }
-impl<'tcx> inline::Oracle<'tcx> for SkipAnnotatedFunctionSelector<'tcx> {
+
+impl<'tcx, 's> inline::Oracle<'tcx, 's> for SkipAnnotatedFunctionSelector<'tcx, 's> {
     fn should_inline(&self, did: LocalDefId) -> bool {
         self.marked_objects
             .as_ref()
@@ -409,6 +412,10 @@ impl<'tcx> inline::Oracle<'tcx> for SkipAnnotatedFunctionSelector<'tcx> {
     }
 
     fn is_semantically_meaningful(&self, did: DefId) -> bool {
-        matches!(did.as_local(), Some(l) if !self.should_inline(l))
+        if let Some(l) = did.as_local() {
+            !self.should_inline(l)
+        } else {
+            self.external_annotations.contains_key(&did)
+        }
     }
 }

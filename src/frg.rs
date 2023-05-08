@@ -8,7 +8,11 @@ extern crate pretty;
 
 use std::hash::Hash;
 
-use crate::{utils::short_hash_pls, HashSet};
+use crate::{
+    ir::IsGlobalLocation,
+    utils::{short_hash_pls, IntoDefId},
+    HashSet, TyCtxt,
+};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
@@ -671,11 +675,15 @@ impl Ctrl {
     }
 }
 
-impl<'a, A: 'a + Clone, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a ProgramDescription
-where
-    D::Doc: Clone,
-{
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+impl ProgramDescription {
+    pub fn serialize_forge<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
+        &'a self,
+        alloc: &'a D,
+        tcx: TyCtxt,
+    ) -> DocBuilder<'a, D, A>
+    where
+        D::Doc: Clone,
+    {
         alloc.lines([
             alloc.text("#lang forge"),
             alloc.nil(),
@@ -689,6 +697,16 @@ where
             make_forge_sigs(alloc),
             alloc.nil(),
             self.make_label_sigs(alloc),
+            alloc.nil(),
+            alloc.lines(
+                self.all_call_sites().into_iter().map(|cs| {
+                    alloc.lines(
+                        [alloc.text("// ").append(cs.as_forge(alloc)).append(": "),
+                                alloc.text("//     ").append(format!("{:?}", tcx.def_path_debug_str(cs.location.innermost_function().into_def_id(tcx)))),
+                                alloc.text("//     ").append(format!("{}", cs.location)),
+                        ])
+                })
+            ),
             alloc.nil(),
             alloc
                 .text("inst ")

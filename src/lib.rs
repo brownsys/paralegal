@@ -84,8 +84,6 @@ pub mod consts;
 
 pub use args::{AnalysisCtrl, Args, DbgArgs, ModelCtrl};
 
-use frg::ToForge;
-
 use crate::utils::outfile_pls;
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
@@ -143,38 +141,38 @@ impl rustc_driver::Callbacks for Callbacks {
             } else {
                 HashMap::new()
             };
-        let mut desc = queries
+        queries
             .global_ctxt()
             .unwrap()
             .take()
             .enter(|tcx| {
-                discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run()
+                let desc = discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run()?;
+                if self.opts.dbg().dump_serialized_flow_graph() {
+                    serde_json::to_writer(
+                        &mut std::fs::OpenOptions::new()
+                            .truncate(true)
+                            .create(true)
+                            .write(true)
+                            .open(consts::FLOW_GRAPH_OUT_NAME)
+                            .unwrap(),
+                        &desc,
+                    )
+                    .unwrap();
+                }
+                info!("All elems walked");
+                let result_path = compiler
+                    .build_output_filenames(&*compiler.session(), &[])
+                    .with_extension("ana.frg");
+                let mut outf = outfile_pls(&result_path)?;
+                let doc_alloc = pretty::BoxAllocator;
+                let doc: DocBuilder<_, ()> = desc.serialize_forge(&doc_alloc, tcx);
+                doc.render(100, &mut outf)?;
+                let mut outf_2 = outfile_pls(self.opts.result_path())?;
+                doc.render(100, &mut outf_2)?;
+                warn!("Due to potential overwrite issues with --result-path (with multiple targets in a crate) outputs were written to {} and {}", self.opts.result_path().display(), &result_path.display());
+                Ok::<_, std::io::Error>(rustc_driver::Compilation::Stop)
             })
-            .unwrap();
-        if self.opts.dbg().dump_serialized_flow_graph() {
-            serde_json::to_writer(
-                &mut std::fs::OpenOptions::new()
-                    .truncate(true)
-                    .create(true)
-                    .write(true)
-                    .open(consts::FLOW_GRAPH_OUT_NAME)
-                    .unwrap(),
-                &desc,
-            )
-            .unwrap();
-        }
-        info!("All elems walked");
-        let result_path = compiler
-            .build_output_filenames(&*compiler.session(), &[])
-            .with_extension("ana.frg");
-        let mut outf = outfile_pls(&result_path).unwrap();
-        let doc_alloc = pretty::BoxAllocator;
-        let doc: DocBuilder<_, ()> = desc.as_forge(&doc_alloc);
-        doc.render(100, &mut outf).unwrap();
-        let mut outf_2 = outfile_pls(self.opts.result_path()).unwrap();
-        doc.render(100, &mut outf_2).unwrap();
-        warn!("Due to potential overwrite issues with --result-path (with multiple targets in a crate) outputs were written to {} and {}", self.opts.result_path().display(), &result_path.display());
-        rustc_driver::Compilation::Stop
+            .unwrap()
     }
 }
 
