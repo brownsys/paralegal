@@ -191,7 +191,7 @@ fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
         .text("`arg")
         .append(alloc.as_string(arg_slot))
         .append(alloc.text("_"))
-        .append(function.as_forge(alloc))
+        .append(function.to_string())
 }
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
