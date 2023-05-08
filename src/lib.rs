@@ -223,11 +223,11 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
-       // return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks { }).run();
+        // return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks { }).run();
         // Setting the log levels is bit complicated because there are two level
         // filters going on in the logging crates. One is imposed by `log`
         // automatically and the other by `simple_logger` internally.
-        
+
         // We use `log::set_max_level` later to selectively enable debug output
         // for specific targets. This max level is distinct from the one
         // provided to `with_level` below. Therefore in the case where we have a
@@ -235,15 +235,20 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `with_level` level lower and then increase it with
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
-        
-        if let Some(k) = compiler_args.iter().enumerate().find_map(|(i,s)| (s=="--crate-name").then_some(i)) {
-            if let Some(s) = compiler_args.get(k+1) {
+
+        if let Some(k) = compiler_args
+            .iter()
+            .enumerate()
+            .find_map(|(i, s)| (s == "--crate-name").then_some(i))
+        {
+            if let Some(s) = compiler_args.get(k + 1) {
                 if plugin_args.target().map_or(false, |t| t != s) {
-                    return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks { }).run();
+                    return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {})
+                        .run();
                 }
             }
         }
-       
+
         let lvl = if plugin_args.debug().is_enabled() {
             log::LevelFilter::Debug
         } else if plugin_args.verbose() {

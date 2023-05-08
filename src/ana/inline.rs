@@ -21,9 +21,7 @@ use petgraph::{
 };
 
 use crate::{
-    ana::{
-        algebra::{self, Term},
-    },
+    ana::algebra::{self, Term},
     hir::BodyId,
     ir::{
         flows::CallOnlyFlow,
@@ -36,8 +34,8 @@ use crate::{
     rust::hir::def_id::{DefId, LocalDefId},
     ty,
     utils::{
-        body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs,
-        DfppBodyExt, DisplayViaDebug, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
+        body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, DfppBodyExt, DisplayViaDebug,
+        IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
     },
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };

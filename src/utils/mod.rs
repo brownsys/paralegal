@@ -694,7 +694,7 @@ impl IntoDefId for Res {
 
 /// Creates an `Identifier` for this `HirId`
 pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
-	let did = did.into_def_id(tcx);
+    let did = did.into_def_id(tcx);
     Identifier::from_str(&format!(
         "{}_{:x}",
         tcx.opt_item_name(did)
@@ -702,10 +702,14 @@ pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> I
                 use hir::def::DefKind::*;
                 match tcx.def_kind(did) {
                     OpaqueTy => Some(Symbol::intern("opaque")),
-                    _ => None
+                    _ => None,
                 }
             })
-            .unwrap_or_else(|| panic!("Could not name {} {:?}", tcx.def_path_debug_str(did), tcx.def_kind(did))),
+            .unwrap_or_else(|| panic!(
+                "Could not name {} {:?}",
+                tcx.def_path_debug_str(did),
+                tcx.def_kind(did)
+            )),
         short_hash_pls(did),
     ))
 }

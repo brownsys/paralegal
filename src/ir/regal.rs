@@ -18,15 +18,13 @@ use crate::{
         rustc_index::vec::IndexVec,
     },
     utils::{
-        body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs,
-        AsFnAndArgsErr, DisplayViaDebug, IntoLocalDefId, LocationExt, Print,
+        body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
+        DisplayViaDebug, IntoLocalDefId, LocationExt, Print,
     },
     DbgArgs, Either, HashMap, HashSet, TyCtxt,
 };
 
-use std::{
-    fmt::{Display, Write},
-};
+use std::fmt::{Display, Write};
 
 newtype_index!(
     pub struct ArgumentIndex {
