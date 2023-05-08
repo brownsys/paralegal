@@ -680,28 +680,24 @@ impl<D: Copy + IntoDefId> IntoDefId for &'_ D {
 }
 
 impl IntoDefId for BodyId {
-	fn into_def_id(self, tcx: TyCtxt) -> DefId {
-		tcx.hir().body_owner_def_id(self).into_def_id(tcx)
-	}
+    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+        tcx.hir().body_owner_def_id(self).into_def_id(tcx)
+    }
 }
 
 impl IntoDefId for Res {
     fn into_def_id(self, tcx: TyCtxt) -> DefId {
         match self {
-			Res::Def(_, did) => did,
-			_ => panic!("turning non-def res into DefId; res is: {:?}", self)
-		}
+            Res::Def(_, did) => did,
+            _ => panic!("turning non-def res into DefId; res is: {:?}", self),
+        }
     }
 }
 
 /// Creates an `Identifier` for this `HirId`
 pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
-	let did = did.into_def_id(tcx);
-    Identifier::from_str(&format!(
-        "{}_{:x}",
-        tcx.item_name(did),
-        short_hash_pls(did),
-    ))
+    let did = did.into_def_id(tcx);
+    Identifier::from_str(&format!("{}_{:x}", tcx.item_name(did), short_hash_pls(did),))
 }
 
 /// Extension trait for [`TyCtxt`]

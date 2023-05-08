@@ -553,9 +553,15 @@ impl PreFrg {
         }
     }
 
-	pub fn ctrl_hashed(&self, name: &str) -> Identifier {
-		self.0.controllers.iter().find(|(id, _)| id.as_str().starts_with(name)).unwrap().0.to_owned()
-	}
+    pub fn ctrl_hashed(&self, name: &str) -> Identifier {
+        self.0
+            .controllers
+            .iter()
+            .find(|(id, _)| id.as_str().starts_with(name))
+            .unwrap()
+            .0
+            .to_owned()
+    }
 
     pub fn has_marker(&self, marker: &str) -> bool {
         let marker = Symbol::intern(marker);
