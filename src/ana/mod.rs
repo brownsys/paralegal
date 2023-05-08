@@ -19,8 +19,10 @@ use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 
 pub mod algebra;
 pub mod df;
-mod inline;
+pub mod inline;
 pub mod non_transitive_aliases;
+
+pub type SerializableInlinedGraph<L> = petgraph::graphmap::GraphMap<regal::SimpleLocation<L>, inline::Edge, petgraph::Directed>;
 
 impl<'tcx> CollectingVisitor<'tcx> {
     /// Driver function. Performs the data collection via visit, then calls

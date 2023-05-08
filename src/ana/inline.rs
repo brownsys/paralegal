@@ -12,18 +12,17 @@
 //!    ([`InlinedGraph::prune_impossible_edges`]) using the accumulated set of
 //!    equations
 
-use std::{cell::RefCell, fmt::Write};
+use std::fmt::Write;
 
 use flowistry::{cached::Cache, mir::borrowck_facts};
 use petgraph::{
     prelude as pg,
-    visit::{EdgeRef, IntoEdgesDirected, IntoNodeReferences},
+    visit::{EdgeRef, IntoNodeReferences},
 };
 
 use crate::{
     ana::{
         algebra::{self, Term},
-        df,
     },
     hir::BodyId,
     ir::{
@@ -37,7 +36,7 @@ use crate::{
     rust::hir::def_id::{DefId, LocalDefId},
     ty,
     utils::{
-        body_name_pls, dump_file_pls, outfile_pls, short_hash_pls, time, write_sep, AsFnAndArgs,
+        body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs,
         DfppBodyExt, DisplayViaDebug, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
     },
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
@@ -93,7 +92,7 @@ impl<C> Node<C> {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Copy)]
+#[derive(Clone, Eq, PartialEq, Hash, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Edge {
     data: TinyBitSet,
     control: bool,
@@ -200,6 +199,10 @@ pub struct InlinedGraph<'g> {
 }
 
 impl<'g> InlinedGraph<'g> {
+    pub fn graph(&self) -> &GraphImpl<GlobalLocation<'g>> {
+        &self.graph
+    }
+
     pub fn vertex_count(&self) -> usize {
         self.graph.node_count()
     }
@@ -495,7 +498,7 @@ fn arg_num_to_local(a: regal::ArgumentIndex) -> mir::Local {
     (a.as_usize() + 1).into()
 }
 
-fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
+pub fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
     g: &mut pg::GraphMap<N, Edge, D>,
     source: N,
     target: N,

@@ -18,14 +18,13 @@ use crate::{
         rustc_index::vec::IndexVec,
     },
     utils::{
-        body_name_pls, dump_file_pls, outfile_pls, places_read, time, write_sep, AsFnAndArgs,
-        AsFnAndArgsErr, DfppBodyExt, DisplayViaDebug, IntoLocalDefId, LocationExt, Print,
+        body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs,
+        AsFnAndArgsErr, DisplayViaDebug, IntoLocalDefId, LocationExt, Print,
     },
     DbgArgs, Either, HashMap, HashSet, TyCtxt,
 };
 
 use std::{
-    borrow::Cow,
     fmt::{Display, Write},
 };
 
