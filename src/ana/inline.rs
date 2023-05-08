@@ -125,6 +125,20 @@ impl Edge {
     pub fn count(self) -> u32 {
         self.data.count() + if self.control { 1 } else { 0 }
     }
+    pub fn remove_type(&mut self, t: EdgeType) -> bool {
+        let changed;
+        match t {
+            EdgeType::Control => {
+                changed = self.control;
+                self.control = false;
+            }
+            EdgeType::Data(i) => {
+                changed = self.data.is_set(i);
+                self.data.clear(i);
+            }
+        }
+        changed
+    }
 }
 
 #[derive(Hash, Eq, PartialEq, Clone, Copy)]
