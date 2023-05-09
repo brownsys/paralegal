@@ -72,7 +72,7 @@ impl<L: Display> Display for Target<L> {
 pub struct Call<D> {
     pub function: DefId,
     pub arguments: IndexVec<ArgumentIndex, Option<(mir::Local, D)>>,
-    pub return_to: mir::Local,
+    pub return_to: Option<mir::Local>,
     pub ctrl_deps: D,
 }
 
@@ -331,15 +331,18 @@ impl Body<DisplayViaDebug<Location>> {
                             .collect(),
                     );
                     let ctrl_deps = recursive_ctrl_deps(ctrl_ana, bb, body, dependencies_for);
-                    let return_place = ret.unwrap().0;
-                    assert!(return_place.projection.is_empty());
+                    let return_to = ret.map(|r| {
+                        let return_place = r.0;
+                        assert!(return_place.projection.is_empty());
+                        return_place.local
+                    });
                     Some((
                         bbloc,
                         Call {
                             function,
                             arguments,
                             ctrl_deps,
-                            return_to: return_place.local,
+                            return_to,
                         },
                     ))
                 })

@@ -334,7 +334,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 let call = self.get_call(location);
                                 let parent = location.parent(self.gli);
                                 call.argument_locals()
-                                    .chain([call.return_to])
+                                    .chain(call.return_to.into_iter())
                                     .map(move |local| {
                                         if let Some(parent) = parent {
                                             GlobalLocal::relative(local, parent)
@@ -792,7 +792,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     let fn_sig = self.tcx.fn_sig(function).skip_binder();
                     let writeables = Self::writeable_arguments(&fn_sig)
                         .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
-                        .chain([call.return_to])
+                        .chain(call.return_to.into_iter())
                         .map(local_as_global)
                         .collect::<Vec<_>>();
                     let mk_term = |tp| algebra::Term::new_base(tp);
@@ -836,15 +836,17 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             }
                         }
                         let call = self.get_call(root_location);
-                        eqs.push(algebra::Equality::new(
-                            algebra::Term::new_base(GlobalLocal::at_root(call.return_to)),
-                            algebra::Term::new_base(GlobalLocal::at_root(
-                                call.arguments[regal::ArgumentIndex::from_usize(0)]
-                                    .as_ref()
-                                    .unwrap()
-                                    .0,
-                            )),
-                        ));
+                        if let Some(return_local) = call.return_to {
+                            eqs.push(algebra::Equality::new(
+                                algebra::Term::new_base(GlobalLocal::at_root(return_local)),
+                                algebra::Term::new_base(GlobalLocal::at_root(
+                                    call.arguments[regal::ArgumentIndex::from_usize(0)]
+                                        .as_ref()
+                                        .unwrap()
+                                        .0,
+                                )),
+                            ));
+                        }
                         g.remove_node(idx);
                         // extend eqs
                         // propagate edges
@@ -897,7 +899,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             }))
                         }
                         .into_iter()
-                        .chain([(call.return_to, mir::RETURN_PLACE)])
+                        .chain(call.return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
                         .map(|(actual_param, formal_param)| {
                             algebra::Equality::new(
                                 Term::new_base(GlobalLocal::at_root(actual_param)),
