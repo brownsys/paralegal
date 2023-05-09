@@ -82,6 +82,7 @@ impl std::fmt::Display for PathMetric {
 #[derive(Clone)]
 enum Command {
     Paths(PathType, String, String, PathMetric),
+    Reachable(PathType, String, String),
     Edges(String, Direction),
     Alias(String, String),
     Size,
@@ -103,6 +104,7 @@ impl std::fmt::Display for Command {
             Command::Edges(from, dir) => write!(f, "edges {from} {dir}"),
             Command::Alias(from, to) => write!(f, "alias {from} {to}"),
             Command::Size => write!(f, "size"),
+            Command::Reachable(tp, from, to) => write!(f, "{tp}-reachable {from} {to}"),
         }
     }
 }
@@ -118,6 +120,7 @@ enum ReadCommandErr {
     UnknownDirection(String),
     NoAliasName,
     UnknownPathMetric(String),
+    UnknownPathType(String),
 }
 
 impl std::fmt::Display for ReadCommandErr {
@@ -136,8 +139,36 @@ impl std::fmt::Display for ReadCommandErr {
             UnknownDirection(dir) => write!(f, "Unknown direction '{dir}'"),
             NoAliasName => write!(f, "No alias name provided"),
             UnknownPathMetric(m) => write!(f, "Unknown path metric '{m}'"),
+            UnknownPathType(ty) => write!(f, "Unknown path type '{ty}'"),
         }
     }
+}
+
+fn parse_path_type(s: &str) -> Result<PathType, ReadCommandErr> {
+    match s {
+        "data" => Ok(PathType::Data),
+        "control" => Ok(PathType::Control),
+        "all" => Ok(PathType::Both),
+        other => Err(ReadCommandErr::UnknownPathType(other.to_string())),
+    }
+}
+
+fn make_reachable_command<'a, I: Iterator<Item=&'a str>>(tp: Option<&str>, mut split: I) -> Result<Command, ReadCommandErr> {
+    let t = tp.map_or(Ok(PathType::Both), parse_path_type)?;
+    let from = split.next().ok_or(ReadCommandErr::NoFromPath)?;
+    let to = split.next().ok_or(ReadCommandErr::NoToPath)?;
+    Ok(Command::Reachable(t, from.to_string(), to.to_string()))
+}
+
+fn make_paths_command<'a, I: Iterator<Item=&'a str>>(tp: Option<&str>, mut split: I) -> Result<Command, ReadCommandErr> {
+    let t = tp.map_or(Ok(PathType::Both), parse_path_type)?;
+    let from = split.next().ok_or(ReadCommandErr::NoFromPath)?;
+    let to = split.next().ok_or(ReadCommandErr::NoToPath)?;
+    let metric = split.next().map_or(Ok(PathMetric::None), |m| match m {
+        "min-ctrl" => Ok(PathMetric::MinCtrl),
+        other => Err(ReadCommandErr::UnknownPathMetric(other.to_string()))
+    })?;
+    Ok(Command::Paths(t, from.to_string(), to.to_string(), metric))
 }
 
 impl std::str::FromStr for Command {
@@ -145,24 +176,13 @@ impl std::str::FromStr for Command {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut split = s.split_ascii_whitespace();
         let cmdstr = split.next().ok_or(ReadCommandErr::NoCommand)?;
-        let cmd = match cmdstr {
-            "paths" | "data-paths" | "control-paths" | "all-paths" => {
-                let t = if cmdstr == "data-paths" {
-                    PathType::Data
-                } else if cmdstr == "control-paths" {
-                    PathType::Control
-                } else {
-                    PathType::Both
-                };
-                let from = split.next().ok_or(ReadCommandErr::NoFromPath)?;
-                let to = split.next().ok_or(ReadCommandErr::NoToPath)?;
-                let metric = split.next().map_or(Ok(PathMetric::None), |m| match m {
-                    "min-ctrl" => Ok(PathMetric::MinCtrl),
-                    other => Err(ReadCommandErr::UnknownPathMetric(other.to_string()))
-                })?;
-                Ok(Command::Paths(t, from.to_string(), to.to_string(), metric))
-            }
-            "edges" => {
+        let dehyphenated = cmdstr.split('-').collect::<Vec<_>>();
+        let cmd = match dehyphenated.as_slice() {
+            [tp, "paths"] => make_paths_command(Some(tp), &mut split),
+            ["paths"] => make_paths_command(None, &mut split),
+            [tp, "reachable"] => make_reachable_command(Some(tp), &mut split),
+            ["reachable"] => make_reachable_command(None, &mut split),
+            ["edges"] => {
                 let node = split.next().ok_or(ReadCommandErr::NoNodeProvided)?;
                 let dir = split.next().map_or(Ok(Direction::Out), |s| match s {
                     "in" => Ok(Direction::In),
@@ -172,13 +192,13 @@ impl std::str::FromStr for Command {
                 })?;
                 Ok(Command::Edges(node.to_string(), dir))
             }
-            "alias" => {
+            ["alias"] => {
                 let name = split.next().ok_or(ReadCommandErr::NoAliasName)?;
                 let node = split.next().ok_or(ReadCommandErr::NoNodeProvided)?;
                 Ok(Command::Alias(name.to_string(), node.to_string()))
             }
-            "size" => Ok(Command::Size),
-            other => Err(ReadCommandErr::UnknownCommand(other.to_string())),
+            ["size"] => Ok(Command::Size),
+            other => Err(ReadCommandErr::UnknownCommand(cmdstr.to_string())),
         }?;
         if split.next().is_some() {
             return Err(ReadCommandErr::TooManyArgs(2, s.to_string()));
@@ -245,8 +265,28 @@ impl<'g> Repl<'g> {
             .map(|r| *r)
     }
 
+    fn data_graph(&self) -> IgnoreCtrlEdges<'_, 'g> {
+        IgnoreCtrlEdges(&self.graph)
+    }
+
     fn run_command(&mut self, command: Command) -> Result<(), RunCommandErr<'g>> {
         match command {
+            Command::Reachable(path_type, from, to) => {
+                use petgraph::algo::has_path_connecting;
+                let from = self.translate_node(from)?;
+                let to = self.translate_node(to)?;
+                let is_reachable = match path_type {
+                    PathType::Both => Ok(has_path_connecting(&self.graph, from, to, None)),
+                    PathType::Data => Ok(has_path_connecting(self.data_graph(), from, to, None)),
+                    PathType::Control => Err(RunCommandErr::Unimplemented("control-reachable")),
+                }?;
+                println!("{}", if is_reachable {
+                    "Yes"
+                } else {
+                    "No"
+                });
+                Ok(())
+            }
             Command::Paths(path_type, from, to, metric) => {
                 if matches!((path_type, metric), (PathType::Data, PathMetric::MinCtrl)) {
                     return Err(RunCommandErr::NonsensicalPathMetric(path_type, metric))
@@ -265,7 +305,7 @@ impl<'g> Repl<'g> {
                             Vec<_>,
                             _,
                         >(
-                            IgnoreCtrlEdges(&self.graph),
+                            self.data_graph(),
                             from,
                             to,
                             0,
@@ -380,6 +420,18 @@ struct IgnoreCtrlEdges<'a, 'g>(&'a Graph<'g>);
 impl<'a, 'g> petgraph::visit::NodeCount for IgnoreCtrlEdges<'a, 'g> {
     fn node_count(self: &Self) -> usize {
         self.0.node_count()
+    }
+}
+
+impl<'a, 'g> petgraph::visit::Visitable for IgnoreCtrlEdges<'a, 'g> {
+    type Map = <&'a Graph<'g> as petgraph::visit::Visitable>::Map;
+
+    fn visit_map(self: &Self) -> Self::Map {
+        self.0.visit_map()
+    }
+
+    fn reset_map(self: &Self,map: &mut Self::Map) {
+        self.0.reset_map(map)
     }
 }
 
