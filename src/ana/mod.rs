@@ -405,20 +405,32 @@ struct SkipAnnotatedFunctionSelector<'tcx, 's> {
     external_annotations: &'s crate::discover::ExternalMarkers,
 }
 
-impl<'tcx, 's> inline::Oracle<'tcx, 's> for SkipAnnotatedFunctionSelector<'tcx, 's> {
-    fn should_inline(&self, did: LocalDefId) -> bool {
+impl<'tcx, 's> SkipAnnotatedFunctionSelector<'tcx, 's> {
+    fn has_local_annotations<D: IntoLocalDefId>(&self, did: D) -> bool {
         self.marked_objects
             .as_ref()
             .borrow()
-            .get(&self.tcx.hir().local_def_id_to_hir_id(did))
-            .map_or(true, |anns| anns.0.is_empty())
+            .get(&self.tcx.hir().local_def_id_to_hir_id(did.into_local_def_id(self.tcx)))
+            .map_or(false, |anns| !anns.0.is_empty())
+    }
+
+    fn has_external_annotations<D: IntoDefId>(&self, did: D) -> bool {
+        self.external_annotations.get(&did.into_def_id(self.tcx))
+            .map_or(false, |anns| anns.0.is_empty())
+    }
+
+    fn has_annotations<D: IntoDefId + Copy>(&self, did: D) -> bool {
+        matches!(did.into_def_id(self.tcx).as_local(), Some(ldid) if self.has_local_annotations(ldid))
+        || self.has_external_annotations(did)
+    }
+}
+
+impl<'tcx, 's> inline::Oracle<'tcx, 's> for SkipAnnotatedFunctionSelector<'tcx, 's> {
+    fn should_inline(&self, did: LocalDefId) -> bool {
+        !self.has_annotations(did)
     }
 
     fn is_semantically_meaningful(&self, did: DefId) -> bool {
-        if let Some(l) = did.as_local() {
-            !self.should_inline(l)
-        } else {
-            self.external_annotations.contains_key(&did)
-        }
+        !self.has_annotations(did)
     }
 }
