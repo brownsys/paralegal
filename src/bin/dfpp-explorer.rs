@@ -2,6 +2,7 @@
 
 extern crate dialoguer as dl;
 extern crate indicatif as ind;
+extern crate ringbuffer;
 use std::fmt::Display;
 
 use clap::Parser;
@@ -12,6 +13,7 @@ use dfpp::{
     utils::{write_sep, Print},
     Either, HashMap,
 };
+use ringbuffer::RingBufferWrite;
 
 #[derive(Parser)]
 struct Args {
@@ -190,6 +192,13 @@ enum RunCommandErr<'g> {
     Unimplemented(&'static str),
     EdgeWeightMissing(GlobalLocation<'g>, GlobalLocation<'g>),
     NonsensicalPathMetric(PathType, PathMetric),
+    IOError(std::io::Error)
+}
+
+impl From<std::io::Error> for RunCommandErr<'_> {
+    fn from(err: std::io::Error) -> Self {
+        RunCommandErr::IOError(err)
+    }
 }
 
 impl<'g> std::fmt::Display for RunCommandErr<'g> {
@@ -200,6 +209,7 @@ impl<'g> std::fmt::Display for RunCommandErr<'g> {
             Unimplemented(s) => write!(f, "'{s}' functionality is not implemented"),
             EdgeWeightMissing(from, to) => write!(f, "Edge weight {from} -> {to} was unexpectedly missing"),
             NonsensicalPathMetric(path_type, metric) => write!(f, "Metric {metric} makes no sense on path query of type {path_type}"),
+            IOError(err) => write!(f, "IO Error: {err}"),
         }
     }
 }
@@ -209,13 +219,29 @@ type Graph<'g> = petgraph::graphmap::GraphMap<GlobalLocation<'g>, Edge, petgraph
 struct Repl<'g> {
     gloc_translation_map: HashMap<String, GlobalLocation<'g>>,
     graph: Graph<'g>,
+    prompt_for_missing_nodes: bool,
 }
 
 impl<'g> Repl<'g> {
     fn translate_node(&self, name: String) -> Result<GlobalLocation<'g>, RunCommandErr<'g>> {
         self.gloc_translation_map
             .get(&name)
-            .ok_or_else(|| RunCommandErr::NodeNotFound(name))
+            .ok_or(())
+            .or_else(|()|
+                if self.prompt_for_missing_nodes {
+                    println!("Could not find the node '{name}', did you mean instead: (press 'ESC' to abort)");
+                    let mut selection = dl::FuzzySelect::new();
+                    let items = self.gloc_translation_map.keys().collect::<Vec<_>>();
+                    selection.items(items.as_slice())
+                        .with_initial_text(&name);
+                    if let Some(idx) = selection.interact_opt()? {
+                        Ok(&self.gloc_translation_map[items[idx]])
+                    } else {
+                        Err(RunCommandErr::NodeNotFound(name))
+                    }
+                } else {
+                    Err(RunCommandErr::NodeNotFound(name))
+                })
             .map(|r| *r)
     }
 
@@ -436,6 +462,26 @@ impl<'a, 'g> petgraph::visit::IntoNeighbors for IgnoreCtrlEdges<'a, 'g> {
     }
 }
 
+struct MyHistory<C>(ringbuffer::ConstGenericRingBuffer<C, 256>);
+
+impl <C> std::default::Default for MyHistory<C> {
+    fn default() -> Self {
+        Self(ringbuffer::ConstGenericRingBuffer::default())
+    }
+}
+
+
+impl <C: ToString + Clone> dl::History<C> for MyHistory<C> {
+    fn read(&self, pos: usize) -> Option<String> {
+        use ringbuffer::RingBufferExt;
+        let new_idx = -1 -(pos as isize);
+        self.0.get(new_idx).map(|c| c.to_string())
+    }
+    fn write(&mut self, val: &C) {
+        self.0.push(val.clone())
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -477,10 +523,12 @@ fn main() {
         let mut repl = Repl {
             graph: g,
             gloc_translation_map,
+            prompt_for_missing_nodes: true,
         };
-
+        let mut history = MyHistory::<Command>::default();
         let mut prompt = dl::Input::new();
-        prompt.with_prompt("> ");
+        prompt.history_with(&mut history);
+        prompt.with_prompt("query");
         loop {
             match prompt.interact_text() {
                 Ok(cmd) => {
