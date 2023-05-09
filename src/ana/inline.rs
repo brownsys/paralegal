@@ -529,36 +529,87 @@ pub fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType
     }
 }
 
-/// Check that this edge is not "significant" in this graph as defined by the
+#[derive(Clone, Copy)]
+struct EdgesClassifier {
+    has_control_only: bool,
+    has_data_only: bool,
+    has_mix: bool,
+}
+
+impl std::default::Default for EdgesClassifier {
+    fn default() -> Self {
+        Self {
+            has_control_only: false,
+            has_data_only: false,
+            has_mix: false,
+        }
+    }
+}
+
+impl std::iter::FromIterator<Edge> for EdgesClassifier {
+    fn from_iter<T: IntoIterator<Item = Edge>>(iter: T) -> Self {
+        iter.into_iter().fold(Self::default(), |mut slf, e| {
+            slf.merge_edge(e);
+            slf
+        })
+    }
+}
+
+impl EdgesClassifier {
+    fn is_insignificant(self) -> bool {
+
+        false
+    }
+
+    fn merge_edge(&mut self, e: Edge) {
+        self.has_control_only |= !e.is_data() && e.is_control();
+        self.has_data_only |= !e.is_control() && e.is_data();
+        self.has_mix |= e.is_control() && e.is_data();
+    }
+
+    fn has_data(self) -> bool {
+        self.has_data_only || self.has_mix
+    }
+
+    fn has_control(self) -> bool {
+        self.has_control_only || self.has_mix
+    }
+
+    fn has_any_edge(self) -> bool {
+        self.has_control_only || self.has_data_only || self.has_mix
+    }
+}
+
+/// Check that this node is not "significant" in this graph as defined by the
 /// policy provided.
 ///
 /// See what significance means in the documentation of
 /// [`InconsequentialCallRemovalPolicy`](crate::args::InconsequentialCallRemovalPolicy)
-fn no_significant_edge<N: petgraph::graphmap::NodeTrait>(
+fn node_is_insignificant<N: petgraph::graphmap::NodeTrait>(
     g: &pg::GraphMap<N, Edge, pg::Directed>,
     n: N,
     policy: crate::args::InconsequentialCallRemovalPolicy,
-) -> bool {
+) -> Option<(EdgesClassifier, EdgesClassifier)> {
     // XXX verify that if the incoming edge is ctrl,
     // it's still safe to remove
-    if !g
+    let in_classifier : EdgesClassifier = g
         .edges_directed(n, pg::Direction::Incoming)
-        .filter(|(_, _, e)| !e.data.is_empty())
-        .next()
-        .is_some()
+        .map(|t| *t.2)
+        .collect();
+    if !in_classifier.has_data()
     {
-        return false;
+        return None;
     }
-    let mut has_data = false;
-    for (_, _, e) in g.edges_directed(n, pg::Direction::Outgoing) {
-        if e.control && !policy.remove_ctrl_flow_source() {
-            return false;
-        }
-        if !e.data.is_empty() || e.control {
-            has_data = true;
-        }
-    }
-    has_data
+    let out_classifier : EdgesClassifier = g.edges_directed(n, pg::Direction::Outgoing)
+        .map(|t| *t.2)
+        .collect();
+    // probably side effecting if it doesn't
+    (out_classifier.has_any_edge()
+        // policy may forbid removing control relevant edges entirely
+        && (!out_classifier.has_control() || policy.remove_ctrl_flow_source())
+        // going from control to data is invalid
+        && !(in_classifier.has_control_only && out_classifier.has_data())
+        ).then_some((in_classifier, out_classifier))
 }
 
 enum InlineAction<'tcx> {
@@ -681,18 +732,21 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn remove_inconsequential_calls(&self, gwr: &mut InlinedGraph<'g>) {
         let remove_calls_policy = self.ana_ctrl.remove_inconsequential_calls();
         let g = &mut gwr.graph;
-        for n in g
+        for (n, (in_classifier, out_classifier)) in g
             .nodes()
-            .filter(|&n| 
+            .filter_map(|n| 
                 // The node has to be not semantically meaningful (e.g. no
                 // label), and it has to have neighbors before and after,
                 // because otherwise it's likely an I/O data source or sink
-                matches!(n, SimpleLocation::Call((loc, defid)) 
+                if matches!(n, SimpleLocation::Call((loc, defid)) 
                     if loc.is_at_root()
                         && !self.oracle.is_semantically_meaningful(defid)
                         && Some(defid) != self.tcx.lang_items().from_generator_fn() 
-                        && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))
-                        && no_significant_edge(g, n, remove_calls_policy)))
+                        && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))) {
+                    node_is_insignificant(g, n, remove_calls_policy).map(|cls| (n, cls))
+                } else {
+                    None
+                })
             .collect::<Vec<_>>()
         {
             for from in g
