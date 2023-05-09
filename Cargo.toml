@@ -43,6 +43,9 @@ dialoguer = "0.10"
 camino = "= 1.0.9"
 serial_test = "2.0.0"
 
+[build-dependencies]
+chrono = "0.4"
+
 [[bin]]
 name = "cargo-dfpp"
 

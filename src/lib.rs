@@ -94,7 +94,7 @@ pub struct DfppPlugin;
 /// forwarded and `_progname` is only to comply with the calling convention of
 /// `cargo` (it passes the program name as first argument).
 #[derive(clap::Parser)]
-#[clap(version = concat!(crate_version!(), "  (commit # ", env!("COMMIT_HASH"), ")"), about)]
+#[clap(version = concat!(crate_version!(), "\nbuilt ", env!("BUILD_TIME"), "\ncommit ", env!("COMMIT_HASH")), about)]
 struct ArgWrapper {
     /// This argument doesn't do anything, but when cargo invokes `cargo-dfpp`
     /// it always provides "dfpp" as the first argument and since we parse with
