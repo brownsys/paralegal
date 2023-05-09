@@ -35,7 +35,7 @@ use crate::{
     ty,
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, DfppBodyExt, DisplayViaDebug,
-        IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
+        IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet, IntoDefId,
     },
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
@@ -608,7 +608,14 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// Convenience wrapper around [`Self::get_inlined_graph`]
     fn get_inlined_graph_by_def_id(&self, def_id: LocalDefId) -> Option<&InlinedGraph<'g>> {
         let hir = self.tcx.hir();
-        self.get_inlined_graph(hir.body_owned_by(hir.local_def_id_to_hir_id(def_id)))
+		let body_id = match hir.maybe_body_owned_by(hir.local_def_id_to_hir_id(def_id)) {
+			None => { 
+				warn!("no body id for {:?}", self.tcx.def_path_debug_str(def_id.into_def_id(self.tcx)));
+				return None;
+			},
+			Some(b) => b
+		};
+        self.get_inlined_graph(body_id)
     }
 
     /// Make the set of equations relative to the call site described by `gli`
