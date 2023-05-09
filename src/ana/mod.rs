@@ -416,7 +416,7 @@ impl<'tcx, 's> SkipAnnotatedFunctionSelector<'tcx, 's> {
 
     fn has_external_annotations<D: IntoDefId>(&self, did: D) -> bool {
         self.external_annotations.get(&did.into_def_id(self.tcx))
-            .map_or(false, |anns| anns.0.is_empty())
+            .map_or(false, |anns| !anns.0.is_empty())
     }
 
     fn has_annotations<D: IntoDefId + Copy>(&self, did: D) -> bool {
