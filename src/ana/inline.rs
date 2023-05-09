@@ -775,7 +775,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 ),
                             ));
                         }
-                        if Some(*function) == self.tcx.lang_items().future_poll_fn() {
+                        if Some(*function) == self.tcx.lang_items().future_poll_fn() && self.ana_ctrl.drop_poll() {
                             return Some((id, *location, InlineAction::Drop));
                         }
                     }

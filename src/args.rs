@@ -157,6 +157,9 @@ pub struct AnalysisCtrl {
     /// By default disabled entirely and no removal is performed
     #[clap(long, env)]
     remove_inconsequential_calls: Option<String>,
+
+    #[clap(long, env)]
+    drop_poll: bool,
 }
 
 /// How are we treating inconsequential call sites?
@@ -246,6 +249,10 @@ impl AnalysisCtrl {
         } else {
             Disabled
         }
+    }
+
+    pub fn drop_poll(&self) -> bool {
+        self.drop_poll
     }
 }
 
