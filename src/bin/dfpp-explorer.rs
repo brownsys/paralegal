@@ -1,6 +1,7 @@
 #![feature(rustc_private)]
 
 extern crate dialoguer as dl;
+extern crate indicatif as ind;
 use std::fmt::Display;
 
 use clap::Parser;
@@ -43,16 +44,42 @@ impl std::fmt::Display for Direction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum PathType {
     Data,
     Control,
     Both,
 }
 
+impl std::fmt::Display for PathType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use PathType::*;
+        match self {
+            Data => f.write_str("data"),
+            Control => f.write_str("control"),
+            Both => f.write_str("all")
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PathMetric {
+    MinCtrl,
+    None
+}
+
+impl std::fmt::Display for PathMetric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathMetric::MinCtrl => f.write_str("min-ctrl"),
+            PathMetric::None => f.write_str("no"),
+        }
+    }
+}
+
 #[derive(Clone)]
 enum Command {
-    Paths(PathType, String, String),
+    Paths(PathType, String, String, PathMetric),
     Edges(String, Direction),
     Alias(String, String),
     Size,
@@ -61,15 +88,16 @@ enum Command {
 impl std::fmt::Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::Paths(t, from, to) => write!(
-                f,
-                "{}paths {from} {to}",
-                match t {
-                    PathType::Control => "control-",
-                    PathType::Data => "data-",
-                    PathType::Both => "",
+            Command::Paths(t, from, to, metric) => {
+                write!(
+                    f,
+                    "{t}-paths {from} {to}",
+                )?;
+                if !matches!(metric, PathMetric::None) {
+                    write!(f, " {metric}")?;
                 }
-            ),
+                Ok(())
+            }   
             Command::Edges(from, dir) => write!(f, "edges {from} {dir}"),
             Command::Alias(from, to) => write!(f, "alias {from} {to}"),
             Command::Size => write!(f, "size"),
@@ -87,6 +115,7 @@ enum ReadCommandErr {
     NoNodeProvided,
     UnknownDirection(String),
     NoAliasName,
+    UnknownPathMetric(String),
 }
 
 impl std::fmt::Display for ReadCommandErr {
@@ -104,6 +133,7 @@ impl std::fmt::Display for ReadCommandErr {
             NoNodeProvided => write!(f, "No node provided"),
             UnknownDirection(dir) => write!(f, "Unknown direction '{dir}'"),
             NoAliasName => write!(f, "No alias name provided"),
+            UnknownPathMetric(m) => write!(f, "Unknown path metric '{m}'"),
         }
     }
 }
@@ -114,7 +144,7 @@ impl std::str::FromStr for Command {
         let mut split = s.split_ascii_whitespace();
         let cmdstr = split.next().ok_or(ReadCommandErr::NoCommand)?;
         let cmd = match cmdstr {
-            "paths" | "data-paths" | "control-paths" => {
+            "paths" | "data-paths" | "control-paths" | "all-paths" => {
                 let t = if cmdstr == "data-paths" {
                     PathType::Data
                 } else if cmdstr == "control-paths" {
@@ -124,7 +154,11 @@ impl std::str::FromStr for Command {
                 };
                 let from = split.next().ok_or(ReadCommandErr::NoFromPath)?;
                 let to = split.next().ok_or(ReadCommandErr::NoToPath)?;
-                Ok(Command::Paths(t, from.to_string(), to.to_string()))
+                let metric = split.next().map_or(Ok(PathMetric::None), |m| match m {
+                    "min-ctrl" => Ok(PathMetric::MinCtrl),
+                    other => Err(ReadCommandErr::UnknownPathMetric(other.to_string()))
+                })?;
+                Ok(Command::Paths(t, from.to_string(), to.to_string(), metric))
             }
             "edges" => {
                 let node = split.next().ok_or(ReadCommandErr::NoNodeProvided)?;
@@ -151,17 +185,21 @@ impl std::str::FromStr for Command {
     }
 }
 
-enum RunCommandErr {
+enum RunCommandErr<'g> {
     NodeNotFound(String),
     Unimplemented(&'static str),
+    EdgeWeightMissing(GlobalLocation<'g>, GlobalLocation<'g>),
+    NonsensicalPathMetric(PathType, PathMetric),
 }
 
-impl std::fmt::Display for RunCommandErr {
+impl<'g> std::fmt::Display for RunCommandErr<'g> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use RunCommandErr::*;
         match self {
             NodeNotFound(n) => write!(f, "Node '{n}' is not known"),
             Unimplemented(s) => write!(f, "'{s}' functionality is not implemented"),
+            EdgeWeightMissing(from, to) => write!(f, "Edge weight {from} -> {to} was unexpectedly missing"),
+            NonsensicalPathMetric(path_type, metric) => write!(f, "Metric {metric} makes no sense on path query of type {path_type}"),
         }
     }
 }
@@ -174,16 +212,19 @@ struct Repl<'g> {
 }
 
 impl<'g> Repl<'g> {
-    fn translate_node(&self, name: String) -> Result<GlobalLocation<'g>, RunCommandErr> {
+    fn translate_node(&self, name: String) -> Result<GlobalLocation<'g>, RunCommandErr<'g>> {
         self.gloc_translation_map
             .get(&name)
             .ok_or_else(|| RunCommandErr::NodeNotFound(name))
             .map(|r| *r)
     }
 
-    fn run_command(&mut self, command: Command) -> Result<(), RunCommandErr> {
+    fn run_command(&mut self, command: Command) -> Result<(), RunCommandErr<'g>> {
         match command {
-            Command::Paths(path_type, from, to) => {
+            Command::Paths(path_type, from, to, metric) => {
+                if matches!((path_type, metric), (PathType::Data, PathMetric::MinCtrl)) {
+                    return Err(RunCommandErr::NonsensicalPathMetric(path_type, metric))
+                }
                 let from = self.translate_node(from)?;
                 let to = self.translate_node(to)?;
                 let paths =
@@ -206,11 +247,58 @@ impl<'g> Repl<'g> {
                         ))),
                         PathType::Control => Err(RunCommandErr::Unimplemented("control-paths")),
                     }?;
-                for path in paths {
-                    println!(
-                        "{}",
-                        Print(|fmt| { write_sep(fmt, " -> ", &path, |node, fmt| node.fmt(fmt)) })
-                    );
+
+                match metric {
+                    PathMetric::MinCtrl => {
+                        let mut scanned = 0_u64;
+                        let mut min = usize::MAX;
+                        let mut min_paths = vec![];
+                        let progress = ind::ProgressBar::new(80)
+                            .with_style(ind::ProgressStyle::with_template("[{elapsed}] {msg}").unwrap());
+                        'next_path: for path in paths {
+                            let mut prior = None;
+                            let mut len = 0;
+                            scanned += 1;
+                            if scanned % 10_000 == 0 {
+                                progress.set_message(format!("Current state: Scanned {scanned} paths, found {} of length {min}", min_paths.len()));
+                            }
+                            for to in path.iter().cloned() {
+                                if let Some(from) = prior {
+                                    let edge = self.graph.edge_weight(from, to).ok_or(RunCommandErr::EdgeWeightMissing(from, to))?;
+                                    if !edge.is_data() && edge.is_control() {
+                                        len += 1;
+                                    }
+                                    if len > min {
+                                        continue 'next_path;
+                                    }
+                                }
+                                prior = Some(to);
+                            }
+                            assert!(len <= min);
+                            if len < min {
+                                min = len;
+                                min_paths.clear()
+                            }
+                            min_paths.push(path);
+                            progress.set_message(format!("Current state: Scanned {scanned} paths, found {} of length {min}", min_paths.len()));
+                        }                    
+                        progress.finish_and_clear();
+                        for path in min_paths {
+                            println!(
+                                "{}",
+                                Print(|fmt| { write_sep(fmt, " -> ", &path, |node, fmt| node.fmt(fmt)) })
+                            );
+                            println!("Extrema for {metric} metric found was {min}")
+                        }
+                    }
+                    PathMetric::None => {
+                        for path in paths {
+                            println!(
+                                "{}",
+                                Print(|fmt| { write_sep(fmt, " -> ", &path, |node, fmt| node.fmt(fmt)) })
+                            )
+                        }
+                    }
                 }
                 Ok(())
             }

@@ -139,6 +139,12 @@ impl Edge {
         }
         changed
     }
+    pub fn is_data(self) -> bool {
+        !self.data.is_empty()
+    }
+    pub fn is_control(self) -> bool {
+        self.control
+    }
 }
 
 #[derive(Hash, Eq, PartialEq, Clone, Copy)]
