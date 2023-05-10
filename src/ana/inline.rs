@@ -827,10 +827,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         _ => (),
                     }
                     if Some(*function) == self.tcx.lang_items().from_generator_fn() {
-                        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(
-                            self.tcx,
-                            local_def_id,
-                        );
+                        let body_with_facts =
+                            borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
                         let body = body_with_facts.simplified_body();
                         let mut args = body
                             .stmt_at_better_err(location.innermost_location())
@@ -916,8 +914,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             algebra::Term::new_base(GlobalLocal::at_root(return_local));
                         if matches!(idx, SimpleLocation::Call((_, fun)) if self.tcx.lang_items().new_unchecked_fn() == Some(fun))
                         {
-                            target = target
-                                .add_member_of(DisplayViaDebug(mir::Field::from_usize(0)));
+                            target =
+                                target.add_member_of(DisplayViaDebug(mir::Field::from_usize(0)));
                         }
                         eqs.push(algebra::Equality::new(
                             target,
@@ -933,14 +931,14 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     continue;
                 }
             };
-            let grw_to_inline =
-                if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id) {
-                    callee_graph
-                } else {
-                    // Breaking recursion. This can only happen if we are trying to
-                    // inline ourself, so we simply skip.
-                    continue;
-                };
+            let grw_to_inline = if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id)
+            {
+                callee_graph
+            } else {
+                // Breaking recursion. This can only happen if we are trying to
+                // inline ourself, so we simply skip.
+                continue;
+            };
             *num_inlined += 1 + grw_to_inline.inlined_functions_count();
             *max_call_stack_depth =
                 (*max_call_stack_depth).max(grw_to_inline.max_call_stack_depth() + 1);
@@ -1018,9 +1016,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 };
 
             for old in to_inline.nodes() {
-                let new = old.map_call(|(location, function)| {
-                    (gli_here.relativize(*location), *function)
-                });
+                let new = old
+                    .map_call(|(location, function)| (gli_here.relativize(*location), *function));
                 g.add_node(new);
                 debug!(
                     "Handling {old} (now {new}) {} incoming edges",
@@ -1028,9 +1025,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 );
                 for edge in to_inline.edges_directed(old, pg::Incoming) {
                     match new {
-                        Node::Call(_) => {
-                            connect_to(g, edge.source(), new, *edge.weight(), false)
-                        }
+                        Node::Call(_) => connect_to(g, edge.source(), new, *edge.weight(), false),
                         Node::Return | Node::Argument(_) => {
                             for (target, out) in g
                                 .edges_directed(idx, pg::Outgoing)
@@ -1071,10 +1066,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             }
         }
 
-        let mut queue_for_pruning =
-            time(&format!("Inlining subgraphs into {name}"), ||
-                self.perform_subfunction_inlining(&proc_g, &mut gwr, body_id));
-
+        let mut queue_for_pruning = time(&format!("Inlining subgraphs into {name}"), || {
+            self.perform_subfunction_inlining(&proc_g, &mut gwr, body_id)
+        });
 
         if self.ana_ctrl.remove_inconsequential_calls().is_enabled() {
             self.remove_inconsequential_calls(&mut gwr);

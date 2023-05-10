@@ -10,7 +10,7 @@ use clap::Parser;
 use dfpp::{
     ana::inline::{add_weighted_edge, Edge, EdgeType},
     ir::global_location::*,
-    utils::{write_sep, Print, outfile_pls},
+    utils::{outfile_pls, write_sep, Print},
     Either, HashMap,
 };
 use ringbuffer::RingBufferWrite;
@@ -118,7 +118,7 @@ impl std::str::FromStr for GraphOutputFormat {
         match s {
             "pdf" => Ok(GraphOutputFormat::Pdf),
             "gv" | "dot" | "graphviz" => Ok(GraphOutputFormat::Graphviz),
-            _ => Err(())
+            _ => Err(()),
         }
     }
 }
@@ -153,7 +153,17 @@ impl std::fmt::Display for Command {
             Command::Alias(from, to) => write!(f, "alias {from} {to}"),
             Command::Size => write!(f, "size"),
             Command::Reachable(tp, from, to) => write!(f, "{tp}-reachable {from} {to}"),
-            Command::DotSubgraph { from, depth, output, direction, .. } => write!(f, "dot-subgraph {from} {depth} {} {direction}", output.display())
+            Command::DotSubgraph {
+                from,
+                depth,
+                output,
+                direction,
+                ..
+            } => write!(
+                f,
+                "dot-subgraph {from} {depth} {} {direction}",
+                output.display()
+            ),
         }
     }
 }
@@ -241,7 +251,7 @@ impl std::str::FromStr for Direction {
             "in" => Ok(Direction::In),
             "out" => Ok(Direction::Out),
             "both" | "inout" => Ok(Direction::Both),
-            other => Err(())
+            other => Err(()),
         }
     }
 }
@@ -259,8 +269,10 @@ impl std::str::FromStr for Command {
             ["reachable"] => make_reachable_command(None, &mut split),
             ["edges"] => {
                 let node = split.next().ok_or(ReadCommandErr::NoNodeProvided)?;
-                let dir = split.next().map_or(Ok(Direction::Out), |s| 
-                    Direction::from_str(s).map_err(|()| ReadCommandErr::UnknownDirection(s.to_string())))?;
+                let dir = split.next().map_or(Ok(Direction::Out), |s| {
+                    Direction::from_str(s)
+                        .map_err(|()| ReadCommandErr::UnknownDirection(s.to_string()))
+                })?;
                 Ok(Command::Edges(node.into(), dir))
             }
             ["alias"] => {
@@ -271,17 +283,30 @@ impl std::str::FromStr for Command {
             ["size"] => Ok(Command::Size),
             ["dot", "subgraph"] => {
                 let from = split.next().ok_or(ReadCommandErr::NoFromPath)?.into();
-                let depth = split.next().ok_or(ReadCommandErr::NoDepth).and_then(|d| usize::from_str(d).map_err(ReadCommandErr::ParseIntErr))?;
-                let output : std::path::PathBuf = split.next().ok_or(ReadCommandErr::NoOutputFile)?.into();
-                let format = 
-                    output.extension().map_or(Ok(GraphOutputFormat::Pdf), |os_str| {
+                let depth = split
+                    .next()
+                    .ok_or(ReadCommandErr::NoDepth)
+                    .and_then(|d| usize::from_str(d).map_err(ReadCommandErr::ParseIntErr))?;
+                let output: std::path::PathBuf =
+                    split.next().ok_or(ReadCommandErr::NoOutputFile)?.into();
+                let format = output
+                    .extension()
+                    .map_or(Ok(GraphOutputFormat::Pdf), |os_str| {
                         let str = os_str.to_str().unwrap();
                         GraphOutputFormat::from_str(str)
                             .map_err(|()| ReadCommandErr::UnknownGraphOutputFormat(str.to_string()))
                     })?;
-                let direction = split.next().map_or(Ok(Direction::Out), |s| 
-                    Direction::from_str(s).map_err(|()| ReadCommandErr::UnknownDirection(s.to_string())))?;
-                Ok(Command::DotSubgraph { from, depth, output, format, direction })
+                let direction = split.next().map_or(Ok(Direction::Out), |s| {
+                    Direction::from_str(s)
+                        .map_err(|()| ReadCommandErr::UnknownDirection(s.to_string()))
+                })?;
+                Ok(Command::DotSubgraph {
+                    from,
+                    depth,
+                    output,
+                    format,
+                    direction,
+                })
             }
             other => Err(ReadCommandErr::UnknownCommand(cmdstr.to_string())),
         }?;
@@ -369,7 +394,13 @@ impl<'g> Repl<'g> {
 
     fn run_command(&mut self, command: Command) -> Result<(), RunCommandErr<'g>> {
         match command {
-            Command::DotSubgraph { from, depth, output, format , direction } => {
+            Command::DotSubgraph {
+                from,
+                depth,
+                output,
+                format,
+                direction,
+            } => {
                 let from = self.translate_node(from)?;
                 let mut subg = Graph::new();
                 subg.add_node(from);
@@ -379,27 +410,27 @@ impl<'g> Repl<'g> {
                         continue;
                     }
                     depth -= 1;
-                    for (to, weight, is_out) in 
-                        direction.wants_out().then(|| self.graph.edges(from).map(|(_, to, w)| (to, w, true)))
-                            .into_iter()
-                            .flatten()
-                            .chain(
-                                direction.wants_in().then(|| 
-                                    self.graph.edges_directed(from, petgraph::Direction::Incoming)
-                                    .map(|(to, _, w)| (to, w, false))
-                                )
+                    for (to, weight, is_out) in direction
+                        .wants_out()
+                        .then(|| self.graph.edges(from).map(|(_, to, w)| (to, w, true)))
+                        .into_iter()
+                        .flatten()
+                        .chain(
+                            direction
+                                .wants_in()
+                                .then(|| {
+                                    self.graph
+                                        .edges_directed(from, petgraph::Direction::Incoming)
+                                        .map(|(to, _, w)| (to, w, false))
+                                })
                                 .into_iter()
-                                .flatten()
-                            )
+                                .flatten(),
+                        )
                     {
                         if !subg.contains_node(to) {
                             queue.push((to, depth));
                         }
-                        let (from, to) = if is_out {
-                            (from, to)
-                        } else {
-                            (to, from)
-                        };
+                        let (from, to) = if is_out { (from, to) } else { (to, from) };
                         add_weighted_edge(&mut subg, from, to, *weight);
                     }
                 }
@@ -409,7 +440,12 @@ impl<'g> Repl<'g> {
                 write!(
                     outf,
                     "{}",
-                    petgraph::dot::Dot::with_attr_getters(&subg, &[], &|_, _| "".to_string(), &|_, _| "shape=box".to_string()),
+                    petgraph::dot::Dot::with_attr_getters(
+                        &subg,
+                        &[],
+                        &|_, _| "".to_string(),
+                        &|_, _| "shape=box".to_string()
+                    ),
                 )?;
                 if matches!(format, GraphOutputFormat::Pdf) {
                     use std::process;
@@ -419,9 +455,9 @@ impl<'g> Repl<'g> {
                         .arg(format!("{}", gvfile.display()))
                         .status()?;
                     if !status.success() {
-                        return Err(RunCommandErr::DotError(status.code()))
+                        return Err(RunCommandErr::DotError(status.code()));
                     }
-                } 
+                }
                 Ok(())
             }
             Command::Reachable(path_type, from, to) => {
