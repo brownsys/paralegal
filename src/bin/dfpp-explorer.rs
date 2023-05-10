@@ -10,7 +10,7 @@ use clap::Parser;
 use dfpp::{
     ana::inline::{add_weighted_edge, Edge, EdgeType},
     ir::global_location::*,
-    utils::{write_sep, Print},
+    utils::{write_sep, Print, outfile_pls},
     Either, HashMap,
 };
 use ringbuffer::RingBufferWrite;
@@ -32,7 +32,7 @@ impl Direction {
         matches!(self, Direction::Both | Direction::In)
     }
     fn wants_out(self) -> bool {
-        matches!(self, Direction::Both | Direction::In)
+        matches!(self, Direction::Both | Direction::Out)
     }
 }
 
@@ -79,12 +79,63 @@ impl std::fmt::Display for PathMetric {
     }
 }
 
+#[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
+struct NodeName(String);
+
+impl From<String> for NodeName {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&'_ str> for NodeName {
+    fn from(s: &'_ str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<&'_ NodeName> for String {
+    fn from(n: &'_ NodeName) -> Self {
+        n.0.clone()
+    }
+}
+
+impl std::fmt::Display for NodeName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0.as_str())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum GraphOutputFormat {
+    Pdf,
+    Graphviz,
+}
+
+impl std::str::FromStr for GraphOutputFormat {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pdf" => Ok(GraphOutputFormat::Pdf),
+            "gv" | "dot" | "graphviz" => Ok(GraphOutputFormat::Graphviz),
+            _ => Err(())
+        }
+    }
+}
+
 #[derive(Clone)]
 enum Command {
-    Paths(PathType, String, String, PathMetric),
-    Reachable(PathType, String, String),
-    Edges(String, Direction),
-    Alias(String, String),
+    Paths(PathType, NodeName, NodeName, PathMetric),
+    Reachable(PathType, NodeName, NodeName),
+    Edges(NodeName, Direction),
+    Alias(NodeName, NodeName),
+    DotSubgraph {
+        from: NodeName,
+        depth: usize,
+        output: std::path::PathBuf,
+        format: GraphOutputFormat,
+        direction: Direction,
+    },
     Size,
 }
 
@@ -102,6 +153,7 @@ impl std::fmt::Display for Command {
             Command::Alias(from, to) => write!(f, "alias {from} {to}"),
             Command::Size => write!(f, "size"),
             Command::Reachable(tp, from, to) => write!(f, "{tp}-reachable {from} {to}"),
+            Command::DotSubgraph { from, depth, output, direction, .. } => write!(f, "dot-subgraph {from} {depth} {} {direction}", output.display())
         }
     }
 }
@@ -118,6 +170,10 @@ enum ReadCommandErr {
     NoAliasName,
     UnknownPathMetric(String),
     UnknownPathType(String),
+    NoDepth,
+    ParseIntErr(std::num::ParseIntError),
+    NoOutputFile,
+    UnknownGraphOutputFormat(String),
 }
 
 impl std::fmt::Display for ReadCommandErr {
@@ -137,6 +193,10 @@ impl std::fmt::Display for ReadCommandErr {
             NoAliasName => write!(f, "No alias name provided"),
             UnknownPathMetric(m) => write!(f, "Unknown path metric '{m}'"),
             UnknownPathType(ty) => write!(f, "Unknown path type '{ty}'"),
+            NoDepth => write!(f, "No depth provided"),
+            ParseIntErr(er) => write!(f, "{}", er),
+            NoOutputFile => write!(f, "No output file provided"),
+            UnknownGraphOutputFormat(format) => write!(f, "Unknown graph output format {format}"),
         }
     }
 }
@@ -157,7 +217,7 @@ fn make_reachable_command<'a, I: Iterator<Item = &'a str>>(
     let t = tp.map_or(Ok(PathType::Both), parse_path_type)?;
     let from = split.next().ok_or(ReadCommandErr::NoFromPath)?;
     let to = split.next().ok_or(ReadCommandErr::NoToPath)?;
-    Ok(Command::Reachable(t, from.to_string(), to.to_string()))
+    Ok(Command::Reachable(t, from.into(), to.into()))
 }
 
 fn make_paths_command<'a, I: Iterator<Item = &'a str>>(
@@ -171,7 +231,19 @@ fn make_paths_command<'a, I: Iterator<Item = &'a str>>(
         "min-ctrl" => Ok(PathMetric::MinCtrl),
         other => Err(ReadCommandErr::UnknownPathMetric(other.to_string())),
     })?;
-    Ok(Command::Paths(t, from.to_string(), to.to_string(), metric))
+    Ok(Command::Paths(t, from.into(), to.into(), metric))
+}
+
+impl std::str::FromStr for Direction {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "in" => Ok(Direction::In),
+            "out" => Ok(Direction::Out),
+            "both" | "inout" => Ok(Direction::Both),
+            other => Err(())
+        }
+    }
 }
 
 impl std::str::FromStr for Command {
@@ -187,20 +259,30 @@ impl std::str::FromStr for Command {
             ["reachable"] => make_reachable_command(None, &mut split),
             ["edges"] => {
                 let node = split.next().ok_or(ReadCommandErr::NoNodeProvided)?;
-                let dir = split.next().map_or(Ok(Direction::Out), |s| match s {
-                    "in" => Ok(Direction::In),
-                    "out" => Ok(Direction::Out),
-                    "both" | "inout" => Ok(Direction::Both),
-                    other => Err(ReadCommandErr::UnknownDirection(other.to_string())),
-                })?;
-                Ok(Command::Edges(node.to_string(), dir))
+                let dir = split.next().map_or(Ok(Direction::Out), |s| 
+                    Direction::from_str(s).map_err(|()| ReadCommandErr::UnknownDirection(s.to_string())))?;
+                Ok(Command::Edges(node.into(), dir))
             }
             ["alias"] => {
                 let name = split.next().ok_or(ReadCommandErr::NoAliasName)?;
                 let node = split.next().ok_or(ReadCommandErr::NoNodeProvided)?;
-                Ok(Command::Alias(name.to_string(), node.to_string()))
+                Ok(Command::Alias(name.into(), node.into()))
             }
             ["size"] => Ok(Command::Size),
+            ["dot", "subgraph"] => {
+                let from = split.next().ok_or(ReadCommandErr::NoFromPath)?.into();
+                let depth = split.next().ok_or(ReadCommandErr::NoDepth).and_then(|d| usize::from_str(d).map_err(ReadCommandErr::ParseIntErr))?;
+                let output : std::path::PathBuf = split.next().ok_or(ReadCommandErr::NoOutputFile)?.into();
+                let format = 
+                    output.extension().map_or(Ok(GraphOutputFormat::Pdf), |os_str| {
+                        let str = os_str.to_str().unwrap();
+                        GraphOutputFormat::from_str(str)
+                            .map_err(|()| ReadCommandErr::UnknownGraphOutputFormat(str.to_string()))
+                    })?;
+                let direction = split.next().map_or(Ok(Direction::Out), |s| 
+                    Direction::from_str(s).map_err(|()| ReadCommandErr::UnknownDirection(s.to_string())))?;
+                Ok(Command::DotSubgraph { from, depth, output, format, direction })
+            }
             other => Err(ReadCommandErr::UnknownCommand(cmdstr.to_string())),
         }?;
         if split.next().is_some() {
@@ -211,11 +293,12 @@ impl std::str::FromStr for Command {
 }
 
 enum RunCommandErr<'g> {
-    NodeNotFound(String),
+    NodeNotFound(NodeName),
     Unimplemented(&'static str),
     EdgeWeightMissing(GlobalLocation<'g>, GlobalLocation<'g>),
     NonsensicalPathMetric(PathType, PathMetric),
     IOError(std::io::Error),
+    DotError(Option<i32>),
 }
 
 impl From<std::io::Error> for RunCommandErr<'_> {
@@ -238,6 +321,13 @@ impl<'g> std::fmt::Display for RunCommandErr<'g> {
                 "Metric {metric} makes no sense on path query of type {path_type}"
             ),
             IOError(err) => write!(f, "IO Error: {err}"),
+            DotError(status) => {
+                write!(f, "Error running 'dot'")?;
+                if let Some(code) = status {
+                    write!(f, " {code}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -245,13 +335,13 @@ impl<'g> std::fmt::Display for RunCommandErr<'g> {
 type Graph<'g> = petgraph::graphmap::GraphMap<GlobalLocation<'g>, Edge, petgraph::Directed>;
 
 struct Repl<'g> {
-    gloc_translation_map: HashMap<String, GlobalLocation<'g>>,
+    gloc_translation_map: HashMap<NodeName, GlobalLocation<'g>>,
     graph: Graph<'g>,
     prompt_for_missing_nodes: bool,
 }
 
 impl<'g> Repl<'g> {
-    fn translate_node(&self, name: String) -> Result<GlobalLocation<'g>, RunCommandErr<'g>> {
+    fn translate_node(&self, name: NodeName) -> Result<GlobalLocation<'g>, RunCommandErr<'g>> {
         self.gloc_translation_map
             .get(&name)
             .ok_or(())
@@ -279,6 +369,61 @@ impl<'g> Repl<'g> {
 
     fn run_command(&mut self, command: Command) -> Result<(), RunCommandErr<'g>> {
         match command {
+            Command::DotSubgraph { from, depth, output, format , direction } => {
+                let from = self.translate_node(from)?;
+                let mut subg = Graph::new();
+                subg.add_node(from);
+                let mut queue = vec![(from, depth)];
+                while let Some((from, mut depth)) = queue.pop() {
+                    if depth == 0 {
+                        continue;
+                    }
+                    depth -= 1;
+                    for (to, weight, is_out) in 
+                        direction.wants_out().then(|| self.graph.edges(from).map(|(_, to, w)| (to, w, true)))
+                            .into_iter()
+                            .flatten()
+                            .chain(
+                                direction.wants_in().then(|| 
+                                    self.graph.edges_directed(from, petgraph::Direction::Incoming)
+                                    .map(|(to, _, w)| (to, w, false))
+                                )
+                                .into_iter()
+                                .flatten()
+                            )
+                    {
+                        if !subg.contains_node(to) {
+                            queue.push((to, depth));
+                        }
+                        let (from, to) = if is_out {
+                            (from, to)
+                        } else {
+                            (to, from)
+                        };
+                        add_weighted_edge(&mut subg, from, to, *weight);
+                    }
+                }
+                let gvfile = output.with_extension("gv");
+                let mut outf = outfile_pls(&gvfile)?;
+                use std::io::Write;
+                write!(
+                    outf,
+                    "{}",
+                    petgraph::dot::Dot::with_attr_getters(&subg, &[], &|_, _| "".to_string(), &|_, _| "shape=box".to_string()),
+                )?;
+                if matches!(format, GraphOutputFormat::Pdf) {
+                    use std::process;
+                    let status = process::Command::new("dot")
+                        .arg("-Tpdf")
+                        .arg(format!("-o{}", output.with_extension("pdf").display()))
+                        .arg(format!("{}", gvfile.display()))
+                        .status()?;
+                    if !status.success() {
+                        return Err(RunCommandErr::DotError(status.code()))
+                    }
+                } 
+                Ok(())
+            }
             Command::Reachable(path_type, from, to) => {
                 use petgraph::algo::has_path_connecting;
                 let from = self.translate_node(from)?;
@@ -556,10 +701,10 @@ fn main() {
         let gli = GLI::new(&interner);
         let mut g = petgraph::graphmap::GraphMap::<_, _, petgraph::Directed>::new();
         let graph = &mut g;
-        let mut gloc_translation_map = HashMap::<String, GlobalLocation>::new();
+        let mut gloc_translation_map = HashMap::<NodeName, GlobalLocation>::new();
         for (to_raw, deps) in flow.location_dependencies.iter() {
             let to = gli.from_vec(to_raw.as_slice().to_vec());
-            gloc_translation_map.insert(format!("{to}"), to);
+            gloc_translation_map.insert(format!("{to}").into(), to);
             for (weight, deps) in deps
                 .input_deps
                 .iter()
