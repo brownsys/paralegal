@@ -108,6 +108,7 @@ where
 {
     std::process::Command::new("cargo")
         .arg("dfpp")
+        .arg("--abort-after-analysis")
         .arg("--dump-serialized-non-transitive-graph")
         .args(extra)
         .status()
@@ -123,6 +124,7 @@ where
 pub fn run_dfpp_with_flow_graph_dump() -> bool {
     std::process::Command::new("cargo")
         .arg("dfpp")
+        .arg("--abort-after-analysis")
         .arg("--dump-serialized-flow-graph")
         .status()
         .unwrap()
@@ -382,10 +384,12 @@ impl G {
             } else {
                 seen.insert(n);
             }
-            if from.match_(n) {
-                return true;
+            for next in self.predecessors_configurable(n, con_ty) {
+                if from.match_(next) {
+                    return true;
+                }
+                queue.push(next);
             }
-            queue.extend(self.predecessors_configurable(n, con_ty))
         }
         false
     }
