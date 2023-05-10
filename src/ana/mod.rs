@@ -410,18 +410,24 @@ impl<'tcx, 's> SkipAnnotatedFunctionSelector<'tcx, 's> {
         self.marked_objects
             .as_ref()
             .borrow()
-            .get(&self.tcx.hir().local_def_id_to_hir_id(did.into_local_def_id(self.tcx)))
+            .get(
+                &self
+                    .tcx
+                    .hir()
+                    .local_def_id_to_hir_id(did.into_local_def_id(self.tcx)),
+            )
             .map_or(false, |anns| !anns.0.is_empty())
     }
 
     fn has_external_annotations<D: IntoDefId>(&self, did: D) -> bool {
-        self.external_annotations.get(&did.into_def_id(self.tcx))
+        self.external_annotations
+            .get(&did.into_def_id(self.tcx))
             .map_or(false, |anns| !anns.0.is_empty())
     }
 
     fn has_annotations<D: IntoDefId + Copy>(&self, did: D) -> bool {
         matches!(did.into_def_id(self.tcx).as_local(), Some(ldid) if self.has_local_annotations(ldid))
-        || self.has_external_annotations(did)
+            || self.has_external_annotations(did)
     }
 }
 

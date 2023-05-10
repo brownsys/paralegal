@@ -17,12 +17,12 @@ use std::fmt::Write;
 use flowistry::{cached::Cache, mir::borrowck_facts};
 use petgraph::{
     prelude as pg,
-    visit::{EdgeRef, IntoNodeReferences},
+    visit::{EdgeRef, IntoNeighborsDirected, IntoNodeReferences},
 };
 
 use crate::{
     ana::algebra::{self, Term},
-    hir::BodyId,
+    hir::{self, BodyId},
     ir::{
         flows::CallOnlyFlow,
         global_location::IsGlobalLocation,
@@ -35,7 +35,7 @@ use crate::{
     ty,
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, DfppBodyExt, DisplayViaDebug,
-        IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet, IntoDefId,
+        IntoDefId, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
     },
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
@@ -557,7 +557,6 @@ impl std::iter::FromIterator<Edge> for EdgesClassifier {
 
 impl EdgesClassifier {
     fn is_insignificant(self) -> bool {
-
         false
     }
 
@@ -592,15 +591,15 @@ fn node_is_insignificant<N: petgraph::graphmap::NodeTrait>(
 ) -> Option<(EdgesClassifier, EdgesClassifier)> {
     // XXX verify that if the incoming edge is ctrl,
     // it's still safe to remove
-    let in_classifier : EdgesClassifier = g
+    let in_classifier: EdgesClassifier = g
         .edges_directed(n, pg::Direction::Incoming)
         .map(|t| *t.2)
         .collect();
-    if !in_classifier.has_data()
-    {
+    if !in_classifier.has_data() {
         return None;
     }
-    let out_classifier : EdgesClassifier = g.edges_directed(n, pg::Direction::Outgoing)
+    let out_classifier: EdgesClassifier = g
+        .edges_directed(n, pg::Direction::Outgoing)
         .map(|t| *t.2)
         .collect();
     // probably side effecting if it doesn't
@@ -608,8 +607,37 @@ fn node_is_insignificant<N: petgraph::graphmap::NodeTrait>(
         // policy may forbid removing control relevant edges entirely
         && (!out_classifier.has_control() || policy.remove_ctrl_flow_source())
         // going from control to data is invalid
-        && !(in_classifier.has_control_only && out_classifier.has_data())
-        ).then_some((in_classifier, out_classifier))
+        && !(in_classifier.has_control_only && out_classifier.has_data()))
+    .then_some((in_classifier, out_classifier))
+}
+
+fn is_part_of_async_desugar<L: Copy + Ord + std::hash::Hash>(
+    lang_items: &hir::LanguageItems,
+    node: Node<(L, DefId)>,
+    graph: &GraphImpl<L>,
+) -> bool {
+    let mut seen = [
+        (lang_items.future_poll_fn(), false),
+        (lang_items.get_context_fn(), false),
+        (lang_items.into_future_fn(), false),
+        (lang_items.new_unchecked_fn(), false),
+    ]
+    .into_iter()
+    .collect::<HashMap<_, _>>();
+    let mut queue = vec![node];
+    while let Some(node) = queue.pop() {
+        if let SimpleLocation::Call((_, def_id)) = node {
+            if let Some(was_seen) = seen.get_mut(&Some(def_id)) {
+                if *was_seen {
+                    continue;
+                }
+                *was_seen = true;
+                queue.extend(graph.neighbors_directed(node, petgraph::Direction::Incoming));
+                queue.extend(graph.neighbors_directed(node, petgraph::Direction::Outgoing))
+            }
+        }
+    }
+    seen.values().all(|v| *v)
 }
 
 enum InlineAction<'tcx> {
@@ -659,13 +687,16 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// Convenience wrapper around [`Self::get_inlined_graph`]
     fn get_inlined_graph_by_def_id(&self, def_id: LocalDefId) -> Option<&InlinedGraph<'g>> {
         let hir = self.tcx.hir();
-		let body_id = match hir.maybe_body_owned_by(hir.local_def_id_to_hir_id(def_id)) {
-			None => { 
-				warn!("no body id for {:?}", self.tcx.def_path_debug_str(def_id.into_def_id(self.tcx)));
-				return None;
-			},
-			Some(b) => b
-		};
+        let body_id = match hir.maybe_body_owned_by(hir.local_def_id_to_hir_id(def_id)) {
+            None => {
+                warn!(
+                    "no body id for {:?}",
+                    self.tcx.def_path_debug_str(def_id.into_def_id(self.tcx))
+                );
+                return None;
+            }
+            Some(b) => b,
+        };
         self.get_inlined_graph(body_id)
     }
 
@@ -836,7 +867,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 ),
                             ));
                         }
-                        if Some(*function) == self.tcx.lang_items().future_poll_fn() && self.ana_ctrl.drop_poll() {
+                        if self.ana_ctrl.drop_poll()
+                            && is_part_of_async_desugar(self.tcx.lang_items(), id, &g)
+                        {
                             return Some((id, *location, InlineAction::Drop));
                         }
                     }
@@ -866,22 +899,17 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     InlineAction::InlineAsyncClosure(did, c) => (did, Some(c)),
                     InlineAction::SimpleInline(did) => (did, None),
                     InlineAction::Drop => {
-                        assert!(
-                            matches!(idx, SimpleLocation::Call((_, did)) if Some(did) == self.tcx.lang_items().future_poll_fn())
-                        );
                         let incoming_closure = g
                             .edges_directed(idx, pg::Direction::Incoming)
-                            .filter_map(|(from, to, weight)| {
-                                assert!(
-                                    weight.data.is_set(0) ^ weight.data.is_set(1) ^ weight.control,
-                                    "{from} -> {to} ({weight})"
-                                );
-                                weight.data.is_set(0).then_some(from)
-                            })
+                            .filter_map(|(from, to, weight)| weight.data.is_set(0).then_some(from))
                             .collect::<Vec<_>>();
                         let outgoing = g
                             .edges_directed(idx, pg::Direction::Outgoing)
-                            .map(|(_, to, weight)| (to, weight.clone()))
+                            .filter_map(|(_, to, weight)| {
+                                let mut weight = *weight;
+                                weight.remove_type(EdgeType::Control);
+                                (!weight.is_empty()).then_some((to, weight))
+                            })
                             .collect::<Vec<_>>();
 
                         for from in incoming_closure {
@@ -891,8 +919,15 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         }
                         let call = self.get_call(root_location);
                         if let Some(return_local) = call.return_to {
+                            let mut target =
+                                algebra::Term::new_base(GlobalLocal::at_root(return_local));
+                            if matches!(idx, SimpleLocation::Call((_, fun)) if self.tcx.lang_items().new_unchecked_fn() == Some(fun))
+                            {
+                                target = target
+                                    .add_member_of(DisplayViaDebug(mir::Field::from_usize(0)));
+                            }
                             eqs.push(algebra::Equality::new(
-                                algebra::Term::new_base(GlobalLocal::at_root(return_local)),
+                                target,
                                 algebra::Term::new_base(GlobalLocal::at_root(
                                     call.arguments[regal::ArgumentIndex::from_usize(0)]
                                         .as_ref()
@@ -902,8 +937,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             ));
                         }
                         g.remove_node(idx);
-                        // extend eqs
-                        // propagate edges
                         continue;
                     }
                 };

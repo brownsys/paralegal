@@ -59,7 +59,7 @@ impl std::fmt::Display for PathType {
         match self {
             Data => f.write_str("data"),
             Control => f.write_str("control"),
-            Both => f.write_str("all")
+            Both => f.write_str("all"),
         }
     }
 }
@@ -67,7 +67,7 @@ impl std::fmt::Display for PathType {
 #[derive(Clone, Copy)]
 enum PathMetric {
     MinCtrl,
-    None
+    None,
 }
 
 impl std::fmt::Display for PathMetric {
@@ -92,15 +92,12 @@ impl std::fmt::Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Command::Paths(t, from, to, metric) => {
-                write!(
-                    f,
-                    "{t}-paths {from} {to}",
-                )?;
+                write!(f, "{t}-paths {from} {to}",)?;
                 if !matches!(metric, PathMetric::None) {
                     write!(f, " {metric}")?;
                 }
                 Ok(())
-            }   
+            }
             Command::Edges(from, dir) => write!(f, "edges {from} {dir}"),
             Command::Alias(from, to) => write!(f, "alias {from} {to}"),
             Command::Size => write!(f, "size"),
@@ -153,20 +150,26 @@ fn parse_path_type(s: &str) -> Result<PathType, ReadCommandErr> {
     }
 }
 
-fn make_reachable_command<'a, I: Iterator<Item=&'a str>>(tp: Option<&str>, mut split: I) -> Result<Command, ReadCommandErr> {
+fn make_reachable_command<'a, I: Iterator<Item = &'a str>>(
+    tp: Option<&str>,
+    mut split: I,
+) -> Result<Command, ReadCommandErr> {
     let t = tp.map_or(Ok(PathType::Both), parse_path_type)?;
     let from = split.next().ok_or(ReadCommandErr::NoFromPath)?;
     let to = split.next().ok_or(ReadCommandErr::NoToPath)?;
     Ok(Command::Reachable(t, from.to_string(), to.to_string()))
 }
 
-fn make_paths_command<'a, I: Iterator<Item=&'a str>>(tp: Option<&str>, mut split: I) -> Result<Command, ReadCommandErr> {
+fn make_paths_command<'a, I: Iterator<Item = &'a str>>(
+    tp: Option<&str>,
+    mut split: I,
+) -> Result<Command, ReadCommandErr> {
     let t = tp.map_or(Ok(PathType::Both), parse_path_type)?;
     let from = split.next().ok_or(ReadCommandErr::NoFromPath)?;
     let to = split.next().ok_or(ReadCommandErr::NoToPath)?;
     let metric = split.next().map_or(Ok(PathMetric::None), |m| match m {
         "min-ctrl" => Ok(PathMetric::MinCtrl),
-        other => Err(ReadCommandErr::UnknownPathMetric(other.to_string()))
+        other => Err(ReadCommandErr::UnknownPathMetric(other.to_string())),
     })?;
     Ok(Command::Paths(t, from.to_string(), to.to_string(), metric))
 }
@@ -212,7 +215,7 @@ enum RunCommandErr<'g> {
     Unimplemented(&'static str),
     EdgeWeightMissing(GlobalLocation<'g>, GlobalLocation<'g>),
     NonsensicalPathMetric(PathType, PathMetric),
-    IOError(std::io::Error)
+    IOError(std::io::Error),
 }
 
 impl From<std::io::Error> for RunCommandErr<'_> {
@@ -227,8 +230,13 @@ impl<'g> std::fmt::Display for RunCommandErr<'g> {
         match self {
             NodeNotFound(n) => write!(f, "Node '{n}' is not known"),
             Unimplemented(s) => write!(f, "'{s}' functionality is not implemented"),
-            EdgeWeightMissing(from, to) => write!(f, "Edge weight {from} -> {to} was unexpectedly missing"),
-            NonsensicalPathMetric(path_type, metric) => write!(f, "Metric {metric} makes no sense on path query of type {path_type}"),
+            EdgeWeightMissing(from, to) => {
+                write!(f, "Edge weight {from} -> {to} was unexpectedly missing")
+            }
+            NonsensicalPathMetric(path_type, metric) => write!(
+                f,
+                "Metric {metric} makes no sense on path query of type {path_type}"
+            ),
             IOError(err) => write!(f, "IO Error: {err}"),
         }
     }
@@ -280,16 +288,12 @@ impl<'g> Repl<'g> {
                     PathType::Data => Ok(has_path_connecting(self.data_graph(), from, to, None)),
                     PathType::Control => Err(RunCommandErr::Unimplemented("control-reachable")),
                 }?;
-                println!("{}", if is_reachable {
-                    "Yes"
-                } else {
-                    "No"
-                });
+                println!("{}", if is_reachable { "Yes" } else { "No" });
                 Ok(())
             }
             Command::Paths(path_type, from, to, metric) => {
                 if matches!((path_type, metric), (PathType::Data, PathMetric::MinCtrl)) {
-                    return Err(RunCommandErr::NonsensicalPathMetric(path_type, metric))
+                    return Err(RunCommandErr::NonsensicalPathMetric(path_type, metric));
                 }
                 let from = self.translate_node(from)?;
                 let to = self.translate_node(to)?;
@@ -305,11 +309,7 @@ impl<'g> Repl<'g> {
                             Vec<_>,
                             _,
                         >(
-                            self.data_graph(),
-                            from,
-                            to,
-                            0,
-                            None,
+                            self.data_graph(), from, to, 0, None
                         ))),
                         PathType::Control => Err(RunCommandErr::Unimplemented("control-paths")),
                     }?;
@@ -319,8 +319,9 @@ impl<'g> Repl<'g> {
                         let mut scanned = 0_u64;
                         let mut min = usize::MAX;
                         let mut min_paths = vec![];
-                        let progress = ind::ProgressBar::new(80)
-                            .with_style(ind::ProgressStyle::with_template("[{elapsed}] {msg}").unwrap());
+                        let progress = ind::ProgressBar::new(80).with_style(
+                            ind::ProgressStyle::with_template("[{elapsed}] {msg}").unwrap(),
+                        );
                         'next_path: for path in paths {
                             let mut prior = None;
                             let mut len = 0;
@@ -330,7 +331,10 @@ impl<'g> Repl<'g> {
                             }
                             for to in path.iter().cloned() {
                                 if let Some(from) = prior {
-                                    let edge = self.graph.edge_weight(from, to).ok_or(RunCommandErr::EdgeWeightMissing(from, to))?;
+                                    let edge = self
+                                        .graph
+                                        .edge_weight(from, to)
+                                        .ok_or(RunCommandErr::EdgeWeightMissing(from, to))?;
                                     if !edge.is_data() && edge.is_control() {
                                         len += 1;
                                     }
@@ -346,13 +350,18 @@ impl<'g> Repl<'g> {
                                 min_paths.clear()
                             }
                             min_paths.push(path);
-                            progress.set_message(format!("Current state: Scanned {scanned} paths, found {} of length {min}", min_paths.len()));
-                        }                    
+                            progress.set_message(format!(
+                                "Current state: Scanned {scanned} paths, found {} of length {min}",
+                                min_paths.len()
+                            ));
+                        }
                         progress.finish_and_clear();
                         for path in min_paths {
                             println!(
                                 "{}",
-                                Print(|fmt| { write_sep(fmt, " -> ", &path, |node, fmt| node.fmt(fmt)) })
+                                Print(|fmt| {
+                                    write_sep(fmt, " -> ", &path, |node, fmt| node.fmt(fmt))
+                                })
                             );
                             println!("Extrema for {metric} metric found was {min}")
                         }
@@ -361,7 +370,9 @@ impl<'g> Repl<'g> {
                         for path in paths {
                             println!(
                                 "{}",
-                                Print(|fmt| { write_sep(fmt, " -> ", &path, |node, fmt| node.fmt(fmt)) })
+                                Print(|fmt| {
+                                    write_sep(fmt, " -> ", &path, |node, fmt| node.fmt(fmt))
+                                })
                             )
                         }
                     }
@@ -430,7 +441,7 @@ impl<'a, 'g> petgraph::visit::Visitable for IgnoreCtrlEdges<'a, 'g> {
         self.0.visit_map()
     }
 
-    fn reset_map(self: &Self,map: &mut Self::Map) {
+    fn reset_map(self: &Self, map: &mut Self::Map) {
         self.0.reset_map(map)
     }
 }
@@ -516,17 +527,16 @@ impl<'a, 'g> petgraph::visit::IntoNeighbors for IgnoreCtrlEdges<'a, 'g> {
 
 struct MyHistory<C>(ringbuffer::ConstGenericRingBuffer<C, 256>);
 
-impl <C> std::default::Default for MyHistory<C> {
+impl<C> std::default::Default for MyHistory<C> {
     fn default() -> Self {
         Self(ringbuffer::ConstGenericRingBuffer::default())
     }
 }
 
-
-impl <C: ToString + Clone> dl::History<C> for MyHistory<C> {
+impl<C: ToString + Clone> dl::History<C> for MyHistory<C> {
     fn read(&self, pos: usize) -> Option<String> {
         use ringbuffer::RingBufferExt;
-        let new_idx = -1 -(pos as isize);
+        let new_idx = -1 - (pos as isize);
         self.0.get(new_idx).map(|c| c.to_string())
     }
     fn write(&mut self, val: &C) {

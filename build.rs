@@ -12,8 +12,7 @@ fn main() {
             .unwrap_or("unknown".to_owned())
     );
     println!(
-        "cargo:rustc-env=BUILD_TIME={}", 
+        "cargo:rustc-env=BUILD_TIME={}",
         chrono::Local::now().format("%a %b %e %T %Y")
-
     )
 }

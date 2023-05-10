@@ -36,6 +36,9 @@ pub struct Args {
 
     #[clap(long, env = "DFPP_TARGET")]
     target: Option<String>,
+    /// Abort the compilation after finishing the analysis
+    #[clap(long, env)]
+    abort_after_analysis: bool,
     /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis")]
     anactrl: AnalysisCtrl,
@@ -108,6 +111,9 @@ impl Args {
     pub fn relaxed(&self) -> bool {
         self.relaxed
     }
+    pub fn abort_after_analysis(&self) -> bool {
+        self.abort_after_analysis
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
@@ -160,6 +166,9 @@ pub struct AnalysisCtrl {
 
     #[clap(long, env)]
     drop_poll: bool,
+
+    #[clap(long, env)]
+    remove_poll_ctrl_influence: bool,
 }
 
 /// How are we treating inconsequential call sites?
