@@ -499,8 +499,8 @@ pub struct Inliner<'tcx, 'g, 's> {
 /// Globalize all locations mentioned in these equations.
 fn to_global_equations<'g>(
     eqs: &Equations<DisplayViaDebug<mir::Local>>,
-    body_id: BodyId,
-    gli: GLI<'g>,
+    _body_id: BodyId,
+    _gli: GLI<'g>,
 ) -> Equations<GlobalLocal<'g>> {
     eqs.iter()
         .map(|eq| {
@@ -556,10 +556,6 @@ impl std::iter::FromIterator<Edge> for EdgesClassifier {
 }
 
 impl EdgesClassifier {
-    fn is_insignificant(self) -> bool {
-        false
-    }
-
     fn merge_edge(&mut self, e: Edge) {
         self.has_control_only |= !e.is_data() && e.is_control();
         self.has_data_only |= !e.is_control() && e.is_data();
@@ -763,7 +759,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn remove_inconsequential_calls(&self, gwr: &mut InlinedGraph<'g>) {
         let remove_calls_policy = self.ana_ctrl.remove_inconsequential_calls();
         let g = &mut gwr.graph;
-        for (n, (in_classifier, out_classifier)) in g
+        for (n, (_in_classifier, _out_classifier)) in g
             .nodes()
             .filter_map(|n| 
                 // The node has to be not semantically meaningful (e.g. no
@@ -814,245 +810,241 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     ) -> EdgeSet<'g> {
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
         let local_def_id = body_id.into_local_def_id(self.tcx);
-        let name = body_name_pls(self.tcx, body_id).name;
         let mut queue_for_pruning = HashSet::new();
-        time(&format!("Inlining subgraphs into {name}"), || {
-            let targets = g
-                .node_references()
-                .filter_map(|(id, n)| match n {
-                    Node::Call((loc, fun)) => Some((id, loc, fun)),
-                    _ => None,
-                })
-                .filter_map(|(id, location, function)| {
-                    if recursive_analysis_enabled {
-                        match function.as_local() {
-                            Some(local_id) if self.oracle.should_inline(local_id) => {
-                                debug!("Inlining {function:?}");
-                                return Some((id, *location, InlineAction::SimpleInline(local_id)));
-                            }
-                            _ => (),
+        let targets = g
+            .node_references()
+            .filter_map(|(id, n)| match n {
+                Node::Call((loc, fun)) => Some((id, loc, fun)),
+                _ => None,
+            })
+            .filter_map(|(id, location, function)| {
+                if recursive_analysis_enabled {
+                    match function.as_local() {
+                        Some(local_id) if self.oracle.should_inline(local_id) => {
+                            debug!("Inlining {function:?}");
+                            return Some((id, *location, InlineAction::SimpleInline(local_id)));
                         }
-                        if Some(*function) == self.tcx.lang_items().from_generator_fn() {
-                            let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(
-                                self.tcx,
-                                local_def_id,
-                            );
-                            let body = body_with_facts.simplified_body();
-                            let mut args = body
-                                .stmt_at_better_err(location.innermost_location())
-                                .right()
-                                .expect("Expected terminator")
-                                .as_fn_and_args()
-                                .unwrap()
-                                .1;
-                            let closure = args
-                                .pop()
-                                .expect("Expected one closure argument")
-                                .expect("Expected non-const closure argument");
-                            debug_assert!(args.is_empty(), "Expected only one argument");
-                            debug_assert!(closure.projection.is_empty());
-                            let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
-                                body.local_decls[closure.local].ty.kind()
-                            {
-                                *gid
-                            } else {
-                                unreachable!("Expected Generator")
-                            };
-                            return Some((
-                                id,
-                                *location,
-                                InlineAction::InlineAsyncClosure(
-                                    closure_fn.as_local().unwrap(),
-                                    closure,
-                                ),
-                            ));
-                        }
-                        if self.ana_ctrl.drop_poll()
-                            && is_part_of_async_desugar(self.tcx.lang_items(), id, &g)
-                        {
-                            return Some((id, *location, InlineAction::Drop));
-                        }
+                        _ => (),
                     }
-                    let local_as_global = GlobalLocal::at_root;
-                    let call = self.get_call(*location);
-                    debug!("Abstracting {function:?}");
-                    let fn_sig = self.tcx.fn_sig(function).skip_binder();
-                    let writeables = Self::writeable_arguments(&fn_sig)
-                        .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
-                        .chain(call.return_to.into_iter())
-                        .map(local_as_global)
-                        .collect::<Vec<_>>();
-                    let mk_term = |tp| algebra::Term::new_base(tp);
-                    eqs.extend(writeables.iter().flat_map(|&write| {
-                        call.argument_locals()
-                            .map(local_as_global)
-                            .filter(move |read| *read != write)
-                            .map(move |read| {
-                                algebra::Equality::new(mk_term(write).add_unknown(), mk_term(read))
-                            })
-                    }));
-                    None
-                })
-                .collect::<Vec<_>>();
-            for (idx, root_location, action) in targets {
-                let (def_id, is_async_closure) = match action {
-                    InlineAction::InlineAsyncClosure(did, c) => (did, Some(c)),
-                    InlineAction::SimpleInline(did) => (did, None),
-                    InlineAction::Drop => {
-                        let incoming_closure = g
-                            .edges_directed(idx, pg::Direction::Incoming)
-                            .filter_map(|(from, to, weight)| weight.data.is_set(0).then_some(from))
-                            .collect::<Vec<_>>();
-                        let outgoing = g
-                            .edges_directed(idx, pg::Direction::Outgoing)
-                            .filter_map(|(_, to, weight)| {
-                                let mut weight = *weight;
-                                weight.remove_type(EdgeType::Control);
-                                (!weight.is_empty()).then_some((to, weight))
-                            })
-                            .collect::<Vec<_>>();
-
-                        for from in incoming_closure {
-                            for (to, weight) in outgoing.iter().cloned() {
-                                add_weighted_edge(g, from, to, weight)
-                            }
-                        }
-                        let call = self.get_call(root_location);
-                        if let Some(return_local) = call.return_to {
-                            let mut target =
-                                algebra::Term::new_base(GlobalLocal::at_root(return_local));
-                            if matches!(idx, SimpleLocation::Call((_, fun)) if self.tcx.lang_items().new_unchecked_fn() == Some(fun))
-                            {
-                                target = target
-                                    .add_member_of(DisplayViaDebug(mir::Field::from_usize(0)));
-                            }
-                            eqs.push(algebra::Equality::new(
-                                target,
-                                algebra::Term::new_base(GlobalLocal::at_root(
-                                    call.arguments[regal::ArgumentIndex::from_usize(0)]
-                                        .as_ref()
-                                        .unwrap()
-                                        .0,
-                                )),
-                            ));
-                        }
-                        g.remove_node(idx);
-                        continue;
-                    }
-                };
-                let grw_to_inline =
-                    if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id) {
-                        callee_graph
-                    } else {
-                        // Breaking recursion. This can only happen if we are trying to
-                        // inline ourself, so we simply skip.
-                        continue;
-                    };
-                *num_inlined += 1 + grw_to_inline.inlined_functions_count();
-                *max_call_stack_depth =
-                    (*max_call_stack_depth).max(grw_to_inline.max_call_stack_depth() + 1);
-                let num_args = if is_async_closure.is_some() {
-                    1 as usize
-                } else {
-                    self.tcx.fn_sig(def_id).skip_binder().inputs().len()
-                };
-                let mut argument_map: HashMap<_, _> = (0..num_args)
-                    .map(|a| (EdgeType::Data(a as u32), vec![]))
-                    .chain([(EdgeType::Control, vec![])])
-                    .collect();
-
-                for e in g.edges_directed(idx, pg::Incoming) {
-                    for arg_num in e.weight().into_types_iter() {
-                        argument_map.get_mut(&arg_num).unwrap().push(e.source());
-                    }
-                }
-
-                assert!(root_location.is_at_root());
-                let call = &proc_g.calls[&DisplayViaDebug(root_location.outermost_location())];
-                let gli_here = self.gli.at(root_location.outermost_location(), body_id);
-                eqs.extend(
-                    Self::relativize_eqs(&grw_to_inline.equations, &gli_here).chain(
-                        if let Some(closure) = is_async_closure {
-                            assert!(closure.projection.is_empty());
-                            Either::Right(std::iter::once((
-                                closure.local,
-                                arg_num_to_local(0_usize.into()),
-                            )))
-                        } else {
-                            Either::Left((0..num_args).filter_map(|a| {
-                                let a = a.into();
-                                let actual_param = call.arguments[a].as_ref()?.0;
-                                Some((actual_param, arg_num_to_local(a)))
-                            }))
-                        }
-                        .into_iter()
-                        .chain(call.return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
-                        .map(|(actual_param, formal_param)| {
-                            algebra::Equality::new(
-                                Term::new_base(GlobalLocal::at_root(actual_param)),
-                                Term::new_base(GlobalLocal::relative(formal_param, root_location)),
-                            )
-                        }),
-                    ),
-                );
-                let to_inline = &grw_to_inline.graph;
-
-                let mut connect_to =
-                    |g: &mut GraphImpl<_>, source, target, weight: Edge, pruning_required| {
-                        let mut add_edge = |source, register_for_pruning| {
-                            debug!("Connecting {source} -> {target}");
-                            if register_for_pruning {
-                                queue_for_pruning.insert((source, target));
-                            }
-                            add_weighted_edge(g, source, target, weight)
+                    if Some(*function) == self.tcx.lang_items().from_generator_fn() {
+                        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(
+                            self.tcx,
+                            local_def_id,
+                        );
+                        let body = body_with_facts.simplified_body();
+                        let mut args = body
+                            .stmt_at_better_err(location.innermost_location())
+                            .right()
+                            .expect("Expected terminator")
+                            .as_fn_and_args()
+                            .unwrap()
+                            .1;
+                        let closure = match args.as_slice() {
+                            [Some(p)] => *p,
+                            _ => panic!("Expected one non-const closure argument"),
                         };
-                        match source {
-                            Node::Call((loc, did)) => add_edge(
-                                Node::Call((gli_here.relativize(loc), did)),
-                                pruning_required,
+                        debug_assert!(closure.projection.is_empty());
+                        let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                            body.local_decls[closure.local].ty.kind()
+                        {
+                            *gid
+                        } else {
+                            unreachable!("Expected Generator")
+                        };
+                        return Some((
+                            id,
+                            *location,
+                            InlineAction::InlineAsyncClosure(
+                                closure_fn.as_local().unwrap(),
+                                closure,
                             ),
-                            Node::Return => unreachable!(),
-                            Node::Argument(a) => {
-                                for nidx in argument_map
-                                    .get(&EdgeType::Data(a.as_usize() as u32))
-                                    .into_iter()
-                                    .flat_map(|s| s.into_iter())
-                                {
-                                    add_edge(*nidx, true)
-                                }
+                        ));
+                    }
+                    if self.ana_ctrl.drop_poll()
+                        && is_part_of_async_desugar(self.tcx.lang_items(), id, &g)
+                    {
+                        return Some((id, *location, InlineAction::Drop));
+                    }
+                }
+                let local_as_global = GlobalLocal::at_root;
+                let call = self.get_call(*location);
+                debug!("Abstracting {function:?}");
+                let fn_sig = self.tcx.fn_sig(function).skip_binder();
+                let writeables = Self::writeable_arguments(&fn_sig)
+                    .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
+                    .chain(call.return_to.into_iter())
+                    .map(local_as_global)
+                    .collect::<Vec<_>>();
+                let mk_term = |tp| algebra::Term::new_base(tp);
+                eqs.extend(writeables.iter().flat_map(|&write| {
+                    call.argument_locals()
+                        .map(local_as_global)
+                        .filter(move |read| *read != write)
+                        .map(move |read| {
+                            algebra::Equality::new(mk_term(write).add_unknown(), mk_term(read))
+                        })
+                }));
+                None
+            })
+            .collect::<Vec<_>>();
+        for (idx, root_location, action) in targets {
+            let (def_id, is_async_closure) = match action {
+                InlineAction::InlineAsyncClosure(did, c) => (did, Some(c)),
+                InlineAction::SimpleInline(did) => (did, None),
+                InlineAction::Drop => {
+                    let incoming_closure = g
+                        .edges_directed(idx, pg::Direction::Incoming)
+                        .filter_map(|(from, _, weight)| weight.data.is_set(0).then_some(from))
+                        .collect::<Vec<_>>();
+                    let outgoing = g
+                        .edges_directed(idx, pg::Direction::Outgoing)
+                        .filter_map(|(_, to, weight)| {
+                            let mut weight = *weight;
+                            weight.remove_type(EdgeType::Control);
+                            (!weight.is_empty()).then_some((to, weight))
+                        })
+                        .collect::<Vec<_>>();
+
+                    for from in incoming_closure {
+                        for (to, weight) in outgoing.iter().cloned() {
+                            add_weighted_edge(g, from, to, weight)
+                        }
+                    }
+                    let call = self.get_call(root_location);
+                    if let Some(return_local) = call.return_to {
+                        let mut target =
+                            algebra::Term::new_base(GlobalLocal::at_root(return_local));
+                        if matches!(idx, SimpleLocation::Call((_, fun)) if self.tcx.lang_items().new_unchecked_fn() == Some(fun))
+                        {
+                            target = target
+                                .add_member_of(DisplayViaDebug(mir::Field::from_usize(0)));
+                        }
+                        eqs.push(algebra::Equality::new(
+                            target,
+                            algebra::Term::new_base(GlobalLocal::at_root(
+                                call.arguments[regal::ArgumentIndex::from_usize(0)]
+                                    .as_ref()
+                                    .unwrap()
+                                    .0,
+                            )),
+                        ));
+                    }
+                    g.remove_node(idx);
+                    continue;
+                }
+            };
+            let grw_to_inline =
+                if let Some(callee_graph) = self.get_inlined_graph_by_def_id(def_id) {
+                    callee_graph
+                } else {
+                    // Breaking recursion. This can only happen if we are trying to
+                    // inline ourself, so we simply skip.
+                    continue;
+                };
+            *num_inlined += 1 + grw_to_inline.inlined_functions_count();
+            *max_call_stack_depth =
+                (*max_call_stack_depth).max(grw_to_inline.max_call_stack_depth() + 1);
+            let num_args = if is_async_closure.is_some() {
+                1 as usize
+            } else {
+                self.tcx.fn_sig(def_id).skip_binder().inputs().len()
+            };
+            let mut argument_map: HashMap<_, _> = (0..num_args)
+                .map(|a| (EdgeType::Data(a as u32), vec![]))
+                .chain([(EdgeType::Control, vec![])])
+                .collect();
+
+            for e in g.edges_directed(idx, pg::Incoming) {
+                for arg_num in e.weight().into_types_iter() {
+                    argument_map.get_mut(&arg_num).unwrap().push(e.source());
+                }
+            }
+
+            assert!(root_location.is_at_root());
+            let call = &proc_g.calls[&DisplayViaDebug(root_location.outermost_location())];
+            let gli_here = self.gli.at(root_location.outermost_location(), body_id);
+            eqs.extend(
+                Self::relativize_eqs(&grw_to_inline.equations, &gli_here).chain(
+                    if let Some(closure) = is_async_closure {
+                        assert!(closure.projection.is_empty());
+                        Either::Right(std::iter::once((
+                            closure.local,
+                            arg_num_to_local(0_usize.into()),
+                        )))
+                    } else {
+                        Either::Left((0..num_args).filter_map(|a| {
+                            let a = a.into();
+                            let actual_param = call.arguments[a].as_ref()?.0;
+                            Some((actual_param, arg_num_to_local(a)))
+                        }))
+                    }
+                    .into_iter()
+                    .chain(call.return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
+                    .map(|(actual_param, formal_param)| {
+                        algebra::Equality::new(
+                            Term::new_base(GlobalLocal::at_root(actual_param)),
+                            Term::new_base(GlobalLocal::relative(formal_param, root_location)),
+                        )
+                    }),
+                ),
+            );
+            let to_inline = &grw_to_inline.graph;
+
+            let mut connect_to =
+                |g: &mut GraphImpl<_>, source, target, weight: Edge, pruning_required| {
+                    let mut add_edge = |source, register_for_pruning| {
+                        debug!("Connecting {source} -> {target}");
+                        if register_for_pruning {
+                            queue_for_pruning.insert((source, target));
+                        }
+                        add_weighted_edge(g, source, target, weight)
+                    };
+                    match source {
+                        Node::Call((loc, did)) => add_edge(
+                            Node::Call((gli_here.relativize(loc), did)),
+                            pruning_required,
+                        ),
+                        Node::Return => unreachable!(),
+                        Node::Argument(a) => {
+                            for nidx in argument_map
+                                .get(&EdgeType::Data(a.as_usize() as u32))
+                                .into_iter()
+                                .flat_map(|s| s.into_iter())
+                            {
+                                add_edge(*nidx, true)
                             }
                         }
-                    };
+                    }
+                };
 
-                for old in to_inline.nodes() {
-                    let new = old.map_call(|(location, function)| {
-                        (gli_here.relativize(*location), *function)
-                    });
-                    g.add_node(new);
-                    debug!(
-                        "Handling {old} (now {new}) {} incoming edges",
-                        to_inline.edges_directed(old, pg::Incoming).count()
-                    );
-                    for edge in to_inline.edges_directed(old, pg::Incoming) {
-                        match new {
-                            Node::Call(_) => {
-                                connect_to(g, edge.source(), new, *edge.weight(), false)
-                            }
-                            Node::Return | Node::Argument(_) => {
-                                for (target, out) in g
-                                    .edges_directed(idx, pg::Outgoing)
-                                    .map(|e| (e.target(), e.weight().clone()))
-                                    .collect::<Vec<_>>()
-                                {
-                                    connect_to(g, edge.source(), target, out, true);
-                                }
+            for old in to_inline.nodes() {
+                let new = old.map_call(|(location, function)| {
+                    (gli_here.relativize(*location), *function)
+                });
+                g.add_node(new);
+                debug!(
+                    "Handling {old} (now {new}) {} incoming edges",
+                    to_inline.edges_directed(old, pg::Incoming).count()
+                );
+                for edge in to_inline.edges_directed(old, pg::Incoming) {
+                    match new {
+                        Node::Call(_) => {
+                            connect_to(g, edge.source(), new, *edge.weight(), false)
+                        }
+                        Node::Return | Node::Argument(_) => {
+                            for (target, out) in g
+                                .edges_directed(idx, pg::Outgoing)
+                                .map(|e| (e.target(), e.weight().clone()))
+                                .collect::<Vec<_>>()
+                            {
+                                connect_to(g, edge.source(), target, out, true);
                             }
                         }
                     }
                 }
-                g.remove_node(idx);
             }
-        });
+            g.remove_node(idx);
+        }
         queue_for_pruning
     }
 
@@ -1079,7 +1071,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             }
         }
 
-        let mut queue_for_pruning = self.perform_subfunction_inlining(&proc_g, &mut gwr, body_id);
+        let mut queue_for_pruning =
+            time(&format!("Inlining subgraphs into {name}"), ||
+                self.perform_subfunction_inlining(&proc_g, &mut gwr, body_id));
+
 
         if self.ana_ctrl.remove_inconsequential_calls().is_enabled() {
             self.remove_inconsequential_calls(&mut gwr);
