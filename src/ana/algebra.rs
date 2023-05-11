@@ -558,6 +558,11 @@ impl<B, F: Copy> Term<B, F> {
         self
     }
 
+    pub fn extend<I: IntoIterator<Item = Operator<F>>>(mut self, others: I) -> Self {
+        self.terms.extend(others);
+        self
+    }
+
     pub fn base(&self) -> &B {
         &self.base
     }

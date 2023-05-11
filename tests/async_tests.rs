@@ -10,7 +10,10 @@ const CRATE_DIR: &str = "tests/async-tests";
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = *helpers::DFPP_INSTALLED
-        && with_current_directory(CRATE_DIR, || { run_dfpp_with_graph_dump() }).map_or_else(
+        && with_current_directory(CRATE_DIR, || {
+            run_dfpp_with_graph_dump_and(&["--drop-poll"])
+        })
+        .map_or_else(
             |e| {
                 println!("io err {}", e);
                 false
@@ -103,4 +106,33 @@ define_test!(no_immutable_inlining_overtaint : graph -> {
     assert!(graph.connects_data(&get2, &send2));
     assert!(!graph.connects(&get, &send2));
     assert!(!graph.connects(&get2, &send));
+});
+
+define_test!(remove_poll_match: graph -> {
+    let input = graph.function_call("some_input");
+    let target = graph.function_call("target");
+    let poll = graph.function_call("poll");
+    let new_unchecked = graph.function_call("new_unchecked");
+    let get_context = graph.function_call("get_context");
+    let into_future = graph.function_call("into_future");
+    let f = graph.function_call(" f(");
+    assert!(graph.connects_data(&input, &target));
+
+    assert!(graph.connects_none(&poll));
+    assert!(graph.connects_none(&new_unchecked));
+    assert!(graph.connects_none(&get_context));
+    assert!(graph.connects_none(&into_future));
+});
+
+define_test!(no_overtaint_over_poll: graph -> {
+    let input = graph.function_call("some_input");
+    let another_input = graph.function_call("another_input");
+
+    let target = graph.function_call(" target");
+    let another_target = graph.function_call("another_target");
+
+    assert!(graph.connects(&input, &target));
+    assert!(graph.connects(&another_input, &another_target));
+    assert!(!graph.connects(&input, &another_target));
+    assert!(!graph.connects(&another_input, &target));
 });

@@ -165,6 +165,8 @@ pub struct AnalysisCtrl {
     remove_inconsequential_calls: Option<String>,
 
     #[clap(long, env)]
+    drop_clone: bool,
+    #[clap(long, env)]
     drop_poll: bool,
 
     #[clap(long, env)]
@@ -262,6 +264,10 @@ impl AnalysisCtrl {
 
     pub fn drop_poll(&self) -> bool {
         self.drop_poll
+    }
+
+    pub fn drop_clone(&self) -> bool {
+        self.drop_clone
     }
 }
 

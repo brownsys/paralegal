@@ -676,7 +676,12 @@ fn is_part_of_async_desugar<L: Copy + Ord + std::hash::Hash>(
 enum InlineAction<'tcx> {
     SimpleInline(LocalDefId),
     InlineAsyncClosure(LocalDefId, mir::Place<'tcx>),
-    Drop,
+    Drop(DropAction),
+}
+
+enum DropAction {
+    None,
+    WrapReturn(Vec<algebra::Operator<DisplayViaDebug<mir::Field>>>),
 }
 
 impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
@@ -696,6 +701,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             ana_ctrl,
             dbg_ctrl,
         }
+    }
+
+    pub fn is_clone_fn(&self, def_id: DefId) -> bool {
+        self.tcx.trait_of_item(def_id) == self.tcx.lang_items().clone_trait()
     }
 
     /// How many (unique) functions we have analyzed
@@ -835,6 +844,67 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
+    fn try_find_inlining_strategy(
+        &self,
+        location: GlobalLocation<'g>,
+        function: DefId,
+        body_id: LocalDefId,
+    ) -> Option<InlineAction> {
+        match function.as_local() {
+            Some(local_id) if self.oracle.should_inline(local_id) => {
+                debug!("Inlining {function:?}");
+                return Some(InlineAction::SimpleInline(local_id));
+            }
+            _ => (),
+        }
+        (Some(function) == self.tcx.lang_items().from_generator_fn()).then(|| {
+            let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, body_id);
+            let body = body_with_facts.simplified_body();
+            let mut args = body
+                .stmt_at_better_err(location.innermost_location())
+                .right()
+                .expect("Expected terminator")
+                .as_fn_and_args()
+                .unwrap()
+                .1;
+            let closure = match args.as_slice() {
+                [Some(p)] => *p,
+                _ => panic!("Expected one non-const closure argument"),
+            };
+            debug_assert!(closure.projection.is_empty());
+            let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                body.local_decls[closure.local].ty.kind()
+            {
+                *gid
+            } else {
+                unreachable!("Expected Generator")
+            };
+            InlineAction::InlineAsyncClosure(closure_fn.as_local().unwrap(), closure)
+        })
+    }
+
+    fn classify_special_function_handling(
+        &self,
+        function: DefId,
+        id: Node<(GlobalLocation<'g>, DefId)>,
+        g: &GraphImpl<GlobalLocation<'g>>,
+    ) -> Option<DropAction> {
+        let language_items = self.tcx.lang_items();
+        if self.ana_ctrl.drop_poll() && is_part_of_async_desugar(language_items, id, &g) {
+            Some(if Some(function) == language_items.new_unchecked_fn() {
+                DropAction::WrapReturn(vec![algebra::Operator::MemberOf(
+                    mir::Field::from_usize(0).into(),
+                )])
+            } else {
+                DropAction::None
+            })
+        } else if self.ana_ctrl.drop_clone() && self.is_clone_fn(function) {
+            Some(DropAction::WrapReturn(vec![algebra::Operator::DerefOf]))
+        } else {
+            None
+        }
+    }
+
     /// Inline crate-local, non-marked called functions and return a set of
     /// newly inserted edges that cross those function boundaries to be
     /// inspected for pruning.
@@ -860,79 +930,48 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 Node::Call((loc, fun)) => Some((id, loc, fun)),
                 _ => None,
             })
-            .filter_map(|(id, location, function)| {
-                if recursive_analysis_enabled {
-                    match function.as_local() {
-                        Some(local_id) if self.oracle.should_inline(local_id) => {
-                            debug!("Inlining {function:?}");
-                            return Some((id, *location, InlineAction::SimpleInline(local_id)));
-                        }
-                        _ => (),
-                    }
-                    if Some(*function) == self.tcx.lang_items().from_generator_fn() {
-                        let body_with_facts =
-                            borrowck_facts::get_body_with_borrowck_facts(self.tcx, local_def_id);
-                        let body = body_with_facts.simplified_body();
-                        let mut args = body
-                            .stmt_at_better_err(location.innermost_location())
-                            .right()
-                            .expect("Expected terminator")
-                            .as_fn_and_args()
-                            .unwrap()
-                            .1;
-                        let closure = match args.as_slice() {
-                            [Some(p)] => *p,
-                            _ => panic!("Expected one non-const closure argument"),
-                        };
-                        debug_assert!(closure.projection.is_empty());
-                        let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
-                            body.local_decls[closure.local].ty.kind()
-                        {
-                            *gid
-                        } else {
-                            unreachable!("Expected Generator")
-                        };
-                        return Some((
-                            id,
-                            *location,
-                            InlineAction::InlineAsyncClosure(
-                                closure_fn.as_local().unwrap(),
-                                closure,
-                            ),
-                        ));
-                    }
-                    if self.ana_ctrl.drop_poll()
-                        && is_part_of_async_desugar(self.tcx.lang_items(), id, &g)
-                    {
-                        return Some((id, *location, InlineAction::Drop));
-                    }
-                }
-                let local_as_global = GlobalLocal::at_root;
-                let call = self.get_call(*location);
-                debug!("Abstracting {function:?}");
-                let fn_sig = self.tcx.fn_sig(function).skip_binder();
-                let writeables = Self::writeable_arguments(&fn_sig)
-                    .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
-                    .chain(call.return_to.into_iter())
-                    .map(local_as_global)
-                    .collect::<Vec<_>>();
-                let mk_term = |tp| algebra::Term::new_base(tp);
-                eqs.extend(writeables.iter().flat_map(|&write| {
-                    call.argument_locals()
-                        .map(local_as_global)
-                        .filter(move |read| *read != write)
-                        .map(move |read| {
-                            algebra::Equality::new(mk_term(write).add_unknown(), mk_term(read))
-                        })
-                }));
-                None
+            .filter_map(|(id, &location, &function)| {
+                recursive_analysis_enabled
+                    .then(|| {
+                        self.try_find_inlining_strategy(location, function, local_def_id)
+                            .map(|ac| (id, location, ac))
+                    })
+                    .flatten()
+                    .or_else(|| {
+                        self.classify_special_function_handling(function, id, g)
+                            .map(|drop_action| (id, location, InlineAction::Drop(drop_action)))
+                    })
+                    .or_else(|| {
+                        let local_as_global = GlobalLocal::at_root;
+                        let call = self.get_call(location);
+                        debug!("Abstracting {function:?}");
+                        let fn_sig = self.tcx.fn_sig(function).skip_binder();
+                        let writeables = Self::writeable_arguments(&fn_sig)
+                            .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
+                            .chain(call.return_to.into_iter())
+                            .map(local_as_global)
+                            .collect::<Vec<_>>();
+                        let mk_term = |tp| algebra::Term::new_base(tp);
+                        eqs.extend(writeables.iter().flat_map(|&write| {
+                            call.argument_locals()
+                                .map(local_as_global)
+                                .filter(move |read| *read != write)
+                                .map(move |read| {
+                                    algebra::Equality::new(
+                                        mk_term(write).add_unknown(),
+                                        mk_term(read),
+                                    )
+                                })
+                        }));
+                        None
+                    })
             })
             .collect::<Vec<_>>();
         for (idx, root_location, action) in targets {
             let (def_id, is_async_closure) = match action {
                 InlineAction::InlineAsyncClosure(did, c) => (did, Some(c)),
                 InlineAction::SimpleInline(did) => (did, None),
-                InlineAction::Drop => {
+                InlineAction::Drop(drop_action) => {
                     let incoming_closure = g
                         .edges_directed(idx, pg::Direction::Incoming)
                         .filter_map(|(from, _, weight)| weight.data.is_set(0).then_some(from))
@@ -955,10 +994,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     if let Some(return_local) = call.return_to {
                         let mut target =
                             algebra::Term::new_base(GlobalLocal::at_root(return_local));
-                        if matches!(idx, SimpleLocation::Call((_, fun)) if self.tcx.lang_items().new_unchecked_fn() == Some(fun))
-                        {
-                            target =
-                                target.add_member_of(DisplayViaDebug(mir::Field::from_usize(0)));
+                        if let DropAction::WrapReturn(wrappings) = drop_action {
+                            target = target.extend(wrappings);
                         }
                         eqs.push(algebra::Equality::new(
                             target,
