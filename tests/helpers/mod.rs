@@ -129,7 +129,7 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
 /// JSON.
 ///
 /// The result is suitable for reading with [`PreFrg::from_file_at`]
-pub fn run_dfpp_with_flow_graph_dump_and<I, S>(extra: I) -> bool 
+pub fn run_dfpp_with_flow_graph_dump_and<I, S>(extra: I) -> bool
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
@@ -526,7 +526,7 @@ impl G {
     }
 }
 
-pub trait HasGraph<'g> : Sized + Copy {
+pub trait HasGraph<'g>: Sized + Copy {
     fn graph(self) -> &'g PreFrg;
 
     fn function(self, name: &str) -> FnRef<'g> {
@@ -546,20 +546,25 @@ pub trait HasGraph<'g> : Sized + Copy {
     }
 
     fn ctrl_hashed(self, name: &str) -> Identifier {
-        self.graph()
+        match self
+            .graph()
             .0
             .controllers
             .iter()
-            .find(|(id, _)| id.as_str().starts_with(name))
-            .unwrap_or_else(|| panic!("Could not find controller '{name}'"))
-            .0
-            .to_owned()
+            .filter(|(id, _)| id.as_str().starts_with(name) && id.as_str().len() == name.len() + 7)
+            .map(|i| i.0)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            [] => panic!("Could not find controller '{name}'"),
+            [ctrl] => **ctrl,
+            more => panic!("Too many matching controllers, found candidates: {more:?}"),
+        }
     }
 
     fn has_marker(self, marker: &str) -> bool {
         let marker = Symbol::intern(marker);
-        self.graph()
-            .0.annotations.values().any(|v| {
+        self.graph().0.annotations.values().any(|v| {
             v.0.iter()
                 .filter_map(|a| a.as_label_ann())
                 .any(|m| m.marker == marker)
@@ -590,7 +595,6 @@ impl PreFrg {
             )
         })
     }
-
 }
 
 #[derive(Clone)]

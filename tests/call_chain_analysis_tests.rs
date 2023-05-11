@@ -67,7 +67,6 @@ define_test!(with_return ctrl {
 
 define_test!(on_mut_var ctrl {
     let src_fn = ctrl.function("source");
-    let ctrl = ctrl.ctrl("on_mut_var0");
     let src = ctrl.call_site(&src_fn);
     let dest_fn = ctrl.function("receiver");
     let dest_sink = ctrl.call_site(&dest_fn);

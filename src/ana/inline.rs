@@ -899,7 +899,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 DropAction::None
             })
         } else if self.ana_ctrl.drop_clone() && self.is_clone_fn(function) {
-            Some(DropAction::WrapReturn(vec![algebra::Operator::DerefOf]))
+            Some(DropAction::WrapReturn(vec![algebra::Operator::RefOf]))
         } else {
             None
         }
@@ -987,6 +987,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
                     for from in incoming_closure {
                         for (to, weight) in outgoing.iter().cloned() {
+                            queue_for_pruning.insert((from, to));
                             add_weighted_edge(g, from, to, weight)
                         }
                     }
