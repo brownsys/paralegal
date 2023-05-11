@@ -97,34 +97,41 @@ pub struct Edge {
 }
 
 impl Edge {
+    #[inline]
     pub fn is_empty(self) -> bool {
         !self.control && self.data.is_empty()
     }
+    #[inline]
     pub fn add_type(&mut self, t: EdgeType) {
         match t {
             EdgeType::Control => self.control = true,
             EdgeType::Data(i) => self.data.set(i),
         }
     }
+    #[inline]
     pub fn empty() -> Self {
         Self {
             control: false,
             data: TinyBitSet::new_empty(),
         }
     }
+    #[inline]
     pub fn merge(&mut self, other: Self) {
         self.control |= other.control;
         self.data |= other.data;
     }
+    #[inline]
     pub fn into_types_iter(self) -> impl Iterator<Item = EdgeType> {
         self.data
             .into_iter_set_in_domain()
             .map(EdgeType::Data)
             .chain(self.control.then_some(EdgeType::Control))
     }
+    #[inline]
     pub fn count(self) -> u32 {
         self.data.count() + if self.control { 1 } else { 0 }
     }
+    #[inline]
     pub fn remove_type(&mut self, t: EdgeType) -> bool {
         let changed;
         match t {
@@ -139,11 +146,21 @@ impl Edge {
         }
         changed
     }
+    #[inline]
     pub fn is_data(self) -> bool {
         !self.data.is_empty()
     }
+    #[inline]
     pub fn is_control(self) -> bool {
         self.control
+    }
+    #[inline]
+    pub fn from_types<I: IntoIterator<Item = EdgeType>>(ts: I) -> Self {
+        let mut slf = Self::empty();
+        for i in ts {
+            slf.add_type(i)
+        }
+        slf
     }
 }
 
@@ -580,11 +597,20 @@ impl EdgesClassifier {
 ///
 /// See what significance means in the documentation of
 /// [`InconsequentialCallRemovalPolicy`](crate::args::InconsequentialCallRemovalPolicy)
-fn node_is_insignificant<N: petgraph::graphmap::NodeTrait>(
+fn node_is_insignificant<N: petgraph::graphmap::NodeTrait + Unpin>(
     g: &pg::GraphMap<N, Edge, pg::Directed>,
     n: N,
     policy: crate::args::InconsequentialCallRemovalPolicy,
+    ctrl_flow_context_cache: &Cache<N, HashSet<N>>,
 ) -> Option<(EdgesClassifier, EdgesClassifier)> {
+    let get_ctrl_flow_context = |node| {
+        ctrl_flow_context_cache.get(node, |_| {
+            g.edges_directed(node, petgraph::Incoming)
+                .filter(|(_, _, w)| w.is_control())
+                .map(|t| t.0)
+                .collect()
+        })
+    };
     // XXX verify that if the incoming edge is ctrl,
     // it's still safe to remove
     let in_classifier: EdgesClassifier = g
@@ -594,16 +620,27 @@ fn node_is_insignificant<N: petgraph::graphmap::NodeTrait>(
     if !in_classifier.has_data() {
         return None;
     }
+    let my_ctrl_flow_context = get_ctrl_flow_context(n);
+    let mut children_have_same_ctrl_context = true;
     let out_classifier: EdgesClassifier = g
         .edges_directed(n, pg::Direction::Outgoing)
-        .map(|t| *t.2)
+        .map(|(_, to, weight)| {
+            // Specifically use '&&' here to allow short circuiting
+            children_have_same_ctrl_context = children_have_same_ctrl_context
+                && my_ctrl_flow_context.is_subset(get_ctrl_flow_context(to));
+            *weight
+        })
         .collect();
+    // Since the conditions tested here are all already simple booleans I use
+    // '|' an '&' instead of the short circuiting '&&' and '||' which introduces
+    // control flow and is probably slower.
+    //
     // probably side effecting if it doesn't
     (out_classifier.has_any_edge()
-        // policy may forbid removing control relevant edges entirely
-        && (!out_classifier.has_control() || policy.remove_ctrl_flow_source())
+        // either we don't have ctrl influence or the policy allows its removal
+        & (!out_classifier.has_control() | policy.remove_ctrl_flow_source())
         // going from control to data is invalid
-        && !(in_classifier.has_control_only && out_classifier.has_data()))
+        & !(in_classifier.has_control_only & out_classifier.has_data() & !children_have_same_ctrl_context))
     .then_some((in_classifier, out_classifier))
 }
 
@@ -759,6 +796,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn remove_inconsequential_calls(&self, gwr: &mut InlinedGraph<'g>) {
         let remove_calls_policy = self.ana_ctrl.remove_inconsequential_calls();
         let g = &mut gwr.graph;
+        let mut ctrl_flow_context_cache = Default::default();
         for (n, (_in_classifier, _out_classifier)) in g
             .nodes()
             .filter_map(|n| 
@@ -770,14 +808,19 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         && !self.oracle.is_semantically_meaningful(defid)
                         && Some(defid) != self.tcx.lang_items().from_generator_fn() 
                         && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))) {
-                    node_is_insignificant(g, n, remove_calls_policy).map(|cls| (n, cls))
+                    node_is_insignificant(g, n, remove_calls_policy, &mut ctrl_flow_context_cache).map(|cls| (n, cls))
                 } else {
                     None
                 })
             .collect::<Vec<_>>()
         {
             for from in g
-                .neighbors_directed(n, pg::Direction::Incoming)
+                .edges_directed(n, pg::Direction::Incoming)
+                .filter_map(|(from, _, weight)| 
+                    // invariant: The selector before ensures that if we inline
+                    // with control, the node below is already in the same
+                    // control flow scope
+                    weight.is_data().then_some(from))
                 .collect::<Vec<_>>()
             {
                 for (to, weight) in g
@@ -785,7 +828,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     .map(|(_, to, weight)| (to, *weight))
                     .collect::<Vec<_>>()
                 {
-                    add_weighted_edge(g, from, to, weight)
+                    add_weighted_edge(g, from, to, weight);
                 }
             }
             g.remove_node(n);
