@@ -236,7 +236,7 @@ fn get_highest_local(body: &mir::Body) -> mir::Local {
     }
     let mut e = Extractor(None);
     e.visit_body(body);
-    e.0.unwrap()
+    e.0.unwrap_or(mir::RETURN_PLACE)
 }
 
 impl Body<DisplayViaDebug<Location>> {
@@ -259,7 +259,6 @@ impl Body<DisplayViaDebug<Location>> {
                                     is_mut_arg|
              -> Dependencies<DisplayViaDebug<_>> {
                 use rustc_ast::Mutability;
-                debug!("Dependencies for {arg:?} at {location}");
                 let ana = flow_analysis.state_at(*location);
                 let mutability = if false && is_mut_arg {
                     Mutability::Mut
@@ -269,14 +268,14 @@ impl Body<DisplayViaDebug<Location>> {
                 // Not sure this is necessary anymore because I changed the analysis
                 // to transitively propagate in cases where a subplace is modified
                 let reachable_values = non_transitive_aliases.reachable_values(arg, mutability);
-                debug!("Reachable values for {arg:?} are {reachable_values:?}");
-                debug!(
-                    "  Children are {:?}",
-                    reachable_values
-                        .into_iter()
-                        .flat_map(|a| non_transitive_aliases.children(*a))
-                        .collect::<Vec<_>>()
-                );
+                // debug!("Reachable values for {arg:?} are {reachable_values:?}");
+                // debug!(
+                //     "  Children are {:?}",
+                //     reachable_values
+                //         .into_iter()
+                //         .flat_map(|a| non_transitive_aliases.children(*a))
+                //         .collect::<Vec<_>>()
+                // );
                 let deps = reachable_values
                     .into_iter()
                     .flat_map(|p| non_transitive_aliases.children(*p))
@@ -293,7 +292,6 @@ impl Body<DisplayViaDebug<Location>> {
                         }
                     })
                     .collect();
-                debug!("  Registering dependencies {deps:?}");
                 deps
             };
             let mut call_argument_equations = HashSet::new();
@@ -358,10 +356,6 @@ impl Body<DisplayViaDebug<Location>> {
                             Some(place.project_deeper(&[mir::PlaceElem::Deref], tcx)).into_iter(),
                         )
                     } else if ty.is_generator() {
-                        debug!(
-                            "{ty:?} is a generator with children {:?}",
-                            non_transitive_aliases.children(place)
-                        );
                         Either::Right(
                             non_transitive_aliases
                                 .children(place)
@@ -378,15 +372,12 @@ impl Body<DisplayViaDebug<Location>> {
                 })
                 .map(|p| (p, HashSet::new()))
                 .collect();
-            debug!("Return arguments are {return_arg_deps:?}");
             let return_deps = body
                 .all_returns()
                 .map(DisplayViaDebug)
                 .flat_map(|loc| {
                     return_arg_deps.iter_mut().for_each(|(i, s)| {
-                        debug!("Return arg dependencies for {i:?} at {loc}");
                         for d in dependencies_for(loc, *i, true) {
-                            debug!("  adding {d}");
                             s.insert(d);
                         }
                     });
@@ -445,23 +436,10 @@ fn recursive_ctrl_deps<
     body: &mir::Body<'tcx>,
     mut dependencies_for: F,
 ) -> Dependencies<DisplayViaDebug<Location>> {
-    debug!(
-        "Ctrl deps\n{}",
-        Print(|f| {
-            for (b, _) in body.basic_blocks().iter_enumerated() {
-                writeln!(f, "{b:?}: {:?}", ctrl_ana.dependent_on(b))?;
-            }
-            Ok(())
-        })
-    );
     let mut seen = ctrl_ana
         .dependent_on(bb)
         .cloned()
         .unwrap_or_else(|| HybridBitSet::new_empty(0));
-    debug!(
-        "Initial ctrl flow of {bb:?} depends on {:?}",
-        seen.iter().collect::<Vec<_>>()
-    );
     let mut queue = seen.iter().collect::<Vec<_>>();
     let mut dependencies = Dependencies::new();
     while let Some(block) = queue.pop() {
@@ -533,14 +511,12 @@ fn recursive_ctrl_deps<
                             .iter()
                             .fold(SetResult::Uninit, |prev_deps, &block| {
                                 if matches!(prev_deps, SetResult::Unequal) {
-                                    debug!("Already unequal");
                                     return SetResult::Unequal;
                                 }
                                 let ctrl_deps =
                                     if let Some(ctrl_deps) = ctrl_ana.dependent_on(block) {
                                         ctrl_deps
                                     } else {
-                                        debug!("No Deps");
                                         return SetResult::Unequal;
                                     };
                                 let data = &body.basic_blocks()[block];
@@ -550,7 +526,6 @@ fn recursive_ctrl_deps<
                                 };
                                 check.visit_basic_block_data(block, data);
                                 if !check.was_assigned {
-                                    debug!("{discr_place:?} not assigned");
                                     return SetResult::Unequal;
                                 }
                                 match prev_deps {
@@ -559,14 +534,12 @@ fn recursive_ctrl_deps<
                                         if !other.superset(ctrl_deps)
                                             || !ctrl_deps.superset(other) =>
                                     {
-                                        debug!("Unequal");
                                         SetResult::Unequal
                                     }
                                     _ => prev_deps,
                                 }
                             })
                     } {
-                        debug!("Also exploring parents {parent_deps:?}");
                         queue.extend(parent_deps.iter());
                     }
                 }

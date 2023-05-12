@@ -309,28 +309,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             let InlinedGraph {
                 graph, equations, ..
             } = graph;
-            info!("Have {} equations for pruning", equations.len());
-            // debug!(
-            //     "Equations for pruning are:\n{}",
-            //     crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-            //         for eq in equations.iter() {
-            //             writeln!(f, "  {eq}")?;
-            //         }
-            //         Ok(())
-            //     })
-            // );
-            // false.then(|| {
-            //     let solver =
-            //         algebra::MemoizedSolution::construct(self.equations.iter().map(|e| e.clone()));
-            //     algebra::dump_dot_graph(
-            //         &mut outfile_pls(&format!("{name}.eqgraph.gv")).unwrap(),
-            //         &solver,
-            //     )
-            //     .unwrap();
-            //     solver
-            // });
-            info!(
-                "Pruning over {} edges",
+            info!("Have {} equations for pruning {} edges", equations.len(),
                 edges_to_prune
                     .into_iter()
                     .filter_map(|&(a, b)| Some(graph.edge_weight(a, b)?.count()))
@@ -413,15 +392,15 @@ impl<'g> InlinedGraph<'g> {
         body: &regal::Body<DisplayViaDebug<Location>>,
     ) -> Self {
         time("Graph Construction From Regal Body", || {
-            debug!(
-                "Equations for body are:\n{}",
-                crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-                    for eq in body.equations.iter() {
-                        writeln!(f, "  {eq}")?;
-                    }
-                    Ok(())
-                })
-            );
+            // debug!(
+            //     "Equations for body are:\n{}",
+            //     crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
+            //         for eq in body.equations.iter() {
+            //             writeln!(f, "  {eq}")?;
+            //         }
+            //         Ok(())
+            //     })
+            // );
             let equations = to_global_equations(&body.equations, body_id, gli);
             let mut gwr = InlinedGraph {
                 equations,
@@ -852,7 +831,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     ) -> Option<InlineAction> {
         match function.as_local() {
             Some(local_id) if self.oracle.should_inline(local_id) => {
-                debug!("Inlining {function:?}");
                 return Some(InlineAction::SimpleInline(local_id));
             }
             _ => (),
@@ -944,7 +922,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     .or_else(|| {
                         let local_as_global = GlobalLocal::at_root;
                         let call = self.get_call(location);
-                        debug!("Abstracting {function:?}");
                         let fn_sig = self.tcx.fn_sig(function).skip_binder();
                         let writeables = Self::writeable_arguments(&fn_sig)
                             .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
@@ -1072,7 +1049,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             let mut connect_to =
                 |g: &mut GraphImpl<_>, source, target, weight: Edge, pruning_required| {
                     let mut add_edge = |source, register_for_pruning| {
-                        debug!("Connecting {source} -> {target}");
                         if register_for_pruning {
                             queue_for_pruning.insert((source, target));
                         }
@@ -1100,10 +1076,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 let new = old
                     .map_call(|(location, function)| (gli_here.relativize(*location), *function));
                 g.add_node(new);
-                debug!(
-                    "Handling {old} (now {new}) {} incoming edges",
-                    to_inline.edges_directed(old, pg::Incoming).count()
-                );
                 for edge in to_inline.edges_directed(old, pg::Incoming) {
                     match new {
                         Node::Call(_) => connect_to(g, edge.source(), new, *edge.weight(), false),

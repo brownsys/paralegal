@@ -445,24 +445,13 @@ pub fn solve_with<
                 .insert(matching.rhs);
         }
     }
-    debug!(
-        "Found the intermediates\n{}",
-        Print(|fmt: &mut std::fmt::Formatter<'_>| {
-            for (k, vs) in intermediates.iter() {
-                write!(fmt, "  {k}: ")?;
-                write_sep(fmt, " || ", vs, Display::fmt)?;
-                fmt.write_str("\n")?;
-            }
-            Ok(())
-        })
-    );
     if !saw_target {
-        debug!("Never saw final target, abandoning solving early");
+        // debug!("Never saw final target, abandoning solving early");
         return;
     }
     let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
-        debug!("No intermediate found for {from}");
+        // debug!("No intermediate found for {from}");
     }
     let mut targets = matching_intermediate
         .into_iter()
@@ -484,7 +473,7 @@ pub fn solve_with<
                     to_sub.simplify().then_some(to_sub)
                 }))
             } else {
-                debug!("No follow up equation found for {var} on the way from {from}");
+                // debug!("No follow up equation found for {var} on the way from {from}");
             }
         }
     }
