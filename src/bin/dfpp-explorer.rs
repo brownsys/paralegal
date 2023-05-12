@@ -18,6 +18,10 @@ use ringbuffer::RingBufferWrite;
 #[derive(Parser)]
 struct Args {
     file: std::path::PathBuf,
+    #[clap(long)]
+    script: Option<std::path::PathBuf>,
+    #[clap(last = true)]
+    command: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -805,18 +809,35 @@ fn main() {
         let gli = GLI::new(&interner);
 
         let mut repl = Repl::from_flow_graph(&flow, gli);
-        let mut history = MyHistory::<Command>::default();
-        let mut prompt = dl::Input::new();
-        prompt.history_with(&mut history);
-        prompt.with_prompt("query");
-        loop {
-            match prompt.interact_text() {
-                Ok(cmd) => {
-                    if let Err(e) = repl.run_command(cmd) {
-                        println!("{e}")
+
+        if let Some(script) = {
+            (!args.command.is_empty()).then(|| Either::Right([args.command.join(" ")].into_iter()))
+                .or_else(||
+                    args.script.map(|script| {
+                        let file = std::fs::File::open(script).unwrap();
+                        use std::io::{BufRead, BufReader};
+                        Either::Left(BufReader::new(file).lines().map(Result::unwrap))
+                    })
+                )
+        } {
+            repl.prompt_for_missing_nodes = false;
+            for l in script {
+                repl.run_command(l.parse().unwrap()).unwrap_or_else(|err| panic!("{err}"))
+            }
+        } else {
+            let mut history = MyHistory::<Command>::default();
+            let mut prompt = dl::Input::new();
+            prompt.history_with(&mut history);
+            prompt.with_prompt("query");
+            loop {
+                match prompt.interact_text() {
+                    Ok(cmd) => {
+                        if let Err(e) = repl.run_command(cmd) {
+                            println!("{e}")
+                        }
                     }
+                    Err(e) => println!("Error {}", e),
                 }
-                Err(e) => println!("Error {}", e),
             }
         }
     });
