@@ -72,14 +72,18 @@ impl std::fmt::Display for PathType {
 enum PathMetric {
     MinCtrl,
     None,
+    Shortest,
 }
 
 impl std::fmt::Display for PathMetric {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PathMetric::MinCtrl => f.write_str("min-ctrl"),
-            PathMetric::None => f.write_str("no"),
-        }
+        f.write_str(
+            match self {
+                PathMetric::MinCtrl => "min-ctrl",
+                PathMetric::None => "no",
+                PathMetric::Shortest => "shortest",
+            }
+        )
     }
 }
 
@@ -243,6 +247,7 @@ fn make_paths_command<'a, I: Iterator<Item = &'a str>>(
     let to = split.next().ok_or(ReadCommandErr::NoToPath)?;
     let metric = split.next().map_or(Ok(PathMetric::None), |m| match m {
         "min-ctrl" => Ok(PathMetric::MinCtrl),
+        "shortest" => Ok(PathMetric::Shortest),
         other => Err(ReadCommandErr::UnknownPathMetric(other.to_string())),
     })?;
     Ok(Command::Paths(t, from.into(), to.into(), metric))
@@ -392,7 +397,7 @@ impl<'g> Repl<'g> {
             .map(|r| *r)
     }
 
-    fn data_graph(&self) -> IgnoreCtrlEdges<'_, 'g> {
+    fn data_graph(&self) -> IgnoreCtrlEdges<&'_ Graph<'g>> {
         IgnoreCtrlEdges(&self.graph)
     }
 
@@ -440,17 +445,40 @@ impl<'g> Repl<'g> {
         metric: PathMetric,
     ) -> Result<(), RunCommandErr<'g>> {
         let paths = match path_type {
-            PathType::Both => Ok(Either::Left(petgraph::algo::all_simple_paths::<Vec<_>, _>(
+            PathType::Both if matches!(metric, PathMetric::Shortest) => Ok(Box::new([{
+                let paths = petgraph::algo::bellman_ford(&WithWeightedEdges{
+                    graph: &self.graph,
+                    weight: &|_| 1.0,
+                }, from).unwrap();
+                let mut v = std::iter::successors(Some(to), |to| {
+                    paths.predecessors[petgraph::visit::NodeIndexable::to_index(&self.graph, *to)]
+                }).collect::<Vec<_>>();
+                v.reverse();
+                v
+            }].into_iter()) as Box<dyn Iterator<Item=Vec<Node<'g>>>>),
+            PathType::Data if matches!(metric, PathMetric::Shortest) => Ok(Box::new([{
+                let paths = petgraph::algo::bellman_ford(&WithWeightedEdges{
+                    graph: &self.data_graph(),
+                    weight: &|_| 1.0,
+                }, from).unwrap();
+                let mut v = std::iter::successors(Some(to), |to| {
+                    paths.predecessors[petgraph::visit::NodeIndexable::to_index(&self.graph, *to)]
+                }).collect::<Vec<_>>();
+                v.reverse();
+                v
+            }].into_iter()) as Box<dyn Iterator<Item=Vec<Node<'g>>>>),
+            PathType::Both => Ok(Box::new(petgraph::algo::all_simple_paths::<Vec<_>, _>(
                 &self.graph,
                 from,
                 to,
                 0,
                 None,
-            ))),
-            PathType::Data => Ok(Either::Right(
+            )) as Box<dyn Iterator<Item=Vec<Node<'g>>>>),
+            PathType::Data => Ok(Box::new(
                 petgraph::algo::all_simple_paths::<Vec<_>, _>(self.data_graph(), from, to, 0, None),
-            )),
+            ) as Box<_>),
             PathType::Control => Err(RunCommandErr::Unimplemented("control-paths")),
+
         }?;
 
         match metric {
@@ -505,7 +533,7 @@ impl<'g> Repl<'g> {
                     println!("Extrema for {metric} metric found was {min}")
                 }
             }
-            PathMetric::None => {
+            PathMetric::None | PathMetric::Shortest => {
                 for path in paths {
                     println!(
                         "{}",
@@ -659,17 +687,137 @@ impl<'g> Repl<'g> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct IgnoreCtrlEdges<'a, 'g>(&'a Graph<'g>);
+use petgraph::visit::{NodeCount, IntoNodeIdentifiers, GraphBase, IntoEdges, IntoNeighbors, IntoEdgeReferences, Data, EdgeRef, IntoNeighborsDirected, NodeIndexable, Visitable, IntoEdgesDirected, GraphRef};
 
-impl<'a, 'g> petgraph::visit::NodeCount for IgnoreCtrlEdges<'a, 'g> {
+struct WithWeightedEdges<'f, G: IntoEdgeReferences> {
+    graph: G,
+    weight: &'f dyn Fn(G::EdgeRef) -> f32
+}
+
+impl<'f, G: Data + IntoEdgeReferences> Data for WithWeightedEdges<'f, G> {
+    type NodeWeight = G::NodeWeight;
+    type EdgeWeight = f32;
+}
+
+#[derive(Clone, Copy)]
+struct WeightedEdgeRef<E> {
+    original_ref: E,
+    weight: f32,
+}
+
+impl<E: EdgeRef> EdgeRef for WeightedEdgeRef<E> {
+    type EdgeId = E::EdgeId;
+    type NodeId = E::NodeId;
+    type Weight = f32;
+    fn source(&self) -> Self::NodeId {
+        self.original_ref.source()
+    }
+    fn target(&self) -> Self::NodeId {
+        self.original_ref.target()
+    }
+    fn id(&self) -> Self::EdgeId {
+        self.original_ref.id()
+    }
+    fn weight(&self) -> &Self::Weight {
+        &self.weight
+    }
+}
+
+struct WeightedEdgeReferences<'f, E, I> {
+    inner: I,
+    get_weight: &'f dyn Fn(E) -> f32,
+}
+
+impl<'f, E: EdgeRef, I: Iterator<Item=E>> Iterator for WeightedEdgeReferences<'f, E, I> {
+    type Item = WeightedEdgeRef<E>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|ef| {
+            WeightedEdgeRef { original_ref: ef, weight: (self.get_weight)(ef) }
+        })
+    }
+}
+
+impl<'f, G: IntoEdgeReferences> IntoEdgeReferences for &'_ WithWeightedEdges<'f, G> 
+where
+    G::EdgeReferences: 'f,
+    G::NodeId: 'f
+{
+    type EdgeRef = WeightedEdgeRef<G::EdgeRef>;
+    type EdgeReferences = WeightedEdgeReferences<'f, G::EdgeRef, G::EdgeReferences>;
+
+    fn edge_references(self) -> Self::EdgeReferences {
+        WeightedEdgeReferences {
+            inner: self.graph.edge_references(),
+            get_weight: self.weight,
+        }
+    }
+}
+
+impl<'f, G: IntoEdges> IntoEdges for &'_ WithWeightedEdges<'f, G> 
+where
+    G::EdgeReferences: 'f,
+    G::NodeId: 'f
+{
+    type Edges = WeightedEdgeReferences<'f, G::EdgeRef, G::Edges>;
+
+    fn edges(self,a:Self::NodeId) -> Self::Edges {
+        WeightedEdgeReferences {
+            inner: self.graph.edges(a),
+            get_weight: self.weight
+        }
+    }
+}
+
+impl<'f, G: IntoNeighbors + IntoEdgeReferences> IntoNeighbors for &'_ WithWeightedEdges<'f, G> {
+    type Neighbors = <G as IntoNeighbors>::Neighbors;
+
+    fn neighbors(self,a:Self::NodeId) -> Self::Neighbors {
+        self.graph.neighbors(a)
+    }
+}
+
+impl<'f, G: GraphBase + IntoEdgeReferences> GraphBase for WithWeightedEdges<'f, G> {
+    type EdgeId = <G as GraphBase>::EdgeId;
+    type NodeId = <G as GraphBase>::NodeId;
+}
+
+impl<'f, G: NodeIndexable + IntoEdgeReferences> NodeIndexable for &'_ WithWeightedEdges<'f, G> {
+    fn from_index(self: &Self,i:usize) -> Self::NodeId {
+        self.graph.from_index(i)
+    }
+    fn node_bound(self: &Self) -> usize {
+        self.graph.node_bound()
+    }
+    fn to_index(self: &Self,a:Self::NodeId) -> usize {
+        self.graph.to_index(a)
+    }
+}
+
+impl<'f, G: NodeCount + IntoEdgeReferences> NodeCount for &'_ WithWeightedEdges<'f, G> {
+    fn node_count(self: &Self) -> usize {
+        self.graph.node_count()
+    }
+}
+
+impl<'f, G: IntoNodeIdentifiers + IntoEdgeReferences> IntoNodeIdentifiers for &'_ WithWeightedEdges<'f, G> {
+    type NodeIdentifiers = <G as IntoNodeIdentifiers>::NodeIdentifiers;
+    fn node_identifiers(self) -> Self::NodeIdentifiers {
+        self.graph.node_identifiers()
+    }
+}
+
+
+#[derive(Clone, Copy)]
+struct IgnoreCtrlEdges<G>(G);
+
+impl<G: NodeCount> NodeCount for IgnoreCtrlEdges<G> {
     fn node_count(self: &Self) -> usize {
         self.0.node_count()
     }
 }
 
-impl<'a, 'g> petgraph::visit::Visitable for IgnoreCtrlEdges<'a, 'g> {
-    type Map = <&'a Graph<'g> as petgraph::visit::Visitable>::Map;
+impl<G: Visitable> Visitable for IgnoreCtrlEdges<G> {
+    type Map = G::Map;
 
     fn visit_map(self: &Self) -> Self::Map {
         self.0.visit_map()
@@ -709,72 +857,115 @@ impl<'g> std::fmt::Display for Node<'g> {
     }
 }
 
-struct NoCtrlNeighbors<'a, 'g> {
-    inner: petgraph::graphmap::Edges<'a, Node<'g>, Edge, petgraph::Directed>,
-    node: Node<'g>,
-}
-
-impl<'a, 'g> std::iter::Iterator for NoCtrlNeighbors<'a, 'g> {
-    type Item = Node<'g>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let (from, to, weight) = self.inner.next()?;
-        let mut weight = *weight;
-        weight.remove_type(EdgeType::Control);
-        (!weight.is_empty())
-            .then_some(if from == self.node { to } else { from })
-            .or_else(|| self.next())
-    }
-}
-
-struct NoCtrlNeighborsDirected<'a, 'g> {
-    inner: petgraph::graphmap::EdgesDirected<'a, Node<'g>, Edge, petgraph::Directed>,
+struct NoCtrlNeighbors<E, I: Iterator<Item=E>> {
+    inner: I,
     direction: petgraph::Direction,
 }
 
-impl<'a, 'g> std::iter::Iterator for NoCtrlNeighborsDirected<'a, 'g> {
-    type Item = Node<'g>;
+impl<E: EdgeRef<Weight=Edge>, I: Iterator<Item=E>> std::iter::Iterator for NoCtrlNeighbors<E, I> {
+    type Item = E::NodeId;
     fn next(&mut self) -> Option<Self::Item> {
-        let (from, to, weight) = self.inner.next()?;
-        let mut weight = *weight;
+        let eref = self.inner.next()?;
+        let mut weight = *eref.weight();
         weight.remove_type(EdgeType::Control);
         (!weight.is_empty())
-            .then_some(if self.direction == petgraph::Direction::Outgoing {
-                to
-            } else {
-                from
-            })
+            .then_some(if self.direction == petgraph::Direction::Outgoing { eref.target() } else { eref.source() })
             .or_else(|| self.next())
     }
 }
 
-impl<'a, 'g> petgraph::visit::IntoNeighborsDirected for IgnoreCtrlEdges<'a, 'g> {
-    type NeighborsDirected = NoCtrlNeighborsDirected<'a, 'g>;
+struct NoCtrlEdges<E, I: Iterator<Item=E>>(I);
+
+impl<E: EdgeRef<Weight=Edge>, I: Iterator<Item=E>> std::iter::Iterator for NoCtrlEdges<E, I> {
+    type Item = E;
+    fn next(&mut self) -> Option<Self::Item> {
+        let eref = self.0.next()?;
+        let mut weight = *eref.weight();
+        weight.remove_type(EdgeType::Control);
+        (!weight.is_empty())
+            .then_some(eref)
+            .or_else(|| self.next())
+    }
+
+}
+
+impl<G: IntoEdgesDirected + Data<EdgeWeight=Edge>> IntoNeighborsDirected for IgnoreCtrlEdges<G> {
+    type NeighborsDirected = NoCtrlNeighbors<G::EdgeRef, G::EdgesDirected>;
     fn neighbors_directed(
         self,
         n: Self::NodeId,
         d: petgraph::Direction,
     ) -> Self::NeighborsDirected {
-        NoCtrlNeighborsDirected {
+        NoCtrlNeighbors {
             inner: self.0.edges_directed(n, d),
             direction: d,
         }
     }
 }
 
-impl<'a, 'g> petgraph::visit::GraphBase for IgnoreCtrlEdges<'a, 'g> {
-    type EdgeId = <&'a Graph<'g> as petgraph::visit::GraphBase>::EdgeId;
-    type NodeId = <&'a Graph<'g> as petgraph::visit::GraphBase>::NodeId;
+impl<G: GraphBase> petgraph::visit::GraphBase for IgnoreCtrlEdges<G> {
+    type EdgeId = G::EdgeId;
+    type NodeId = G::NodeId;
 }
 
-impl<'a, 'g> petgraph::visit::GraphRef for IgnoreCtrlEdges<'a, 'g> {}
+impl<G: GraphRef> GraphRef for IgnoreCtrlEdges<G> {}
 
-impl<'a, 'g> petgraph::visit::IntoNeighbors for IgnoreCtrlEdges<'a, 'g> {
-    type Neighbors = NoCtrlNeighbors<'a, 'g>;
+impl<G:IntoEdges+ Data<EdgeWeight=Edge>> petgraph::visit::IntoNeighbors for IgnoreCtrlEdges<G> {
+    type Neighbors = NoCtrlNeighbors<G::EdgeRef, G::Edges>;
     fn neighbors(self, a: Self::NodeId) -> Self::Neighbors {
         NoCtrlNeighbors {
             inner: self.0.edges(a),
-            node: a,
+            direction: petgraph::Outgoing,
         }
+    }
+}
+
+impl<G: Data> Data for IgnoreCtrlEdges<G> {
+    type EdgeWeight = G::EdgeWeight;
+    type NodeWeight = G::NodeWeight;
+}
+
+impl<G: IntoEdgeReferences + Data<EdgeWeight = Edge>> IntoEdgeReferences for IgnoreCtrlEdges<G> {
+    type EdgeRef = G::EdgeRef;
+    type EdgeReferences = NoCtrlEdges<Self::EdgeRef, G::EdgeReferences>;
+
+    fn edge_references(self) -> Self::EdgeReferences {
+        NoCtrlEdges(self.0.edge_references())
+    }
+}
+
+impl<G: IntoNodeIdentifiers> IntoNodeIdentifiers for IgnoreCtrlEdges<G> {
+    type NodeIdentifiers = G::NodeIdentifiers;
+
+    fn node_identifiers(self) -> Self::NodeIdentifiers {
+        self.0.node_identifiers()
+    }
+}
+
+impl <G: IntoEdges + Data<EdgeWeight = Edge>> IntoEdges for IgnoreCtrlEdges<G> {
+    type Edges = NoCtrlEdges<G::EdgeRef, G::Edges>;
+    fn edges(self,a:Self::NodeId) -> Self::Edges {  
+        NoCtrlEdges(self.0.edges(a))
+    }
+}
+
+impl<G: IntoEdgesDirected + Data<EdgeWeight = Edge>> IntoEdgesDirected for IgnoreCtrlEdges<G> {
+    type EdgesDirected = NoCtrlEdges<G::EdgeRef, G::EdgesDirected>;
+
+    fn edges_directed(self,a:Self::NodeId,dir:petgraph::Direction) -> Self::EdgesDirected {
+        NoCtrlEdges(self.0.edges_directed(a, dir))
+    }
+}
+
+impl<G: NodeIndexable> NodeIndexable for IgnoreCtrlEdges<G> {
+    fn from_index(self: &Self,i:usize) -> Self::NodeId {
+        self.0.from_index(i)
+    }
+    fn node_bound(self: &Self) -> usize {
+        self.0.node_bound()
+    }
+    fn to_index(self: &Self,a:Self::NodeId) -> usize {
+        self.0.to_index(a)
     }
 }
 
