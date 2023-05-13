@@ -22,6 +22,7 @@ use crate::{
 };
 
 use std::{
+    borrow::BorrowMut,
     fmt::{Debug, Display, Write},
     hash::{Hash, Hasher},
 };
@@ -333,6 +334,76 @@ fn partial_cmp_terms<'a, F: Copy + Eq>(
     }
 }
 
+pub mod graph {
+    use std::collections::VecDeque;
+
+    use super::*;
+    use crate::rust::rustc_index::bit_set::BitSet;
+    use petgraph::{visit::EdgeRef, *};
+
+    pub type Graph<B, F> = graphmap::GraphMap<B, Vec<Operator<F>>, Directed>;
+
+    pub fn new<
+        B: Copy + Eq + Ord + Hash,
+        F: Copy,
+        GetEq: std::borrow::Borrow<Equality<B, F>>,
+        I: IntoIterator<Item = GetEq>,
+    >(
+        equations: I,
+    ) -> Graph<B, F> {
+        let mut graph = Graph::new();
+        for eq in equations {
+            let mut eq: Equality<_, _> = eq.borrow().clone();
+            if graph.contains_edge(*eq.lhs.base(), *eq.rhs.base()) {
+                panic!("Reinserted edge")
+            }
+            eq.rearrange_left_to_right();
+            graph.add_edge(*eq.rhs.base(), *eq.lhs.base(), eq.rhs.terms);
+        }
+        graph
+    }
+
+    pub fn reachable<B: Copy + Hash + Eq + Ord, F: Eq + Display + Copy, T: Fn(B) -> bool>(
+        from: B,
+        is_target: T,
+        graph: &Graph<B, F>,
+    ) -> Option<Vec<Operator<F>>> {
+        use visit::NodeIndexable;
+        let seen = BitSet::new_empty(graph.node_bound());
+        let mut queue = VecDeque::from_iter([(from, seen, Term::new_base(0))]);
+        while let Some((node, mut seen, projections)) = queue.pop_front() {
+            seen.insert(graph.to_index(node));
+            for next in graph
+                .edges(node)
+                .chain(graph.edges_directed(node, Incoming))
+            {
+                let (to, is_flipped) = if next.source() == node {
+                    (next.target(), false)
+                } else {
+                    (next.source(), true)
+                };
+                if seen.contains(graph.to_index(to)) {
+                    continue;
+                }
+                let mut projections = projections.clone();
+                if is_flipped {
+                    projections =
+                        projections.extend(next.weight().iter().copied().map(Operator::flip).rev());
+                } else {
+                    projections = projections.extend(next.weight().iter().copied());
+                }
+                if projections.simplify() {
+                    if is_target(to) {
+                        return Some(projections.terms);
+                    }
+                    queue.push_back((to, seen.clone(), projections));
+                }
+            }
+        }
+        None
+    }
+}
+
 /// Solve for the relationship of two bases.
 ///
 /// Returns all terms `t` such that `from = t(to)`. If no terms are returned the
@@ -343,7 +414,7 @@ fn partial_cmp_terms<'a, F: Copy + Eq>(
 /// `y = t2` and solve for `x` and `y` instead.
 ///
 pub fn solve<
-    B: Clone + Hash + Eq + Display,
+    B: Clone + Hash + Eq + Display + Ord,
     F: Eq + Hash + Clone + Copy + Display,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
 >(
@@ -365,10 +436,10 @@ pub fn solve<
 }
 
 pub fn solve_reachable<
-    B: Clone + Hash + Eq + Display,
+    B: Clone + Hash + Eq + Display + Ord,
     F: Eq + Hash + Clone + Copy + Display,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
-    IsTarget: FnMut(&B) -> bool,
+    IsTarget: Fn(&B) -> bool,
 >(
     equations: &[GetEq],
     from: &B,
@@ -382,18 +453,65 @@ pub fn solve_reachable<
     reachable
 }
 
+use std::sync::atomic;
+
+lazy_static! {
+    static ref IOUTCTR: atomic::AtomicI32 = atomic::AtomicI32::new(0);
+}
+
+fn dump_intermediates<
+    B: Clone + Hash + Display + Eq + Ord,
+    F: Eq + Hash + Copy + Display,
+    H: Fn(&B) -> bool,
+    D: Fn(&B) -> bool,
+>(
+    intr: &HashMap<B, HashSet<Term<B, F>>>,
+    is_target: H,
+    died_here: D,
+) {
+    use petgraph::graphmap::*;
+    use petgraph::prelude::*;
+    let graph = GraphMap::<_, _, Directed>::from_edges(
+        intr.iter()
+            .flat_map(|(k, v)| v.iter().map(move |t| (k, &t.base, t.replace_base(0_usize)))),
+    );
+    use std::io::Write;
+    let name = format!(
+        "intermediates_{}.gv",
+        IOUTCTR.fetch_add(1, atomic::Ordering::Relaxed)
+    );
+    let mut outf = outfile_pls(&name).unwrap();
+    debug!("Dumped intermediates to {name}");
+    write!(
+        outf,
+        "{}",
+        petgraph::dot::Dot::with_attr_getters(&graph, &[], &|_, _| "".to_string(), &|_, n| {
+            if is_target(n.0) {
+                "shape=box,color=green"
+            } else if died_here(n.0) {
+                "shape=box,color=red"
+            } else {
+                "shape=box"
+            }
+            .to_string()
+        })
+    )
+    .unwrap()
+}
+
 pub fn solve_with<
-    B: Clone + Hash + Eq + Display,
+    B: Clone + Hash + Eq + Display + Ord,
     F: Eq + Hash + Clone + Copy + Display,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
     RegisterFinal: FnMut(Vec<Operator<F>>) -> bool,
-    IsTarget: FnMut(&B) -> bool,
+    IsTarget: Fn(&B) -> bool,
 >(
     equations: &[GetEq],
     from: &B,
-    mut is_target: IsTarget,
+    is_target: IsTarget,
     mut register_final: RegisterFinal,
 ) {
+    let is_debug_target = format!("{from}") == "_32 @ root";
     if is_target(from) {
         register_final(vec![]);
         return;
@@ -446,13 +564,16 @@ pub fn solve_with<
         }
     }
     if !saw_target {
-        // debug!("Never saw final target, abandoning solving early");
+        if is_debug_target {
+            debug!("Never saw final target, abandoning solving early");
+        }
         return;
     }
     let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
         // debug!("No intermediate found for {from}");
     }
+    let mut died = HashSet::new();
     let mut targets = matching_intermediate
         .into_iter()
         .flat_map(|v| v.iter().cloned())
@@ -470,12 +591,21 @@ pub fn solve_with<
                 targets.extend(next_eq.iter().cloned().filter_map(|term| {
                     let mut to_sub = intermediate_target.clone();
                     to_sub.sub(term);
-                    to_sub.simplify().then_some(to_sub)
+                    let simplifies = to_sub.simplify();
+                    if !simplifies && is_debug_target {
+                        debug!("{to_sub} does not simplify");
+                        died.insert(to_sub.base.clone());
+                    }
+                    simplifies.then_some(to_sub)
                 }))
             } else {
                 // debug!("No follow up equation found for {var} on the way from {from}");
             }
         }
+    }
+
+    if is_debug_target {
+        dump_intermediates(&intermediates, &is_target, |b| died.contains(b));
     }
 }
 

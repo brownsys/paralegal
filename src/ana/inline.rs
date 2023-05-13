@@ -309,12 +309,16 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             let InlinedGraph {
                 graph, equations, ..
             } = graph;
-            info!("Have {} equations for pruning {} edges", equations.len(),
+            info!(
+                "Have {} equations for pruning {} edges",
+                equations.len(),
                 edges_to_prune
                     .into_iter()
                     .filter_map(|&(a, b)| Some(graph.edge_weight(a, b)?.count()))
                     .count()
             );
+
+            let locals_graph = algebra::graph::new(equations);
 
             for &(from, to) in edges_to_prune {
                 if let Some(weight) = graph.edge_weight_mut(from, to) {
@@ -349,22 +353,31 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 f.write_char('}')
                             })
                         );
-                        let mut is_reachable = false;
-                        algebra::solve_with(
-                            &equations,
-                            &to_target,
-                            |to| targets.contains(to),
-                            |term| {
-                                debug!(
-                                    "Found to be reachable via term {}",
-                                    Print(|f| algebra::display_term_pieces(f, &term, &0))
-                                );
-                                is_reachable = true;
-                                false
-                            },
+                        let mut is_reachable = algebra::graph::reachable(
+                            to_target,
+                            |to| targets.contains(&to),
+                            &locals_graph,
                         );
+                        // algebra::solve_with(
+                        //     &equations,
+                        //     &to_target,
+                        //     |to| targets.contains(to),
+                        //     |term| {
+                        //         debug!(
+                        //             "Found to be reachable via term {}",
+                        //             Print(|f| algebra::display_term_pieces(f, &term, &0))
+                        //         );
+                        //         is_reachable = true;
+                        //         false
+                        //     },
+                        // );
 
-                        if !is_reachable {
+                        if let Some(t) = is_reachable {
+                            debug!(
+                                "Found to be reachable via {}",
+                                Print(|fmt| { algebra::display_term_pieces(fmt, &t, &0_usize) })
+                            );
+                        } else {
                             debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
                             weight.data.clear(idx)
                         }
