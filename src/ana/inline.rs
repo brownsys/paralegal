@@ -34,8 +34,8 @@ use crate::{
     rust::hir::def_id::{DefId, LocalDefId},
     ty,
     utils::{
-        body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, DfppBodyExt, DisplayViaDebug,
-        IntoDefId, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
+        body_name_pls, dump_file_pls, outfile_pls, time, write_sep, AsFnAndArgs, DfppBodyExt,
+        DisplayViaDebug, IntoDefId, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
     },
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
@@ -304,6 +304,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         graph: &mut InlinedGraph<'g>,
         name: Symbol,
         edges_to_prune: &EdgeSet<'g>,
+        id: LocalDefId,
     ) {
         time(&format!("Edge Pruning for {name}"), || {
             let InlinedGraph {
@@ -394,6 +395,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     }
                 }
             }
+            // let mut f = dump_file_pls(self.tcx, id, "locals-graph.gv").unwrap();
+            // algebra::graph::dump(f, locals_graph, |_| false, |_| false);
         })
     }
 }
@@ -883,9 +886,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let language_items = self.tcx.lang_items();
         if self.ana_ctrl.drop_poll() && is_part_of_async_desugar(language_items, id, &g) {
             Some(if Some(function) == language_items.new_unchecked_fn() {
-                DropAction::WrapReturn(vec![algebra::Operator::MemberOf(
-                    mir::Field::from_usize(0).into(),
-                )])
+                DropAction::WrapReturn(vec![
+                    algebra::Operator::MemberOf(mir::Field::from_usize(0).into()),
+                    algebra::Operator::RefOf,
+                ])
+            } else if Some(function) == language_items.future_poll_fn() {
+                DropAction::WrapReturn(vec![algebra::Operator::Downcast(0)])
             } else {
                 DropAction::None
             })
@@ -1168,7 +1174,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 }
                 queue_for_pruning
             };
-            self.prune_impossible_edges(&mut gwr, name, &edges_to_prune);
+            self.prune_impossible_edges(
+                &mut gwr,
+                name,
+                &edges_to_prune,
+                body_id.into_local_def_id(self.tcx),
+            );
             if self.dbg_ctrl.dump_inlined_pruned_graph() {
                 dump_dot_graph(
                     dump_file_pls(self.tcx, body_id, "inlined-pruned.gv").unwrap(),

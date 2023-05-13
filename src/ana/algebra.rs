@@ -23,7 +23,7 @@ use crate::{
 
 use std::{
     borrow::BorrowMut,
-    fmt::{Debug, Display, Write},
+    fmt::{write, Debug, Display, Write},
     hash::{Hash, Hasher},
 };
 
@@ -50,7 +50,7 @@ pub fn display_term_pieces<F: Display + Copy, B: Display>(
             RefOf => f.write_char('&'),
             DerefOf => f.write_char('*'),
             ContainsAt(field) => write!(f, "{{ .{}: ", field),
-            Upcast(_, s) => write!(f, "#{s}"),
+            Upcast(s) => write!(f, "#{s}"),
             Unknown => f.write_char('?'),
             ArrayWith => f.write_char('['),
             _ => Ok(()),
@@ -61,7 +61,7 @@ pub fn display_term_pieces<F: Display + Copy, B: Display>(
         match t {
             MemberOf(field) => write!(f, ".{}", field),
             ContainsAt(_) => f.write_str(" }"),
-            Downcast(_, s) => write!(f, " #{s}"),
+            Downcast(s) => write!(f, " #{s}"),
             ArrayWith => f.write_char(']'),
             IndexOf => write!(f, "[]"),
             _ => Ok(()),
@@ -99,8 +99,8 @@ pub enum Operator<F: Copy> {
     ContainsAt(F),
     IndexOf,
     ArrayWith,
-    Downcast(Option<Symbol>, VariantIdx),
-    Upcast(Option<Symbol>, VariantIdx),
+    Downcast(VariantIdx),
+    Upcast(VariantIdx),
     Unknown,
 }
 
@@ -113,8 +113,8 @@ impl<F: Copy + std::fmt::Display> std::fmt::Display for Operator<F> {
             Unknown => f.write_char('?'),
             MemberOf(m) => write!(f, ".{m}"),
             ContainsAt(m) => write!(f, "@{m}"),
-            Downcast(_, s) => write!(f, "#{s:?}"),
-            Upcast(_, s) => write!(f, "^{s:?}"),
+            Downcast(s) => write!(f, "#{s:?}"),
+            Upcast(s) => write!(f, "^{s:?}"),
             IndexOf => f.write_str("$"),
             ArrayWith => f.write_str("[]"),
         }
@@ -157,8 +157,8 @@ impl<F: Copy> Operator<F> {
             DerefOf => RefOf,
             MemberOf(f) => ContainsAt(f),
             ContainsAt(f) => MemberOf(f),
-            Downcast(s, v) => Upcast(s, v),
-            Upcast(s, v) => Downcast(s, v),
+            Downcast(v) => Upcast(v),
+            Upcast(v) => Downcast(v),
             Unknown => Unknown,
             ArrayWith => IndexOf,
             IndexOf => ArrayWith,
@@ -204,7 +204,7 @@ impl<F: Copy> Operator<F> {
             (MemberOf(f), ContainsAt(g)) | (ContainsAt(g), MemberOf(f)) if f != g => {
                 Cancel::NonOverlappingField(f, g)
             }
-            (Downcast(_, v1), Upcast(_, v2)) | (Upcast(_, v2), Downcast(_, v1)) if v1 != v2 => {
+            (Downcast(v1), Upcast(v2)) | (Upcast(v2), Downcast(v1)) if v1 != v2 => {
                 Cancel::NonOverlappingVariant(v1, v2)
             }
             _ if self == other.flip() => Cancel::CancelBoth,
@@ -220,8 +220,8 @@ impl<F: Copy> Operator<F> {
             DerefOf => DerefOf,
             MemberOf(f) => MemberOf(g(f)),
             ContainsAt(f) => ContainsAt(g(f)),
-            Upcast(s, v) => Upcast(s, v),
-            Downcast(s, v) => Downcast(s, v),
+            Upcast(v) => Upcast(v),
+            Downcast(v) => Downcast(v),
             Unknown => Unknown,
             IndexOf => IndexOf,
             ArrayWith => ArrayWith,
@@ -401,6 +401,54 @@ pub mod graph {
             }
         }
         None
+    }
+
+    pub fn dump<
+        B: graphmap::NodeTrait + Display,
+        F: Copy + Display,
+        W: std::io::Write,
+        IsTarget: Fn(B) -> bool,
+        DiedHere: Fn(B) -> bool,
+    >(
+        mut w: W,
+        graph: Graph<B, F>,
+        is_target: IsTarget,
+        died_here: DiedHere,
+    ) {
+        write!(
+            w,
+            "{}",
+            petgraph::dot::Dot::with_attr_getters(
+                unsafe {
+                    std::mem::transmute::<_, &graphmap::GraphMap<B, Operators<F>, Directed>>(&graph)
+                },
+                &[],
+                &|_, _| "".to_string(),
+                &|_, n| {
+                    if is_target(n.0) {
+                        "shape=box,color=green"
+                    } else if died_here(n.0) {
+                        "shape=box,color=red"
+                    } else {
+                        "shape=box"
+                    }
+                    .to_string()
+                }
+            )
+        )
+        .unwrap()
+    }
+}
+
+struct Operators<F: Copy>(Vec<Operator<F>>);
+
+impl<F: Copy + Display> std::fmt::Display for Operators<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        display_term_pieces(f, self.0.as_slice(), &0)?;
+        return Ok(());
+        f.write_char('[')?;
+        write_sep(f, ", ", self.0.iter(), Display::fmt)?;
+        f.write_char(']')
     }
 }
 
@@ -653,12 +701,12 @@ impl<B, F: Copy> Term<B, F> {
     }
 
     pub fn add_downcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
-        self.terms.push(Operator::Downcast(symbol, idx));
+        self.terms.push(Operator::Downcast(idx));
         self
     }
 
     pub fn add_upcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
-        self.terms.push(Operator::Upcast(symbol, idx));
+        self.terms.push(Operator::Upcast(idx));
         self
     }
 
