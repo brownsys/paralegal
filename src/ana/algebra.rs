@@ -363,12 +363,13 @@ pub mod graph {
         graph
     }
 
-    pub fn reachable<B: Copy + Hash + Eq + Ord, F: Eq + Display + Copy, T: Fn(B) -> bool>(
+    pub fn reachable<B: Copy + Hash + Eq + Ord, F: Hash + Eq + Display + Copy, T: Fn(B) -> bool>(
         from: B,
         is_target: T,
         graph: &Graph<B, F>,
     ) -> Option<Vec<Operator<F>>> {
         use visit::NodeIndexable;
+        let mut short_circuiting : HashMap<_, HashSet<_>> = HashMap::from_iter([(from, HashSet::from_iter([Term::new_base(0)]))]);
         let seen = BitSet::new_empty(graph.node_bound());
         let mut queue = VecDeque::from_iter([(from, seen, Term::new_base(0))]);
         while let Some((node, mut seen, projections)) = queue.pop_front() {
@@ -386,17 +387,22 @@ pub mod graph {
                     continue;
                 }
                 let mut projections = projections.clone();
-                if is_flipped {
-                    projections =
-                        projections.extend(next.weight().iter().copied().map(Operator::flip).rev());
-                } else {
-                    projections = projections.extend(next.weight().iter().copied());
-                }
-                if projections.simplify() {
+                if next.weight().is_empty() || { 
+                    if is_flipped {
+                        projections =
+                            projections.extend(next.weight().iter().copied().map(Operator::flip).rev());
+                    } else {
+                        projections = projections.extend(next.weight().iter().copied());
+                    }
+                    projections.simplify() 
+                } 
+                {
                     if is_target(to) {
                         return Some(projections.terms);
                     }
-                    queue.push_back((to, seen.clone(), projections));
+                    if short_circuiting.entry(to).or_insert_with(HashSet::new).insert(projections.clone()) {
+                        queue.push_back((to, seen.clone(), projections));
+                    }
                 }
             }
         }
