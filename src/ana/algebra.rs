@@ -340,8 +340,10 @@ pub mod graph {
     use super::*;
     use crate::rust::rustc_index::bit_set::BitSet;
     use petgraph::{visit::EdgeRef, *};
+    extern crate smallvec;
+    use smallvec::SmallVec;
 
-    pub type Graph<B, F> = graphmap::GraphMap<B, Vec<Operator<F>>, Directed>;
+    pub type Graph<B, F> = graphmap::GraphMap<B, SmallVec<[Vec<Operator<F>>; 1]>, Directed>;
 
     pub fn new<
         B: Copy + Eq + Ord + Hash,
@@ -354,11 +356,12 @@ pub mod graph {
         let mut graph = Graph::new();
         for eq in equations {
             let mut eq: Equality<_, _> = eq.borrow().clone();
-            if graph.contains_edge(*eq.lhs.base(), *eq.rhs.base()) {
-                panic!("Reinserted edge")
-            }
             eq.rearrange_left_to_right();
-            graph.add_edge(*eq.rhs.base(), *eq.lhs.base(), eq.rhs.terms);
+            if let Some(w) = graph.edge_weight_mut(*eq.lhs.base(), *eq.rhs.base()) {
+                w.push(eq.rhs.terms)
+            } else {
+                graph.add_edge(*eq.rhs.base(), *eq.lhs.base(), SmallVec::from_iter([eq.rhs.terms]));
+            }   
         }
         graph
     }
@@ -386,22 +389,24 @@ pub mod graph {
                 if seen.contains(graph.to_index(to)) {
                     continue;
                 }
-                let mut projections = projections.clone();
-                if next.weight().is_empty() || { 
-                    if is_flipped {
-                        projections =
-                            projections.extend(next.weight().iter().copied().map(Operator::flip).rev());
-                    } else {
-                        projections = projections.extend(next.weight().iter().copied());
-                    }
-                    projections.simplify() 
-                } 
-                {
-                    if is_target(to) {
-                        return Some(projections.terms);
-                    }
-                    if short_circuiting.entry(to).or_insert_with(HashSet::new).insert(projections.clone()) {
-                        queue.push_back((to, seen.clone(), projections));
+                for weight in next.weight() {
+                    let mut projections = projections.clone();
+                    if next.weight().is_empty() || { 
+                        if is_flipped {
+                            projections =
+                                projections.extend(weight.iter().copied().map(Operator::flip).rev());
+                        } else {
+                            projections = projections.extend(weight.iter().copied());
+                        }
+                        projections.simplify() 
+                    } 
+                    {
+                        if is_target(to) {
+                            return Some(projections.terms);
+                        }
+                        if short_circuiting.entry(to).or_insert_with(HashSet::new).insert(projections.clone()) {
+                            queue.push_back((to, seen.clone(), projections));
+                        }
                     }
                 }
             }

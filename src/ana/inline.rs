@@ -375,7 +375,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
                         if let Some(t) = is_reachable {
                             debug!(
-                                "Found to be reachable via {}",
+                                "Found {from} -> {to} to be reachable via {}",
                                 Print(|fmt| { algebra::display_term_pieces(fmt, &t, &0_usize) })
                             );
                         } else {
