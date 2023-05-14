@@ -184,6 +184,8 @@ enum Command {
         from: NodeName,
         #[clap(long, short, default_value_t = Direction::Both)]
         direction: Direction,
+        #[clap(short = 't', long)]
+        typ: PathType,
     },
     Alias {
         alias: NodeName,
@@ -228,7 +230,7 @@ impl std::fmt::Display for Command {
                 }
                 Ok(())
             }
-            Command::Edges { from, direction } => write!(f, "edges {from} {direction}"),
+            Command::Edges { from, direction , typ } => write!(f, "edges {from} -d {direction} -t {typ}"),
             Command::Alias { alias, origin } => write!(f, "alias {alias} {origin}"),
             Command::Size => write!(f, "size"),
             Command::Reachable { typ, from, to } => write!(f, "reachable -t {typ} {from} {to}"),
@@ -540,6 +542,32 @@ impl<'a, 'g> Repl<'a, 'g> {
         Some(&t.1)
     }
 
+    fn run_edges<G: IntoEdgesDirected<NodeId = Node<'g>>>(&self, g: G, node: Node<'g>, direction: Direction) 
+    where
+        G::EdgeWeight: Display
+    {
+        let mut num = 0;
+        if direction.wants_in() {
+            for e in 
+                g
+                .edges_directed(node, petgraph::Direction::Incoming)
+            {
+                num += 1;
+                println!("in {} {}", e.source(), e.weight());
+            }
+        }
+        if direction.wants_out() {
+            for e in 
+                g
+                .edges_directed(node, petgraph::Direction::Outgoing)
+            {
+                num += 1;
+                println!("out {} {}", e.target(), e.weight());
+            }
+        }
+        println!("Found {num} edges");
+    }
+
     fn run_command(&mut self, command: Command) -> Result<(), RunCommandErr<'g>> {
         match command {
             Command::DotSubgraph {
@@ -603,28 +631,13 @@ impl<'a, 'g> Repl<'a, 'g> {
                 let to = self.translate_node(to)?;
                 self.run_paths_command(from, to, typ, metric, limit)
             }
-            Command::Edges { from, direction } => {
+            Command::Edges { from, direction, typ} => {
                 let node = self.translate_node(from)?;
-                let mut num = 0;
-                if direction.wants_in() {
-                    for (from, _, edge) in self
-                        .graph
-                        .edges_directed(node, petgraph::Direction::Incoming)
-                    {
-                        num += 1;
-                        println!("in {from} {edge}");
-                    }
+                match typ {
+                    PathType::Both => self.run_edges(&self.graph, node, direction),
+                    PathType::Data => self.run_edges(self.data_graph(), node, direction),
+                    PathType::Control => return Err(RunCommandErr::Unimplemented("control edges")),
                 }
-                if direction.wants_out() {
-                    for (_, to, edge) in self
-                        .graph
-                        .edges_directed(node, petgraph::Direction::Outgoing)
-                    {
-                        num += 1;
-                        println!("out {to} {edge}");
-                    }
-                }
-                println!("Found {num} edges");
                 Ok(())
             }
             Command::Alias { alias, origin } => {
