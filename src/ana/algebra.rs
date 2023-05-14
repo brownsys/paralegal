@@ -17,6 +17,7 @@ use crate::{
     either::Either,
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
+    ty,
     utils::{outfile_pls, write_sep, DisplayViaDebug, Print},
     HashMap, HashSet, Symbol, TyCtxt,
 };
@@ -343,7 +344,7 @@ pub mod graph {
     extern crate smallvec;
     use smallvec::SmallVec;
 
-    pub type Graph<B, F> = graphmap::GraphMap<B, SmallVec<[Vec<Operator<F>>; 1]>, Directed>;
+    pub type Graph<B, F> = graphmap::GraphMap<B, Operators<F>, Directed>;
 
     pub fn new<
         B: Copy + Eq + Ord + Hash,
@@ -358,9 +359,9 @@ pub mod graph {
             let mut eq: Equality<_, _> = eq.borrow().clone();
             eq.rearrange_left_to_right();
             if let Some(w) = graph.edge_weight_mut(*eq.lhs.base(), *eq.rhs.base()) {
-                w.push(eq.rhs.terms)
+                w.0.push(eq.rhs.terms)
             } else {
-                graph.add_edge(*eq.rhs.base(), *eq.lhs.base(), SmallVec::from_iter([eq.rhs.terms]));
+                graph.add_edge(*eq.rhs.base(), *eq.lhs.base(), Operators(SmallVec::from_iter([eq.rhs.terms])));
             }   
         }
         graph
@@ -370,7 +371,7 @@ pub mod graph {
         from: B,
         is_target: T,
         graph: &Graph<B, F>,
-    ) -> Option<Vec<Operator<F>>> {
+    ) -> Option<(BitSet<usize>, Vec<Operator<F>>)> {
         use visit::NodeIndexable;
         let mut short_circuiting : HashMap<_, HashSet<_>> = HashMap::from_iter([(from, HashSet::from_iter([Term::new_base(0)]))]);
         let seen = BitSet::new_empty(graph.node_bound());
@@ -389,9 +390,9 @@ pub mod graph {
                 if seen.contains(graph.to_index(to)) {
                     continue;
                 }
-                for weight in next.weight() {
+                for weight in next.weight().0.iter() {
                     let mut projections = projections.clone();
-                    if next.weight().is_empty() || { 
+                    if next.weight().0.is_empty() || { 
                         if is_flipped {
                             projections =
                                 projections.extend(weight.iter().copied().map(Operator::flip).rev());
@@ -402,7 +403,7 @@ pub mod graph {
                     } 
                     {
                         if is_target(to) {
-                            return Some(projections.terms);
+                            return Some((seen, projections.terms));
                         }
                         if short_circuiting.entry(to).or_insert_with(HashSet::new).insert(projections.clone()) {
                             queue.push_back((to, seen.clone(), projections));
@@ -422,7 +423,7 @@ pub mod graph {
         DiedHere: Fn(B) -> bool,
     >(
         mut w: W,
-        graph: Graph<B, F>,
+        graph: &Graph<B, F>,
         is_target: IsTarget,
         died_here: DiedHere,
     ) {
@@ -430,9 +431,7 @@ pub mod graph {
             w,
             "{}",
             petgraph::dot::Dot::with_attr_getters(
-                unsafe {
-                    std::mem::transmute::<_, &graphmap::GraphMap<B, Operators<F>, Directed>>(&graph)
-                },
+                graph,
                 &[],
                 &|_, _| "".to_string(),
                 &|_, n| {
@@ -449,19 +448,15 @@ pub mod graph {
         )
         .unwrap()
     }
-}
+    pub struct Operators<F: Copy>(SmallVec<[Vec<Operator<F>>;1]>);
 
-struct Operators<F: Copy>(Vec<Operator<F>>);
-
-impl<F: Copy + Display> std::fmt::Display for Operators<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        display_term_pieces(f, self.0.as_slice(), &0)?;
-        return Ok(());
-        f.write_char('[')?;
-        write_sep(f, ", ", self.0.iter(), Display::fmt)?;
-        f.write_char(']')
+    impl<F: Copy + Display> std::fmt::Display for Operators<F> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write_sep(f, ", ", self.0.iter(), |elem, f| display_term_pieces(f, elem.as_slice(), &0))
+        }
     }
 }
+
 
 /// Solve for the relationship of two bases.
 ///
@@ -910,21 +905,25 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                 AggregateKind::Adt(def_id, idx, _, _, _) => {
                     let adt_def = self.tcx.adt_def(*def_id);
                     let variant = adt_def.variant(*idx);
+                    let is_enum = adt_def.flags().contains(ty::AdtFlags::IS_ENUM);
                     let iter = variant
                         .fields
                         .iter()
                         .enumerate()
                         .zip(ops.iter())
-                        .filter_map(|((i, _field), op)| {
+                        .filter_map(move |((i, _field), op)| {
                             let place = op.place()?;
                             // let field = mir::ProjectionElem::Field(
                             //     Field::from_usize(i),
                             //     field.ty(self.tcx, substs),
                             // );
-                            Some(
+                            let mut term = 
                                 MirTerm::from(place)
-                                    .add_contains_at(DisplayViaDebug(Field::from_usize(i))),
-                            )
+                                    .add_contains_at(DisplayViaDebug(Field::from_usize(i)));
+                            if is_enum {
+                                term = term.add_upcast(None, idx.as_usize());
+                            }
+                            Some(term)
                         });
                     Box::new(iter) as Box<_>
                 }
