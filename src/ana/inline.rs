@@ -320,6 +320,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             );
 
             let locals_graph = algebra::graph::new(equations);
+            let mut f = dump_file_pls(self.tcx, id, "locals-graph.gv").unwrap();
+            algebra::graph::dump(f, &locals_graph, |_| false, |_| false);
 
             for &(from, to) in edges_to_prune {
                 if let Some(weight) = graph.edge_weight_mut(from, to) {
@@ -395,8 +397,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     }
                 }
             }
-            // let mut f = dump_file_pls(self.tcx, id, "locals-graph.gv").unwrap();
-            // algebra::graph::dump(f, locals_graph, |_| false, |_| false);
         })
     }
 }
