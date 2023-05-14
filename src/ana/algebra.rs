@@ -435,8 +435,7 @@ pub mod graph {
                                 Simplified::NonOverlapping => false,
                                 Simplified::Invalid(one, two) => {
                                     let path = "algebra-invalidation-err.gv";
-                                    let mut outf =
-                                        outfile_pls(path).unwrap();
+                                    let mut outf = outfile_pls(path).unwrap();
                                     use std::io::Write;
                                     write!(
                                         outf,

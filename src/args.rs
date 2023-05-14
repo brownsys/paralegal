@@ -331,6 +331,8 @@ pub struct DbgArgs {
     /// Dump the equations after inlining (`.global.eqs`)
     #[clap(long, env)]
     dump_global_equations: bool,
+    #[clap(long, env)]
+    dump_locals_graph: bool,
 }
 
 impl DbgArgs {
@@ -369,5 +371,8 @@ impl DbgArgs {
     }
     pub fn dump_global_equations(&self) -> bool {
         self.dump_global_equations
+    }
+    pub fn dump_locals_graph(&self) -> bool {
+        self.dump_locals_graph
     }
 }
