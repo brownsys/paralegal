@@ -6,7 +6,7 @@ use flowistry::{
 use super::GLI;
 use crate::{
     ana::{
-        algebra::{self, Equality, Term},
+        algebra::{self, Assign, Term},
         df,
     },
     hir::def_id::LocalDefId,
@@ -185,7 +185,7 @@ pub struct Body<L> {
     pub calls: HashMap<L, Call<Dependencies<L>>>,
     pub return_deps: Dependencies<L>,
     pub return_arg_deps: Vec<Dependencies<L>>,
-    pub equations: Vec<algebra::Equality<DisplayViaDebug<mir::Local>, DisplayViaDebug<Field>>>,
+    pub equations: Vec<algebra::Assign<DisplayViaDebug<mir::Local>, DisplayViaDebug<Field>>>,
 }
 
 impl<L: Display + Ord> Display for Body<L> {
@@ -317,7 +317,7 @@ impl Body<DisplayViaDebug<Location>> {
                                     } else {
                                         use crate::rust::rustc_index::vec::Idx;
                                         next_new_local.increment_by(1);
-                                        call_argument_equations.insert(Equality::new(
+                                        call_argument_equations.insert(Assign::new(
                                             Term::new_base(DisplayViaDebug(next_new_local)),
                                             Term::from(a),
                                         ));

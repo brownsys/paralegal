@@ -221,7 +221,7 @@ impl std::fmt::Display for GlobalLocal<'_> {
 }
 
 /// Common, parameterized equation type used by the [`GraphResolver`]s
-pub type Equation<L> = algebra::Equality<L, DisplayViaDebug<mir::Field>>;
+pub type Equation<L> = algebra::Assign<L, DisplayViaDebug<mir::Field>>;
 pub type Equations<L> = Vec<Equation<L>>;
 /// Common, parameterized graph type used in this module
 pub type GraphImpl<L> = pg::GraphMap<Node<(L, DefId)>, Edge, pg::Directed>;
@@ -327,6 +327,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
             for &(from, to) in edges_to_prune {
                 if let Some(weight) = graph.edge_weight_mut(from, to) {
+                    let is_special_target = matches!((from, to), (SimpleLocation::Call((from_loc, _)), SimpleLocation::Call((to_loc, _))) 
+                        if format!("{to_loc}") == "bb0[2]@bb10[0]@bb146[6]" && format!("{from_loc}") == "bb64[0]@bb39[2]");
+
                     for idx in weight.data.into_iter_set_in_domain() {
                         let to_target = self.node_to_local(&to, idx);
                         // This can be optimized (directly create function)
@@ -358,30 +361,39 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 f.write_char('}')
                             })
                         );
-                        let mut is_reachable = algebra::graph::reachable(
+                        let is_reachable = algebra::graph::reachable(
                             to_target,
                             |to| targets.contains(&to),
                             &locals_graph,
                         );
-                        // algebra::solve_with(
-                        //     &equations,
-                        //     &to_target,
-                        //     |to| targets.contains(to),
-                        //     |term| {
-                        //         debug!(
-                        //             "Found to be reachable via term {}",
-                        //             Print(|f| algebra::display_term_pieces(f, &term, &0))
-                        //         );
-                        //         is_reachable = true;
-                        //         false
-                        //     },
-                        // );
-
                         if let Some((_visited, t)) = is_reachable {
                             debug!(
                                 "Found {from} -> {to} to be reachable via {}",
                                 Print(|fmt| { algebra::display_term_pieces(fmt, &t, &0_usize) })
                             );
+                            if is_special_target {
+                                let mut f = dump_file_pls(self.tcx, id, "special-target.gv").unwrap();
+                                use std::io::Write;
+                                use petgraph::visit::NodeIndexable;
+                                let node_is_present = |n| _visited.contains(locals_graph.to_index(n)) || n == to_target || targets.contains(&n);
+                                let g = algebra::graph::Graph::from_edges(
+                                    locals_graph.all_edges()
+                                        .filter(|(from, to, _)| 
+                                            node_is_present(*from) && node_is_present(*to))
+                                );
+                                write!(f, "{}", petgraph::dot::Dot::with_attr_getters(&g, &[], &|_,_| "".to_string(), &|_,(n, _)| {
+                                    let color =
+                                    if n == to_target {
+                                        "yellow"
+                                    } else if targets.contains(&n) {
+                                        "green"
+                                    } else {
+                                        "black"
+                                    };
+                                    format!("shape=box,color={color}")
+                                })).unwrap();
+                                debug!("Wrote special target file")
+                            }
                         } else {
                             debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
                             weight.data.clear(idx)
@@ -955,7 +967,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 .map(local_as_global)
                                 .filter(move |read| *read != write)
                                 .map(move |read| {
-                                    algebra::Equality::new(
+                                    algebra::Assign::new(
                                         mk_term(write).add_unknown(),
                                         mk_term(read),
                                     )
@@ -996,7 +1008,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         if let DropAction::WrapReturn(wrappings) = drop_action {
                             target = target.extend(wrappings);
                         }
-                        eqs.push(algebra::Equality::new(
+                        eqs.push(algebra::Assign::new(
                             target,
                             algebra::Term::new_base(GlobalLocal::at_root(
                                 call.arguments[regal::ArgumentIndex::from_usize(0)]
@@ -1058,9 +1070,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     .into_iter()
                     .chain(call.return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
                     .map(|(actual_param, formal_param)| {
-                        algebra::Equality::new(
-                            Term::new_base(GlobalLocal::at_root(actual_param)),
+                        algebra::Assign::new(
                             Term::new_base(GlobalLocal::relative(formal_param, root_location)),
+                            Term::new_base(GlobalLocal::at_root(actual_param)),
                         )
                     }),
                 ),

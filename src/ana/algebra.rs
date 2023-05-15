@@ -252,48 +252,25 @@ impl<F: Copy> Operator<F> {
 }
 
 /// An equation in the algebra
-#[derive(Clone, Debug)]
-pub struct Equality<B, F: Copy> {
-    lhs: Term<B, F>,
-    rhs: Term<B, F>,
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct Assign<B, F: Copy> {
+    write: Term<B, F>,
+    read: Term<B, F>,
 }
 
-impl<B: Display, F: Display + Copy> Display for Equality<B, F> {
+impl<B: Display, F: Display + Copy> Display for Assign<B, F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} = {}", self.lhs, self.rhs)
+        write!(f, "{} <- {}", self.write, self.read)
     }
 }
 
-/// The Eq instance is special, because it is order independent with respect
-/// to the left and right hand side.
-impl<B: std::cmp::PartialEq, F: std::cmp::PartialEq + Copy> std::cmp::PartialEq for Equality<B, F> {
-    fn eq(&self, other: &Self) -> bool {
-        // Using an unpack here so compiler warns in case a new field is ever added
-        let Equality { lhs, rhs } = other;
-        (lhs == &self.lhs && rhs == &self.rhs) || (rhs == &self.lhs && lhs == &self.rhs)
-    }
-}
 
-impl<B: Eq, F: Eq + Copy> Eq for Equality<B, F> {}
 
-/// The Hash instance is special, because it is order independent with respect
-/// to the left and right hand side.
-impl<B: Hash, F: Hash + Copy> Hash for Equality<B, F> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let mut l = std::collections::hash_map::DefaultHasher::new();
-        let mut r = std::collections::hash_map::DefaultHasher::new();
 
-        self.lhs.hash(&mut l);
-        self.rhs.hash(&mut r);
-
-        state.write_u64(l.finish().wrapping_add(r.finish()))
-    }
-}
-
-impl<B, F: Copy> Equality<B, F> {
+impl<B, F: Copy> Assign<B, F> {
     /// Create a new equation
-    pub fn new(lhs: Term<B, F>, rhs: Term<B, F>) -> Self {
-        Self { lhs, rhs }
+    pub fn new(write: Term<B, F>, read: Term<B, F>) -> Self {
+        Self { write, read }
     }
 
     /// Rearrange the equation, moving all operators from the left hand side to
@@ -302,27 +279,27 @@ impl<B, F: Copy> Equality<B, F> {
     /// After calling this function it is guaranteed that `self.lhs.is_base() == true`
     ///
     /// If you want to rearrange from right to left use [`Equality::swap`]
-    pub fn rearrange_left_to_right(&mut self) {
-        self.rhs
+    pub fn rearrange_read_to_write(&mut self) {
+        self.write
             .terms
-            .extend(self.lhs.terms.drain(..).rev().map(Operator::flip));
+            .extend(self.read.terms.drain(..).rev().map(Operator::flip));
     }
 
-    /// Swap the left and right hand side terms
-    pub fn swap(&mut self) {
-        std::mem::swap(&mut self.lhs, &mut self.rhs)
-    }
+    // /// Swap the left and right hand side terms
+    // pub fn swap(&mut self) {
+    //     std::mem::swap(&mut self.read, &mut self.rhs)
+    // }
 
     pub fn bases(&self) -> [&B; 2] {
-        [self.lhs.base(), self.rhs.base()]
+        [self.read.base(), self.write.base()]
     }
 
     /// Apply a function to each base, creating a new equation with a
     /// potentially different base type.
-    pub fn map_bases<B0, G: FnMut(&B) -> B0>(&self, mut f: G) -> Equality<B0, F> {
-        Equality {
-            lhs: self.lhs.replace_base(f(self.lhs.base())),
-            rhs: self.rhs.replace_base(f(self.rhs.base())),
+    pub fn map_bases<B0, G: FnMut(&B) -> B0>(&self, mut f: G) -> Assign<B0, F> {
+        Assign {
+            read: self.read.replace_base(f(self.read.base())),
+            write: self.write.replace_base(f(self.write.base())),
         }
     }
 }
@@ -370,22 +347,22 @@ pub mod graph {
     pub fn new<
         B: Copy + Eq + Ord + Hash,
         F: Copy,
-        GetEq: std::borrow::Borrow<Equality<B, F>>,
+        GetEq: std::borrow::Borrow<Assign<B, F>>,
         I: IntoIterator<Item = GetEq>,
     >(
         equations: I,
     ) -> Graph<B, F> {
         let mut graph = Graph::new();
         for eq in equations {
-            let mut eq: Equality<_, _> = eq.borrow().clone();
-            eq.rearrange_left_to_right();
-            if let Some(w) = graph.edge_weight_mut(*eq.lhs.base(), *eq.rhs.base()) {
-                w.0.push(eq.rhs.terms)
+            let mut eq: Assign<_, _> = eq.borrow().clone();
+            eq.rearrange_read_to_write();
+            if let Some(w) = graph.edge_weight_mut(*eq.write.base(), *eq.read.base()) {
+                w.0.push(eq.write.terms)
             } else {
                 graph.add_edge(
-                    *eq.rhs.base(),
-                    *eq.lhs.base(),
-                    Operators(SmallVec::from_iter([eq.rhs.terms])),
+                    *eq.write.base(),
+                    *eq.read.base(),
+                    Operators(SmallVec::from_iter([eq.write.terms])),
                 );
             }
         }
@@ -408,28 +385,17 @@ pub mod graph {
         let mut queue = VecDeque::from_iter([(from, seen, Term::new_base(0))]);
         while let Some((node, mut seen, projections)) = queue.pop_front() {
             seen.insert(graph.to_index(node));
-            for next in graph
+            for (_, to, weight) in graph
                 .edges(node)
-                .chain(graph.edges_directed(node, Incoming))
             {
-                let (to, is_flipped) = if next.source() == node {
-                    (next.target(), false)
-                } else {
-                    (next.source(), true)
-                };
                 if seen.contains(graph.to_index(to)) {
                     continue;
                 }
-                for weight in next.weight().0.iter() {
+                for weight in weight.0.iter() {
                     let mut projections = projections.clone();
-                    if next.weight().0.is_empty()
+                    if weight.is_empty()
                         || {
-                            if is_flipped {
-                                projections = projections
-                                    .extend(weight.iter().copied().map(Operator::flip).rev());
-                            } else {
-                                projections = projections.extend(weight.iter().copied());
-                            }
+                            projections = projections.extend(weight.iter().copied());
                             match projections.simplify() {
                                 Simplified::Yes => true,
                                 Simplified::NonOverlapping => false,
@@ -512,7 +478,8 @@ pub mod graph {
             })
         )
         .unwrap()
-    }
+    }   
+    #[derive(Clone)]
     pub struct Operators<F: Copy>(SmallVec<[Vec<Operator<F>>; 1]>);
 
     impl<F: Copy + Display> std::fmt::Display for Operators<F> {
@@ -533,45 +500,45 @@ pub mod graph {
 /// new bases `x`, `y` then extend the fact base with the equations `x = t1`,
 /// `y = t2` and solve for `x` and `y` instead.
 ///
-pub fn solve<
-    B: Clone + Hash + Eq + Display + Ord,
-    F: Eq + Hash + Clone + Copy + Display,
-    GetEq: std::borrow::Borrow<Equality<B, F>>,
->(
-    equations: &[GetEq],
-    from: &B,
-    to: &B,
-) -> Vec<Vec<Operator<F>>> {
-    let mut solutions = vec![];
-    solve_with(
-        equations,
-        from,
-        |found| found == to,
-        |solution| {
-            solutions.push(solution);
-            true
-        },
-    );
-    solutions
-}
+// pub fn solve<
+//     B: Clone + Hash + Eq + Display + Ord,
+//     F: Eq + Hash + Clone + Copy + Display,
+//     GetEq: std::borrow::Borrow<Assign<B, F>>,
+// >(
+//     equations: &[GetEq],
+//     from: &B,
+//     to: &B,
+// ) -> Vec<Vec<Operator<F>>> {
+//     let mut solutions = vec![];
+//     solve_with(
+//         equations,
+//         from,
+//         |found| found == to,
+//         |solution| {
+//             solutions.push(solution);
+//             true
+//         },
+//     );
+//     solutions
+// }
 
-pub fn solve_reachable<
-    B: Clone + Hash + Eq + Display + Ord,
-    F: Eq + Hash + Clone + Copy + Display,
-    GetEq: std::borrow::Borrow<Equality<B, F>>,
-    IsTarget: Fn(&B) -> bool,
->(
-    equations: &[GetEq],
-    from: &B,
-    to: IsTarget,
-) -> bool {
-    let mut reachable = false;
-    solve_with(equations, from, to, |_| {
-        reachable = true;
-        false
-    });
-    reachable
-}
+// pub fn solve_reachable<
+//     B: Clone + Hash + Eq + Display + Ord,
+//     F: Eq + Hash + Clone + Copy + Display,
+//     GetEq: std::borrow::Borrow<Assign<B, F>>,
+//     IsTarget: Fn(&B) -> bool,
+// >(
+//     equations: &[GetEq],
+//     from: &B,
+//     to: IsTarget,
+// ) -> bool {
+//     let mut reachable = false;
+//     solve_with(equations, from, to, |_| {
+//         reachable = true;
+//         false
+//     });
+//     reachable
+// }
 
 use std::sync::atomic;
 
@@ -619,115 +586,115 @@ fn dump_intermediates<
     .unwrap()
 }
 
-pub fn solve_with<
-    B: Clone + Hash + Eq + Display + Ord,
-    F: Eq + Hash + Clone + Copy + Display,
-    GetEq: std::borrow::Borrow<Equality<B, F>>,
-    RegisterFinal: FnMut(Vec<Operator<F>>) -> bool,
-    IsTarget: Fn(&B) -> bool,
->(
-    equations: &[GetEq],
-    from: &B,
-    is_target: IsTarget,
-    mut register_final: RegisterFinal,
-) {
-    let is_debug_target = format!("{from}") == "_32 @ root";
-    if is_target(from) {
-        register_final(vec![]);
-        return;
-    }
-    let mut eqs_with_bases = equations
-        .iter()
-        .map(|e| {
-            (
-                e.borrow().bases().into_iter().collect::<Vec<_>>(),
-                e.borrow(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut intermediates: HashMap<B, HashSet<Term<B, F>>> = HashMap::new();
-    let mut find_matching = |target: &B| {
-        eqs_with_bases
-            .drain_filter(|(bases, _eq)| bases.contains(&target))
-            .map(|(_, eq)| eq)
-            .collect::<Vec<_>>()
-    };
+// pub fn solve_with<
+//     B: Clone + Hash + Eq + Display + Ord,
+//     F: Eq + Hash + Clone + Copy + Display,
+//     GetEq: std::borrow::Borrow<Assign<B, F>>,
+//     RegisterFinal: FnMut(Vec<Operator<F>>) -> bool,
+//     IsTarget: Fn(&B) -> bool,
+// >(
+//     equations: &[GetEq],
+//     from: &B,
+//     is_target: IsTarget,
+//     mut register_final: RegisterFinal,
+// ) {
+//     let is_debug_target = format!("{from}") == "_32 @ root";
+//     if is_target(from) {
+//         register_final(vec![]);
+//         return;
+//     }
+//     let mut eqs_with_bases = equations
+//         .iter()
+//         .map(|e| {
+//             (
+//                 e.borrow().bases().into_iter().collect::<Vec<_>>(),
+//                 e.borrow(),
+//             )
+//         })
+//         .collect::<Vec<_>>();
+//     let mut intermediates: HashMap<B, HashSet<Term<B, F>>> = HashMap::new();
+//     let mut find_matching = |target: &B| {
+//         eqs_with_bases
+//             .drain_filter(|(bases, _eq)| bases.contains(&target))
+//             .map(|(_, eq)| eq)
+//             .collect::<Vec<_>>()
+//     };
 
-    let mut targets = vec![from.clone()];
+//     let mut targets = vec![from.clone()];
 
-    let mut saw_target = false;
+//     let mut saw_target = false;
 
-    while let Some(intermediate_target) = targets.pop() {
-        if intermediates.contains_key(&intermediate_target) {
-            continue;
-        }
-        let all_matching = find_matching(&intermediate_target);
-        // if all_matching.is_empty() {
-        //     debug!(
-        //         "No matching equation for intermediate target {} from {}",
-        //         intermediate_target, from
-        //     );
-        // }
-        for mut matching in all_matching.into_iter().cloned() {
-            if matching.lhs.base() != &intermediate_target {
-                matching.swap()
-            }
-            saw_target |= is_target(matching.rhs.base());
-            matching.rearrange_left_to_right();
-            if !is_target(matching.rhs.base()) {
-                targets.push(matching.rhs.base().clone());
-            }
-            intermediates
-                .entry(intermediate_target.clone())
-                .or_insert_with(HashSet::default)
-                .insert(matching.rhs);
-        }
-    }
-    if !saw_target {
-        if is_debug_target {
-            debug!("Never saw final target, abandoning solving early");
-        }
-        return;
-    }
-    let matching_intermediate = intermediates.get(from);
-    if matching_intermediate.is_none() {
-        // debug!("No intermediate found for {from}");
-    }
-    let mut died = HashSet::new();
-    let mut targets = matching_intermediate
-        .into_iter()
-        .flat_map(|v| v.iter().cloned())
-        .collect::<Vec<_>>();
-    let mut seen = HashSet::new();
-    while let Some(intermediate_target) = targets.pop() {
-        let var = intermediate_target.base();
-        if is_target(var) {
-            if !register_final(intermediate_target.terms) {
-                return;
-            }
-        } else if !seen.contains(var) {
-            seen.insert(var.clone());
-            if let Some(next_eq) = intermediates.get(&var) {
-                targets.extend(next_eq.iter().cloned().filter_map(|term| {
-                    let mut to_sub = intermediate_target.clone();
-                    to_sub.sub(term);
-                    let simplifies = to_sub.simplify();
-                    if simplifies != Simplified::Yes && is_debug_target {
-                        debug!("{to_sub} does not simplify");
-                        died.insert(to_sub.base.clone());
-                    }
-                    (simplifies == Simplified::Yes).then_some(to_sub)
-                }))
-            } else {
-                // debug!("No follow up equation found for {var} on the way from {from}");
-            }
-        }
-    }
+//     while let Some(intermediate_target) = targets.pop() {
+//         if intermediates.contains_key(&intermediate_target) {
+//             continue;
+//         }
+//         let all_matching = find_matching(&intermediate_target);
+//         // if all_matching.is_empty() {
+//         //     debug!(
+//         //         "No matching equation for intermediate target {} from {}",
+//         //         intermediate_target, from
+//         //     );
+//         // }
+//         for mut matching in all_matching.into_iter().cloned() {
+//             if matching.lhs.base() != &intermediate_target {
+//                 matching.swap()
+//             }
+//             saw_target |= is_target(matching.rhs.base());
+//             matching.rearrange_left_to_right();
+//             if !is_target(matching.rhs.base()) {
+//                 targets.push(matching.rhs.base().clone());
+//             }
+//             intermediates
+//                 .entry(intermediate_target.clone())
+//                 .or_insert_with(HashSet::default)
+//                 .insert(matching.rhs);
+//         }
+//     }
+//     if !saw_target {
+//         if is_debug_target {
+//             debug!("Never saw final target, abandoning solving early");
+//         }
+//         return;
+//     }
+//     let matching_intermediate = intermediates.get(from);
+//     if matching_intermediate.is_none() {
+//         // debug!("No intermediate found for {from}");
+//     }
+//     let mut died = HashSet::new();
+//     let mut targets = matching_intermediate
+//         .into_iter()
+//         .flat_map(|v| v.iter().cloned())
+//         .collect::<Vec<_>>();
+//     let mut seen = HashSet::new();
+//     while let Some(intermediate_target) = targets.pop() {
+//         let var = intermediate_target.base();
+//         if is_target(var) {
+//             if !register_final(intermediate_target.terms) {
+//                 return;
+//             }
+//         } else if !seen.contains(var) {
+//             seen.insert(var.clone());
+//             if let Some(next_eq) = intermediates.get(&var) {
+//                 targets.extend(next_eq.iter().cloned().filter_map(|term| {
+//                     let mut to_sub = intermediate_target.clone();
+//                     to_sub.sub(term);
+//                     let simplifies = to_sub.simplify();
+//                     if simplifies != Simplified::Yes && is_debug_target {
+//                         debug!("{to_sub} does not simplify");
+//                         died.insert(to_sub.base.clone());
+//                     }
+//                     (simplifies == Simplified::Yes).then_some(to_sub)
+//                 }))
+//             } else {
+//                 // debug!("No follow up equation found for {var} on the way from {from}");
+//             }
+//         }
+//     }
 
-    if is_debug_target {
-        dump_intermediates(&intermediates, &is_target, |b| died.contains(b));
-    }
-}
+//     if is_debug_target {
+//         dump_intermediates(&intermediates, &is_target, |b| died.contains(b));
+//     }
+// }
 
 fn vec_drop_range<T>(v: &mut Vec<T>, r: std::ops::Range<usize>) {
     let ptr = v.as_mut_ptr();
@@ -918,7 +885,7 @@ impl<B> Term<B, Field> {
     }
 }
 
-pub type MirEquation = Equality<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
+pub type MirEquation = Assign<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
 
 struct Extractor<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -959,9 +926,12 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
         rvalue: &mir::Rvalue<'tcx>,
         _location: mir::Location,
     ) {
-        let lhs = MirTerm::from(place);
+        let write = MirTerm::from(place);
         use mir::{AggregateKind, Rvalue::*};
-        let rhs_s = match rvalue {
+        if let Ref(_, mir::BorrowKind::Mut { .. }, val) = rvalue {
+            self.equations.insert(Assign { write: val.into(), read: MirTerm::from(place).add_deref_of() });
+        }
+        let reads = match rvalue {
             Use(op) | UnaryOp(_, op) | Cast(_, op, _) 
             | ShallowInitBox(op, _) // XXX Not sure this is correct
             => Box::new(op.place().into_iter().map(|p| p.into()))
@@ -1057,9 +1027,9 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                 }
             },
         };
-        self.equations.extend(rhs_s.map(|rhs| Equality {
-            lhs: lhs.clone(),
-            rhs,
+        self.equations.extend(reads.map(|read| Assign {
+            write: write.clone(),
+            read,
         }))
     }
 }
