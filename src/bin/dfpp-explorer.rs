@@ -205,6 +205,9 @@ enum Command {
     },
     RenderErroneousFlow {
         input: std::path::PathBuf,
+    },
+    Load {
+        path: std::path::PathBuf,
     }
 }
 
@@ -234,7 +237,11 @@ impl std::fmt::Display for Command {
                 }
                 Ok(())
             }
-            Command::Edges { from, direction , typ } => write!(f, "edges {from} -d {direction} -t {typ}"),
+            Command::Edges {
+                from,
+                direction,
+                typ,
+            } => write!(f, "edges {from} -d {direction} -t {typ}"),
             Command::Alias { alias, origin } => write!(f, "alias {alias} {origin}"),
             Command::Size => write!(f, "size"),
             Command::Reachable { typ, from, to } => write!(f, "reachable -t {typ} {from} {to}"),
@@ -250,7 +257,10 @@ impl std::fmt::Display for Command {
                 output.display()
             ),
             Command::CallChain { from } => write!(f, "call-chain {from}"),
-            Command::RenderErroneousFlow { input } => write!(f, "render-erroneous-flow {}", input.display()),
+            Command::RenderErroneousFlow { input } => {
+                write!(f, "render-erroneous-flow {}", input.display())
+            }
+            Command::Load { path } => write!(f, "load {}", path.display()),
         }
     }
 }
@@ -276,7 +286,7 @@ enum RunCommandErr<'g> {
     IOError(std::io::Error),
     DotError(Option<i32>),
     LispParseErr(sexpr::parse::Error),
-    MinimalFlowParseError,
+    MinimalFlowParseError(&'static str),
     NoGraphLoaded,
 }
 
@@ -314,8 +324,10 @@ impl<'g> std::fmt::Display for RunCommandErr<'g> {
                 Ok(())
             }
             LispParseErr(e) => write!(f, "Error parsing lisp: {e}"),
-            MinimalFlowParseError => f.write_str("Error parsing minimal flow"),
-            NoGraphLoaded => f.write_str("There is no graph loaded currently, load one using the `load` command"),
+            MinimalFlowParseError(s) => write!(f, "Error parsing minimal flow: {s}"),
+            NoGraphLoaded => {
+                f.write_str("There is no graph loaded currently, load one using the `load` command")
+            }
         }
     }
 }
@@ -327,12 +339,13 @@ struct Repl<'g> {
     graph: Option<Graph<'g>>,
     prompt_for_missing_nodes: bool,
     bodies: Option<Bodies>,
+    gli: GLI<'g>,
 }
 
 impl<'g> Repl<'g> {
     fn translate_node(&self, name: NodeName) -> Result<Node<'g>, RunCommandErr<'g>> {
-        let map = 
-        self.gloc_translation_map
+        let map = self
+            .gloc_translation_map
             .as_ref()
             .ok_or(RunCommandErr::NoGraphLoaded)?;
         map
@@ -364,7 +377,12 @@ impl<'g> Repl<'g> {
         self.graph.as_ref().ok_or(RunCommandErr::NoGraphLoaded)
     }
 
-    fn create_subgraph(&self, from: Node<'g>, depth: usize, direction: Direction) -> Result<Graph<'g>, RunCommandErr<'g>> {
+    fn create_subgraph(
+        &self,
+        from: Node<'g>,
+        depth: usize,
+        direction: Direction,
+    ) -> Result<Graph<'g>, RunCommandErr<'g>> {
         let graph = self.graph()?;
         let mut subg = Graph::new();
         subg.add_node(from);
@@ -413,49 +431,48 @@ impl<'g> Repl<'g> {
             PathType::Both if matches!(metric, PathMetric::Shortest) => {
                 let graph = self.graph()?;
                 Ok(Box::new(
-                [{
-                    let paths = petgraph::algo::bellman_ford(
-                        &WithWeightedEdges {
-                            graph: graph,
-                            weight: &|_| 1.0,
-                        },
-                        from,
-                    )
-                    .unwrap();
-                    let mut v = std::iter::successors(Some(to), |to| {
-                        paths.predecessors
-                            [petgraph::visit::NodeIndexable::to_index(graph, *to)]
-                    })
-                    .collect::<Vec<_>>();
-                    v.reverse();
-                    v
-                }]
-                .into_iter(),
-            )
-                as Box<dyn Iterator<Item = Vec<Node<'g>>>>)}
+                    [{
+                        let paths = petgraph::algo::bellman_ford(
+                            &WithWeightedEdges {
+                                graph: graph,
+                                weight: &|_| 1.0,
+                            },
+                            from,
+                        )
+                        .unwrap();
+                        let mut v = std::iter::successors(Some(to), |to| {
+                            paths.predecessors[petgraph::visit::NodeIndexable::to_index(graph, *to)]
+                        })
+                        .collect::<Vec<_>>();
+                        v.reverse();
+                        v
+                    }]
+                    .into_iter(),
+                ) as Box<dyn Iterator<Item = Vec<Node<'g>>>>)
+            }
             PathType::Data if matches!(metric, PathMetric::Shortest) => {
                 let graph = self.data_graph()?;
                 Ok(Box::new(
-                [{
-                    let paths = petgraph::algo::bellman_ford(
-                        &WithWeightedEdges {
-                            graph,
-                            weight: &|_| 1.0,
-                        },
-                        from,
-                    )
-                    .unwrap();
-                    let mut v = std::iter::successors(Some(to), |to| {
-                        paths.predecessors
-                            [petgraph::visit::NodeIndexable::to_index(&graph, *to)]
-                    })
-                    .collect::<Vec<_>>();
-                    v.reverse();
-                    v
-                }]
-                .into_iter(),
-            )
-                as Box<dyn Iterator<Item = Vec<Node<'g>>>>)}
+                    [{
+                        let paths = petgraph::algo::bellman_ford(
+                            &WithWeightedEdges {
+                                graph,
+                                weight: &|_| 1.0,
+                            },
+                            from,
+                        )
+                        .unwrap();
+                        let mut v = std::iter::successors(Some(to), |to| {
+                            paths.predecessors
+                                [petgraph::visit::NodeIndexable::to_index(&graph, *to)]
+                        })
+                        .collect::<Vec<_>>();
+                        v.reverse();
+                        v
+                    }]
+                    .into_iter(),
+                ) as Box<dyn Iterator<Item = Vec<Node<'g>>>>)
+            }
             PathType::Both => Ok(Box::new(petgraph::algo::all_simple_paths::<Vec<_>, _>(
                 self.graph()?,
                 from,
@@ -569,7 +586,11 @@ impl<'g> Repl<'g> {
 
     fn fn_name_for_loc(&self, n: GlobalLocationS) -> Result<Option<&str>, RunCommandErr<'g>> {
         Ok(self.bodies()?.0.get(&n.function).and_then(|body| {
-            body.1 .0.iter().find(|t| t.0 == n.location).map(|t| t.1.as_str())
+            body.1
+                 .0
+                .iter()
+                .find(|t| t.0 == n.location)
+                .map(|t| t.1.as_str())
         }))
     }
 
@@ -577,25 +598,23 @@ impl<'g> Repl<'g> {
         self.bodies.as_ref().ok_or(RunCommandErr::NoGraphLoaded)
     }
 
-    fn run_edges<G: IntoEdgesDirected<NodeId = Node<'g>>>(&self, g: G, node: Node<'g>, direction: Direction) 
-    where
-        G::EdgeWeight: Display
+    fn run_edges<G: IntoEdgesDirected<NodeId = Node<'g>>>(
+        &self,
+        g: G,
+        node: Node<'g>,
+        direction: Direction,
+    ) where
+        G::EdgeWeight: Display,
     {
         let mut num = 0;
         if direction.wants_in() {
-            for e in 
-                g
-                .edges_directed(node, petgraph::Direction::Incoming)
-            {
+            for e in g.edges_directed(node, petgraph::Direction::Incoming) {
                 num += 1;
                 println!("in {} {}", e.source(), e.weight());
             }
         }
         if direction.wants_out() {
-            for e in 
-                g
-                .edges_directed(node, petgraph::Direction::Outgoing)
-            {
+            for e in g.edges_directed(node, petgraph::Direction::Outgoing) {
                 num += 1;
                 println!("out {} {}", e.target(), e.weight());
             }
@@ -605,6 +624,7 @@ impl<'g> Repl<'g> {
 
     fn run_command(&mut self, command: Command) -> Result<(), RunCommandErr<'g>> {
         match command {
+            Command::Load { path } => self.load_graph(&path),
             Command::DotSubgraph {
                 from,
                 depth,
@@ -666,7 +686,11 @@ impl<'g> Repl<'g> {
                 let to = self.translate_node(to)?;
                 self.run_paths_command(from, to, typ, metric, limit)
             }
-            Command::Edges { from, direction, typ} => {
+            Command::Edges {
+                from,
+                direction,
+                typ,
+            } => {
                 let node = self.translate_node(from)?;
                 match typ {
                     PathType::Both => self.run_edges(self.graph()?, node, direction),
@@ -677,7 +701,12 @@ impl<'g> Repl<'g> {
             }
             Command::Alias { alias, origin } => {
                 let node = self.translate_node(origin)?;
-                if let Some(old) = self.gloc_translation_map.as_mut().ok_or(RunCommandErr::NoGraphLoaded)?.insert(alias, node) {
+                if let Some(old) = self
+                    .gloc_translation_map
+                    .as_mut()
+                    .ok_or(RunCommandErr::NoGraphLoaded)?
+                    .insert(alias, node)
+                {
                     println!("Overwrote prior value {old}");
                 }
                 Ok(())
@@ -702,74 +731,109 @@ impl<'g> Repl<'g> {
                             fmt,
                             "\n  called by ",
                             loc.as_slice().iter().rev(),
-                            |node, fmt| fmt.write_str(self.fn_name_for_loc(*node).unwrap().unwrap_or("?"))
+                            |node, fmt| fmt
+                                .write_str(self.fn_name_for_loc(*node).unwrap().unwrap_or("?"))
                         ))
                     );
                 } else {
                     println!("Return")
                 }
                 Ok(())
-            },
+            }
             Command::RenderErroneousFlow { input } => {
                 let mut file = std::fs::File::open(&input)?;
                 let mut all = String::new();
                 use std::io::Read;
                 file.read_to_string(&mut all)?;
-                let target = all.split_once("'(#hash").unwrap().1; //.ok_or(RunCommandErr::MinimalFlowParseError)?.1;
-                let target = target.rsplit_once("'((").unwrap().0; //.ok_or(RunCommandErr::MinimalFlowParseError)?.0;
-                let target = target.rsplit_once(")").unwrap().0;
+                let target = all
+                    .split_once("'(#hash")
+                    .ok_or(RunCommandErr::MinimalFlowParseError(
+                        "Did not find pattern \"'(#hash\"",
+                    ))?
+                    .1;
+                let target = target
+                    .rsplit_once("'((")
+                    .ok_or(RunCommandErr::MinimalFlowParseError(
+                        "Did not find pattern \"'((\" at the file end",
+                    ))?
+                    .0;
+                let target = target
+                    .rsplit_once(")")
+                    .ok_or(RunCommandErr::MinimalFlowParseError(
+                        "Did not find pattern \")\" before \"'((\" at the file end",
+                    ))?
+                    .0;
                 let value = sexpr::parse::from_str(target)?;
-                let flow = value.get("minimal_subflow").unwrap(); //.ok_or(RunCommandErr::MinimalFlowParseError)?;
-                let arg_call_site = value.get("arg_call_site").unwrap(); //.ok_or(RunCommandErr::MinimalFlowParseError)?;
+                let flow =
+                    value
+                        .get("minimal_subflow")
+                        .ok_or(RunCommandErr::MinimalFlowParseError(
+                            "Did not find 'minimal_subflow' key",
+                        ))?;
+                let arg_call_site =
+                    value
+                        .get("arg_call_site")
+                        .ok_or(RunCommandErr::MinimalFlowParseError(
+                            "Did not find 'arg_call_site' key",
+                        ))?;
                 let mut graph: petgraph::prelude::GraphMap<&str, u16, petgraph::Directed> = petgraph::graphmap::GraphMap::from_edges(
-                    flow.list_iter().unwrap()
-                        //.ok_or(RunCommandErr::MinimalFlowParseError)?
-                        .map(|v| match v.to_ref_vec().unwrap() //.ok_or(RunCommandErr::MinimalFlowParseError)?
+                    flow.list_iter()
+                        .ok_or(RunCommandErr::MinimalFlowParseError("'minimal_subflow' is not an s-expression list"))?
+                        .map(|v| match v.to_ref_vec().ok_or(RunCommandErr::MinimalFlowParseError("'minimal_subflow' elements are not lists"))?
                         .as_slice() 
                         {
                             [_, from, to] => Ok((
-                                from.as_symbol().unwrap(), // .ok_or(RunCommandErr::MinimalFlowParseError)?, 
-                                to.as_symbol().unwrap(), //.ok_or(RunCommandErr::MinimalFlowParseError)?, 
+                                from.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("Second elements of 'minimal_subflow' elements should be a symbol"))?, 
+                                to.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("Third elements of 'minimal_subflow' elements should be a symbol"))?, 
                                 0)),
-                            _ => Err(RunCommandErr::MinimalFlowParseError)
+                            _ => Err(RunCommandErr::MinimalFlowParseError("'minimal_subflow' list elements should be 3-tuples"))
                         })
                         .collect::<Result<Vec<_>, _>>()?
                     );
-                
-                    for (arg, fun) in arg_call_site.list_iter()
-                            .unwrap()
+
+                for res in arg_call_site.list_iter()
+                            .ok_or(RunCommandErr::MinimalFlowParseError("'arg_call_site' is not an s-expression list"))?
                             //.ok_or(RunCommandErr::MinimalFlowParseError)?
-                            .map(|v| match v.to_ref_vec().unwrap() //.ok_or(RunCommandErr::MinimalFlowParseError)?
+                            .map(|v| match v.to_ref_vec().ok_or(RunCommandErr::MinimalFlowParseError("'arg_call_site' elements are not lists"))?
                             .as_slice() 
                             {
-                                [from, to] => (
-                                    from.as_symbol().unwrap(), //.ok_or(RunCommandErr::MinimalFlowParseError)?, 
-                                    to.as_symbol().unwrap(), //.ok_or(RunCommandErr::MinimalFlowParseError)?, 
-                                    ),
-                                _ => panic!("Wrong number of values")
+                                [from, to] => Ok((
+                                    from.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("First elements of 'arg_call_site' elements should be a symbol"))?, 
+                                    to.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("Second elements of 'arg_call_site' elements should be a symbol"))?, 
+                                    )),
+                                _ => Err(RunCommandErr::MinimalFlowParseError("'arg_call_site' list elements should be 2-tuples"))
                             }) {
+                    let (arg, fun) = res?;
                     if graph.contains_node(arg) && graph.contains_node(fun) {
                         graph.add_edge(arg, fun, 0);
                     }
                 }
                 let mut outfile = outfile_pls(input.with_extension("gv"))?;
                 use std::io::Write;
-                write!(outfile, "{}", petgraph::dot::Dot::with_attr_getters(&graph, &[], &|_,_| "".to_string(), &|_, _| "shape=box".to_string()))?;
+                write!(
+                    outfile,
+                    "{}",
+                    petgraph::dot::Dot::with_attr_getters(
+                        &graph,
+                        &[],
+                        &|_, _| "".to_string(),
+                        &|_, _| "shape=box".to_string()
+                    )
+                )?;
                 Ok(())
             }
         }
     }
 
-    fn from_flow_graph(
-        flow: CallOnlyFlow<RawGlobalLocation>,
-        gli: GLI<'g>,
-        bodies: Bodies,
-    ) -> Self {
+    fn load_graph(&mut self, path: &std::path::Path) -> Result<(), RunCommandErr<'g>> {
+
+        let (flow, bodies) =
+            dfpp::dbg::read_non_transitive_graph_and_body(std::fs::File::open(path).unwrap());
         let mut g = petgraph::graphmap::GraphMap::<_, _, petgraph::Directed>::new();
         let graph = &mut g;
 
         for (to_raw, deps) in flow.location_dependencies.iter() {
-            let to = gli.from_vec(to_raw.as_slice().to_vec()).into();
+            let to = self.gli.from_vec(to_raw.as_slice().to_vec()).into();
             for (weight, deps) in deps
                 .input_deps
                 .iter()
@@ -778,14 +842,14 @@ impl<'g> Repl<'g> {
                 .chain([(Edge::from_types([EdgeType::Control]), &deps.ctrl_deps)])
             {
                 for from_raw in deps {
-                    let from = gli.from_vec(from_raw.as_slice().to_vec()).into();
+                    let from = self.gli.from_vec(from_raw.as_slice().to_vec()).into();
                     add_weighted_edge(graph, from, to, weight);
                 }
             }
         }
 
         for from_raw in &flow.return_dependencies {
-            let from = gli.from_vec(from_raw.as_slice().to_vec()).into();
+            let from = self.gli.from_vec(from_raw.as_slice().to_vec()).into();
             add_weighted_edge(
                 graph,
                 from,
@@ -796,16 +860,16 @@ impl<'g> Repl<'g> {
 
         let gloc_translation_map: HashMap<NodeName, Node> =
             g.nodes().map(|n| (format!("{n}").into(), n)).collect();
-        Self {
-            graph: Some(g),
-            gloc_translation_map: Some(gloc_translation_map),
-            prompt_for_missing_nodes: true,
-            bodies: Some(bodies),
-        }
+        self.gloc_translation_map = Some(gloc_translation_map);
+        self.bodies = Some(bodies);
+        self.graph = Some(g);
+        Ok(())
     }
 
-    fn empty() -> Self {
+
+    fn empty(gli: GLI<'g>) -> Self {
         Self {
+            gli,
             gloc_translation_map: None,
             graph: None,
             bodies: None,
@@ -1127,19 +1191,14 @@ fn main() {
     let args = Args::parse();
 
     dfpp::rust::rustc_span::create_default_session_if_not_set_then(|_| {
-
-
         let arena = dfpp::rust::rustc_arena::TypedArena::default();
         let interner = GlobalLocationInterner::new(&arena);
         let gli = GLI::new(&interner);
-        let mut repl = if let Some(file) = args.file.as_ref() {
-            let (flow, bodies) =
-                dfpp::dbg::read_non_transitive_graph_and_body(std::fs::File::open(file).unwrap());
-            Repl::from_flow_graph(flow, gli, bodies)
-        } else {
-            Repl::empty()
-        };
+        let mut repl = Repl::empty(gli);
 
+        if let Some(file) = args.file.as_ref() {
+            repl.load_graph(file.as_path()).unwrap();
+        }
 
         if let Some(script) = {
             (!args.command.is_empty())
