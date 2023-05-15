@@ -27,8 +27,11 @@ nom = "7"
 log = "0.4"
 simple_logger = "2"
 petgraph = "0.6"
+
+
 humantime = "2"
 indicatif = "0.17"
+serde-lexpr = "0.1"
 
 #dot = "0.1"
 dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106"}
