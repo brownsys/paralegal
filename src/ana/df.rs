@@ -308,7 +308,7 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
             .marker_carrying
             .get(bid, |bid| {
                 let body = self.tcx.body_for_body_id(bid).simplified_body();
-                !body
+                body
                     .basic_blocks()
                     .iter()
                     .any(|bbdat| self.fn_carries_marker(body, &bbdat.terminator().kind))
@@ -318,11 +318,15 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
 
     fn fn_carries_marker(&self, body: &Body<'tcx>, terminator: &TerminatorKind) -> bool {
         use utils::TyExt;
+            
         if let Ok((defid, args, _)) = terminator.as_fn_and_args() {
+            debug!("Checking function {} for markers", self.tcx.def_path_debug_str(defid));
             let carries = self.carries_marker.carries_marker(defid);
-            if carries {
-                return true;
+            let result = if carries {
+                debug!("  carries self");
+                true
             } else if Some(defid) == self.tcx.lang_items().from_generator_fn() {
+                debug!("  is async closure");
                 let closure = match args.as_slice() {
                     [Some(p)] => *p,
                     _ => panic!("Expected one non-const closure argument"),
@@ -342,8 +346,10 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
             } else {
                 let local_carries = matches!(defid.as_local(), Some(ldid) if
                     self.body_carries_marker(ldid.into_body_id(self.tcx).unwrap()));
-                local_carries
-                    || self
+                if local_carries {
+                    debug!("  body carries");
+                }
+                let type_carries = self
                         .tcx
                         .fn_sig(defid)
                         .skip_binder()
@@ -356,8 +362,13 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
                                     .map_or(false, |t| self.carries_marker.carries_marker(t)),
                                 _ => false,
                             })
-                        })
-            }
+                        });
+                if type_carries {
+                    debug!("  type carries");
+                }
+                local_carries | type_carries
+            };
+            result
         } else {
             false
         }
