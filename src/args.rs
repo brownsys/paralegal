@@ -173,7 +173,7 @@ pub struct AnalysisCtrl {
     remove_poll_ctrl_influence: bool,
 
     #[clap(long, env)]
-    avoid_inlining: bool,
+    inline_elision: bool,
 }
 
 /// How are we treating inconsequential call sites?
@@ -274,7 +274,7 @@ impl AnalysisCtrl {
     }
 
     pub fn avoid_inlining(&self) -> bool {
-        self.avoid_inlining
+        self.inline_elision
     }
 }
 
