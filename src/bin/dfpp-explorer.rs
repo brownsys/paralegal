@@ -112,7 +112,7 @@ impl std::str::FromStr for PathMetric {
     }
 }
 
-/// Must be fully expanded basic block nodename, e.g. `bb39[2]@bb58[5]@bb0[4]`. You can find this in the 
+/// Must be fully expanded basic block nodename, e.g. `bb39[2]@bb58[5]@bb0[4]`. You can find this in the
 /// comments in analysis_result.frg.
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
 struct NodeName(String);
@@ -176,7 +176,7 @@ impl std::str::FromStr for GraphOutputFormat {
 
 #[derive(Clone, Parser)]
 enum Command {
-	/// Find out what a path is between two nodes. 
+    /// Find out what a path is between two nodes.
     Paths {
         #[clap(short = 't', long, default_value_t = PathType::Both)]
         typ: PathType,
@@ -187,14 +187,14 @@ enum Command {
         #[clap(short, long)]
         limit: Option<usize>,
     },
-	/// Find out if a node is reachable from another node. 
+    /// Find out if a node is reachable from another node.
     Reachable {
         #[clap(short = 't', long, default_value_t = PathType::Both)]
         typ: PathType,
         from: NodeName,
         to: NodeName,
     },
-	/// For a given node, return its inputs and/or outputs. 
+    /// For a given node, return its inputs and/or outputs.
     Edges {
         from: NodeName,
         #[clap(long, short, default_value_t = Direction::Both)]
@@ -206,7 +206,7 @@ enum Command {
         alias: NodeName,
         origin: NodeName,
     },
-	/// Given a node and a length, give you a dot rendering expanding out from that node.
+    /// Given a node and a length, give you a dot rendering expanding out from that node.
     DotSubgraph {
         from: NodeName,
         depth: usize,
@@ -217,7 +217,7 @@ enum Command {
         direction: Direction,
     },
     Size,
-	/// For a given node, what is its call stack.
+    /// For a given node, what is its call stack.
     CallChain {
         from: NodeName,
     },
@@ -226,7 +226,7 @@ enum Command {
     },
     Load {
         path: std::path::PathBuf,
-    }
+    },
 }
 
 impl std::str::FromStr for Command {
@@ -844,7 +844,6 @@ impl<'g> Repl<'g> {
     }
 
     fn load_graph(&mut self, path: &std::path::Path) -> Result<(), RunCommandErr<'g>> {
-
         let (flow, bodies) =
             dfpp::dbg::read_non_transitive_graph_and_body(std::fs::File::open(path).unwrap());
         let mut g = petgraph::graphmap::GraphMap::<_, _, petgraph::Directed>::new();
@@ -883,7 +882,6 @@ impl<'g> Repl<'g> {
         self.graph = Some(g);
         Ok(())
     }
-
 
     fn empty(gli: GLI<'g>) -> Self {
         Self {

@@ -65,6 +65,7 @@ use crate::{
 pub trait Oracle<'tcx, 's> {
     fn should_inline(&self, did: LocalDefId) -> bool;
     fn is_semantically_meaningful(&self, did: DefId) -> bool;
+    fn carries_marker(&self, did: DefId) -> bool;
 }
 
 impl<'tcx, 's, T: Oracle<'tcx, 's>> Oracle<'tcx, 's> for std::rc::Rc<T> {
@@ -73,6 +74,9 @@ impl<'tcx, 's, T: Oracle<'tcx, 's>> Oracle<'tcx, 's> for std::rc::Rc<T> {
     }
     fn is_semantically_meaningful(&self, did: DefId) -> bool {
         self.as_ref().is_semantically_meaningful(did)
+    }
+    fn carries_marker(&self, did: DefId) -> bool {
+        self.as_ref().carries_marker(did)
     }
 }
 
@@ -714,7 +718,14 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// [`ProcedureGraph::from`]
     fn get_procedure_graph(&self, body_id: BodyId) -> &regal::Body<DisplayViaDebug<Location>> {
         self.base_memo.get(body_id, |bid| {
-            regal::compute_from_body_id(self.dbg_ctrl, bid, self.tcx, self.gli)
+            regal::compute_from_body_id(
+                self.dbg_ctrl,
+                bid,
+                self.tcx,
+                self.gli,
+                self.oracle,
+                self.ana_ctrl,
+            )
         })
     }
 

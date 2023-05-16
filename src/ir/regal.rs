@@ -8,6 +8,7 @@ use crate::{
     ana::{
         algebra::{self, Equality, Term},
         df,
+        inline::Oracle,
     },
     hir::def_id::LocalDefId,
     mir::{self, Field, HasLocalDecls, Location},
@@ -21,7 +22,7 @@ use crate::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
         DisplayViaDebug, IntoLocalDefId, LocationExt, Print,
     },
-    DbgArgs, Either, HashMap, HashSet, TyCtxt,
+    AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, TyCtxt,
 };
 
 use std::fmt::{Display, Write};
@@ -241,7 +242,7 @@ fn get_highest_local(body: &mir::Body) -> mir::Local {
 
 impl Body<DisplayViaDebug<Location>> {
     pub fn construct<'tcx, I: IntoIterator<Item = algebra::MirEquation>>(
-        flow_analysis: df::FlowResults<'_, 'tcx, '_>,
+        flow_analysis: df::FlowResults<'_, 'tcx, '_, '_>,
         equations: I,
         tcx: TyCtxt<'tcx>,
         def_id: LocalDefId,
@@ -549,17 +550,26 @@ fn recursive_ctrl_deps<
     dependencies
 }
 
-pub fn compute_from_body_id(
+pub fn compute_from_body_id<'oracle, 'tcx>(
     dbg_opts: &DbgArgs,
     body_id: BodyId,
-    tcx: TyCtxt,
+    tcx: TyCtxt<'tcx>,
     gli: GLI,
+    carries_marker: &'oracle dyn Oracle<'tcx, 'oracle>,
+    analysis_control: &'static AnalysisCtrl,
 ) -> Body<DisplayViaDebug<Location>> {
     let local_def_id = body_id.into_local_def_id(tcx);
     info!("Analyzing function {}", body_name_pls(tcx, body_id));
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
-    let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts);
+    let flow = df::compute_flow_internal(
+        tcx,
+        gli,
+        body_id,
+        body_with_facts,
+        carries_marker,
+        analysis_control,
+    );
     if dbg_opts.dump_callee_mir() {
         mir::pretty::write_mir_fn(
             tcx,

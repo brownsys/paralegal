@@ -1,15 +1,17 @@
 use std::{borrow::Cow, fmt::Display, rc::Rc};
 
 use crate::{
+    ana,
     ir::global_location::{GliAt, GLI},
     rust::{
         mir::{visit::Visitor, *},
         rustc_data_structures::fx::FxHashSet as HashSet,
         rustc_hir::{def_id::DefId, BodyId},
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
+        ty::{self, subst::GenericArgKind},
     },
-    utils::SparseMatrix,
-    TyCtxt,
+    utils::{self, AsFnAndArgs, IntoBodyId, SparseMatrix, TyCtxtExt},
+    AnalysisCtrl, TyCtxt,
 };
 
 use flowistry::{
@@ -26,7 +28,10 @@ use flowistry::{
 
 pub use flowistry::mir::control_dependencies::ControlDependencies;
 
-pub type FlowResults<'a, 'tcx, 'g> = engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g>>;
+use super::inline::Oracle;
+
+pub type FlowResults<'a, 'tcx, 'g, 'oracle> =
+    engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g, 'oracle>>;
 
 pub type Dependency<'tcx> = (Location, Place<'tcx>);
 pub type LocationSet<'tcx> = HashSet<Dependency<'tcx>>;
@@ -103,16 +108,23 @@ impl<'tcx> JoinSemiLattice for FlowDomain<'tcx> {
     }
 }
 
-pub struct FlowAnalysis<'a, 'tcx, 'g> {
+pub struct FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
     pub tcx: TyCtxt<'tcx>,
     pub def_id: DefId,
     pub body: &'a Body<'tcx>,
     pub control_dependencies: ControlDependencies,
     pub aliases: Aliases<'a, 'tcx>,
     pub gli: GLI<'g>,
+    analysis_control: &'static AnalysisCtrl,
+    carries_marker: &'oracle dyn Oracle<'tcx, 'oracle>,
+    recurse_cache: flowistry::cached::Cache<
+        BodyId,
+        flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>,
+    >,
+    marker_carrying: utils::RecursionBreakingCache<BodyId, bool>,
 }
 
-impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
+impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
     fn body_id(&self) -> BodyId {
         self.tcx.hir().body_owned_by(
             self.tcx
@@ -128,6 +140,8 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         body: &'a Body<'tcx>,
         aliases: Aliases<'a, 'tcx>,
         control_dependencies: ControlDependencies,
+        carries_marker: &'oracle dyn Oracle<'tcx, 'oracle>,
+        analysis_control: &'static AnalysisCtrl,
     ) -> Self {
         FlowAnalysis {
             tcx,
@@ -136,6 +150,10 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             body,
             aliases,
             control_dependencies,
+            recurse_cache: flowistry::cached::Cache::default(),
+            marker_carrying: Default::default(),
+            carries_marker,
+            analysis_control,
         }
     }
 
@@ -284,9 +302,259 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
             }
         }
     }
+
+    fn body_carries_marker(&self, bid: BodyId) -> bool {
+        *self
+            .marker_carrying
+            .get(bid, |bid| {
+                let body = self.tcx.body_for_body_id(bid).simplified_body();
+                !body
+                    .basic_blocks()
+                    .iter()
+                    .any(|bbdat| self.fn_carries_marker(body, &bbdat.terminator().kind))
+            })
+            .unwrap_or(&false)
+    }
+
+    fn fn_carries_marker(&self, body: &Body<'tcx>, terminator: &TerminatorKind) -> bool {
+        use utils::TyExt;
+        if let Ok((defid, args, _)) = terminator.as_fn_and_args() {
+            let carries = self.carries_marker.carries_marker(defid);
+            if carries {
+                return true;
+            } else if Some(defid) == self.tcx.lang_items().from_generator_fn() {
+                let closure = match args.as_slice() {
+                    [Some(p)] => *p,
+                    _ => panic!("Expected one non-const closure argument"),
+                };
+                debug_assert!(closure.projection.is_empty());
+                let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                    body.local_decls[closure.local].ty.kind()
+                {
+                    *gid
+                } else {
+                    unreachable!("Expected Generator")
+                };
+                let map = self.tcx.hir();
+                self.body_carries_marker(
+                    map.body_owned_by(map.local_def_id_to_hir_id(closure_fn.as_local().unwrap())),
+                )
+            } else {
+                let local_carries = matches!(defid.as_local(), Some(ldid) if
+                    self.body_carries_marker(ldid.into_body_id(self.tcx).unwrap()));
+                local_carries
+                    || self
+                        .tcx
+                        .fn_sig(defid)
+                        .skip_binder()
+                        .inputs_and_output
+                        .iter()
+                        .any(|t| {
+                            t.walk().any(|t| match t.unpack() {
+                                GenericArgKind::Type(t) => t
+                                    .defid()
+                                    .map_or(false, |t| self.carries_marker.carries_marker(t)),
+                                _ => false,
+                            })
+                        })
+            }
+        } else {
+            false
+        }
+    }
+
+    fn recurse_into_call(
+        &self,
+        state: &mut FlowDomain<'tcx>,
+        call: &TerminatorKind<'tcx>,
+        location: Location,
+    ) -> bool {
+        let tcx = self.tcx;
+        let (func, parent_args, destination) = match call {
+            TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                ..
+            } => (func, args, destination),
+            _ => unreachable!(),
+        };
+        debug!("Checking whether can recurse into {func:?}");
+
+        let func = match func.constant() {
+            Some(func) => func,
+            None => {
+                debug!("  Func is not constant");
+                return false;
+            }
+        };
+
+        let def_id = match func.literal.ty().kind() {
+            ty::TyKind::FnDef(def_id, _) => def_id,
+            _ => {
+                debug!("  Func is not a FnDef");
+                return false;
+            }
+        };
+
+        // If a function returns never (fn () -> !) then there are no exit points,
+        // so we can't analyze effects on exit
+        let fn_sig = tcx.fn_sig(*def_id);
+        if fn_sig.skip_binder().output().is_never() {
+            debug!("  Func returns never");
+            return false;
+        }
+
+        let node = match tcx.hir().get_if_local(*def_id) {
+            Some(node) => node,
+            None => {
+                debug!("  Func is not in local crate");
+                return false;
+            }
+        };
+
+        let body_id = match node.body_id() {
+            Some(body_id) => body_id,
+            None => {
+                debug!("  Func does not have a BodyId");
+                return false;
+            }
+        };
+
+        let unsafety = tcx.unsafety_check_result(def_id.expect_local());
+        if !unsafety.used_unsafe_blocks.is_empty() {
+            debug!("  Func contains unsafe blocks");
+            return false;
+        }
+
+        let parent_arg_places = flowistry::mir::utils::arg_places(parent_args);
+        let any_closure_inputs = parent_arg_places.iter().any(|(_, place)| {
+            let ty = place.ty(self.body.local_decls(), tcx).ty;
+            ty.walk().any(|arg| match arg.unpack() {
+                ty::subst::GenericArgKind::Type(ty) => match ty.kind() {
+                    ty::TyKind::Closure(_, substs) => matches!(
+                        substs.as_closure().kind(),
+                        ty::ClosureKind::FnOnce | ty::ClosureKind::FnMut
+                    ),
+                    _ => false,
+                },
+                _ => false,
+            })
+        });
+        if any_closure_inputs {
+            debug!("  Func has closure inputs");
+            return false;
+        }
+
+        let recursive = flowistry::infoflow::BODY_STACK.with(|body_stack| {
+            let body_stack = body_stack.borrow();
+            body_stack.iter().any(|visited_id| *visited_id == body_id)
+        });
+        if recursive {
+            debug!("  Func is a recursive call");
+            return false;
+        }
+
+        let body_with_facts =
+            crate::borrowck_facts::get_body_with_borrowck_facts(tcx, def_id.expect_local());
+        let flow = self.recurse_cache.get(body_id, |_| {
+            info!("Recursing into {}", tcx.def_path_debug_str(*def_id));
+            flowistry::infoflow::compute_flow(tcx, body_id, body_with_facts)
+        });
+        let body = &body_with_facts.simplified_body();
+
+        let mut return_state = <flowistry::infoflow::TransitiveFlowDomain as flowistry::infoflow::FlowDomain>::from_location_domain(flow.analysis.location_domain());
+        {
+            let return_locs = body
+                .basic_blocks()
+                .iter_enumerated()
+                .filter_map(|(bb, data)| match data.terminator().kind {
+                    TerminatorKind::Return => Some(body.terminator_loc(bb)),
+                    _ => None,
+                });
+
+            for loc in return_locs {
+                return_state.join(flow.state_at(loc));
+            }
+        };
+
+        let translate_child_to_parent =
+            |child: Place<'tcx>, mutated: bool| -> Option<Place<'tcx>> {
+                if child.local == RETURN_PLACE && child.projection.len() == 0 {
+                    if child.ty(body.local_decls(), tcx).ty.is_unit() {
+                        return None;
+                    }
+
+                    if let Some((dst, _)) = destination {
+                        return Some(*dst);
+                    }
+                }
+
+                if !child.is_arg(body) || (mutated && !child.is_indirect()) {
+                    return None;
+                }
+
+                // For example, say we're calling f(_5.0) and child = (*_1).1 where
+                // .1 is private to parent. Then:
+                //    parent_toplevel_arg = _5.0
+                //    parent_arg_projected = (*_5.0).1
+                //    parent_arg_accessible = (*_5.0)
+
+                let parent_toplevel_arg = parent_arg_places
+                    .iter()
+                    .find(|(j, _)| child.local.as_usize() - 1 == *j)
+                    .map(|(_, place)| place)?;
+
+                let mut projection = parent_toplevel_arg.projection.to_vec();
+                let mut ty = parent_toplevel_arg.ty(self.body.local_decls(), tcx);
+                let parent_param_env = tcx.param_env(self.def_id);
+                log::debug!("Adding child {child:?} to parent {parent_toplevel_arg:?}");
+                for elem in child.projection.iter() {
+                    ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
+                        ty.field_ty(tcx, field)
+                    });
+                    let elem = match elem {
+                        ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
+                        elem => elem,
+                    };
+                    projection.push(elem);
+                }
+
+                let parent_arg_projected = Place::make(parent_toplevel_arg.local, &projection, tcx);
+                Some(parent_arg_projected)
+            };
+        use flowistry::infoflow::FlowDomain;
+
+        for (child, _) in return_state.matrix().rows() {
+            if let Some(parent) = translate_child_to_parent(child, true) {
+                let was_return = child.local == RETURN_PLACE;
+                // > 1 because arguments will always have their synthetic location in their dep set
+                let was_mutated = return_state.row_set(child).len() > 1;
+                if !was_mutated && !was_return {
+                    continue;
+                }
+
+                let child_deps = return_state.row_set(child);
+                let parent_deps = return_state
+                    .matrix()
+                    .rows()
+                    .filter(|(_, deps)| child_deps.is_superset(deps))
+                    .filter_map(|(row, _)| Some((translate_child_to_parent(row, false)?, None)))
+                    .collect::<Vec<_>>();
+
+                debug!(
+          "child {child:?} \n  / child_deps {child_deps:?}\n-->\nparent {parent:?}\n   / parent_deps {parent_deps:?}"
+        );
+
+                self.transfer_function(state, parent, &parent_deps, location, true);
+            }
+        }
+
+        true
+    }
 }
 
-impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
+impl<'a, 'tcx, 'g, 'oracle> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
     type Domain = FlowDomain<'tcx>;
     type Direction = Forward;
     const NAME: &'static str = "FlowAnalysis";
@@ -311,7 +579,7 @@ impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
     }
 }
 
-impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
+impl<'a, 'tcx, 'g, 'oracle> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
     fn apply_statement_effect(
         &self,
         state: &mut Self::Domain,
@@ -336,19 +604,21 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
+        let is_call = matches!(&terminator.kind, TerminatorKind::Call { .. });
+        if is_call
+            && self.analysis_control.avoid_inlining()
+            && !self.fn_carries_marker(self.body, &terminator.kind)
+            && self.recurse_into_call(state, &terminator.kind, location)
+        {
+            return;
+        }
         ModularMutationVisitor::new(
             &self.aliases,
             |mutated: Place<'tcx>,
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
              _mutation_status: MutationStatus| {
-                self.transfer_function(
-                    state,
-                    mutated,
-                    inputs,
-                    location,
-                    !matches!(&terminator.kind, TerminatorKind::Call { .. }),
-                )
+                self.transfer_function(state, mutated, inputs, location, !is_call)
             },
         )
         .visit_terminator(terminator, location);
@@ -363,12 +633,14 @@ impl<'a, 'tcx, 'g> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
     }
 }
 
-pub fn compute_flow_internal<'a, 'tcx, 'g>(
+pub fn compute_flow_internal<'a, 'tcx, 'g, 'oracle>(
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     body_id: BodyId,
     body_with_facts: &'a CachedSimplifedBodyWithFacts<'tcx>,
-) -> FlowResults<'a, 'tcx, 'g> {
+    carries_marker: &'oracle dyn Oracle<'tcx, 'oracle>,
+    analysis_control: &'static AnalysisCtrl,
+) -> FlowResults<'a, 'tcx, 'g, 'oracle> {
     flowistry::infoflow::BODY_STACK.with(|body_stack| {
     body_stack.borrow_mut().push(body_id);
     // debug!(
@@ -389,7 +661,7 @@ pub fn compute_flow_internal<'a, 'tcx, 'g>(
     let results = {
       //block_timer!("Flow");
 
-      let analysis = FlowAnalysis::new(tcx, gli, def_id, body, aliases, control_dependencies);
+      let analysis = FlowAnalysis::new(tcx, gli, def_id, body, aliases, control_dependencies, carries_marker, analysis_control);
       engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
       // analysis.into_engine(tcx, body).iterate_to_fixpoint()
     };

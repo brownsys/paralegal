@@ -439,4 +439,7 @@ impl<'tcx, 's> inline::Oracle<'tcx, 's> for SkipAnnotatedFunctionSelector<'tcx, 
     fn is_semantically_meaningful(&self, did: DefId) -> bool {
         self.has_annotations(did)
     }
+    fn carries_marker(&self, did: DefId) -> bool {
+        self.has_annotations(did)
+    }
 }
