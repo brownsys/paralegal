@@ -152,6 +152,15 @@ enum GraphOutputFormat {
     Graphviz,
 }
 
+impl std::fmt::Display for GraphOutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            GraphOutputFormat::Graphviz => "graphviz",
+            GraphOutputFormat::Pdf => "pdf",
+        })
+    }
+}
+
 impl std::str::FromStr for GraphOutputFormat {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -166,7 +175,7 @@ impl std::str::FromStr for GraphOutputFormat {
 #[derive(Clone, Parser)]
 enum Command {
     Paths {
-        #[clap(short = 't', long)]
+        #[clap(short = 't', long, default_value_t = PathType::Both)]
         typ: PathType,
         from: NodeName,
         to: NodeName,
@@ -176,7 +185,7 @@ enum Command {
         limit: Option<usize>,
     },
     Reachable {
-        #[clap(short = 't', long)]
+        #[clap(short = 't', long, default_value_t = PathType::Both)]
         typ: PathType,
         from: NodeName,
         to: NodeName,
@@ -196,7 +205,9 @@ enum Command {
         from: NodeName,
         depth: usize,
         output: std::path::PathBuf,
+        #[clap(long, short, default_value_t = GraphOutputFormat::Pdf)]
         format: GraphOutputFormat,
+        #[clap(long, short, default_value_t = Direction::Both)]
         direction: Direction,
     },
     Size,
