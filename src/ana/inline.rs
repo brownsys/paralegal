@@ -369,19 +369,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             |to| targets.contains(&to),
                             &locals_graph,
                         );
-                        // algebra::solve_with(
-                        //     &equations,
-                        //     &to_target,
-                        //     |to| targets.contains(to),
-                        //     |term| {
-                        //         debug!(
-                        //             "Found to be reachable via term {}",
-                        //             Print(|f| algebra::display_term_pieces(f, &term, &0))
-                        //         );
-                        //         is_reachable = true;
-                        //         false
-                        //     },
-                        // );
 
                         if let Some((_visited, t)) = is_reachable {
                             debug!(
@@ -392,13 +379,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
                             weight.data.clear(idx)
                         }
-
-                        // if !algebra::solve_reachable(&equations, &to_target, |to| {
-                        //     targets.contains(to)
-                        // }) {
-                        //     debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
-                        //     weight.data.clear(idx)
-                        // }
                     }
                     if weight.is_empty() {
                         graph.remove_edge(from, to);
@@ -414,17 +394,9 @@ impl<'g> InlinedGraph<'g> {
         gli: GLI<'g>,
         body_id: BodyId,
         body: &regal::Body<DisplayViaDebug<Location>>,
+        tcx: TyCtxt,
     ) -> Self {
         time("Graph Construction From Regal Body", || {
-            // debug!(
-            //     "Equations for body are:\n{}",
-            //     crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-            //         for eq in body.equations.iter() {
-            //             writeln!(f, "  {eq}")?;
-            //         }
-            //         Ok(())
-            //     })
-            // );
             let equations = to_global_equations(&body.equations, body_id, gli);
             let mut gwr = InlinedGraph {
                 equations,
@@ -438,19 +410,6 @@ impl<'g> InlinedGraph<'g> {
                 .iter()
                 .map(|(loc, call)| (loc, call.function))
                 .collect::<HashMap<_, _>>();
-            // let node_map = body
-            //     .calls
-            //     .iter()
-            //     .map(|(loc, call)| (*loc, g.add_node(Node::Call((*loc, call.function)))))
-            //     .collect::<HashMap<_, _>>();
-            // let arg_map = IndexVec::from_raw(
-            //     body.return_arg_deps
-            //         .iter()
-            //         .enumerate()
-            //         .map(|(i, _)| g.add_node(SimpleLocation::Argument(ArgNum::from_usize(i))))
-            //         .collect(),
-            // );
-
             let return_node = g.add_node(Node::Return);
 
             let mut add_dep_edges =
@@ -460,7 +419,12 @@ impl<'g> InlinedGraph<'g> {
                         let from = match d {
                             Target::Call(c) => regal::SimpleLocation::Call((
                                 gli.globalize_location(**c, body_id),
-                                call_map[c],
+                                *call_map.get(c).unwrap_or_else(|| {
+                                    panic!(
+                                        "Expected to find call at {c} in function {}",
+                                        tcx.def_path_debug_str(body_id.into_def_id(tcx))
+                                    )
+                                }),
                             )),
                             Target::Argument(a) => regal::SimpleLocation::Argument(*a),
                         };
@@ -1149,7 +1113,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// it ([`to_global_graph`]).
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
         let proc_g = self.get_procedure_graph(body_id);
-        let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g);
+        let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g, self.tcx);
 
         let name = body_name_pls(self.tcx, body_id).name;
         if self.dbg_ctrl.dump_pre_inline_graph() {

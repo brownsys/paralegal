@@ -9,6 +9,7 @@ use crate::{
     ana,
     ir::global_location::{GliAt, GLI},
     rust::{
+        hir,
         mir::{visit::Visitor, *},
         rustc_data_structures::fx::FxHashSet as HashSet,
         rustc_hir::{def_id::DefId, BodyId},
@@ -16,7 +17,7 @@ use crate::{
         ty::{self, subst::GenericArgKind},
     },
     utils::{self, AsFnAndArgs, IntoBodyId, SparseMatrix, TyCtxtExt},
-    AnalysisCtrl, TyCtxt,
+    AnalysisCtrl, HashMap, TyCtxt,
 };
 
 use flowistry::{
@@ -203,8 +204,22 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
                     map.body_owned_by(map.local_def_id_to_hir_id(closure_fn.as_local().unwrap())),
                 )
             } else {
-                let local_carries = matches!(defid.as_local(), Some(ldid) if
-                    self.body_carries_marker(ldid.into_body_id(self.tcx).unwrap()));
+                let local_carries = 
+                    defid.as_local().map_or(false, |ldid| 
+                        ldid.into_body_id(self.tcx)
+                        .map_or_else(|| {
+                            let kind = self.tcx.def_kind(defid);
+                            let name = self.tcx.def_path_debug_str(defid);
+                            if matches!(kind, hir::def::DefKind::AssocFn) {
+                                warn!("Inline elision for associated functions is not yet implemented {}", name);
+                                false
+                            } else {
+
+                                panic!("Could not get a body id for {name}, def kind {kind:?}")
+                            }
+                        } ,
+                            
+                            |body_id| self.body_carries_marker(body_id)));
                 if local_carries {
                     debug!("  body carries");
                 }
@@ -247,14 +262,14 @@ pub struct FlowAnalysis<'a, 'tcx, 'g, 's> {
         BodyId,
         flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>,
     >,
-    equations_from_elision: RefCell<HashSet<algebra::MirEquation>>,
+    elision_info: RefCell<HashMap<Location, HashSet<algebra::MirEquation>>>,
 }
 
 impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
-    pub fn equations_from_elision(
+    pub fn elision_info(
         &self,
-    ) -> impl std::ops::Deref<Target = HashSet<algebra::MirEquation>> + '_ {
-        self.equations_from_elision.borrow()
+    ) -> impl std::ops::Deref<Target = HashMap<Location, HashSet<algebra::MirEquation>>> + '_ {
+        self.elision_info.borrow()
     }
 
     fn body_id(&self) -> BodyId {
@@ -284,7 +299,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             control_dependencies,
             recurse_cache: flowistry::cached::Cache::default(),
             analysis_control,
-            equations_from_elision: Default::default(),
+            elision_info: Default::default(),
             carries_marker,
         }
     }
@@ -616,8 +631,10 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
 
                 debug!("child {child:?} \n  / child_deps {child_deps:?}\n-->\nparent {parent:?}\n   / parent_deps {parent_deps:?}"
                 );
-                self.equations_from_elision
+                self.elision_info
                     .borrow_mut()
+                    .entry(location)
+                    .or_insert_with(HashSet::default)
                     .extend(parent_deps.iter().map(|(p, proj)| {
                         let mut dep: algebra::MirTerm = p.into();
                         if let Some(elem) = proj {
