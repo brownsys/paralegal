@@ -129,12 +129,19 @@ pub struct ModelCtrl {
     /// `dump_serialized_flow_graph`.
     #[clap(long, env)]
     external_annotations: Option<std::path::PathBuf>,
+
+    #[clap(long, env, default_value_t = crate::frg::Version::V1)]
+    model_version: crate::frg::Version,
 }
 
 impl ModelCtrl {
     /// What (if any) is the path to the file containing external annotations
     pub fn external_annotations(&self) -> Option<&std::path::Path> {
         self.external_annotations.as_ref().map(|p| p.as_path())
+    }
+
+    pub fn model_version(&self) -> crate::frg::Version {
+        self.model_version
     }
 }
 

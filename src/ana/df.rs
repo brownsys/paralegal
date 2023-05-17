@@ -617,18 +617,26 @@ impl<'a, 'tcx, 'g, 'oracle> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'oracl
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
-        let is_call = match &terminator.kind { 
-            TerminatorKind::Call { args, destination, .. } => {
+        let is_call = match &terminator.kind {
+            TerminatorKind::Call {
+                args, destination, ..
+            } => {
                 if self.analysis_control.avoid_inlining()
-                    && !destination.map_or(false, |(d, _)| d.ty(self.body.local_decls(), self.tcx).ty.is_unit())
-                    && args.iter().filter_map(Operand::place).any(|p| !state.matrix().row(&p).is_empty())
+                    && !destination.map_or(false, |(d, _)| {
+                        d.ty(self.body.local_decls(), self.tcx).ty.is_unit()
+                    })
+                    && args
+                        .iter()
+                        .filter_map(Operand::place)
+                        .any(|p| !state.matrix().row(&p).is_empty())
                     && !self.fn_carries_marker(self.body, &terminator.kind)
-                    && self.recurse_into_call(state, &terminator.kind, location) {
-                        return;
+                    && self.recurse_into_call(state, &terminator.kind, location)
+                {
+                    return;
                 }
                 true
             }
-            _ => false
+            _ => false,
         };
         ModularMutationVisitor::new(
             &self.aliases,
