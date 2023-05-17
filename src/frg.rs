@@ -348,7 +348,7 @@ pub mod name {
                 V1 => vec![],
                 V2 => vec![
                     (FLOW, set(SINK)),
-                    (CTRL_FLOW, set(SINK)),
+                    (CTRL_FLOW, set(CALL_SITE)),
                     (TYPES, set(TYPE)),
                 ],
             },
