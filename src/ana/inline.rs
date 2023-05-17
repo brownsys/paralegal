@@ -40,6 +40,8 @@ use crate::{
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
+use super::df::MarkerCarryingOracle;
+
 /// This essentially describes a closure that determines for a given
 /// [`LocalDefId`] if it should be inlined. Originally this was in fact done by
 /// passing a closure, but it couldn't properly satisfy the type checker,
@@ -62,13 +64,13 @@ use crate::{
 ///
 /// The only implementation currently in use for this is
 /// [`SkipAnnotatedFunctionSelector`].
-pub trait Oracle<'tcx, 's> {
+pub trait Oracle {
     fn should_inline(&self, did: LocalDefId) -> bool;
     fn is_semantically_meaningful(&self, did: DefId) -> bool;
     fn carries_marker(&self, did: DefId) -> bool;
 }
 
-impl<'tcx, 's, T: Oracle<'tcx, 's>> Oracle<'tcx, 's> for std::rc::Rc<T> {
+impl<T: Oracle> Oracle for std::rc::Rc<T> {
     fn should_inline(&self, did: LocalDefId) -> bool {
         self.as_ref().should_inline(did)
     }
@@ -507,11 +509,12 @@ pub struct Inliner<'tcx, 'g, 's> {
     /// (possibly transitively).
     inline_memo: RecursionBreakingCache<BodyId, InlinedGraph<'g>>,
     /// Makes choices base on labels
-    oracle: &'s dyn Oracle<'tcx, 's>,
+    oracle: &'s (dyn Oracle + 's),
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     ana_ctrl: &'static AnalysisCtrl,
     dbg_ctrl: &'static DbgArgs,
+    marker_carrying: MarkerCarryingOracle<'tcx, 's>,
 }
 
 /// Globalize all locations mentioned in these equations.
@@ -689,7 +692,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         gli: GLI<'g>,
-        recurse_selector: &'s dyn Oracle<'tcx, 's>,
+        recurse_selector: &'s (dyn Oracle + 's),
         ana_ctrl: &'static AnalysisCtrl,
         dbg_ctrl: &'static DbgArgs,
     ) -> Self {
@@ -701,6 +704,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             inline_memo: Default::default(),
             ana_ctrl,
             dbg_ctrl,
+            marker_carrying: MarkerCarryingOracle::new(recurse_selector, tcx),
         }
     }
 
@@ -716,14 +720,17 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// Compute a procedure graph for this `body_id` (memoized). Actual
     /// computation performed by [`regal::compute_from_body_id`] and
     /// [`ProcedureGraph::from`]
-    fn get_procedure_graph(&self, body_id: BodyId) -> &regal::Body<DisplayViaDebug<Location>> {
+    fn get_procedure_graph<'a: 's>(
+        &'a self,
+        body_id: BodyId,
+    ) -> &regal::Body<DisplayViaDebug<Location>> {
         self.base_memo.get(body_id, |bid| {
             regal::compute_from_body_id(
                 self.dbg_ctrl,
                 bid,
                 self.tcx,
                 self.gli,
-                self.oracle,
+                &self.marker_carrying,
                 self.ana_ctrl,
             )
         })
@@ -857,10 +864,19 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         location: GlobalLocation<'g>,
         function: DefId,
         body_id: LocalDefId,
+        g: &GraphImpl<GlobalLocation<'g>>,
     ) -> Option<InlineAction> {
         match function.as_local() {
-            Some(local_id) if self.oracle.should_inline(local_id) => {
-                return Some(InlineAction::SimpleInline(local_id));
+            Some(local_id) => {
+                if self.oracle.should_inline(local_id) {
+                    return if !self.ana_ctrl.avoid_inlining()
+                        || self.marker_carrying.body_carries_marker(local_id)
+                    {
+                        Some(InlineAction::SimpleInline(local_id))
+                    } else {
+                        None
+                    };
+                }
             }
             _ => (),
         }
@@ -943,7 +959,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             .filter_map(|(id, &location, &function)| {
                 recursive_analysis_enabled
                     .then(|| {
-                        self.try_find_inlining_strategy(location, function, local_def_id)
+                        self.try_find_inlining_strategy(location, function, local_def_id, g)
                             .map(|ac| (id, location, ac))
                     })
                     .flatten()

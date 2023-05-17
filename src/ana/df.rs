@@ -1,4 +1,9 @@
-use std::{borrow::Cow, fmt::Display, rc::Rc};
+use std::{
+    borrow::{Borrow, Cow},
+    cell::RefCell,
+    fmt::Display,
+    rc::Rc,
+};
 
 use crate::{
     ana,
@@ -28,10 +33,10 @@ use flowistry::{
 
 pub use flowistry::mir::control_dependencies::ControlDependencies;
 
-use super::inline::Oracle;
+use super::{algebra, inline::Oracle};
 
-pub type FlowResults<'a, 'tcx, 'g, 'oracle> =
-    engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g, 'oracle>>;
+pub type FlowResults<'a, 'tcx, 'g, 'inliner> =
+    engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g, 'inliner>>;
 
 pub type Dependency<'tcx> = (Location, Place<'tcx>);
 pub type LocationSet<'tcx> = HashSet<Dependency<'tcx>>;
@@ -108,7 +113,128 @@ impl<'tcx> JoinSemiLattice for FlowDomain<'tcx> {
     }
 }
 
-pub struct FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
+pub struct MarkerCarryingOracle<'tcx, 's> {
+    oracle: &'s (dyn Oracle + 's),
+    cache: utils::RecursionBreakingCache<BodyId, bool>,
+    tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
+    fn probably_performs_side_effects(
+        &self,
+        func: DefId,
+        args: &[Option<Place>],
+        state: &FlowDomain<'tcx>,
+    ) -> bool {
+        let sig = self.tcx.fn_sig(func).skip_binder();
+        let has_no_outputs =
+            sig.output().is_unit() && !sig.inputs().iter().any(|i| i.is_mutable_ptr());
+        has_no_outputs
+            || args
+                .iter()
+                .cloned()
+                .filter_map(std::convert::identity)
+                .all(|p| state.matrix().row(&p).is_empty())
+    }
+
+    pub fn can_be_elided(
+        &self,
+        terminator: &TerminatorKind,
+        body: &Body<'tcx>,
+        state: &FlowDomain<'tcx>,
+    ) -> bool {
+        if let Ok((func, args, _ret)) = terminator.as_fn_and_args() {
+            !self.fn_carries_marker(body, &terminator)
+                && !self.probably_performs_side_effects(func, &args, state)
+        } else {
+            false
+        }
+    }
+
+    pub fn new(oracle: &'s (dyn Oracle + 's), tcx: TyCtxt<'tcx>) -> Self {
+        Self {
+            oracle,
+            cache: Default::default(),
+            tcx,
+        }
+    }
+
+    pub fn body_carries_marker<I: IntoBodyId>(&self, id: I) -> bool {
+        let body_id = id.into_body_id(self.tcx).unwrap();
+        *self
+            .cache
+            .get(body_id, |_| {
+                let body = self.tcx.body_for_body_id(body_id).simplified_body();
+                body.basic_blocks()
+                    .iter()
+                    .any(|bbdat| self.fn_carries_marker(body, &bbdat.terminator().kind))
+            })
+            .unwrap_or(&false)
+    }
+
+    pub fn fn_carries_marker(&self, body: &Body<'tcx>, terminator: &TerminatorKind) -> bool {
+        use utils::TyExt;
+
+        if let Ok((defid, args, _)) = terminator.as_fn_and_args() {
+            debug!(
+                "Checking function {} for markers",
+                self.tcx.def_path_debug_str(defid)
+            );
+            let carries = self.oracle.carries_marker(defid);
+            let result = if carries {
+                debug!("  carries self");
+                true
+            } else if Some(defid) == self.tcx.lang_items().from_generator_fn() {
+                debug!("  is async closure");
+                let closure = match args.as_slice() {
+                    [Some(p)] => *p,
+                    _ => panic!("Expected one non-const closure argument"),
+                };
+                debug_assert!(closure.projection.is_empty());
+                let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
+                    body.local_decls[closure.local].ty.kind()
+                {
+                    *gid
+                } else {
+                    unreachable!("Expected Generator")
+                };
+                let map = self.tcx.hir();
+                self.body_carries_marker(
+                    map.body_owned_by(map.local_def_id_to_hir_id(closure_fn.as_local().unwrap())),
+                )
+            } else {
+                let local_carries = matches!(defid.as_local(), Some(ldid) if
+                    self.body_carries_marker(ldid.into_body_id(self.tcx).unwrap()));
+                if local_carries {
+                    debug!("  body carries");
+                }
+                let type_carries = self
+                    .tcx
+                    .fn_sig(defid)
+                    .skip_binder()
+                    .inputs_and_output
+                    .iter()
+                    .any(|t| {
+                        t.walk().any(|t| match t.unpack() {
+                            GenericArgKind::Type(t) => {
+                                t.defid().map_or(false, |t| self.oracle.carries_marker(t))
+                            }
+                            _ => false,
+                        })
+                    });
+                if type_carries {
+                    debug!("  type carries");
+                }
+                local_carries | type_carries
+            };
+            result
+        } else {
+            false
+        }
+    }
+}
+
+pub struct FlowAnalysis<'a, 'tcx, 'g, 's> {
     pub tcx: TyCtxt<'tcx>,
     pub def_id: DefId,
     pub body: &'a Body<'tcx>,
@@ -116,15 +242,21 @@ pub struct FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
     pub aliases: Aliases<'a, 'tcx>,
     pub gli: GLI<'g>,
     analysis_control: &'static AnalysisCtrl,
-    carries_marker: &'oracle dyn Oracle<'tcx, 'oracle>,
+    carries_marker: &'s MarkerCarryingOracle<'tcx, 's>,
     recurse_cache: flowistry::cached::Cache<
         BodyId,
         flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>,
     >,
-    marker_carrying: utils::RecursionBreakingCache<BodyId, bool>,
+    equations_from_elision: RefCell<HashSet<algebra::MirEquation>>,
 }
 
-impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
+impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
+    pub fn equations_from_elision(
+        &self,
+    ) -> impl std::ops::Deref<Target = HashSet<algebra::MirEquation>> + '_ {
+        self.equations_from_elision.borrow()
+    }
+
     fn body_id(&self) -> BodyId {
         self.tcx.hir().body_owned_by(
             self.tcx
@@ -140,7 +272,7 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
         body: &'a Body<'tcx>,
         aliases: Aliases<'a, 'tcx>,
         control_dependencies: ControlDependencies,
-        carries_marker: &'oracle dyn Oracle<'tcx, 'oracle>,
+        carries_marker: &'s MarkerCarryingOracle<'tcx, 's>,
         analysis_control: &'static AnalysisCtrl,
     ) -> Self {
         FlowAnalysis {
@@ -151,9 +283,9 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
             aliases,
             control_dependencies,
             recurse_cache: flowistry::cached::Cache::default(),
-            marker_carrying: Default::default(),
-            carries_marker,
             analysis_control,
+            equations_from_elision: Default::default(),
+            carries_marker,
         }
     }
 
@@ -300,79 +432,6 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
                 }
                 state.union_after(normalized, Cow::Borrowed(&input_location_deps));
             }
-        }
-    }
-
-    fn body_carries_marker(&self, bid: BodyId) -> bool {
-        *self
-            .marker_carrying
-            .get(bid, |bid| {
-                let body = self.tcx.body_for_body_id(bid).simplified_body();
-                body.basic_blocks()
-                    .iter()
-                    .any(|bbdat| self.fn_carries_marker(body, &bbdat.terminator().kind))
-            })
-            .unwrap_or(&false)
-    }
-
-    fn fn_carries_marker(&self, body: &Body<'tcx>, terminator: &TerminatorKind) -> bool {
-        use utils::TyExt;
-
-        if let Ok((defid, args, _)) = terminator.as_fn_and_args() {
-            debug!(
-                "Checking function {} for markers",
-                self.tcx.def_path_debug_str(defid)
-            );
-            let carries = self.carries_marker.carries_marker(defid);
-            let result = if carries {
-                debug!("  carries self");
-                true
-            } else if Some(defid) == self.tcx.lang_items().from_generator_fn() {
-                debug!("  is async closure");
-                let closure = match args.as_slice() {
-                    [Some(p)] => *p,
-                    _ => panic!("Expected one non-const closure argument"),
-                };
-                debug_assert!(closure.projection.is_empty());
-                let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
-                    body.local_decls[closure.local].ty.kind()
-                {
-                    *gid
-                } else {
-                    unreachable!("Expected Generator")
-                };
-                let map = self.tcx.hir();
-                self.body_carries_marker(
-                    map.body_owned_by(map.local_def_id_to_hir_id(closure_fn.as_local().unwrap())),
-                )
-            } else {
-                let local_carries = matches!(defid.as_local(), Some(ldid) if
-                    self.body_carries_marker(ldid.into_body_id(self.tcx).unwrap()));
-                if local_carries {
-                    debug!("  body carries");
-                }
-                let type_carries = self
-                    .tcx
-                    .fn_sig(defid)
-                    .skip_binder()
-                    .inputs_and_output
-                    .iter()
-                    .any(|t| {
-                        t.walk().any(|t| match t.unpack() {
-                            GenericArgKind::Type(t) => t
-                                .defid()
-                                .map_or(false, |t| self.carries_marker.carries_marker(t)),
-                            _ => false,
-                        })
-                    });
-                if type_carries {
-                    debug!("  type carries");
-                }
-                local_carries | type_carries
-            };
-            result
-        } else {
-            false
         }
     }
 
@@ -555,10 +614,17 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
                     .filter_map(|(row, _)| Some((translate_child_to_parent(row, false)?, None)))
                     .collect::<Vec<_>>();
 
-                debug!(
-          "child {child:?} \n  / child_deps {child_deps:?}\n-->\nparent {parent:?}\n   / parent_deps {parent_deps:?}"
-        );
-
+                debug!("child {child:?} \n  / child_deps {child_deps:?}\n-->\nparent {parent:?}\n   / parent_deps {parent_deps:?}"
+                );
+                self.equations_from_elision
+                    .borrow_mut()
+                    .extend(parent_deps.iter().map(|(p, proj)| {
+                        let mut dep: algebra::MirTerm = p.into();
+                        if let Some(elem) = proj {
+                            dep = dep.wrap_in_elem(*elem);
+                        }
+                        algebra::MirEquation::new(parent.into(), dep.add_unknown())
+                    }));
                 self.transfer_function(state, parent, &parent_deps, location, true);
             }
         }
@@ -567,7 +633,7 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
     }
 }
 
-impl<'a, 'tcx, 'g, 'oracle> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
+impl<'a, 'tcx, 'g, 'inliner> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inliner> {
     type Domain = FlowDomain<'tcx>;
     type Direction = Forward;
     const NAME: &'static str = "FlowAnalysis";
@@ -592,7 +658,7 @@ impl<'a, 'tcx, 'g, 'oracle> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 
     }
 }
 
-impl<'a, 'tcx, 'g, 'oracle> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
+impl<'a, 'tcx, 'g, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inliner> {
     fn apply_statement_effect(
         &self,
         state: &mut Self::Domain,
@@ -617,34 +683,30 @@ impl<'a, 'tcx, 'g, 'oracle> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'oracl
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
-        let is_call = match &terminator.kind {
-            TerminatorKind::Call {
-                args, destination, ..
-            } => {
-                if self.analysis_control.avoid_inlining()
-                    && !destination.map_or(false, |(d, _)| {
-                        d.ty(self.body.local_decls(), self.tcx).ty.is_unit()
-                    })
-                    && args
-                        .iter()
-                        .filter_map(Operand::place)
-                        .any(|p| !state.matrix().row(&p).is_empty())
-                    && !self.fn_carries_marker(self.body, &terminator.kind)
-                    && self.recurse_into_call(state, &terminator.kind, location)
-                {
-                    return;
-                }
-                true
+        if self.analysis_control.avoid_inlining() {
+            if self
+                .carries_marker
+                .can_be_elided(&terminator.kind, self.body, state)
+                && self.recurse_into_call(state, &terminator.kind, location)
+            {
+                debug!("Elided {:?}", terminator.kind);
+                return;
             }
-            _ => false,
-        };
+        }
+
         ModularMutationVisitor::new(
             &self.aliases,
             |mutated: Place<'tcx>,
              inputs: &[(Place<'tcx>, Option<PlaceElem<'tcx>>)],
              location: Location,
              _mutation_status: MutationStatus| {
-                self.transfer_function(state, mutated, inputs, location, !is_call)
+                self.transfer_function(
+                    state,
+                    mutated,
+                    inputs,
+                    location,
+                    !matches!(terminator.kind, TerminatorKind::Call { .. }),
+                )
             },
         )
         .visit_terminator(terminator, location);
@@ -659,14 +721,14 @@ impl<'a, 'tcx, 'g, 'oracle> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'oracl
     }
 }
 
-pub fn compute_flow_internal<'a, 'tcx, 'g, 'oracle>(
+pub fn compute_flow_internal<'a, 'tcx, 'g, 's>(
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     body_id: BodyId,
     body_with_facts: &'a CachedSimplifedBodyWithFacts<'tcx>,
-    carries_marker: &'oracle dyn Oracle<'tcx, 'oracle>,
+    carries_marker: &'s MarkerCarryingOracle<'tcx, 's>,
     analysis_control: &'static AnalysisCtrl,
-) -> FlowResults<'a, 'tcx, 'g, 'oracle> {
+) -> FlowResults<'a, 'tcx, 'g, 's> {
     flowistry::infoflow::BODY_STACK.with(|body_stack| {
         body_stack.borrow_mut().push(body_id);
         // debug!(
@@ -685,35 +747,21 @@ pub fn compute_flow_internal<'a, 'tcx, 'g, 'oracle>(
         debug!("Control dependencies: {control_dependencies:?}");
 
         let results = {
-        //block_timer!("Flow");
+            //block_timer!("Flow");
 
-            let analysis = FlowAnalysis::new(tcx, gli, def_id, body, aliases, control_dependencies, carries_marker, analysis_control);
+            let analysis = FlowAnalysis::new(
+                tcx,
+                gli,
+                def_id,
+                body,
+                aliases,
+                control_dependencies,
+                carries_marker,
+                analysis_control,
+            );
             engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
             // analysis.into_engine(tcx, body).iterate_to_fixpoint()
         };
-
-        if log::log_enabled!(log::Level::Info) {
-            let counts = body
-                .all_locations()
-                .flat_map(|loc| {
-                let state = results.state_at(loc).matrix();
-                state
-                    .rows()
-                    .map(|(_, locations)| locations.len())
-                    .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-
-            let nloc = body.all_locations().count();
-            let np = counts.len();
-            let pavg = np as f64 / (nloc as f64);
-            let nl = counts.into_iter().sum::<usize>();
-            let lavg = nl as f64 / (nloc as f64);
-            log::info!(
-                "Over {nloc} locations, total number of place entries: {np} (avg {pavg:.0}/loc), total size of location sets: {nl} (avg {lavg:.0}/loc)",
-            );
-        }
-
         body_stack.borrow_mut().pop();
 
         results

@@ -905,11 +905,11 @@ impl<B, F: Copy> Term<B, F> {
     }
 }
 
-impl<B> Term<B, Field> {
+impl<B> Term<B, DisplayViaDebug<Field>> {
     pub fn wrap_in_elem(self, elem: mir::PlaceElem) -> Self {
         use mir::ProjectionElem::*;
         match elem {
-            Field(f, _) => self.add_member_of(f),
+            Field(f, _) => self.add_member_of(DisplayViaDebug(f)),
             Deref => self.add_deref_of(),
             Downcast(s, v) => self.add_downcast(s, v.as_usize()),
             Index(_) | ConstantIndex { .. } => self.add_index_of(),
@@ -934,7 +934,7 @@ impl<'tcx> Extractor<'tcx> {
     }
 }
 
-type MirTerm = Term<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
+pub type MirTerm = Term<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
 
 impl From<Place<'_>> for MirTerm {
     fn from(p: Place<'_>) -> Self {
@@ -942,7 +942,7 @@ impl From<Place<'_>> for MirTerm {
         for (_, proj) in p.iter_projections() {
             term = term.wrap_in_elem(proj);
         }
-        term.replace_fields(DisplayViaDebug)
+        term
     }
 }
 

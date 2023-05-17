@@ -247,6 +247,7 @@ impl Body<DisplayViaDebug<Location>> {
         tcx: TyCtxt<'tcx>,
         def_id: LocalDefId,
         body_with_facts: &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
+        carries_marker: &df::MarkerCarryingOracle<'tcx, '_>,
     ) -> Self {
         let name = body_name_pls(tcx, def_id).name;
         time(&format!("Regal Body Construction of {name}"), || {
@@ -300,6 +301,13 @@ impl Body<DisplayViaDebug<Location>> {
             let calls = body
                 .basic_blocks()
                 .iter_enumerated()
+                .filter(|(bb, dat)| {
+                    !carries_marker.can_be_elided(
+                        &dat.terminator().kind,
+                        body,
+                        flow_analysis.state_at(body.terminator_loc(*bb)),
+                    )
+                })
                 .filter_map(|(bb, bbdat)| {
                     let (function, simple_args, ret) = match bbdat.terminator().as_fn_and_args() {
                         Ok(p) => p,
@@ -550,12 +558,12 @@ fn recursive_ctrl_deps<
     dependencies
 }
 
-pub fn compute_from_body_id<'oracle, 'tcx>(
+pub fn compute_from_body_id<'tcx, 's>(
     dbg_opts: &DbgArgs,
     body_id: BodyId,
     tcx: TyCtxt<'tcx>,
     gli: GLI,
-    carries_marker: &'oracle dyn Oracle<'tcx, 'oracle>,
+    carries_marker: &df::MarkerCarryingOracle<'tcx, '_>,
     analysis_control: &'static AnalysisCtrl,
 ) -> Body<DisplayViaDebug<Location>> {
     let local_def_id = body_id.into_local_def_id(tcx);
@@ -586,8 +594,16 @@ pub fn compute_from_body_id<'oracle, 'tcx>(
             writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
         }
     }
-    let equations = algebra::extract_equations(tcx, body);
-    let r = Body::construct(flow, equations, tcx, local_def_id, body_with_facts);
+    let mut equations = algebra::extract_equations(tcx, body);
+    equations.extend(flow.analysis.equations_from_elision().iter().cloned());
+    let r = Body::construct(
+        flow,
+        equations,
+        tcx,
+        local_def_id,
+        body_with_facts,
+        carries_marker,
+    );
     if dbg_opts.dump_regal_ir() {
         let mut out = dump_file_pls(tcx, body_id, "regal").unwrap();
         use std::io::Write;

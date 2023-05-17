@@ -5,8 +5,8 @@
 use std::borrow::Cow;
 
 use crate::{
-    dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*, Either, HashMap, HashSet,
-    LogLevelConfig, Symbol,
+    dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*, AnalysisCtrl, Either, HashMap,
+    HashSet, LogLevelConfig, Symbol,
 };
 
 use hir::def_id::DefId;
@@ -431,7 +431,7 @@ impl<'tcx, 's> SkipAnnotatedFunctionSelector<'tcx, 's> {
     }
 }
 
-impl<'tcx, 's> inline::Oracle<'tcx, 's> for SkipAnnotatedFunctionSelector<'tcx, 's> {
+impl<'tcx, 's> inline::Oracle for SkipAnnotatedFunctionSelector<'tcx, 's> {
     fn should_inline(&self, did: LocalDefId) -> bool {
         !self.has_annotations(did)
     }

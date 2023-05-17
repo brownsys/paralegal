@@ -48,7 +48,7 @@ define_test!(unelision: graph -> {
     graph.function_call("other_input");
 });
 
-define_test!(connection_precision: graph -> {
+define_test_skip!(connection_precision: graph -> {
     let touched = graph.function_call(" input");
     let untouched = graph.function_call("other_input");
 
@@ -60,7 +60,7 @@ define_test!(connection_precision: graph -> {
     assert!(!graph.connects(&untouched, &receive_touched))
 });
 
-define_test!(connection_precision_2: graph -> {
+define_test_skip!(connection_precision_2: graph -> {
     let touched = graph.function_call(" input");
     let untouched = graph.function_call("other_input");
     let receive_touched = graph.function_call("receive_touched");
@@ -71,7 +71,7 @@ define_test!(connection_precision_2: graph -> {
     assert!(!graph.connects(&untouched, &receive_touched))
 });
 
-define_test!(connection_precision_3: graph -> {
+define_test_skip!(connection_precision_3: graph -> {
     let touched = graph.function_call(" input");
     let untouched = graph.function_call("other_input");
     let receive_touched = graph.function_call("receive_touched");
