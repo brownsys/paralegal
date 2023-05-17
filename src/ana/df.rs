@@ -308,8 +308,7 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
             .marker_carrying
             .get(bid, |bid| {
                 let body = self.tcx.body_for_body_id(bid).simplified_body();
-                body
-                    .basic_blocks()
+                body.basic_blocks()
                     .iter()
                     .any(|bbdat| self.fn_carries_marker(body, &bbdat.terminator().kind))
             })
@@ -318,9 +317,12 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
 
     fn fn_carries_marker(&self, body: &Body<'tcx>, terminator: &TerminatorKind) -> bool {
         use utils::TyExt;
-            
+
         if let Ok((defid, args, _)) = terminator.as_fn_and_args() {
-            debug!("Checking function {} for markers", self.tcx.def_path_debug_str(defid));
+            debug!(
+                "Checking function {} for markers",
+                self.tcx.def_path_debug_str(defid)
+            );
             let carries = self.carries_marker.carries_marker(defid);
             let result = if carries {
                 debug!("  carries self");
@@ -350,19 +352,19 @@ impl<'a, 'tcx, 'g, 'oracle> FlowAnalysis<'a, 'tcx, 'g, 'oracle> {
                     debug!("  body carries");
                 }
                 let type_carries = self
-                        .tcx
-                        .fn_sig(defid)
-                        .skip_binder()
-                        .inputs_and_output
-                        .iter()
-                        .any(|t| {
-                            t.walk().any(|t| match t.unpack() {
-                                GenericArgKind::Type(t) => t
-                                    .defid()
-                                    .map_or(false, |t| self.carries_marker.carries_marker(t)),
-                                _ => false,
-                            })
-                        });
+                    .tcx
+                    .fn_sig(defid)
+                    .skip_binder()
+                    .inputs_and_output
+                    .iter()
+                    .any(|t| {
+                        t.walk().any(|t| match t.unpack() {
+                            GenericArgKind::Type(t) => t
+                                .defid()
+                                .map_or(false, |t| self.carries_marker.carries_marker(t)),
+                            _ => false,
+                        })
+                    });
                 if type_carries {
                     debug!("  type carries");
                 }
@@ -615,14 +617,19 @@ impl<'a, 'tcx, 'g, 'oracle> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'oracl
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
-        let is_call = matches!(&terminator.kind, TerminatorKind::Call { .. });
-        if is_call
-            && self.analysis_control.avoid_inlining()
-            && !self.fn_carries_marker(self.body, &terminator.kind)
-            && self.recurse_into_call(state, &terminator.kind, location)
-        {
-            return;
-        }
+        let is_call = match &terminator.kind { 
+            TerminatorKind::Call { args, destination, .. } => {
+                if self.analysis_control.avoid_inlining()
+                    && !destination.map_or(false, |(d, _)| d.ty(self.body.local_decls(), self.tcx).ty.is_unit())
+                    && args.iter().filter_map(Operand::place).any(|p| !state.matrix().row(&p).is_empty())
+                    && !self.fn_carries_marker(self.body, &terminator.kind)
+                    && self.recurse_into_call(state, &terminator.kind, location) {
+                        return;
+                }
+                true
+            }
+            _ => false
+        };
         ModularMutationVisitor::new(
             &self.aliases,
             |mutated: Place<'tcx>,
@@ -653,61 +660,54 @@ pub fn compute_flow_internal<'a, 'tcx, 'g, 'oracle>(
     analysis_control: &'static AnalysisCtrl,
 ) -> FlowResults<'a, 'tcx, 'g, 'oracle> {
     flowistry::infoflow::BODY_STACK.with(|body_stack| {
-    body_stack.borrow_mut().push(body_id);
-    // debug!(
-    //   "{}",
-    //   rustc_hir_pretty::to_string(rustc_hir_pretty::NO_ANN, |s| s
-    //     .print_expr(&tcx.hir().body(body_id).value))
-    // );
-    // debug!("{}", body_with_facts.simplified_body().to_string(tcx).unwrap());
+        body_stack.borrow_mut().push(body_id);
+        // debug!(
+        //   "{}",
+        //   rustc_hir_pretty::to_string(rustc_hir_pretty::NO_ANN, |s| s
+        //     .print_expr(&tcx.hir().body(body_id).value))
+        // );
+        // debug!("{}", body_with_facts.simplified_body().to_string(tcx).unwrap());
 
-    let def_id = tcx.hir().body_owner_def_id(body_id).to_def_id();
-    let aliases = Aliases::build(tcx, def_id, body_with_facts);
-    let location_domain = aliases.location_domain().clone();
+        let def_id = tcx.hir().body_owner_def_id(body_id).to_def_id();
+        let aliases = Aliases::build(tcx, def_id, body_with_facts);
+        let location_domain = aliases.location_domain().clone();
 
-    let body = body_with_facts.simplified_body();
-    let control_dependencies = ControlDependencies::build(body);
-    debug!("Control dependencies: {control_dependencies:?}");
+        let body = body_with_facts.simplified_body();
+        let control_dependencies = ControlDependencies::build(body);
+        debug!("Control dependencies: {control_dependencies:?}");
 
-    let results = {
-      //block_timer!("Flow");
+        let results = {
+        //block_timer!("Flow");
 
-      let analysis = FlowAnalysis::new(tcx, gli, def_id, body, aliases, control_dependencies, carries_marker, analysis_control);
-      engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
-      // analysis.into_engine(tcx, body).iterate_to_fixpoint()
-    };
+            let analysis = FlowAnalysis::new(tcx, gli, def_id, body, aliases, control_dependencies, carries_marker, analysis_control);
+            engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
+            // analysis.into_engine(tcx, body).iterate_to_fixpoint()
+        };
 
-    if log::log_enabled!(log::Level::Info) {
-      let counts = body
-        .all_locations()
-        .flat_map(|loc| {
-          let state = results.state_at(loc).matrix();
-          state
-            .rows()
-            .map(|(_, locations)| locations.len())
-            .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+        if log::log_enabled!(log::Level::Info) {
+            let counts = body
+                .all_locations()
+                .flat_map(|loc| {
+                let state = results.state_at(loc).matrix();
+                state
+                    .rows()
+                    .map(|(_, locations)| locations.len())
+                    .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
 
-      let nloc = body.all_locations().count();
-      let np = counts.len();
-      let pavg = np as f64 / (nloc as f64);
-      let nl = counts.into_iter().sum::<usize>();
-      let lavg = nl as f64 / (nloc as f64);
-      log::info!(
-        "Over {nloc} locations, total number of place entries: {np} (avg {pavg:.0}/loc), total size of location sets: {nl} (avg {lavg:.0}/loc)",
-      );
-    }
+            let nloc = body.all_locations().count();
+            let np = counts.len();
+            let pavg = np as f64 / (nloc as f64);
+            let nl = counts.into_iter().sum::<usize>();
+            let lavg = nl as f64 / (nloc as f64);
+            log::info!(
+                "Over {nloc} locations, total number of place entries: {np} (avg {pavg:.0}/loc), total size of location sets: {nl} (avg {lavg:.0}/loc)",
+            );
+        }
 
-    if std::env::var("DUMP_MIR").is_ok()
-      && flowistry::infoflow::BODY_STACK.with(|body_stack| body_stack.borrow().len() == 1)
-    {
-      todo!()
-      // utils::dump_results(body, &results, def_id, tcx).unwrap();
-    }
+        body_stack.borrow_mut().pop();
 
-    body_stack.borrow_mut().pop();
-
-    results
-  })
+        results
+    })
 }
