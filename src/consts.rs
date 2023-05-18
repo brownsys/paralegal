@@ -25,6 +25,7 @@ lazy_static! {
     /// This will match the annotation `#[dfpp::label(...)]` when using
     /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
     pub static ref LABEL_MARKER: AttrMatchT = sym_vec!["dfpp", "label"];
+    pub static ref MARKER_MARKER: AttrMatchT = sym_vec!["dfpp", "marker"];
     /// This will match the annotation `#[dfpp::analyze]` when using
     /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
     pub static ref ANALYZE_MARKER: AttrMatchT = sym_vec!["dfpp", "analyze"];
