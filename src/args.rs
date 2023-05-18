@@ -132,6 +132,9 @@ pub struct ModelCtrl {
 
     #[clap(long, env, default_value_t = crate::frg::Version::V1)]
     model_version: crate::frg::Version,
+
+    #[clap(long, env)] 
+    skip_sigs: bool,
 }
 
 impl ModelCtrl {
@@ -142,6 +145,10 @@ impl ModelCtrl {
 
     pub fn model_version(&self) -> crate::frg::Version {
         self.model_version
+    }
+
+    pub fn skip_sigs(&self) -> bool {
+        self.skip_sigs
     }
 }
 

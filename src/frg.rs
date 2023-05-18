@@ -11,7 +11,7 @@ use std::hash::Hash;
 use crate::{
     ir::IsGlobalLocation,
     utils::{short_hash_pls, IntoDefId},
-    HashSet, TyCtxt,
+    HashSet, TyCtxt, ModelCtrl,
 };
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
@@ -858,11 +858,12 @@ impl ProgramDescription {
         &'a self,
         alloc: &'a D,
         tcx: TyCtxt,
-        version: Version,
+        model_ctrl: &ModelCtrl,
     ) -> DocBuilder<'a, D, A>
     where
         D::Doc: Clone,
     {
+        let version = model_ctrl.model_version();
         alloc.lines([
             alloc.text("#lang forge"),
             alloc.nil(),
@@ -873,7 +874,11 @@ impl ProgramDescription {
                 .append(crate_version!())
                 .append(". */"),
             alloc.nil(),
-            make_forge_sigs(version, alloc),
+            if model_ctrl.skip_sigs() {
+                alloc.nil()
+            } else {
+                make_forge_sigs(version, alloc)
+            },
             alloc.nil(),
             self.make_label_sigs(alloc),
             alloc.nil(),

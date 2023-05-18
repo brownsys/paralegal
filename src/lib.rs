@@ -175,7 +175,7 @@ impl rustc_driver::Callbacks for Callbacks {
                     .with_extension("ana.frg");
                 let mut outf = outfile_pls(&result_path)?;
                 let doc_alloc = pretty::BoxAllocator;
-                let doc: DocBuilder<_, ()> = desc.serialize_forge(&doc_alloc, tcx, self.opts.modelctrl().model_version());
+                let doc: DocBuilder<_, ()> = desc.serialize_forge(&doc_alloc, tcx, self.opts.modelctrl());
                 doc.render(100, &mut outf)?;
                 let mut outf_2 = outfile_pls(self.opts.result_path())?;
                 doc.render(100, &mut outf_2)?;
