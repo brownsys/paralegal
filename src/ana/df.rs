@@ -160,17 +160,37 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
         }
     }
 
-    pub fn body_carries_marker<I: IntoBodyId>(&self, id: I) -> bool {
-        let body_id = id.into_body_id(self.tcx).unwrap();
-        *self
-            .cache
-            .get(body_id, |_| {
-                let body = self.tcx.body_for_body_id(body_id).simplified_body();
-                body.basic_blocks()
-                    .iter()
-                    .any(|bbdat| self.fn_carries_marker(body, &bbdat.terminator().kind))
-            })
-            .unwrap_or(&false)
+    pub fn body_carries_marker<I: IntoBodyId + crate::utils::IntoDefId>(&self, id: I) -> bool {
+        if let Some(body_id) = self.force_into_body_id(id) {
+            *self
+                .cache
+                .get(body_id, |_| {
+                    let body = self.tcx.body_for_body_id(body_id).simplified_body();
+                    body.basic_blocks()
+                        .iter()
+                        .any(|bbdat| self.fn_carries_marker(body, &bbdat.terminator().kind))
+                })
+                .unwrap_or(&false)
+        } else {
+            false
+        }
+    }
+
+    fn force_into_body_id<I: IntoBodyId + crate::utils::IntoDefId>(&self, i: I) -> Option<BodyId> {
+        let defid = i.into_def_id(self.tcx);
+        i.into_body_id(self.tcx).or_else(|| {
+            let kind = self.tcx.def_kind(defid);
+            let name = self.tcx.def_path_debug_str(defid);
+            if matches!(kind, hir::def::DefKind::AssocFn) {
+                warn!(
+                    "Inline elision and inling for associated functions is not yet implemented {}",
+                    name
+                );
+                None
+            } else {
+                panic!("Could not get a body id for {name}, def kind {kind:?}")
+            }
+        })
     }
 
     pub fn fn_carries_marker(&self, body: &Body<'tcx>, terminator: &TerminatorKind) -> bool {
@@ -204,22 +224,10 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
                     map.body_owned_by(map.local_def_id_to_hir_id(closure_fn.as_local().unwrap())),
                 )
             } else {
-                let local_carries = 
-                    defid.as_local().map_or(false, |ldid| 
-                        ldid.into_body_id(self.tcx)
-                        .map_or_else(|| {
-                            let kind = self.tcx.def_kind(defid);
-                            let name = self.tcx.def_path_debug_str(defid);
-                            if matches!(kind, hir::def::DefKind::AssocFn) {
-                                warn!("Inline elision for associated functions is not yet implemented {}", name);
-                                false
-                            } else {
-
-                                panic!("Could not get a body id for {name}, def kind {kind:?}")
-                            }
-                        } ,
-                            
-                            |body_id| self.body_carries_marker(body_id)));
+                let local_carries = defid.as_local().map_or(false, |ldid| {
+                    self.force_into_body_id(ldid)
+                        .map_or(false, |body_id| self.body_carries_marker(body_id))
+                });
                 if local_carries {
                     debug!("  body carries");
                 }

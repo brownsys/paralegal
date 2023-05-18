@@ -133,7 +133,7 @@ pub struct ModelCtrl {
     #[clap(long, env, default_value_t = crate::frg::Version::V1)]
     model_version: crate::frg::Version,
 
-    #[clap(long, env)] 
+    #[clap(long, env)]
     skip_sigs: bool,
 }
 
