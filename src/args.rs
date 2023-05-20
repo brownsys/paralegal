@@ -188,6 +188,9 @@ pub struct AnalysisCtrl {
 
     #[clap(long, env)]
     inline_elision: bool,
+
+    #[clap(long, env)]
+    inline_no_arg_closures: bool,
 }
 
 /// How are we treating inconsequential call sites?
@@ -289,6 +292,10 @@ impl AnalysisCtrl {
 
     pub fn avoid_inlining(&self) -> bool {
         self.inline_elision
+    }
+
+    pub fn inline_no_arg_closures(&self) -> bool {
+        self.inline_no_arg_closures
     }
 }
 

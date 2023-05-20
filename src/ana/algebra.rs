@@ -368,8 +368,8 @@ pub mod graph {
     pub type Graph<B, F> = graphmap::GraphMap<B, Operators<F>, Directed>;
 
     pub fn new<
-        B: Copy + Eq + Ord + Hash,
-        F: Copy,
+        B: Copy + Eq + Ord + Hash + Display,
+        F: Copy + Display,
         GetEq: std::borrow::Borrow<Equality<B, F>>,
         I: IntoIterator<Item = GetEq>,
     >(
@@ -379,6 +379,21 @@ pub mod graph {
         for eq in equations {
             let mut eq: Equality<_, _> = eq.borrow().clone();
             eq.rearrange_left_to_right();
+            debug!(
+                "Adding {} -> {} {} ({})",
+                eq.rhs.base(),
+                eq.lhs.base(),
+                Print(|fmt| {
+                    fmt.write_char('[')?;
+                    write_sep(fmt, ", ", eq.rhs.terms.iter(), Display::fmt)?;
+                    fmt.write_char(']')
+                }),
+                Print(|fmt| {
+                    fmt.write_char('[')?;
+                    write_sep(fmt, ", ", eq.lhs.terms.iter(), Display::fmt)?;
+                    fmt.write_char(']')
+                }),
+            );
             if let Some(w) = graph.edge_weight_mut(*eq.lhs.base(), *eq.rhs.base()) {
                 w.0.push(eq.rhs.terms)
             } else {
@@ -421,6 +436,19 @@ pub mod graph {
                     continue;
                 }
                 for weight in next.weight().0.iter() {
+                    debug!(
+                        "{node} {} {to} {}, {is_flipped}",
+                        Print(|fmt| {
+                            fmt.write_char('[')?;
+                            write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
+                            fmt.write_char(']')
+                        }),
+                        Print(|fmt| {
+                            fmt.write_char('[')?;
+                            write_sep(fmt, ", ", weight.iter(), Display::fmt)?;
+                            fmt.write_char(']')
+                        }),
+                    );
                     let mut projections = projections.clone();
                     if next.weight().0.is_empty()
                         || {
@@ -430,6 +458,14 @@ pub mod graph {
                             } else {
                                 projections = projections.extend(weight.iter().copied());
                             }
+                            debug!(
+                                "{}",
+                                Print(|fmt| {
+                                    fmt.write_char('[')?;
+                                    write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
+                                    fmt.write_char(']')
+                                }),
+                            );
                             match projections.simplify() {
                                 Simplified::Yes => true,
                                 Simplified::NonOverlapping => false,
@@ -804,6 +840,11 @@ impl<B, F: Copy> Term<B, F> {
         self
     }
 
+    pub fn add_elem(mut self, elem: Operator<F>) -> Self {
+        self.terms.push(elem);
+        self
+    }
+
     pub fn extend<I: IntoIterator<Item = Operator<F>>>(mut self, others: I) -> Self {
         self.terms.extend(others);
         self
@@ -942,6 +983,7 @@ impl From<Place<'_>> for MirTerm {
         for (_, proj) in p.iter_projections() {
             term = term.wrap_in_elem(proj);
         }
+        debug!("{p:?} -> {term}");
         term
     }
 }

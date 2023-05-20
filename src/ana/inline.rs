@@ -21,7 +21,7 @@ use petgraph::{
 };
 
 use crate::{
-    ana::algebra::{self, Term},
+    ana::algebra::{self, Operator, Term},
     hir::{self, BodyId},
     ir::{
         flows::CallOnlyFlow,
@@ -325,9 +325,20 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     .count()
             );
 
+            debug!(
+                "{}",
+                Print(|f| {
+                    for eq in equations.iter() {
+                        use std::io::Write;
+                        writeln!(f, "{eq}")?;
+                    }
+                    Ok(())
+                })
+            );
+
             let locals_graph = algebra::graph::new(equations);
             if self.dbg_ctrl.dump_locals_graph() {
-                let mut f = dump_file_pls(self.tcx, id, "locals-graph.gv").unwrap();
+                let f = dump_file_pls(self.tcx, id, "locals-graph.gv").unwrap();
                 algebra::graph::dump(f, &locals_graph, |_| false, |_| false);
             }
 
@@ -641,9 +652,34 @@ fn is_part_of_async_desugar<L: Copy + Ord + std::hash::Hash>(
     seen.values().all(|v| *v)
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ClosureDescription {
+    Async,
+    Ptr,
+    Val,
+}
+
+impl ClosureDescription {
+    fn project_closure_arg<F: Copy>(self) -> Option<Operator<F>> {
+        use ClosureDescription::*;
+        match self {
+            Ptr => Some(Operator::DerefOf),
+            _ => None,
+        }
+    }
+
+    fn project_return<F: Copy>(self) -> Option<Operator<F>> {
+        matches!(self, ClosureDescription::Async).then_some(Operator::Unknown)
+    }
+}
+
 enum InlineAction<'tcx> {
     SimpleInline(LocalDefId),
-    InlineAsyncClosure(LocalDefId, mir::Place<'tcx>),
+    InlineClosure {
+        closure_def_id: LocalDefId,
+        closure_object: mir::Place<'tcx>,
+        closure_description: ClosureDescription,
+    },
     Drop(DropAction),
 }
 
@@ -830,44 +866,78 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         body_id: LocalDefId,
         g: &GraphImpl<GlobalLocation<'g>>,
     ) -> Option<InlineAction> {
-        match function.as_local() {
-            Some(local_id) => {
-                if self.oracle.should_inline(local_id) {
-                    return if !self.ana_ctrl.avoid_inlining()
-                        || self.marker_carrying.body_carries_marker(local_id)
-                    {
-                        Some(InlineAction::SimpleInline(local_id))
+        debug!(
+            "Picking inlining strategy for {}",
+            self.tcx.def_path_debug_str(function)
+        );
+        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, body_id);
+        let body = body_with_facts.simplified_body();
+        let args = body
+            .stmt_at_better_err(location.innermost_location())
+            .right()
+            .expect("Expected terminator")
+            .as_fn_and_args()
+            .unwrap()
+            .1;
+        if let &[Some(closure_object)] = args.as_slice() {
+            debug!("Testing for closure");
+            let closure_type = body.local_decls[closure_object.local].ty.kind();
+            if let Some((closure_description, closure_def_id)) =
+                if Some(function) == self.tcx.lang_items().from_generator_fn() {
+                    if let ty::TyKind::Generator(gid, _, _) = closure_type {
+                        Some((ClosureDescription::Async, gid.as_local().unwrap()))
                     } else {
-                        None
-                    };
+                        unreachable!("Expected Generator")
+                    }
+                } else if let ty::TyKind::Closure(defid, sub) = closure_type {
+                    debug!("Found a closure {}", self.tcx.def_path_debug_str(*defid));
+                    let clj = sub.as_closure();
+                    let sig = clj.sig().skip_binder();
+                    debug!(
+                        "will inline if {:?} {}",
+                        sig.inputs(),
+                        self.ana_ctrl.inline_no_arg_closures()
+                    );
+                    match sig.inputs() {
+                        [arg] if arg.is_unit() && self.ana_ctrl.inline_no_arg_closures() => {
+                            defid.as_local().map(|ldid| {
+                                (
+                                    match clj.kind() {
+                                        ty::ClosureKind::FnOnce => ClosureDescription::Val,
+                                        _ => ClosureDescription::Ptr,
+                                    },
+                                    ldid,
+                                )
+                            })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
                 }
-            }
-            _ => (),
-        }
-        (Some(function) == self.tcx.lang_items().from_generator_fn()).then(|| {
-            let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(self.tcx, body_id);
-            let body = body_with_facts.simplified_body();
-            let mut args = body
-                .stmt_at_better_err(location.innermost_location())
-                .right()
-                .expect("Expected terminator")
-                .as_fn_and_args()
-                .unwrap()
-                .1;
-            let closure = match args.as_slice() {
-                [Some(p)] => *p,
-                _ => panic!("Expected one non-const closure argument"),
-            };
-            debug_assert!(closure.projection.is_empty());
-            let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
-                body.local_decls[closure.local].ty.kind()
             {
-                *gid
-            } else {
-                unreachable!("Expected Generator")
-            };
-            InlineAction::InlineAsyncClosure(closure_fn.as_local().unwrap(), closure)
-        })
+                debug_assert!(closure_object.projection.is_empty());
+                return Some(InlineAction::InlineClosure {
+                    closure_def_id,
+                    closure_object,
+                    closure_description,
+                });
+            }
+        } else {
+            debug!("Too many arguments {:?}", args);
+        }
+        if let Some(local_id) = function.as_local() {
+            if self.oracle.should_inline(local_id) {
+                return if !self.ana_ctrl.avoid_inlining()
+                    || self.marker_carrying.body_carries_marker(local_id)
+                {
+                    Some(InlineAction::SimpleInline(local_id))
+                } else {
+                    None
+                };
+            }
+        }
+        None
     }
 
     fn classify_special_function_handling(
@@ -957,8 +1027,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             })
             .collect::<Vec<_>>();
         for (idx, root_location, action) in targets {
-            let (def_id, is_async_closure) = match action {
-                InlineAction::InlineAsyncClosure(did, c) => (did, Some(c)),
+            let (def_id, is_no_arg_closure) = match action {
+                InlineAction::InlineClosure {
+                    closure_object,
+                    closure_def_id,
+                    closure_description,
+                } => (closure_def_id, Some((closure_object, closure_description))),
                 InlineAction::SimpleInline(did) => (did, None),
                 InlineAction::Drop(drop_action) => {
                     let incoming_closure = g
@@ -1012,7 +1086,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             *num_inlined += 1 + grw_to_inline.inlined_functions_count();
             *max_call_stack_depth =
                 (*max_call_stack_depth).max(grw_to_inline.max_call_stack_depth() + 1);
-            let num_args = if is_async_closure.is_some() {
+            let num_args = if is_no_arg_closure.is_some() {
                 1 as usize
             } else {
                 self.tcx.fn_sig(def_id).skip_binder().inputs().len()
@@ -1033,25 +1107,37 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             let gli_here = self.gli.at(root_location.outermost_location(), body_id);
             eqs.extend(
                 Self::relativize_eqs(&grw_to_inline.equations, &gli_here).chain(
-                    if let Some(closure) = is_async_closure {
+                    if let Some((closure, closure_descr)) = is_no_arg_closure {
                         assert!(closure.projection.is_empty());
                         Either::Right(std::iter::once((
                             closure.local,
                             arg_num_to_local(0_usize.into()),
+                            closure_descr.project_closure_arg(),
                         )))
                     } else {
                         Either::Left((0..num_args).filter_map(|a| {
                             let a = a.into();
                             let actual_param = call.arguments[a].as_ref()?.0;
-                            Some((actual_param, arg_num_to_local(a)))
+                            Some((actual_param, arg_num_to_local(a), None))
                         }))
                     }
                     .into_iter()
-                    .chain(call.return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
-                    .map(|(actual_param, formal_param)| {
+                    .chain(call.return_to.into_iter().map(|r| {
+                        (
+                            r,
+                            mir::RETURN_PLACE,
+                            is_no_arg_closure.and_then(|a| a.1.project_return()),
+                        )
+                    }))
+                    .map(|(actual_param, formal_param, formal_project)| {
+                        let mut formal_term =
+                            Term::new_base(GlobalLocal::relative(formal_param, root_location));
+                        if let Some(proj) = formal_project {
+                            formal_term = formal_term.add_elem(proj)
+                        };
                         algebra::Equality::new(
                             Term::new_base(GlobalLocal::at_root(actual_param)),
-                            Term::new_base(GlobalLocal::relative(formal_param, root_location)),
+                            formal_term,
                         )
                     }),
                 ),
