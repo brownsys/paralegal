@@ -199,7 +199,7 @@ enum Command {
         from: NodeName,
         #[clap(long, short, default_value_t = Direction::Both)]
         direction: Direction,
-        #[clap(short = 't', longm, default_value_t = PathType::Both)]
+        #[clap(short = 't', long, default_value_t = PathType::Both)]
         typ: PathType,
     },
     Alias {
