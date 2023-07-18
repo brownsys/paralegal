@@ -8,11 +8,11 @@ use crate::{
     desc::*,
     rust::*,
     utils::{self, *},
-    Either, HashMap,
+    HashMap,
 };
 
 use hir::{
-    def_id::{self, DefId},
+    def_id::DefId,
     hir_id::HirId,
     intravisit::{self, FnKind},
     BodyId,
@@ -34,7 +34,7 @@ pub type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 /// This is sharable so we can stick it into the
 /// [`SkipAnnotatedFunctionSelector`]. Technically at that point this map is
 /// read-only.
-pub type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
+pub type MarkedObjects = Rc<RefCell<HashMap<LocalDefId, (Vec<Annotation>, ObjectType)>>>;
 
 /// This visitor traverses the items in the analyzed crate to discover
 /// annotations and analysis targets and store them in this struct. After the
@@ -94,7 +94,9 @@ fn resolve_external_markers(
                 Res::Def(kind, did) => Some((
                     did,
                     if kind.is_fn_like() {
-                        ObjectType::Function(tcx.fn_sig(did).skip_binder().inputs().len())
+                        ObjectType::Function(
+                            tcx.fn_sig(did).skip_binder().skip_binder().inputs().len(),
+                        )
                     } else {
                         // XXX add an actual match here
                         ObjectType::Type
@@ -234,10 +236,10 @@ impl<'tcx> CollectingVisitor<'tcx> {
     }
 
     /// Does the function named by this id have the `dfpp::analyze` annotation
-    fn should_analyze_function(&self, ident: HirId) -> bool {
+    fn should_analyze_function(&self, ident: LocalDefId) -> bool {
         self.tcx
             .hir()
-            .attrs(ident)
+            .attrs(self.tcx.local_def_id_to_hir_id(ident))
             .iter()
             .any(|a| a.matches_path(&consts::ANALYZE_MARKER))
     }
@@ -296,7 +298,10 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                 self.marked_objects
                     .as_ref()
                     .borrow_mut()
-                    .insert(id, (sink_matches, ObjectType::Function(decl.inputs.len())))
+                    .insert(
+                        id.expect_owner().def_id,
+                        (sink_matches, ObjectType::Function(decl.inputs.len())),
+                    )
                     .is_none()
             } else {
                 // I'm restricting the Ctor in the second set of patterns to
@@ -312,7 +317,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                         .marked_objects
                         .as_ref()
                         .borrow_mut()
-                        .insert(id, (sink_matches, ObjectType::Type))
+                        .insert(id.expect_owner().def_id, (sink_matches, ObjectType::Type))
                         .is_none(),
                     _ => {
                         let e = match node {
@@ -325,9 +330,9 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                         };
                         let obj_type = obj_type_for_stmt_ann(&sink_matches);
                         let did = match e.kind {
-                            hir::ExprKind::MethodCall(_, _, _) => {
+                            hir::ExprKind::MethodCall(_, _, _, _) => {
                                 let body_id = hir.enclosing_body_owner(id);
-                                let tcres = tcx.typeck(hir.local_def_id(body_id));
+                                let tcres = tcx.typeck(body_id);
                                 tcres.type_dependent_def_id(e.hir_id).unwrap_or_else(|| {
                                     panic!("No DefId found for method call {e:?}")
                                 })
@@ -341,7 +346,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                                 _,
                             ) => {
                                 let body_id = hir.enclosing_body_owner(id);
-                                let tcres = tcx.typeck(hir.local_def_id(body_id));
+                                let tcres = tcx.typeck(body_id);
                                 match tcres.qpath_res(p, *hir_id) {
                                     hir::def::Res::Def(_, did) => did,
                                     res => panic!("Not a function? {res:?}"),
@@ -364,8 +369,8 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
         kind: FnKind<'tcx>,
         declaration: &'tcx rustc_hir::FnDecl<'tcx>,
         body_id: BodyId,
-        s: Span,
-        id: HirId,
+        _s: Span,
+        id: LocalDefId,
     ) {
         match &kind {
             FnKind::ItemFn(name, _, _) | FnKind::Method(name, _)
@@ -382,6 +387,6 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
         // dispatch to recursive walk. This is probably unnecessary but if in
         // the future we decide to do something with nested items we may need
         // it.
-        intravisit::walk_fn(self, kind, declaration, body_id, s, id)
+        intravisit::walk_fn(self, kind, declaration, body_id, id)
     }
 }

@@ -80,7 +80,7 @@
 //! serializable version is an owned `Box` and as such would be moved with these
 //! function calls.
 
-use crate::desc::{CallSite, DataSource, Identifier};
+use crate::desc::{CallSite, DataSource};
 use crate::rust::rustc_arena;
 use crate::rust::*;
 use crate::utils::*;

@@ -3,7 +3,7 @@ use std::{borrow::Cow, fmt::Display, rc::Rc};
 use crate::{
     ir::global_location::{GliAt, GLI},
     rust::{
-        mir::{visit::Visitor, *},
+        mir::{self, visit::Visitor, *},
         rustc_data_structures::fx::FxHashSet as HashSet,
         rustc_hir::{def_id::DefId, BodyId},
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
@@ -14,21 +14,216 @@ use crate::{
 
 use flowistry::{
     extensions::{is_extension_active, MutabilityMode},
-    indexed::{impls::LocationDomain, IndexedDomain},
-    infoflow::mutation::{ModularMutationVisitor, MutationStatus},
-    mir::{
-        aliases::Aliases,
-        borrowck_facts::CachedSimplifedBodyWithFacts,
-        engine,
-        utils::{BodyExt, PlaceExt, PlaceRelation},
+    indexed::{
+        impls::{LocationOrArg, LocationOrArgDomain as LocationDomain, LocationOrArgIndex},
+        IndexedDomain,
     },
+    infoflow::mutation::MutationStatus,
+    mir::{aliases::Aliases, engine},
+};
+use rustc_utils::mir::{
+    borrowck_facts::CachedSimplifedBodyWithFacts, control_dependencies::ControlDependencies,
 };
 
-pub use flowistry::mir::control_dependencies::ControlDependencies;
+use rustc_utils::{BodyExt, PlaceExt};
+
+pub struct PlaceCollector<'tcx> {
+    pub tcx: TyCtxt<'tcx>,
+    pub places: Vec<(Place<'tcx>, Option<PlaceElem<'tcx>>)>,
+}
+
+impl<'tcx> Visitor<'tcx> for PlaceCollector<'tcx> {
+    fn visit_place(
+        &mut self,
+        place: &Place<'tcx>,
+        _context: mir::visit::PlaceContext,
+        _location: Location,
+    ) {
+        self.places.push((*place, None));
+    }
+
+    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
+        match rvalue {
+            Rvalue::Aggregate(box AggregateKind::Adt(def_id, idx, substs, _, _), ops) => {
+                // In the case of _1 = aggregate { field1: op1, field2: op2, ... }
+                // we want to remember which places correspond to which fields so the infoflow
+                // analysis can be field-sensitive for constructors.
+                let adt_def = self.tcx.adt_def(*def_id);
+                let variant = adt_def.variant(*idx);
+                let places = variant
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .zip(ops.iter())
+                    .filter_map(|((i, field), op)| {
+                        let place = op.place()?;
+                        let field =
+                            ProjectionElem::Field(Field::from_usize(i), field.ty(self.tcx, substs));
+                        Some((place, Some(field)))
+                    });
+                self.places.extend(places);
+            }
+            _ => self.super_rvalue(rvalue, location),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum PlaceRelation {
+    Super,
+    Sub,
+    Disjoint,
+}
+
+impl PlaceRelation {
+    pub fn overlaps(&self) -> bool {
+        *self != PlaceRelation::Disjoint
+    }
+
+    pub fn of<'tcx>(part_place: Place<'tcx>, whole_place: Place<'tcx>) -> Self {
+        Self::configurable_of(part_place, whole_place, true)
+    }
+    pub fn configurable_of<'tcx>(
+        part_place: Place<'tcx>,
+        whole_place: Place<'tcx>,
+        deref_means_disjoint: bool,
+    ) -> Self {
+        let locals_match = part_place.local == whole_place.local;
+        if !locals_match {
+            return PlaceRelation::Disjoint;
+        }
+
+        let projections_match = part_place
+            .projection
+            .iter()
+            .zip(whole_place.projection.iter())
+            .all(|(elem1, elem2)| {
+                use ProjectionElem::*;
+                match (elem1, elem2) {
+                    (Deref, Deref) => true,
+                    (Field(f1, _), Field(f2, _)) => f1 == f2,
+                    (Index(_), Index(_)) => true,
+                    (ConstantIndex { .. }, ConstantIndex { .. }) => true,
+                    (Subslice { .. }, Subslice { .. }) => true,
+                    (Downcast(_, v1), Downcast(_, v2)) => v1 == v2,
+                    _ => false,
+                }
+            });
+
+        let is_sub_part = part_place.projection.len() >= whole_place.projection.len();
+        let remaining_projection = if is_sub_part {
+            &part_place.projection[whole_place.projection.len()..]
+        } else {
+            &whole_place.projection[part_place.projection.len()..]
+        };
+
+        if deref_means_disjoint
+            && remaining_projection
+                .iter()
+                .any(|elem| matches!(elem, ProjectionElem::Deref))
+        {
+            return PlaceRelation::Disjoint;
+        }
+
+        if projections_match {
+            if is_sub_part {
+                PlaceRelation::Sub
+            } else {
+                PlaceRelation::Super
+            }
+        } else {
+            PlaceRelation::Disjoint
+        }
+    }
+}
+pub struct ModularMutationVisitor<'a, 'tcx, F>
+where
+    F: FnMut(Place<'tcx>, &[(Place<'tcx>, Option<PlaceElem<'tcx>>)], Location, MutationStatus),
+{
+    f: F,
+    aliases: &'a Aliases<'a, 'tcx>,
+}
+
+impl<'a, 'tcx, F> ModularMutationVisitor<'a, 'tcx, F>
+where
+    F: FnMut(Place<'tcx>, &[(Place<'tcx>, Option<PlaceElem<'tcx>>)], Location, MutationStatus),
+{
+    pub fn new(aliases: &'a Aliases<'a, 'tcx>, f: F) -> Self {
+        ModularMutationVisitor { aliases, f }
+    }
+}
+
+impl<'tcx, F> Visitor<'tcx> for ModularMutationVisitor<'_, 'tcx, F>
+where
+    F: FnMut(Place<'tcx>, &[(Place<'tcx>, Option<PlaceElem<'tcx>>)], Location, MutationStatus),
+{
+    fn visit_assign(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>, location: Location) {
+        debug!("Checking {location:?}: {place:?} = {rvalue:?}");
+        let mut collector = PlaceCollector {
+            places: Vec::new(),
+            tcx: self.aliases.tcx,
+        };
+        collector.visit_rvalue(rvalue, location);
+        (self.f)(
+            *place,
+            collector.places.as_slice(),
+            location,
+            MutationStatus::Definitely,
+        );
+    }
+
+    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
+        debug!("Checking {location:?}: {:?}", terminator.kind);
+        let tcx = self.aliases.tcx;
+
+        match &terminator.kind {
+            TerminatorKind::Call {
+                /*func,*/ // TODO: deal with func
+                args,
+                destination: dst_place,
+                ..
+            } => {
+                let arg_places = args.iter().filter_map(Operand::place).collect::<Vec<_>>();
+                let arg_inputs = arg_places
+                    .iter()
+                    .map(|place| (*place, None))
+                    .collect::<Vec<_>>();
+
+                let ret_is_unit = dst_place
+                    .ty(self.aliases.body.local_decls(), tcx)
+                    .ty
+                    .is_unit();
+                let empty = vec![];
+                let inputs = if ret_is_unit { &empty } else { &arg_inputs };
+
+                (self.f)(
+                    *dst_place,
+                    inputs.as_slice(),
+                    location,
+                    MutationStatus::Definitely,
+                );
+
+                for arg in arg_places {
+                    for arg_mut in self.aliases.reachable_values(arg, Mutability::Mut) {
+                        // The argument itself can never be modified in a caller-visible way,
+                        // because it's either getting moved or copied.
+                        if arg == *arg_mut {
+                            continue;
+                        }
+
+                        (self.f)(*arg_mut, &arg_inputs, location, MutationStatus::Possibly);
+                    }
+                }
+            }
+
+            _ => {}
+        }
+    }
+}
 
 pub type FlowResults<'a, 'tcx, 'g> = engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g>>;
 
-pub type Dependency<'tcx> = (Location, Place<'tcx>);
+pub type Dependency<'tcx> = (LocationOrArgIndex, Place<'tcx>);
 pub type LocationSet<'tcx> = HashSet<Dependency<'tcx>>;
 pub type DependencyMap<'tcx> = SparseMatrix<Place<'tcx>, Dependency<'tcx>>;
 
@@ -70,6 +265,7 @@ impl<'tcx> FlowDomain<'tcx> {
     pub fn deps(&self, at: Place<'tcx>) -> impl Iterator<Item = &Dependency<'tcx>> {
         self.matrix().row(&at).into_iter()
     }
+    #[allow(dead_code)]
     fn override_(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
         self.overrides.set(row, at)
     }
@@ -82,6 +278,8 @@ impl<'tcx> FlowDomain<'tcx> {
     fn union_after(&mut self, row: Place<'tcx>, from: Cow<LocationSet<'tcx>>) -> bool {
         self.overrides.union_row(&row, from)
     }
+    
+    #[allow(dead_code)]
     fn include(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
         self.override_(row, at)
     }
@@ -107,18 +305,14 @@ pub struct FlowAnalysis<'a, 'tcx, 'g> {
     pub tcx: TyCtxt<'tcx>,
     pub def_id: DefId,
     pub body: &'a Body<'tcx>,
-    pub control_dependencies: ControlDependencies,
+    pub control_dependencies: ControlDependencies<BasicBlock>,
     pub aliases: Aliases<'a, 'tcx>,
     pub gli: GLI<'g>,
 }
 
 impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
     fn body_id(&self) -> BodyId {
-        self.tcx.hir().body_owned_by(
-            self.tcx
-                .hir()
-                .local_def_id_to_hir_id(self.def_id.expect_local()),
-        )
+        self.tcx.hir().body_owned_by(self.def_id.expect_local())
     }
 
     pub fn new(
@@ -127,7 +321,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
         def_id: DefId,
         body: &'a Body<'tcx>,
         aliases: Aliases<'a, 'tcx>,
-        control_dependencies: ControlDependencies,
+        control_dependencies: ControlDependencies<BasicBlock>,
     ) -> Self {
         FlowAnalysis {
             tcx,
@@ -146,6 +340,12 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
     pub fn gli_at(&self, location: Location) -> GliAt<'g> {
         self.gli.at(location, self.body_id())
     }
+
+    pub fn location_to_index(&self, location: Location) -> LocationOrArgIndex {
+        self.location_domain()
+            .index(&LocationOrArg::Location(location))
+    }
+
     fn transfer_function(
         &self,
         state: &mut FlowDomain<'tcx>,
@@ -171,7 +371,7 @@ impl<'a, 'tcx, 'g> FlowAnalysis<'a, 'tcx, 'g> {
 
         let mut input_location_deps = LocationSet::default();
         if !transitive {
-            input_location_deps.insert((location, mutated));
+            input_location_deps.insert((self.location_to_index(location), mutated));
         }
 
         let add_deps = |place: Place<'tcx>, location_deps: &mut LocationSet<'tcx>| {
@@ -302,10 +502,9 @@ impl<'a, 'tcx, 'g> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g> {
                     "arg={arg:?} / place={place:?} / loc={:?}",
                     self.location_domain().value(loc)
                 );
-                state.matrix_mut().set(
-                    self.aliases.normalize(*place),
-                    (*self.location_domain().value(loc), *place),
-                );
+                state
+                    .matrix_mut()
+                    .set(self.aliases.normalize(*place), (loc, *place));
             }
         }
     }
@@ -369,8 +568,8 @@ pub fn compute_flow_internal<'a, 'tcx, 'g>(
     body_id: BodyId,
     body_with_facts: &'a CachedSimplifedBodyWithFacts<'tcx>,
 ) -> FlowResults<'a, 'tcx, 'g> {
-    flowistry::infoflow::BODY_STACK.with(|body_stack| {
-    body_stack.borrow_mut().push(body_id);
+    //flowistry::infoflow::BODY_STACK.with(|body_stack| {
+    //body_stack.borrow_mut().push(body_id);
     // debug!(
     //   "{}",
     //   rustc_hir_pretty::to_string(rustc_hir_pretty::NO_ANN, |s| s
@@ -379,52 +578,44 @@ pub fn compute_flow_internal<'a, 'tcx, 'g>(
     // debug!("{}", body_with_facts.simplified_body().to_string(tcx).unwrap());
 
     let def_id = tcx.hir().body_owner_def_id(body_id).to_def_id();
-    let aliases = Aliases::build(tcx, def_id, body_with_facts);
+    let aliases = Aliases::build(tcx, def_id, body_with_facts.body_with_facts());
     let location_domain = aliases.location_domain().clone();
 
     let body = body_with_facts.simplified_body();
-    let control_dependencies = ControlDependencies::build(body);
+    let control_dependencies = body.control_dependencies();
     debug!("Control dependencies: {control_dependencies:?}");
 
     let results = {
-      //block_timer!("Flow");
+        //block_timer!("Flow");
 
-      let analysis = FlowAnalysis::new(tcx, gli, def_id, body, aliases, control_dependencies);
-      engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
-      // analysis.into_engine(tcx, body).iterate_to_fixpoint()
+        let analysis = FlowAnalysis::new(tcx, gli, def_id, body, aliases, control_dependencies);
+        engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
+        // analysis.into_engine(tcx, body).iterate_to_fixpoint()
     };
 
     if log::log_enabled!(log::Level::Info) {
-      let counts = body
-        .all_locations()
-        .flat_map(|loc| {
-          let state = results.state_at(loc).matrix();
-          state
-            .rows()
-            .map(|(_, locations)| locations.len())
-            .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+        let counts = body
+            .all_locations()
+            .flat_map(|loc| {
+                let state = results.state_at(loc).matrix();
+                state
+                    .rows()
+                    .map(|(_, locations)| locations.len())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
 
-      let nloc = body.all_locations().count();
-      let np = counts.len();
-      let pavg = np as f64 / (nloc as f64);
-      let nl = counts.into_iter().sum::<usize>();
-      let lavg = nl as f64 / (nloc as f64);
-      log::info!(
+        let nloc = body.all_locations().count();
+        let np = counts.len();
+        let pavg = np as f64 / (nloc as f64);
+        let nl = counts.into_iter().sum::<usize>();
+        let lavg = nl as f64 / (nloc as f64);
+        log::info!(
         "Over {nloc} locations, total number of place entries: {np} (avg {pavg:.0}/loc), total size of location sets: {nl} (avg {lavg:.0}/loc)",
       );
     }
-
-    if std::env::var("DUMP_MIR").is_ok()
-      && flowistry::infoflow::BODY_STACK.with(|body_stack| body_stack.borrow().len() == 1)
-    {
-      todo!()
-      // utils::dump_results(body, &results, def_id, tcx).unwrap();
-    }
-
-    body_stack.borrow_mut().pop();
+    //body_stack.borrow_mut().pop();
 
     results
-  })
+    //})
 }

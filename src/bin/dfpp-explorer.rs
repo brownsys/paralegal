@@ -625,8 +625,8 @@ impl<'g> Repl<'g> {
                 .input_deps
                 .iter()
                 .enumerate()
-                .map(|(i, deps)| (Edge::from_types([EdgeType::Data(i as u32)]), deps))
-                .chain([(Edge::from_types([EdgeType::Control]), &deps.ctrl_deps)])
+                .map(|(i, deps)| (Edge::from_iter([EdgeType::Data(i as u32)]), deps))
+                .chain([(Edge::from_iter([EdgeType::Control]), &deps.ctrl_deps)])
             {
                 for from_raw in deps {
                     let from = gli.from_vec(from_raw.as_slice().to_vec()).into();
@@ -641,7 +641,7 @@ impl<'g> Repl<'g> {
                 graph,
                 from,
                 Node::return_(),
-                Edge::from_types([EdgeType::Data(0)]),
+                Edge::from_iter([EdgeType::Data(0)]),
             );
         }
 

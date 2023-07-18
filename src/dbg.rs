@@ -13,20 +13,20 @@ use flowistry::indexed::IndexedDomain;
 use crate::{
     ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
     rust::{mir, TyCtxt},
-    utils::{body_name_pls, write_sep},
+    utils::body_name_pls,
     HashMap, HashSet,
 };
 extern crate dot;
 
-pub fn print_flowistry_matrix<W: std::io::Write>(
+pub fn print_flowistry_matrix<'a : 'tcx, 'tcx, W: std::io::Write>(
     mut out: W,
-    matrix: &crate::sah::Matrix,
+    matrix: &'a flowistry::infoflow::FlowDomain<'tcx>,
 ) -> std::io::Result<()> {
     write!(out, "{}", PrintableMatrix(matrix))
 }
 
 /// Pretty printing struct for a flowistry result.
-pub struct PrintableMatrix<'a>(pub &'a crate::sah::Matrix<'a>);
+pub struct PrintableMatrix<'a>(pub &'a flowistry::infoflow::FlowDomain<'a>);
 
 impl<'a> std::fmt::Display for PrintableMatrix<'a> {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -34,7 +34,7 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
             s.truncate(i);
             s
         }
-        let domain = &self.0.col_domain;
+        let domain = &self.0.col_domain();
         let header_col_width = 10;
         let cell_width = 8;
         write!(out, "{:header_col_width$} |", ' ')?;
@@ -67,6 +67,7 @@ pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
     use std::collections::HashSet;
 
+
     use crate::{
         ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
         rust::mir::{Statement, StatementKind},
@@ -87,7 +88,6 @@ pub mod call_only_flow_dot {
     enum To {
         Ctrl,
         Arg(usize),
-        None,
     }
     pub struct G<'tcx, 'g, Flow> {
         graph: &'g Flow,
@@ -175,7 +175,6 @@ pub mod call_only_flow_dot {
                 match e.into {
                     To::Ctrl => Some(dot::Id::new("ctrl").unwrap()),
                     To::Arg(i) => Some(dot::Id::new(format!("a{}", i)).unwrap()),
-                    To::None => None,
                 },
                 None,
             )
@@ -191,10 +190,11 @@ pub mod call_only_flow_dot {
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
-            let body_with_facts = flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
-                self.tcx,
-                self.tcx.hir().body_owner_def_id(body_id),
-            );
+            let body_with_facts =
+                rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
+                    self.tcx,
+                    self.tcx.hir().body_owner_def_id(body_id),
+                );
             let body = &body_with_facts.simplified_body();
             let write_label = |s: &mut String| -> std::fmt::Result {
                 write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
@@ -264,11 +264,7 @@ pub mod call_only_flow_dot {
                         }
                     }
                 } else {
-                    write!(
-                        s,
-                        "<ret>{}",
-                        flowistry::mir::utils::location_to_string(loc, body)
-                    )?;
+                    write!(s, "<ret>{:?}", loc)?;
                 }
                 Ok(())
             };
@@ -317,8 +313,8 @@ impl<'g> GlobalLocation<'g> {
 use crate::serializers::{Bodies, BodyProxy, SerializableCallOnlyFlow};
 
 /// All locations that a body has (helper)
-pub fn locations_of_body<'a>(body: &'a mir::Body) -> impl Iterator<Item = mir::Location> + 'a {
-    body.basic_blocks()
+pub fn locations_of_body<'a : 'tcx, 'tcx>(body: &'a mir::Body<'tcx>) -> impl Iterator<Item = mir::Location> + 'a + 'tcx {
+    body.basic_blocks
         .iter_enumerated()
         .flat_map(|(block, dat)| {
             (0..=dat.statements.len()).map(move |statement_index| mir::Location {
@@ -355,7 +351,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                     (
                         body_name_pls(tcx, bid).name,
                         BodyProxy::from_body_with_normalize(
-                            flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
+                            rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
                                 tcx,
                                 tcx.hir().body_owner_def_id(bid),
                             )

@@ -11,13 +11,11 @@
 //! For instance to extract a fact base from an MIR body use
 //! [`extract_equations`].
 
-use petgraph::visit::IntoEdges;
 
 use crate::{
-    either::Either,
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
-    utils::{outfile_pls, write_sep, DisplayViaDebug, Print},
+    utils::{write_sep, DisplayViaDebug, Print},
     HashMap, HashSet, Symbol, TyCtxt,
 };
 
@@ -304,6 +302,7 @@ impl<B, F: Copy> Equality<B, F> {
     }
 }
 
+#[allow(dead_code)]
 fn partial_cmp_terms<'a, F: Copy + Eq>(
     mut left: &'a [Operator<F>],
     mut right: &'a [Operator<F>],
@@ -592,10 +591,10 @@ impl<B, F: Copy> Term<B, F> {
                 continue;
             };
             match prior.cancel(op) {
-                Cancel::NonOverlappingField(f, g) => {
+                Cancel::NonOverlappingField(_f, _g) => {
                     valid = false;
                 }
-                Cancel::NonOverlappingVariant(v1, v2) => {
+                Cancel::NonOverlappingVariant(_v1, _v2) => {
                     valid = false;
                 }
                 Cancel::CancelBoth => {
@@ -705,6 +704,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
             | ShallowInitBox(op, _) // XXX Not sure this is correct
             => Box::new(op.place().into_iter().map(|p| p.into()))
                 as Box<dyn Iterator<Item = MirTerm>>,
+            CopyForDeref(place) => Box::new(std::iter::once(place.into())) as Box<_>,
             Repeat(..) // safe because it can only ever be populated by constants
             | ThreadLocalRef(..) // This accesses a global variable and thus cannot be tracked
             | NullaryOp(_, _) // Computes a type level constant from thin air
@@ -745,7 +745,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                         });
                     Box::new(iter) as Box<_>
                 }
-                AggregateKind::Closure(def_id, _) => {
+                AggregateKind::Closure(_def_id, _) => {
                     // XXX This is a speculative way of handling this. Instead
                     // we should look up actual field info but I wasn't able to
                     // find a function that retrieves a closure's layout

@@ -10,7 +10,7 @@ use std::hash::Hash;
 
 use crate::{
     ir::IsGlobalLocation,
-    utils::{short_hash_pls, IntoDefId},
+    utils::IntoDefId,
     HashSet, TyCtxt,
 };
 use pretty::{DocAllocator, DocBuilder, Pretty};

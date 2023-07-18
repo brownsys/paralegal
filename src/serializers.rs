@@ -147,30 +147,28 @@ fn iter_stmts<'a, 'tcx>(
         Either<&'a mir::Statement<'tcx>, &'a mir::Terminator<'tcx>>,
     ),
 > {
-    b.basic_blocks()
-        .iter_enumerated()
-        .flat_map(|(block, bbdat)| {
-            bbdat
-                .statements
-                .iter()
-                .enumerate()
-                .map(move |(statement_index, stmt)| {
-                    (
-                        mir::Location {
-                            block,
-                            statement_index,
-                        },
-                        Either::Left(stmt),
-                    )
-                })
-                .chain(std::iter::once((
+    b.basic_blocks.iter_enumerated().flat_map(|(block, bbdat)| {
+        bbdat
+            .statements
+            .iter()
+            .enumerate()
+            .map(move |(statement_index, stmt)| {
+                (
                     mir::Location {
                         block,
-                        statement_index: bbdat.statements.len(),
+                        statement_index,
                     },
-                    Either::Right(bbdat.terminator()),
-                )))
-        })
+                    Either::Left(stmt),
+                )
+            })
+            .chain(std::iter::once((
+                mir::Location {
+                    block,
+                    statement_index: bbdat.statements.len(),
+                },
+                Either::Right(bbdat.terminator()),
+            )))
+    })
 }
 
 impl<'tcx> From<&mir::Body<'tcx>> for BodyProxy {
@@ -321,10 +319,17 @@ struct LocalDefIdProxy {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(remote = "hir::hir_id::OwnerId")]
+struct OwnerIdProxy {
+    #[serde(with = "LocalDefIdProxy")]
+    def_id: crate::LocalDefId,
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(remote = "hir::HirId")]
 struct HirIdProxy {
-    #[serde(with = "LocalDefIdProxy")]
-    owner: def_id::LocalDefId,
+    #[serde(with = "OwnerIdProxy")]
+    owner: hir::OwnerId,
     #[serde(with = "ItemLocalIdProxy")]
     local_id: hir::ItemLocalId,
 }

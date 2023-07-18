@@ -11,6 +11,7 @@
 extern crate clap;
 extern crate ordermap;
 extern crate rustc_plugin;
+extern crate rustc_utils;
 extern crate serde;
 extern crate toml;
 #[macro_use]
@@ -28,6 +29,7 @@ extern crate rustc_serialize;
 
 pub mod rust {
     //! Exposes the rustc external crates (this mod is just to tidy things up).
+    pub extern crate rustc_abi;
     pub extern crate rustc_arena;
     pub extern crate rustc_ast;
     pub extern crate rustc_borrowck;
@@ -40,11 +42,16 @@ pub mod rust {
     pub extern crate rustc_query_system;
     pub extern crate rustc_serialize;
     pub extern crate rustc_span;
+    pub extern crate rustc_type_ir;
     pub use super::rustc_index;
+    pub use rustc_type_ir::sty;
 
     pub use rustc_ast as ast;
+    pub mod mir {
+        pub use super::rustc_abi::FieldIdx as Field;
+        pub use super::rustc_middle::mir::*;
+    }
     pub use rustc_hir as hir;
-    pub use rustc_middle::mir;
     pub use rustc_middle::ty;
 
     pub use rustc_middle::dep_graph::DepGraph;
@@ -58,7 +65,8 @@ use args::LogLevelConfig;
 use pretty::DocBuilder;
 use rust::*;
 
-use flowistry::mir::borrowck_facts;
+use rustc_plugin::CrateFilter;
+use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
 
 // This import is sort of special because it comes from the private rustc
@@ -76,7 +84,7 @@ pub mod desc;
 mod discover;
 pub mod frg;
 pub mod ir;
-mod sah;
+//mod sah;
 pub mod serializers;
 #[macro_use]
 pub mod utils;
@@ -154,7 +162,6 @@ impl rustc_driver::Callbacks for Callbacks {
         queries
             .global_ctxt()
             .unwrap()
-            .take()
             .enter(|tcx| {
                 let desc = discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run()?;
                 if self.opts.dbg().dump_serialized_flow_graph() {
@@ -206,8 +213,12 @@ impl rustc_driver::Callbacks for Callbacks {
 impl rustc_plugin::RustcPlugin for DfppPlugin {
     type Args = Args;
 
-    fn bin_name() -> String {
-        "dfpp".to_string()
+    fn version(&self) -> std::borrow::Cow<'static, str> {
+        crate_version!().into()
+    }
+
+    fn driver_name(&self) -> std::borrow::Cow<'static, str> {
+        "dfpp".into()
     }
 
     fn args(
@@ -218,9 +229,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         let args = ArgWrapper::parse();
         rustc_plugin::RustcPluginArgs {
             args: args.args,
-            file: None,
-            flags: None,
-            cargo_args: args.cargo_args,
+            filter: CrateFilter::OnlyWorkspace,
         }
     }
 

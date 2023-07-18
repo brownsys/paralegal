@@ -1,4 +1,4 @@
-#[allow(dead_code)]
+#![allow(dead_code)]
 extern crate either;
 extern crate rustc_hir as hir;
 extern crate rustc_middle;
@@ -261,7 +261,7 @@ impl MatchCallSite for GlobalLocationS {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum EdgeSelection {
+pub enum EdgeSelection {
     Data,
     Control,
     Both,

@@ -1,6 +1,10 @@
-use flowistry::{
-    extensions::RecurseSelector,
-    mir::{borrowck_facts, control_dependencies::ControlDependencies, utils::BodyExt},
+use flowistry::indexed::{
+    impls::{build_location_arg_domain, LocationOrArg},
+    IndexedDomain,
+};
+use rustc_utils::{
+    mir::{borrowck_facts, control_dependencies::ControlDependencies},
+    BodyExt,
 };
 
 use super::GLI;
@@ -10,7 +14,7 @@ use crate::{
         df,
     },
     hir::def_id::LocalDefId,
-    mir::{self, Field, HasLocalDecls, Location},
+    mir::{self, BasicBlock, Field, HasLocalDecls, Location},
     rust::{
         rustc_ast,
         rustc_hir::{def_id::DefId, BodyId},
@@ -19,7 +23,7 @@ use crate::{
     },
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
-        DisplayViaDebug, IntoLocalDefId, LocationExt, Print,
+        DisplayViaDebug, IntoLocalDefId, Print,
     },
     DbgArgs, Either, HashMap, HashSet, TyCtxt,
 };
@@ -27,9 +31,8 @@ use crate::{
 use std::fmt::{Display, Write};
 
 newtype_index!(
-    pub struct ArgumentIndex {
-        DEBUG_FORMAT = "arg{}"
-    }
+    #[debug_format = "arg{}"]
+    pub struct ArgumentIndex {}
 );
 
 impl Display for ArgumentIndex {
@@ -48,6 +51,18 @@ pub enum TargetPlace {
 pub enum Target<L> {
     Call(L),
     Argument(ArgumentIndex),
+}
+
+impl From<LocationOrArg> for Target<DisplayViaDebug<Location>> {
+    fn from(value: LocationOrArg) -> Self {
+        match value {
+            LocationOrArg::Arg(a) => {
+                assert_ne!(a.as_usize(), 0);
+                Target::Argument(a.as_usize().into())
+            }
+            LocationOrArg::Location(loc) => Target::Call(loc.into()),
+        }
+    }
 }
 
 impl<L> Target<L> {
@@ -84,13 +99,13 @@ impl<D> Call<D> {
     }
 }
 
-struct NeverInline;
+// struct NeverInline;
 
-impl RecurseSelector for NeverInline {
-    fn is_selected<'tcx>(&self, _tcx: TyCtxt<'tcx>, _tk: &mir::TerminatorKind<'tcx>) -> bool {
-        false
-    }
-}
+// impl RecurseSelector for NeverInline {
+//     fn is_selected<'tcx>(&self, _tcx: TyCtxt<'tcx>, _tk: &mir::TerminatorKind<'tcx>) -> bool {
+//         false
+//     }
+// }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 pub struct RelativePlace<L> {
@@ -224,13 +239,13 @@ fn get_highest_local(body: &mir::Body) -> mir::Local {
     impl Visitor<'_> for Extractor {
         fn visit_local(
             &mut self,
-            local: &mir::Local,
+            local: mir::Local,
             _context: mir::visit::PlaceContext,
             _location: Location,
         ) {
-            let m = self.0.get_or_insert(*local);
-            if *m < *local {
-                *m = *local;
+            let m = self.0.get_or_insert(local);
+            if *m < local {
+                *m = local;
             }
         }
     }
@@ -245,8 +260,9 @@ impl Body<DisplayViaDebug<Location>> {
         equations: I,
         tcx: TyCtxt<'tcx>,
         def_id: LocalDefId,
-        body_with_facts: &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
+        body_with_facts: &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
     ) -> Self {
+        let domain = build_location_arg_domain(body_with_facts.simplified_body());
         let name = body_name_pls(tcx, def_id).name;
         time(&format!("Regal Body Construction of {name}"), || {
             let body = flow_analysis.analysis.body;
@@ -284,14 +300,7 @@ impl Body<DisplayViaDebug<Location>> {
                     // always contain all relevant subplaces
                     //.filter(|p| !is_mut_arg || p != &arg)
                     .flat_map(|place| ana.deps(non_transitive_aliases.normalize(place)))
-                    .map(|&(dep_loc, _dep_place)| {
-                        let dep_loc = DisplayViaDebug(dep_loc);
-                        if dep_loc.is_real(body) {
-                            Target::Call(dep_loc)
-                        } else {
-                            Target::Argument(ArgumentIndex::from_usize(dep_loc.statement_index - 1))
-                        }
-                    })
+                    .map(|&(dep_loc, _dep_place)| (*domain.value(dep_loc)).into())
                     .collect();
                 debug!("  Registering dependencies {deps:?}");
                 deps
@@ -299,7 +308,7 @@ impl Body<DisplayViaDebug<Location>> {
             let mut call_argument_equations = HashSet::new();
             let mut next_new_local = get_highest_local(body);
             let calls = body
-                .basic_blocks()
+                .basic_blocks
                 .iter_enumerated()
                 .filter_map(|(bb, bbdat)| {
                     let (function, simple_args, ret) = match bbdat.terminator().as_fn_and_args() {
@@ -331,11 +340,8 @@ impl Body<DisplayViaDebug<Location>> {
                             .collect(),
                     );
                     let ctrl_deps = recursive_ctrl_deps(ctrl_ana, bb, body, dependencies_for);
-                    let return_to = ret.map(|r| {
-                        let return_place = r.0;
-                        assert!(return_place.projection.is_empty());
-                        return_place.local
-                    });
+                    assert!(ret.projection.is_empty());
+                    let return_to = Some(ret.local);
                     Some((
                         bbloc,
                         Call {
@@ -440,7 +446,7 @@ fn recursive_ctrl_deps<
         bool,
     ) -> Dependencies<DisplayViaDebug<Location>>,
 >(
-    ctrl_ana: &ControlDependencies,
+    ctrl_ana: &ControlDependencies<BasicBlock>,
     bb: mir::BasicBlock,
     body: &mir::Body<'tcx>,
     mut dependencies_for: F,
@@ -448,7 +454,7 @@ fn recursive_ctrl_deps<
     debug!(
         "Ctrl deps\n{}",
         Print(|f| {
-            for (b, _) in body.basic_blocks().iter_enumerated() {
+            for (b, _) in body.basic_blocks.iter_enumerated() {
                 writeln!(f, "{b:?}: {:?}", ctrl_ana.dependent_on(b))?;
             }
             Ok(())
@@ -466,7 +472,7 @@ fn recursive_ctrl_deps<
     let mut dependencies = Dependencies::new();
     while let Some(block) = queue.pop() {
         seen.insert(block);
-        let terminator = body.basic_blocks()[block].terminator();
+        let terminator = body.basic_blocks[block].terminator();
         if let mir::TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
             if let Some(discr_place) = discr.place() {
                 let deps = dependencies_for(
@@ -492,7 +498,7 @@ fn recursive_ctrl_deps<
                 // `&&` and `||` in an annoying way. The details are explained
                 // in
                 // https://www.notion.so/justus-adam/Control-flow-with-non-fn-statement-does-not-create-the-ctrl_flow-relation-correctly-3993e8fd86d54f51bfa75fde447b81ec
-                let predecessors = &body.predecessors()[block];
+                let predecessors = &body.basic_blocks.predecessors()[block];
                 if predecessors.len() > 1 {
                     enum SetResult<A> {
                         Uninit,
@@ -520,10 +526,9 @@ fn recursive_ctrl_deps<
                                 _location: Location,
                             ) {
                                 match terminator.kind {
-                                    mir::TerminatorKind::Call {
-                                        destination: Some((dest, _)),
-                                        ..
-                                    } => self.was_assigned |= dest == self.target,
+                                    mir::TerminatorKind::Call { destination, .. } => {
+                                        self.was_assigned |= destination == self.target
+                                    }
                                     _ => (),
                                 }
                             }
@@ -543,7 +548,7 @@ fn recursive_ctrl_deps<
                                         debug!("No Deps");
                                         return SetResult::Unequal;
                                     };
-                                let data = &body.basic_blocks()[block];
+                                let data = &body.basic_blocks[block];
                                 let mut check = AssignsCheck {
                                     target: discr_place,
                                     was_assigned: false,
@@ -584,7 +589,8 @@ pub fn compute_from_body_id(
 ) -> Body<DisplayViaDebug<Location>> {
     let local_def_id = body_id.into_local_def_id(tcx);
     info!("Analyzing function {}", body_name_pls(tcx, body_id));
-    let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
+    let body_with_facts =
+        borrowck_facts::get_simplified_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
     let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts);
     if dbg_opts.dump_callee_mir() {

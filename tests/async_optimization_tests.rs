@@ -35,7 +35,7 @@ define_test!(remove_poll_match: graph -> {
     let new_unchecked = graph.function_call("new_unchecked");
     let get_context = graph.function_call("get_context");
     let into_future = graph.function_call("into_future");
-    let f = graph.function_call(" f(");
+    let _f = graph.function_call(" f(");
     assert!(graph.connects_data(&input, &target));
 
     assert!(graph.connects_none(&poll));

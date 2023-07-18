@@ -1,5 +1,5 @@
 [toolchain]
-channel = "nightly-2022-05-23"
+channel = "nightly-2023-04-12"
 components = ["rustc-dev"]
 
 # You are probably looking at this because you got an error that the toolchain

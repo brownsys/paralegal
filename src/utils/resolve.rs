@@ -5,9 +5,9 @@ use hir::{
     def_id::CrateNum,
     def_id::LocalDefId,
     def_id::LOCAL_CRATE,
-    ImplItemRef, ItemKind, Mod, Node, PrimTy, TraitItemRef,
+    ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
 };
-use ty::{fast_reject::SimplifiedTypeGen::*, FloatTy, IntTy, UintTy};
+use ty::{fast_reject::SimplifiedType::*, FloatTy, IntTy, UintTy};
 
 /// Lifted from `clippy_utils`
 pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
@@ -26,7 +26,7 @@ pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
                 .iter()
                 .find(|item| item.ident.name.as_str() == name)
                 .map(|child| child.res.expect_non_local()),
-            DefKind::Impl => tcx
+            DefKind::Impl { of_trait: false } => tcx
                 .associated_item_def_ids(def_id)
                 .iter()
                 .copied()
@@ -46,10 +46,7 @@ pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
         let root_mod;
         let item_kind = match hir.find_by_def_id(local_id) {
             Some(Node::Crate(r#mod)) => {
-                root_mod = ItemKind::Mod(Mod {
-                    spans: r#mod.spans.clone(),
-                    item_ids: r#mod.item_ids.clone(),
-                });
+                root_mod = ItemKind::Mod(r#mod);
                 &root_mod
             }
             Some(Node::Item(item)) => &item.kind,
@@ -63,16 +60,16 @@ pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Res {
                 .item_ids
                 .iter()
                 .find(|&item_id| hir.item(*item_id).ident.name.as_str() == name)
-                .map(|&item_id| res(item_id.def_id)),
+                .map(|&item_id| res(item_id.owner_id.def_id)),
             ItemKind::Impl(r#impl) => r#impl
                 .items
                 .iter()
                 .find(|item| item.ident.name.as_str() == name)
-                .map(|&ImplItemRef { id, .. }| res(id.def_id)),
+                .map(|&ImplItemRef { id, .. }| res(id.owner_id.def_id)),
             ItemKind::Trait(.., trait_item_refs) => trait_item_refs
                 .iter()
                 .find(|item| item.ident.name.as_str() == name)
-                .map(|&TraitItemRef { id, .. }| res(id.def_id)),
+                .map(|&TraitItemRef { id, .. }| res(id.owner_id.def_id)),
             _ => None,
         }
     }
