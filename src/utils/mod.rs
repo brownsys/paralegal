@@ -236,7 +236,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
                         let ty = match literal {
                             mir::ConstantKind::Val(_, ty) => *ty,
                             mir::ConstantKind::Ty(cst) => cst.ty(),
-                            mir::ConstantKind::Unevaluated {.. }  => unreachable!(),
+                            mir::ConstantKind::Unevaluated { .. } => unreachable!(),
                         };
                         match ty.kind() {
                             ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),

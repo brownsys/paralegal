@@ -278,7 +278,7 @@ impl<'tcx> FlowDomain<'tcx> {
     fn union_after(&mut self, row: Place<'tcx>, from: Cow<LocationSet<'tcx>>) -> bool {
         self.overrides.union_row(&row, from)
     }
-    
+
     #[allow(dead_code)]
     fn include(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
         self.override_(row, at)

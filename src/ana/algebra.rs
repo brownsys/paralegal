@@ -11,7 +11,6 @@
 //! For instance to extract a fact base from an MIR body use
 //! [`extract_equations`].
 
-
 use crate::{
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
@@ -700,7 +699,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
         let lhs = MirTerm::from(place);
         use mir::{AggregateKind, Rvalue::*};
         let rhs_s = match rvalue {
-            Use(op) | UnaryOp(_, op) | Cast(_, op, _) 
+            Use(op) | UnaryOp(_, op) | Cast(_, op, _)
             | ShallowInitBox(op, _) // XXX Not sure this is correct
             => Box::new(op.place().into_iter().map(|p| p.into()))
                 as Box<dyn Iterator<Item = MirTerm>>,
@@ -711,7 +710,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
             => Box::new(std::iter::empty()) as Box<_>,
             AddressOf(_, p) // XXX Not sure this is correct but I just want to be safe. The result is a pointer so I don't know how we deal with that
             | Discriminant(p) | Len(p) // This is a weaker (implicit flows) sort of relationship but it is a relationship non the less so I'm adding them here
-            => Box::new(std::iter::once(MirTerm::from(p).add_unknown())), 
+            => Box::new(std::iter::once(MirTerm::from(p).add_unknown())),
             Ref(_, _, p) => {
                 let term = MirTerm::from(p).add_ref_of();
                 Box::new(std::iter::once(term)) as Box<_>

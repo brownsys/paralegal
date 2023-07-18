@@ -201,7 +201,7 @@ pub trait IsGlobalLocation: Sized + std::fmt::Display {
         if self.is_at_root() && !is_real_location {
             DataSource::Argument(self.outermost_location().statement_index - 1)
         } else {
-            let terminator = 
+            let terminator =
                     tcx.body_for_body_id(dep_fun)
                         .simplified_body()
                         .maybe_stmt_at(dep_loc)

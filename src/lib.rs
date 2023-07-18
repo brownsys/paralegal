@@ -3,10 +3,13 @@
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `dfpp` and
 //! `cargo-dfpp` (a structure suggested by [rustc_plugin]).
-#![feature(rustc_private)]
-#![feature(min_specialization)]
-#![feature(drain_filter)]
-#![feature(box_patterns)]
+#![feature(
+    rustc_private,
+    min_specialization,
+    drain_filter,
+    box_patterns,
+    let_chains
+)]
 #[macro_use]
 extern crate clap;
 extern crate ordermap;

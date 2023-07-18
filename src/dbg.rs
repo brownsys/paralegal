@@ -18,7 +18,7 @@ use crate::{
 };
 extern crate dot;
 
-pub fn print_flowistry_matrix<'a : 'tcx, 'tcx, W: std::io::Write>(
+pub fn print_flowistry_matrix<'a: 'tcx, 'tcx, W: std::io::Write>(
     mut out: W,
     matrix: &'a flowistry::infoflow::FlowDomain<'tcx>,
 ) -> std::io::Result<()> {
@@ -66,7 +66,6 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
     use std::collections::HashSet;
-
 
     use crate::{
         ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
@@ -313,7 +312,9 @@ impl<'g> GlobalLocation<'g> {
 use crate::serializers::{Bodies, BodyProxy, SerializableCallOnlyFlow};
 
 /// All locations that a body has (helper)
-pub fn locations_of_body<'a : 'tcx, 'tcx>(body: &'a mir::Body<'tcx>) -> impl Iterator<Item = mir::Location> + 'a + 'tcx {
+pub fn locations_of_body<'a: 'tcx, 'tcx>(
+    body: &'a mir::Body<'tcx>,
+) -> impl Iterator<Item = mir::Location> + 'a + 'tcx {
     body.basic_blocks
         .iter_enumerated()
         .flat_map(|(block, dat)| {

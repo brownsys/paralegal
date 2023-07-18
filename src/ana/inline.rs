@@ -33,8 +33,8 @@ use crate::{
     rust::hir::def_id::{DefId, LocalDefId},
     ty,
     utils::{
-        body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug,
-        IntoDefId, IntoLocalDefId, Print, RecursionBreakingCache, TinyBitSet,
+        body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, IntoDefId, IntoLocalDefId,
+        Print, RecursionBreakingCache, TinyBitSet,
     },
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
@@ -800,11 +800,11 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let mut ctrl_flow_context_cache = Default::default();
         for (n, (_in_classifier, _out_classifier)) in g
             .nodes()
-            .filter_map(|n| 
+            .filter_map(|n|
                 // The node has to be not semantically meaningful (e.g. no
                 // label), and it has to have neighbors before and after,
                 // because otherwise it's likely an I/O data source or sink
-                if matches!(n, SimpleLocation::Call((loc, defid)) 
+                if matches!(n, SimpleLocation::Call((loc, defid))
                     if loc.is_at_root()
                         && !self.oracle.is_semantically_meaningful(defid)
                         //&& Some(defid) != self.tcx.lang_items().from_generator_fn() 
@@ -817,7 +817,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         {
             for from in g
                 .edges_directed(n, pg::Direction::Incoming)
-                .filter_map(|(from, _, weight)| 
+                .filter_map(|(from, _, weight)|
                     // invariant: The selector before ensures that if we inline
                     // with control, the node below is already in the same
                     // control flow scope
@@ -838,7 +838,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
     fn try_inline_as_async_fn(
         &self,
-        proc_g: &regal::Body<DisplayViaDebug<Location>>,
         i_graph: &mut InlinedGraph<'g>,
         body_id: BodyId,
     ) -> bool {
@@ -850,9 +849,13 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let body_with_facts =
             borrowck_facts::get_simplified_body_with_borrowck_facts(self.tcx, local_def_id);
         let body = body_with_facts.simplified_body();
-        let return_ty = body.return_ty();
-        // XXX This might become invalid if funcitons other than `async` can create generators
-        let closure_fn = if let ty::TyKind::Generator(gid, _, _) = return_ty.kind() {
+        // XXX This might become invalid if functions other than `async` can create generators
+        let closure_fn =
+            if let Some(bb) = (*body.basic_blocks).iter().last()
+                && let Some(stmt) = bb.statements.last()
+                && let mir::StatementKind::Assign(assign) = &stmt.kind
+                && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, ..), _) = &assign.1 {
+
             *gid
         } else {
             return false;
@@ -877,22 +880,26 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
         let root_location = self.gli.globalize_location(return_location, body_id);
         self.inline_one_function(
-            proc_g,
             i_graph,
             body_id,
             closure_fn.expect_local(),
             Some(mir::RETURN_PLACE.into()),
             &incoming,
             &outgoing,
+            &[Some(mir::RETURN_PLACE)],
+            Some(mir::RETURN_PLACE),
             &mut HashSet::default(),
             root_location,
+        );
+        debug!(
+            "Recognized {} as an async function",
+            self.tcx.def_path_debug_str(local_def_id.to_def_id())
         );
         true
     }
 
     fn inline_one_function(
         &self,
-        proc_g: &regal::Body<DisplayViaDebug<Location>>,
         InlinedGraph {
             graph: g,
             equations: eqs,
@@ -904,6 +911,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         is_async_closure: Option<mir::Place<'tcx>>,
         incoming: &[(SimpleLocation<(GlobalLocation<'g>, DefId)>, Edge)],
         outgoing: &[(SimpleLocation<(GlobalLocation<'g>, DefId)>, Edge)],
+        arguments: &[Option<mir::Local>],
+        return_to: Option<mir::Local>,
         queue_for_pruning: &mut HashSet<(
             SimpleLocation<(GlobalLocation<'g>, DefId)>,
             SimpleLocation<(GlobalLocation<'g>, DefId)>,
@@ -942,7 +951,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             }
         }
 
-        let call = &proc_g.calls[&DisplayViaDebug(root_location.outermost_location())];
         let gli_here = self
             .gli
             .at(root_location.outermost_location(), caller_function);
@@ -955,14 +963,18 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         arg_num_to_local(0_usize.into()),
                     )))
                 } else {
-                    Either::Left((0..num_args).filter_map(|a| {
-                        let a = a.into();
-                        let actual_param = call.arguments[a].as_ref()?.0;
-                        Some((actual_param, arg_num_to_local(a)))
-                    }))
+                    Either::Left(
+                        arguments
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(a, actual_param)| {
+                                let a = a.into();
+                                Some(((*actual_param)?, arg_num_to_local(a)))
+                            }),
+                    )
                 }
                 .into_iter()
-                .chain(call.return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
+                .chain(return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
                 .map(|(actual_param, formal_param)| {
                     algebra::Equality::new(
                         Term::new_base(GlobalLocal::at_root(actual_param)),
@@ -1033,8 +1045,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         body_id: BodyId,
     ) -> EdgeSet<'g> {
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
-        if recursive_analysis_enabled && self.try_inline_as_async_fn(proc_g, i_graph, body_id) {
-            return Default::default()
+        if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, body_id) {
+            return Default::default();
         };
         let mut queue_for_pruning = HashSet::new();
         let targets = i_graph
@@ -1140,14 +1152,21 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 .edges_directed(idx, pg::Outgoing)
                 .map(|e| (e.target(), *e.weight()))
                 .collect::<Vec<_>>();
+            let call = &proc_g.calls[&DisplayViaDebug(root_location.outermost_location())];
+            let arguments = call
+                .arguments
+                .iter()
+                .map(|a| a.as_ref().map(|a| a.0))
+                .collect::<Vec<_>>();
             self.inline_one_function(
-                proc_g,
                 i_graph,
                 body_id,
                 def_id,
                 is_async_closure,
                 &incoming,
                 &outgoing,
+                &arguments,
+                call.return_to,
                 &mut queue_for_pruning,
                 root_location,
             );

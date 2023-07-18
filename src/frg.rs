@@ -8,11 +8,7 @@ extern crate pretty;
 
 use std::hash::Hash;
 
-use crate::{
-    ir::IsGlobalLocation,
-    utils::IntoDefId,
-    HashSet, TyCtxt,
-};
+use crate::{ir::IsGlobalLocation, utils::IntoDefId, HashSet, TyCtxt};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
@@ -810,7 +806,7 @@ impl ProgramDescription {
                                                 std::iter::once(alloc.hardline().append(
                                                     //(&ctrl.data_flow).as_forge(alloc)
                                                     alloc.forge_relation(
-                                                        ctrl.data_flow.0.iter().map(|(source, sinks)| 
+                                                        ctrl.data_flow.0.iter().map(|(source, sinks)|
                                                             (
                                                                 std::iter::once(data_source_as_forge(source, alloc, *e)),
                                                                 sinks.iter().map(|snk| snk.as_forge(alloc))
@@ -920,13 +916,12 @@ impl ProgramDescription {
                                         self.annotations.iter()
                                             .flat_map(|(ident, (anns, _))|
                                                 anns.iter().filter_map(Annotation::as_label_ann)
-                                                    .flat_map(|label| 
-                                                        label.refinement.on_argument().into_iter_set_in_domain().map(|i| 
+                                                    .flat_map(|label|
+                                                        label.refinement.on_argument().into_iter_set_in_domain().map(|i|
                                                             (
-                                                                std::iter::once(FormalParameter { position: i as u16, function: *ident }.as_forge(alloc)), 
+                                                                std::iter::once(FormalParameter { position: i as u16, function: *ident }.as_forge(alloc)),
                                                                 std::iter::once(ident.as_forge(alloc).append("->").append(label.marker.as_str())))))
-                                                    
-                                            )   
+                                            )
                                     )
                                     .indent(4)
                                     .append(alloc.hardline())
