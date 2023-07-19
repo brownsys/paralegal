@@ -58,7 +58,7 @@ impl From<LocationOrArg> for Target<DisplayViaDebug<Location>> {
         match value {
             LocationOrArg::Arg(a) => {
                 assert_ne!(a.as_usize(), 0);
-                Target::Argument(a.as_usize().into())
+                Target::Argument((a.as_usize() - 1).into())
             }
             LocationOrArg::Location(loc) => Target::Call(loc.into()),
         }

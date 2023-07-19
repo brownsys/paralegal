@@ -836,11 +836,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
-    fn try_inline_as_async_fn(
-        &self,
-        i_graph: &mut InlinedGraph<'g>,
-        body_id: BodyId,
-    ) -> bool {
+    fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'g>, body_id: BodyId) -> bool {
         let local_def_id = body_id.into_local_def_id(self.tcx);
         let body_with_facts =
             borrowck_facts::get_simplified_body_with_borrowck_facts(self.tcx, local_def_id);
@@ -927,6 +923,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 // inline ourself, so we simply skip.
                 return;
             };
+        debug!(
+            "Inlining {} with {} arguments and {} targets",
+            self.tcx.def_path_debug_str(inlining_target.to_def_id()),
+            incoming.len(),
+            outgoing.len()
+        );
         *num_inlined += 1 + grw_to_inline.inlined_functions_count();
         *max_call_stack_depth =
             (*max_call_stack_depth).max(grw_to_inline.max_call_stack_depth() + 1);
@@ -1003,8 +1005,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     Node::Argument(a) => {
                         for nidx in argument_map
                             .get(&EdgeType::Data(a.as_usize() as u32))
-                            .into_iter()
-                            .flat_map(|s| s.into_iter())
+                            .unwrap()
+                            .iter()
                         {
                             add_edge(*nidx, true)
                         }
@@ -1020,12 +1022,13 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 "Handling {old} (now {new}) {} incoming edges",
                 to_inline.edges_directed(old, pg::Incoming).count()
             );
-            for edge in incoming {
+            for edge in to_inline.edges_directed(old, pg::Incoming) {
+                debug!("See incoming edge {} ({})", edge.source(), edge.weight());
                 match new {
-                    Node::Call(_) => connect_to(g, edge.0, new, edge.1, false),
+                    Node::Call(_) => connect_to(g, edge.source(), new, *edge.weight(), false),
                     Node::Return | Node::Argument(_) => {
                         for (target, out) in outgoing {
-                            connect_to(g, edge.0, *target, *out, true);
+                            connect_to(g, edge.source(), *target, *out, true);
                         }
                     }
                 }
@@ -1045,10 +1048,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         body_id: BodyId,
     ) -> EdgeSet<'g> {
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
-        if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, body_id) {
-            return Default::default();
-        };
         let mut queue_for_pruning = HashSet::new();
+        if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, body_id) {
+            return queue_for_pruning;
+        };
         let targets = i_graph
             .graph
             .node_references()
@@ -1095,8 +1098,38 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             })
             .collect::<Vec<_>>();
         for (idx, root_location, action) in targets {
-            let (def_id, is_async_closure) = match action {
-                InlineAction::SimpleInline(did) => (did, None),
+            match action {
+                InlineAction::SimpleInline(did) => {
+                    assert!(root_location.is_at_root());
+                    let incoming = i_graph
+                        .graph
+                        .edges_directed(idx, pg::Incoming)
+                        .map(|e| (e.source(), *e.weight()))
+                        .collect::<Vec<_>>();
+                    let outgoing = i_graph
+                        .graph
+                        .edges_directed(idx, pg::Outgoing)
+                        .map(|e| (e.target(), *e.weight()))
+                        .collect::<Vec<_>>();
+                    let call = &proc_g.calls[&DisplayViaDebug(root_location.outermost_location())];
+                    let arguments = call
+                        .arguments
+                        .iter()
+                        .map(|a| a.as_ref().map(|a| a.0))
+                        .collect::<Vec<_>>();
+                    self.inline_one_function(
+                        i_graph,
+                        body_id,
+                        did,
+                        None,
+                        &incoming,
+                        &outgoing,
+                        &arguments,
+                        call.return_to,
+                        &mut queue_for_pruning,
+                        root_location,
+                    );
+                }
                 InlineAction::Drop => {
                     let incoming_closure = i_graph
                         .graph
@@ -1137,39 +1170,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             )),
                         ));
                     }
-                    i_graph.graph.remove_node(idx);
-                    continue;
                 }
             };
-            assert!(root_location.is_at_root());
-            let incoming = i_graph
-                .graph
-                .edges_directed(idx, pg::Incoming)
-                .map(|e| (e.source(), *e.weight()))
-                .collect::<Vec<_>>();
-            let outgoing = i_graph
-                .graph
-                .edges_directed(idx, pg::Outgoing)
-                .map(|e| (e.target(), *e.weight()))
-                .collect::<Vec<_>>();
-            let call = &proc_g.calls[&DisplayViaDebug(root_location.outermost_location())];
-            let arguments = call
-                .arguments
-                .iter()
-                .map(|a| a.as_ref().map(|a| a.0))
-                .collect::<Vec<_>>();
-            self.inline_one_function(
-                i_graph,
-                body_id,
-                def_id,
-                is_async_closure,
-                &incoming,
-                &outgoing,
-                &arguments,
-                call.return_to,
-                &mut queue_for_pruning,
-                root_location,
-            );
             i_graph.graph.remove_node(idx);
         }
         queue_for_pruning
@@ -1198,7 +1200,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             }
         }
 
-        let mut queue_for_pruning = time(&format!("Inlining subgraphs into {name}"), || {
+        let mut queue_for_pruning = time(&format!("Inlining subgraphs into '{name}'"), || {
             self.perform_subfunction_inlining(&proc_g, &mut gwr, body_id)
         });
 
