@@ -115,17 +115,30 @@ where
         .unwrap()
         .success()
 }
-
 /// Run dfpp in the current directory, passing the
 /// `--dump-serialized-flow-graph` which dumps the [`ProgramDescription`] as
 /// JSON.
 ///
 /// The result is suitable for reading with [`PreFrg::from_file_at`]
 pub fn run_dfpp_with_flow_graph_dump() -> bool {
+    run_dfpp_with_flow_graph_dump_and::<_, &str>([])
+}
+
+/// Run dfpp in the current directory, passing the
+/// `--dump-serialized-flow-graph` which dumps the [`ProgramDescription`] as
+/// JSON.
+///
+/// The result is suitable for reading with [`PreFrg::from_file_at`]
+pub fn run_dfpp_with_flow_graph_dump_and<I, S>(extra: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     std::process::Command::new("cargo")
         .arg("dfpp")
         .arg("--abort-after-analysis")
         .arg("--dump-serialized-flow-graph")
+        .args(extra)
         .status()
         .unwrap()
         .success()
@@ -513,15 +526,57 @@ impl G {
     }
 }
 
-pub trait HasGraph<'g> {
-    fn graph(self) -> &'g ProgramDescription;
+pub trait HasGraph<'g>: Sized + Copy {
+    fn graph(self) -> &'g PreFrg;
+
+    fn function(self, name: &str) -> FnRef<'g> {
+        FnRef {
+            graph: self.graph(),
+            ident: Identifier::from_str(name),
+        }
+    }
+
+    fn ctrl(self, name: &str) -> CtrlRef<'g> {
+        let ident = Identifier::from_str(name);
+        CtrlRef {
+            graph: self.graph(),
+            ident,
+            ctrl: &self.graph().0.controllers[&self.ctrl_hashed(name)],
+        }
+    }
+
+    fn ctrl_hashed(self, name: &str) -> Identifier {
+        match self
+            .graph()
+            .0
+            .controllers
+            .iter()
+            .filter(|(id, _)| id.as_str().starts_with(name) && id.as_str().len() == name.len() + 7)
+            .map(|i| i.0)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            [] => panic!("Could not find controller '{name}'"),
+            [ctrl] => **ctrl,
+            more => panic!("Too many matching controllers, found candidates: {more:?}"),
+        }
+    }
+
+    fn has_marker(self, marker: &str) -> bool {
+        let marker = Symbol::intern(marker);
+        self.graph().0.annotations.values().any(|v| {
+            v.0.iter()
+                .filter_map(|a| a.as_label_ann())
+                .any(|m| m.marker == marker)
+        })
+    }
 }
 
 pub struct PreFrg(ProgramDescription);
 
 impl<'g> HasGraph<'g> for &'g PreFrg {
-    fn graph(self) -> &'g ProgramDescription {
-        &self.0
+    fn graph(self) -> &'g PreFrg {
+        self
     }
 }
 
@@ -540,41 +595,6 @@ impl PreFrg {
             )
         })
     }
-
-    pub fn function(&self, name: &str) -> FnRef {
-        FnRef {
-            graph: self,
-            ident: Identifier::from_str(name),
-        }
-    }
-
-    pub fn ctrl(&self, name: &str) -> CtrlRef {
-        let ident = Identifier::from_str(name);
-        CtrlRef {
-            graph: self,
-            ident,
-            ctrl: &self.0.controllers[&self.ctrl_hashed(name)],
-        }
-    }
-
-    pub fn ctrl_hashed(&self, name: &str) -> Identifier {
-        self.0
-            .controllers
-            .iter()
-            .find(|(id, _)| id.as_str().starts_with(name))
-            .unwrap()
-            .0
-            .to_owned()
-    }
-
-    pub fn has_marker(&self, marker: &str) -> bool {
-        let marker = Symbol::intern(marker);
-        self.0.annotations.values().any(|v| {
-            v.0.iter()
-                .filter_map(|a| a.as_label_ann())
-                .any(|m| m.marker == marker)
-        })
-    }
 }
 
 #[derive(Clone)]
@@ -591,7 +611,7 @@ impl<'g> PartialEq for CtrlRef<'g> {
 }
 
 impl<'g> HasGraph<'g> for &CtrlRef<'g> {
-    fn graph(self) -> &'g ProgramDescription {
+    fn graph(self) -> &'g PreFrg {
         self.graph.graph()
     }
 }
@@ -672,7 +692,7 @@ impl<'g> CtrlRef<'g> {
 }
 
 impl<'g> HasGraph<'g> for &FnRef<'g> {
-    fn graph(self) -> &'g ProgramDescription {
+    fn graph(self) -> &'g PreFrg {
         self.graph.graph()
     }
 }
@@ -683,7 +703,7 @@ pub struct FnRef<'g> {
 }
 
 impl<'g> FnRef<'g> {
-    fn graph(&self) -> &'g ProgramDescription {
+    fn graph(&self) -> &'g PreFrg {
         self.graph.graph()
     }
 }
@@ -769,7 +789,7 @@ impl<'g> CallSiteRef<'g> {
 }
 
 impl<'g> HasGraph<'g> for &CallSiteRef<'g> {
-    fn graph(self) -> &'g ProgramDescription {
+    fn graph(self) -> &'g PreFrg {
         self.function.graph()
     }
 }
@@ -780,7 +800,7 @@ pub struct DataSinkRef<'g> {
 }
 
 impl<'g> HasGraph<'g> for &DataSinkRef<'g> {
-    fn graph(self) -> &'g ProgramDescription {
+    fn graph(self) -> &'g PreFrg {
         match self.call_site {
             Either::Left(l) => l.graph(),
             Either::Right(r) => r.graph(),

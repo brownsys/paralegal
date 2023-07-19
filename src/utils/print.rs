@@ -48,7 +48,7 @@ impl<T> std::ops::Deref for DisplayViaDebug<T> {
 }
 
 impl<T> From<T> for DisplayViaDebug<T> {
-    fn from(value: T) -> Self {
-        DisplayViaDebug(value)
+    fn from(t: T) -> Self {
+        Self(t)
     }
 }

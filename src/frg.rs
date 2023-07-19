@@ -8,11 +8,15 @@ extern crate pretty;
 
 use std::hash::Hash;
 
-use crate::{ir::IsGlobalLocation, utils::IntoDefId, HashSet, TyCtxt};
+use crate::{
+    ir::IsGlobalLocation,
+    utils::IntoDefId,
+    HashSet, ModelCtrl, TyCtxt,
+};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
-    Annotation, CallSite, Ctrl, DataSink, DataSource, Identifier, ObjectType, ProgramDescription,
+    Annotation, CallSite, DataSink, DataSource, Identifier, ObjectType, ProgramDescription,
     Relation,
 };
 
@@ -242,6 +246,32 @@ fn data_source_as_forge<'b, A, D: DocAllocator<'b, A>>(
     }
 }
 
+#[derive(Eq, PartialEq, Copy, Clone, Hash, serde::Serialize, serde::Deserialize)]
+pub enum Version {
+    V1,
+    V2,
+}
+
+impl std::str::FromStr for Version {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "v1" => Ok(Version::V1),
+            "v2" => Ok(Version::V2),
+            other => Err(format!("Unknown version number {other}")),
+        }
+    }
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Version::V1 => "v1",
+            Version::V2 => "v2",
+        })
+    }
+}
+
 pub mod name {
     //! Constants for the names of the Forge entities (`sig`s and relations) we
     //! emit.
@@ -273,6 +303,7 @@ pub mod name {
     //pub const RETURN_CALL_SITE: &'static str = "ret_call_site";
     pub const OTYPE_REL: &str = "otype";
     pub const EXCEPTIONS_LABEL: &str = "exception";
+    pub const CTRL_CALLS: &str = "calls";
 
     pub enum Qualifier {
         Abstract,
@@ -281,49 +312,91 @@ pub mod name {
     }
 
     use Qualifier::*;
-    lazy_static! {
-        /// A description of the preamble of Forge `sig`s we always emit.
-        ///
-        /// These are in topological order, because the code generation just
-        /// iterates over this vector and emits them in the same order as in
-        /// this vector and Forge requires everything (e.g. an inherited `sig`)
-        /// to be defined before being referenced.
-        pub static ref SIGS: Vec<(
-                &'static str,
-                Qualifier,
-                Option<&'static str>,
-                Vec<(&'static str, String)>,
-            )> = {
-                let set = |i| "set ".to_string() + i;
-                let one = |i| "one ".to_string() + i;
-                let arr = |from: &str, to| from.to_string() + "->" + to;
+    /// A description of the preamble of Forge `sig`s we always emit.
+    ///
+    /// These are in topological order, because the code generation just
+    /// iterates over this vector and emits them in the same order as in
+    /// this vector and Forge requires everything (e.g. an inherited `sig`)
+    /// to be defined before being referenced.
+    pub fn sigs(
+        version: super::Version,
+    ) -> Vec<(
+        &'static str,
+        Qualifier,
+        Option<&'static str>,
+        Vec<(&'static str, String)>,
+    )> {
+        use super::Version::*;
+        fn set(i: &str) -> String {
+            "set ".to_string() + i
+        }
+        fn one(i: &str) -> String {
+            "one ".to_string() + i
+        }
+        fn arr(from: &str, to: &str) -> String {
+            from.to_string() + "->" + to
+        }
+        let mut sigs = Vec::new();
+        sigs.push((LABEL, Abstract, None, vec![]));
+        sigs.push((OBJ, Abstract, None, vec![(LABELS_REL, set(LABEL))]));
+        sigs.push((FUNCTION, No, Some(OBJ), vec![]));
+        sigs.push((
+            SRC,
+            Abstract,
+            Some(OBJ),
+            match version {
+                V1 => vec![],
+                V2 => vec![
+                    (FLOW, set(SINK)),
+                    (CTRL_FLOW, set(CALL_SITE)),
+                    (TYPES, set(TYPE)),
+                ],
+            },
+        ));
+        match version {
+            V1 => sigs.push((
+                FORMAL_PARAMETER,
+                No,
+                Some(SRC),
                 vec![
-                    (LABEL, Abstract, None, vec![]),
-                    (OBJ, Abstract, None, vec![(LABELS_REL, set(LABEL))]),
-                    (FUNCTION, No, Some(OBJ), vec![]),
-                    (SRC, Abstract, Some(OBJ), vec![]),
-                    (FORMAL_PARAMETER, No, Some(SRC), vec![
-                        (FORMAL_PARAMETER_FUNCTION, set(FUNCTION)),
-                        (FORMAL_PARAMETER_ANNOTATION, set(&arr(FUNCTION, LABEL)))]),
-                    (SINK, Abstract, Some(OBJ), vec![]),
-                    (RETURN, One, Some(SINK), vec![]),
-                    //(CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]),
-                    (CALL_ARGUMENT, No, Some(SINK), vec![(ARG_CALL_SITE, one(CALL_SITE))]),
-                    (TYPE, No, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
-                    //(CALL_ARGUMENT_OUTPUT, Some(SRC), vec![(RETURN_CALL_SITE, one(CALL_SITE))]),
-                    (CALL_SITE, No, Some(SRC), vec![(FUN_REL, one(FUNCTION))]),
-                    (
-                        CTRL,
-                        No,
-                        Some(FUNCTION),
-                        vec![
-                            (FLOW, set(&arr(SRC, SINK))),
-                            (CTRL_FLOW, set(&arr(SRC, CALL_SITE))),
-                            (TYPES, set(&arr(SRC, TYPE))),
-                        ],
-                    ),
-                ]
-            };
+                    (FORMAL_PARAMETER_FUNCTION, set(FUNCTION)),
+                    (FORMAL_PARAMETER_ANNOTATION, set(&arr(FUNCTION, LABEL))),
+                ],
+            )),
+            V2 => sigs.push((
+                FORMAL_PARAMETER,
+                No,
+                Some(SRC),
+                vec![(FORMAL_PARAMETER_FUNCTION, set(FUNCTION))],
+            )),
+        }
+        sigs.push((SINK, Abstract, Some(OBJ), vec![]));
+        sigs.push((RETURN, One, Some(SINK), vec![]));
+        //(CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]));
+        sigs.push((
+            CALL_ARGUMENT,
+            No,
+            Some(SINK),
+            vec![(ARG_CALL_SITE, one(CALL_SITE))],
+        ));
+        sigs.push((TYPE, No, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]));
+        //(CALL_ARGUMENT_OUTPUT, Some(SRC), vec![(RETURN_CALL_SITE, one(CALL_SITE))]));
+        sigs.push((CALL_SITE, No, Some(SRC), vec![(FUN_REL, one(FUNCTION))]));
+        match version {
+            V1 => sigs.push((
+                CTRL,
+                No,
+                Some(FUNCTION),
+                vec![
+                    (FLOW, set(&arr(SRC, SINK))),
+                    (CTRL_FLOW, set(&arr(SRC, CALL_SITE))),
+                    (TYPES, set(&arr(SRC, TYPE))),
+                ],
+            )),
+            V2 => sigs.push((CTRL, No, Some(FUNCTION), vec![(CTRL_CALLS, set(CALL_SITE))])),
+        }
+
+        sigs
     }
 }
 
@@ -369,39 +442,46 @@ fn hash_set_into_call_site_forge<'a, A: 'a, D: DocAllocator<'a, A>>(
 }
 
 /// Emit `sig`s for everything in [`name::SIGS`](struct@name::SIGS)
-fn make_forge_sigs<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(alloc: &'a D) -> DocBuilder<'a, D, A>
+fn make_forge_sigs<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
+    version: Version,
+    alloc: &'a D,
+) -> DocBuilder<'a, D, A>
 where
     D::Doc: Clone,
 {
-    alloc.lines(name::SIGS.iter().map(|(name, qualifier, parent, fields)| {
-        alloc
-            .text(match *qualifier {
-                Qualifier::Abstract => "abstract sig ",
-                Qualifier::No => "sig ",
-                Qualifier::One => "one sig ",
-            })
-            .append(*name)
-            .append(parent.map_or(alloc.nil(), |p| alloc.text(" extends ").append(p)))
-            .append(alloc.space())
-            .append(
-                if fields.is_empty() {
-                    alloc.nil()
-                } else {
-                    alloc.hardline().append(
-                        alloc
-                            .intersperse(
-                                fields.iter().map(|(name, typ)| {
-                                    alloc.text(*name).append(": ").append(alloc.text(typ))
-                                }),
-                                alloc.text(",").append(alloc.hardline()),
+    alloc.lines(
+        name::sigs(version)
+            .into_iter()
+            .map(|(name, qualifier, parent, fields)| {
+                alloc
+                    .text(match qualifier {
+                        Qualifier::Abstract => "abstract sig ",
+                        Qualifier::No => "sig ",
+                        Qualifier::One => "one sig ",
+                    })
+                    .append(name)
+                    .append(parent.map_or(alloc.nil(), |p| alloc.text(" extends ").append(p)))
+                    .append(alloc.space())
+                    .append(
+                        if fields.is_empty() {
+                            alloc.nil()
+                        } else {
+                            alloc.hardline().append(
+                                alloc
+                                    .intersperse(
+                                        fields.into_iter().map(|(name, typ)| {
+                                            alloc.text(name).append(": ").append(alloc.text(typ))
+                                        }),
+                                        alloc.text(",").append(alloc.hardline()),
+                                    )
+                                    .indent(4)
+                                    .append(alloc.hardline()),
                             )
-                            .indent(4)
-                            .append(alloc.hardline()),
+                        }
+                        .braces(),
                     )
-                }
-                .braces(),
-            )
-    }))
+            }),
+    )
 }
 
 #[derive(Hash, PartialEq, Eq)]
@@ -642,42 +722,154 @@ impl ProgramDescription {
             )
         }))
     }
-}
 
-impl Ctrl {
     fn make_types_relation<'a, A: 'a, D: DocAllocator<'a, A>>(
         &'a self,
         alloc: &'a D,
-        ctrl: Identifier,
+        version: Version,
     ) -> DocBuilder<'a, D, A>
     where
         D::Doc: Clone,
         A: Clone,
     {
-        alloc.hardline().append(
-            alloc
-                .forge_relation(self.types.0.iter().map(|(i, desc)| {
+        match version {
+            Version::V1 => alloc.forge_relation_with_arity(
+                3,
+                self.controllers.iter().map(|(e, ctrl)| {
                     (
-                        std::iter::once(data_source_as_forge(i, alloc, ctrl)),
+                        std::iter::once(e.as_forge(alloc)),
+                        std::iter::once(
+                            alloc.hardline().append(
+                                alloc
+                                    .forge_relation(ctrl.types.0.iter().map(|(i, desc)| {
+                                        (
+                                            std::iter::once(data_source_as_forge(i, alloc, *e)),
+                                            desc.iter().map(|t| t.as_forge(alloc)),
+                                        )
+                                    }))
+                                    .indent(4),
+                            ),
+                        ),
+                    )
+                }),
+            ),
+            Version::V2 => alloc.forge_relation(self.controllers.iter().flat_map(|(e, ctrl)| {
+                ctrl.types.0.iter().map(|(i, desc)| {
+                    (
+                        std::iter::once(data_source_as_forge(i, alloc, *e)),
                         desc.iter().map(|t| t.as_forge(alloc)),
                     )
-                }))
-                .indent(4),
-        )
+                })
+            })),
+        }
     }
 }
 
 impl ProgramDescription {
+    pub fn make_flow<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
+        &'a self,
+        alloc: &'a D,
+        version: Version,
+    ) -> DocBuilder<D, A>
+    where
+        D::Doc: Clone,
+    {
+        match version {
+            Version::V1 => alloc.forge_relation_with_arity(
+                3,
+                self.controllers.iter().map(|(e, ctrl)| {
+                    (
+                        std::iter::once(e.as_forge(alloc)),
+                        std::iter::once(
+                            alloc.hardline().append(
+                                //(&ctrl.data_flow).as_forge(alloc)
+                                alloc
+                                    .forge_relation(ctrl.data_flow.0.iter().map(
+                                        |(source, sinks)| {
+                                            (
+                                                std::iter::once(data_source_as_forge(
+                                                    source, alloc, *e,
+                                                )),
+                                                sinks.iter().map(|snk| snk.as_forge(alloc)),
+                                            )
+                                        },
+                                    ))
+                                    .indent(4),
+                            ),
+                        ),
+                    )
+                }),
+            ),
+            Version::V2 => alloc.forge_relation(self.controllers.iter().flat_map(|(e, ctrl)| {
+                ctrl.data_flow.0.iter().map(|(src, snks)| {
+                    (
+                        std::iter::once(data_source_as_forge(src, alloc, *e)),
+                        snks.iter().map(|snk| snk.as_forge(alloc)),
+                    )
+                })
+            })),
+        }
+    }
+
+    pub fn make_ctrl_flow<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
+        &'a self,
+        alloc: &'a D,
+        version: Version,
+    ) -> DocBuilder<D, A>
+    where
+        D::Doc: Clone,
+    {
+        match version {
+            Version::V1 => alloc.forge_relation_with_arity(
+                3,
+                self.controllers.iter().map(|(e, ctrl)| {
+                    (
+                        std::iter::once(e.as_forge(alloc)),
+                        std::iter::once(
+                            alloc.hardline().append(
+                                (alloc.forge_relation(ctrl.ctrl_flow.0.iter().map(
+                                    |(src, sinks)| {
+                                        (
+                                            std::iter::once(data_source_as_forge(src, alloc, *e)),
+                                            sinks
+                                                .iter()
+                                                .map(|sink| call_site_as_forge(alloc, sink)),
+                                        )
+                                    },
+                                )))
+                                .indent(4),
+                            ),
+                        ),
+                    )
+                }),
+            ),
+            Version::V2 => alloc.forge_relation(self.controllers.iter().flat_map(|(e, ctrl)| {
+                ctrl.ctrl_flow.0.iter().map(|(src, snks)| {
+                    (
+                        std::iter::once(data_source_as_forge(src, alloc, *e)),
+                        snks.iter().map(|snk| call_site_as_forge(alloc, snk)),
+                    )
+                })
+            })),
+        }
+    }
+
     pub fn serialize_forge<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
         &'a self,
         alloc: &'a D,
         tcx: TyCtxt,
+        model_ctrl: &ModelCtrl,
     ) -> DocBuilder<'a, D, A>
     where
         D::Doc: Clone,
     {
+        let version = model_ctrl.model_version();
         alloc.lines([
-            alloc.text("#lang forge"),
+            if model_ctrl.skip_sigs() {
+                alloc.nil()
+            } else {
+                alloc.text("#lang forge")
+            },
             alloc.nil(),
             alloc
                 .text("/* This file is auto-generated by ")
@@ -686,7 +878,11 @@ impl ProgramDescription {
                 .append(crate_version!())
                 .append(". */"),
             alloc.nil(),
-            make_forge_sigs(alloc),
+            if model_ctrl.skip_sigs() {
+                alloc.nil()
+            } else {
+                make_forge_sigs(version, alloc)
+            },
             alloc.nil(),
             self.make_label_sigs(alloc),
             alloc.nil(),
@@ -799,68 +995,19 @@ impl ProgramDescription {
                             alloc.nil(),
                             alloc.text(name::FLOW).append(" = ").append(
                                 alloc.hardline().append(
-                                    alloc
-                                        .forge_relation_with_arity(3, self.controllers.iter().map(|(e, ctrl)| {
-                                            (
-                                                std::iter::once(e.as_forge(alloc)),
-                                                std::iter::once(alloc.hardline().append(
-                                                    //(&ctrl.data_flow).as_forge(alloc)
-                                                    alloc.forge_relation(
-                                                        ctrl.data_flow.0.iter().map(|(source, sinks)|
-                                                            (
-                                                                std::iter::once(data_source_as_forge(source, alloc, *e)),
-                                                                sinks.iter().map(|snk| snk.as_forge(alloc))
-                                                            )
-                                                        )
-                                                    )
-                                                    .indent(4),
-                                                )),
-                                            )
-                                        }))
+                                    self.make_flow(alloc, version)
                                         .indent(4),
                                 ),
                             ),
                             alloc.text(name::CTRL_FLOW).append(" = ").append(
                                 alloc.hardline().append(
-                                    alloc
-                                        .forge_relation_with_arity(3, self.controllers.iter().map(|(e, ctrl)| {
-                                            (
-                                                std::iter::once(e.as_forge(alloc)),
-                                                std::iter::once(
-                                                    alloc.hardline().append(
-                                                        (alloc.forge_relation(
-                                                            ctrl.ctrl_flow.0.iter().map(
-                                                                |(src, sinks)| {
-                                                                    (
-                                                                        std::iter::once(
-                                                                            data_source_as_forge(src, alloc, *e)
-                                                                        ),
-                                                                        sinks.iter().map(|sink| {
-                                                                            call_site_as_forge(
-                                                                                alloc, sink,
-                                                                            )
-                                                                        }),
-                                                                    )
-                                                                },
-                                                            ),
-                                                        ))
-                                                        .indent(4),
-                                                    ),
-                                                ),
-                                            )
-                                        }))
+                                        self.make_ctrl_flow(alloc, version)
                                         .indent(4),
                                 ),
                             ),
                             alloc.text(name::TYPES).append(" = ").append(
                                 alloc.hardline().append(
-                                    alloc
-                                        .forge_relation_with_arity(3, self.controllers.iter().map(|(e, ctrl)| {
-                                            (
-                                                std::iter::once(e.as_forge(alloc)),
-                                                std::iter::once(ctrl.make_types_relation(alloc, *e)),
-                                            )
-                                        }))
+                                        self.make_types_relation(alloc, version)
                                         .indent(4),
                                 ),
                             ),
@@ -909,25 +1056,52 @@ impl ProgramDescription {
                                     self.make_formal_param_relation(alloc).indent(4).append(alloc.hardline())
                                 ).parens()
                             ),
-                            alloc.text(name::FORMAL_PARAMETER_ANNOTATION).append(" = ").append(
-                                alloc.hardline()
-                                .append(
-                                    alloc.forge_relation_with_arity(3,
-                                        self.annotations.iter()
-                                            .flat_map(|(ident, (anns, _))|
-                                                anns.iter().filter_map(Annotation::as_label_ann)
-                                                    .flat_map(|label|
-                                                        label.refinement.on_argument().into_iter_set_in_domain().map(|i|
-                                                            (
-                                                                std::iter::once(FormalParameter { position: i as u16, function: *ident }.as_forge(alloc)),
-                                                                std::iter::once(ident.as_forge(alloc).append("->").append(label.marker.as_str())))))
-                                            )
+                            if version == Version::V1 {
+                                alloc.text(name::FORMAL_PARAMETER_ANNOTATION).append(" = ").append(
+                                    alloc.hardline()
+                                    .append(
+                                        alloc.forge_relation_with_arity(3,
+                                            self.annotations.iter()
+                                                .flat_map(|(ident, (anns, _))|
+                                                    anns.iter().filter_map(Annotation::as_label_ann)
+                                                        .flat_map(|label| 
+                                                            label.refinement.on_argument().into_iter_set_in_domain().map(|i| 
+                                                                (
+                                                                    std::iter::once(FormalParameter { position: i as u16, function: *ident }.as_forge(alloc)), 
+                                                                    std::iter::once(ident.as_forge(alloc).append("->").append(label.marker.as_str())))))
+                                                        
+                                                )   
+                                        )
+                                        .indent(4)
+                                        .append(alloc.hardline())
                                     )
-                                    .indent(4)
-                                    .append(alloc.hardline())
+                                    .parens()
                                 )
-                                .parens()
-                            )
+                            } else {
+                                alloc.text(name::CTRL_CALLS).append(" = ").append(
+                                    alloc.hardline().append(
+                                        alloc.forge_relation_with_arity(2, 
+                                            self.controllers.iter().map(|(ctrl, data)| {
+                                                let call_sites = data.ctrl_flow.0.iter().flat_map(|(from, to)| 
+                                                    from.as_function_call().into_iter().chain(to)
+                                                ).chain(
+                                                    data.data_flow.0.iter().flat_map(|(from, to)| 
+                                                    from.as_function_call().into_iter().chain(
+                                                        to.iter().filter_map(|s| s.as_argument()).map(|a| a.0)
+                                                    )
+                                                )
+                                                ).collect::<HashSet<_>>();
+
+                                                (std::iter::once(ctrl.as_forge(alloc)),
+                                                call_sites.into_iter().map(|cs| cs.as_forge(alloc))
+                                                )
+                                            })
+                                        )
+                                        .indent(4)
+                                        .append(alloc.hardline())
+                                    )
+                                )
+                            }
                         ])
                         .nest(4)
                         .append(alloc.hardline())

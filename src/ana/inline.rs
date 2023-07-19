@@ -38,6 +38,8 @@ use crate::{
     },
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
+
+use super::df::MarkerCarryingOracle;
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
 
 /// This essentially describes a closure that determines for a given
@@ -62,17 +64,21 @@ use rustc_utils::{cache::Cache, mir::borrowck_facts};
 ///
 /// The only implementation currently in use for this is
 /// [`SkipAnnotatedFunctionSelector`].
-pub trait Oracle<'tcx, 's> {
+pub trait Oracle {
     fn should_inline(&self, did: LocalDefId) -> bool;
     fn is_semantically_meaningful(&self, did: DefId) -> bool;
+    fn carries_marker(&self, did: DefId) -> bool;
 }
 
-impl<'tcx, 's, T: Oracle<'tcx, 's>> Oracle<'tcx, 's> for std::rc::Rc<T> {
+impl<T: Oracle> Oracle for std::rc::Rc<T> {
     fn should_inline(&self, did: LocalDefId) -> bool {
         self.as_ref().should_inline(did)
     }
     fn is_semantically_meaningful(&self, did: DefId) -> bool {
         self.as_ref().is_semantically_meaningful(did)
+    }
+    fn carries_marker(&self, did: DefId) -> bool {
+        self.as_ref().carries_marker(did)
     }
 }
 
@@ -306,38 +312,36 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         graph: &mut InlinedGraph<'g>,
         name: Symbol,
         edges_to_prune: &EdgeSet<'g>,
+        id: LocalDefId,
     ) {
         time(&format!("Edge Pruning for {name}"), || {
             let InlinedGraph {
                 graph, equations, ..
             } = graph;
-            info!("Have {} equations for pruning", equations.len());
-            // debug!(
-            //     "Equations for pruning are:\n{}",
-            //     crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-            //         for eq in equations.iter() {
-            //             writeln!(f, "  {eq}")?;
-            //         }
-            //         Ok(())
-            //     })
-            // );
-            // false.then(|| {
-            //     let solver =
-            //         algebra::MemoizedSolution::construct(self.equations.iter().map(|e| e.clone()));
-            //     algebra::dump_dot_graph(
-            //         &mut outfile_pls(&format!("{name}.eqgraph.gv")).unwrap(),
-            //         &solver,
-            //     )
-            //     .unwrap();
-            //     solver
-            // });
             info!(
-                "Pruning over {} edges",
+                "Have {} equations for pruning {} edges",
+                equations.len(),
                 edges_to_prune
                     .into_iter()
                     .filter_map(|&(a, b)| Some(graph.edge_weight(a, b)?.count()))
                     .count()
             );
+
+            debug!(
+                "{}",
+                Print(|f| {
+                    for eq in equations.iter() {
+                        writeln!(f, "{eq}")?;
+                    }
+                    Ok(())
+                })
+            );
+
+            let locals_graph = algebra::graph::new(equations);
+            if self.dbg_ctrl.dump_locals_graph() {
+                let f = dump_file_pls(self.tcx, id, "locals-graph.gv").unwrap();
+                algebra::graph::dump(f, &locals_graph, |_| false, |_| false);
+            }
 
             for &(from, to) in edges_to_prune {
                 if let Some(weight) = graph.edge_weight_mut(from, to) {
@@ -372,32 +376,21 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 f.write_char('}')
                             })
                         );
-                        let mut is_reachable = false;
-                        algebra::solve_with(
-                            &equations,
-                            &to_target,
-                            |to| targets.contains(to),
-                            |term| {
-                                debug!(
-                                    "Found to be reachable via term {}",
-                                    Print(|f| algebra::display_term_pieces(f, &term, &0))
-                                );
-                                is_reachable = true;
-                                false
-                            },
+                        let is_reachable = algebra::graph::reachable(
+                            to_target,
+                            |to| targets.contains(&to),
+                            &locals_graph,
                         );
 
-                        if !is_reachable {
+                        if let Some((_visited, t)) = is_reachable {
+                            debug!(
+                                "Found {from} -> {to} to be reachable via {}",
+                                Print(|fmt| { algebra::display_term_pieces(fmt, &t, &0_usize) })
+                            );
+                        } else {
                             debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
                             weight.data.clear(idx)
                         }
-
-                        // if !algebra::solve_reachable(&equations, &to_target, |to| {
-                        //     targets.contains(to)
-                        // }) {
-                        //     debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
-                        //     weight.data.clear(idx)
-                        // }
                     }
                     if weight.is_empty() {
                         graph.remove_edge(from, to);
@@ -413,17 +406,9 @@ impl<'g> InlinedGraph<'g> {
         gli: GLI<'g>,
         body_id: BodyId,
         body: &regal::Body<DisplayViaDebug<Location>>,
+        tcx: TyCtxt,
     ) -> Self {
         time("Graph Construction From Regal Body", || {
-            debug!(
-                "Equations for body are:\n{}",
-                crate::utils::Print(|f: &mut std::fmt::Formatter<'_>| {
-                    for eq in body.equations.iter() {
-                        writeln!(f, "  {eq}")?;
-                    }
-                    Ok(())
-                })
-            );
             let equations = to_global_equations(&body.equations, body_id, gli);
             let mut gwr = InlinedGraph {
                 equations,
@@ -437,19 +422,6 @@ impl<'g> InlinedGraph<'g> {
                 .iter()
                 .map(|(loc, call)| (loc, call.function))
                 .collect::<HashMap<_, _>>();
-            // let node_map = body
-            //     .calls
-            //     .iter()
-            //     .map(|(loc, call)| (*loc, g.add_node(Node::Call((*loc, call.function)))))
-            //     .collect::<HashMap<_, _>>();
-            // let arg_map = IndexVec::from_raw(
-            //     body.return_arg_deps
-            //         .iter()
-            //         .enumerate()
-            //         .map(|(i, _)| g.add_node(SimpleLocation::Argument(ArgNum::from_usize(i))))
-            //         .collect(),
-            // );
-
             let return_node = g.add_node(Node::Return);
 
             let mut add_dep_edges =
@@ -459,7 +431,12 @@ impl<'g> InlinedGraph<'g> {
                         let from = match d {
                             Target::Call(c) => regal::SimpleLocation::Call((
                                 gli.globalize_location(**c, body_id),
-                                call_map[c],
+                                *call_map.get(c).unwrap_or_else(|| {
+                                    panic!(
+                                        "Expected to find call at {c} in function {}",
+                                        tcx.def_path_debug_str(body_id.into_def_id(tcx))
+                                    )
+                                }),
                             )),
                             Target::Argument(a) => regal::SimpleLocation::Argument(*a),
                         };
@@ -508,11 +485,12 @@ pub struct Inliner<'tcx, 'g, 's> {
     /// (possibly transitively).
     inline_memo: RecursionBreakingCache<BodyId, InlinedGraph<'g>>,
     /// Makes choices base on labels
-    oracle: &'s dyn Oracle<'tcx, 's>,
+    oracle: &'s (dyn Oracle + 's),
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     ana_ctrl: &'static AnalysisCtrl,
     dbg_ctrl: &'static DbgArgs,
+    marker_carrying: MarkerCarryingOracle<'tcx, 's>,
 }
 
 /// Globalize all locations mentioned in these equations.
@@ -673,14 +651,19 @@ fn is_part_of_async_desugar<L: Copy + Ord + std::hash::Hash>(
 
 enum InlineAction {
     SimpleInline(LocalDefId),
-    Drop,
+    Drop(DropAction),
+}
+
+enum DropAction {
+    None,
+    WrapReturn(Vec<algebra::Operator<DisplayViaDebug<mir::Field>>>),
 }
 
 impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         gli: GLI<'g>,
-        recurse_selector: &'s dyn Oracle<'tcx, 's>,
+        recurse_selector: &'s (dyn Oracle + 's),
         ana_ctrl: &'static AnalysisCtrl,
         dbg_ctrl: &'static DbgArgs,
     ) -> Self {
@@ -692,7 +675,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             inline_memo: Default::default(),
             ana_ctrl,
             dbg_ctrl,
+            marker_carrying: MarkerCarryingOracle::new(recurse_selector, tcx),
         }
+    }
+
+    pub fn is_clone_fn(&self, def_id: DefId) -> bool {
+        self.tcx.trait_of_item(def_id) == self.tcx.lang_items().clone_trait()
     }
 
     /// How many (unique) functions we have analyzed
@@ -703,9 +691,19 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// Compute a procedure graph for this `body_id` (memoized). Actual
     /// computation performed by [`regal::compute_from_body_id`] and
     /// [`ProcedureGraph::from`]
-    fn get_procedure_graph(&self, body_id: BodyId) -> &regal::Body<DisplayViaDebug<Location>> {
+    fn get_procedure_graph<'a: 's>(
+        &'a self,
+        body_id: BodyId,
+    ) -> &regal::Body<DisplayViaDebug<Location>> {
         self.base_memo.get(body_id, |bid| {
-            regal::compute_from_body_id(self.dbg_ctrl, bid, self.tcx, self.gli)
+            regal::compute_from_body_id(
+                self.dbg_ctrl,
+                bid,
+                self.tcx,
+                self.gli,
+                &self.marker_carrying,
+                self.ana_ctrl,
+            )
         })
     }
 
@@ -829,6 +827,31 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 }
             }
             g.remove_node(n);
+        }
+    }
+
+    fn classify_special_function_handling(
+        &self,
+        function: DefId,
+        id: Node<(GlobalLocation<'g>, DefId)>,
+        g: &GraphImpl<GlobalLocation<'g>>,
+    ) -> Option<DropAction> {
+        let language_items = self.tcx.lang_items();
+        if self.ana_ctrl.drop_poll() && is_part_of_async_desugar(language_items, id, &g) {
+            Some(if Some(function) == language_items.new_unchecked_fn() {
+                DropAction::WrapReturn(vec![
+                    algebra::Operator::MemberOf(mir::Field::from_usize(0).into()),
+                    algebra::Operator::RefOf,
+                ])
+            } else if Some(function) == language_items.future_poll_fn() {
+                DropAction::WrapReturn(vec![algebra::Operator::Downcast(0)])
+            } else {
+                DropAction::None
+            })
+        } else if self.ana_ctrl.drop_clone() && self.is_clone_fn(function) {
+            Some(DropAction::WrapReturn(vec![algebra::Operator::RefOf]))
+        } else {
+            None
         }
     }
 
@@ -1050,10 +1073,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         }
                         _ => (),
                     }
-                    if self.ana_ctrl.drop_poll()
-                        && is_part_of_async_desugar(self.tcx.lang_items(), id, &i_graph.graph)
+                    if let Some(ac) = self.classify_special_function_handling(*function, id, &i_graph.graph)
                     {
-                        return Some((id, *location, InlineAction::Drop));
+                        return Some((id, *location, InlineAction::Drop(ac)));
                     }
                 }
                 let local_as_global = GlobalLocal::at_root;
@@ -1112,7 +1134,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         root_location,
                     );
                 }
-                InlineAction::Drop => {
+                InlineAction::Drop(drop_action) => {
                     let incoming_closure = i_graph
                         .graph
                         .edges_directed(idx, pg::Direction::Incoming)
@@ -1130,6 +1152,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
                     for from in incoming_closure {
                         for (to, weight) in outgoing.iter().cloned() {
+                            queue_for_pruning.insert((from, to));
                             add_weighted_edge(&mut i_graph.graph, from, to, weight)
                         }
                     }
@@ -1137,10 +1160,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     if let Some(return_local) = call.return_to {
                         let mut target =
                             algebra::Term::new_base(GlobalLocal::at_root(return_local));
-                        if matches!(idx, SimpleLocation::Call((_, fun)) if self.tcx.lang_items().new_unchecked_fn() == Some(fun))
-                        {
-                            target =
-                                target.add_member_of(DisplayViaDebug(mir::Field::from_usize(0)));
+                        if let DropAction::WrapReturn(wrappings) = drop_action {
+                            target = target.extend(wrappings);
                         }
                         i_graph.equations.push(algebra::Equality::new(
                             target,
@@ -1164,7 +1185,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// it ([`to_global_graph`]).
     fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
         let proc_g = self.get_procedure_graph(body_id);
-        let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g);
+        let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g, self.tcx);
 
         let name = body_name_pls(self.tcx, body_id).name;
         if self.dbg_ctrl.dump_pre_inline_graph() {
@@ -1218,7 +1239,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 }
                 queue_for_pruning
             };
-            self.prune_impossible_edges(&mut gwr, name, &edges_to_prune);
+            self.prune_impossible_edges(
+                &mut gwr,
+                name,
+                &edges_to_prune,
+                body_id.into_local_def_id(self.tcx),
+            );
             if self.dbg_ctrl.dump_inlined_pruned_graph() {
                 dump_dot_graph(
                     dump_file_pls(self.tcx, body_id, "inlined-pruned.gv").unwrap(),

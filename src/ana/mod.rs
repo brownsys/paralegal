@@ -420,12 +420,15 @@ impl<'tcx, 's> SkipAnnotatedFunctionSelector<'tcx, 's> {
     }
 }
 
-impl<'tcx, 's> inline::Oracle<'tcx, 's> for SkipAnnotatedFunctionSelector<'tcx, 's> {
+impl<'tcx, 's> inline::Oracle for SkipAnnotatedFunctionSelector<'tcx, 's> {
     fn should_inline(&self, did: LocalDefId) -> bool {
         !self.has_annotations(did)
     }
 
     fn is_semantically_meaningful(&self, did: DefId) -> bool {
+        self.has_annotations(did)
+    }
+    fn carries_marker(&self, did: DefId) -> bool {
         self.has_annotations(did)
     }
 }

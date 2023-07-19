@@ -884,3 +884,31 @@ pub fn time<R, F: FnOnce() -> R>(msg: &str, f: F) -> R {
     info!("{msg} took {}", humantime::format_duration(time.elapsed()));
     r
 }
+
+pub trait IntoBodyId: Copy {
+    fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId>;
+}
+
+impl IntoBodyId for BodyId {
+    fn into_body_id(self, _tcx: TyCtxt) -> Option<BodyId> {
+        Some(self)
+    }
+}
+
+impl IntoBodyId for HirId {
+    fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
+        self.as_owner()?.def_id.into_body_id(tcx)
+    }
+}
+
+impl IntoBodyId for LocalDefId {
+    fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
+        tcx.hir().maybe_body_owned_by(self)
+    }
+}
+
+impl IntoBodyId for DefId {
+    fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
+        self.as_local()?.into_body_id(tcx)
+    }
+}
