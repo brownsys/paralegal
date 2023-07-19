@@ -35,6 +35,19 @@ newtype_index!(
     pub struct ArgumentIndex {}
 );
 
+impl From<mir::Local> for ArgumentIndex {
+    fn from(value: mir::Local) -> Self {
+        assert_ne!(value, mir::RETURN_PLACE);
+        Self::from_usize(value.as_usize() - 1)
+    }
+}
+
+impl From<ArgumentIndex> for mir::Local {
+    fn from(value: ArgumentIndex) -> Self {
+        Self::from_usize(value.as_usize() + 1)
+    }
+}
+
 impl Display for ArgumentIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "a{}", self.as_usize())
@@ -57,8 +70,8 @@ impl From<LocationOrArg> for Target<DisplayViaDebug<Location>> {
     fn from(value: LocationOrArg) -> Self {
         match value {
             LocationOrArg::Arg(a) => {
-                assert_ne!(a.as_usize(), 0);
-                Target::Argument((a.as_usize() - 1).into())
+                debug!("Saw argument {:?}, now {:?}", a, ArgumentIndex::from(a));
+                Target::Argument(a.into())
             }
             LocationOrArg::Location(loc) => Target::Call(loc.into()),
         }

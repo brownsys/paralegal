@@ -266,7 +266,7 @@ dependencies = [
  "pretty",
  "ringbuffer",
  "rustc_plugin",
- "rustc_utils 0.6.0-nightly-2023-04-12",
+ "rustc_utils 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "serial_test",
@@ -853,12 +853,7 @@ name = "rustc_utils"
 version = "0.6.0-nightly-2023-04-12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3935b4a82abe6904308c9273afba6160cf36f20044e720c43839a08519eadfd8"
-dependencies = [
- "anyhow",
- "cfg-if",
- "intervaltree",
- "log",
-]
+replace = "rustc_utils 0.6.0-nightly-2023-04-12"
 
 [[package]]
 name = "rustix"

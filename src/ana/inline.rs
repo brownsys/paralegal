@@ -531,10 +531,6 @@ fn to_global_equations<'g>(
         .collect()
 }
 
-fn arg_num_to_local(a: regal::ArgumentIndex) -> mir::Local {
-    (a.as_usize() + 1).into()
-}
-
 pub fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
     g: &mut pg::GraphMap<N, Edge, D>,
     source: N,
@@ -769,7 +765,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     ) -> GlobalLocal<'g> {
         match node {
             SimpleLocation::Return => GlobalLocal::at_root(mir::RETURN_PLACE),
-            SimpleLocation::Argument(idx) => GlobalLocal::at_root(arg_num_to_local(*idx)),
+            SimpleLocation::Argument(idx) => GlobalLocal::at_root((*idx).into()),
             SimpleLocation::Call((loc, _)) => {
                 let call = self.get_call(*loc);
                 let pure_local = call.arguments[(idx as usize).into()]
@@ -840,11 +836,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let local_def_id = body_id.into_local_def_id(self.tcx);
         let body_with_facts =
             borrowck_facts::get_simplified_body_with_borrowck_facts(self.tcx, local_def_id);
-        let num_args = body_with_facts.simplified_body().args_iter().count();
-        let local_def_id = body_id.into_local_def_id(self.tcx);
-        let body_with_facts =
-            borrowck_facts::get_simplified_body_with_borrowck_facts(self.tcx, local_def_id);
         let body = body_with_facts.simplified_body();
+        let num_args = body.args_iter().count();
         // XXX This might become invalid if functions other than `async` can create generators
         let closure_fn =
             if let Some(bb) = (*body.basic_blocks).iter().last()
@@ -875,6 +868,11 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         };
 
         let root_location = self.gli.globalize_location(return_location, body_id);
+
+        debug!(
+            "Recognized {} as an async function",
+            self.tcx.def_path_debug_str(local_def_id.to_def_id())
+        );
         self.inline_one_function(
             i_graph,
             body_id,
@@ -882,14 +880,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             Some(mir::RETURN_PLACE.into()),
             &incoming,
             &outgoing,
-            &[Some(mir::RETURN_PLACE)],
+            &[Some(mir::RETURN_PLACE), None],
             Some(mir::RETURN_PLACE),
             &mut HashSet::default(),
             root_location,
-        );
-        debug!(
-            "Recognized {} as an async function",
-            self.tcx.def_path_debug_str(local_def_id.to_def_id())
         );
         true
     }
@@ -932,18 +926,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         *num_inlined += 1 + grw_to_inline.inlined_functions_count();
         *max_call_stack_depth =
             (*max_call_stack_depth).max(grw_to_inline.max_call_stack_depth() + 1);
-        let num_args = if is_async_closure.is_some() {
-            1 as usize
-        } else {
-            self.tcx
-                .fn_sig(inlining_target)
-                .skip_binder()
-                .inputs()
-                .skip_binder()
-                .len()
-        };
-        let mut argument_map: HashMap<_, _> = (0..num_args)
-            .map(|a| (EdgeType::Data(a as u32), vec![]))
+        let mut argument_map: HashMap<_, _> = arguments
+            .iter()
+            .enumerate()
+            .map(|(a, _)| (EdgeType::Data(a as u32), vec![]))
             .chain([(EdgeType::Control, vec![])])
             .collect();
 
@@ -960,18 +946,14 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             Self::relativize_eqs(&grw_to_inline.equations, &gli_here).chain(
                 if let Some(closure) = is_async_closure {
                     assert!(closure.projection.is_empty());
-                    Either::Right(std::iter::once((
-                        closure.local,
-                        arg_num_to_local(0_usize.into()),
-                    )))
+                    Either::Right(std::iter::once((closure.local, mir::RETURN_PLACE)))
                 } else {
                     Either::Left(
                         arguments
                             .iter()
                             .enumerate()
                             .filter_map(|(a, actual_param)| {
-                                let a = a.into();
-                                Some(((*actual_param)?, arg_num_to_local(a)))
+                                Some(((*actual_param)?, (a + 1).into()))
                             }),
                     )
                 }
@@ -1005,7 +987,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     Node::Argument(a) => {
                         for nidx in argument_map
                             .get(&EdgeType::Data(a.as_usize() as u32))
-                            .unwrap()
+                            .unwrap_or_else(|| panic!("Could not find {a} in arguments"))
                             .iter()
                         {
                             add_edge(*nidx, true)
