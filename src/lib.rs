@@ -142,7 +142,12 @@ impl rustc_driver::Callbacks for Callbacks {
         config.override_queries = Some(borrowck_facts::override_queries);
     }
 
-    fn after_parsing<'tcx>(
+    // This used to run `after_parsing` but that now makes `tcx.crates()` empty
+    // (which interferes with external anotation resolution). So now it runs
+    // `after_expansion` and so far that doesn't seem to break anything, but I'm
+    // explaining this here in case that flowistry has some sort of issue with
+    // that (when retrieveing the MIR bodies for instance)
+    fn after_expansion<'tcx>(
         &mut self,
         compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,

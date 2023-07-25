@@ -1038,7 +1038,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                             //     Field::from_usize(i),
                             //     field.ty(self.tcx, substs),
                             // );
-                            let mut term = 
+                            let mut term =
                                 MirTerm::from(place)
                                     .add_contains_at(DisplayViaDebug(Field::from_usize(i)));
                             if is_enum {

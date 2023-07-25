@@ -394,7 +394,7 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
             let result = if carries {
                 debug!("  carries self");
                 true
-            } else if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) = 
+            } else if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
                     body.local_decls[mir::RETURN_PLACE].ty.kind()
                 && let ty::TyKind::Generator(closure_fn, _, _) = self.tcx.type_of(alias.def_id).skip_binder().kind() {
                 let map = self.tcx.hir();

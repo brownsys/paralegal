@@ -1060,13 +1060,12 @@ impl ProgramDescription {
                                             self.annotations.iter()
                                                 .flat_map(|(ident, (anns, _))|
                                                     anns.iter().filter_map(Annotation::as_label_ann)
-                                                        .flat_map(|label| 
-                                                            label.refinement.on_argument().into_iter_set_in_domain().map(|i| 
+                                                        .flat_map(|label|
+                                                            label.refinement.on_argument().into_iter_set_in_domain().map(|i|
                                                                 (
-                                                                    std::iter::once(FormalParameter { position: i as u16, function: *ident }.as_forge(alloc)), 
+                                                                    std::iter::once(FormalParameter { position: i as u16, function: *ident }.as_forge(alloc)),
                                                                     std::iter::once(ident.as_forge(alloc).append("->").append(label.marker.as_str())))))
-                                                        
-                                                )   
+                                                )
                                         )
                                         .indent(4)
                                         .append(alloc.hardline())
@@ -1076,12 +1075,12 @@ impl ProgramDescription {
                             } else {
                                 alloc.text(name::CTRL_CALLS).append(" = ").append(
                                     alloc.hardline().append(
-                                        alloc.forge_relation_with_arity(2, 
+                                        alloc.forge_relation_with_arity(2,
                                             self.controllers.iter().map(|(ctrl, data)| {
-                                                let call_sites = data.ctrl_flow.0.iter().flat_map(|(from, to)| 
+                                                let call_sites = data.ctrl_flow.0.iter().flat_map(|(from, to)|
                                                     from.as_function_call().into_iter().chain(to)
                                                 ).chain(
-                                                    data.data_flow.0.iter().flat_map(|(from, to)| 
+                                                    data.data_flow.0.iter().flat_map(|(from, to)|
                                                     from.as_function_call().into_iter().chain(
                                                         to.iter().filter_map(|s| s.as_argument()).map(|a| a.0)
                                                     )

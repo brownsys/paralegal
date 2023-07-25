@@ -84,12 +84,13 @@ fn resolve_external_markers(
     tcx: TyCtxt,
     markers: &crate::RawExternalMarkers,
 ) -> ExternalMarkers {
-    use hir::def::Res;
+    use utils::resolve::{def_path_res, Res};
     let new_map: ExternalMarkers = markers
         .iter()
         .filter_map(|(path, marker)| {
             let segment_vec = path.split("::").collect::<Vec<_>>();
-            let res = utils::resolve::def_path_res(tcx, &segment_vec);
+            let res = def_path_res(tcx, &segment_vec)
+                .unwrap_or_else(|err| panic!("Could not resolve {path}: {err:?}"));
             let (did, typ) = match res {
                 Res::Def(kind, did) => Some((
                     did,

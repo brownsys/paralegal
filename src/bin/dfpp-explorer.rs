@@ -798,7 +798,7 @@ impl<'g> Repl<'g> {
                     flow.list_iter()
                         .ok_or(RunCommandErr::MinimalFlowParseError("'minimal_subflow' is not an s-expression list"))?
                         .map(|v| match v.to_ref_vec().ok_or(RunCommandErr::MinimalFlowParseError("'minimal_subflow' elements are not lists"))?
-                        .as_slice() 
+                        .as_slice()
                         {
                             [_, from, to] => Ok((
                                 from.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("Second elements of 'minimal_subflow' elements should be a symbol"))?, 
@@ -813,7 +813,7 @@ impl<'g> Repl<'g> {
                             .ok_or(RunCommandErr::MinimalFlowParseError("'arg_call_site' is not an s-expression list"))?
                             //.ok_or(RunCommandErr::MinimalFlowParseError)?
                             .map(|v| match v.to_ref_vec().ok_or(RunCommandErr::MinimalFlowParseError("'arg_call_site' elements are not lists"))?
-                            .as_slice() 
+                            .as_slice()
                             {
                                 [from, to] => Ok((
                                     from.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("First elements of 'arg_call_site' elements should be a symbol"))?, 
