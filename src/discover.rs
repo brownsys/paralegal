@@ -86,7 +86,7 @@ fn resolve_external_markers(
 ) -> ExternalMarkers {
     use hir::def::Res;
     let new_map: ExternalMarkers = markers
-        .into_iter()
+        .iter()
         .filter_map(|(path, marker)| {
             let segment_vec = path.split("::").collect::<Vec<_>>();
             let res = utils::resolve::def_path_res(tcx, &segment_vec);

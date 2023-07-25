@@ -23,7 +23,7 @@ use crate::{
     },
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
-        DisplayViaDebug, IntoLocalDefId, 
+        DisplayViaDebug, IntoLocalDefId,
     },
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, TyCtxt,
 };
@@ -156,7 +156,7 @@ impl<L: Display> Display for Call<Dependencies<L>> {
         f.write_char('(')?;
         write_sep(f, ", ", self.arguments.iter(), |elem, f| {
             if let Some((place, deps)) = elem {
-                fmt_deps(&deps, f)?;
+                fmt_deps(deps, f)?;
                 write!(f, " with {place:?}")
             } else {
                 f.write_str("{}")
@@ -306,7 +306,7 @@ impl Body<DisplayViaDebug<Location>> {
                 //         .collect::<Vec<_>>()
                 // );
                 let deps = reachable_values
-                    .into_iter()
+                    .iter()
                     .flat_map(|p| non_transitive_aliases.children(*p))
                     // Commenting out this filter because reachable values doesn't
                     // always contain all relevant subplaces
@@ -406,9 +406,7 @@ impl Body<DisplayViaDebug<Location>> {
                             s.insert(d);
                         }
                     });
-                    dependencies_for(loc, mir::Place::return_place(), false)
-                        .clone()
-                        .into_iter()
+                    dependencies_for(loc, mir::Place::return_place(), false).into_iter()
                 })
                 .collect();
 
@@ -522,11 +520,10 @@ fn recursive_ctrl_deps<
                                 terminator: &mir::Terminator<'tcx>,
                                 _location: Location,
                             ) {
-                                match terminator.kind {
-                                    mir::TerminatorKind::Call { destination, .. } => {
-                                        self.was_assigned |= destination == self.target
-                                    }
-                                    _ => (),
+                                if let mir::TerminatorKind::Call { destination, .. } =
+                                    terminator.kind
+                                {
+                                    self.was_assigned |= destination == self.target
                                 }
                             }
                         }
@@ -573,7 +570,7 @@ fn recursive_ctrl_deps<
     dependencies
 }
 
-pub fn compute_from_body_id<'tcx, 's>(
+pub fn compute_from_body_id<'tcx>(
     dbg_opts: &DbgArgs,
     body_id: BodyId,
     tcx: TyCtxt<'tcx>,
@@ -605,7 +602,7 @@ pub fn compute_from_body_id<'tcx, 's>(
     }
     if dbg_opts.dump_dataflow_analysis_result() {
         use std::io::Write;
-        let ref mut states_out = dump_file_pls(tcx, body_id, "df").unwrap();
+        let states_out = &mut dump_file_pls(tcx, body_id, "df").unwrap();
         for l in body.all_locations() {
             writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
         }

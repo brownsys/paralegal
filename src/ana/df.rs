@@ -1,21 +1,16 @@
-use std::{
-    borrow::Cow,
-    cell::RefCell,
-    fmt::Display,
-    rc::Rc,
-};
+use std::{borrow::Cow, cell::RefCell, fmt::Display, rc::Rc};
 
 use crate::{
     ir::global_location::{GliAt, GLI},
     rust::{
         hir,
-        mir::{visit::Visitor, *, self},
+        mir::{self, visit::Visitor, *},
         rustc_data_structures::fx::FxHashSet as HashSet,
         rustc_hir::{def_id::DefId, BodyId},
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
         ty::{self, subst::GenericArgKind},
     },
-    utils::{self, AsFnAndArgs, IntoBodyId, SparseMatrix, TyCtxtExt, RecursionBreakingCache},
+    utils::{self, AsFnAndArgs, IntoBodyId, RecursionBreakingCache, SparseMatrix, TyCtxtExt},
     AnalysisCtrl, HashMap, TyCtxt,
 };
 
@@ -183,47 +178,44 @@ where
         debug!("Checking {location:?}: {:?}", terminator.kind);
         let tcx = self.aliases.tcx;
 
-        match &terminator.kind {
-            TerminatorKind::Call {
-                /*func,*/ // TODO: deal with func
-                args,
-                destination: dst_place,
-                ..
-            } => {
-                let arg_places = args.iter().filter_map(Operand::place).collect::<Vec<_>>();
-                let arg_inputs = arg_places
-                    .iter()
-                    .map(|place| (*place, None))
-                    .collect::<Vec<_>>();
+        if let TerminatorKind::Call {
+            /*func,*/ // TODO: deal with func
+            args,
+            destination: dst_place,
+            ..
+        } = &terminator.kind
+        {
+            let arg_places = args.iter().filter_map(Operand::place).collect::<Vec<_>>();
+            let arg_inputs = arg_places
+                .iter()
+                .map(|place| (*place, None))
+                .collect::<Vec<_>>();
 
-                let ret_is_unit = dst_place
-                    .ty(self.aliases.body.local_decls(), tcx)
-                    .ty
-                    .is_unit();
-                let empty = vec![];
-                let inputs = if ret_is_unit { &empty } else { &arg_inputs };
+            let ret_is_unit = dst_place
+                .ty(self.aliases.body.local_decls(), tcx)
+                .ty
+                .is_unit();
+            let empty = vec![];
+            let inputs = if ret_is_unit { &empty } else { &arg_inputs };
 
-                (self.f)(
-                    *dst_place,
-                    inputs.as_slice(),
-                    location,
-                    MutationStatus::Definitely,
-                );
+            (self.f)(
+                *dst_place,
+                inputs.as_slice(),
+                location,
+                MutationStatus::Definitely,
+            );
 
-                for arg in arg_places {
-                    for arg_mut in self.aliases.reachable_values(arg, Mutability::Mut) {
-                        // The argument itself can never be modified in a caller-visible way,
-                        // because it's either getting moved or copied.
-                        if arg == *arg_mut {
-                            continue;
-                        }
-
-                        (self.f)(*arg_mut, &arg_inputs, location, MutationStatus::Possibly);
+            for arg in arg_places {
+                for arg_mut in self.aliases.reachable_values(arg, Mutability::Mut) {
+                    // The argument itself can never be modified in a caller-visible way,
+                    // because it's either getting moved or copied.
+                    if arg == *arg_mut {
+                        continue;
                     }
+
+                    (self.f)(*arg_mut, &arg_inputs, location, MutationStatus::Possibly);
                 }
             }
-
-            _ => {}
         }
     }
 }
@@ -273,7 +265,7 @@ impl<'tcx> Display for FlowDomain<'tcx> {
 
 impl<'tcx> FlowDomain<'tcx> {
     pub fn deps(&self, at: Place<'tcx>) -> impl Iterator<Item = &Dependency<'tcx>> {
-        self.matrix().row(&at).into_iter()
+        self.matrix().row(&at).iter()
     }
     #[allow(dead_code)]
     fn override_(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
@@ -282,7 +274,7 @@ impl<'tcx> FlowDomain<'tcx> {
     fn matrix(&self) -> &DependencyMap<'tcx> {
         &self.matrix
     }
-    fn matrix_mut<'a>(&mut self) -> &mut DependencyMap<'tcx> {
+    fn matrix_mut(&mut self) -> &mut DependencyMap<'tcx> {
         &mut self.matrix
     }
     fn union_after(&mut self, row: Place<'tcx>, from: Cow<LocationSet<'tcx>>) -> bool {
@@ -296,7 +288,7 @@ impl<'tcx> FlowDomain<'tcx> {
     fn rows_after_override(&self) -> impl Iterator<Item = (&Place<'tcx>, &LocationSet<'tcx>)> {
         self.matrix
             .rows()
-            .filter(|r| !self.overrides.has(&r.0))
+            .filter(|r| !self.overrides.has(r.0))
             .chain(self.overrides.rows())
     }
 }
@@ -331,7 +323,7 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
             || args
                 .iter()
                 .cloned()
-                .filter_map(std::convert::identity)
+                .flatten()
                 .all(|p| state.matrix().row(&p).is_empty())
     }
 
@@ -342,7 +334,7 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
         state: &FlowDomain<'tcx>,
     ) -> bool {
         if let Ok((func, args, _ret)) = terminator.as_fn_and_args() {
-            !self.fn_carries_marker(body, &terminator)
+            !self.fn_carries_marker(body, terminator)
                 && !self.probably_performs_side_effects(func, &args, state)
         } else {
             false
@@ -453,10 +445,7 @@ pub struct FlowAnalysis<'a, 'tcx, 'g, 's> {
     pub gli: GLI<'g>,
     analysis_control: &'static AnalysisCtrl,
     carries_marker: &'s MarkerCarryingOracle<'tcx, 's>,
-    recurse_cache: RecursionBreakingCache<
-        BodyId,
-        flowistry::infoflow::FlowResults<'a, 'tcx>,
-    >,
+    recurse_cache: RecursionBreakingCache<BodyId, flowistry::infoflow::FlowResults<'a, 'tcx>>,
     elision_info: RefCell<HashMap<Location, HashSet<algebra::MirEquation>>>,
 }
 
@@ -542,14 +531,11 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             }
             //let reachable_values = all_aliases.reachable_values(place, Mutability::Not);
             let reachable_values = all_aliases.children(place);
-            let provenance = place
-                .refs_in_projection()
-                .into_iter()
-                .flat_map(|(place_ref, _)| {
-                    all_aliases
-                        .aliases(Place::from_ref(place_ref, self.tcx))
-                        .iter()
-                });
+            let provenance = place.refs_in_projection().flat_map(|(place_ref, _)| {
+                all_aliases
+                    .aliases(Place::from_ref(place_ref, self.tcx))
+                    .iter()
+            });
             for relevant in reachable_values.iter().chain(provenance) {
                 let deps = state.matrix().row(&all_aliases.normalize(*relevant));
                 trace!("    For relevant {relevant:?} for input {place:?} adding deps {deps:?}");
@@ -579,7 +565,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             }
         }
 
-        if children.len() > 0 {
+        if !children.is_empty() {
             // In the special case of mutated = aggregate { x: .., y: .. }
             // then we ensure that deps(mutated.x) != deps(mutated)
 
@@ -628,7 +614,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             debug!("  Mutated conflicting places: {mutable_conflicts:?}");
             debug!("    with deps {input_location_deps:?}");
 
-            for place in mutable_conflicts.into_owned().into_iter() {
+            for place in mutable_conflicts.iter().cloned() {
                 let normalized = all_aliases.normalize(place);
                 // I am unsure if this is the right place to do this. I am using
                 // `configurable_of` with `deref_means_disjoint == true` so this
@@ -738,15 +724,16 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
         }) else { return false };
         let body = &body_with_facts.body;
 
-        let mut return_state = flowistry::infoflow::FlowDomain::new(flow.analysis.location_domain());
+        let mut return_state =
+            flowistry::infoflow::FlowDomain::new(flow.analysis.location_domain());
         {
-            let return_locs = body
-                .basic_blocks
-                .iter_enumerated()
-                .filter_map(|(bb, data)| match data.terminator().kind {
-                    TerminatorKind::Return => Some(body.terminator_loc(bb)),
-                    _ => None,
-                });
+            let return_locs =
+                body.basic_blocks
+                    .iter_enumerated()
+                    .filter_map(|(bb, data)| match data.terminator().kind {
+                        TerminatorKind::Return => Some(body.terminator_loc(bb)),
+                        _ => None,
+                    });
 
             for loc in return_locs {
                 return_state.join(flow.state_at(loc));
@@ -760,7 +747,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
                         return None;
                     }
 
-                    return Some(*destination)
+                    return Some(*destination);
                 }
 
                 if !child.is_arg(body) || (mutated && !child.is_indirect()) {
@@ -783,9 +770,13 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
                 let parent_param_env = tcx.param_env(self.def_id);
                 log::debug!("Adding child {child:?} to parent {parent_toplevel_arg:?}");
                 for elem in child.projection.iter() {
-                    ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
-                        ty.field_ty(tcx, field)
-                    }, |_, ty| ty);
+                    ty = ty.projection_ty_core(
+                        tcx,
+                        parent_param_env,
+                        &elem,
+                        |_, field, _| ty.field_ty(tcx, field),
+                        |_, ty| ty,
+                    );
                     let elem = match elem {
                         ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
                         elem => elem,
@@ -883,15 +874,14 @@ impl<'a, 'tcx, 'g, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inli
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
-        if self.analysis_control.avoid_inlining() {
-            if self
+        if self.analysis_control.avoid_inlining()
+            && self
                 .carries_marker
                 .can_be_elided(&terminator.kind, self.body, state)
-                && self.recurse_into_call(state, &terminator.kind, location)
-            {
-                debug!("Elided {:?}", terminator.kind);
-                return;
-            }
+            && self.recurse_into_call(state, &terminator.kind, location)
+        {
+            debug!("Elided {:?}", terminator.kind);
+            return;
         }
 
         ModularMutationVisitor::new(

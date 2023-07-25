@@ -48,8 +48,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
-        fn register_call_site<'tcx>(
-            tcx: TyCtxt<'tcx>,
+        fn register_call_site(
+            tcx: TyCtxt<'_>,
             map: &mut CallSiteAnnotations,
             did: DefId,
             ann: Option<&[Annotation]>,

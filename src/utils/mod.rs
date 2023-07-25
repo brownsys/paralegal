@@ -161,7 +161,7 @@ impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
         let block_data = self
             .basic_blocks
             .get(block)
-            .ok_or_else(|| StmtAtErr::BasicBlockOutOfBound(block, &self))?;
+            .ok_or(StmtAtErr::BasicBlockOutOfBound(block, self))?;
         if statement_index == block_data.statements.len() {
             Ok(Either::Right(block_data.terminator()))
         } else if let Some(stmt) = block_data.statements.get(statement_index) {
@@ -224,34 +224,27 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
     fn as_fn_and_args(
         &self,
     ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>> {
-        match self {
-            mir::TerminatorKind::Call {
+        let mir::TerminatorKind::Call {
                 func,
                 args,
                 destination,
                 ..
-            } => {
-                let defid = match func.constant().ok_or(AsFnAndArgsErr::NotAConstant)? {
-                    mir::Constant { literal, .. } => {
-                        let ty = match literal {
-                            mir::ConstantKind::Val(_, ty) => *ty,
-                            mir::ConstantKind::Ty(cst) => cst.ty(),
-                            mir::ConstantKind::Unevaluated { .. } => unreachable!(),
-                        };
-                        match ty.kind() {
-                            ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),
-                            _ => Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone())),
-                        }
-                    }
-                }?;
-                Ok((
-                    defid,
-                    args.iter().map(|a| a.place()).collect(),
-                    *destination,
-                ))
-            }
-            _ => Err(AsFnAndArgsErr::NotAFunctionCall),
-        }
+            } = self else {
+                return Err(AsFnAndArgsErr::NotAFunctionCall)
+            };
+        let ty = match &func.constant().ok_or(AsFnAndArgsErr::NotAConstant)?.literal {
+            mir::ConstantKind::Val(_, ty) => *ty,
+            mir::ConstantKind::Ty(cst) => cst.ty(),
+            mir::ConstantKind::Unevaluated { .. } => unreachable!(),
+        };
+        let (ty::FnDef(defid, _) | ty::Closure(defid, _)) = ty.kind() else {
+                    return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()))
+                };
+        Ok((
+            *defid,
+            args.iter().map(|a| a.place()).collect(),
+            *destination,
+        ))
     }
 }
 
@@ -303,9 +296,7 @@ pub fn read_places_with_provenance<'tcx>(
     stmt: &Either<&Statement<'tcx>, &Terminator<'tcx>>,
     tcx: TyCtxt<'tcx>,
 ) -> impl Iterator<Item = Place<'tcx>> {
-    places_read(tcx, l, stmt, None)
-        .into_iter()
-        .flat_map(move |place| place.provenance(tcx).into_iter())
+    places_read(tcx, l, stmt, None).flat_map(move |place| place.provenance(tcx).into_iter())
 }
 
 /// Extension trait for [`Place`]s so we can implement methods on them. [`Self`]
@@ -325,7 +316,6 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
         use rustc_utils::PlaceExt;
         let mut refs: SmallVec<_> = self
             .refs_in_projection()
-            .into_iter()
             .map(|(ptr, _)| Place::from_ref(ptr, tcx))
             .chain([self])
             .collect();
@@ -474,10 +464,7 @@ pub fn dump_file_pls<I: IntoLocalDefId>(
     id: I,
     ext: &str,
 ) -> std::io::Result<std::fs::File> {
-    outfile_pls(&format!(
-        "{}.{ext}",
-        unique_and_terse_body_name_pls(tcx, id)
-    ))
+    outfile_pls(format!("{}.{ext}", unique_and_terse_body_name_pls(tcx, id)))
 }
 
 /// Give me this file as writable (possibly creating or overwriting it).

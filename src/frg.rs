@@ -8,11 +8,7 @@ extern crate pretty;
 
 use std::hash::Hash;
 
-use crate::{
-    ir::IsGlobalLocation,
-    utils::IntoDefId,
-    HashSet, ModelCtrl, TyCtxt,
-};
+use crate::{ir::IsGlobalLocation, utils::IntoDefId, HashSet, ModelCtrl, TyCtxt};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{

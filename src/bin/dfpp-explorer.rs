@@ -452,7 +452,7 @@ impl<'g> Repl<'g> {
                     [{
                         let paths = petgraph::algo::bellman_ford(
                             &WithWeightedEdges {
-                                graph: graph,
+                                graph,
                                 weight: &|_| 1.0,
                             },
                             from,
@@ -776,7 +776,7 @@ impl<'g> Repl<'g> {
                     ))?
                     .0;
                 let target = target
-                    .rsplit_once(")")
+                    .rsplit_once(')')
                     .ok_or(RunCommandErr::MinimalFlowParseError(
                         "Did not find pattern \")\" before \"'((\" at the file end",
                     ))?
@@ -993,19 +993,19 @@ impl<'f, G: GraphBase + IntoEdgeReferences> GraphBase for WithWeightedEdges<'f, 
 }
 
 impl<'f, G: NodeIndexable + IntoEdgeReferences> NodeIndexable for &'_ WithWeightedEdges<'f, G> {
-    fn from_index(self: &Self, i: usize) -> Self::NodeId {
+    fn from_index(&self, i: usize) -> Self::NodeId {
         self.graph.from_index(i)
     }
-    fn node_bound(self: &Self) -> usize {
+    fn node_bound(&self) -> usize {
         self.graph.node_bound()
     }
-    fn to_index(self: &Self, a: Self::NodeId) -> usize {
+    fn to_index(&self, a: Self::NodeId) -> usize {
         self.graph.to_index(a)
     }
 }
 
 impl<'f, G: NodeCount + IntoEdgeReferences> NodeCount for &'_ WithWeightedEdges<'f, G> {
-    fn node_count(self: &Self) -> usize {
+    fn node_count(&self) -> usize {
         self.graph.node_count()
     }
 }
@@ -1023,7 +1023,7 @@ impl<'f, G: IntoNodeIdentifiers + IntoEdgeReferences> IntoNodeIdentifiers
 struct IgnoreCtrlEdges<G>(G);
 
 impl<G: NodeCount> NodeCount for IgnoreCtrlEdges<G> {
-    fn node_count(self: &Self) -> usize {
+    fn node_count(&self) -> usize {
         self.0.node_count()
     }
 }
@@ -1031,11 +1031,11 @@ impl<G: NodeCount> NodeCount for IgnoreCtrlEdges<G> {
 impl<G: Visitable> Visitable for IgnoreCtrlEdges<G> {
     type Map = G::Map;
 
-    fn visit_map(self: &Self) -> Self::Map {
+    fn visit_map(&self) -> Self::Map {
         self.0.visit_map()
     }
 
-    fn reset_map(self: &Self, map: &mut Self::Map) {
+    fn reset_map(&self, map: &mut Self::Map) {
         self.0.reset_map(map)
     }
 }
@@ -1173,13 +1173,13 @@ impl<G: IntoEdgesDirected + Data<EdgeWeight = Edge>> IntoEdgesDirected for Ignor
 }
 
 impl<G: NodeIndexable> NodeIndexable for IgnoreCtrlEdges<G> {
-    fn from_index(self: &Self, i: usize) -> Self::NodeId {
+    fn from_index(&self, i: usize) -> Self::NodeId {
         self.0.from_index(i)
     }
-    fn node_bound(self: &Self) -> usize {
+    fn node_bound(&self) -> usize {
         self.0.node_bound()
     }
-    fn to_index(self: &Self, a: Self::NodeId) -> usize {
+    fn to_index(&self, a: Self::NodeId) -> usize {
         self.0.to_index(a)
     }
 }

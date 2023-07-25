@@ -295,7 +295,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         graph
             .all_edges()
             .filter_map(|(from, to, _)| {
-                (!Inliner::edge_has_been_pruned_before(from, to)).then(|| (from, to))
+                (!Inliner::edge_has_been_pruned_before(from, to)).then_some((from, to))
             })
             .collect()
     }
@@ -322,7 +322,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 "Have {} equations for pruning {} edges",
                 equations.len(),
                 edges_to_prune
-                    .into_iter()
+                    .iter()
                     .filter_map(|&(a, b)| Some(graph.edge_weight(a, b)?.count()))
                     .count()
             );
@@ -460,7 +460,7 @@ impl<'g> InlinedGraph<'g> {
                 }
                 add_dep_edges(n, EdgeType::Control, &call.ctrl_deps);
             }
-            add_dep_edges(return_node, EdgeType::Data(0 as u32), &body.return_deps);
+            add_dep_edges(return_node, EdgeType::Data(0_u32), &body.return_deps);
             for (idx, deps) in body.return_arg_deps.iter().enumerate() {
                 add_dep_edges(
                     SimpleLocation::Argument(idx.into()),
@@ -522,21 +522,11 @@ pub fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct EdgesClassifier {
     has_control_only: bool,
     has_data_only: bool,
     has_mix: bool,
-}
-
-impl std::default::Default for EdgesClassifier {
-    fn default() -> Self {
-        Self {
-            has_control_only: false,
-            has_data_only: false,
-            has_mix: false,
-        }
-    }
 }
 
 impl std::iter::FromIterator<Edge> for EdgesClassifier {
@@ -803,7 +793,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         && !self.oracle.is_semantically_meaningful(defid)
                         //&& Some(defid) != self.tcx.lang_items().from_generator_fn() 
                         && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))) {
-                    node_is_insignificant(g, n, remove_calls_policy, &mut ctrl_flow_context_cache).map(|cls| (n, cls))
+                    node_is_insignificant(g, n, remove_calls_policy, &ctrl_flow_context_cache).map(|cls| (n, cls))
                 } else {
                     None
                 })
@@ -837,7 +827,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         g: &GraphImpl<GlobalLocation<'g>>,
     ) -> Option<DropAction> {
         let language_items = self.tcx.lang_items();
-        if self.ana_ctrl.drop_poll() && is_part_of_async_desugar(language_items, id, &g) {
+        if self.ana_ctrl.drop_poll() && is_part_of_async_desugar(language_items, id, g) {
             Some(if Some(function) == language_items.new_unchecked_fn() {
                 DropAction::WrapReturn(vec![
                     algebra::Operator::MemberOf(mir::Field::from_usize(0).into()),
@@ -1073,7 +1063,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         }
                         _ => (),
                     }
-                    if let Some(ac) = self.classify_special_function_handling(*function, id, &i_graph.graph)
+                    if let Some(ac) =
+                        self.classify_special_function_handling(*function, id, &i_graph.graph)
                     {
                         return Some((id, *location, InlineAction::Drop(ac)));
                     }
@@ -1087,7 +1078,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     .chain(call.return_to.into_iter())
                     .map(local_as_global)
                     .collect::<Vec<_>>();
-                let mk_term = |tp| algebra::Term::new_base(tp);
+                let mk_term = algebra::Term::new_base;
                 i_graph
                     .equations
                     .extend(writeables.iter().flat_map(|&write| {
@@ -1204,7 +1195,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
 
         let mut queue_for_pruning = time(&format!("Inlining subgraphs into '{name}'"), || {
-            self.perform_subfunction_inlining(&proc_g, &mut gwr, body_id)
+            self.perform_subfunction_inlining(proc_g, &mut gwr, body_id)
         });
 
         if self.ana_ctrl.remove_inconsequential_calls().is_enabled() {

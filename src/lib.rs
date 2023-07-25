@@ -181,7 +181,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 }
                 info!("All elems walked");
                 let result_path = compiler
-                    .build_output_filenames(&*compiler.session(), &[])
+                    .build_output_filenames(compiler.session(), &[])
                     .with_extension("ana.frg");
                 let mut outf = outfile_pls(&result_path)?;
                 let doc_alloc = pretty::BoxAllocator;
@@ -190,7 +190,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 let mut outf_2 = outfile_pls(self.opts.result_path())?;
                 doc.render(100, &mut outf_2)?;
 
-                let info_path = compiler.build_output_filenames(&*compiler.session(), &[])
+                let info_path = compiler.build_output_filenames(compiler.session(), &[])
                     .with_extension("info.json");
                 let info = AdditionalInfo {
                     call_sites: desc.all_call_sites().into_iter().map(|cs| (cs.to_string(), cs.clone())).collect()

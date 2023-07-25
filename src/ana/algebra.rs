@@ -740,7 +740,7 @@ pub fn solve_with<
             }
         } else if !seen.contains(var) {
             seen.insert(var.clone());
-            if let Some(next_eq) = intermediates.get(&var) {
+            if let Some(next_eq) = intermediates.get(var) {
                 targets.extend(next_eq.iter().cloned().filter_map(|term| {
                     let mut to_sub = intermediate_target.clone();
                     to_sub.sub(term);
@@ -765,7 +765,7 @@ pub fn solve_with<
 fn vec_drop_range<T>(v: &mut Vec<T>, r: std::ops::Range<usize>) {
     let ptr = v.as_mut_ptr();
     for i in r.clone() {
-        unsafe { drop(ptr.add(i)) }
+        unsafe { ptr.add(i).drop_in_place() }
     }
     unsafe {
         std::ptr::copy(ptr.add(r.end), ptr.add(r.start), v.len() - r.end);
