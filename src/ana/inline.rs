@@ -885,6 +885,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
         let root_location = self.gli.globalize_location(return_location, body_id);
 
+        // Following we must sumilate two code rewrites to the body of this
+        // function to simulate calling the closure. We make the closure
+        // argument a fresh variable and we break existing connections of
+        // arguments and return. The latter will be restored by the inlining
+        // routine.
+
         // We invent a new variable here that stores the closure. Rustc uses _0
         // (the return place) to store it but we will overwrite that with the
         // return of calling the closure. However that would connect the inputs
@@ -902,6 +908,14 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 term.base.local = new_closure_local;
             }
         }
+
+        // Break the return connections
+        //
+        // Actuall clears the graph, but that is fine, because whenever we
+        // insert endges (as the inlining routine will do later) we
+        // automatically create the source and target nodes if they don't exist.
+        i_graph.graph.clear();
+
 
         debug!(
             "Recognized {} as an async function",
