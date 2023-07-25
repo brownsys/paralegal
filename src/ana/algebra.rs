@@ -28,9 +28,9 @@ use std::{
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Term<B, F: Copy> {
     /// The base of the term
-    base: B,
+    pub base: B,
     /// Operators applied to the term (in reverse order)
-    terms: Vec<Operator<F>>,
+    pub terms: Vec<Operator<F>>,
 }
 
 pub fn display_term_pieces<F: Display + Copy, B: Display>(
@@ -250,8 +250,8 @@ impl<F: Copy> Operator<F> {
 /// An equation in the algebra
 #[derive(Clone, Debug)]
 pub struct Equality<B, F: Copy> {
-    lhs: Term<B, F>,
-    rhs: Term<B, F>,
+    pub lhs: Term<B, F>,
+    pub rhs: Term<B, F>,
 }
 
 impl<B: Display, F: Display + Copy> Display for Equality<B, F> {
@@ -867,17 +867,14 @@ impl<B, F: Copy> Term<B, F> {
         if l < 2 {
             return Simplified::Yes;
         }
-        let mut valid = None;
         let mut overlapping = true;
         let old_terms = std::mem::replace(&mut self.terms, Vec::with_capacity(l));
         let mut it = old_terms.into_iter();
         let mut after_first_unknown = None;
         let mut after_last_unknown = None;
         self.terms.push(it.next().unwrap());
-        for op in it {
-            let prior = if let Some(last) = self.terms.last() {
-                *last
-            } else {
+        while let Some(op) = it.next() {
+            let Some(prior) = self.terms.last().copied() else {
                 self.terms.push(op);
                 continue;
             };
@@ -896,7 +893,11 @@ impl<B, F: Copy> Term<B, F> {
                     continue;
                 }
                 Cancel::Remains => (),
-                Cancel::Invalid => valid = Some((prior, op)),
+                Cancel::Invalid => {
+                    self.terms.push(op);
+                    self.terms.extend(it);
+                    return Simplified::Invalid(prior, op);
+                },
             }
             self.terms.push(op);
             if op.is_unknown() {
@@ -907,9 +908,6 @@ impl<B, F: Copy> Term<B, F> {
                 }
                 .insert(self.terms.len());
             }
-        }
-        if let Some((one, two)) = valid {
-            return Simplified::Invalid(one, two);
         }
         if let (Some(from), Some(to)) = (after_first_unknown, after_last_unknown) {
             vec_drop_range(&mut self.terms, from..to);

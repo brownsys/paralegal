@@ -246,7 +246,7 @@ impl<L: Display + Ord> Display for Body<L> {
     }
 }
 
-fn get_highest_local(body: &mir::Body) -> mir::Local {
+pub fn get_highest_local(body: &mir::Body) -> mir::Local {
     use mir::visit::Visitor;
     struct Extractor(Option<mir::Local>);
     impl Visitor<'_> for Extractor {

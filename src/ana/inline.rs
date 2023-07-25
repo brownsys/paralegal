@@ -314,6 +314,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         edges_to_prune: &EdgeSet<'g>,
         id: LocalDefId,
     ) {
+        if edges_to_prune.is_empty() {
+            return;
+        }
         time(&format!("Edge Pruning for {name}"), || {
             let InlinedGraph {
                 graph, equations, ..
@@ -781,7 +784,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn remove_inconsequential_calls(&self, gwr: &mut InlinedGraph<'g>) {
         let remove_calls_policy = self.ana_ctrl.remove_inconsequential_calls();
         let g = &mut gwr.graph;
-        let mut ctrl_flow_context_cache = Default::default();
+        let ctrl_flow_context_cache = Default::default();
         for (n, (_in_classifier, _out_classifier)) in g
             .nodes()
             .filter_map(|n|
@@ -882,6 +885,24 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
 
         let root_location = self.gli.globalize_location(return_location, body_id);
 
+        // We invent a new variable here that stores the closure. Rustc uses _0
+        // (the return place) to store it but we will overwrite that with the
+        // return of calling the closure. However that would connect the inputs
+        // and outputs in the algebra *if* we did not invent this new temporary
+        // for the closure.
+        let new_closure_local = regal::get_highest_local(body) + 1;
+
+        for term in i_graph
+            .equations
+            .iter_mut()
+            .flat_map(|eq| [&mut eq.rhs, &mut eq.lhs])
+        {
+            assert!(term.base.location.is_none());
+            if term.base.local == mir::RETURN_PLACE {
+                term.base.local = new_closure_local;
+            }
+        }
+
         debug!(
             "Recognized {} as an async function",
             self.tcx.def_path_debug_str(local_def_id.to_def_id())
@@ -890,10 +911,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             i_graph,
             body_id,
             closure_fn.expect_local(),
-            Some(mir::RETURN_PLACE.into()),
             &incoming,
             &outgoing,
-            &[Some(mir::RETURN_PLACE), None],
+            &[Some(new_closure_local), None],
             Some(mir::RETURN_PLACE),
             &mut HashSet::default(),
             root_location,
@@ -911,7 +931,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }: &mut InlinedGraph<'g>,
         caller_function: BodyId,
         inlining_target: LocalDefId,
-        is_async_closure: Option<mir::Place<'tcx>>,
         incoming: &[(SimpleLocation<(GlobalLocation<'g>, DefId)>, Edge)],
         outgoing: &[(SimpleLocation<(GlobalLocation<'g>, DefId)>, Edge)],
         arguments: &[Option<mir::Local>],
@@ -957,27 +976,18 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             .at(root_location.outermost_location(), caller_function);
         eqs.extend(
             Self::relativize_eqs(&grw_to_inline.equations, &gli_here).chain(
-                if let Some(closure) = is_async_closure {
-                    assert!(closure.projection.is_empty());
-                    Either::Right(std::iter::once((closure.local, mir::RETURN_PLACE)))
-                } else {
-                    Either::Left(
-                        arguments
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(a, actual_param)| {
-                                Some(((*actual_param)?, (a + 1).into()))
-                            }),
-                    )
-                }
-                .into_iter()
-                .chain(return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
-                .map(|(actual_param, formal_param)| {
-                    algebra::Equality::new(
-                        Term::new_base(GlobalLocal::at_root(actual_param)),
-                        Term::new_base(GlobalLocal::relative(formal_param, root_location)),
-                    )
-                }),
+                arguments
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(a, actual_param)| Some(((*actual_param)?, (a + 1).into())))
+                    .into_iter()
+                    .chain(return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
+                    .map(|(actual_param, formal_param)| {
+                        algebra::Equality::new(
+                            Term::new_base(GlobalLocal::at_root(actual_param)),
+                            Term::new_base(GlobalLocal::relative(formal_param, root_location)),
+                        )
+                    }),
             ),
         );
         let to_inline = &grw_to_inline.graph;
@@ -1116,7 +1126,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         i_graph,
                         body_id,
                         did,
-                        None,
                         &incoming,
                         &outgoing,
                         &arguments,
