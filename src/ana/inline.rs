@@ -832,10 +832,14 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let language_items = self.tcx.lang_items();
         if self.ana_ctrl.drop_poll() && is_part_of_async_desugar(language_items, id, g) {
             Some(if Some(function) == language_items.new_unchecked_fn() {
-                DropAction::WrapReturn(vec![
-                    algebra::Operator::MemberOf(mir::Field::from_usize(0).into()),
-                    algebra::Operator::RefOf,
-                ])
+                // I used to add a
+                // algebra::Operator::MemberOf(mir::Field::from_usize(0).into())
+                // here as well, but while that is technically correct in erms
+                // of what this function does, the new encoding for `poll`
+                // strips that away before calling the closure, so now I just
+                // don't. Probably cleaner would be to change the wrapping for
+                // `poll` but I'm lazy
+                DropAction::WrapReturn(vec![algebra::Operator::RefOf])
             } else if Some(function) == language_items.future_poll_fn() {
                 DropAction::WrapReturn(vec![algebra::Operator::Downcast(0)])
             } else {
@@ -915,7 +919,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         // insert endges (as the inlining routine will do later) we
         // automatically create the source and target nodes if they don't exist.
         i_graph.graph.clear();
-
 
         debug!(
             "Recognized {} as an async function",

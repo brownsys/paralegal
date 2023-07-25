@@ -47,7 +47,7 @@ pub fn display_term_pieces<F: Display + Copy, B: Display>(
             RefOf => f.write_char('&'),
             DerefOf => f.write_char('*'),
             ContainsAt(field) => write!(f, "{{ .{}: ", field),
-            Upcast(s) => write!(f, "#{s}"),
+            Upcast(s) => write!(f, "#{s} "),
             Unknown => f.write_char('?'),
             ArrayWith => f.write_char('['),
             _ => Ok(()),
@@ -897,7 +897,7 @@ impl<B, F: Copy> Term<B, F> {
                     self.terms.push(op);
                     self.terms.extend(it);
                     return Simplified::Invalid(prior, op);
-                },
+                }
             }
             self.terms.push(op);
             if op.is_unknown() {
