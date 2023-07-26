@@ -25,11 +25,6 @@ pub fn link_rustc_lib() {
     let rustup_lib = [&rustup_home, "toolchains", &rustup_tc, "lib"]
         .into_iter()
         .collect::<PathBuf>();
-    eprint!("Found the library files: ");
-    for file in std::fs::read_dir(&rustup_lib).expect("Rustup lib dir does not exist") {
-        eprint!("{}, ", file.unwrap().file_name().to_string_lossy());
-    }
-    eprintln!();
     add_link_search_path_for_compiler_binaries(rustup_lib.display());
 
     // While we hard-code the above for development purposes, for a release/install we look
