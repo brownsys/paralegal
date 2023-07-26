@@ -36,14 +36,14 @@ jobs:
     - name: Build Compiler
       run: cargo build --verbose
     - name: Cache Racket dependencies
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: |
           ~/.cache/racket
           ~/.local/share/racket
         key: ${{ runner.os }}-racket-8.1
     - name: Install Racket
-      uses: Bogdanp/setup-racket@v1.5
+      uses: Bogdanp/setup-racket@v1.10
       with:
         architecture: 'x64'
         distribution: 'full'
@@ -56,6 +56,6 @@ jobs:
         cd Forge
         git checkout ${FORGE_REVISION}
         cd forge
-        raco pgk install --auto
+        raco pkg install --auto
     - name: Run Tests
       run: cargo test --test external_annotation_tests 
