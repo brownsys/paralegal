@@ -20,7 +20,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    # just triggers rustup to download the toolchain
     - &cache_toolchain
       name: Cache Toolchain
       uses: actions/cache@v3
