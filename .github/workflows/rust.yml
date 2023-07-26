@@ -52,8 +52,10 @@ jobs:
     - name: Install Forge
       run: |
         cd ..
-        git clone https://github.com/tnelson/Forge -b ${FORGE_REVISION}
-        cd Forge/forge
+        git clone https://github.com/tnelson/Forge 
+        cd Forge
+        git checkout ${FORGE_REVISION}
+        cd forge
         raco pgk install --auto
     - name: Run Tests
       run: cargo test --test external_annotation_tests 
