@@ -18,8 +18,16 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     # just triggers rustup to download the toolchain
-    - run: cargo --help
-    - uses: Swatinem/rust-cache@v2
+    - name: Cache Toolchain
+      uses: actions/cache@v3
+      with:
+        path: ~/.rustup
+        key: ${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
+    - name: Cache Dependencies
+      uses: actions/cache@v3
+      with:
+        path: target
+        key: ${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Build
       run: cargo build --verbose
     - name: Run tests
