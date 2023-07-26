@@ -1,6 +1,6 @@
 [toolchain]
 channel = "nightly-2023-04-12"
-components = ["rustc-dev", "rust-src"]
+components = ["rustc-dev", "rust-src", "rustfmt"]
 
 # You are probably looking at this because you got an error that the toolchain
 # that was configured does not exist,
