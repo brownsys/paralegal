@@ -5,10 +5,14 @@ use std::env;
 
 const COMPILER_DEPENDENT_BINARIES : &[&str] = &["dfpp", "cargo-dfpp", "dfpp-explorer"];
 
-fn add_link_path_for_compiler_binaries(s: impl std::fmt::Display) {
+fn add_link_arg_for_compiler_binaries(s: impl std::fmt::Display) {
     for bin in COMPILER_DEPENDENT_BINARIES {
-        println!("cargo:rustc-link-arg-bin={bin}=-Wl,-rpath,{s}");
+        println!("cargo:rustc-link-arg-bin={bin}={s}");
     }
+}
+
+fn add_link_search_path_for_compiler_binaries(s: impl std::fmt::Display) {
+    add_link_arg_for_compiler_binaries(format!("-Wl,-rpath,{s}"))
 }
 
 /// Taken from Kani
@@ -26,7 +30,7 @@ pub fn link_rustc_lib() {
         eprint!("{}, ", file.unwrap().file_name().to_string_lossy());
     }
     eprintln!();
-    add_link_path_for_compiler_binaries(rustup_lib.display());
+    add_link_search_path_for_compiler_binaries(rustup_lib.display());
 
     // While we hard-code the above for development purposes, for a release/install we look
     // in a relative location for a symlink to the local rust toolchain
@@ -35,7 +39,10 @@ pub fn link_rustc_lib() {
     } else {
         "$ORIGIN"
     };
-    add_link_path_for_compiler_binaries(&format!("{origin}/../toolchain/lib"));
+    add_link_search_path_for_compiler_binaries(&format!("{origin}/../toolchain/lib"));
+    if cfg!(target_os = "linux") {
+        println!("cargo:rustc-link-search=native={}", rustup_lib.display());
+    }
 }
 
 fn main() {
