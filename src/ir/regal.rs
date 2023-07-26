@@ -283,39 +283,33 @@ impl Body<DisplayViaDebug<Location>> {
             let non_transitive_aliases =
                 crate::ana::non_transitive_aliases::compute(tcx, def_id, body_with_facts);
 
-            let dependencies_for = |location: DisplayViaDebug<_>,
-                                    arg,
-                                    is_mut_arg|
-             -> Dependencies<DisplayViaDebug<_>> {
-                use rustc_ast::Mutability;
-                let ana = flow_analysis.state_at(*location);
-                let mutability = if false && is_mut_arg {
-                    Mutability::Mut
-                } else {
-                    Mutability::Not
+            let dependencies_for =
+                |location: DisplayViaDebug<_>, arg| -> Dependencies<DisplayViaDebug<_>> {
+                    use rustc_ast::Mutability;
+                    let ana = flow_analysis.state_at(*location);
+                    let mutability = Mutability::Not;
+                    // Not sure this is necessary anymore because I changed the analysis
+                    // to transitively propagate in cases where a subplace is modified
+                    let reachable_values = non_transitive_aliases.reachable_values(arg, mutability);
+                    // debug!("Reachable values for {arg:?} are {reachable_values:?}");
+                    // debug!(
+                    //     "  Children are {:?}",
+                    //     reachable_values
+                    //         .into_iter()
+                    //         .flat_map(|a| non_transitive_aliases.children(*a))
+                    //         .collect::<Vec<_>>()
+                    // );
+                    let deps = reachable_values
+                        .iter()
+                        .flat_map(|p| non_transitive_aliases.children(*p))
+                        // Commenting out this filter because reachable values doesn't
+                        // always contain all relevant subplaces
+                        //.filter(|p| !is_mut_arg || p != &arg)
+                        .flat_map(|place| ana.deps(non_transitive_aliases.normalize(place)))
+                        .map(|&(dep_loc, _dep_place)| (*domain.value(dep_loc)).into())
+                        .collect();
+                    deps
                 };
-                // Not sure this is necessary anymore because I changed the analysis
-                // to transitively propagate in cases where a subplace is modified
-                let reachable_values = non_transitive_aliases.reachable_values(arg, mutability);
-                // debug!("Reachable values for {arg:?} are {reachable_values:?}");
-                // debug!(
-                //     "  Children are {:?}",
-                //     reachable_values
-                //         .into_iter()
-                //         .flat_map(|a| non_transitive_aliases.children(*a))
-                //         .collect::<Vec<_>>()
-                // );
-                let deps = reachable_values
-                    .iter()
-                    .flat_map(|p| non_transitive_aliases.children(*p))
-                    // Commenting out this filter because reachable values doesn't
-                    // always contain all relevant subplaces
-                    //.filter(|p| !is_mut_arg || p != &arg)
-                    .flat_map(|place| ana.deps(non_transitive_aliases.normalize(place)))
-                    .map(|&(dep_loc, _dep_place)| (*domain.value(dep_loc)).into())
-                    .collect();
-                deps
-            };
             let mut call_argument_equations = HashSet::new();
             let mut next_new_local = get_highest_local(body);
             let calls = body
@@ -351,7 +345,7 @@ impl Body<DisplayViaDebug<Location>> {
                                         ));
                                         next_new_local
                                     };
-                                    (local, dependencies_for(bbloc, a, false))
+                                    (local, dependencies_for(bbloc, a))
                                 })
                             })
                             .collect(),
@@ -402,11 +396,11 @@ impl Body<DisplayViaDebug<Location>> {
                 .map(DisplayViaDebug)
                 .flat_map(|loc| {
                     return_arg_deps.iter_mut().for_each(|(i, s)| {
-                        for d in dependencies_for(loc, *i, true) {
+                        for d in dependencies_for(loc, *i) {
                             s.insert(d);
                         }
                     });
-                    dependencies_for(loc, mir::Place::return_place(), false).into_iter()
+                    dependencies_for(loc, mir::Place::return_place()).into_iter()
                 })
                 .collect();
 
@@ -448,11 +442,7 @@ impl Body<DisplayViaDebug<Location>> {
 /// if this is the right thing to do.
 fn recursive_ctrl_deps<
     'tcx,
-    F: FnMut(
-        DisplayViaDebug<Location>,
-        mir::Place<'tcx>,
-        bool,
-    ) -> Dependencies<DisplayViaDebug<Location>>,
+    F: FnMut(DisplayViaDebug<Location>, mir::Place<'tcx>) -> Dependencies<DisplayViaDebug<Location>>,
 >(
     ctrl_ana: &ControlDependencies<BasicBlock>,
     bb: mir::BasicBlock,
@@ -470,11 +460,8 @@ fn recursive_ctrl_deps<
         let terminator = body.basic_blocks[block].terminator();
         if let mir::TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
             if let Some(discr_place) = discr.place() {
-                let deps = dependencies_for(
-                    DisplayViaDebug(body.terminator_loc(block)),
-                    discr_place,
-                    false,
-                );
+                let deps =
+                    dependencies_for(DisplayViaDebug(body.terminator_loc(block)), discr_place);
                 for d in &deps {
                     if let Target::Call(loc) = d {
                         seen.insert(loc.block);

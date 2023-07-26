@@ -36,6 +36,7 @@ pub type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 /// read-only.
 pub type MarkedObjects = Rc<RefCell<HashMap<LocalDefId, (Vec<Annotation>, ObjectType)>>>;
 
+#[allow(clippy::type_complexity)]
 /// This visitor traverses the items in the analyzed crate to discover
 /// annotations and analysis targets and store them in this struct. After the
 /// discovery phase [`Self::analyze`] is used to drive the

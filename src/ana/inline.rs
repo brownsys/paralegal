@@ -285,12 +285,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
-    fn find_prunable_edges(
-        graph: &InlinedGraph<'g>,
-    ) -> HashSet<(
-        Node<(GlobalLocation<'g>, DefId)>,
-        Node<(GlobalLocation<'g>, DefId)>,
-    )> {
+    fn find_prunable_edges(graph: &InlinedGraph<'g>) -> EdgeSet<'g> {
         let graph = &graph.graph;
         graph
             .all_edges()
@@ -938,6 +933,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         true
     }
 
+    #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn inline_one_function(
         &self,
         InlinedGraph {
@@ -952,10 +949,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         outgoing: &[(SimpleLocation<(GlobalLocation<'g>, DefId)>, Edge)],
         arguments: &[Option<mir::Local>],
         return_to: Option<mir::Local>,
-        queue_for_pruning: &mut HashSet<(
-            SimpleLocation<(GlobalLocation<'g>, DefId)>,
-            SimpleLocation<(GlobalLocation<'g>, DefId)>,
-        )>,
+        queue_for_pruning: &mut EdgeSet<'g>,
         root_location: GlobalLocation<'g>,
     ) {
         let grw_to_inline =
@@ -997,7 +991,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     .iter()
                     .enumerate()
                     .filter_map(|(a, actual_param)| Some(((*actual_param)?, (a + 1).into())))
-                    .into_iter()
                     .chain(return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
                     .map(|(actual_param, formal_param)| {
                         algebra::Equality::new(

@@ -34,7 +34,7 @@ pub fn link_rustc_lib() {
     } else {
         "$ORIGIN"
     };
-    add_link_search_path_for_compiler_binaries(&format!("{origin}/../toolchain/lib"));
+    add_link_search_path_for_compiler_binaries(format!("{origin}/../toolchain/lib"));
     if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-search=native={}", rustup_lib.display());
     }
