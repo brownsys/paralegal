@@ -21,12 +21,14 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     # just triggers rustup to download the toolchain
-    - name: Cache Toolchain
+    - &cache_toolchain
+      name: Cache Toolchain
       uses: actions/cache@v3
       with:
         path: ~/.rustup
         key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Cache Dependencies
+    - &cache_dependencies
+      name: Cache Dependencies
       uses: actions/cache@v3
       with:
         path: |
@@ -84,12 +86,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    # just triggers rustup to download the toolchain
-    - name: Cache Toolchain
-      uses: actions/cache@v3
-      with:
-        path: ~/.rustup
-        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+    - *cache_toolchain
     - name: Perform Check
       run: cargo fmt --check
 
@@ -98,20 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - name: Cache Toolchain
-      uses: actions/cache@v3
-      with:
-        path: ~/.rustup
-        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Cache Dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+    - *cache_toolchain
+    - *cache_dependencies
     - name: Here come the complaints
       run: cargo clippy --all -- -D warnings
