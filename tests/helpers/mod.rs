@@ -63,13 +63,18 @@ pub fn run_dfpp_with_graph_dump(dir: impl AsRef<Path>) -> bool {
 pub fn dfpp_command(dir: impl AsRef<Path>) -> std::process::Command {
     let mut cmd = std::process::Command::new("cargo");
     let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
-    let dfpp_path = std::env::current_dir()
-        .unwrap()
-        .join("target")
-        .join("debug");
+    // Cargo gives us the path where it wrote `cargo-dfpp` to
+    let cargo_dfpp_path = std::path::Path::new(env!("CARGO_BIN_EXE_cargo-dfpp"));
     let mut new_path =
-        std::ffi::OsString::with_capacity(path.len() + dfpp_path.as_os_str().len() + 1);
-    new_path.push(dfpp_path);
+        std::ffi::OsString::with_capacity(path.len() + cargo_dfpp_path.as_os_str().len() + 1);
+    // We then append the parent (e.g. its directory) to the search path. THat
+    // directory (we presume) contains both `dfpp` and `cargo-dfpp`.
+    new_path.push(cargo_dfpp_path.parent().unwrap_or_else(|| {
+        panic!(
+            "cargo-dfpp path {} had no parent",
+            cargo_dfpp_path.display()
+        )
+    }));
     new_path.push(":");
     new_path.push(path);
     cmd.arg("dfpp").env("PATH", new_path).current_dir(dir);
