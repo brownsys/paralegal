@@ -9,9 +9,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  FORGE_REVISION: aa2e8a67a8ff38db145dcb1a1aa5c02d0b851235
+  racket_version: 8.1
 
 jobs:
-  build:
+  compiler-tests:
+    name: Compiler Tests
 
     runs-on: ubuntu-latest
 
@@ -26,4 +29,34 @@ jobs:
         cargo test --test control_flow_tests
         cargo test --test new_alias_analysis_tests
         cargo test --test async_tests
-#        cargo test --test external_annotation_tests 
+  intergration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build Compiler
+      run: cargo build --verbose
+    - name: Cache Racket dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/racket
+          ~/.local/share/racket
+        key: ${{ runner.os }}-integration-tests-${{ env.racket_version }}-${{ env.FORGE_REVISION }}
+    - name: Install Racket
+      uses: Bogdanp/setup-racket@v1.10
+      with:
+        architecture: 'x64'
+        distribution: 'full'
+        variant: 'CS'
+        version: ${{ env.racket_version }}
+    - name: Install Forge
+      run: |
+        cd ..
+        git clone https://github.com/tnelson/Forge 
+        cd Forge
+        git checkout ${FORGE_REVISION}
+        cd forge
+        raco pkg install --auto || raco setup forge
+    - name: Run Tests
+      run: cargo test --test external_annotation_tests 
