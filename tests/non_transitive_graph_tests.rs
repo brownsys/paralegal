@@ -9,17 +9,8 @@ use helpers::*;
 const CRATE_DIR: &str = "tests/non-transitive-graph-tests";
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = *helpers::DFPP_INSTALLED
-        && with_current_directory(CRATE_DIR, || {
-            run_dfpp_with_graph_dump_and(["--no-cross-function-analysis"])
-        })
-        .map_or_else(
-            |e| {
-                println!("io err {}", e);
-                false
-            },
-            |t| t
-        );
+    static ref TEST_CRATE_ANALYZED: bool =
+        run_dfpp_with_graph_dump_and(CRATE_DIR, ["--no-cross-function-analysis"]);
 }
 
 macro_rules! define_test {

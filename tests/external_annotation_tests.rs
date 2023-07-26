@@ -6,21 +6,16 @@ mod helpers;
 use helpers::*;
 
 fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::io::Result<A> {
-    with_current_directory("tests/external-annotation-tests", f)
+    with_current_directory(CRATE_DIR, f)
 }
 
+const CRATE_DIR: &str = "tests/external-annotation-tests";
+
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = *helpers::DFPP_INSTALLED
-        && do_in_crate_dir(|| {
-            run_dfpp_with_graph_dump_and(["--external-annotations", "external-annotations.toml"])
-        })
-        .map_or_else(
-            |e| {
-                println!("io err {}", e);
-                false
-            },
-            |t| t
-        );
+    static ref TEST_CRATE_ANALYZED: bool = run_dfpp_with_graph_dump_and(
+        CRATE_DIR,
+        ["--external-annotations", "external-annotations.toml"]
+    );
 }
 // This will create a forge file with the name "test_{test_name}.frg"
 // that test expects that running {property} for Flows is {result}.
