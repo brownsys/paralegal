@@ -20,7 +20,6 @@ use std::io::prelude::*;
 
 lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    pub static ref DFPP_INSTALLED: bool = install_dfpp();
 }
 
 /// Run an action `F` in the directory `P`, ensuring that afterwards the
@@ -70,19 +69,6 @@ pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
     rustc_span::create_default_session_if_not_set_then(|_| f())
 }
 
-pub fn install_dfpp() -> bool {
-    std::process::Command::new("cargo")
-        .arg("install")
-        .arg("--locked")
-        .arg("--offline")
-        .arg("--path")
-        .arg(".")
-        .arg("--debug")
-        .status()
-        .unwrap()
-        .success()
-}
-
 /// Run dfpp in the current directory, passing the
 /// `--dump-serialized-non-transitive-graph` flag, which dumps a
 /// [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow) for each controller.
@@ -91,6 +77,22 @@ pub fn install_dfpp() -> bool {
 /// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
 pub fn run_dfpp_with_graph_dump() -> bool {
     run_dfpp_with_graph_dump_and::<_, &str>([])
+}
+
+pub fn dfpp_command() -> std::process::Command {
+    let mut cmd = std::process::Command::new("cargo");
+    let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
+    let dfpp_path = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("debug");
+    let mut new_path =
+        std::ffi::OsString::with_capacity(path.len() + dfpp_path.as_os_str().len() + 1);
+    new_path.push(dfpp_path);
+    new_path.push(":");
+    new_path.push(path);
+    cmd.arg("dfpp").env("PATH", new_path);
+    cmd
 }
 
 /// Run dfpp in the current directory, passing the
@@ -106,8 +108,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    std::process::Command::new("cargo")
-        .arg("dfpp")
+    dfpp_command()
         .arg("--abort-after-analysis")
         .arg("--dump-serialized-non-transitive-graph")
         .args(extra)
@@ -134,8 +135,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    std::process::Command::new("cargo")
-        .arg("dfpp")
+    dfpp_command()
         .arg("--abort-after-analysis")
         .arg("--dump-serialized-flow-graph")
         .args(extra)
