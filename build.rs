@@ -3,6 +3,14 @@ use std::process::Command;
 extern crate chrono;
 use std::env;
 
+const COMPILER_DEPENDENT_BINARIES : &[&str] = &["dfpp", "cargo-dfpp", "dfpp-explorer"];
+
+fn add_link_path_for_compiler_binaries(s: impl std::fmt::Display) {
+    for bin in COMPILER_DEPENDENT_BINARIES {
+        println!("cargo:rustc-link-arg-bin={bin}=-Wl,-rpath,{s}");
+    }
+}
+
 /// Taken from Kani
 /// (<https://github.com/model-checking/kani/blob/3d8ceddb0672e1dda6c186830f411c979bc132e2/kani-compiler/build.rs>)
 /// this code links the rustc libraries directly with the compiled binaries.
@@ -13,14 +21,7 @@ pub fn link_rustc_lib() {
     let rustup_lib = [&rustup_home, "toolchains", &rustup_tc, "lib"]
         .into_iter()
         .collect::<PathBuf>();
-    println!(
-        "cargo:rustc-link-arg-bin=dfpp=-Wl,-rpath,{}",
-        rustup_lib.display()
-    );
-    println!(
-        "cargo:rustc-link-arg-bin=cargo-dfpp=-Wl,-rpath,{}",
-        rustup_lib.display()
-    );
+    add_link_path_for_compiler_binaries(rustup_lib.display());
 
     // While we hard-code the above for development purposes, for a release/install we look
     // in a relative location for a symlink to the local rust toolchain
@@ -29,8 +30,7 @@ pub fn link_rustc_lib() {
     } else {
         "$ORIGIN"
     };
-    println!("cargo:rustc-link-arg-bin=dfpp=-Wl,-rpath,{origin}/../toolchain/lib");
-    println!("cargo:rustc-link-arg-bin=cargo-dfpp=-Wl,-rpath,{origin}/../toolchain/lib");
+    add_link_path_for_compiler_binaries(&format!("{origin}/../toolchain/lib"));
 }
 
 fn main() {
