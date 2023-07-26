@@ -76,3 +76,17 @@ jobs:
         raco pkg install --auto || raco setup forge
     - name: Run Tests
       run: cargo test --test external_annotation_tests 
+  format-check:
+    name: Format Control
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    # just triggers rustup to download the toolchain
+    - name: Cache Toolchain
+      uses: actions/cache@v3
+      with:
+        path: ~/.rustup
+        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+    - name: Perform Check
+      run: cargo fmt --check
