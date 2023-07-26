@@ -11,7 +11,7 @@ const CRATE_DIR: &str = "tests/inline-no-arg-closure-tests";
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = *helpers::DFPP_INSTALLED
         && with_current_directory(CRATE_DIR, || {
-            run_dfpp_with_graph_dump_and(&["--inline-no-arg-closures"])
+            run_dfpp_with_graph_dump_and(["--inline-no-arg-closures"])
         })
         .map_or_else(
             |e| {
@@ -43,13 +43,13 @@ define_test!(local: graph -> {
 define_test!(closure_arg: graph -> {
     let src = graph.function_call("input");
     let sink = graph.function_calls("sink").into_iter().collect::<Vec<_>>();
-    assert!(sink.len() == 0 || (sink.len() == 1 && !graph.connects(&src, &sink[0])))
+    assert!(sink.is_empty() || (sink.len() == 1 && !graph.connects(&src, &sink[0])))
 });
 
 define_test!(caller_arg: graph -> {
     let src = graph.function_call("input");
     let sink = graph.function_calls("sink").into_iter().collect::<Vec<_>>();
-    assert!(sink.len() == 0 || (sink.len() == 1 && !graph.connects(&src, &sink[0])))
+    assert!(sink.is_empty() || (sink.len() == 1 && !graph.connects(&src, &sink[0])))
 });
 define_test!(return_connect: graph -> {
     let src = graph.function_call("input");

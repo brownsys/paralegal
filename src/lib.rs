@@ -3,14 +3,18 @@
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `dfpp` and
 //! `cargo-dfpp` (a structure suggested by [rustc_plugin]).
-#![feature(rustc_private)]
-#![feature(min_specialization)]
-#![feature(drain_filter)]
-#![feature(box_patterns)]
+#![feature(
+    rustc_private,
+    min_specialization,
+    drain_filter,
+    box_patterns,
+    let_chains
+)]
 #[macro_use]
 extern crate clap;
 extern crate ordermap;
 extern crate rustc_plugin;
+extern crate rustc_utils;
 extern crate serde;
 extern crate toml;
 #[macro_use]
@@ -28,6 +32,7 @@ extern crate rustc_serialize;
 
 pub mod rust {
     //! Exposes the rustc external crates (this mod is just to tidy things up).
+    pub extern crate rustc_abi;
     pub extern crate rustc_arena;
     pub extern crate rustc_ast;
     pub extern crate rustc_borrowck;
@@ -40,11 +45,16 @@ pub mod rust {
     pub extern crate rustc_query_system;
     pub extern crate rustc_serialize;
     pub extern crate rustc_span;
+    pub extern crate rustc_type_ir;
     pub use super::rustc_index;
+    pub use rustc_type_ir::sty;
 
     pub use rustc_ast as ast;
+    pub mod mir {
+        pub use super::rustc_abi::FieldIdx as Field;
+        pub use super::rustc_middle::mir::*;
+    }
     pub use rustc_hir as hir;
-    pub use rustc_middle::mir;
     pub use rustc_middle::ty;
 
     pub use rustc_middle::dep_graph::DepGraph;
@@ -58,7 +68,8 @@ use args::LogLevelConfig;
 use pretty::DocBuilder;
 use rust::*;
 
-use flowistry::mir::borrowck_facts;
+use rustc_plugin::CrateFilter;
+use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
 
 // This import is sort of special because it comes from the private rustc
@@ -76,7 +87,7 @@ pub mod desc;
 mod discover;
 pub mod frg;
 pub mod ir;
-mod sah;
+//mod sah;
 pub mod serializers;
 #[macro_use]
 pub mod utils;
@@ -131,7 +142,12 @@ impl rustc_driver::Callbacks for Callbacks {
         config.override_queries = Some(borrowck_facts::override_queries);
     }
 
-    fn after_parsing<'tcx>(
+    // This used to run `after_parsing` but that now makes `tcx.crates()` empty
+    // (which interferes with external anotation resolution). So now it runs
+    // `after_expansion` and so far that doesn't seem to break anything, but I'm
+    // explaining this here in case that flowistry has some sort of issue with
+    // that (when retrieveing the MIR bodies for instance)
+    fn after_expansion<'tcx>(
         &mut self,
         compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
@@ -154,7 +170,6 @@ impl rustc_driver::Callbacks for Callbacks {
         queries
             .global_ctxt()
             .unwrap()
-            .take()
             .enter(|tcx| {
                 let desc = discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run()?;
                 if self.opts.dbg().dump_serialized_flow_graph() {
@@ -171,7 +186,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 }
                 info!("All elems walked");
                 let result_path = compiler
-                    .build_output_filenames(&*compiler.session(), &[])
+                    .build_output_filenames(compiler.session(), &[])
                     .with_extension("ana.frg");
                 let mut outf = outfile_pls(&result_path)?;
                 let doc_alloc = pretty::BoxAllocator;
@@ -180,7 +195,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 let mut outf_2 = outfile_pls(self.opts.result_path())?;
                 doc.render(100, &mut outf_2)?;
 
-                let info_path = compiler.build_output_filenames(&*compiler.session(), &[])
+                let info_path = compiler.build_output_filenames(compiler.session(), &[])
                     .with_extension("info.json");
                 let info = AdditionalInfo {
                     call_sites: desc.all_call_sites().into_iter().map(|cs| (cs.to_string(), cs.clone())).collect()
@@ -206,8 +221,12 @@ impl rustc_driver::Callbacks for Callbacks {
 impl rustc_plugin::RustcPlugin for DfppPlugin {
     type Args = Args;
 
-    fn bin_name() -> String {
-        "dfpp".to_string()
+    fn version(&self) -> std::borrow::Cow<'static, str> {
+        crate_version!().into()
+    }
+
+    fn driver_name(&self) -> std::borrow::Cow<'static, str> {
+        "dfpp".into()
     }
 
     fn args(
@@ -218,9 +237,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         let args = ArgWrapper::parse();
         rustc_plugin::RustcPluginArgs {
             args: args.args,
-            file: None,
-            flags: None,
-            cargo_args: args.cargo_args,
+            filter: CrateFilter::OnlyWorkspace,
         }
     }
 

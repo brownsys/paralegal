@@ -1,45 +1,231 @@
-use std::{
-    borrow::{Borrow, Cow},
-    cell::RefCell,
-    fmt::Display,
-    rc::Rc,
-};
+use std::{borrow::Cow, cell::RefCell, fmt::Display, rc::Rc};
 
 use crate::{
-    ana,
     ir::global_location::{GliAt, GLI},
     rust::{
         hir,
-        mir::{visit::Visitor, *},
+        mir::{self, visit::Visitor, *},
         rustc_data_structures::fx::FxHashSet as HashSet,
         rustc_hir::{def_id::DefId, BodyId},
         rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
         ty::{self, subst::GenericArgKind},
     },
-    utils::{self, AsFnAndArgs, IntoBodyId, SparseMatrix, TyCtxtExt},
+    utils::{self, AsFnAndArgs, IntoBodyId, RecursionBreakingCache, SparseMatrix, TyCtxtExt},
     AnalysisCtrl, HashMap, TyCtxt,
 };
 
 use flowistry::{
     extensions::{is_extension_active, MutabilityMode},
-    indexed::{impls::LocationDomain, IndexedDomain},
-    infoflow::mutation::{ModularMutationVisitor, MutationStatus},
-    mir::{
-        aliases::Aliases,
-        borrowck_facts::CachedSimplifedBodyWithFacts,
-        engine,
-        utils::{BodyExt, PlaceExt, PlaceRelation},
+    indexed::{
+        impls::{LocationOrArg, LocationOrArgDomain as LocationDomain, LocationOrArgIndex},
+        IndexedDomain,
     },
+    infoflow::mutation::MutationStatus,
+    mir::{aliases::Aliases, engine},
+};
+use rustc_utils::mir::{
+    borrowck_facts::CachedSimplifedBodyWithFacts, control_dependencies::ControlDependencies,
 };
 
-pub use flowistry::mir::control_dependencies::ControlDependencies;
+use rustc_utils::{BodyExt, PlaceExt};
+
+pub struct PlaceCollector<'tcx> {
+    pub tcx: TyCtxt<'tcx>,
+    pub places: Vec<(Place<'tcx>, Option<PlaceElem<'tcx>>)>,
+}
+
+impl<'tcx> Visitor<'tcx> for PlaceCollector<'tcx> {
+    fn visit_place(
+        &mut self,
+        place: &Place<'tcx>,
+        _context: mir::visit::PlaceContext,
+        _location: Location,
+    ) {
+        self.places.push((*place, None));
+    }
+
+    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
+        match rvalue {
+            Rvalue::Aggregate(box AggregateKind::Adt(def_id, idx, substs, _, _), ops) => {
+                // In the case of _1 = aggregate { field1: op1, field2: op2, ... }
+                // we want to remember which places correspond to which fields so the infoflow
+                // analysis can be field-sensitive for constructors.
+                let adt_def = self.tcx.adt_def(*def_id);
+                let variant = adt_def.variant(*idx);
+                let places = variant
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .zip(ops.iter())
+                    .filter_map(|((i, field), op)| {
+                        let place = op.place()?;
+                        let field =
+                            ProjectionElem::Field(Field::from_usize(i), field.ty(self.tcx, substs));
+                        Some((place, Some(field)))
+                    });
+                self.places.extend(places);
+            }
+            _ => self.super_rvalue(rvalue, location),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum PlaceRelation {
+    Super,
+    Sub,
+    Disjoint,
+}
+
+impl PlaceRelation {
+    pub fn overlaps(&self) -> bool {
+        *self != PlaceRelation::Disjoint
+    }
+
+    pub fn of<'tcx>(part_place: Place<'tcx>, whole_place: Place<'tcx>) -> Self {
+        Self::configurable_of(part_place, whole_place, true)
+    }
+    pub fn configurable_of<'tcx>(
+        part_place: Place<'tcx>,
+        whole_place: Place<'tcx>,
+        deref_means_disjoint: bool,
+    ) -> Self {
+        let locals_match = part_place.local == whole_place.local;
+        if !locals_match {
+            return PlaceRelation::Disjoint;
+        }
+
+        let projections_match = part_place
+            .projection
+            .iter()
+            .zip(whole_place.projection.iter())
+            .all(|(elem1, elem2)| {
+                use ProjectionElem::*;
+                match (elem1, elem2) {
+                    (Deref, Deref) => true,
+                    (Field(f1, _), Field(f2, _)) => f1 == f2,
+                    (Index(_), Index(_)) => true,
+                    (ConstantIndex { .. }, ConstantIndex { .. }) => true,
+                    (Subslice { .. }, Subslice { .. }) => true,
+                    (Downcast(_, v1), Downcast(_, v2)) => v1 == v2,
+                    _ => false,
+                }
+            });
+
+        let is_sub_part = part_place.projection.len() >= whole_place.projection.len();
+        let remaining_projection = if is_sub_part {
+            &part_place.projection[whole_place.projection.len()..]
+        } else {
+            &whole_place.projection[part_place.projection.len()..]
+        };
+
+        if deref_means_disjoint
+            && remaining_projection
+                .iter()
+                .any(|elem| matches!(elem, ProjectionElem::Deref))
+        {
+            return PlaceRelation::Disjoint;
+        }
+
+        if projections_match {
+            if is_sub_part {
+                PlaceRelation::Sub
+            } else {
+                PlaceRelation::Super
+            }
+        } else {
+            PlaceRelation::Disjoint
+        }
+    }
+}
+pub struct ModularMutationVisitor<'a, 'tcx, F>
+where
+    F: FnMut(Place<'tcx>, &[(Place<'tcx>, Option<PlaceElem<'tcx>>)], Location, MutationStatus),
+{
+    f: F,
+    aliases: &'a Aliases<'a, 'tcx>,
+}
+
+impl<'a, 'tcx, F> ModularMutationVisitor<'a, 'tcx, F>
+where
+    F: FnMut(Place<'tcx>, &[(Place<'tcx>, Option<PlaceElem<'tcx>>)], Location, MutationStatus),
+{
+    pub fn new(aliases: &'a Aliases<'a, 'tcx>, f: F) -> Self {
+        ModularMutationVisitor { aliases, f }
+    }
+}
+
+impl<'tcx, F> Visitor<'tcx> for ModularMutationVisitor<'_, 'tcx, F>
+where
+    F: FnMut(Place<'tcx>, &[(Place<'tcx>, Option<PlaceElem<'tcx>>)], Location, MutationStatus),
+{
+    fn visit_assign(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>, location: Location) {
+        debug!("Checking {location:?}: {place:?} = {rvalue:?}");
+        let mut collector = PlaceCollector {
+            places: Vec::new(),
+            tcx: self.aliases.tcx,
+        };
+        collector.visit_rvalue(rvalue, location);
+        (self.f)(
+            *place,
+            collector.places.as_slice(),
+            location,
+            MutationStatus::Definitely,
+        );
+    }
+
+    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
+        debug!("Checking {location:?}: {:?}", terminator.kind);
+        let tcx = self.aliases.tcx;
+
+        if let TerminatorKind::Call {
+            /*func,*/ // TODO: deal with func
+            args,
+            destination: dst_place,
+            ..
+        } = &terminator.kind
+        {
+            let arg_places = args.iter().filter_map(Operand::place).collect::<Vec<_>>();
+            let arg_inputs = arg_places
+                .iter()
+                .map(|place| (*place, None))
+                .collect::<Vec<_>>();
+
+            let ret_is_unit = dst_place
+                .ty(self.aliases.body.local_decls(), tcx)
+                .ty
+                .is_unit();
+            let empty = vec![];
+            let inputs = if ret_is_unit { &empty } else { &arg_inputs };
+
+            (self.f)(
+                *dst_place,
+                inputs.as_slice(),
+                location,
+                MutationStatus::Definitely,
+            );
+
+            for arg in arg_places {
+                for arg_mut in self.aliases.reachable_values(arg, Mutability::Mut) {
+                    // The argument itself can never be modified in a caller-visible way,
+                    // because it's either getting moved or copied.
+                    if arg == *arg_mut {
+                        continue;
+                    }
+
+                    (self.f)(*arg_mut, &arg_inputs, location, MutationStatus::Possibly);
+                }
+            }
+        }
+    }
+}
 
 use super::{algebra, inline::Oracle};
 
 pub type FlowResults<'a, 'tcx, 'g, 'inliner> =
     engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g, 'inliner>>;
 
-pub type Dependency<'tcx> = (Location, Place<'tcx>);
+pub type Dependency<'tcx> = (LocationOrArgIndex, Place<'tcx>);
 pub type LocationSet<'tcx> = HashSet<Dependency<'tcx>>;
 pub type DependencyMap<'tcx> = SparseMatrix<Place<'tcx>, Dependency<'tcx>>;
 
@@ -79,27 +265,30 @@ impl<'tcx> Display for FlowDomain<'tcx> {
 
 impl<'tcx> FlowDomain<'tcx> {
     pub fn deps(&self, at: Place<'tcx>) -> impl Iterator<Item = &Dependency<'tcx>> {
-        self.matrix().row(&at).into_iter()
+        self.matrix().row(&at).iter()
     }
+    #[allow(dead_code)]
     fn override_(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
         self.overrides.set(row, at)
     }
     fn matrix(&self) -> &DependencyMap<'tcx> {
         &self.matrix
     }
-    fn matrix_mut<'a>(&mut self) -> &mut DependencyMap<'tcx> {
+    fn matrix_mut(&mut self) -> &mut DependencyMap<'tcx> {
         &mut self.matrix
     }
     fn union_after(&mut self, row: Place<'tcx>, from: Cow<LocationSet<'tcx>>) -> bool {
         self.overrides.union_row(&row, from)
     }
+
+    #[allow(dead_code)]
     fn include(&mut self, row: Place<'tcx>, at: Dependency<'tcx>) -> bool {
         self.override_(row, at)
     }
     fn rows_after_override(&self) -> impl Iterator<Item = (&Place<'tcx>, &LocationSet<'tcx>)> {
         self.matrix
             .rows()
-            .filter(|r| !self.overrides.has(&r.0))
+            .filter(|r| !self.overrides.has(r.0))
             .chain(self.overrides.rows())
     }
 }
@@ -124,28 +313,28 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
     fn probably_performs_side_effects(
         &self,
         func: DefId,
-        args: &[Option<Place>],
+        args: &[Option<Place<'tcx>>],
         state: &FlowDomain<'tcx>,
     ) -> bool {
-        let sig = self.tcx.fn_sig(func).skip_binder();
+        let sig = self.tcx.fn_sig(func).skip_binder().skip_binder();
         let has_no_outputs =
             sig.output().is_unit() && !sig.inputs().iter().any(|i| i.is_mutable_ptr());
         has_no_outputs
             || args
                 .iter()
                 .cloned()
-                .filter_map(std::convert::identity)
+                .flatten()
                 .all(|p| state.matrix().row(&p).is_empty())
     }
 
     pub fn can_be_elided(
         &self,
-        terminator: &TerminatorKind,
+        terminator: &TerminatorKind<'tcx>,
         body: &Body<'tcx>,
         state: &FlowDomain<'tcx>,
     ) -> bool {
         if let Ok((func, args, _ret)) = terminator.as_fn_and_args() {
-            !self.fn_carries_marker(body, &terminator)
+            !self.fn_carries_marker(body, terminator)
                 && !self.probably_performs_side_effects(func, &args, state)
         } else {
             false
@@ -166,7 +355,7 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
                 .cache
                 .get(body_id, |_| {
                     let body = self.tcx.body_for_body_id(body_id).simplified_body();
-                    body.basic_blocks()
+                    body.basic_blocks
                         .iter()
                         .any(|bbdat| self.fn_carries_marker(body, &bbdat.terminator().kind))
                 })
@@ -196,64 +385,51 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
     pub fn fn_carries_marker(&self, body: &Body<'tcx>, terminator: &TerminatorKind) -> bool {
         use utils::TyExt;
 
-        if let Ok((defid, args, _)) = terminator.as_fn_and_args() {
+        if let Ok((defid, _args, _)) = terminator.as_fn_and_args() {
             debug!(
                 "Checking function {} for markers",
                 self.tcx.def_path_debug_str(defid)
             );
-            let carries = self.oracle.carries_marker(defid);
-            let result = if carries {
+            if self.oracle.carries_marker(defid) {
                 debug!("  carries self");
-                true
-            } else if Some(defid) == self.tcx.lang_items().from_generator_fn() {
-                debug!("  is async closure");
-                let closure = match args.as_slice() {
-                    [Some(p)] => *p,
-                    _ => panic!("Expected one non-const closure argument"),
-                };
-                debug_assert!(closure.projection.is_empty());
-                let closure_fn = if let ty::TyKind::Generator(gid, _, _) =
-                    body.local_decls[closure.local].ty.kind()
-                {
-                    *gid
-                } else {
-                    unreachable!("Expected Generator")
-                };
+                return true;
+            }
+            if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
+                    body.local_decls[mir::RETURN_PLACE].ty.kind()
+                && let ty::TyKind::Generator(closure_fn, _, _) = self.tcx.type_of(alias.def_id).skip_binder().kind() {
                 let map = self.tcx.hir();
-                self.body_carries_marker(
-                    map.body_owned_by(map.local_def_id_to_hir_id(closure_fn.as_local().unwrap())),
-                )
-            } else {
-                let local_carries = defid.as_local().map_or(false, |ldid| {
-                    self.force_into_body_id(ldid)
-                        .map_or(false, |body_id| self.body_carries_marker(body_id))
-                });
-                if local_carries {
-                    debug!("  body carries");
-                }
-                let type_carries = self
-                    .tcx
-                    .fn_sig(defid)
-                    .skip_binder()
-                    .inputs_and_output
-                    .iter()
-                    .any(|t| {
-                        t.walk().any(|t| match t.unpack() {
-                            GenericArgKind::Type(t) => {
-                                t.defid().map_or(false, |t| self.oracle.carries_marker(t))
-                            }
-                            _ => false,
-                        })
-                    });
-                if type_carries {
-                    debug!("  type carries");
-                }
-                local_carries | type_carries
-            };
-            result
-        } else {
-            false
+                return self.body_carries_marker(
+                    map.body_owned_by(closure_fn.as_local().unwrap()),
+                );
+            }
+            if defid.as_local().map_or(false, |ldid| {
+                self.force_into_body_id(ldid)
+                    .map_or(false, |body_id| self.body_carries_marker(body_id))
+            }) {
+                debug!("  body carries");
+                return true;
+            }
+            if self
+                .tcx
+                .fn_sig(defid)
+                .skip_binder()
+                .skip_binder()
+                .inputs_and_output
+                .iter()
+                .any(|t| {
+                    t.walk().any(|t| match t.unpack() {
+                        GenericArgKind::Type(t) => {
+                            t.defid().map_or(false, |t| self.oracle.carries_marker(t))
+                        }
+                        _ => false,
+                    })
+                })
+            {
+                debug!("  type carries");
+                return true;
+            }
         }
+        false
     }
 }
 
@@ -261,15 +437,12 @@ pub struct FlowAnalysis<'a, 'tcx, 'g, 's> {
     pub tcx: TyCtxt<'tcx>,
     pub def_id: DefId,
     pub body: &'a Body<'tcx>,
-    pub control_dependencies: ControlDependencies,
+    pub control_dependencies: ControlDependencies<BasicBlock>,
     pub aliases: Aliases<'a, 'tcx>,
     pub gli: GLI<'g>,
     analysis_control: &'static AnalysisCtrl,
     carries_marker: &'s MarkerCarryingOracle<'tcx, 's>,
-    recurse_cache: flowistry::cached::Cache<
-        BodyId,
-        flowistry::infoflow::FlowResults<'a, 'tcx, flowistry::infoflow::TransitiveFlowDomain<'tcx>>,
-    >,
+    recurse_cache: RecursionBreakingCache<BodyId, flowistry::infoflow::FlowResults<'a, 'tcx>>,
     elision_info: RefCell<HashMap<Location, HashSet<algebra::MirEquation>>>,
 }
 
@@ -281,11 +454,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
     }
 
     fn body_id(&self) -> BodyId {
-        self.tcx.hir().body_owned_by(
-            self.tcx
-                .hir()
-                .local_def_id_to_hir_id(self.def_id.expect_local()),
-        )
+        self.tcx.hir().body_owned_by(self.def_id.expect_local())
     }
 
     pub fn new(
@@ -294,7 +463,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
         def_id: DefId,
         body: &'a Body<'tcx>,
         aliases: Aliases<'a, 'tcx>,
-        control_dependencies: ControlDependencies,
+        control_dependencies: ControlDependencies<BasicBlock>,
         carries_marker: &'s MarkerCarryingOracle<'tcx, 's>,
         analysis_control: &'static AnalysisCtrl,
     ) -> Self {
@@ -305,7 +474,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             body,
             aliases,
             control_dependencies,
-            recurse_cache: flowistry::cached::Cache::default(),
+            recurse_cache: RecursionBreakingCache::default(),
             analysis_control,
             elision_info: Default::default(),
             carries_marker,
@@ -319,6 +488,12 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
     pub fn gli_at(&self, location: Location) -> GliAt<'g> {
         self.gli.at(location, self.body_id())
     }
+
+    pub fn location_to_index(&self, location: Location) -> LocationOrArgIndex {
+        self.location_domain()
+            .index(&LocationOrArg::Location(location))
+    }
+
     fn transfer_function(
         &self,
         state: &mut FlowDomain<'tcx>,
@@ -344,7 +519,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
 
         let mut input_location_deps = LocationSet::default();
         if !transitive {
-            input_location_deps.insert((location, mutated));
+            input_location_deps.insert((self.location_to_index(location), mutated));
         }
 
         let add_deps = |place: Place<'tcx>, location_deps: &mut LocationSet<'tcx>| {
@@ -353,14 +528,11 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             }
             //let reachable_values = all_aliases.reachable_values(place, Mutability::Not);
             let reachable_values = all_aliases.children(place);
-            let provenance = place
-                .refs_in_projection()
-                .into_iter()
-                .flat_map(|(place_ref, _)| {
-                    all_aliases
-                        .aliases(Place::from_ref(place_ref, self.tcx))
-                        .iter()
-                });
+            let provenance = place.refs_in_projection().flat_map(|(place_ref, _)| {
+                all_aliases
+                    .aliases(Place::from_ref(place_ref, self.tcx))
+                    .iter()
+            });
             for relevant in reachable_values.iter().chain(provenance) {
                 let deps = state.matrix().row(&all_aliases.normalize(*relevant));
                 trace!("    For relevant {relevant:?} for input {place:?} adding deps {deps:?}");
@@ -390,7 +562,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             }
         }
 
-        if children.len() > 0 {
+        if !children.is_empty() {
             // In the special case of mutated = aggregate { x: .., y: .. }
             // then we ensure that deps(mutated.x) != deps(mutated)
 
@@ -439,7 +611,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             debug!("  Mutated conflicting places: {mutable_conflicts:?}");
             debug!("    with deps {input_location_deps:?}");
 
-            for place in mutable_conflicts.into_owned().into_iter() {
+            for place in mutable_conflicts.iter().cloned() {
                 let normalized = all_aliases.normalize(place);
                 // I am unsure if this is the right place to do this. I am using
                 // `configurable_of` with `deref_means_disjoint == true` so this
@@ -494,7 +666,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
 
         // If a function returns never (fn () -> !) then there are no exit points,
         // so we can't analyze effects on exit
-        let fn_sig = tcx.fn_sig(*def_id);
+        let fn_sig = tcx.fn_sig(*def_id).skip_binder();
         if fn_sig.skip_binder().output().is_never() {
             debug!("  Func returns never");
             return false;
@@ -541,32 +713,24 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             return false;
         }
 
-        let recursive = flowistry::infoflow::BODY_STACK.with(|body_stack| {
-            let body_stack = body_stack.borrow();
-            body_stack.iter().any(|visited_id| *visited_id == body_id)
-        });
-        if recursive {
-            debug!("  Func is a recursive call");
-            return false;
-        }
-
         let body_with_facts =
             crate::borrowck_facts::get_body_with_borrowck_facts(tcx, def_id.expect_local());
-        let flow = self.recurse_cache.get(body_id, |_| {
+        let Some(flow) = self.recurse_cache.get(body_id, |_| {
             info!("Recursing into {}", tcx.def_path_debug_str(*def_id));
             flowistry::infoflow::compute_flow(tcx, body_id, body_with_facts)
-        });
-        let body = &body_with_facts.simplified_body();
+        }) else { return false };
+        let body = &body_with_facts.body;
 
-        let mut return_state = <flowistry::infoflow::TransitiveFlowDomain as flowistry::infoflow::FlowDomain>::from_location_domain(flow.analysis.location_domain());
+        let mut return_state =
+            flowistry::infoflow::FlowDomain::new(flow.analysis.location_domain());
         {
-            let return_locs = body
-                .basic_blocks()
-                .iter_enumerated()
-                .filter_map(|(bb, data)| match data.terminator().kind {
-                    TerminatorKind::Return => Some(body.terminator_loc(bb)),
-                    _ => None,
-                });
+            let return_locs =
+                body.basic_blocks
+                    .iter_enumerated()
+                    .filter_map(|(bb, data)| match data.terminator().kind {
+                        TerminatorKind::Return => Some(body.terminator_loc(bb)),
+                        _ => None,
+                    });
 
             for loc in return_locs {
                 return_state.join(flow.state_at(loc));
@@ -580,9 +744,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
                         return None;
                     }
 
-                    if let Some((dst, _)) = destination {
-                        return Some(*dst);
-                    }
+                    return Some(*destination);
                 }
 
                 if !child.is_arg(body) || (mutated && !child.is_indirect()) {
@@ -605,9 +767,13 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
                 let parent_param_env = tcx.param_env(self.def_id);
                 log::debug!("Adding child {child:?} to parent {parent_toplevel_arg:?}");
                 for elem in child.projection.iter() {
-                    ty = ty.projection_ty_core(tcx, parent_param_env, &elem, |_, field, _| {
-                        ty.field_ty(tcx, field)
-                    });
+                    ty = ty.projection_ty_core(
+                        tcx,
+                        parent_param_env,
+                        &elem,
+                        |_, field, _| ty.field_ty(tcx, field),
+                        |_, ty| ty,
+                    );
                     let elem = match elem {
                         ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
                         elem => elem,
@@ -618,9 +784,8 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
                 let parent_arg_projected = Place::make(parent_toplevel_arg.local, &projection, tcx);
                 Some(parent_arg_projected)
             };
-        use flowistry::infoflow::FlowDomain;
 
-        for (child, _) in return_state.matrix().rows() {
+        for (child, _) in return_state.rows() {
             if let Some(parent) = translate_child_to_parent(child, true) {
                 let was_return = child.local == RETURN_PLACE;
                 // > 1 because arguments will always have their synthetic location in their dep set
@@ -631,7 +796,6 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
 
                 let child_deps = return_state.row_set(child);
                 let parent_deps = return_state
-                    .matrix()
                     .rows()
                     .filter(|(_, deps)| child_deps.is_superset(deps))
                     .filter_map(|(row, _)| Some((translate_child_to_parent(row, false)?, None)))
@@ -674,10 +838,9 @@ impl<'a, 'tcx, 'g, 'inliner> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g,
                     "arg={arg:?} / place={place:?} / loc={:?}",
                     self.location_domain().value(loc)
                 );
-                state.matrix_mut().set(
-                    self.aliases.normalize(*place),
-                    (*self.location_domain().value(loc), *place),
-                );
+                state
+                    .matrix_mut()
+                    .set(self.aliases.normalize(*place), (loc, *place));
             }
         }
     }
@@ -708,15 +871,14 @@ impl<'a, 'tcx, 'g, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inli
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
-        if self.analysis_control.avoid_inlining() {
-            if self
+        if self.analysis_control.avoid_inlining()
+            && self
                 .carries_marker
                 .can_be_elided(&terminator.kind, self.body, state)
-                && self.recurse_into_call(state, &terminator.kind, location)
-            {
-                debug!("Elided {:?}", terminator.kind);
-                return;
-            }
+            && self.recurse_into_call(state, &terminator.kind, location)
+        {
+            debug!("Elided {:?}", terminator.kind);
+            return;
         }
 
         ModularMutationVisitor::new(
@@ -754,41 +916,63 @@ pub fn compute_flow_internal<'a, 'tcx, 'g, 's>(
     carries_marker: &'s MarkerCarryingOracle<'tcx, 's>,
     analysis_control: &'static AnalysisCtrl,
 ) -> FlowResults<'a, 'tcx, 'g, 's> {
-    flowistry::infoflow::BODY_STACK.with(|body_stack| {
-        body_stack.borrow_mut().push(body_id);
-        // debug!(
-        //   "{}",
-        //   rustc_hir_pretty::to_string(rustc_hir_pretty::NO_ANN, |s| s
-        //     .print_expr(&tcx.hir().body(body_id).value))
-        // );
-        // debug!("{}", body_with_facts.simplified_body().to_string(tcx).unwrap());
+    //flowistry::infoflow::BODY_STACK.with(|body_stack| {
+    //body_stack.borrow_mut().push(body_id);
+    // debug!(
+    //   "{}",
+    //   rustc_hir_pretty::to_string(rustc_hir_pretty::NO_ANN, |s| s
+    //     .print_expr(&tcx.hir().body(body_id).value))
+    // );
+    // debug!("{}", body_with_facts.simplified_body().to_string(tcx).unwrap());
 
-        let def_id = tcx.hir().body_owner_def_id(body_id).to_def_id();
-        let aliases = Aliases::build(tcx, def_id, body_with_facts);
-        let location_domain = aliases.location_domain().clone();
+    let def_id = tcx.hir().body_owner_def_id(body_id).to_def_id();
+    let aliases = Aliases::build(tcx, def_id, body_with_facts.body_with_facts());
+    let location_domain = aliases.location_domain().clone();
 
-        let body = body_with_facts.simplified_body();
-        let control_dependencies = ControlDependencies::build(body);
-        debug!("Control dependencies: {control_dependencies:?}");
+    let body = body_with_facts.simplified_body();
+    let control_dependencies = body.control_dependencies();
+    debug!("Control dependencies: {control_dependencies:?}");
 
-        let results = {
-            //block_timer!("Flow");
+    let results = {
+        //block_timer!("Flow");
 
-            let analysis = FlowAnalysis::new(
-                tcx,
-                gli,
-                def_id,
-                body,
-                aliases,
-                control_dependencies,
-                carries_marker,
-                analysis_control,
-            );
-            engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
-            // analysis.into_engine(tcx, body).iterate_to_fixpoint()
-        };
-        body_stack.borrow_mut().pop();
+        let analysis = FlowAnalysis::new(
+            tcx,
+            gli,
+            def_id,
+            body,
+            aliases,
+            control_dependencies,
+            carries_marker,
+            analysis_control,
+        );
+        engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
+        // analysis.into_engine(tcx, body).iterate_to_fixpoint()
+    };
 
-        results
-    })
+    if log::log_enabled!(log::Level::Info) {
+        let counts = body
+            .all_locations()
+            .flat_map(|loc| {
+                let state = results.state_at(loc).matrix();
+                state
+                    .rows()
+                    .map(|(_, locations)| locations.len())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let nloc = body.all_locations().count();
+        let np = counts.len();
+        let pavg = np as f64 / (nloc as f64);
+        let nl = counts.into_iter().sum::<usize>();
+        let lavg = nl as f64 / (nloc as f64);
+        log::info!(
+        "Over {nloc} locations, total number of place entries: {np} (avg {pavg:.0}/loc), total size of location sets: {nl} (avg {lavg:.0}/loc)",
+      );
+    }
+    //body_stack.borrow_mut().pop();
+
+    results
+    //})
 }

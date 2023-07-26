@@ -4,7 +4,7 @@ pub struct Print<F: Fn(&mut Formatter<'_>) -> Result>(pub F);
 
 impl<F: Fn(&mut Formatter<'_>) -> Result> Display for Print<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        (&self.0)(f)
+        (self.0)(f)
     }
 }
 pub fn write_sep<E, I: IntoIterator<Item = E>, F: FnMut(E, &mut Formatter<'_>) -> Result>(

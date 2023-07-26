@@ -11,12 +11,12 @@
 use crate::{
     consts,
     desc::{
-        ExceptionAnnotation, Identifier, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind,
+        ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind,
         TypeDescriptor,
     },
     rust::*,
     utils,
-    utils::TinyBitSet,
+    utils::{write_sep, Print, TinyBitSet},
     Symbol,
 };
 use ast::{token, tokenstream};
@@ -35,7 +35,7 @@ use nom::{
 ///
 /// Construct if from a [`TokenStream`] with [`Self::from_stream`].
 #[derive(Clone)]
-pub struct I<'a>(CursorRef<'a>);
+pub struct I<'a>(RefTokenTreeCursor<'a>);
 type R<'a, T> = nom::IResult<I<'a>, T>;
 
 impl<'a> Iterator for I<'a> {
@@ -67,13 +67,8 @@ impl<'a> std::fmt::Debug for I<'a> {
 
 impl<'a> nom::InputLength for I<'a> {
     fn input_len(&self) -> usize {
-        // Extremely yikes, but the only way to get to this information. :(
-        // It's a trick to break visibility as per https://www.reddit.com/r/rust/comments/cfxg60/comment/eud8n3y/
-        type __EvilTarget<'a> = (&'a TokenStream, usize);
-        use std::mem::{size_of, transmute};
-        assert_eq!(size_of::<__EvilTarget>(), size_of::<Self>());
-        let slf = unsafe { transmute::<&Self, &__EvilTarget<'_>>(self) };
-        slf.0.len() - slf.1
+        // Cloning is cheap, because this is just a pointer + a count
+        self.clone().0.count()
     }
 }
 
@@ -99,7 +94,7 @@ fn one(mut tree: I) -> R<&TokenTree> {
 /// [`TokenTree::Delimited`] subtrees.
 pub fn one_token(i: I) -> R<&Token> {
     nom::combinator::map_res(one, |t| match t {
-        TokenTree::Token(t) => Ok(t),
+        TokenTree::Token(t, _) => Ok(t),
         _ => Result::Err(()),
     })(i)
 }
@@ -211,9 +206,9 @@ pub fn tiny_bitset(i: I) -> R<TinyBitSet> {
 }
 
 /// Parser for the payload of the `#[dfpp::output_type(...)]` annotation.
-pub(crate) fn otype_ann_match(ann: &ast::MacArgs, tcx: TyCtxt) -> Vec<TypeDescriptor> {
+pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Vec<TypeDescriptor> {
     match ann {
-        ast::MacArgs::Delimited(_, _, stream) => {
+        ast::AttrArgs::Delimited(dargs) => {
             let mut p = nom::multi::separated_list0(
                 assert_token(TokenKind::Comma),
                 nom::multi::separated_list0(
@@ -221,7 +216,7 @@ pub(crate) fn otype_ann_match(ann: &ast::MacArgs, tcx: TyCtxt) -> Vec<TypeDescri
                     nom::combinator::map(identifier, |i| i.to_string()),
                 ),
             );
-            p(I::from_stream(stream))
+            p(I::from_stream(&dargs.tokens))
                 .unwrap_or_else(|err: nom::Err<_>| {
                     panic!("parser failed on {ann:?} with error {err:?}")
                 })
@@ -229,7 +224,18 @@ pub(crate) fn otype_ann_match(ann: &ast::MacArgs, tcx: TyCtxt) -> Vec<TypeDescri
                 .into_iter()
                 .map(|strs| {
                     let segment_vec = strs.iter().map(AsRef::as_ref).collect::<Vec<&str>>();
-                    utils::identifier_for_item(tcx, utils::resolve::def_path_res(tcx, &segment_vec))
+                    utils::identifier_for_item(
+                        tcx,
+                        utils::resolve::def_path_res(tcx, &segment_vec)
+                            .unwrap_or_else(|err| {
+                                panic!(
+                                    "Could not resolve {}: {err:?}",
+                                    Print(|f| write_sep(f, "::", &segment_vec, |elem, f| f
+                                        .write_str(elem)))
+                                )
+                            })
+                            .def_id(),
+                    )
                 })
                 .collect()
         }
@@ -238,10 +244,10 @@ pub(crate) fn otype_ann_match(ann: &ast::MacArgs, tcx: TyCtxt) -> Vec<TypeDescri
 }
 
 /// Parser for an [`ExceptionAnnotation`]
-pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
+pub(crate) fn match_exception(ann: &rustc_ast::AttrArgs) -> ExceptionAnnotation {
     use rustc_ast::*;
     match ann {
-        ast::MacArgs::Delimited(_, _, stream) => {
+        ast::AttrArgs::Delimited(dargs) => {
             let p = |i| {
                 let (i, verification_hash) = nom::combinator::opt(nom::sequence::preceded(
                     nom::sequence::tuple((
@@ -256,7 +262,7 @@ pub(crate) fn match_exception(ann: &rustc_ast::MacArgs) -> ExceptionAnnotation {
                 let _ = nom::combinator::eof(i)?;
                 Ok(ExceptionAnnotation { verification_hash })
             };
-            p(I::from_stream(stream))
+            p(I::from_stream(&dargs.tokens))
                 .unwrap_or_else(|err: nom::Err<_>| panic!("parser failed with error {err:?}"))
         }
         _ => panic!(),
@@ -295,11 +301,11 @@ fn refinements_parser(i: I) -> R<MarkerRefinement> {
 }
 
 /// Parser for a [`LabelAnnotation`]
-pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> MarkerAnnotation {
+pub(crate) fn ann_match_fn(ann: &rustc_ast::AttrArgs) -> MarkerAnnotation {
     use rustc_ast::*;
     use token::*;
     match ann {
-        ast::MacArgs::Delimited(_, _, stream) => {
+        ast::AttrArgs::Delimited(dargs) => {
             let p = |i| {
                 let (i, label) = identifier(i)?;
                 let (i, cont) = nom::combinator::opt(assert_token(TokenKind::Comma))(i)?;
@@ -310,7 +316,7 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::MacArgs) -> MarkerAnnotation {
                     refinement: refinement.unwrap_or_else(MarkerRefinement::empty),
                 })
             };
-            p(I::from_stream(stream))
+            p(I::from_stream(&dargs.tokens))
                 .unwrap_or_else(|err: nom::Err<_>| panic!("parser failed with error {err:?}"))
         }
         _ => panic!(),

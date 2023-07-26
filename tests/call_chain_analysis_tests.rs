@@ -13,8 +13,8 @@ lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = {
         let crate_dir: std::path::PathBuf = TEST_CRATE_NAME.to_string().into();
         *DFPP_INSTALLED
-            && cwd_and_use_rustc_in(&crate_dir, || {
-                run_dfpp_with_flow_graph_dump_and(&["--drop-clone"])
+            && cwd_and_use_rustc_in(crate_dir, || {
+                run_dfpp_with_flow_graph_dump_and(["--drop-clone"])
             })
             .map_or_else(
                 |e| {

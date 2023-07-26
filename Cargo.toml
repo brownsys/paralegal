@@ -9,13 +9,16 @@ description = "A linter for user-defined privacy properties for Rust code"
 rustc_private = true
 
 [dependencies]
-#flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "1f469a4cce9f2e240ad14b5145669a8011d4e6b2" }
-#flowistry = { path = "../flowistry/crates/flowistry" }
-flowistry = { git = "https://github.com/brownsys/flowistry", rev = "6e1de0459ec32bfd9ad046491a556410942d6ddc" }
+#flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "1759ef8" }
+flowistry = { path = "../flowistry/crates/flowistry" }
+#flowistry = { git = "https://github.com/brownsys/flowistry", rev = "6e1de0459ec32bfd9ad046491a556410942d6ddc" }
 
 #rustc_plugin = { git = "https://github.com/willcrichton/flowistry", rev = "1f469a4cce9f2e240ad14b5145669a8011d4e6b2" }
 #rustc_plugin = { path = "../flowistry/crates/rustc_plugin" }
-rustc_plugin = { git = "https://github.com/brownsys/flowistry", rev = "6e1de0459ec32bfd9ad046491a556410942d6ddc" }
+#rustc_plugin = { git = "https://github.com/brownsys/flowistry", rev = "6e1de0459ec32bfd9ad046491a556410942d6ddc" }
+#rustc_utils = { path = "../rustc_plugin/crates/rustc_utils"}
+rustc_utils = "0.6.0-nightly-2023-04-12"
+rustc_plugin = { path = "../rustc_plugin/crates/rustc_plugin"}
 
 clap = { version = "3", features = ["derive", "cargo", "env"] }
 serde = { version = "1", features = ["derive"] }
@@ -62,3 +65,8 @@ name = "dfpp-explorer"
 
 [profile.release]
 debug = true
+
+
+[replace]
+
+"rustc_utils:0.6.0-nightly-2023-04-12" = { path = "../rustc_plugin/crates/rustc_utils" }

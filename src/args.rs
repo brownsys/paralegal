@@ -76,7 +76,7 @@ impl<'a> LogLevelConfig<'a> {
 
 impl Args {
     pub fn target(&self) -> Option<&str> {
-        self.target.as_ref().map(|s| s.as_str())
+        self.target.as_deref()
     }
     /// Returns the configuration specified for the `--debug` option
     pub fn debug(&self) -> Cow<'_, LogLevelConfig<'_>> {
@@ -140,7 +140,7 @@ pub struct ModelCtrl {
 impl ModelCtrl {
     /// What (if any) is the path to the file containing external annotations
     pub fn external_annotations(&self) -> Option<&std::path::Path> {
-        self.external_annotations.as_ref().map(|p| p.as_path())
+        self.external_annotations.as_deref()
     }
 
     pub fn model_version(&self) -> crate::frg::Version {

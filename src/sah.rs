@@ -154,8 +154,8 @@ impl<'tcx, F> MirReindexer<'tcx, F> {
     }
 }
 
-impl<'tcx, F> TypeFolder<'tcx> for MirReindexer<'tcx, F> {
-    fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
+impl<'tcx, F> TypeFolder<TyCtxt<'tcx>> for MirReindexer<'tcx, F> {
+    fn interner<'a>(&'a self) -> TyCtxt<'tcx> {
         self.tcx
     }
     fn fold_region(&mut self, r: ty::Region<'tcx>) -> ty::Region<'tcx> {
@@ -210,10 +210,11 @@ impl<'tcx, F: FnMut(mir::BasicBlock) -> Option<Option<mir::BasicBlock>>>
                         })
                         .is_some()
                     {
-                        *t = self.tcx.mk_const(ty::ConstS {
-                            ty: t.ty(),
-                            val: new_val,
-                        });
+                        *t = ty::Const::new(
+                            self.tcx,
+                            new_val,
+                            t.ty(),
+                        );
                         println!("{operand:?}");
                     }
                 }
@@ -222,19 +223,19 @@ impl<'tcx, F: FnMut(mir::BasicBlock) -> Option<Option<mir::BasicBlock>>>
         self.super_operand(operand, location);
     }
 
-    fn visit_const(&mut self, constant: &mut ty::Const<'tcx>, _: mir::Location) {
-        let new_ty = self.fold_ty(constant.ty());
-        *constant = self.tcx.mk_const(ty::ConstS {
-            ty: new_ty,
-            val: constant.val(),
-        });
-        self.super_const(constant)
-    }
     /// This is necessary so that we set `user_ty` to `None` everywhere prior to
     /// hashing. The reason is that it is again a linearly generated index and
     /// it influences hashing, but has no semantic meaning to us.
     fn visit_constant(&mut self, constant: &mut mir::Constant<'tcx>, location: mir::Location) {
         constant.user_ty = None;
+        match &mut constant.literal {
+            mir::ConstantKind::Ty(constant) => {
+
+                let new_ty = self.fold_ty(constant.ty());
+                *constant = ty::Const::new(self.tcx, constant.val(), new_ty);
+                self.super_const(constant)
+            }
+        }
         self.super_constant(constant, location);
     }
 
@@ -403,7 +404,7 @@ mod graphviz_out {
     }
 }
 
-pub type Matrix<'tcx> = flowistry::infoflow::FlowDomainMatrix<'tcx>;
+pub type Matrix<'tcx> = flowistry::infoflow::FlowDomain<'tcx>;
 
 #[allow(dead_code)]
 pub fn compute_verification_hash_for_stmt_2<'tcx>(
@@ -532,17 +533,18 @@ impl<'tcx, 'a> ExternalDependencyHasher<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> ty::TypeVisitor<'tcx> for ExternalDependencyHasher<'tcx, 'a> {
+impl<'tcx, 'a> ty::TypeVisitor<TyCtxt<'tcx>> for ExternalDependencyHasher<'tcx, 'a> {
     fn visit_ty(&mut self, t: ty::Ty<'tcx>) -> std::ops::ControlFlow<Self::BreakTy> {
-        use ty::{TyKind::*, TypeFoldable};
+        use ty::TypeSuperVisitable;
+        use sty::TyKind::*;
         match t.kind() {
             Foreign(did)
             | FnDef(did, _)
             | Closure(did, _)
             | Generator(did, _, _)
-            | Opaque(did, _) => {
+            => {
                 if let Some(ldid) = did.as_local() {
-                    flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(self.tcx, ldid)
+                    rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(self.tcx, ldid)
                         .simplified_body()
                         .hash_stable(self.hctx, self.hasher);
                 } else {

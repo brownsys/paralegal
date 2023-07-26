@@ -55,7 +55,7 @@ pub trait MetaItemMatch {
     /// functions see the source for
     /// [`match_exception`](crate::ann_parse::match_exception) or
     /// [`ann_match_fn`](crate::ann_parse::ann_match_fn).
-    fn match_extract<A, F: Fn(&ast::MacArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A>;
+    fn match_extract<A, F: Fn(&ast::AttrArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A>;
     /// Check that this attribute matches the provided path. All attribute
     /// payload is ignored (i.e. no error if there is a payload).
     fn matches_path(&self, path: &[Symbol]) -> bool {
@@ -64,24 +64,24 @@ pub trait MetaItemMatch {
 }
 
 impl MetaItemMatch for ast::Attribute {
-    fn match_extract<A, F: Fn(&ast::MacArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A> {
+    fn match_extract<A, F: Fn(&ast::AttrArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A> {
         match &self.kind {
-            ast::AttrKind::Normal(
+            ast::AttrKind::Normal(normal) => match &normal.item {
                 ast::AttrItem {
                     path: attr_path,
                     args,
                     ..
-                },
-                _,
-            ) if attr_path.segments.len() == path.len()
-                && attr_path
-                    .segments
-                    .iter()
-                    .zip(path)
-                    .all(|(seg, i)| seg.ident.name == *i) =>
-            {
-                Some(parse(args))
-            }
+                } if attr_path.segments.len() == path.len()
+                    && attr_path
+                        .segments
+                        .iter()
+                        .zip(path)
+                        .all(|(seg, i)| seg.ident.name == *i) =>
+                {
+                    Some(parse(args))
+                }
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -106,8 +106,7 @@ impl<'tcx> TyExt for ty::Ty<'tcx> {
             ty::TyKind::Foreign(did)
             | ty::TyKind::FnDef(did, _)
             | ty::TyKind::Closure(did, _)
-            | ty::TyKind::Generator(did, _, _)
-            | ty::TyKind::Opaque(did, _) => Some(*did),
+            | ty::TyKind::Generator(did, _, _) => Some(*did),
             _ => None,
         }
     }
@@ -160,9 +159,9 @@ impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
             statement_index,
         } = l;
         let block_data = self
-            .basic_blocks()
+            .basic_blocks
             .get(block)
-            .ok_or_else(|| StmtAtErr::BasicBlockOutOfBound(block, &self))?;
+            .ok_or(StmtAtErr::BasicBlockOutOfBound(block, self))?;
         if statement_index == block_data.statements.len() {
             Ok(Either::Right(block_data.terminator()))
         } else if let Some(stmt) = block_data.statements.get(statement_index) {
@@ -202,27 +201,13 @@ pub type SimplifiedArguments<'tcx> = Vec<Option<Place<'tcx>>>;
 pub trait AsFnAndArgs<'tcx> {
     fn as_fn_and_args(
         &self,
-    ) -> Result<
-        (
-            DefId,
-            SimplifiedArguments<'tcx>,
-            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        ),
-        AsFnAndArgsErr<'tcx>,
-    >;
+    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>>;
 }
 
 impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
     fn as_fn_and_args(
         &self,
-    ) -> Result<
-        (
-            DefId,
-            SimplifiedArguments<'tcx>,
-            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        ),
-        AsFnAndArgsErr<'tcx>,
-    > {
+    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>> {
         self.kind.as_fn_and_args()
     }
 }
@@ -238,43 +223,28 @@ pub enum AsFnAndArgsErr<'tcx> {
 impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
     fn as_fn_and_args(
         &self,
-    ) -> Result<
-        (
-            DefId,
-            SimplifiedArguments<'tcx>,
-            Option<(mir::Place<'tcx>, mir::BasicBlock)>,
-        ),
-        AsFnAndArgsErr<'tcx>,
-    > {
-        match self {
-            mir::TerminatorKind::Call {
+    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>> {
+        let mir::TerminatorKind::Call {
                 func,
                 args,
                 destination,
                 ..
-            } => {
-                let defid = match func.constant().ok_or(AsFnAndArgsErr::NotAConstant)? {
-                    mir::Constant { literal, .. } => match literal {
-                        mir::ConstantKind::Val(_, ty)
-                        | mir::ConstantKind::Ty(ty::Const(
-                            crate::rust::rustc_data_structures::intern::Interned(
-                                ty::ConstS { ty, .. },
-                                _,
-                            ),
-                        )) => match ty.kind() {
-                            ty::FnDef(defid, _) | ty::Closure(defid, _) => Ok(*defid),
-                            _ => Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone())),
-                        },
-                    },
-                }?;
-                Ok((
-                    defid,
-                    args.iter().map(|a| a.place()).collect(),
-                    *destination,
-                ))
-            }
-            _ => Err(AsFnAndArgsErr::NotAFunctionCall),
-        }
+            } = self else {
+                return Err(AsFnAndArgsErr::NotAFunctionCall)
+            };
+        let ty = match &func.constant().ok_or(AsFnAndArgsErr::NotAConstant)?.literal {
+            mir::ConstantKind::Val(_, ty) => *ty,
+            mir::ConstantKind::Ty(cst) => cst.ty(),
+            mir::ConstantKind::Unevaluated { .. } => unreachable!(),
+        };
+        let (ty::FnDef(defid, _) | ty::Closure(defid, _)) = ty.kind() else {
+                    return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()))
+                };
+        Ok((
+            *defid,
+            args.iter().map(|a| a.place()).collect(),
+            *destination,
+        ))
     }
 }
 
@@ -307,7 +277,7 @@ pub trait LocationExt {
 
 impl LocationExt for Location {
     fn is_real(self, body: &mir::Body) -> bool {
-        body.basic_blocks().get(self.block).map(|bb|
+        body.basic_blocks.get(self.block).map(|bb|
                 // Its `<=` because if len == statement_index it refers to the
                 // terminator
                 // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
@@ -326,9 +296,7 @@ pub fn read_places_with_provenance<'tcx>(
     stmt: &Either<&Statement<'tcx>, &Terminator<'tcx>>,
     tcx: TyCtxt<'tcx>,
 ) -> impl Iterator<Item = Place<'tcx>> {
-    places_read(tcx, l, stmt, None)
-        .into_iter()
-        .flat_map(move |place| place.provenance(tcx).into_iter())
+    places_read(tcx, l, stmt, None).flat_map(move |place| place.provenance(tcx).into_iter())
 }
 
 /// Extension trait for [`Place`]s so we can implement methods on them. [`Self`]
@@ -345,17 +313,13 @@ pub trait PlaceExt<'tcx> {
 
 impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
     fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>; 2]> {
-        use flowistry::mir::utils::PlaceExt;
-        let mut refs = self.place_and_refs_in_projection(tcx);
-        // Now make sure the ordering is correct. The refs as we get them from above
-        // are `[_1.foo.bar, _1, _1.foo]`, e.g. first the place, then the local and
-        // then successively more projections.
-        //
-        // So first we reverse it, because we want successively fewer projections
+        use rustc_utils::PlaceExt;
+        let mut refs: SmallVec<_> = self
+            .refs_in_projection()
+            .map(|(ptr, _)| Place::from_ref(ptr, tcx))
+            .chain([self])
+            .collect();
         refs.reverse();
-        // Now we have the right order, except for `place` (e.g. the most specific
-        // place) being at the end, so we rotate to get it to the front.
-        refs.rotate_right(0);
         refs
     }
 }
@@ -377,18 +341,18 @@ impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
         match self {
             hir::Node::Item(hir::Item {
                 ident,
-                def_id,
+                owner_id,
                 kind: hir::ItemKind::Fn(_, _, body_id),
                 ..
             })
             | hir::Node::ImplItem(hir::ImplItem {
                 ident,
-                def_id,
+                owner_id,
                 kind: hir::ImplItemKind::Fn(_, body_id),
                 ..
-            }) => Some((*ident, *def_id, *body_id)),
+            }) => Some((*ident, owner_id.def_id, *body_id)),
             hir::Node::Expr(hir::Expr {
-                kind: hir::ExprKind::Closure(_, _, body_id, _, _),
+                kind: hir::ExprKind::Closure(hir::Closure { body: body_id, .. }),
                 ..
             }) => Some((
                 Ident::from_str("closure"),
@@ -420,7 +384,7 @@ pub fn extract_places<'tcx>(
         }) if exclude_return_places_from_call => std::iter::once(func)
             .chain(args.iter())
             .for_each(|o| vis.visit_operand(o, l)),
-        _ => body.basic_blocks()[l.block]
+        _ => body.basic_blocks[l.block]
             .visitable(l.statement_index)
             .apply(l, &mut vis),
     };
@@ -446,8 +410,8 @@ impl IntoLocalDefId for BodyId {
 }
 
 impl IntoLocalDefId for HirId {
-    fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
-        tcx.hir().local_def_id(self)
+    fn into_local_def_id(self, _: TyCtxt) -> LocalDefId {
+        self.expect_owner().def_id
     }
 }
 
@@ -500,10 +464,7 @@ pub fn dump_file_pls<I: IntoLocalDefId>(
     id: I,
     ext: &str,
 ) -> std::io::Result<std::fs::File> {
-    outfile_pls(&format!(
-        "{}.{ext}",
-        unique_and_terse_body_name_pls(tcx, id)
-    ))
+    outfile_pls(format!("{}.{ext}", unique_and_terse_body_name_pls(tcx, id)))
 }
 
 /// Give me this file as writable (possibly creating or overwriting it).
@@ -584,13 +545,13 @@ pub fn places_read<'tcx>(
             // second part of the tuple (which is what our condition was on)>
             for pl in proj.chain(last_field_proj.into_iter()) {
                 vis.visit_place(
-                    &<Place as flowistry::mir::utils::PlaceExt>::from_ref(pl.0, tcx),
+                    &<Place as rustc_utils::PlaceExt>::from_ref(pl.0, tcx),
                     mir::visit::PlaceContext::MutatingUse(mir::visit::MutatingUseContext::Store),
                     location,
                 );
             }
             if let mir::Rvalue::Aggregate(_, ops) = &a.1 {
-                match handle_aggregate_assign(a.0, &a.1, tcx, ops, read_after) {
+                match handle_aggregate_assign(a.0, &a.1, tcx, &ops.raw, read_after) {
                     Ok(place) => vis.visit_place(
                         &place,
                         mir::visit::PlaceContext::NonMutatingUse(
@@ -654,20 +615,20 @@ pub trait IntoDefId {
 }
 
 impl IntoDefId for DefId {
-    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+    fn into_def_id(self, _: TyCtxt) -> DefId {
         self
     }
 }
 
 impl IntoDefId for LocalDefId {
-    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+    fn into_def_id(self, _: TyCtxt) -> DefId {
         self.to_def_id()
     }
 }
 
 impl IntoDefId for HirId {
     fn into_def_id(self, tcx: TyCtxt) -> DefId {
-        tcx.hir().local_def_id(self).to_def_id()
+        self.into_local_def_id(tcx).to_def_id()
     }
 }
 
@@ -684,7 +645,7 @@ impl IntoDefId for BodyId {
 }
 
 impl IntoDefId for Res {
-    fn into_def_id(self, tcx: TyCtxt) -> DefId {
+    fn into_def_id(self, _: TyCtxt) -> DefId {
         match self {
             Res::Def(_, did) => did,
             _ => panic!("turning non-def res into DefId; res is: {:?}", self),
@@ -724,15 +685,15 @@ pub trait TyCtxtExt<'tcx> {
     fn body_for_body_id(
         self,
         b: BodyId,
-    ) -> &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>;
+    ) -> &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     fn body_for_body_id(
         self,
         b: BodyId,
-    ) -> &'tcx flowistry::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx> {
-        flowistry::mir::borrowck_facts::get_body_with_borrowck_facts(
+    ) -> &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx> {
+        rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
             self,
             self.hir().body_owner_def_id(b),
         )
@@ -923,13 +884,13 @@ impl IntoBodyId for BodyId {
 
 impl IntoBodyId for HirId {
     fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
-        tcx.hir().maybe_body_owned_by(self)
+        self.as_owner()?.def_id.into_body_id(tcx)
     }
 }
 
 impl IntoBodyId for LocalDefId {
     fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
-        tcx.hir().local_def_id_to_hir_id(self).into_body_id(tcx)
+        tcx.hir().maybe_body_owned_by(self)
     }
 }
 

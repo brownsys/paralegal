@@ -9,9 +9,7 @@
 use std::hash::Hash;
 
 use crate::{
-    ir::GlobalLocation,
     ir::{IsGlobalLocation, RawGlobalLocation},
-    mir,
     rust::DefId,
     serde,
     utils::{identifier_for_item, TinyBitSet},

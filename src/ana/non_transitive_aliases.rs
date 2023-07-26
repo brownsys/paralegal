@@ -8,7 +8,8 @@ use crate::{
     },
     Either, TyCtxt,
 };
-use flowistry::mir::{aliases::Aliases, borrowck_facts::CachedSimplifedBodyWithFacts};
+use flowistry::mir::aliases::Aliases;
+use rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts;
 extern crate polonius_engine;
 
 /// For some reason I can't find a canonical place where the `LocationIndex`
@@ -65,7 +66,10 @@ pub fn compute<'tcx>(
     body_with_facts: &'tcx CachedSimplifedBodyWithFacts<'tcx>,
 ) -> Aliases<'tcx, 'tcx> {
     let selector = ConstraintSelector::location_based(body_with_facts.body_with_facts());
-    Aliases::build_with_fact_selection(tcx, def_id.to_def_id(), body_with_facts, |r1, r2, idx| {
-        selector.select(r1, r2, idx)
-    })
+    Aliases::build_with_fact_selection(
+        tcx,
+        def_id.to_def_id(),
+        body_with_facts.body_with_facts(),
+        |r1, r2, idx| selector.select(r1, r2, idx),
+    )
 }

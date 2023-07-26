@@ -11,10 +11,7 @@
 //! For instance to extract a fact base from an MIR body use
 //! [`extract_equations`].
 
-use petgraph::visit::IntoEdges;
-
 use crate::{
-    either::Either,
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
     ty,
@@ -23,8 +20,7 @@ use crate::{
 };
 
 use std::{
-    borrow::BorrowMut,
-    fmt::{write, Debug, Display, Write},
+    fmt::{Debug, Display, Write},
     hash::{Hash, Hasher},
 };
 
@@ -32,9 +28,9 @@ use std::{
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Term<B, F: Copy> {
     /// The base of the term
-    base: B,
+    pub base: B,
     /// Operators applied to the term (in reverse order)
-    terms: Vec<Operator<F>>,
+    pub terms: Vec<Operator<F>>,
 }
 
 pub fn display_term_pieces<F: Display + Copy, B: Display>(
@@ -51,7 +47,7 @@ pub fn display_term_pieces<F: Display + Copy, B: Display>(
             RefOf => f.write_char('&'),
             DerefOf => f.write_char('*'),
             ContainsAt(field) => write!(f, "{{ .{}: ", field),
-            Upcast(s) => write!(f, "#{s}"),
+            Upcast(s) => write!(f, "#{s} "),
             Unknown => f.write_char('?'),
             ArrayWith => f.write_char('['),
             _ => Ok(()),
@@ -254,8 +250,8 @@ impl<F: Copy> Operator<F> {
 /// An equation in the algebra
 #[derive(Clone, Debug)]
 pub struct Equality<B, F: Copy> {
-    lhs: Term<B, F>,
-    rhs: Term<B, F>,
+    pub lhs: Term<B, F>,
+    pub rhs: Term<B, F>,
 }
 
 impl<B: Display, F: Display + Copy> Display for Equality<B, F> {
@@ -327,6 +323,7 @@ impl<B, F: Copy> Equality<B, F> {
     }
 }
 
+#[allow(dead_code)]
 fn partial_cmp_terms<'a, F: Copy + Eq>(
     mut left: &'a [Operator<F>],
     mut right: &'a [Operator<F>],
@@ -743,7 +740,7 @@ pub fn solve_with<
             }
         } else if !seen.contains(var) {
             seen.insert(var.clone());
-            if let Some(next_eq) = intermediates.get(&var) {
+            if let Some(next_eq) = intermediates.get(var) {
                 targets.extend(next_eq.iter().cloned().filter_map(|term| {
                     let mut to_sub = intermediate_target.clone();
                     to_sub.sub(term);
@@ -768,7 +765,7 @@ pub fn solve_with<
 fn vec_drop_range<T>(v: &mut Vec<T>, r: std::ops::Range<usize>) {
     let ptr = v.as_mut_ptr();
     for i in r.clone() {
-        unsafe { drop(ptr.add(i)) }
+        unsafe { ptr.add(i).drop_in_place() }
     }
     unsafe {
         std::ptr::copy(ptr.add(r.end), ptr.add(r.start), v.len() - r.end);
@@ -815,12 +812,12 @@ impl<B, F: Copy> Term<B, F> {
         self
     }
 
-    pub fn add_downcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
+    pub fn add_downcast(mut self, _symbol: Option<Symbol>, idx: VariantIdx) -> Self {
         self.terms.push(Operator::Downcast(idx));
         self
     }
 
-    pub fn add_upcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
+    pub fn add_upcast(mut self, _symbol: Option<Symbol>, idx: VariantIdx) -> Self {
         self.terms.push(Operator::Upcast(idx));
         self
     }
@@ -870,25 +867,22 @@ impl<B, F: Copy> Term<B, F> {
         if l < 2 {
             return Simplified::Yes;
         }
-        let mut valid = None;
         let mut overlapping = true;
         let old_terms = std::mem::replace(&mut self.terms, Vec::with_capacity(l));
         let mut it = old_terms.into_iter();
         let mut after_first_unknown = None;
         let mut after_last_unknown = None;
         self.terms.push(it.next().unwrap());
-        for op in it {
-            let prior = if let Some(last) = self.terms.last() {
-                *last
-            } else {
+        while let Some(op) = it.next() {
+            let Some(prior) = self.terms.last().copied() else {
                 self.terms.push(op);
                 continue;
             };
             match prior.cancel(op) {
-                Cancel::NonOverlappingField(f, g) => {
+                Cancel::NonOverlappingField(_f, _g) => {
                     overlapping = false;
                 }
-                Cancel::NonOverlappingVariant(v1, v2) => {
+                Cancel::NonOverlappingVariant(_v1, _v2) => {
                     overlapping = false;
                 }
                 Cancel::CancelBoth => {
@@ -899,7 +893,11 @@ impl<B, F: Copy> Term<B, F> {
                     continue;
                 }
                 Cancel::Remains => (),
-                Cancel::Invalid => valid = Some((prior, op)),
+                Cancel::Invalid => {
+                    self.terms.push(op);
+                    self.terms.extend(it);
+                    return Simplified::Invalid(prior, op);
+                }
             }
             self.terms.push(op);
             if op.is_unknown() {
@@ -910,9 +908,6 @@ impl<B, F: Copy> Term<B, F> {
                 }
                 .insert(self.terms.len());
             }
-        }
-        if let Some((one, two)) = valid {
-            return Simplified::Invalid(one, two);
         }
         if let (Some(from), Some(to)) = (after_first_unknown, after_last_unknown) {
             vec_drop_range(&mut self.terms, from..to);
@@ -1004,17 +999,18 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
         let lhs = MirTerm::from(place);
         use mir::{AggregateKind, Rvalue::*};
         let rhs_s = match rvalue {
-            Use(op) | UnaryOp(_, op) | Cast(_, op, _) 
+            Use(op) | UnaryOp(_, op) | Cast(_, op, _)
             | ShallowInitBox(op, _) // XXX Not sure this is correct
             => Box::new(op.place().into_iter().map(|p| p.into()))
                 as Box<dyn Iterator<Item = MirTerm>>,
+            CopyForDeref(place) => Box::new(std::iter::once(place.into())) as Box<_>,
             Repeat(..) // safe because it can only ever be populated by constants
             | ThreadLocalRef(..) // This accesses a global variable and thus cannot be tracked
             | NullaryOp(_, _) // Computes a type level constant from thin air
             => Box::new(std::iter::empty()) as Box<_>,
             AddressOf(_, p) // XXX Not sure this is correct but I just want to be safe. The result is a pointer so I don't know how we deal with that
             | Discriminant(p) | Len(p) // This is a weaker (implicit flows) sort of relationship but it is a relationship non the less so I'm adding them here
-            => Box::new(std::iter::once(MirTerm::from(p).add_unknown())), 
+            => Box::new(std::iter::once(MirTerm::from(p).add_unknown())),
             Ref(_, _, p) => {
                 let term = MirTerm::from(p).add_ref_of();
                 Box::new(std::iter::once(term)) as Box<_>
@@ -1042,7 +1038,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                             //     Field::from_usize(i),
                             //     field.ty(self.tcx, substs),
                             // );
-                            let mut term = 
+                            let mut term =
                                 MirTerm::from(place)
                                     .add_contains_at(DisplayViaDebug(Field::from_usize(i)));
                             if is_enum {
@@ -1052,7 +1048,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                         });
                     Box::new(iter) as Box<_>
                 }
-                AggregateKind::Closure(def_id, _) => {
+                AggregateKind::Closure(_def_id, _) => {
                     // XXX This is a speculative way of handling this. Instead
                     // we should look up actual field info but I wasn't able to
                     // find a function that retrieves a closure's layout

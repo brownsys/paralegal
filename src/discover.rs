@@ -8,18 +8,18 @@ use crate::{
     desc::*,
     rust::*,
     utils::{self, *},
-    Either, HashMap,
+    HashMap,
 };
 
 use hir::{
-    def_id::{self, DefId},
+    def_id::DefId,
     hir_id::HirId,
     intravisit::{self, FnKind},
     BodyId,
 };
 use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, collections::hash_map::Entry};
 
 /// Values of this type can be matched against Rust attributes
 pub type AttrMatchT = Vec<Symbol>;
@@ -34,7 +34,7 @@ pub type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
 /// This is sharable so we can stick it into the
 /// [`SkipAnnotatedFunctionSelector`]. Technically at that point this map is
 /// read-only.
-pub type MarkedObjects = Rc<RefCell<HashMap<HirId, (Vec<Annotation>, ObjectType)>>>;
+pub type MarkedObjects = Rc<RefCell<HashMap<LocalDefId, (Vec<Annotation>, ObjectType)>>>;
 
 /// This visitor traverses the items in the analyzed crate to discover
 /// annotations and analysis targets and store them in this struct. After the
@@ -84,17 +84,20 @@ fn resolve_external_markers(
     tcx: TyCtxt,
     markers: &crate::RawExternalMarkers,
 ) -> ExternalMarkers {
-    use hir::def::Res;
+    use utils::resolve::{def_path_res, Res};
     let new_map: ExternalMarkers = markers
-        .into_iter()
+        .iter()
         .filter_map(|(path, marker)| {
             let segment_vec = path.split("::").collect::<Vec<_>>();
-            let res = utils::resolve::def_path_res(tcx, &segment_vec);
+            let res = def_path_res(tcx, &segment_vec)
+                .unwrap_or_else(|err| panic!("Could not resolve {path}: {err:?}"));
             let (did, typ) = match res {
                 Res::Def(kind, did) => Some((
                     did,
                     if kind.is_fn_like() {
-                        ObjectType::Function(tcx.fn_sig(did).skip_binder().inputs().len())
+                        ObjectType::Function(
+                            tcx.fn_sig(did).skip_binder().skip_binder().inputs().len(),
+                        )
                     } else {
                         // XXX add an actual match here
                         ObjectType::Type
@@ -234,10 +237,10 @@ impl<'tcx> CollectingVisitor<'tcx> {
     }
 
     /// Does the function named by this id have the `dfpp::analyze` annotation
-    fn should_analyze_function(&self, ident: HirId) -> bool {
+    fn should_analyze_function(&self, ident: LocalDefId) -> bool {
         self.tcx
             .hir()
-            .attrs(ident)
+            .attrs(self.tcx.local_def_id_to_hir_id(ident))
             .iter()
             .any(|a| a.matches_path(&consts::ANALYZE_MARKER))
     }
@@ -295,71 +298,89 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                 })
             })
             .collect::<Vec<_>>();
-        if !sink_matches.is_empty() {
-            let node = self.tcx.hir().find(id).unwrap();
-            assert!(if let Some(decl) = node.fn_decl() {
-                self.marked_objects
-                    .as_ref()
-                    .borrow_mut()
-                    .insert(id, (sink_matches, ObjectType::Function(decl.inputs.len())))
-                    .is_none()
-            } else {
-                // I'm restricting the Ctor in the second set of patterns to
-                // `Unit`, because in that case the annotation ends up on the
-                // synthesized constructor (for some reason).
-                match node {
-                    hir::Node::Ty(_)
-                    | hir::Node::Item(hir::Item {
-                        kind: hir::ItemKind::Struct(..),
+        if sink_matches.is_empty() {
+            return;
+        }
+
+
+        let node = self.tcx.hir().find(id).unwrap();
+        println!("Handling annotations on {node:?}");
+
+        if let Some((def_id, obj_type, allow_prior)) = if let Some(decl) = node.fn_decl() {
+            Some((
+                id.expect_owner().def_id,
+                ObjectType::Function(decl.inputs.len()),
+                false,
+            ))
+        } else {
+            match node {
+                // For some type definitions the annotation ends up on
+                // constructor. This is the case for empty structs or
+                // `#[reps(transparent)` tuple structs which is what these patterns cover.
+                hir::Node::Ty(_)
+                | hir::Node::Item(hir::Item {
+                    kind: hir::ItemKind::Struct(..),
+                    ..
+                })
+                | hir::Node::Ctor(hir::VariantData::Unit(..)) => {
+                    Some((id.expect_owner().def_id, ObjectType::Type, false))
+                }
+                hir::Node::Ctor(hir::VariantData::Tuple(_, _, _)) => {
+                    Some((self.tcx.hir().parent_id(id).expect_owner().def_id, ObjectType::Type, true))
+                }
+                _ => None,
+            }
+        } {
+            let val = (sink_matches, obj_type);
+            match self.marked_objects.borrow_mut().entry(def_id) {
+                Entry::Occupied(entr) => {
+                    assert!(allow_prior && entr.get() == &val,
+                        "Duplicate inserted value for key {}:\nold {:?}\nnew {val:?}\noriginal id {id:?}\nnode {node:?}", self.tcx.def_path_debug_str(def_id.to_def_id()), entr.get()
+                    )
+                }
+                Entry::Vacant(vac) => {
+                    vac.insert(val);
+                },
+            }
+        } else {
+            let e = match node {
+                hir::Node::Expr(e) => e,
+                hir::Node::Stmt(hir::Stmt { kind, .. }) => match kind {
+                    hir::StmtKind::Expr(e) | hir::StmtKind::Semi(e) => e,
+                    _ => panic!("Unsupported statement kind"),
+                },
+                _ => panic!("Unsupported object type for annotation {node:?}"),
+            };
+            let obj_type = obj_type_for_stmt_ann(&sink_matches);
+            let did = match e.kind {
+                hir::ExprKind::MethodCall(_, _, _, _) => {
+                    let body_id = hir.enclosing_body_owner(id);
+                    let tcres = tcx.typeck(body_id);
+                    tcres
+                        .type_dependent_def_id(e.hir_id)
+                        .unwrap_or_else(|| panic!("No DefId found for method call {e:?}"))
+                }
+                hir::ExprKind::Call(
+                    hir::Expr {
+                        hir_id,
+                        kind: hir::ExprKind::Path(p),
                         ..
-                    })
-                    | hir::Node::Ctor(hir::VariantData::Unit(..)) => self
-                        .marked_objects
-                        .as_ref()
-                        .borrow_mut()
-                        .insert(id, (sink_matches, ObjectType::Type))
-                        .is_none(),
-                    _ => {
-                        let e = match node {
-                            hir::Node::Expr(e) => e,
-                            hir::Node::Stmt(hir::Stmt { kind, .. }) => match kind {
-                                hir::StmtKind::Expr(e) | hir::StmtKind::Semi(e) => e,
-                                _ => panic!("Unsupported statement kind"),
-                            },
-                            _ => panic!("Unsupported object type for annotation {node:?}"),
-                        };
-                        let obj_type = obj_type_for_stmt_ann(&sink_matches);
-                        let did = match e.kind {
-                            hir::ExprKind::MethodCall(_, _, _) => {
-                                let body_id = hir.enclosing_body_owner(id);
-                                let tcres = tcx.typeck(hir.local_def_id(body_id));
-                                tcres.type_dependent_def_id(e.hir_id).unwrap_or_else(|| {
-                                    panic!("No DefId found for method call {e:?}")
-                                })
-                            }
-                            hir::ExprKind::Call(
-                                hir::Expr {
-                                    hir_id,
-                                    kind: hir::ExprKind::Path(p),
-                                    ..
-                                },
-                                _,
-                            ) => {
-                                let body_id = hir.enclosing_body_owner(id);
-                                let tcres = tcx.typeck(hir.local_def_id(body_id));
-                                match tcres.qpath_res(p, *hir_id) {
-                                    hir::def::Res::Def(_, did) => did,
-                                    res => panic!("Not a function? {res:?}"),
-                                }
-                            }
-                            _ => panic!("Unsupported expression kind {:?}", e.kind),
-                        };
-                        self.marked_stmts
-                            .insert(id, ((sink_matches, obj_type), e.span, did))
-                            .is_none()
+                    },
+                    _,
+                ) => {
+                    let body_id = hir.enclosing_body_owner(id);
+                    let tcres = tcx.typeck(body_id);
+                    match tcres.qpath_res(p, *hir_id) {
+                        hir::def::Res::Def(_, did) => did,
+                        res => panic!("Not a function? {res:?}"),
                     }
                 }
-            })
+                _ => panic!("Unsupported expression kind {:?}", e.kind),
+            };
+            assert!(self
+                .marked_stmts
+                .insert(id, ((sink_matches, obj_type), e.span, did))
+                .is_none())
         }
     }
 
@@ -369,8 +390,8 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
         kind: FnKind<'tcx>,
         declaration: &'tcx rustc_hir::FnDecl<'tcx>,
         body_id: BodyId,
-        s: Span,
-        id: HirId,
+        _s: Span,
+        id: LocalDefId,
     ) {
         match &kind {
             FnKind::ItemFn(name, _, _) | FnKind::Method(name, _)
@@ -387,6 +408,6 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
         // dispatch to recursive walk. This is probably unnecessary but if in
         // the future we decide to do something with nested items we may need
         // it.
-        intravisit::walk_fn(self, kind, declaration, body_id, s, id)
+        intravisit::walk_fn(self, kind, declaration, body_id, id)
     }
 }

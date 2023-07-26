@@ -5,15 +5,14 @@
 use std::borrow::Cow;
 
 use crate::{
-    dbg, desc::*, ir::*, rust::*, sah::HashVerifications, utils::*, AnalysisCtrl, Either, HashMap,
-    HashSet, LogLevelConfig, Symbol,
+    dbg, desc::*, ir::*, rust::*, utils::*, Either, HashMap, HashSet, LogLevelConfig, Symbol,
 };
 
 use hir::def_id::DefId;
 use mir::Location;
 use rustc_hir::def_id::LocalDefId;
 
-use flowistry::mir::borrowck_facts;
+use rustc_utils::mir::borrowck_facts;
 
 use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 
@@ -31,7 +30,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// endpoints.
     pub fn run(mut self) -> std::io::Result<ProgramDescription> {
         let tcx = self.tcx;
-        tcx.hir().deep_visit_all_item_likes(&mut self);
+        tcx.hir().visit_all_item_likes_in_crate(&mut self);
         //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
         self.analyze()
     }
@@ -40,7 +39,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// return the representation suitable for emitting into Forge.
     fn handle_target<'g>(
         &self,
-        _hash_verifications: &mut HashVerifications,
+        //_hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
         target: FnToAnalyze,
@@ -49,8 +48,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
-        fn register_call_site<'tcx>(
-            tcx: TyCtxt<'tcx>,
+        fn register_call_site(
+            tcx: TyCtxt<'_>,
             map: &mut CallSiteAnnotations,
             did: DefId,
             ann: Option<&[Annotation]>,
@@ -62,13 +61,13 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 .or_insert_with(|| {
                     (
                         ann.iter().flat_map(|a| a.iter()).cloned().collect(),
-                        tcx.fn_sig(did).skip_binder().inputs().len(),
+                        tcx.fn_sig(did).skip_binder().skip_binder().inputs().len(),
                     )
                 });
         }
         let tcx = self.tcx;
         let controller_body_with_facts =
-            borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
+            borrowck_facts::get_simplified_body_with_borrowck_facts(tcx, local_def_id);
 
         if self.opts.dbg().dump_ctrl_mir() {
             mir::graphviz::write_mir_fn_graphviz(
@@ -92,7 +91,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         block: mir::BasicBlock::from_usize(
                             controller_body_with_facts
                                 .simplified_body()
-                                .basic_blocks()
+                                .basic_blocks
                                 .len(),
                         ),
                         statement_index: a as usize + 1,
@@ -183,7 +182,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             let stmt_anns = self.statement_anns_by_loc(defid, terminator);
             let bound_sig = tcx.fn_sig(defid);
             let interesting_output_types: HashSet<_> =
-                self.annotated_subtypes(bound_sig.skip_binder().output());
+                self.annotated_subtypes(bound_sig.skip_binder().skip_binder().output());
             if !interesting_output_types.is_empty() {
                 flows.types.0.insert(
                     DataSource::FunctionCall(call_site.clone()),
@@ -266,9 +265,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             .borrow()
             .iter()
             .filter_map(|(s, v)| match v.1 {
-                ObjectType::Function(i) => {
-                    Some((tcx.hir().local_def_id(*s).to_def_id(), (v.0.clone(), i)))
-                }
+                ObjectType::Function(i) => Some((s.to_def_id(), (v.0.clone(), i))),
                 _ => None,
             })
             .collect::<HashMap<_, _>>();
@@ -300,14 +297,14 @@ impl<'tcx> CollectingVisitor<'tcx> {
         );
 
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
-        let result = crate::sah::HashVerifications::with(|hash_verifications| {
+        let result = //crate::sah::HashVerifications::with(|hash_verifications| {
             targets
                 .drain(..)
                 .map(|desc| {
                     let target_name = desc.name();
                     with_reset_level_if_target(self.opts, target_name, || {
                         self.handle_target(
-                            hash_verifications,
+                            //hash_verifications,
                             &mut call_site_annotations,
                             &interesting_fn_defs,
                             desc,
@@ -335,8 +332,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
                             )
                         }))
                         .collect(),
-                })
-        });
+                });
+        //});
         info!(
             "Total number of analyzed functions {}",
             inliner.cache_size()
@@ -357,10 +354,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         }
                         let item_name = identifier_for_item(self.tcx, def);
                         if def.as_local().map_or(false, |ldef| {
-                            self.marked_objects
-                                .as_ref()
-                                .borrow()
-                                .contains_key(&self.tcx.hir().local_def_id_to_hir_id(ldef))
+                            self.marked_objects.as_ref().borrow().contains_key(&ldef)
                         }) || self.external_annotations.contains_key(&def)
                         {
                             Some(item_name)
@@ -410,12 +404,7 @@ impl<'tcx, 's> SkipAnnotatedFunctionSelector<'tcx, 's> {
         self.marked_objects
             .as_ref()
             .borrow()
-            .get(
-                &self
-                    .tcx
-                    .hir()
-                    .local_def_id_to_hir_id(did.into_local_def_id(self.tcx)),
-            )
+            .get(&did.into_local_def_id(self.tcx))
             .map_or(false, |anns| !anns.0.is_empty())
     }
 
