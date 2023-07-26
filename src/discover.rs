@@ -19,7 +19,7 @@ use hir::{
 };
 use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, collections::hash_map::Entry};
 
 /// Values of this type can be matched against Rust attributes
 pub type AttrMatchT = Vec<Symbol>;
@@ -298,74 +298,89 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                 })
             })
             .collect::<Vec<_>>();
-        if !sink_matches.is_empty() {
-            let node = self.tcx.hir().find(id).unwrap();
-            assert!(if let Some(decl) = node.fn_decl() {
-                self.marked_objects
-                    .as_ref()
-                    .borrow_mut()
-                    .insert(
-                        id.expect_owner().def_id,
-                        (sink_matches, ObjectType::Function(decl.inputs.len())),
+        if sink_matches.is_empty() {
+            return;
+        }
+
+
+        let node = self.tcx.hir().find(id).unwrap();
+        println!("Handling annotations on {node:?}");
+
+        if let Some((def_id, obj_type, allow_prior)) = if let Some(decl) = node.fn_decl() {
+            Some((
+                id.expect_owner().def_id,
+                ObjectType::Function(decl.inputs.len()),
+                false,
+            ))
+        } else {
+            match node {
+                // For some type definitions the annotation ends up on
+                // constructor. This is the case for empty structs or
+                // `#[reps(transparent)` tuple structs which is what these patterns cover.
+                hir::Node::Ty(_)
+                | hir::Node::Item(hir::Item {
+                    kind: hir::ItemKind::Struct(..),
+                    ..
+                })
+                | hir::Node::Ctor(hir::VariantData::Unit(..)) => {
+                    Some((id.expect_owner().def_id, ObjectType::Type, false))
+                }
+                hir::Node::Ctor(hir::VariantData::Tuple(_, _, _)) => {
+                    Some((self.tcx.hir().parent_id(id).expect_owner().def_id, ObjectType::Type, true))
+                }
+                _ => None,
+            }
+        } {
+            let val = (sink_matches, obj_type);
+            match self.marked_objects.borrow_mut().entry(def_id) {
+                Entry::Occupied(entr) => {
+                    assert!(allow_prior && entr.get() == &val,
+                        "Duplicate inserted value for key {}:\nold {:?}\nnew {val:?}\noriginal id {id:?}\nnode {node:?}", self.tcx.def_path_debug_str(def_id.to_def_id()), entr.get()
                     )
-                    .is_none()
-            } else {
-                // I'm restricting the Ctor in the second set of patterns to
-                // `Unit`, because in that case the annotation ends up on the
-                // synthesized constructor (for some reason).
-                match node {
-                    hir::Node::Ty(_)
-                    | hir::Node::Item(hir::Item {
-                        kind: hir::ItemKind::Struct(..),
+                }
+                Entry::Vacant(vac) => {
+                    vac.insert(val);
+                },
+            }
+        } else {
+            let e = match node {
+                hir::Node::Expr(e) => e,
+                hir::Node::Stmt(hir::Stmt { kind, .. }) => match kind {
+                    hir::StmtKind::Expr(e) | hir::StmtKind::Semi(e) => e,
+                    _ => panic!("Unsupported statement kind"),
+                },
+                _ => panic!("Unsupported object type for annotation {node:?}"),
+            };
+            let obj_type = obj_type_for_stmt_ann(&sink_matches);
+            let did = match e.kind {
+                hir::ExprKind::MethodCall(_, _, _, _) => {
+                    let body_id = hir.enclosing_body_owner(id);
+                    let tcres = tcx.typeck(body_id);
+                    tcres
+                        .type_dependent_def_id(e.hir_id)
+                        .unwrap_or_else(|| panic!("No DefId found for method call {e:?}"))
+                }
+                hir::ExprKind::Call(
+                    hir::Expr {
+                        hir_id,
+                        kind: hir::ExprKind::Path(p),
                         ..
-                    })
-                    | hir::Node::Ctor(hir::VariantData::Unit(..)) => self
-                        .marked_objects
-                        .as_ref()
-                        .borrow_mut()
-                        .insert(id.expect_owner().def_id, (sink_matches, ObjectType::Type))
-                        .is_none(),
-                    _ => {
-                        let e = match node {
-                            hir::Node::Expr(e) => e,
-                            hir::Node::Stmt(hir::Stmt { kind, .. }) => match kind {
-                                hir::StmtKind::Expr(e) | hir::StmtKind::Semi(e) => e,
-                                _ => panic!("Unsupported statement kind"),
-                            },
-                            _ => panic!("Unsupported object type for annotation {node:?}"),
-                        };
-                        let obj_type = obj_type_for_stmt_ann(&sink_matches);
-                        let did = match e.kind {
-                            hir::ExprKind::MethodCall(_, _, _, _) => {
-                                let body_id = hir.enclosing_body_owner(id);
-                                let tcres = tcx.typeck(body_id);
-                                tcres.type_dependent_def_id(e.hir_id).unwrap_or_else(|| {
-                                    panic!("No DefId found for method call {e:?}")
-                                })
-                            }
-                            hir::ExprKind::Call(
-                                hir::Expr {
-                                    hir_id,
-                                    kind: hir::ExprKind::Path(p),
-                                    ..
-                                },
-                                _,
-                            ) => {
-                                let body_id = hir.enclosing_body_owner(id);
-                                let tcres = tcx.typeck(body_id);
-                                match tcres.qpath_res(p, *hir_id) {
-                                    hir::def::Res::Def(_, did) => did,
-                                    res => panic!("Not a function? {res:?}"),
-                                }
-                            }
-                            _ => panic!("Unsupported expression kind {:?}", e.kind),
-                        };
-                        self.marked_stmts
-                            .insert(id, ((sink_matches, obj_type), e.span, did))
-                            .is_none()
+                    },
+                    _,
+                ) => {
+                    let body_id = hir.enclosing_body_owner(id);
+                    let tcres = tcx.typeck(body_id);
+                    match tcres.qpath_res(p, *hir_id) {
+                        hir::def::Res::Def(_, did) => did,
+                        res => panic!("Not a function? {res:?}"),
                     }
                 }
-            })
+                _ => panic!("Unsupported expression kind {:?}", e.kind),
+            };
+            assert!(self
+                .marked_stmts
+                .insert(id, ((sink_matches, obj_type), e.span, did))
+                .is_none())
         }
     }
 
