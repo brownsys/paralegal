@@ -121,7 +121,7 @@ where
     A: 'a,
     D: ?std::marker::Sized + DocAllocator<'a, A>,
 {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A>;
+    fn build_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A>;
 }
 
 lazy_static! {
@@ -132,12 +132,12 @@ lazy_static! {
         "open", "and", "abstract", "extends", "none", "set"
     ]
     .into_iter()
-    .map(Identifier::from_str)
+    .map(Identifier::new_intern)
     .collect();
 }
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for Identifier {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+    fn build_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc
             .text("`")
             .append(alloc.text(if FORGE_RESERVED_SYMBOLS.contains(&self) {
@@ -149,8 +149,8 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for Identifier {
 }
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a Identifier {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
-        (*self).as_forge(alloc)
+    fn build_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+        (*self).build_forge(alloc)
     }
 }
 
@@ -160,18 +160,18 @@ where
     &'a X: ToForge<'a, A, D>,
     &'a Y: ToForge<'a, A, D>,
 {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+    fn build_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.forge_relation(self.0.iter().map(|(src, sinks)| {
             (
-                std::iter::once(src.as_forge(alloc)),
-                sinks.iter().map(|sink| sink.as_forge(alloc)),
+                std::iter::once(src.build_forge(alloc)),
+                sinks.iter().map(|sink| sink.build_forge(alloc)),
             )
         }))
     }
 }
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a str {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+    fn build_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.text(self)
     }
 }
@@ -191,7 +191,7 @@ fn data_sink_as_forge<'b, A, D: DocAllocator<'b, A>>(
 }
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a DataSink {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+    fn build_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         match self {
             DataSink::Return => alloc.text("`Return"),
             DataSink::Argument { function, arg_slot } => {
@@ -205,11 +205,11 @@ impl<'a, A: 'a, D: DocAllocator<'a, A>, T> ToForge<'a, A, D> for &'a HashSet<T>
 where
     &'a T: ToForge<'a, A, D>,
 {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+    fn build_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         if self.is_empty() {
             alloc.text("none")
         } else {
-            alloc.intersperse(self.iter().map(|w| w.as_forge(alloc)), "+")
+            alloc.intersperse(self.iter().map(|w| w.build_forge(alloc)), "+")
         }
     }
 }
@@ -222,7 +222,7 @@ fn call_site_as_forge<'b, A, D: DocAllocator<'b, A>>(
 }
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for &'a CallSite {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+    fn build_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         call_site_as_forge(alloc, self)
     }
 }
@@ -238,7 +238,7 @@ fn data_source_as_forge<'b, A, D: DocAllocator<'b, A>>(
             function: ctrl,
             position: *a as u16,
         }
-        .as_forge(alloc),
+        .build_forge(alloc),
     }
 }
 
@@ -308,6 +308,8 @@ pub mod name {
     }
 
     use Qualifier::*;
+
+    #[allow(clippy::type_complexity)]
     /// A description of the preamble of Forge `sig`s we always emit.
     ///
     /// These are in topological order, because the code generation just
@@ -332,23 +334,24 @@ pub mod name {
         fn arr(from: &str, to: &str) -> String {
             from.to_string() + "->" + to
         }
-        let mut sigs = Vec::new();
-        sigs.push((LABEL, Abstract, None, vec![]));
-        sigs.push((OBJ, Abstract, None, vec![(LABELS_REL, set(LABEL))]));
-        sigs.push((FUNCTION, No, Some(OBJ), vec![]));
-        sigs.push((
-            SRC,
-            Abstract,
-            Some(OBJ),
-            match version {
-                V1 => vec![],
-                V2 => vec![
-                    (FLOW, set(SINK)),
-                    (CTRL_FLOW, set(CALL_SITE)),
-                    (TYPES, set(TYPE)),
-                ],
-            },
-        ));
+        let mut sigs = vec![
+            (LABEL, Abstract, None, vec![]),
+            (OBJ, Abstract, None, vec![(LABELS_REL, set(LABEL))]),
+            (FUNCTION, No, Some(OBJ), vec![]),
+            (
+                SRC,
+                Abstract,
+                Some(OBJ),
+                match version {
+                    V1 => vec![],
+                    V2 => vec![
+                        (FLOW, set(SINK)),
+                        (CTRL_FLOW, set(CALL_SITE)),
+                        (TYPES, set(TYPE)),
+                    ],
+                },
+            ),
+        ];
         match version {
             V1 => sigs.push((
                 FORMAL_PARAMETER,
@@ -366,18 +369,18 @@ pub mod name {
                 vec![(FORMAL_PARAMETER_FUNCTION, set(FUNCTION))],
             )),
         }
-        sigs.push((SINK, Abstract, Some(OBJ), vec![]));
-        sigs.push((RETURN, One, Some(SINK), vec![]));
-        //(CALL_SITE, Some(OBJ), vec![(FUN_REL, one(FUNCTION))]));
-        sigs.push((
-            CALL_ARGUMENT,
-            No,
-            Some(SINK),
-            vec![(ARG_CALL_SITE, one(CALL_SITE))],
-        ));
-        sigs.push((TYPE, No, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]));
-        //(CALL_ARGUMENT_OUTPUT, Some(SRC), vec![(RETURN_CALL_SITE, one(CALL_SITE))]));
-        sigs.push((CALL_SITE, No, Some(SRC), vec![(FUN_REL, one(FUNCTION))]));
+        sigs.extend([
+            (SINK, Abstract, Some(OBJ), vec![]),
+            (RETURN, One, Some(SINK), vec![]),
+            (
+                CALL_ARGUMENT,
+                No,
+                Some(SINK),
+                vec![(ARG_CALL_SITE, one(CALL_SITE))],
+            ),
+            (TYPE, No, Some(OBJ), vec![(OTYPE_REL, set(TYPE))]),
+            (CALL_SITE, No, Some(SRC), vec![(FUN_REL, one(FUNCTION))]),
+        ]);
         match version {
             V1 => sigs.push((
                 CTRL,
@@ -422,7 +425,7 @@ fn hash_set_into_forge<'a, A: 'a, D: DocAllocator<'a, A>, T: ToForge<'a, A, D>>(
     if h.is_empty() {
         alloc.text("none")
     } else {
-        alloc.intersperse(h.into_iter().map(|w| w.as_forge(alloc)), "+")
+        alloc.intersperse(h.into_iter().map(|w| w.build_forge(alloc)), "+")
     }
 }
 
@@ -487,7 +490,7 @@ struct FormalParameter {
 }
 
 impl<'a, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, A, D> for FormalParameter {
-    fn as_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
+    fn build_forge(self, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc
             .text("`fp")
             .append(alloc.as_string(self.position))
@@ -619,22 +622,22 @@ impl ProgramDescription {
                                                     .is_set(*arg_slot as u32)
                                         )
                                     })
-                                    .map(|s| s.as_forge(alloc)),
+                                    .map(|s| s.build_forge(alloc)),
                             )
-                            .chain([id.as_forge(alloc)])
+                            .chain([id.build_forge(alloc)])
                             .chain(a.refinement.on_argument().into_iter_set_in_domain().map(
                                 |slot| {
                                     FormalParameter {
                                         function: *id,
                                         position: slot as u16,
                                     }
-                                    .as_forge(alloc)
+                                    .build_forge(alloc)
                                 },
                             ))
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
                             .into_iter(),
-                            std::iter::once(Identifier::new(a.marker).as_forge(alloc)),
+                            std::iter::once(Identifier::new(a.marker).build_forge(alloc)),
                         )
                     })
             }))
@@ -646,7 +649,7 @@ impl ProgramDescription {
                         anns.iter()
                             .filter_map(Annotation::as_exception_annotation)
                             .next()
-                            .map(|_| id.as_forge(alloc))
+                            .map(|_| id.build_forge(alloc))
                             .into_iter(),
                         std::iter::once(alloc.text(name::EXCEPTIONS_LABEL)),
                     )
@@ -664,7 +667,7 @@ impl ProgramDescription {
         alloc.forge_relation(self.all_sinks().into_iter().filter_map(|src| {
             src.as_argument().map(|(function, _)| {
                 (
-                    std::iter::once(src.as_forge(alloc)),
+                    std::iter::once(src.build_forge(alloc)),
                     std::iter::once(call_site_as_forge(alloc, function)),
                 )
             })
@@ -681,7 +684,7 @@ impl ProgramDescription {
         alloc.forge_relation(self.all_call_sites().into_iter().map(|src| {
             (
                 std::iter::once(call_site_as_forge(alloc, src)),
-                std::iter::once((&src.function).as_forge(alloc)),
+                std::iter::once((&src.function).build_forge(alloc)),
             )
         }))
     }
@@ -695,11 +698,11 @@ impl ProgramDescription {
     {
         alloc.forge_relation(self.annotations.iter().map(|(o, (anns, _))| {
             (
-                std::iter::once(o.as_forge(alloc)),
+                std::iter::once(o.build_forge(alloc)),
                 anns.iter()
                     .filter_map(Annotation::as_otype_ann)
                     .flat_map(|v| v.iter())
-                    .map(|t| t.as_forge(alloc)),
+                    .map(|t| t.build_forge(alloc)),
             )
         }))
     }
@@ -711,9 +714,9 @@ impl ProgramDescription {
         D::Doc: Clone,
     {
         alloc.forge_relation(self.all_formal_parameters().into_iter().map(|p| {
-            let fn_forge = p.function.as_forge(alloc);
+            let fn_forge = p.function.build_forge(alloc);
             (
-                std::iter::once(p.as_forge(alloc)),
+                std::iter::once(p.build_forge(alloc)),
                 std::iter::once(fn_forge),
             )
         }))
@@ -733,14 +736,14 @@ impl ProgramDescription {
                 3,
                 self.controllers.iter().map(|(e, ctrl)| {
                     (
-                        std::iter::once(e.as_forge(alloc)),
+                        std::iter::once(e.build_forge(alloc)),
                         std::iter::once(
                             alloc.hardline().append(
                                 alloc
                                     .forge_relation(ctrl.types.0.iter().map(|(i, desc)| {
                                         (
                                             std::iter::once(data_source_as_forge(i, alloc, *e)),
-                                            desc.iter().map(|t| t.as_forge(alloc)),
+                                            desc.iter().map(|t| t.build_forge(alloc)),
                                         )
                                     }))
                                     .indent(4),
@@ -753,7 +756,7 @@ impl ProgramDescription {
                 ctrl.types.0.iter().map(|(i, desc)| {
                     (
                         std::iter::once(data_source_as_forge(i, alloc, *e)),
-                        desc.iter().map(|t| t.as_forge(alloc)),
+                        desc.iter().map(|t| t.build_forge(alloc)),
                     )
                 })
             })),
@@ -775,7 +778,7 @@ impl ProgramDescription {
                 3,
                 self.controllers.iter().map(|(e, ctrl)| {
                     (
-                        std::iter::once(e.as_forge(alloc)),
+                        std::iter::once(e.build_forge(alloc)),
                         std::iter::once(
                             alloc.hardline().append(
                                 //(&ctrl.data_flow).as_forge(alloc)
@@ -786,7 +789,7 @@ impl ProgramDescription {
                                                 std::iter::once(data_source_as_forge(
                                                     source, alloc, *e,
                                                 )),
-                                                sinks.iter().map(|snk| snk.as_forge(alloc)),
+                                                sinks.iter().map(|snk| snk.build_forge(alloc)),
                                             )
                                         },
                                     ))
@@ -800,7 +803,7 @@ impl ProgramDescription {
                 ctrl.data_flow.0.iter().map(|(src, snks)| {
                     (
                         std::iter::once(data_source_as_forge(src, alloc, *e)),
-                        snks.iter().map(|snk| snk.as_forge(alloc)),
+                        snks.iter().map(|snk| snk.build_forge(alloc)),
                     )
                 })
             })),
@@ -820,7 +823,7 @@ impl ProgramDescription {
                 3,
                 self.controllers.iter().map(|(e, ctrl)| {
                     (
-                        std::iter::once(e.as_forge(alloc)),
+                        std::iter::once(e.build_forge(alloc)),
                         std::iter::once(
                             alloc.hardline().append(
                                 (alloc.forge_relation(ctrl.ctrl_flow.0.iter().map(
@@ -885,7 +888,7 @@ impl ProgramDescription {
             alloc.lines(
                 self.all_call_sites().into_iter().map(|cs| {
                     alloc.lines(
-                        [alloc.text("// ").append(cs.as_forge(alloc)).append(": "),
+                        [alloc.text("// ").append(cs.build_forge(alloc)).append(": "),
                                 alloc.text("//     ").append(format!("{:?}", tcx.def_path_debug_str(cs.location.innermost_function().into_def_id(tcx)))),
                                 alloc.text("//     ").append(format!("{}", cs.location)),
                         ])
@@ -908,7 +911,7 @@ impl ProgramDescription {
                                 alloc
                                     .text(l.as_str().to_owned())
                                     .append(" = ")
-                                    .append(l.as_forge(alloc))
+                                    .append(l.build_forge(alloc))
                             })),
                             alloc.text(name::CALL_SITE).append(" = ").append(
                                 hash_set_into_call_site_forge(self.all_call_sites(), alloc),
@@ -1063,8 +1066,8 @@ impl ProgramDescription {
                                                         .flat_map(|label|
                                                             label.refinement.on_argument().into_iter_set_in_domain().map(|i|
                                                                 (
-                                                                    std::iter::once(FormalParameter { position: i as u16, function: *ident }.as_forge(alloc)),
-                                                                    std::iter::once(ident.as_forge(alloc).append("->").append(label.marker.as_str())))))
+                                                                    std::iter::once(FormalParameter { position: i as u16, function: *ident }.build_forge(alloc)),
+                                                                    std::iter::once(ident.build_forge(alloc).append("->").append(label.marker.as_str())))))
                                                 )
                                         )
                                         .indent(4)
@@ -1087,8 +1090,8 @@ impl ProgramDescription {
                                                 )
                                                 ).collect::<HashSet<_>>();
 
-                                                (std::iter::once(ctrl.as_forge(alloc)),
-                                                call_sites.into_iter().map(|cs| cs.as_forge(alloc))
+                                                (std::iter::once(ctrl.build_forge(alloc)),
+                                                call_sites.into_iter().map(|cs| cs.build_forge(alloc))
                                                 )
                                             })
                                         )

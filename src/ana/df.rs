@@ -457,6 +457,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
         self.tcx.hir().body_owned_by(self.def_id.expect_local())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         tcx: TyCtxt<'tcx>,
         gli: GLI<'g>,

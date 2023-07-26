@@ -404,6 +404,7 @@ pub mod graph {
         graph
     }
 
+    #[allow(clippy::blocks_in_if_conditions)]
     pub fn reachable<
         B: Display + Copy + Hash + Eq + Ord,
         F: Hash + Eq + Display + Copy,

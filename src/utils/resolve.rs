@@ -190,7 +190,7 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
         .or(find_crate(tcx, base).map(|i| Cow::Owned(vec![i])))
         .ok_or(ResolutionError::CouldNotResolveCrate(base))?;
     let starts = base_mods
-        .into_iter()
+        .iter()
         .filter_map(|id| item_child_by_name(tcx, *id, first));
 
     let mut last = Err(ResolutionError::EmptyStarts);

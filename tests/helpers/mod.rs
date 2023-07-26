@@ -519,12 +519,12 @@ pub trait HasGraph<'g>: Sized + Copy {
     fn function(self, name: &str) -> FnRef<'g> {
         FnRef {
             graph: self.graph(),
-            ident: Identifier::from_str(name),
+            ident: Identifier::new_intern(name),
         }
     }
 
     fn ctrl(self, name: &str) -> CtrlRef<'g> {
-        let ident = Identifier::from_str(name);
+        let ident = Identifier::new_intern(name);
         CtrlRef {
             graph: self.graph(),
             ident,
