@@ -125,4 +125,52 @@ async fn no_immutable_inlining_overtaint() {
     send_both(&ud1, &ud2);
 }
 
+#[dfpp::label(noinline)]
+async fn f() -> usize {
+    0
+}
+
+#[dfpp::label(noinline)]
+fn some_input() -> usize {
+    0
+}
+
+#[dfpp::label(noinline)]
+fn another_input() -> usize {
+    9
+}
+
+#[dfpp::label(target)]
+fn target(i: usize) {
+
+}
+
+#[dfpp::label(target)]
+fn another_target(i: usize) {
+
+}
+
+async fn id_fun<T>(t: T) -> T {
+    let _ = f();
+    t
+}
+
+#[dfpp::analyze]
+async fn remove_poll_match() {
+    let p = some_input();
+    let x = f().await;
+    let y = target(p);
+    ()
+}
+
+#[dfpp::analyze]
+async fn no_overtaint_over_poll() {
+    let p = some_input();
+    let q = another_input();
+    let t = id_fun((p, q)).await;
+    target(t.0);
+    another_target(t.1);
+}
+
+
 fn main() {}

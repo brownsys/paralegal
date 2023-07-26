@@ -28,7 +28,7 @@ fn callee_2(x: i32) {
 }
 
 #[dfpp::analyze]
-fn on_mut_var0() {
+fn on_mut_var() {
     let mut x = 4;
     modify_it(&mut x);
     receiver(x)
@@ -49,6 +49,7 @@ fn on_mut_var_no_modify() {
     receiver(x)
 }
 
+#[derive(Clone)]
 struct S {
     usize_field: usize,
     string_field: String,
@@ -91,3 +92,16 @@ fn main() {}
 
 #[dfpp::label(otherwise_unused)]
 fn unused() {}
+
+#[dfpp::analyze]
+fn field_sensitivity_across_clone() {
+    let distraction = 4;
+    let mut s = S {
+        usize_field: produce_usize(),
+        string_field: produce_string(),
+    };
+    let s = (&s).clone();
+    read_usize(s.usize_field);
+    read_string(s.string_field);
+    read_usize(distraction);
+}

@@ -8,6 +8,7 @@ use crate::{
     ana::{
         algebra::{self, Equality, Term},
         df,
+        inline::Oracle,
     },
     hir::def_id::LocalDefId,
     mir::{self, Field, HasLocalDecls, Location},
@@ -21,7 +22,7 @@ use crate::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
         DisplayViaDebug, IntoLocalDefId, LocationExt, Print,
     },
-    DbgArgs, Either, HashMap, HashSet, TyCtxt,
+    AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, TyCtxt,
 };
 
 use std::fmt::{Display, Write};
@@ -236,12 +237,12 @@ fn get_highest_local(body: &mir::Body) -> mir::Local {
     }
     let mut e = Extractor(None);
     e.visit_body(body);
-    e.0.unwrap()
+    e.0.unwrap_or(mir::RETURN_PLACE)
 }
 
 impl Body<DisplayViaDebug<Location>> {
     pub fn construct<'tcx, I: IntoIterator<Item = algebra::MirEquation>>(
-        flow_analysis: df::FlowResults<'_, 'tcx, '_>,
+        flow_analysis: df::FlowResults<'_, 'tcx, '_, '_>,
         equations: I,
         tcx: TyCtxt<'tcx>,
         def_id: LocalDefId,
@@ -259,7 +260,6 @@ impl Body<DisplayViaDebug<Location>> {
                                     is_mut_arg|
              -> Dependencies<DisplayViaDebug<_>> {
                 use rustc_ast::Mutability;
-                debug!("Dependencies for {arg:?} at {location}");
                 let ana = flow_analysis.state_at(*location);
                 let mutability = if false && is_mut_arg {
                     Mutability::Mut
@@ -269,14 +269,14 @@ impl Body<DisplayViaDebug<Location>> {
                 // Not sure this is necessary anymore because I changed the analysis
                 // to transitively propagate in cases where a subplace is modified
                 let reachable_values = non_transitive_aliases.reachable_values(arg, mutability);
-                debug!("Reachable values for {arg:?} are {reachable_values:?}");
-                debug!(
-                    "  Children are {:?}",
-                    reachable_values
-                        .into_iter()
-                        .flat_map(|a| non_transitive_aliases.children(*a))
-                        .collect::<Vec<_>>()
-                );
+                // debug!("Reachable values for {arg:?} are {reachable_values:?}");
+                // debug!(
+                //     "  Children are {:?}",
+                //     reachable_values
+                //         .into_iter()
+                //         .flat_map(|a| non_transitive_aliases.children(*a))
+                //         .collect::<Vec<_>>()
+                // );
                 let deps = reachable_values
                     .into_iter()
                     .flat_map(|p| non_transitive_aliases.children(*p))
@@ -293,7 +293,6 @@ impl Body<DisplayViaDebug<Location>> {
                         }
                     })
                     .collect();
-                debug!("  Registering dependencies {deps:?}");
                 deps
             };
             let mut call_argument_equations = HashSet::new();
@@ -301,6 +300,12 @@ impl Body<DisplayViaDebug<Location>> {
             let calls = body
                 .basic_blocks()
                 .iter_enumerated()
+                .filter(|(bb, _dat)| {
+                    !flow_analysis
+                        .analysis
+                        .elision_info()
+                        .contains_key(&body.terminator_loc(*bb))
+                })
                 .filter_map(|(bb, bbdat)| {
                     let (function, simple_args, ret) = match bbdat.terminator().as_fn_and_args() {
                         Ok(p) => p,
@@ -358,10 +363,6 @@ impl Body<DisplayViaDebug<Location>> {
                             Some(place.project_deeper(&[mir::PlaceElem::Deref], tcx)).into_iter(),
                         )
                     } else if ty.is_generator() {
-                        debug!(
-                            "{ty:?} is a generator with children {:?}",
-                            non_transitive_aliases.children(place)
-                        );
                         Either::Right(
                             non_transitive_aliases
                                 .children(place)
@@ -378,15 +379,12 @@ impl Body<DisplayViaDebug<Location>> {
                 })
                 .map(|p| (p, HashSet::new()))
                 .collect();
-            debug!("Return arguments are {return_arg_deps:?}");
             let return_deps = body
                 .all_returns()
                 .map(DisplayViaDebug)
                 .flat_map(|loc| {
                     return_arg_deps.iter_mut().for_each(|(i, s)| {
-                        debug!("Return arg dependencies for {i:?} at {loc}");
                         for d in dependencies_for(loc, *i, true) {
-                            debug!("  adding {d}");
                             s.insert(d);
                         }
                     });
@@ -445,23 +443,10 @@ fn recursive_ctrl_deps<
     body: &mir::Body<'tcx>,
     mut dependencies_for: F,
 ) -> Dependencies<DisplayViaDebug<Location>> {
-    debug!(
-        "Ctrl deps\n{}",
-        Print(|f| {
-            for (b, _) in body.basic_blocks().iter_enumerated() {
-                writeln!(f, "{b:?}: {:?}", ctrl_ana.dependent_on(b))?;
-            }
-            Ok(())
-        })
-    );
     let mut seen = ctrl_ana
         .dependent_on(bb)
         .cloned()
         .unwrap_or_else(|| HybridBitSet::new_empty(0));
-    debug!(
-        "Initial ctrl flow of {bb:?} depends on {:?}",
-        seen.iter().collect::<Vec<_>>()
-    );
     let mut queue = seen.iter().collect::<Vec<_>>();
     let mut dependencies = Dependencies::new();
     while let Some(block) = queue.pop() {
@@ -533,14 +518,12 @@ fn recursive_ctrl_deps<
                             .iter()
                             .fold(SetResult::Uninit, |prev_deps, &block| {
                                 if matches!(prev_deps, SetResult::Unequal) {
-                                    debug!("Already unequal");
                                     return SetResult::Unequal;
                                 }
                                 let ctrl_deps =
                                     if let Some(ctrl_deps) = ctrl_ana.dependent_on(block) {
                                         ctrl_deps
                                     } else {
-                                        debug!("No Deps");
                                         return SetResult::Unequal;
                                     };
                                 let data = &body.basic_blocks()[block];
@@ -550,7 +533,6 @@ fn recursive_ctrl_deps<
                                 };
                                 check.visit_basic_block_data(block, data);
                                 if !check.was_assigned {
-                                    debug!("{discr_place:?} not assigned");
                                     return SetResult::Unequal;
                                 }
                                 match prev_deps {
@@ -559,14 +541,12 @@ fn recursive_ctrl_deps<
                                         if !other.superset(ctrl_deps)
                                             || !ctrl_deps.superset(other) =>
                                     {
-                                        debug!("Unequal");
                                         SetResult::Unequal
                                     }
                                     _ => prev_deps,
                                 }
                             })
                     } {
-                        debug!("Also exploring parents {parent_deps:?}");
                         queue.extend(parent_deps.iter());
                     }
                 }
@@ -576,17 +556,26 @@ fn recursive_ctrl_deps<
     dependencies
 }
 
-pub fn compute_from_body_id(
+pub fn compute_from_body_id<'tcx, 's>(
     dbg_opts: &DbgArgs,
     body_id: BodyId,
-    tcx: TyCtxt,
+    tcx: TyCtxt<'tcx>,
     gli: GLI,
+    carries_marker: &df::MarkerCarryingOracle<'tcx, '_>,
+    analysis_control: &'static AnalysisCtrl,
 ) -> Body<DisplayViaDebug<Location>> {
     let local_def_id = body_id.into_local_def_id(tcx);
     info!("Analyzing function {}", body_name_pls(tcx, body_id));
     let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
-    let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts);
+    let flow = df::compute_flow_internal(
+        tcx,
+        gli,
+        body_id,
+        body_with_facts,
+        carries_marker,
+        analysis_control,
+    );
     if dbg_opts.dump_callee_mir() {
         mir::pretty::write_mir_fn(
             tcx,
@@ -603,7 +592,14 @@ pub fn compute_from_body_id(
             writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
         }
     }
-    let equations = algebra::extract_equations(tcx, body);
+    let mut equations = algebra::extract_equations(tcx, body);
+    equations.extend(
+        flow.analysis
+            .elision_info()
+            .values()
+            .flat_map(|i| i.iter())
+            .cloned(),
+    );
     let r = Body::construct(flow, equations, tcx, local_def_id, body_with_facts);
     if dbg_opts.dump_regal_ir() {
         let mut out = dump_file_pls(tcx, body_id, "regal").unwrap();

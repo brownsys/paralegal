@@ -17,12 +17,14 @@ use crate::{
     either::Either,
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
+    ty,
     utils::{outfile_pls, write_sep, DisplayViaDebug, Print},
     HashMap, HashSet, Symbol, TyCtxt,
 };
 
 use std::{
-    fmt::{Debug, Display, Write},
+    borrow::BorrowMut,
+    fmt::{write, Debug, Display, Write},
     hash::{Hash, Hasher},
 };
 
@@ -49,7 +51,7 @@ pub fn display_term_pieces<F: Display + Copy, B: Display>(
             RefOf => f.write_char('&'),
             DerefOf => f.write_char('*'),
             ContainsAt(field) => write!(f, "{{ .{}: ", field),
-            Upcast(_, s) => write!(f, "#{s}"),
+            Upcast(s) => write!(f, "#{s}"),
             Unknown => f.write_char('?'),
             ArrayWith => f.write_char('['),
             _ => Ok(()),
@@ -60,7 +62,7 @@ pub fn display_term_pieces<F: Display + Copy, B: Display>(
         match t {
             MemberOf(field) => write!(f, ".{}", field),
             ContainsAt(_) => f.write_str(" }"),
-            Downcast(_, s) => write!(f, " #{s}"),
+            Downcast(s) => write!(f, " #{s}"),
             ArrayWith => f.write_char(']'),
             IndexOf => write!(f, "[]"),
             _ => Ok(()),
@@ -98,8 +100,8 @@ pub enum Operator<F: Copy> {
     ContainsAt(F),
     IndexOf,
     ArrayWith,
-    Downcast(Option<Symbol>, VariantIdx),
-    Upcast(Option<Symbol>, VariantIdx),
+    Downcast(VariantIdx),
+    Upcast(VariantIdx),
     Unknown,
 }
 
@@ -112,8 +114,8 @@ impl<F: Copy + std::fmt::Display> std::fmt::Display for Operator<F> {
             Unknown => f.write_char('?'),
             MemberOf(m) => write!(f, ".{m}"),
             ContainsAt(m) => write!(f, "@{m}"),
-            Downcast(_, s) => write!(f, "#{s:?}"),
-            Upcast(_, s) => write!(f, "^{s:?}"),
+            Downcast(s) => write!(f, "#{s:?}"),
+            Upcast(s) => write!(f, "^{s:?}"),
             IndexOf => f.write_str("$"),
             ArrayWith => f.write_str("[]"),
         }
@@ -132,6 +134,7 @@ pub enum Cancel<F> {
     CancelOne,
     /// The operators did not cancel
     Remains,
+    Invalid,
 }
 
 impl<F: Copy + std::fmt::Display> std::fmt::Display for Cancel<F> {
@@ -143,6 +146,7 @@ impl<F: Copy + std::fmt::Display> std::fmt::Display for Cancel<F> {
             CancelBoth => f.write_str("cancel both"),
             CancelOne => f.write_str("cancel one"),
             Remains => f.write_str("remains"),
+            Invalid => f.write_str("invalid combination"),
         }
     }
 }
@@ -156,8 +160,8 @@ impl<F: Copy> Operator<F> {
             DerefOf => RefOf,
             MemberOf(f) => ContainsAt(f),
             ContainsAt(f) => MemberOf(f),
-            Downcast(s, v) => Upcast(s, v),
-            Upcast(s, v) => Downcast(s, v),
+            Downcast(v) => Upcast(v),
+            Upcast(v) => Downcast(v),
             Unknown => Unknown,
             ArrayWith => IndexOf,
             IndexOf => ArrayWith,
@@ -200,15 +204,34 @@ impl<F: Copy> Operator<F> {
         match (self, other) {
             (Unknown, Unknown) => Cancel::CancelOne,
             (Unknown, _) | (_, Unknown) => Cancel::Remains,
-            (MemberOf(f), ContainsAt(g)) | (ContainsAt(g), MemberOf(f)) if f != g => {
-                Cancel::NonOverlappingField(f, g)
+            (ContainsAt(f), MemberOf(g)) => {
+                if f == g {
+                    Cancel::CancelBoth
+                } else {
+                    Cancel::NonOverlappingField(f, g)
+                }
             }
-            (Downcast(_, v1), Upcast(_, v2)) | (Upcast(_, v2), Downcast(_, v1)) if v1 != v2 => {
-                Cancel::NonOverlappingVariant(v1, v2)
+            (Upcast(v1), Downcast(v2)) => {
+                if v1 == v2 {
+                    Cancel::CancelBoth
+                } else {
+                    Cancel::NonOverlappingVariant(v1, v2)
+                }
             }
-            _ if self == other.flip() => Cancel::CancelBoth,
+            (RefOf, DerefOf) | (DerefOf, RefOf) | (ArrayWith, IndexOf) => Cancel::CancelBoth,
+            _ if other.is_projecting() && !self.is_projecting() => Cancel::Invalid,
             _ => Cancel::Remains,
         }
+    }
+
+    pub fn is_wrapping(self) -> bool {
+        use Operator::*;
+        matches!(self, ArrayWith | Upcast(_) | ContainsAt(_) | RefOf)
+    }
+
+    pub fn is_projecting(self) -> bool {
+        use Operator::*;
+        matches!(self, IndexOf | DerefOf | MemberOf(_) | Downcast(_))
     }
 
     /// Apply a function to the field, creating a new operator
@@ -219,8 +242,8 @@ impl<F: Copy> Operator<F> {
             DerefOf => DerefOf,
             MemberOf(f) => MemberOf(g(f)),
             ContainsAt(f) => ContainsAt(g(f)),
-            Upcast(s, v) => Upcast(s, v),
-            Downcast(s, v) => Downcast(s, v),
+            Upcast(v) => Upcast(v),
+            Downcast(v) => Downcast(v),
             Unknown => Unknown,
             IndexOf => IndexOf,
             ArrayWith => ArrayWith,
@@ -333,6 +356,210 @@ fn partial_cmp_terms<'a, F: Copy + Eq>(
     }
 }
 
+pub mod graph {
+    use std::collections::VecDeque;
+
+    use super::*;
+    use crate::rust::rustc_index::bit_set::BitSet;
+    use petgraph::{visit::EdgeRef, *};
+    extern crate smallvec;
+    use smallvec::SmallVec;
+
+    pub type Graph<B, F> = graphmap::GraphMap<B, Operators<F>, Directed>;
+
+    pub fn new<
+        B: Copy + Eq + Ord + Hash + Display,
+        F: Copy + Display,
+        GetEq: std::borrow::Borrow<Equality<B, F>>,
+        I: IntoIterator<Item = GetEq>,
+    >(
+        equations: I,
+    ) -> Graph<B, F> {
+        let mut graph = Graph::new();
+        for eq in equations {
+            let mut eq: Equality<_, _> = eq.borrow().clone();
+            eq.rearrange_left_to_right();
+            debug!(
+                "Adding {} -> {} {} ({})",
+                eq.rhs.base(),
+                eq.lhs.base(),
+                Print(|fmt| {
+                    fmt.write_char('[')?;
+                    write_sep(fmt, ", ", eq.rhs.terms.iter(), Display::fmt)?;
+                    fmt.write_char(']')
+                }),
+                Print(|fmt| {
+                    fmt.write_char('[')?;
+                    write_sep(fmt, ", ", eq.lhs.terms.iter(), Display::fmt)?;
+                    fmt.write_char(']')
+                }),
+            );
+            if let Some(w) = graph.edge_weight_mut(*eq.lhs.base(), *eq.rhs.base()) {
+                w.0.push(eq.rhs.terms)
+            } else {
+                graph.add_edge(
+                    *eq.rhs.base(),
+                    *eq.lhs.base(),
+                    Operators(SmallVec::from_iter([eq.rhs.terms])),
+                );
+            }
+        }
+        graph
+    }
+
+    pub fn reachable<
+        B: Display + Copy + Hash + Eq + Ord,
+        F: Hash + Eq + Display + Copy,
+        T: Fn(B) -> bool,
+    >(
+        from: B,
+        is_target: T,
+        graph: &Graph<B, F>,
+    ) -> Option<(BitSet<usize>, Vec<Operator<F>>)> {
+        use visit::NodeIndexable;
+        let mut short_circuiting: HashMap<_, HashSet<_>> =
+            HashMap::from_iter([(from, HashSet::from_iter([Term::new_base(0)]))]);
+        let seen = BitSet::new_empty(graph.node_bound());
+        let mut queue = VecDeque::from_iter([(from, seen, Term::new_base(0))]);
+        while let Some((node, mut seen, projections)) = queue.pop_front() {
+            seen.insert(graph.to_index(node));
+            for next in graph
+                .edges(node)
+                .chain(graph.edges_directed(node, Incoming))
+            {
+                let (to, is_flipped) = if next.source() == node {
+                    (next.target(), false)
+                } else {
+                    (next.source(), true)
+                };
+                if seen.contains(graph.to_index(to)) {
+                    continue;
+                }
+                for weight in next.weight().0.iter() {
+                    debug!(
+                        "{node} {} {to} {}, {is_flipped}",
+                        Print(|fmt| {
+                            fmt.write_char('[')?;
+                            write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
+                            fmt.write_char(']')
+                        }),
+                        Print(|fmt| {
+                            fmt.write_char('[')?;
+                            write_sep(fmt, ", ", weight.iter(), Display::fmt)?;
+                            fmt.write_char(']')
+                        }),
+                    );
+                    let mut projections = projections.clone();
+                    if next.weight().0.is_empty()
+                        || {
+                            if is_flipped {
+                                projections = projections
+                                    .extend(weight.iter().copied().map(Operator::flip).rev());
+                            } else {
+                                projections = projections.extend(weight.iter().copied());
+                            }
+                            debug!(
+                                "{}",
+                                Print(|fmt| {
+                                    fmt.write_char('[')?;
+                                    write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
+                                    fmt.write_char(']')
+                                }),
+                            );
+                            match projections.simplify() {
+                                Simplified::Yes => true,
+                                Simplified::NonOverlapping => false,
+                                Simplified::Invalid(one, two) => {
+                                    let path = "algebra-invalidation-err.gv";
+                                    let mut outf = outfile_pls(path).unwrap();
+                                    use std::io::Write;
+                                    write!(
+                                        outf,
+                                        "{}",
+                                        petgraph::dot::Dot::with_attr_getters(
+                                            graph,
+                                            &[],
+                                            &|_, _| "".to_string(),
+                                            &|_, (n, _)| if seen.contains(graph.to_index(n)) {
+                                                "shape=box,color=blue".to_string()
+                                            } else if n == to {
+                                                "shape=box,color=red".to_string()
+                                            } else if is_target(n) {
+                                                "shape=box,color=green".to_string()
+                                            } else if n == from {
+                                                "shape=box,color=aqua".to_string()
+                                            } else {
+                                                "shape=box".to_string()
+                                            }
+                                        )
+                                    )
+                                    .unwrap();
+                                    panic!("Encountered invalid operator combination {one} {two} in {projections}: as op chain {}. The state of the search on the operator graph at the time the error as found has been dumped to {path}.", Print(|fmt| {
+                                    fmt.write_char('[')?;
+                                    write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
+                                    fmt.write_char(']')
+                                }
+                                ));
+                                }
+                            }
+                        }
+                    {
+                        if is_target(to) {
+                            return Some((seen, projections.terms));
+                        }
+                        if short_circuiting
+                            .entry(to)
+                            .or_insert_with(HashSet::new)
+                            .insert(projections.clone())
+                        {
+                            queue.push_back((to, seen.clone(), projections));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn dump<
+        B: graphmap::NodeTrait + Display,
+        F: Copy + Display,
+        W: std::io::Write,
+        IsTarget: Fn(B) -> bool,
+        DiedHere: Fn(B) -> bool,
+    >(
+        mut w: W,
+        graph: &Graph<B, F>,
+        is_target: IsTarget,
+        died_here: DiedHere,
+    ) {
+        write!(
+            w,
+            "{}",
+            petgraph::dot::Dot::with_attr_getters(graph, &[], &|_, _| "".to_string(), &|_, n| {
+                if is_target(n.0) {
+                    "shape=box,color=green"
+                } else if died_here(n.0) {
+                    "shape=box,color=red"
+                } else {
+                    "shape=box"
+                }
+                .to_string()
+            })
+        )
+        .unwrap()
+    }
+    pub struct Operators<F: Copy>(SmallVec<[Vec<Operator<F>>; 1]>);
+
+    impl<F: Copy + Display> std::fmt::Display for Operators<F> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write_sep(f, ", ", self.0.iter(), |elem, f| {
+                display_term_pieces(f, elem.as_slice(), &0)
+            })
+        }
+    }
+}
+
 /// Solve for the relationship of two bases.
 ///
 /// Returns all terms `t` such that `from = t(to)`. If no terms are returned the
@@ -343,7 +570,7 @@ fn partial_cmp_terms<'a, F: Copy + Eq>(
 /// `y = t2` and solve for `x` and `y` instead.
 ///
 pub fn solve<
-    B: Clone + Hash + Eq + Display,
+    B: Clone + Hash + Eq + Display + Ord,
     F: Eq + Hash + Clone + Copy + Display,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
 >(
@@ -365,10 +592,10 @@ pub fn solve<
 }
 
 pub fn solve_reachable<
-    B: Clone + Hash + Eq + Display,
+    B: Clone + Hash + Eq + Display + Ord,
     F: Eq + Hash + Clone + Copy + Display,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
-    IsTarget: FnMut(&B) -> bool,
+    IsTarget: Fn(&B) -> bool,
 >(
     equations: &[GetEq],
     from: &B,
@@ -382,18 +609,65 @@ pub fn solve_reachable<
     reachable
 }
 
+use std::sync::atomic;
+
+lazy_static! {
+    static ref IOUTCTR: atomic::AtomicI32 = atomic::AtomicI32::new(0);
+}
+
+fn dump_intermediates<
+    B: Clone + Hash + Display + Eq + Ord,
+    F: Eq + Hash + Copy + Display,
+    H: Fn(&B) -> bool,
+    D: Fn(&B) -> bool,
+>(
+    intr: &HashMap<B, HashSet<Term<B, F>>>,
+    is_target: H,
+    died_here: D,
+) {
+    use petgraph::graphmap::*;
+    use petgraph::prelude::*;
+    let graph = GraphMap::<_, _, Directed>::from_edges(
+        intr.iter()
+            .flat_map(|(k, v)| v.iter().map(move |t| (k, &t.base, t.replace_base(0_usize)))),
+    );
+    use std::io::Write;
+    let name = format!(
+        "intermediates_{}.gv",
+        IOUTCTR.fetch_add(1, atomic::Ordering::Relaxed)
+    );
+    let mut outf = outfile_pls(&name).unwrap();
+    debug!("Dumped intermediates to {name}");
+    write!(
+        outf,
+        "{}",
+        petgraph::dot::Dot::with_attr_getters(&graph, &[], &|_, _| "".to_string(), &|_, n| {
+            if is_target(n.0) {
+                "shape=box,color=green"
+            } else if died_here(n.0) {
+                "shape=box,color=red"
+            } else {
+                "shape=box"
+            }
+            .to_string()
+        })
+    )
+    .unwrap()
+}
+
 pub fn solve_with<
-    B: Clone + Hash + Eq + Display,
+    B: Clone + Hash + Eq + Display + Ord,
     F: Eq + Hash + Clone + Copy + Display,
     GetEq: std::borrow::Borrow<Equality<B, F>>,
     RegisterFinal: FnMut(Vec<Operator<F>>) -> bool,
-    IsTarget: FnMut(&B) -> bool,
+    IsTarget: Fn(&B) -> bool,
 >(
     equations: &[GetEq],
     from: &B,
-    mut is_target: IsTarget,
+    is_target: IsTarget,
     mut register_final: RegisterFinal,
 ) {
+    let is_debug_target = format!("{from}") == "_32 @ root";
     if is_target(from) {
         register_final(vec![]);
         return;
@@ -445,25 +719,17 @@ pub fn solve_with<
                 .insert(matching.rhs);
         }
     }
-    debug!(
-        "Found the intermediates\n{}",
-        Print(|fmt: &mut std::fmt::Formatter<'_>| {
-            for (k, vs) in intermediates.iter() {
-                write!(fmt, "  {k}: ")?;
-                write_sep(fmt, " || ", vs, Display::fmt)?;
-                fmt.write_str("\n")?;
-            }
-            Ok(())
-        })
-    );
     if !saw_target {
-        debug!("Never saw final target, abandoning solving early");
+        if is_debug_target {
+            debug!("Never saw final target, abandoning solving early");
+        }
         return;
     }
     let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
-        debug!("No intermediate found for {from}");
+        // debug!("No intermediate found for {from}");
     }
+    let mut died = HashSet::new();
     let mut targets = matching_intermediate
         .into_iter()
         .flat_map(|v| v.iter().cloned())
@@ -481,12 +747,21 @@ pub fn solve_with<
                 targets.extend(next_eq.iter().cloned().filter_map(|term| {
                     let mut to_sub = intermediate_target.clone();
                     to_sub.sub(term);
-                    to_sub.simplify().then_some(to_sub)
+                    let simplifies = to_sub.simplify();
+                    if simplifies != Simplified::Yes && is_debug_target {
+                        debug!("{to_sub} does not simplify");
+                        died.insert(to_sub.base.clone());
+                    }
+                    (simplifies == Simplified::Yes).then_some(to_sub)
                 }))
             } else {
-                debug!("No follow up equation found for {var} on the way from {from}");
+                // debug!("No follow up equation found for {var} on the way from {from}");
             }
         }
+    }
+
+    if is_debug_target {
+        dump_intermediates(&intermediates, &is_target, |b| died.contains(b));
     }
 }
 
@@ -499,6 +774,13 @@ fn vec_drop_range<T>(v: &mut Vec<T>, r: std::ops::Range<usize>) {
         std::ptr::copy(ptr.add(r.end), ptr.add(r.start), v.len() - r.end);
         v.set_len(v.len() - r.len());
     }
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+pub enum Simplified<F: Copy> {
+    Yes,
+    NonOverlapping,
+    Invalid(Operator<F>, Operator<F>),
 }
 
 impl<B, F: Copy> Term<B, F> {
@@ -534,12 +816,12 @@ impl<B, F: Copy> Term<B, F> {
     }
 
     pub fn add_downcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
-        self.terms.push(Operator::Downcast(symbol, idx));
+        self.terms.push(Operator::Downcast(idx));
         self
     }
 
     pub fn add_upcast(mut self, symbol: Option<Symbol>, idx: VariantIdx) -> Self {
-        self.terms.push(Operator::Upcast(symbol, idx));
+        self.terms.push(Operator::Upcast(idx));
         self
     }
 
@@ -558,6 +840,16 @@ impl<B, F: Copy> Term<B, F> {
         self
     }
 
+    pub fn add_elem(mut self, elem: Operator<F>) -> Self {
+        self.terms.push(elem);
+        self
+    }
+
+    pub fn extend<I: IntoIterator<Item = Operator<F>>>(mut self, others: I) -> Self {
+        self.terms.extend(others);
+        self
+    }
+
     pub fn base(&self) -> &B {
         &self.base
     }
@@ -569,16 +861,17 @@ impl<B, F: Copy> Term<B, F> {
         std::mem::swap(&mut self.terms, &mut terms)
     }
 
-    pub fn simplify(&mut self) -> bool
+    pub fn simplify(&mut self) -> Simplified<F>
     where
         F: Eq + Display,
         B: Display,
     {
         let l = self.terms.len();
         if l < 2 {
-            return true;
+            return Simplified::Yes;
         }
-        let mut valid = true;
+        let mut valid = None;
+        let mut overlapping = true;
         let old_terms = std::mem::replace(&mut self.terms, Vec::with_capacity(l));
         let mut it = old_terms.into_iter();
         let mut after_first_unknown = None;
@@ -593,10 +886,10 @@ impl<B, F: Copy> Term<B, F> {
             };
             match prior.cancel(op) {
                 Cancel::NonOverlappingField(f, g) => {
-                    valid = false;
+                    overlapping = false;
                 }
                 Cancel::NonOverlappingVariant(v1, v2) => {
-                    valid = false;
+                    overlapping = false;
                 }
                 Cancel::CancelBoth => {
                     self.terms.pop();
@@ -605,7 +898,8 @@ impl<B, F: Copy> Term<B, F> {
                 Cancel::CancelOne => {
                     continue;
                 }
-                _ => (),
+                Cancel::Remains => (),
+                Cancel::Invalid => valid = Some((prior, op)),
             }
             self.terms.push(op);
             if op.is_unknown() {
@@ -617,10 +911,17 @@ impl<B, F: Copy> Term<B, F> {
                 .insert(self.terms.len());
             }
         }
+        if let Some((one, two)) = valid {
+            return Simplified::Invalid(one, two);
+        }
         if let (Some(from), Some(to)) = (after_first_unknown, after_last_unknown) {
             vec_drop_range(&mut self.terms, from..to);
         }
-        valid
+        if overlapping {
+            Simplified::Yes
+        } else {
+            Simplified::NonOverlapping
+        }
     }
 
     pub fn replace_base<B0>(&self, base: B0) -> Term<B0, F> {
@@ -645,13 +946,14 @@ impl<B, F: Copy> Term<B, F> {
     }
 }
 
-impl<B> Term<B, Field> {
+impl<B> Term<B, DisplayViaDebug<Field>> {
     pub fn wrap_in_elem(self, elem: mir::PlaceElem) -> Self {
         use mir::ProjectionElem::*;
         match elem {
-            Field(f, _) => self.add_member_of(f),
+            Field(f, _) => self.add_member_of(DisplayViaDebug(f)),
             Deref => self.add_deref_of(),
             Downcast(s, v) => self.add_downcast(s, v.as_usize()),
+            Index(_) | ConstantIndex { .. } => self.add_index_of(),
             _ => unimplemented!("{:?}", elem),
         }
     }
@@ -673,7 +975,7 @@ impl<'tcx> Extractor<'tcx> {
     }
 }
 
-type MirTerm = Term<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
+pub type MirTerm = Term<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
 
 impl From<Place<'_>> for MirTerm {
     fn from(p: Place<'_>) -> Self {
@@ -681,7 +983,8 @@ impl From<Place<'_>> for MirTerm {
         for (_, proj) in p.iter_projections() {
             term = term.wrap_in_elem(proj);
         }
-        term.replace_fields(DisplayViaDebug)
+        debug!("{p:?} -> {term}");
+        term
     }
 }
 
@@ -727,21 +1030,25 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                 AggregateKind::Adt(def_id, idx, _, _, _) => {
                     let adt_def = self.tcx.adt_def(*def_id);
                     let variant = adt_def.variant(*idx);
+                    let is_enum = adt_def.flags().contains(ty::AdtFlags::IS_ENUM);
                     let iter = variant
                         .fields
                         .iter()
                         .enumerate()
                         .zip(ops.iter())
-                        .filter_map(|((i, _field), op)| {
+                        .filter_map(move |((i, _field), op)| {
                             let place = op.place()?;
                             // let field = mir::ProjectionElem::Field(
                             //     Field::from_usize(i),
                             //     field.ty(self.tcx, substs),
                             // );
-                            Some(
+                            let mut term = 
                                 MirTerm::from(place)
-                                    .add_contains_at(DisplayViaDebug(Field::from_usize(i))),
-                            )
+                                    .add_contains_at(DisplayViaDebug(Field::from_usize(i)));
+                            if is_enum {
+                                term = term.add_upcast(None, idx.as_usize());
+                            }
+                            Some(term)
                         });
                     Box::new(iter) as Box<_>
                 }
@@ -785,7 +1092,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                 AggregateKind::Array(_) => {
                     let it = ops.iter().filter_map(|op| {
                         Some(
-                            MirTerm::from(op.place()?).add_index_of()
+                            MirTerm::from(op.place()?).add_array_with()
                         )
                     });
                     Box::new(it) as Box<_>

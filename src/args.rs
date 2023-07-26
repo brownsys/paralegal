@@ -129,12 +129,26 @@ pub struct ModelCtrl {
     /// `dump_serialized_flow_graph`.
     #[clap(long, env)]
     external_annotations: Option<std::path::PathBuf>,
+
+    #[clap(long, env, default_value_t = crate::frg::Version::V1)]
+    model_version: crate::frg::Version,
+
+    #[clap(long, env)]
+    skip_sigs: bool,
 }
 
 impl ModelCtrl {
     /// What (if any) is the path to the file containing external annotations
     pub fn external_annotations(&self) -> Option<&std::path::Path> {
         self.external_annotations.as_ref().map(|p| p.as_path())
+    }
+
+    pub fn model_version(&self) -> crate::frg::Version {
+        self.model_version
+    }
+
+    pub fn skip_sigs(&self) -> bool {
+        self.skip_sigs
     }
 }
 
@@ -165,10 +179,18 @@ pub struct AnalysisCtrl {
     remove_inconsequential_calls: Option<String>,
 
     #[clap(long, env)]
+    drop_clone: bool,
+    #[clap(long, env)]
     drop_poll: bool,
 
     #[clap(long, env)]
     remove_poll_ctrl_influence: bool,
+
+    #[clap(long, env)]
+    inline_elision: bool,
+
+    #[clap(long, env)]
+    inline_no_arg_closures: bool,
 }
 
 /// How are we treating inconsequential call sites?
@@ -263,6 +285,18 @@ impl AnalysisCtrl {
     pub fn drop_poll(&self) -> bool {
         self.drop_poll
     }
+
+    pub fn drop_clone(&self) -> bool {
+        self.drop_clone
+    }
+
+    pub fn avoid_inlining(&self) -> bool {
+        self.inline_elision
+    }
+
+    pub fn inline_no_arg_closures(&self) -> bool {
+        self.inline_no_arg_closures
+    }
 }
 
 /// Arguments that control the output of debug information or output to be
@@ -325,6 +359,8 @@ pub struct DbgArgs {
     /// Dump the equations after inlining (`.global.eqs`)
     #[clap(long, env)]
     dump_global_equations: bool,
+    #[clap(long, env)]
+    dump_locals_graph: bool,
 }
 
 impl DbgArgs {
@@ -363,5 +399,8 @@ impl DbgArgs {
     }
     pub fn dump_global_equations(&self) -> bool {
         self.dump_global_equations
+    }
+    pub fn dump_locals_graph(&self) -> bool {
+        self.dump_locals_graph
     }
 }
