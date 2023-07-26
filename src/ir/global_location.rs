@@ -169,7 +169,7 @@ pub trait IsGlobalLocation: Sized + std::fmt::Display {
 
     /// It this location is top-level (i.e. `self.next() == None`), then return
     /// the `location` field.
-    fn as_local(self) -> Option<mir::Location> {
+    fn as_local(&self) -> Option<mir::Location> {
         if self.is_at_root() {
             Some(self.outermost_location())
         } else {

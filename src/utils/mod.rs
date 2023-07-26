@@ -116,11 +116,11 @@ pub trait GenericArgExt<'tcx> {
     /// Generic arguments can reference non-type things (in particular constants
     /// and lifetimes). If it is a type, then this extracts that type, otherwise
     /// `None`.
-    fn as_type(self) -> Option<ty::Ty<'tcx>>;
+    fn as_type(&self) -> Option<ty::Ty<'tcx>>;
 }
 
 impl<'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
-    fn as_type(self) -> Option<ty::Ty<'tcx>> {
+    fn as_type(&self) -> Option<ty::Ty<'tcx>> {
         match self.unpack() {
             ty::subst::GenericArgKind::Type(t) => Some(t),
             _ => None,
@@ -272,11 +272,11 @@ pub trait LocationExt {
     /// to refer to function arguments. Those locations are not recognized the
     /// rustc functions that operate on MIR and thus need to be filtered before
     /// doing things such as indexing into a `mir::Body`.
-    fn is_real(self, body: &mir::Body) -> bool;
+    fn is_real(&self, body: &mir::Body) -> bool;
 }
 
 impl LocationExt for Location {
-    fn is_real(self, body: &mir::Body) -> bool {
+    fn is_real(&self, body: &mir::Body) -> bool {
         body.basic_blocks.get(self.block).map(|bb|
                 // Its `<=` because if len == statement_index it refers to the
                 // terminator
@@ -656,7 +656,7 @@ impl IntoDefId for Res {
 /// Creates an `Identifier` for this `HirId`
 pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
     let did = did.into_def_id(tcx);
-    Identifier::from_str(&format!(
+    Identifier::new_intern(&format!(
         "{}_{:x}",
         tcx.opt_item_name(did)
             .or_else(|| {

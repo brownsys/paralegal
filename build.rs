@@ -3,7 +3,7 @@ use std::process::Command;
 extern crate chrono;
 use std::env;
 
-const COMPILER_DEPENDENT_BINARIES : &[&str] = &["dfpp", "cargo-dfpp", "dfpp-explorer"];
+const COMPILER_DEPENDENT_BINARIES: &[&str] = &["dfpp", "cargo-dfpp", "dfpp-explorer"];
 
 fn add_link_arg_for_compiler_binaries(s: impl std::fmt::Display) {
     for bin in COMPILER_DEPENDENT_BINARIES {
@@ -34,7 +34,7 @@ pub fn link_rustc_lib() {
     } else {
         "$ORIGIN"
     };
-    add_link_search_path_for_compiler_binaries(&format!("{origin}/../toolchain/lib"));
+    add_link_search_path_for_compiler_binaries(format!("{origin}/../toolchain/lib"));
     if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-search=native={}", rustup_lib.display());
     }

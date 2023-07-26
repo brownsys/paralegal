@@ -298,7 +298,7 @@ impl Identifier {
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
-    pub fn from_str(s: &str) -> Self {
+    pub fn new_intern(s: &str) -> Self {
         Self::new(Symbol::intern(s))
     }
 }
