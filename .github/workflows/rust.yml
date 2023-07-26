@@ -42,7 +42,7 @@ jobs:
         path: |
           ~/.cache/racket
           ~/.local/share/racket
-        key: ${{ runner.os }}-racket-${{ env.racket_version }}
+        key: ${{ runner.os }}-integration-tests-${{ env.racket_version }}-${{ env.FORGE_REVISION }}
     - name: Install Racket
       uses: Bogdanp/setup-racket@v1.10
       with:
@@ -57,6 +57,6 @@ jobs:
         cd Forge
         git checkout ${FORGE_REVISION}
         cd forge
-        raco pkg install --auto
+        raco pkg install --auto || raco setup forge
     - name: Run Tests
       run: cargo test --test external_annotation_tests 
