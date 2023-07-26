@@ -19,7 +19,7 @@ use hir::{
 };
 use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
-use std::{cell::RefCell, rc::Rc, collections::hash_map::Entry};
+use std::{cell::RefCell, collections::hash_map::Entry, rc::Rc};
 
 /// Values of this type can be matched against Rust attributes
 pub type AttrMatchT = Vec<Symbol>;
@@ -302,7 +302,6 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
             return;
         }
 
-
         let node = self.tcx.hir().find(id).unwrap();
 
         if let Some((def_id, obj_type, allow_prior)) = if let Some(decl) = node.fn_decl() {
@@ -324,9 +323,11 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                 | hir::Node::Ctor(hir::VariantData::Unit(..)) => {
                     Some((id.expect_owner().def_id, ObjectType::Type, false))
                 }
-                hir::Node::Ctor(hir::VariantData::Tuple(_, _, _)) => {
-                    Some((self.tcx.hir().parent_id(id).expect_owner().def_id, ObjectType::Type, true))
-                }
+                hir::Node::Ctor(hir::VariantData::Tuple(_, _, _)) => Some((
+                    self.tcx.hir().parent_id(id).expect_owner().def_id,
+                    ObjectType::Type,
+                    true,
+                )),
                 _ => None,
             }
         } {
@@ -339,7 +340,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                 }
                 Entry::Vacant(vac) => {
                     vac.insert(val);
-                },
+                }
             }
         } else {
             let e = match node {
