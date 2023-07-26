@@ -17,7 +17,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - run: rustup
+    # just triggers rustup to download the toolchain
+    - run: cargo --help
     - uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo build --verbose
