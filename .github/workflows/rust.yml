@@ -10,6 +10,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   FORGE_REVISION: aa2e8a67a8ff38db145dcb1a1aa5c02d0b851235
+  racket_version: 8.1
 
 jobs:
   compiler-tests:
@@ -41,14 +42,14 @@ jobs:
         path: |
           ~/.cache/racket
           ~/.local/share/racket
-        key: ${{ runner.os }}-racket-8.1
+        key: ${{ runner.os }}-racket-${{ env.racket_version }}
     - name: Install Racket
       uses: Bogdanp/setup-racket@v1.10
       with:
         architecture: 'x64'
         distribution: 'full'
         variant: 'CS'
-        version: '8.1'
+        version: ${{ env.racket_version }}
     - name: Install Forge
       run: |
         cd ..
