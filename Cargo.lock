@@ -339,6 +339,7 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 [[package]]
 name = "flowistry"
 version = "0.5.36"
+source = "git+https://github.com/brownsys/flowistry?rev=f3b27bb1e06a13c599ea56beca7aa047f7d291e5#f3b27bb1e06a13c599ea56beca7aa047f7d291e5"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -845,6 +846,8 @@ checksum = "b6e4fbb37fd18bd949f42583141d650fcdce49dbf759264e4dd3a5df0bc15dc6"
 [[package]]
 name = "rustc_plugin"
 version = "0.6.0-nightly-2023-04-12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79b172d929863ef84797b5592af9b58160f954a484938991f5a6b2829e3c163a"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -863,19 +866,20 @@ checksum = "b3c5a95edfa0c893236ae4778bb7c4752760e4c0d245e19b5eff33c5aa5eb9dc"
 [[package]]
 name = "rustc_utils"
 version = "0.6.0-nightly-2023-04-12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3935b4a82abe6904308c9273afba6160cf36f20044e720c43839a08519eadfd8"
+replace = "rustc_utils 0.6.0-nightly-2023-04-12 (git+https://github.com/JustusAdam/rustc_plugin?rev=d2328a0148359f440b6074bf7144aba00e3a16d1)"
+
+[[package]]
+name = "rustc_utils"
+version = "0.6.0-nightly-2023-04-12"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=d2328a0148359f440b6074bf7144aba00e3a16d1#d2328a0148359f440b6074bf7144aba00e3a16d1"
 dependencies = [
  "anyhow",
  "cfg-if",
  "intervaltree",
  "log",
 ]
-
-[[package]]
-name = "rustc_utils"
-version = "0.6.0-nightly-2023-04-12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3935b4a82abe6904308c9273afba6160cf36f20044e720c43839a08519eadfd8"
-replace = "rustc_utils 0.6.0-nightly-2023-04-12"
 
 [[package]]
 name = "rustix"

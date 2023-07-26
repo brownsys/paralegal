@@ -304,7 +304,6 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
 
 
         let node = self.tcx.hir().find(id).unwrap();
-        println!("Handling annotations on {node:?}");
 
         if let Some((def_id, obj_type, allow_prior)) = if let Some(decl) = node.fn_decl() {
             Some((
