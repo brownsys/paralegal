@@ -390,49 +390,46 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
                 "Checking function {} for markers",
                 self.tcx.def_path_debug_str(defid)
             );
-            let carries = self.oracle.carries_marker(defid);
-            let result = if carries {
+            if self.oracle.carries_marker(defid) {
                 debug!("  carries self");
-                true
-            } else if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
+                return true;
+            }
+            if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
                     body.local_decls[mir::RETURN_PLACE].ty.kind()
                 && let ty::TyKind::Generator(closure_fn, _, _) = self.tcx.type_of(alias.def_id).skip_binder().kind() {
                 let map = self.tcx.hir();
-                self.body_carries_marker(
+                return self.body_carries_marker(
                     map.body_owned_by(closure_fn.as_local().unwrap()),
-                )
-            } else {
-                let local_carries = defid.as_local().map_or(false, |ldid| {
-                    self.force_into_body_id(ldid)
-                        .map_or(false, |body_id| self.body_carries_marker(body_id))
-                });
-                if local_carries {
-                    debug!("  body carries");
-                }
-                let type_carries = self
-                    .tcx
-                    .fn_sig(defid)
-                    .skip_binder()
-                    .skip_binder()
-                    .inputs_and_output
-                    .iter()
-                    .any(|t| {
-                        t.walk().any(|t| match t.unpack() {
-                            GenericArgKind::Type(t) => {
-                                t.defid().map_or(false, |t| self.oracle.carries_marker(t))
-                            }
-                            _ => false,
-                        })
-                    });
-                if type_carries {
-                    debug!("  type carries");
-                }
-                local_carries | type_carries
-            };
-            result
-        } else {
-            false
+                );
+            }
+            if defid.as_local().map_or(false, |ldid| {
+                self.force_into_body_id(ldid)
+                    .map_or(false, |body_id| self.body_carries_marker(body_id))
+            }) {
+                debug!("  body carries");
+                return true;
+            }
+            if self
+                .tcx
+                .fn_sig(defid)
+                .skip_binder()
+                .skip_binder()
+                .inputs_and_output
+                .iter()
+                .any(|t| {
+                    t.walk().any(|t| match t.unpack() {
+                        GenericArgKind::Type(t) => {
+                            t.defid().map_or(false, |t| self.oracle.carries_marker(t))
+                        }
+                        _ => false,
+                    })
+                })
+            {
+                debug!("  type carries");
+                return true;
+            }
         }
+        false
     }
 }
 
