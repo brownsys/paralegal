@@ -17,6 +17,7 @@ use either::Either;
 use dfpp::utils::outfile_pls;
 use std::borrow::Cow;
 use std::io::prelude::*;
+use std::path::Path;
 
 lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -41,26 +42,6 @@ pub fn with_current_directory<
     Ok(res)
 }
 
-/// Run the action `F` in directory `P` and with rustc data structures
-/// initialized (e.g. using [`Symbol`] works), taking care to lock the directory
-/// change and resetting the working directory after.
-///
-/// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
-/// [`Symbol`]s created after `F` and may cause dereference errors.
-pub fn cwd_and_use_rustc_in<
-    P: AsRef<std::path::Path>,
-    A,
-    F: std::panic::UnwindSafe + FnOnce() -> A,
->(
-    p: P,
-    f: F,
-) -> std::io::Result<A> {
-    with_current_directory(p, || {
-        eprintln!("creating session");
-        rustc_span::create_default_session_if_not_set_then(|_| f())
-    })
-}
-
 /// Initialize rustc data structures (e.g. [`Symbol`] works) and run `F`
 ///
 /// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
@@ -75,11 +56,11 @@ pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
 ///
 /// The result is suitable for reading with
 /// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
-pub fn run_dfpp_with_graph_dump() -> bool {
-    run_dfpp_with_graph_dump_and::<_, &str>([])
+pub fn run_dfpp_with_graph_dump(dir: impl AsRef<Path>) -> bool {
+    run_dfpp_with_graph_dump_and::<_, &str>(dir, [])
 }
 
-pub fn dfpp_command() -> std::process::Command {
+pub fn dfpp_command(dir: impl AsRef<Path>) -> std::process::Command {
     let mut cmd = std::process::Command::new("cargo");
     let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
     let dfpp_path = std::env::current_dir()
@@ -91,7 +72,8 @@ pub fn dfpp_command() -> std::process::Command {
     new_path.push(dfpp_path);
     new_path.push(":");
     new_path.push(path);
-    cmd.arg("dfpp").env("PATH", new_path);
+    cmd.arg("dfpp").env("PATH", new_path).current_dir(dir);
+    eprintln!("Command is {cmd:?}");
     cmd
 }
 
@@ -103,12 +85,12 @@ pub fn dfpp_command() -> std::process::Command {
 /// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
 ///
 /// Allows for additional arguments to be passed to dfpp
-pub fn run_dfpp_with_graph_dump_and<I, S>(extra: I) -> bool
+pub fn run_dfpp_with_graph_dump_and<I, S>(dir: impl AsRef<Path>, extra: I) -> bool
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    dfpp_command()
+    dfpp_command(dir)
         .arg("--abort-after-analysis")
         .arg("--dump-serialized-non-transitive-graph")
         .args(extra)
@@ -121,8 +103,8 @@ where
 /// JSON.
 ///
 /// The result is suitable for reading with [`PreFrg::from_file_at`]
-pub fn run_dfpp_with_flow_graph_dump() -> bool {
-    run_dfpp_with_flow_graph_dump_and::<_, &str>([])
+pub fn run_dfpp_with_flow_graph_dump(dir: impl AsRef<Path>) -> bool {
+    run_dfpp_with_flow_graph_dump_and::<_, &str>(dir, [])
 }
 
 /// Run dfpp in the current directory, passing the
@@ -130,12 +112,12 @@ pub fn run_dfpp_with_flow_graph_dump() -> bool {
 /// JSON.
 ///
 /// The result is suitable for reading with [`PreFrg::from_file_at`]
-pub fn run_dfpp_with_flow_graph_dump_and<I, S>(extra: I) -> bool
+pub fn run_dfpp_with_flow_graph_dump_and<I, S>(dir: impl AsRef<Path>, extra: I) -> bool
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    dfpp_command()
+    dfpp_command(dir)
         .arg("--abort-after-analysis")
         .arg("--dump-serialized-flow-graph")
         .args(extra)

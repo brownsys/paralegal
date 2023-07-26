@@ -9,16 +9,8 @@ use helpers::*;
 const CRATE_DIR: &str = "tests/inline-no-arg-closure-tests";
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = with_current_directory(CRATE_DIR, || {
-        run_dfpp_with_graph_dump_and(["--inline-no-arg-closures"])
-    })
-    .map_or_else(
-        |e| {
-            println!("io err {}", e);
-            false
-        },
-        |t| t
-    );
+    static ref TEST_CRATE_ANALYZED: bool =
+        run_dfpp_with_graph_dump_and(CRATE_DIR, ["--inline-no-arg-closures"]);
 }
 
 macro_rules! define_test {

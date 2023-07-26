@@ -13,16 +13,7 @@ fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::i
 }
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = {
-        let crate_dir: std::path::PathBuf = TEST_CRATE_NAME.to_string().into();
-        cwd_and_use_rustc_in(crate_dir, run_dfpp_with_flow_graph_dump).map_or_else(
-            |e| {
-                println!("io err {}", e);
-                false
-            },
-            |t| t,
-        )
-    };
+    static ref TEST_CRATE_ANALYZED: bool = run_dfpp_with_flow_graph_dump(TEST_CRATE_NAME);
 }
 
 // This will create a forge file with the name "test_{test_name}.frg"

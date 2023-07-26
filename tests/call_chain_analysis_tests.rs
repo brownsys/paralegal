@@ -10,19 +10,8 @@ use helpers::*;
 const TEST_CRATE_NAME: &str = "tests/call-chain-analysis-tests";
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = {
-        let crate_dir: std::path::PathBuf = TEST_CRATE_NAME.to_string().into();
-        cwd_and_use_rustc_in(crate_dir, || {
-            run_dfpp_with_flow_graph_dump_and(["--drop-clone"])
-        })
-        .map_or_else(
-            |e| {
-                println!("io err {}", e);
-                false
-            },
-            |t| t,
-        )
-    };
+    static ref TEST_CRATE_ANALYZED: bool =
+        run_dfpp_with_flow_graph_dump_and(TEST_CRATE_NAME, ["--drop-clone"]);
 }
 
 macro_rules! define_test {
