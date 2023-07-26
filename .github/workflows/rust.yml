@@ -45,6 +45,7 @@ jobs:
         cargo test --test control_flow_tests
         cargo test --test new_alias_analysis_tests
         cargo test --test async_tests
+
   intergration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -76,9 +77,9 @@ jobs:
         raco pkg install --auto || raco setup forge
     - name: Run Tests
       run: cargo test --test external_annotation_tests 
-  linting:
-    name: Clippy
 
+  format-check:
+    name: Format Control
     runs-on: ubuntu-latest
 
     steps:
@@ -89,6 +90,13 @@ jobs:
       with:
         path: ~/.rustup
         key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+    - name: Perform Check
+      run: cargo fmt --check
+
+  linting:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
     - name: Cache Dependencies
       uses: actions/cache@v3
       with:
@@ -99,5 +107,5 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-    - name: Clippy
+    - name: Here come the complaints
       run: cargo clippy --all -- -D warnings
