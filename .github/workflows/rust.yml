@@ -22,7 +22,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/.rustup
-        key: ${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
+        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
     - name: Cache Dependencies
       uses: actions/cache@v3
       with:
@@ -32,7 +32,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+        key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Build
       run: cargo build --verbose
     - name: Run tests
