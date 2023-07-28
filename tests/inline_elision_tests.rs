@@ -8,6 +8,8 @@ use helpers::*;
 
 const CRATE_DIR: &str = "tests/inline-elision-tests";
 
+const TARGET_FN: &str = "std::convert::identity";
+
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool =
         run_dfpp_with_graph_dump_and(CRATE_DIR, ["--inline-elision"]);
@@ -22,7 +24,7 @@ macro_rules! define_test {
 define_test!(basic_elision : graph -> {
     let input = graph.function_call("input");
     let receiver = graph.function_call("receive_touched");
-    assert!(graph.function_calls("elide_me").is_empty() || graph.connects_none(&graph.function_call("elide_me")));
+    assert!(graph.function_calls(TARGET_FN).is_empty() || graph.connects_none(&graph.function_call(TARGET_FN)));
     assert!(graph.connects(&input, &receiver))
 
 });
@@ -30,7 +32,7 @@ define_test!(basic_elision : graph -> {
 define_test!(basic_elision_mut : graph -> {
     let input = graph.function_call("input");
     let receiver = graph.function_call("receive_touched");
-    assert!(graph.function_calls("elide_me").is_empty() || graph.connects_none(&graph.function_call("elide_me")));
+    assert!(graph.function_calls(TARGET_FN).is_empty() || graph.connects_none(&graph.function_call(TARGET_FN)));
     assert!(graph.connects(&input, &receiver))
 
 });

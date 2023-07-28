@@ -1076,17 +1076,17 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             })
             .filter_map(|(id, location, function)| {
                 if recursive_analysis_enabled {
-                    match function.as_local() {
-                        Some(local_id) if self.oracle.should_inline(local_id) => {
-                            debug!("Inlining {function:?}");
-                            return Some((id, *location, InlineAction::SimpleInline(local_id)));
-                        }
-                        _ => (),
-                    }
                     if let Some(ac) =
                         self.classify_special_function_handling(*function, id, &i_graph.graph)
                     {
                         return Some((id, *location, InlineAction::Drop(ac)));
+                    }
+                    if let Some(local_id) = function.as_local()
+                        && self.oracle.should_inline(local_id)
+                        && (!self.ana_ctrl.avoid_inlining() || self.marker_carrying.body_carries_marker(local_id))
+                    {
+                        debug!("Inlining {function:?}");
+                        return Some((id, *location, InlineAction::SimpleInline(local_id)));
                     }
                 }
                 let local_as_global = GlobalLocal::at_root;

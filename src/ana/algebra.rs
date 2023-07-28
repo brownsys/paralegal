@@ -397,11 +397,7 @@ pub mod graph {
             if let Some(w) = graph.edge_weight_mut(from, to) {
                 w.0.push(eq.rhs.terms)
             } else {
-                graph.add_edge(
-                    from,
-                    to,
-                    Operators(SmallVec::from_iter([eq.rhs.terms])),
-                );
+                graph.add_edge(from, to, Operators(SmallVec::from_iter([eq.rhs.terms])));
             }
         }
         graph
@@ -481,9 +477,8 @@ pub mod graph {
                                             graph,
                                             &[],
                                             &|_, _| "".to_string(),
-                                            &|_, (n, _)| 
-                                                "shape=box,color=".to_string() + 
-                                                if n == to {
+                                            &|_, (n, _)| "shape=box,color=".to_string()
+                                                + if n == to {
                                                     "red"
                                                 } else if is_target(n) {
                                                     "green"

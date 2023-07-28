@@ -6,10 +6,11 @@ fn inner() -> u32 {
 }
 
 fn elide_me(i: u32) -> u32 {
-    i
+    std::convert::identity(i)
 }
 
 fn elide_me2(i: &mut u32) {
+    *i = std::convert::identity(*i);
 }
 
 #[dfpp::analyze]
