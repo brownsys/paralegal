@@ -45,6 +45,7 @@ jobs:
         cargo test --test control_flow_tests
         cargo test --test new_alias_analysis_tests
         cargo test --test async_tests
+        cargo test --test inline_elision_tests
 
   intergration-tests:
     name: Integration Tests
