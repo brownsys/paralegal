@@ -302,6 +302,7 @@ impl<B, F: Copy> Equality<B, F> {
         self.rhs
             .terms
             .extend(self.lhs.terms.drain(..).rev().map(Operator::flip));
+        assert!(self.lhs.terms.is_empty());
     }
 
     /// Swap the left and right hand side terms
@@ -376,10 +377,12 @@ pub mod graph {
         for eq in equations {
             let mut eq: Equality<_, _> = eq.borrow().clone();
             eq.rearrange_left_to_right();
+            let from = *eq.rhs.base();
+            let to = *eq.lhs.base();
             debug!(
                 "Adding {} -> {} {} ({})",
-                eq.rhs.base(),
-                eq.lhs.base(),
+                to,
+                from,
                 Print(|fmt| {
                     fmt.write_char('[')?;
                     write_sep(fmt, ", ", eq.rhs.terms.iter(), Display::fmt)?;
@@ -391,14 +394,10 @@ pub mod graph {
                     fmt.write_char(']')
                 }),
             );
-            if let Some(w) = graph.edge_weight_mut(*eq.lhs.base(), *eq.rhs.base()) {
+            if let Some(w) = graph.edge_weight_mut(from, to) {
                 w.0.push(eq.rhs.terms)
             } else {
-                graph.add_edge(
-                    *eq.rhs.base(),
-                    *eq.lhs.base(),
-                    Operators(SmallVec::from_iter([eq.rhs.terms])),
-                );
+                graph.add_edge(from, to, Operators(SmallVec::from_iter([eq.rhs.terms])));
             }
         }
         graph
@@ -478,21 +477,24 @@ pub mod graph {
                                             graph,
                                             &[],
                                             &|_, _| "".to_string(),
-                                            &|_, (n, _)| if seen.contains(graph.to_index(n)) {
-                                                "shape=box,color=blue".to_string()
-                                            } else if n == to {
-                                                "shape=box,color=red".to_string()
-                                            } else if is_target(n) {
-                                                "shape=box,color=green".to_string()
-                                            } else if n == from {
-                                                "shape=box,color=aqua".to_string()
-                                            } else {
-                                                "shape=box".to_string()
-                                            }
+                                            &|_, (n, _)| "shape=box,color=".to_string()
+                                                + if n == to {
+                                                    "red"
+                                                } else if is_target(n) {
+                                                    "green"
+                                                } else if n == from {
+                                                    "yellow"
+                                                } else if n == node {
+                                                    "purple"
+                                                } else if seen.contains(graph.to_index(n)) {
+                                                    "blue"
+                                                } else {
+                                                    "black"
+                                                }
                                         )
                                     )
                                     .unwrap();
-                                    panic!("Encountered invalid operator combination {one} {two} in {projections}: as op chain {}. The state of the search on the operator graph at the time the error as found has been dumped to {path}.", Print(|fmt| {
+                                    panic!("Encountered invalid operator combination {one} {two} in {projections}: as op chain {}.\n  The state of the search on the operator graph at the time the error as found has been dumped to {path}.\n    Yellow is where the search started,\n    blue nodes were seen during the search,\n    the target is green,\n    the red node is the one we were trying to reach and\n    the purple node is where we tried to reach it from.", Print(|fmt| {
                                     fmt.write_char('[')?;
                                     write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
                                     fmt.write_char(']')
@@ -1020,7 +1022,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                 [op1, op2]
                     .into_iter()
                     .flat_map(|op| op.place().into_iter())
-                    .map(|op| op.into()),
+                    .map(|op| MirTerm::from(op).add_contains_at(crate::rustc_abi::FieldIdx::from(0_usize).into())),
             )
                 as Box<_>,
             Aggregate(box kind, ops) => match kind {
