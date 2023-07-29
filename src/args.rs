@@ -11,7 +11,11 @@
 
 use std::{borrow::Cow, str::FromStr};
 
+use clap::ValueEnum;
+
 use crate::utils::TinyBitSet;
+
+use crate::{num_derive, num_traits::FromPrimitive};
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct Args(GArgs<DumpArgs>);
@@ -106,13 +110,41 @@ pub struct ParseableDumpArgs {
     /// compilation. A short description of each value is provided here, for a
     /// more comprehensive explanation refer to the [notion page on
     /// dumping](https://www.notion.so/justus-adam/Dumping-Intermediate-Representations-4bd66ec11f8f4c459888a8d8cfb10e93).
-    #[clap(long)]
-    dump: Vec<DumpOption>,
+    #[clap(long, value_enum)]
+    dump: Vec<DumpArgs>,
+}
+
+lazy_static! {
+    static ref DUMP_ARGS_OPTIONS: Vec<DumpArgs> = 
+        DumpOption::value_variants().iter().map(|&v| v.into()).collect();
+}
+
+impl clap::ValueEnum for DumpArgs {
+    fn value_variants<'a>() -> &'a [Self] {
+        &*DUMP_ARGS_OPTIONS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let mut it = self.0.into_iter_set_in_domain();
+        let v = it.next().unwrap();
+        assert!(it.next().is_none());
+        DumpOption::from_u32(v).unwrap().to_possible_value()
+    }
+
+    fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {
+        input.split(",").map(|segment| DumpOption::from_str(segment, ignore_case)).collect()
+    }
+}
+
+impl From<DumpOption> for DumpArgs {
+    fn from(value: DumpOption) -> Self {
+        [value].into_iter().collect()
+    }
 }
 
 impl From<ParseableDumpArgs> for DumpArgs {
     fn from(value: ParseableDumpArgs) -> Self {
-        Self(value.dump.into_iter().map(|opt| opt as u32).collect())
+        value.dump.into_iter().flat_map(|opt| opt.iter()).collect()
     }
 }
 
@@ -148,8 +180,20 @@ impl clap::Args for DumpArgs {
 /// type variable at the struct definition itself. That means this compressed
 /// type, that is only meant to be queried but not parsed needs an impl for
 /// these contraints, hence the `undefined!()`.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct DumpArgs(TinyBitSet);
+
+impl DumpArgs {
+    fn iter(self) -> impl Iterator<Item= DumpOption> {
+        self.0.into_iter_set_in_domain().filter_map(|v| DumpOption::from_u32(v))
+    }
+}
+
+impl FromIterator<DumpOption> for DumpArgs {
+    fn from_iter<T: IntoIterator<Item = DumpOption>>(iter: T) -> Self {
+        Self(iter.into_iter().map(|v| v as u32).collect())
+    }
+}
 
 #[derive(
     Copy,
@@ -159,6 +203,7 @@ pub struct DumpArgs(TinyBitSet);
     serde::Serialize,
     serde::Deserialize,
     clap::ValueEnum,
+    num_derive::FromPrimitive,
 )]
 enum DumpOption {
     /// For each controller dump a dot representation for each [`mir::Body`] as
