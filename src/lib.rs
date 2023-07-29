@@ -239,7 +239,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         use clap::Parser;
         let args = ArgWrapper::parse();
         rustc_plugin::RustcPluginArgs {
-            args: Args::from_parseable(args.args.into()).unwrap(),
+            args: Args::from_parseable(args.args).unwrap(),
             filter: CrateFilter::OnlyWorkspace,
         }
     }

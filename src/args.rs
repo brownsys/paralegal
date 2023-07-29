@@ -44,7 +44,7 @@ impl Args {
                 },
         } = value;
         let mut dump: DumpArgs = dump.into();
-        if let Some(from_env) = std::env::var("DFPP_DUMP").ok() {
+        if let Ok(from_env) = std::env::var("DFPP_DUMP") {
             let from_env = DumpArgs::from_str(&from_env, false)?;
             dump.0 |= from_env.0;
         }
@@ -130,7 +130,7 @@ lazy_static! {
 
 impl clap::ValueEnum for DumpArgs {
     fn value_variants<'a>() -> &'a [Self] {
-        &*DUMP_ARGS_OPTIONS
+        &DUMP_ARGS_OPTIONS
     }
 
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
@@ -142,7 +142,7 @@ impl clap::ValueEnum for DumpArgs {
 
     fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {
         input
-            .split(",")
+            .split(',')
             .map(|segment| DumpOption::from_str(segment, ignore_case))
             .collect()
     }
@@ -199,7 +199,7 @@ impl DumpArgs {
     fn iter(self) -> impl Iterator<Item = DumpOption> {
         self.0
             .into_iter_set_in_domain()
-            .filter_map(|v| DumpOption::from_u32(v))
+            .filter_map(DumpOption::from_u32)
     }
 }
 
