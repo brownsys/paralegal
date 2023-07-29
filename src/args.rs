@@ -26,8 +26,8 @@ pub struct ParseableArgs {
     ignored: GArgs<ParseableDumpArgs>,
 }
 
-impl From<ParseableArgs> for Args {
-    fn from(value: ParseableArgs) -> Self {
+impl Args {
+    pub fn from_parseable(value: ParseableArgs) -> Result<Self, String> {
         let ParseableArgs {
             ignored:
                 GArgs {
@@ -43,7 +43,12 @@ impl From<ParseableArgs> for Args {
                     dump,
                 },
         } = value;
-        Args(GArgs {
+        let mut dump: DumpArgs = dump.into();
+        if let Some(from_env) = std::env::var("DFPP_DUMP").ok() {
+            let from_env = DumpArgs::from_str(&from_env, false)?;
+            dump.0 |= from_env.0;
+        }
+        Ok(Args(GArgs {
             verbose,
             debug,
             debug_target,
@@ -53,8 +58,8 @@ impl From<ParseableArgs> for Args {
             abort_after_analysis,
             anactrl,
             modelctrl,
-            dump: dump.into(),
-        })
+            dump,
+        }))
     }
 }
 
@@ -110,13 +115,17 @@ pub struct ParseableDumpArgs {
     /// compilation. A short description of each value is provided here, for a
     /// more comprehensive explanation refer to the [notion page on
     /// dumping](https://www.notion.so/justus-adam/Dumping-Intermediate-Representations-4bd66ec11f8f4c459888a8d8cfb10e93).
+    ///
+    /// Can also be supplied as a comma-separated list (no spaces) and be set with the `DFPP_DUMP` variable.
     #[clap(long, value_enum)]
     dump: Vec<DumpArgs>,
 }
 
 lazy_static! {
-    static ref DUMP_ARGS_OPTIONS: Vec<DumpArgs> = 
-        DumpOption::value_variants().iter().map(|&v| v.into()).collect();
+    static ref DUMP_ARGS_OPTIONS: Vec<DumpArgs> = DumpOption::value_variants()
+        .iter()
+        .map(|&v| v.into())
+        .collect();
 }
 
 impl clap::ValueEnum for DumpArgs {
@@ -132,7 +141,10 @@ impl clap::ValueEnum for DumpArgs {
     }
 
     fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {
-        input.split(",").map(|segment| DumpOption::from_str(segment, ignore_case)).collect()
+        input
+            .split(",")
+            .map(|segment| DumpOption::from_str(segment, ignore_case))
+            .collect()
     }
 }
 
@@ -169,7 +181,7 @@ impl clap::Args for DumpArgs {
 }
 
 /// Collection of the [`DumpOption`]s a user has set.
-/// 
+///
 /// Separates the cli and the internal api. Users set [`DumpOption`]s in the
 /// cli, internally we use the snake-case version of the option as a method on
 /// this type. This is so we can rename the outer UI without breaking code or
@@ -184,8 +196,10 @@ impl clap::Args for DumpArgs {
 pub struct DumpArgs(TinyBitSet);
 
 impl DumpArgs {
-    fn iter(self) -> impl Iterator<Item= DumpOption> {
-        self.0.into_iter_set_in_domain().filter_map(|v| DumpOption::from_u32(v))
+    fn iter(self) -> impl Iterator<Item = DumpOption> {
+        self.0
+            .into_iter_set_in_domain()
+            .filter_map(|v| DumpOption::from_u32(v))
     }
 }
 
@@ -494,12 +508,10 @@ impl AnalysisCtrl {
     }
 }
 
-
 impl DumpArgs {
     #[inline]
     fn has(&self, opt: DumpOption) -> bool {
-        self.0.contains(DumpOption::All as u32).unwrap() ||
-        self.0.contains(opt as u32).unwrap()
+        self.0.contains(DumpOption::All as u32).unwrap() || self.0.contains(opt as u32).unwrap()
     }
     pub fn dump_ctrl_mir(&self) -> bool {
         self.has(DumpOption::CtrlMir)

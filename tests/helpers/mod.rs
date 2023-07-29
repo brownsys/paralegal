@@ -96,8 +96,11 @@ where
     S: AsRef<std::ffi::OsStr>,
 {
     dfpp_command(dir)
-        .arg("--abort-after-analysis")
-        .arg("--dump-serialized-non-transitive-graph")
+        .args([
+            "--abort-after-analysis",
+            "--dump",
+            "serialized-non-transitive-graph",
+        ])
         .args(extra)
         .status()
         .unwrap()
