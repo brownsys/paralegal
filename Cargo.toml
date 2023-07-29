@@ -20,7 +20,7 @@ flowistry = { git = "https://github.com/brownsys/flowistry", rev = "f3b27bb1e06a
 rustc_utils = "=0.6.0-nightly-2023-04-12"
 rustc_plugin = "=0.6.0-nightly-2023-04-12"
 
-clap = { version = "3", features = ["derive", "cargo", "env"] }
+clap = { version = "4", features = ["derive", "cargo", "env"] }
 serde = { version = "1", features = ["derive"] }
 lazy_static = "1"
 ordermap = "0.3"

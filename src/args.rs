@@ -11,9 +11,59 @@
 
 use std::{borrow::Cow, str::FromStr};
 
+use crate::utils::TinyBitSet;
+
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct Args(GArgs<DumpArgs>);
+
+#[derive(clap::Args)]
+pub struct ParseableArgs {
+    #[clap(flatten)]
+    ignored: GArgs<ParseableDumpArgs>,
+}
+
+impl From<ParseableArgs> for Args {
+    fn from(value: ParseableArgs) -> Self {
+        let ParseableArgs {
+            ignored:
+                GArgs {
+                    verbose,
+                    debug,
+                    debug_target,
+                    result_path,
+                    relaxed,
+                    target,
+                    abort_after_analysis,
+                    anactrl,
+                    modelctrl,
+                    dump,
+                },
+        } = value;
+        Args(GArgs {
+            verbose,
+            debug,
+            debug_target,
+            result_path,
+            relaxed,
+            target,
+            abort_after_analysis,
+            anactrl,
+            modelctrl,
+            dump: dump.into(),
+        })
+    }
+}
+
 /// Top level command line arguments
+///
+/// There are some shenanigans going on here wrt the `DA` type variable. This is
+/// because as of writing these docs Justus can't figure out how to directly
+/// collect the dump options into a set, so I first collect them into a vector
+/// and then compress it into a set.
+///
+/// This is what the `Parseable*` structs are trying to hide from the user.
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
-pub struct Args {
+struct GArgs<DA: clap::FromArgMatches + clap::Args> {
     /// Print additional logging output (up to the "info" level)
     #[clap(short, long, env = "DFPP_VERBOSE")]
     verbose: bool,
@@ -46,8 +96,108 @@ pub struct Args {
     #[clap(flatten, next_help_heading = "Model Generation")]
     modelctrl: ModelCtrl,
     /// Additional arguments that control debug args specifically
-    #[clap(flatten, next_help_heading = "Debugging and Testing")]
-    dbg: DbgArgs,
+    #[clap(flatten)]
+    dump: DA,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, clap::Args)]
+pub struct ParseableDumpArgs {
+    /// Generate intermediate of various formats and at various stages of
+    /// compilation. A short description of each value is provided here, for a
+    /// more comprehensive explanation refer to the [notion page on
+    /// dumping](https://www.notion.so/justus-adam/Dumping-Intermediate-Representations-4bd66ec11f8f4c459888a8d8cfb10e93).
+    #[clap(long)]
+    dump: Vec<DumpOption>,
+}
+
+impl From<ParseableDumpArgs> for DumpArgs {
+    fn from(value: ParseableDumpArgs) -> Self {
+        Self(value.dump.into_iter().map(|opt| opt as u32).collect())
+    }
+}
+
+/// See [`DumpArgs`]
+impl clap::FromArgMatches for DumpArgs {
+    fn from_arg_matches(_: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        unimplemented!()
+    }
+    fn update_from_arg_matches(&mut self, _: &clap::ArgMatches) -> Result<(), clap::Error> {
+        unimplemented!()
+    }
+}
+
+/// See [`DumpArgs`]
+impl clap::Args for DumpArgs {
+    fn augment_args(_: clap::Command) -> clap::Command {
+        unimplemented!()
+    }
+    fn augment_args_for_update(_: clap::Command) -> clap::Command {
+        unimplemented!()
+    }
+}
+
+/// Collection of the [`DumpOption`]s a user has set.
+/// 
+/// Separates the cli and the internal api. Users set [`DumpOption`]s in the
+/// cli, internally we use the snake-case version of the option as a method on
+/// this type. This is so we can rename the outer UI without breaking code or
+/// even combine options together.
+///
+/// As of writing these docs clap doesn't have a way to attach extra constraints
+/// to a derived impl (e.g. `Args` of `GArgs`). And so it has to be added to the
+/// type variable at the struct definition itself. That means this compressed
+/// type, that is only meant to be queried but not parsed needs an impl for
+/// these contraints, hence the `undefined!()`.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct DumpArgs(TinyBitSet);
+
+#[derive(
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    clap::ValueEnum,
+)]
+enum DumpOption {
+    /// For each controller dump a dot representation for each [`mir::Body`] as
+    /// provided by rustc
+    CtrlMir,
+    /// For each controller dumps the calculated dataflow graphs as well as
+    /// information about the MIR to <name of controller>.ntgb.json. Can be
+    /// deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
+    SerializedNonTransitiveGraph,
+    /// Dumps a dot graph representation of the dataflow between function calls
+    /// calculated for each controller to <name of controller>.call-only-flow.gv
+    CallOnlyFlow,
+    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json)
+    /// format to "flow-graph.json". Used for testing.
+    SerializedFlowGraph,
+    /// Dump a `.df` file for each called function describing the dataflow
+    /// matrices calculated by the flowistry-style dataflow analysis
+    DataflowAnalysisResult,
+    /// Dump a `.inlined-pruned.gv` PDG for each called function describing the flow graph
+    /// after pruning with the place algebra (only useful without `--no-pruning`)
+    InlinedPrunedGraph,
+    /// Dump a `.inlined.gv` PDG after inlining called functions, but before pruning
+    InlinedGraph,
+    /// Dump the MIR (`.mir`) of each called function (irrespective of whether they are a
+    /// controller)
+    CalleeMir,
+    /// Dump the flow PDG before inlining the called functions
+    PreInlineGraph,
+    /// Dump a representation of the "regal" IR for each function (`.regal`)
+    RegalIr,
+    /// Dump the equations before inlining (`.local.eqs`)
+    LocalEquations,
+    /// Dump the equations after inlining (`.global.eqs`)
+    GlobalEquations,
+    LocalsGraph,
+    /// Deprecated alias for `dump_call_only_flow`
+    NonTransitiveGraph,
+    /// Dump everything we know of
+    All,
 }
 
 /// How a specific logging level was configured. (currently only used for the
@@ -76,43 +226,43 @@ impl<'a> LogLevelConfig<'a> {
 
 impl Args {
     pub fn target(&self) -> Option<&str> {
-        self.target.as_deref()
+        self.0.target.as_deref()
     }
     /// Returns the configuration specified for the `--debug` option
     pub fn debug(&self) -> Cow<'_, LogLevelConfig<'_>> {
-        Cow::Owned(match &self.debug_target {
+        Cow::Owned(match &self.0.debug_target {
             Some(target) if !target.is_empty() => {
                 LogLevelConfig::Targeted(Cow::Borrowed(target.as_str()))
             }
-            _ if self.debug => LogLevelConfig::Enabled,
+            _ if self.0.debug => LogLevelConfig::Enabled,
             _ => LogLevelConfig::Disabled,
         })
     }
     /// Access the debug arguments
-    pub fn dbg(&self) -> &DbgArgs {
-        &self.dbg
+    pub fn dbg(&self) -> &DumpArgs {
+        &self.0.dump
     }
     /// Access the argument controlling the analysis
     pub fn anactrl(&self) -> &AnalysisCtrl {
-        &self.anactrl
+        &self.0.anactrl
     }
     pub fn modelctrl(&self) -> &ModelCtrl {
-        &self.modelctrl
+        &self.0.modelctrl
     }
     /// the file to write results to
     pub fn result_path(&self) -> &std::path::Path {
-        self.result_path.as_path()
+        self.0.result_path.as_path()
     }
     /// Should we output additional log messages (level `info`)
     pub fn verbose(&self) -> bool {
-        self.verbose
+        self.0.verbose
     }
     /// Warn instead of crashing the program in case of non-fatal errors
     pub fn relaxed(&self) -> bool {
-        self.relaxed
+        self.0.relaxed
     }
     pub fn abort_after_analysis(&self) -> bool {
-        self.abort_after_analysis
+        self.0.abort_after_analysis
     }
 }
 
@@ -299,108 +449,50 @@ impl AnalysisCtrl {
     }
 }
 
-/// Arguments that control the output of debug information or output to be
-/// consumed for testing.
-#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
-pub struct DbgArgs {
-    /// Dumps a table representing retrieved Flowistry matrices to stdout.
-    #[clap(long, env)]
-    dump_flowistry_matrix: bool,
-    /// Dumps a dot graph representation of the finely granular, inlined flow of each controller.
-    /// Unlike `dump_call_only_flow` this contains also statements and non-call
-    /// terminators. It is also created differently (using dependency
-    /// resolution) and has not been tested in a while and shouldn't be relied upon.
-    #[clap(long, env)]
-    dump_inlined_function_flow: bool,
-    /// Dumps a dot graph representation of the dataflow between function calls
-    /// calculated for each controller to <name of controller>.call-only-flow.gv
-    #[clap(long, env)]
-    dump_call_only_flow: bool,
-    /// Deprecated alias for `dump_call_only_flow`
-    #[clap(long, env)]
-    dump_non_transitive_graph: bool,
-    /// For each controller dumps the calculated dataflow graphs as well as
-    /// information about the MIR to <name of controller>.ntgb.json. Can be
-    /// deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
-    #[clap(long, env)]
-    dump_serialized_non_transitive_graph: bool,
-    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json)
-    /// format to "flow-graph.json". Used for testing.
-    #[clap(long, env)]
-    dump_serialized_flow_graph: bool,
-    /// For each controller dump a dot representation for each [`mir::Body`] as
-    /// provided by rustc
-    #[clap(long, env)]
-    dump_ctrl_mir: bool,
-    /// Dump a `.df` file for each called function describing the dataflow
-    /// matrices calculated by the flowistry-style dataflow analysis
-    #[clap(long, env)]
-    dump_dataflow_analysis_result: bool,
-    /// Dump a `.inlined-pruned.gv` PDG for each called function describing the flow graph
-    /// after pruning with the place algebra (only useful without `--no-pruning`)
-    #[clap(long, env)]
-    dump_inlined_pruned_graph: bool,
-    /// Dump a `.inlined.gv` PDG after inlining called functions, but before pruning
-    #[clap(long, env)]
-    dump_inlined_graph: bool,
-    /// Dump the MIR (`.mir`) of each called function (irrespective of whether they are a
-    /// controller)
-    #[clap(long, env)]
-    dump_callee_mir: bool,
-    /// Dump the flow PDG before inlining the called functions
-    #[clap(long, env)]
-    dump_pre_inline_graph: bool,
-    /// Dump a representation of the "regal" IR for each function (`.regal`)
-    #[clap(long, env)]
-    dump_regal_ir: bool,
-    /// Dump the equations before inlining (`.local.eqs`)
-    #[clap(long, env)]
-    dump_local_equations: bool,
-    /// Dump the equations after inlining (`.global.eqs`)
-    #[clap(long, env)]
-    dump_global_equations: bool,
-    #[clap(long, env)]
-    dump_locals_graph: bool,
-}
 
-impl DbgArgs {
+impl DumpArgs {
+    #[inline]
+    fn has(&self, opt: DumpOption) -> bool {
+        self.0.contains(DumpOption::All as u32).unwrap() ||
+        self.0.contains(opt as u32).unwrap()
+    }
     pub fn dump_ctrl_mir(&self) -> bool {
-        self.dump_ctrl_mir
+        self.has(DumpOption::CtrlMir)
     }
     pub fn dump_serialized_non_transitive_graph(&self) -> bool {
-        self.dump_serialized_non_transitive_graph
+        self.has(DumpOption::SerializedNonTransitiveGraph)
     }
     pub fn dump_call_only_flow(&self) -> bool {
-        self.dump_call_only_flow || self.dump_non_transitive_graph
+        self.has(DumpOption::NonTransitiveGraph) || self.has(DumpOption::CallOnlyFlow)
     }
     pub fn dump_serialized_flow_graph(&self) -> bool {
-        self.dump_serialized_flow_graph
+        self.has(DumpOption::SerializedFlowGraph)
     }
     pub fn dump_dataflow_analysis_result(&self) -> bool {
-        self.dump_dataflow_analysis_result
+        self.has(DumpOption::DataflowAnalysisResult)
     }
     pub fn dump_inlined_pruned_graph(&self) -> bool {
-        self.dump_inlined_pruned_graph
+        self.has(DumpOption::InlinedPrunedGraph)
     }
     pub fn dump_inlined_graph(&self) -> bool {
-        self.dump_inlined_graph
+        self.has(DumpOption::InlinedGraph)
     }
     pub fn dump_callee_mir(&self) -> bool {
-        self.dump_callee_mir
+        self.has(DumpOption::CalleeMir)
     }
     pub fn dump_pre_inline_graph(&self) -> bool {
-        self.dump_pre_inline_graph
+        self.has(DumpOption::PreInlineGraph)
     }
     pub fn dump_regal_ir(&self) -> bool {
-        self.dump_regal_ir
+        self.has(DumpOption::RegalIr)
     }
     pub fn dump_local_equations(&self) -> bool {
-        self.dump_local_equations
+        self.has(DumpOption::LocalEquations)
     }
     pub fn dump_global_equations(&self) -> bool {
-        self.dump_global_equations
+        self.has(DumpOption::GlobalEquations)
     }
     pub fn dump_locals_graph(&self) -> bool {
-        self.dump_locals_graph
+        self.has(DumpOption::LocalsGraph)
     }
 }

@@ -36,7 +36,7 @@ use crate::{
         body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, IntoDefId, IntoLocalDefId,
         Print, RecursionBreakingCache, TinyBitSet,
     },
-    AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
+    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
 use super::df::MarkerCarryingOracle;
@@ -487,7 +487,7 @@ pub struct Inliner<'tcx, 'g, 's> {
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     ana_ctrl: &'static AnalysisCtrl,
-    dbg_ctrl: &'static DbgArgs,
+    dbg_ctrl: &'static DumpArgs,
     marker_carrying: MarkerCarryingOracle<'tcx, 's>,
 }
 
@@ -653,7 +653,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         gli: GLI<'g>,
         recurse_selector: &'s (dyn Oracle + 's),
         ana_ctrl: &'static AnalysisCtrl,
-        dbg_ctrl: &'static DbgArgs,
+        dbg_ctrl: &'static DumpArgs,
     ) -> Self {
         Self {
             tcx,
