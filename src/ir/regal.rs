@@ -25,7 +25,7 @@ use crate::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
         DisplayViaDebug, IntoLocalDefId,
     },
-    AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, TyCtxt,
+    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, TyCtxt,
 };
 
 use std::fmt::{Display, Write};
@@ -558,7 +558,7 @@ fn recursive_ctrl_deps<
 }
 
 pub fn compute_from_body_id<'tcx>(
-    dbg_opts: &DbgArgs,
+    dbg_opts: &DumpArgs,
     body_id: BodyId,
     tcx: TyCtxt<'tcx>,
     gli: GLI,
