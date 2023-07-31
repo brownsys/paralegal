@@ -212,7 +212,7 @@ pub trait IsGlobalLocation: Sized + std::fmt::Display {
                         .expect("not a terminator");
             DataSource::FunctionCall(CallSite::new(
                 self,
-                terminator.as_fn_and_args().unwrap().0,
+                terminator.as_fn_and_args(tcx).unwrap().0,
                 tcx,
             ))
         }

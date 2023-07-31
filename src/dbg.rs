@@ -228,7 +228,7 @@ pub mod call_only_flow_dot {
                 if let Some(stmt) = stmt {
                     match stmt {
                         Either::Right(term) => {
-                            if let Ok((fun, args, _)) = term.as_fn_and_args() {
+                            if let Ok((fun, args, _)) = term.as_fn_and_args(self.tcx) {
                                 let fun_name = self.tcx.item_name(fun);
                                 write!(s, "{{{{")?;
                                 for (i, arg) in args.iter().enumerate() {

@@ -322,7 +322,8 @@ impl Body<DisplayViaDebug<Location>> {
                         .contains_key(&body.terminator_loc(*bb))
                 })
                 .filter_map(|(bb, bbdat)| {
-                    let (function, simple_args, ret) = match bbdat.terminator().as_fn_and_args() {
+                    let (function, simple_args, ret) = match bbdat.terminator().as_fn_and_args(tcx)
+                    {
                         Ok(p) => p,
                         Err(AsFnAndArgsErr::NotAFunctionCall) => return None,
                         Err(e) => panic!("{e:?}"),

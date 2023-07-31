@@ -175,6 +175,21 @@ impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum FnResolution<'tcx> {
+    Final(ty::Instance<'tcx>),
+    Partial(DefId),
+}
+
+impl FnResolution<'_> {
+    fn def_id(self) -> DefId {
+        match self {
+            FnResolution::Final(f) => f.def_id(),
+            FnResolution::Partial(p) => p,
+        }
+    }
+}
+
 /// A simplified version of the argument list that is stored in a
 /// `TerminatorKind::Call`.
 ///
@@ -201,14 +216,38 @@ pub type SimplifiedArguments<'tcx> = Vec<Option<Place<'tcx>>>;
 pub trait AsFnAndArgs<'tcx> {
     fn as_fn_and_args(
         &self,
-    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>>;
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>> {
+        self.as_instance_and_args(tcx)
+            .map(|(inst, args, ret)| (inst.def_id(), args, ret))
+    }
+
+    fn as_instance_and_args(
+        &self,
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<
+        (
+            FnResolution<'tcx>,
+            SimplifiedArguments<'tcx>,
+            mir::Place<'tcx>,
+        ),
+        AsFnAndArgsErr<'tcx>,
+    >;
 }
 
 impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
-    fn as_fn_and_args(
+    fn as_instance_and_args(
         &self,
-    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>> {
-        self.kind.as_fn_and_args()
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<
+        (
+            FnResolution<'tcx>,
+            SimplifiedArguments<'tcx>,
+            mir::Place<'tcx>,
+        ),
+        AsFnAndArgsErr<'tcx>,
+    > {
+        self.kind.as_instance_and_args(tcx)
     }
 }
 
@@ -218,12 +257,21 @@ pub enum AsFnAndArgsErr<'tcx> {
     NotFunctionType(ty::TyKind<'tcx>),
     NotValueLevelConstant(ty::Const<'tcx>),
     NotAFunctionCall,
+    InstanceResolutionErr,
 }
 
 impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
-    fn as_fn_and_args(
+    fn as_instance_and_args(
         &self,
-    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>> {
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<
+        (
+            FnResolution<'tcx>,
+            SimplifiedArguments<'tcx>,
+            mir::Place<'tcx>,
+        ),
+        AsFnAndArgsErr<'tcx>,
+    > {
         let mir::TerminatorKind::Call {
                 func,
                 args,
@@ -237,11 +285,14 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
             mir::ConstantKind::Ty(cst) => cst.ty(),
             mir::ConstantKind::Unevaluated { .. } => unreachable!(),
         };
-        let (ty::FnDef(defid, _) | ty::Closure(defid, _)) = ty.kind() else {
+        let (ty::FnDef(defid, gargs) | ty::Closure(defid, gargs)) = ty.kind() else {
                     return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()))
                 };
+        let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
+            .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
+            .map_or(FnResolution::Partial(*defid), FnResolution::Final);
         Ok((
-            *defid,
+            instance,
             args.iter().map(|a| a.place()).collect(),
             *destination,
         ))

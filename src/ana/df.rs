@@ -333,7 +333,7 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
         body: &Body<'tcx>,
         state: &FlowDomain<'tcx>,
     ) -> bool {
-        if let Ok((func, args, _ret)) = terminator.as_fn_and_args() {
+        if let Ok((func, args, _ret)) = terminator.as_fn_and_args(self.tcx) {
             !self.fn_carries_marker(body, terminator)
                 && !self.probably_performs_side_effects(func, &args, state)
         } else {
@@ -382,10 +382,10 @@ impl<'tcx, 's> MarkerCarryingOracle<'tcx, 's> {
         })
     }
 
-    pub fn fn_carries_marker(&self, body: &Body<'tcx>, terminator: &TerminatorKind) -> bool {
+    pub fn fn_carries_marker(&self, body: &Body<'tcx>, terminator: &TerminatorKind<'tcx>) -> bool {
         use utils::TyExt;
 
-        if let Ok((defid, _args, _)) = terminator.as_fn_and_args() {
+        if let Ok((defid, _args, _)) = terminator.as_fn_and_args(self.tcx) {
             debug!(
                 "Checking function {} for markers",
                 self.tcx.def_path_debug_str(defid)
