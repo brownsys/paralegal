@@ -887,11 +887,13 @@ impl ProgramDescription {
             alloc.nil(),
             alloc.lines(
                 self.all_call_sites().into_iter().map(|cs| {
+                    let function = cs.location.innermost_function().into_def_id(tcx);
                     alloc.lines(
-                        [alloc.text("// ").append(cs.build_forge(alloc)).append(": "),
-                                alloc.text("//     ").append(format!("{:?}", tcx.def_path_debug_str(cs.location.innermost_function().into_def_id(tcx)))),
-                                alloc.text("//     ").append(format!("{}", cs.location)),
-                        ])
+                        [cs.build_forge(alloc).append(": "),
+                                alloc.text("  ").append(format!("{:?}", tcx.def_path_debug_str(function))),
+                                alloc.text("  ").append(format!("{}", tcx.fn_sig(function).skip_binder())),
+                                alloc.text("  ").append(format!("{}", cs.location)),
+                        ].into_iter().map(|l| alloc.text("// ").append(l)))
                 })
             ),
             alloc.nil(),
