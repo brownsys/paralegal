@@ -266,7 +266,7 @@ dependencies = [
  "pretty",
  "ringbuffer",
  "rustc_plugin",
- "rustc_utils 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustc_utils 0.6.0-nightly-2023-04-12",
  "serde",
  "serde-lexpr",
  "serde_json",
@@ -846,8 +846,6 @@ checksum = "b6e4fbb37fd18bd949f42583141d650fcdce49dbf759264e4dd3a5df0bc15dc6"
 [[package]]
 name = "rustc_plugin"
 version = "0.6.0-nightly-2023-04-12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79b172d929863ef84797b5592af9b58160f954a484938991f5a6b2829e3c163a"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -862,6 +860,16 @@ name = "rustc_tools_util"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3c5a95edfa0c893236ae4778bb7c4752760e4c0d245e19b5eff33c5aa5eb9dc"
+
+[[package]]
+name = "rustc_utils"
+version = "0.6.0-nightly-2023-04-12"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "intervaltree",
+ "log",
+]
 
 [[package]]
 name = "rustc_utils"

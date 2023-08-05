@@ -36,11 +36,14 @@ use crate::{
         body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, IntoDefId, IntoLocalDefId,
         Print, RecursionBreakingCache, TinyBitSet,
     },
-    AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
+    AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
 
-use super::df::MarkerCarryingOracle;
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
+
+mod judge;
+
+pub use judge::InlineJudge;
 
 /// This essentially describes a closure that determines for a given
 /// [`LocalDefId`] if it should be inlined. Originally this was in fact done by
@@ -271,7 +274,7 @@ type EdgeSet<'g> = HashSet<(
     Node<(GlobalLocation<'g>, DefId)>,
 )>;
 
-impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
+impl<'tcx, 'g> Inliner<'tcx, 'g> {
     fn edge_has_been_pruned_before(
         from: Node<(GlobalLocation<'g>, DefId)>,
         to: Node<(GlobalLocation<'g>, DefId)>,
@@ -475,20 +478,18 @@ impl<'g> InlinedGraph<'g> {
 type BodyCache = Cache<BodyId, regal::Body<DisplayViaDebug<Location>>>;
 
 /// Essentially just a bunch of caches of analyses.
-pub struct Inliner<'tcx, 'g, 's> {
+pub struct Inliner<'tcx, 'g> {
     /// Memoized graphs created from single-procedure analyses
     base_memo: BodyCache,
     /// Memoized graphs that have all their callees inlined. Unlike `base_memo`
     /// this has to be recursion breaking, since a function may call itself
     /// (possibly transitively).
     inline_memo: RecursionBreakingCache<BodyId, InlinedGraph<'g>>,
-    /// Makes choices base on labels
-    oracle: &'s (dyn Oracle + 's),
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     ana_ctrl: &'static AnalysisCtrl,
     dbg_ctrl: &'static DbgArgs,
-    marker_carrying: MarkerCarryingOracle<'tcx, 's>,
+    marker_carrying: InlineJudge<'tcx>,
 }
 
 /// Globalize all locations mentioned in these equations.
@@ -518,94 +519,6 @@ pub fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType
     } else {
         g.add_edge(source, target, weight);
     }
-}
-
-#[derive(Clone, Copy, Default)]
-struct EdgesClassifier {
-    has_control_only: bool,
-    has_data_only: bool,
-    has_mix: bool,
-}
-
-impl std::iter::FromIterator<Edge> for EdgesClassifier {
-    fn from_iter<T: IntoIterator<Item = Edge>>(iter: T) -> Self {
-        iter.into_iter().fold(Self::default(), |mut slf, e| {
-            slf.merge_edge(e);
-            slf
-        })
-    }
-}
-
-impl EdgesClassifier {
-    fn merge_edge(&mut self, e: Edge) {
-        self.has_control_only |= !e.is_data() && e.is_control();
-        self.has_data_only |= !e.is_control() && e.is_data();
-        self.has_mix |= e.is_control() && e.is_data();
-    }
-
-    fn has_data(self) -> bool {
-        self.has_data_only || self.has_mix
-    }
-
-    fn has_control(self) -> bool {
-        self.has_control_only || self.has_mix
-    }
-
-    fn has_any_edge(self) -> bool {
-        self.has_control_only || self.has_data_only || self.has_mix
-    }
-}
-
-/// Check that this node is not "significant" in this graph as defined by the
-/// policy provided.
-///
-/// See what significance means in the documentation of
-/// [`InconsequentialCallRemovalPolicy`](crate::args::InconsequentialCallRemovalPolicy)
-fn node_is_insignificant<N: petgraph::graphmap::NodeTrait + Unpin>(
-    g: &pg::GraphMap<N, Edge, pg::Directed>,
-    n: N,
-    policy: crate::args::InconsequentialCallRemovalPolicy,
-    ctrl_flow_context_cache: &Cache<N, HashSet<N>>,
-) -> Option<(EdgesClassifier, EdgesClassifier)> {
-    let get_ctrl_flow_context = |node| {
-        ctrl_flow_context_cache.get(node, |_| {
-            g.edges_directed(node, petgraph::Incoming)
-                .filter(|(_, _, w)| w.is_control())
-                .map(|t| t.0)
-                .collect()
-        })
-    };
-    // XXX verify that if the incoming edge is ctrl,
-    // it's still safe to remove
-    let in_classifier: EdgesClassifier = g
-        .edges_directed(n, pg::Direction::Incoming)
-        .map(|t| *t.2)
-        .collect();
-    if !in_classifier.has_data() {
-        return None;
-    }
-    let my_ctrl_flow_context = get_ctrl_flow_context(n);
-    let mut children_have_same_ctrl_context = true;
-    let out_classifier: EdgesClassifier = g
-        .edges_directed(n, pg::Direction::Outgoing)
-        .map(|(_, to, weight)| {
-            // Specifically use '&&' here to allow short circuiting
-            children_have_same_ctrl_context = children_have_same_ctrl_context
-                && my_ctrl_flow_context.is_subset(get_ctrl_flow_context(to));
-            *weight
-        })
-        .collect();
-    // Since the conditions tested here are all already simple booleans I use
-    // '|' an '&' instead of the short circuiting '&&' and '||' which introduces
-    // control flow and is probably slower.
-    //
-    // probably side effecting if it doesn't
-    (out_classifier.has_any_edge()
-        // either we don't have ctrl influence or the policy allows its removal
-        & (!out_classifier.has_control() | policy.remove_ctrl_flow_source())
-        // going from control to data is invalid
-        & !(in_classifier.has_control_only & out_classifier.has_data() & !children_have_same_ctrl_context))
-    .then_some((in_classifier, out_classifier))
 }
 
 fn is_part_of_async_desugar<L: Copy + Ord + std::hash::Hash>(
@@ -647,23 +560,22 @@ enum DropAction {
     WrapReturn(Vec<algebra::Operator<DisplayViaDebug<mir::Field>>>),
 }
 
-impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
+impl<'tcx, 'g> Inliner<'tcx, 'g> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         gli: GLI<'g>,
-        recurse_selector: &'s (dyn Oracle + 's),
+        marker_ctx: MarkerCtx<'tcx>,
         ana_ctrl: &'static AnalysisCtrl,
         dbg_ctrl: &'static DbgArgs,
     ) -> Self {
         Self {
             tcx,
             gli,
-            oracle: recurse_selector,
             base_memo: Default::default(),
             inline_memo: Default::default(),
             ana_ctrl,
             dbg_ctrl,
-            marker_carrying: MarkerCarryingOracle::new(recurse_selector, tcx),
+            marker_carrying: InlineJudge::new(marker_ctx, tcx),
         }
     }
 
@@ -679,7 +591,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// Compute a procedure graph for this `body_id` (memoized). Actual
     /// computation performed by [`regal::compute_from_body_id`] and
     /// [`ProcedureGraph::from`]
-    fn get_procedure_graph<'a: 's>(
+    fn get_procedure_graph<'a>(
         &'a self,
         body_id: BodyId,
     ) -> &regal::Body<DisplayViaDebug<Location>> {
@@ -774,48 +686,6 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             t.is_mutable_ptr()
                 .then(|| regal::ArgumentIndex::from_usize(i))
         })
-    }
-
-    fn remove_inconsequential_calls(&self, gwr: &mut InlinedGraph<'g>) {
-        let remove_calls_policy = self.ana_ctrl.remove_inconsequential_calls();
-        let g = &mut gwr.graph;
-        let ctrl_flow_context_cache = Default::default();
-        for (n, (_in_classifier, _out_classifier)) in g
-            .nodes()
-            .filter_map(|n|
-                // The node has to be not semantically meaningful (e.g. no
-                // label), and it has to have neighbors before and after,
-                // because otherwise it's likely an I/O data source or sink
-                if matches!(n, SimpleLocation::Call((loc, defid))
-                    if loc.is_at_root()
-                        && !self.oracle.is_semantically_meaningful(defid)
-                        //&& Some(defid) != self.tcx.lang_items().from_generator_fn() 
-                        && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))) {
-                    node_is_insignificant(g, n, remove_calls_policy, &ctrl_flow_context_cache).map(|cls| (n, cls))
-                } else {
-                    None
-                })
-            .collect::<Vec<_>>()
-        {
-            for from in g
-                .edges_directed(n, pg::Direction::Incoming)
-                .filter_map(|(from, _, weight)|
-                    // invariant: The selector before ensures that if we inline
-                    // with control, the node below is already in the same
-                    // control flow scope
-                    weight.is_data().then_some(from))
-                .collect::<Vec<_>>()
-            {
-                for (to, weight) in g
-                    .edges_directed(n, pg::Direction::Outgoing)
-                    .map(|(_, to, weight)| (to, *weight))
-                    .collect::<Vec<_>>()
-                {
-                    add_weighted_edge(g, from, to, weight);
-                }
-            }
-            g.remove_node(n);
-        }
     }
 
     fn classify_special_function_handling(
@@ -1082,8 +952,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                         return Some((id, *location, InlineAction::Drop(ac)));
                     }
                     if let Some(local_id) = function.as_local()
-                        && self.oracle.should_inline(local_id)
-                        && (!self.ana_ctrl.avoid_inlining() || self.marker_carrying.body_carries_marker(local_id))
+                        && self.marker_carrying.should_inline(local_id)
+                        && (!self.ana_ctrl.avoid_inlining() || self.marker_carrying.marker_is_reachable(local_id))
                     {
                         debug!("Inlining {function:?}");
                         return Some((id, *location, InlineAction::SimpleInline(local_id)));
@@ -1218,7 +1088,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         });
 
         if self.ana_ctrl.remove_inconsequential_calls().is_enabled() {
-            self.remove_inconsequential_calls(&mut gwr);
+            panic!("Removing inconsequential calls is no longer supported");
         }
 
         if self.dbg_ctrl.dump_global_equations() {
@@ -1277,7 +1147,7 @@ fn dump_dot_graph<W: std::io::Write>(mut w: W, g: &InlinedGraph) -> std::io::Res
     )
 }
 
-impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
+impl<'tcx, 'g> Inliner<'tcx, 'g> {
     /// Turn the output of the inliner into the format the rest of the dfpp pipeline
     /// understands.
     pub fn to_call_only_flow<A: FnMut(ArgNum) -> GlobalLocation<'g>>(

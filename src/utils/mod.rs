@@ -449,24 +449,28 @@ pub trait IntoLocalDefId {
 }
 
 impl IntoLocalDefId for LocalDefId {
+    #[inline]
     fn into_local_def_id(self, _tcx: TyCtxt) -> LocalDefId {
         self
     }
 }
 
 impl IntoLocalDefId for BodyId {
+    #[inline]
     fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
         tcx.hir().body_owner_def_id(self)
     }
 }
 
 impl IntoLocalDefId for HirId {
+    #[inline]
     fn into_local_def_id(self, _: TyCtxt) -> LocalDefId {
         self.expect_owner().def_id
     }
 }
 
 impl<D: Copy + IntoLocalDefId> IntoLocalDefId for &'_ D {
+    #[inline]
     fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
         (*self).into_local_def_id(tcx)
     }
@@ -666,41 +670,63 @@ pub trait IntoDefId {
 }
 
 impl IntoDefId for DefId {
+    #[inline]
     fn into_def_id(self, _: TyCtxt) -> DefId {
         self
     }
 }
 
 impl IntoDefId for LocalDefId {
+    #[inline]
     fn into_def_id(self, _: TyCtxt) -> DefId {
         self.to_def_id()
     }
 }
 
 impl IntoDefId for HirId {
+    #[inline]
     fn into_def_id(self, tcx: TyCtxt) -> DefId {
         self.into_local_def_id(tcx).to_def_id()
     }
 }
 
 impl<D: Copy + IntoDefId> IntoDefId for &'_ D {
+    #[inline]
     fn into_def_id(self, tcx: TyCtxt) -> DefId {
         (*self).into_def_id(tcx)
     }
 }
 
 impl IntoDefId for BodyId {
+    #[inline]
     fn into_def_id(self, tcx: TyCtxt) -> DefId {
         tcx.hir().body_owner_def_id(self).into_def_id(tcx)
     }
 }
 
 impl IntoDefId for Res {
+    #[inline]
     fn into_def_id(self, _: TyCtxt) -> DefId {
         match self {
             Res::Def(_, did) => did,
             _ => panic!("turning non-def res into DefId; res is: {:?}", self),
         }
+    }
+}
+
+pub trait IntoHirId: std::marker::Sized {
+    fn into_hir_id(self, tcx: TyCtxt) -> Option<HirId>;
+
+    #[inline]
+    fn force_into_hir_id(self, tcx: TyCtxt) -> HirId {
+        self.into_hir_id(tcx).unwrap()
+    }
+}
+
+impl IntoHirId for LocalDefId {
+    #[inline]
+    fn into_hir_id(self, tcx: TyCtxt) -> Option<HirId> {
+        Some(tcx.hir().local_def_id_to_hir_id(self))
     }
 }
 

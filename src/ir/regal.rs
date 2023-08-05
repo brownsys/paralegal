@@ -12,6 +12,7 @@ use crate::{
     ana::{
         algebra::{self, Equality, Term},
         df,
+        inline::InlineJudge,
     },
     hir::def_id::LocalDefId,
     mir::{self, BasicBlock, Field, HasLocalDecls, Location},
@@ -563,7 +564,7 @@ pub fn compute_from_body_id<'tcx>(
     body_id: BodyId,
     tcx: TyCtxt<'tcx>,
     gli: GLI,
-    carries_marker: &df::MarkerCarryingOracle<'tcx, '_>,
+    carries_marker: &InlineJudge<'tcx>,
     analysis_control: &'static AnalysisCtrl,
 ) -> Body<DisplayViaDebug<Location>> {
     let local_def_id = body_id.into_local_def_id(tcx);
