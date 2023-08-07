@@ -104,7 +104,11 @@ impl<'tcx> CollectingVisitor<'tcx> {
         {
             let types = controller_body.args_iter().map(|l| {
                 let ty = controller_body.local_decls[l].ty;
-                let subtypes = self.annotated_subtypes(ty);
+                let subtypes = self
+                    .marker_ctx
+                    .all_type_markers(ty)
+                    .map(|t| Identifier::new(t.0.marker))
+                    .collect::<HashSet<_>>();
                 (DataSource::Argument(l.as_usize() - 1), subtypes)
             });
             flows.add_types(types);
@@ -317,31 +321,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
             inliner.cache_size()
         );
         result
-    }
-
-    fn annotated_subtypes(&self, ty: ty::Ty) -> HashSet<TypeDescriptor> {
-        debug!("Checking subtypes of {ty:?}");
-        ty.walk()
-            .filter_map(|ty| {
-                ty.as_type()
-                    .and_then(TyExt::defid)
-                    //.and_then(DefId::as_local)
-                    .and_then(|def| {
-                        let item_name = identifier_for_item(self.tcx, def);
-                        debug!(
-                            "Checking type {item_name} ({})",
-                            self.tcx.def_path_debug_str(def)
-                        );
-                        if self.marker_ctx.is_marked(def) {
-                            debug!("Found annotations");
-                            Some(item_name)
-                        } else {
-                            debug!("Found no annotations");
-                            None
-                        }
-                    })
-            })
-            .collect()
     }
 }
 

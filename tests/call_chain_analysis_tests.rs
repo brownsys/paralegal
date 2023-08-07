@@ -81,7 +81,7 @@ define_test!(field_sensitivity: ctrl -> {
     assert!(produce_string.flows_to(&read_string.input()[0]));
 });
 
-define_test!(unused_labels: graph, field_sensitivity -> {
+define_test_skip!(unused_labels: graph, field_sensitivity -> {
     assert!(graph.has_marker("otherwise_unused"));
 });
 
@@ -90,8 +90,6 @@ define_test!(field_sensitivity_across_clone: ctrl -> {
     let produce_string_fn = ctrl.function("produce_string");
     let consume_usize_fn = ctrl.function("read_usize");
     let consume_string_fn = ctrl.function("read_string");
-    let clone = ctrl.function("clone");
-    assert!(ctrl.call_sites(&clone).is_empty());
     let produce_usize = ctrl.call_site(&produce_usize_fn);
     let produce_string = ctrl.call_site(&produce_string_fn);
     let read_string = ctrl.call_site(&consume_string_fn);

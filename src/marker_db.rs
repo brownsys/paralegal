@@ -1,8 +1,7 @@
 use crate::{
     args::Args,
     consts,
-    desc::Annotation,
-    desc::{Identifier, MarkerAnnotation},
+    desc::{Annotation, MarkerAnnotation},
     hir, mir, ty,
     utils::{
         AsFnAndArgs, GenericArgExt, IntoBodyId, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt,
@@ -171,25 +170,35 @@ impl<'tcx> MarkerCtx<'tcx> {
         Some(Box::new(sink_matches))
     }
 
+    pub fn all_type_markers<'a>(
+        &'a self,
+        ty: ty::Ty<'tcx>,
+    ) -> impl Iterator<Item = (&'a MarkerAnnotation, (ty::Ty<'tcx>, DefId))> {
+        ty.walk().filter_map(|g| g.as_type()).flat_map(move |typ| {
+            typ.defid().into_iter().flat_map(move |did| {
+                self.combined_markers(did)
+                    .zip(std::iter::repeat((typ, did)))
+            })
+        })
+    }
+
     pub fn all_function_markers<'a>(
         &'a self,
         def_id: DefId,
     ) -> impl Iterator<Item = (&'a MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> {
-        let f = |did| self.combined_markers(did);
-        f(def_id).into_iter().zip(std::iter::repeat(None)).chain(
-            self.tcx()
-                .fn_sig(def_id)
-                .skip_binder()
-                .skip_binder()
-                .output()
-                .walk()
-                .filter_map(|g| g.as_type())
-                .flat_map(move |typ| {
-                    typ.defid()
-                        .into_iter()
-                        .flat_map(move |did| f(did).zip(std::iter::repeat(Some((typ, did)))))
-                }),
-        )
+        self.combined_markers(def_id)
+            .into_iter()
+            .zip(std::iter::repeat(None))
+            .chain(
+                self.all_type_markers(
+                    self.tcx()
+                        .fn_sig(def_id)
+                        .skip_binder()
+                        .skip_binder()
+                        .output(),
+                )
+                .map(|(marker, typeinfo)| (marker, Some(typeinfo))),
+            )
     }
 }
 

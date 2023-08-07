@@ -139,16 +139,21 @@ where
 /// Define a test that is skipped. This can be used to temporarily disable the
 /// test. A message can be passed after the test name explaining why it was
 /// skipped and the message will be printed when the test is skipped.
+///
+/// Everything but the first ident and the message are ignored, so the idea is
+/// that whatever `define_test` macro you're using and whatever format that
+/// macro imposes this should still serve as a drop-in replacement so that you
+/// can later remove the `_skip` part and have your test back immediately.
 #[macro_export]
 macro_rules! define_test_skip {
-    ($name:ident : $graph:ident -> $block:block) => {
-        define_test_skip!($name "" : $graph -> $block);
-    };
-    ($name:ident $message:literal : $graph:ident -> $block:block) => {
+    ($name:ident $message:literal $($ignored:tt)*) => {
         #[test]
         fn $name() {
             eprintln!(concat!("Skipping test ", stringify!($name), " ", $message));
         }
+    };
+    ($name:ident $($ignored:tt)*) => {
+        define_test_skip!($name "" $($ignored)*);
     };
 }
 
