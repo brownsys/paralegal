@@ -26,6 +26,9 @@ extern crate humantime;
 
 extern crate petgraph;
 
+extern crate num_derive;
+extern crate num_traits;
+
 #[macro_use]
 pub extern crate rustc_index;
 extern crate rustc_serialize;
@@ -65,7 +68,7 @@ pub mod rust {
     pub use mir::Location;
 }
 
-use args::LogLevelConfig;
+use args::{LogLevelConfig, ParseableArgs};
 use pretty::DocBuilder;
 use rust::*;
 
@@ -95,7 +98,7 @@ pub mod utils;
 pub mod consts;
 pub mod marker_db;
 
-pub use args::{AnalysisCtrl, Args, DbgArgs, ModelCtrl};
+pub use args::{AnalysisCtrl, Args, DumpArgs, ModelCtrl};
 
 use crate::utils::outfile_pls;
 
@@ -118,7 +121,7 @@ struct ArgWrapper {
 
     /// The actual arguments
     #[clap(flatten)]
-    args: Args,
+    args: ParseableArgs,
 
     /// Pass through for additional cargo arguments (like --features)
     #[clap(last = true)]
@@ -224,7 +227,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         use clap::Parser;
         let args = ArgWrapper::parse();
         rustc_plugin::RustcPluginArgs {
-            args: args.args,
+            args: Args::from_parseable(args.args).unwrap(),
             filter: CrateFilter::OnlyWorkspace,
         }
     }

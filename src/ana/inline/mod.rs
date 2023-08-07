@@ -31,7 +31,7 @@ use crate::{
         body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, IntoDefId, IntoLocalDefId,
         Print, RecursionBreakingCache,
     },
-    AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
+    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
 
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
@@ -270,7 +270,7 @@ pub struct Inliner<'tcx, 'g> {
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     ana_ctrl: &'static AnalysisCtrl,
-    dbg_ctrl: &'static DbgArgs,
+    dbg_ctrl: &'static DumpArgs,
     marker_carrying: InlineJudge<'tcx>,
 }
 
@@ -328,7 +328,7 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
         gli: GLI<'g>,
         marker_ctx: MarkerCtx<'tcx>,
         ana_ctrl: &'static AnalysisCtrl,
-        dbg_ctrl: &'static DbgArgs,
+        dbg_ctrl: &'static DumpArgs,
     ) -> Self {
         Self {
             tcx,
