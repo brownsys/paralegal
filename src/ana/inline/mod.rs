@@ -531,13 +531,11 @@ fn is_part_of_async_desugar<L: Copy + Ord + std::hash::Hash>(
         (lang_items.get_context_fn(), false),
         (lang_items.into_future_fn(), false),
         (lang_items.new_unchecked_fn(), false),
-    ]
-    .into_iter()
-    .collect::<HashMap<_, _>>();
+    ];
     let mut queue = vec![node];
     while let Some(node) = queue.pop() {
         if let SimpleLocation::Call((_, def_id)) = node {
-            if let Some(was_seen) = seen.get_mut(&Some(def_id)) {
+            if let Some((_, was_seen)) = seen.iter_mut().find(|(k, _)| *k == Some(def_id)) {
                 if *was_seen {
                     continue;
                 }
@@ -547,7 +545,7 @@ fn is_part_of_async_desugar<L: Copy + Ord + std::hash::Hash>(
             }
         }
     }
-    seen.values().all(|v| *v)
+    seen.iter().all(|v| v.1)
 }
 
 enum InlineAction {
