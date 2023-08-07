@@ -889,10 +889,8 @@ impl ProgramDescription {
                 self.all_call_sites().into_iter().map(|cs| {
                     let function = cs.location.innermost_function().into_def_id(tcx);
                     alloc.lines(
-                        [cs.build_forge(alloc).append(": "),
-                                alloc.text("  ").append(format!("{:?}", tcx.def_path_debug_str(function))),
-                                alloc.text("  ").append(format!("{}", tcx.fn_sig(function).skip_binder())),
-                                alloc.text("  ").append(format!("{}", cs.location)),
+                        [cs.build_forge(alloc).append(format!(" @ {}", cs.location)),
+                                alloc.text("   called from").append(format!("{} : {}", tcx.def_path_debug_str(function), tcx.fn_sig(function).skip_binder())),
                         ].into_iter().map(|l| alloc.text("// ").append(l)))
                 })
             ),
