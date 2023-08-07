@@ -14,11 +14,6 @@
 
 use std::fmt::Write;
 
-use petgraph::{
-    prelude as pg,
-    visit::{EdgeRef, IntoNodeReferences},
-};
-
 use crate::{
     ana::algebra::{self, Term},
     hir::{self, BodyId},
@@ -34,14 +29,25 @@ use crate::{
     ty,
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, IntoDefId, IntoLocalDefId,
-        Print, RecursionBreakingCache, TinyBitSet,
+        Print, RecursionBreakingCache,
     },
     AnalysisCtrl, DbgArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
 
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
 
+mod graph;
 mod judge;
+
+pub use graph::{
+    add_weighted_edge, ArgNum, Edge, EdgeType, Equation, Equations, GlobalLocal, GraphImpl,
+    InlinedGraph, Node,
+};
+
+use petgraph::{
+    prelude as pg,
+    visit::{EdgeRef, IntoNodeReferences},
+};
 
 pub use judge::InlineJudge;
 
@@ -82,190 +88,6 @@ impl<T: Oracle> Oracle for std::rc::Rc<T> {
     }
     fn carries_marker(&self, did: DefId) -> bool {
         self.as_ref().carries_marker(did)
-    }
-}
-
-type ArgNum = u32;
-
-type Node<C> = regal::SimpleLocation<C>;
-
-impl<C> Node<C> {
-    fn map_call<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Node<C0> {
-        match self {
-            Node::Return => Node::Return,
-            Node::Argument(a) => Node::Argument(*a),
-            Node::Call(c) => Node::Call(f(c)),
-        }
-    }
-}
-
-#[derive(Clone, Eq, PartialEq, Hash, Copy, serde::Serialize, serde::Deserialize)]
-pub struct Edge {
-    data: TinyBitSet,
-    control: bool,
-}
-
-impl Edge {
-    #[inline]
-    pub fn is_empty(self) -> bool {
-        !self.control && self.data.is_empty()
-    }
-    #[inline]
-    pub fn add_type(&mut self, t: EdgeType) {
-        match t {
-            EdgeType::Control => self.control = true,
-            EdgeType::Data(i) => self.data.set(i),
-        }
-    }
-    #[inline]
-    pub fn empty() -> Self {
-        Self {
-            control: false,
-            data: TinyBitSet::new_empty(),
-        }
-    }
-    #[inline]
-    pub fn merge(&mut self, other: Self) {
-        self.control |= other.control;
-        self.data |= other.data;
-    }
-    #[inline]
-    pub fn into_types_iter(self) -> impl Iterator<Item = EdgeType> {
-        self.data
-            .into_iter_set_in_domain()
-            .map(EdgeType::Data)
-            .chain(self.control.then_some(EdgeType::Control))
-    }
-    #[inline]
-    pub fn count(self) -> u32 {
-        self.data.count() + if self.control { 1 } else { 0 }
-    }
-    #[inline]
-    pub fn remove_type(&mut self, t: EdgeType) -> bool {
-        let changed;
-        match t {
-            EdgeType::Control => {
-                changed = self.control;
-                self.control = false;
-            }
-            EdgeType::Data(i) => {
-                changed = self.data.is_set(i);
-                self.data.clear(i);
-            }
-        }
-        changed
-    }
-    #[inline]
-    pub fn is_data(self) -> bool {
-        !self.data.is_empty()
-    }
-    #[inline]
-    pub fn is_control(self) -> bool {
-        self.control
-    }
-}
-
-impl FromIterator<EdgeType> for Edge {
-    fn from_iter<T: IntoIterator<Item = EdgeType>>(iter: T) -> Self {
-        let mut slf = Self::empty();
-        for i in iter {
-            slf.add_type(i)
-        }
-        slf
-    }
-}
-
-#[derive(Hash, Eq, PartialEq, Clone, Copy)]
-pub enum EdgeType {
-    Data(u32),
-    Control,
-}
-
-impl std::fmt::Display for Edge {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write_sep(
-            f,
-            ", ",
-            self.data
-                .into_iter_set_in_domain()
-                .map(Either::Left)
-                .chain(self.control.then_some(Either::Right(()))),
-            |elem, f| match elem {
-                Either::Left(i) => write!(f, "arg{i}"),
-                Either::Right(()) => write!(f, "ctrl"),
-            },
-        )
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
-pub struct GlobalLocal<'g> {
-    local: mir::Local,
-    location: Option<GlobalLocation<'g>>,
-}
-
-impl<'g> GlobalLocal<'g> {
-    pub fn at_root(local: mir::Local) -> Self {
-        Self {
-            local,
-            location: None,
-        }
-    }
-
-    pub fn relative(local: mir::Local, location: GlobalLocation<'g>) -> Self {
-        Self {
-            local,
-            location: Some(location),
-        }
-    }
-}
-
-impl std::fmt::Display for GlobalLocal<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} @ ", self.local)?;
-        if let Some(loc) = self.location {
-            write!(f, "{}", loc)
-        } else {
-            f.write_str("root")
-        }
-    }
-}
-
-/// Common, parameterized equation type used by the [`GraphResolver`]s
-pub type Equation<L> = algebra::Equality<L, DisplayViaDebug<mir::Field>>;
-pub type Equations<L> = Vec<Equation<L>>;
-/// Common, parameterized graph type used in this module
-pub type GraphImpl<L> = pg::GraphMap<Node<(L, DefId)>, Edge, pg::Directed>;
-
-pub struct InlinedGraph<'g> {
-    graph: GraphImpl<GlobalLocation<'g>>,
-    equations: Equations<GlobalLocal<'g>>,
-    num_inlined: usize,
-    max_call_stack_depth: usize,
-}
-
-impl<'g> InlinedGraph<'g> {
-    pub fn graph(&self) -> &GraphImpl<GlobalLocation<'g>> {
-        &self.graph
-    }
-
-    pub fn vertex_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    pub fn edge_count(&self) -> usize {
-        self.graph
-            .all_edges()
-            .map(|(_, _, w)| w.count() as usize)
-            .sum()
-    }
-
-    pub fn inlined_functions_count(&self) -> usize {
-        self.num_inlined
-    }
-
-    pub fn max_call_stack_depth(&self) -> usize {
-        self.max_call_stack_depth
     }
 }
 
@@ -346,7 +168,7 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
 
             for &(from, to) in edges_to_prune {
                 if let Some(weight) = graph.edge_weight_mut(from, to) {
-                    for idx in weight.data.into_iter_set_in_domain() {
+                    for idx in weight.into_iter_data() {
                         let to_target = self.node_to_local(&to, idx);
                         // This can be optimized (directly create function)
                         let targets = match from {
@@ -390,7 +212,7 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
                             );
                         } else {
                             debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
-                            weight.data.clear(idx)
+                            weight.remove_type(EdgeType::Data(idx));
                         }
                     }
                     if weight.is_empty() {
@@ -499,26 +321,8 @@ fn to_global_equations<'g>(
     _gli: GLI<'g>,
 ) -> Equations<GlobalLocal<'g>> {
     eqs.iter()
-        .map(|eq| {
-            eq.map_bases(|target| GlobalLocal {
-                local: **target,
-                location: None,
-            })
-        })
+        .map(|eq| eq.map_bases(|target| GlobalLocal::at_root(**target)))
         .collect()
-}
-
-pub fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
-    g: &mut pg::GraphMap<N, Edge, D>,
-    source: N,
-    target: N,
-    weight: Edge,
-) {
-    if let Some(prior_weight) = g.edge_weight_mut(source, target) {
-        prior_weight.merge(weight)
-    } else {
-        g.add_edge(source, target, weight);
-    }
 }
 
 fn is_part_of_async_desugar<L: Copy + Ord + std::hash::Hash>(
@@ -632,12 +436,12 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
         gli: &'a GliAt<'g>,
     ) -> impl Iterator<Item = Equation<GlobalLocal<'g>>> + 'a {
         equations.iter().map(move |eq| {
-            eq.map_bases(|base| GlobalLocal {
-                local: base.local,
-                location: Some(
-                    base.location
+            eq.map_bases(|base| {
+                GlobalLocal::relative(
+                    base.local(),
+                    base.location()
                         .map_or_else(|| gli.as_global_location(), |prior| gli.relativize(prior)),
-                ),
+                )
             })
         })
     }
@@ -770,8 +574,8 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
             .iter_mut()
             .flat_map(|eq| [&mut eq.rhs, &mut eq.lhs])
         {
-            assert!(term.base.location.is_none());
-            if term.base.local == mir::RETURN_PLACE {
+            assert!(term.base.location().is_none());
+            if term.base.local() == mir::RETURN_PLACE {
                 term.base.local = new_closure_local;
             }
         }
@@ -1016,7 +820,9 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
                     let incoming_closure = i_graph
                         .graph
                         .edges_directed(idx, pg::Direction::Incoming)
-                        .filter_map(|(from, _, weight)| weight.data.is_set(0).then_some(from))
+                        .filter_map(|(from, _, weight)| {
+                            weight.has_type(EdgeType::Data(0)).then_some(from)
+                        })
                         .collect::<Vec<_>>();
                     let outgoing = i_graph
                         .graph
