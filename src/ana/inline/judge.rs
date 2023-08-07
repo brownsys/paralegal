@@ -37,7 +37,10 @@ impl<'tcx> InlineJudge<'tcx> {
     }
 
     pub fn should_inline(&self, def_id: LocalDefId) -> bool {
-        !self.marker_ctx.is_marked(def_id)
+        self.marker_ctx
+            .all_function_markers(def_id.to_def_id())
+            .next()
+            .is_none()
     }
 
     pub fn marker_is_reachable(&self, def_id: LocalDefId) -> bool {

@@ -179,16 +179,11 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     .map_or(None, |ldid| self.marker_ctx.local_annotations(ldid)),
             );
 
-            let bound_sig = tcx.fn_sig(defid);
-
-            debug!(
-                "Considering annotations for {}\n with signature {}",
-                tcx.def_path_debug_str(defid),
-                bound_sig.skip_binder()
-            );
-
-            let interesting_output_types: HashSet<_> =
-                self.annotated_subtypes(bound_sig.skip_binder().skip_binder().output());
+            let interesting_output_types: HashSet<_> = self
+                .marker_ctx
+                .all_function_markers(defid)
+                .filter_map(|(_, t)| Some(identifier_for_item(self.tcx, t?.1)))
+                .collect();
             if !interesting_output_types.is_empty() {
                 flows.types.0.insert(
                     DataSource::FunctionCall(call_site.clone()),

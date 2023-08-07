@@ -51,46 +51,6 @@ use petgraph::{
 
 pub use judge::InlineJudge;
 
-/// This essentially describes a closure that determines for a given
-/// [`LocalDefId`] if it should be inlined. Originally this was in fact done by
-/// passing a closure, but it couldn't properly satisfy the type checker,
-/// because the selector has to be stored in `fluid_let` variable, which is a
-/// dynamically scoped variable. This means that the type needs to be valid for
-/// a static lifetime, which I believe closures are not.
-///
-/// In particular the way that this works is that values of this interface are
-/// then wrapped with [`RecurseSelector`], which is a flowistry interface that
-/// satisfies [`flowistry::extensions::RecurseSelector`]. The wrapper then
-/// simply dispatches to the [`InlineSelector`].
-///
-/// The reason for the two tiers of selectors is that
-///
-/// - Flowistry is a separate crate and so I wanted a way to control it that
-///   decouples from the specifics of dfpp
-/// - We use the selectors to skip functions with annotations, but I wanted to
-///   keep the construction of inlined flow graphs agnostic to any notion of
-///   annotations. Those are handled by the [`CollectingVisitor`]
-///
-/// The only implementation currently in use for this is
-/// [`SkipAnnotatedFunctionSelector`].
-pub trait Oracle {
-    fn should_inline(&self, did: LocalDefId) -> bool;
-    fn is_semantically_meaningful(&self, did: DefId) -> bool;
-    fn carries_marker(&self, did: DefId) -> bool;
-}
-
-impl<T: Oracle> Oracle for std::rc::Rc<T> {
-    fn should_inline(&self, did: LocalDefId) -> bool {
-        self.as_ref().should_inline(did)
-    }
-    fn is_semantically_meaningful(&self, did: DefId) -> bool {
-        self.as_ref().is_semantically_meaningful(did)
-    }
-    fn carries_marker(&self, did: DefId) -> bool {
-        self.as_ref().carries_marker(did)
-    }
-}
-
 type EdgeSet<'g> = HashSet<(
     Node<(GlobalLocation<'g>, DefId)>,
     Node<(GlobalLocation<'g>, DefId)>,

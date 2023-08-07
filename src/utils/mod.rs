@@ -2,7 +2,6 @@
 
 extern crate smallvec;
 
-use hir::def::Res;
 use smallvec::SmallVec;
 
 use crate::{
@@ -11,12 +10,14 @@ use crate::{
         ast,
         hir::{
             self,
+            def::Res,
             def_id::{DefId, LocalDefId},
             hir_id::HirId,
             BodyId,
         },
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_data_structures::fx::{FxHashMap, FxHashSet},
+        rustc_data_structures::intern::Interned,
         rustc_span::symbol::Ident,
         ty,
     },
@@ -89,24 +90,27 @@ impl MetaItemMatch for ast::Attribute {
 
 /// Extension trait for [`ty::Ty`]. This lets us implement methods on
 /// [`ty::Ty`]. [`Self`] is only ever supposed to be instantiated as [`ty::Ty`].
-pub trait TyExt {
+pub trait TyExt: Sized {
     /// Extract a `DefId` if this type references an object that has one. This
     /// is true for most user defined types, including types form the standard
     /// library, but not builtin types, such as `u32`, arrays or ad-hoc types
     /// such as function pointers.
     ///
     /// Use with caution, this function might not be exhaustive (yet).
-    fn defid(self) -> Option<DefId>;
+    fn defid(self) -> Option<DefId> {
+        self.defid_ref().copied()
+    }
+    fn defid_ref(&self) -> Option<&DefId>;
 }
 
 impl<'tcx> TyExt for ty::Ty<'tcx> {
-    fn defid(self) -> Option<DefId> {
+    fn defid_ref(&self) -> Option<&DefId> {
         match self.kind() {
-            ty::TyKind::Adt(def, _) => Some(def.did()),
+            ty::TyKind::Adt(ty::AdtDef(Interned(ty::AdtDefData { did, .. }, _)), _) => Some(did),
             ty::TyKind::Foreign(did)
             | ty::TyKind::FnDef(did, _)
             | ty::TyKind::Closure(did, _)
-            | ty::TyKind::Generator(did, _, _) => Some(*did),
+            | ty::TyKind::Generator(did, _, _) => Some(did),
             _ => None,
         }
     }

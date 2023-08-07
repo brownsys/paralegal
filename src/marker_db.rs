@@ -4,8 +4,10 @@ use crate::{
     desc::Annotation,
     desc::{Identifier, MarkerAnnotation},
     hir, mir, ty,
-    utils::TyExt,
-    utils::{AsFnAndArgs, IntoBodyId, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt},
+    utils::{
+        AsFnAndArgs, GenericArgExt, IntoBodyId, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt,
+        TyExt,
+    },
     BodyId, DefId, HashMap, LocalDefId, TyCtxt,
 };
 use rustc_utils::cache::{Cache, CopyCache};
@@ -44,6 +46,19 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.db()
             .external_annotations
             .get(&did.into_def_id(self.tcx()))
+    }
+
+    pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
+        def_id
+            .as_local()
+            .and_then(|ldid| self.local_annotations(ldid))
+            .into_iter()
+            .flat_map(|anns| anns.iter().flat_map(Annotation::as_label_ann))
+            .chain(
+                self.external_markers(def_id)
+                    .into_iter()
+                    .flat_map(|v| v.iter()),
+            )
     }
 
     pub fn is_externally_marked<D: IntoDefId>(&self, did: D) -> bool {
@@ -155,6 +170,27 @@ impl<'tcx> MarkerCtx<'tcx> {
 
         Some(Box::new(sink_matches))
     }
+
+    pub fn all_function_markers<'a>(
+        &'a self,
+        def_id: DefId,
+    ) -> impl Iterator<Item = (&'a MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> {
+        let f = |did| self.combined_markers(did);
+        f(def_id).into_iter().zip(std::iter::repeat(None)).chain(
+            self.tcx()
+                .fn_sig(def_id)
+                .skip_binder()
+                .skip_binder()
+                .output()
+                .walk()
+                .filter_map(|g| g.as_type())
+                .flat_map(move |typ| {
+                    typ.defid()
+                        .into_iter()
+                        .flat_map(move |did| f(did).zip(std::iter::repeat(Some((typ, did)))))
+                }),
+        )
+    }
 }
 
 fn force_into_body_id(tcx: TyCtxt, defid: LocalDefId) -> Option<BodyId> {
@@ -230,27 +266,4 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
     } else {
         HashMap::new()
     }
-}
-
-pub fn markers<'tcx, I: IntoIterator<Item = Identifier>>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    mut f: impl FnMut(DefId) -> I + 'tcx,
-) -> impl Iterator<Item = Identifier> + 'tcx
-where
-    I: 'tcx,
-{
-    f(def_id).into_iter().chain(
-        tcx.fn_sig(def_id)
-            .skip_binder()
-            .skip_binder()
-            .output()
-            .walk()
-            .filter_map(|a| match a.unpack() {
-                ty::GenericArgKind::Type(t) => Some(t),
-                _ => None,
-            })
-            .filter_map(TyExt::defid)
-            .flat_map(f),
-    )
 }
