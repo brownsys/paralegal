@@ -98,7 +98,6 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     fn has_transitive_reachable_markers(&self, body_id: BodyId) -> bool {
-        debug!("Checking marker reachable for {body_id:?}");
         self.db()
             .marker_reachable_cache
             .get_maybe_recursive(body_id, |_| self.compute_marker_reachable(body_id))

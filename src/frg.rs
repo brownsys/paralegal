@@ -8,7 +8,7 @@ extern crate pretty;
 
 use std::hash::Hash;
 
-use crate::{ir::IsGlobalLocation, utils::IntoDefId, HashSet, ModelCtrl, TyCtxt};
+use crate::{HashSet, ModelCtrl, TyCtxt};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
@@ -856,7 +856,7 @@ impl ProgramDescription {
     pub fn serialize_forge<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
         &'a self,
         alloc: &'a D,
-        tcx: TyCtxt,
+        _tcx: TyCtxt,
         model_ctrl: &ModelCtrl,
     ) -> DocBuilder<'a, D, A>
     where

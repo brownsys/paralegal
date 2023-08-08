@@ -16,7 +16,7 @@ use std::fmt::Write;
 
 use crate::{
     ana::algebra::{self, Term},
-    hir::{self, BodyId},
+    hir::BodyId,
     ir::{
         flows::CallOnlyFlow,
         global_location::IsGlobalLocation,
@@ -307,7 +307,7 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
             inline_memo: Default::default(),
             ana_ctrl,
             dbg_ctrl,
-            marker_carrying: InlineJudge::new(marker_ctx, tcx),
+            marker_carrying: InlineJudge::new(marker_ctx, tcx, ana_ctrl),
         }
     }
 
@@ -334,7 +334,6 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
                 self.tcx,
                 self.gli,
                 &self.marker_carrying,
-                self.ana_ctrl,
             )
         })
     }
@@ -670,14 +669,15 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
             .filter_map(|(id, location, function)| {
                 if recursive_analysis_enabled {
                     debug!("Recursive analysis enabled");
-                    if let Some(ac) =
-                        self.classify_special_function_handling(function.def_id(), id, &i_graph.graph)
-                    {
+                    if let Some(ac) = self.classify_special_function_handling(
+                        function.def_id(),
+                        id,
+                        &i_graph.graph,
+                    ) {
                         return Some((id, *location, InlineAction::Drop(ac)));
                     }
                     if let Some(local_id) = function.def_id().as_local()
                         && self.marker_carrying.should_inline(*function)
-                        && (!self.ana_ctrl.avoid_inlining() || self.marker_carrying.marker_is_reachable(function.def_id()))
                     {
                         debug!("Inlining {function:?}");
                         return Some((id, *location, InlineAction::SimpleInline(local_id)));

@@ -24,7 +24,7 @@ use crate::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
         DisplayViaDebug, FnResolution, IntoLocalDefId,
     },
-    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, TyCtxt,
+    DumpArgs, Either, HashMap, HashSet, TyCtxt,
 };
 
 use std::fmt::{Display, Write};
@@ -563,21 +563,13 @@ pub fn compute_from_body_id<'tcx>(
     tcx: TyCtxt<'tcx>,
     gli: GLI,
     carries_marker: &InlineJudge<'tcx>,
-    analysis_control: &'static AnalysisCtrl,
 ) -> Body<'tcx, DisplayViaDebug<Location>> {
     let local_def_id = body_id.into_local_def_id(tcx);
     info!("Analyzing function {}", body_name_pls(tcx, body_id));
     let body_with_facts =
         borrowck_facts::get_simplified_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
-    let flow = df::compute_flow_internal(
-        tcx,
-        gli,
-        body_id,
-        body_with_facts,
-        carries_marker,
-        analysis_control,
-    );
+    let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts, carries_marker);
     if dbg_opts.dump_callee_mir() {
         mir::pretty::write_mir_fn(
             tcx,

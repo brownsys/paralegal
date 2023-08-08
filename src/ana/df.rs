@@ -8,7 +8,7 @@ use crate::{
     rustc_mir_dataflow::{self, Analysis, AnalysisDomain, Forward, JoinSemiLattice},
     ty,
     utils::{AsFnAndArgs, RecursionBreakingCache, SparseMatrix},
-    AnalysisCtrl, HashMap, TyCtxt,
+    HashMap, TyCtxt,
 };
 
 use super::inline::InlineJudge;
@@ -309,7 +309,6 @@ pub struct FlowAnalysis<'a, 'tcx, 'g, 's> {
     pub control_dependencies: ControlDependencies<BasicBlock>,
     pub aliases: Aliases<'a, 'tcx>,
     pub gli: GLI<'g>,
-    analysis_control: &'static AnalysisCtrl,
     carries_marker: &'s InlineJudge<'tcx>,
     recurse_cache: RecursionBreakingCache<BodyId, flowistry::infoflow::FlowResults<'a, 'tcx>>,
     elision_info: RefCell<HashMap<Location, HashSet<algebra::MirEquation>>>,
@@ -335,7 +334,6 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
         aliases: Aliases<'a, 'tcx>,
         control_dependencies: ControlDependencies<BasicBlock>,
         carries_marker: &'s InlineJudge<'tcx>,
-        analysis_control: &'static AnalysisCtrl,
     ) -> Self {
         FlowAnalysis {
             tcx,
@@ -345,7 +343,6 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             aliases,
             control_dependencies,
             recurse_cache: RecursionBreakingCache::default(),
-            analysis_control,
             elision_info: Default::default(),
             carries_marker,
         }
@@ -741,8 +738,7 @@ impl<'a, 'tcx, 'g, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inli
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
-        if self.analysis_control.avoid_inlining()
-            && let Ok((func, args, _ret)) = terminator.as_fn_and_args(self.tcx)
+        if let Ok((func, args, _ret)) = terminator.as_instance_and_args(self.tcx)
             && self
                 .carries_marker
                 .can_be_elided(func, &args, 
@@ -752,6 +748,8 @@ impl<'a, 'tcx, 'g, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inli
         {
             debug!("Elided {:?}", terminator.kind);
             return;
+        } else {
+            debug!("{:?} cannot be elided", terminator.kind);
         }
 
         ModularMutationVisitor::new(
@@ -787,7 +785,6 @@ pub fn compute_flow_internal<'a, 'tcx, 'g, 's>(
     body_id: BodyId,
     body_with_facts: &'a CachedSimplifedBodyWithFacts<'tcx>,
     carries_marker: &'s InlineJudge<'tcx>,
-    analysis_control: &'static AnalysisCtrl,
 ) -> FlowResults<'a, 'tcx, 'g, 's> {
     //flowistry::infoflow::BODY_STACK.with(|body_stack| {
     //body_stack.borrow_mut().push(body_id);
@@ -817,7 +814,6 @@ pub fn compute_flow_internal<'a, 'tcx, 'g, 's>(
             aliases,
             control_dependencies,
             carries_marker,
-            analysis_control,
         );
         engine::iterate_to_fixpoint(tcx, body, location_domain, analysis)
         // analysis.into_engine(tcx, body).iterate_to_fixpoint()
