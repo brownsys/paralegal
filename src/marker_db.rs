@@ -4,8 +4,8 @@ use crate::{
     desc::{Annotation, MarkerAnnotation},
     hir, mir, ty,
     utils::{
-        AsFnAndArgs, GenericArgExt, IntoBodyId, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt,
-        TyExt,
+        AsFnAndArgs, FnResolution, GenericArgExt, IntoBodyId, IntoDefId, IntoHirId, MetaItemMatch,
+        TyCtxtExt, TyExt,
     },
     BodyId, DefId, HashMap, LocalDefId, TyCtxt,
 };
@@ -88,7 +88,17 @@ impl<'tcx> MarkerCtx<'tcx> {
         &self.db().external_annotations
     }
 
-    pub fn marker_is_reachable(&self, body_id: BodyId) -> bool {
+    pub fn marker_is_reachable(&self, def_id: DefId) -> bool {
+        self.is_marked(def_id)
+            || def_id.as_local().map_or(false, |ldid| {
+                force_into_body_id(self.tcx(), ldid).map_or(false, |body_id| {
+                    self.has_transitive_reachable_markers(body_id)
+                })
+            })
+    }
+
+    fn has_transitive_reachable_markers(&self, body_id: BodyId) -> bool {
+        debug!("Checking marker reachable for {body_id:?}");
         self.db()
             .marker_reachable_cache
             .get_maybe_recursive(body_id, |_| self.compute_marker_reachable(body_id))
@@ -112,24 +122,15 @@ impl<'tcx> MarkerCtx<'tcx> {
                 "Checking function {} for markers",
                 self.tcx().def_path_debug_str(defid)
             );
-            if self.is_marked(defid) {
-                debug!("  carries self");
+            if self.marker_is_reachable(defid) {
                 return true;
             }
             if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
                     local_decls[mir::RETURN_PLACE].ty.kind()
                 && let ty::TyKind::Generator(closure_fn, _, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
-                let map = self.tcx().hir();
                 return self.marker_is_reachable(
-                    map.body_owned_by(closure_fn.as_local().unwrap()),
+                    *closure_fn
                 );
-            }
-            if defid.as_local().map_or(false, |ldid| {
-                force_into_body_id(self.tcx(), ldid)
-                    .map_or(false, |body_id| self.marker_is_reachable(body_id))
-            }) {
-                debug!("  body carries");
-                return true;
             }
         }
         false
@@ -184,20 +185,14 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     pub fn all_function_markers<'a>(
         &'a self,
-        def_id: DefId,
+        function: FnResolution<'tcx>,
     ) -> impl Iterator<Item = (&'a MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> {
-        self.combined_markers(def_id)
+        self.combined_markers(function.def_id())
             .into_iter()
             .zip(std::iter::repeat(None))
             .chain(
-                self.all_type_markers(
-                    self.tcx()
-                        .fn_sig(def_id)
-                        .skip_binder()
-                        .skip_binder()
-                        .output(),
-                )
-                .map(|(marker, typeinfo)| (marker, Some(typeinfo))),
+                self.all_type_markers(function.sig(self.tcx()).skip_binder().output())
+                    .map(|(marker, typeinfo)| (marker, Some(typeinfo))),
             )
     }
 }

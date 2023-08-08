@@ -47,21 +47,15 @@ impl<'tcx> CollectingVisitor<'tcx> {
         let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
         fn register_call_site(
-            tcx: TyCtxt<'_>,
             map: &mut CallSiteAnnotations,
             did: DefId,
             ann: Option<&[Annotation]>,
         ) {
             map.entry(did)
                 .and_modify(|e| {
-                    e.0.extend(ann.iter().flat_map(|a| a.iter()).cloned());
+                    e.extend(ann.iter().flat_map(|a| a.iter()).cloned());
                 })
-                .or_insert_with(|| {
-                    (
-                        ann.iter().flat_map(|a| a.iter()).cloned().collect(),
-                        tcx.fn_sig(did).skip_binder().skip_binder().inputs().len(),
-                    )
-                });
+                .or_insert_with(|| ann.iter().flat_map(|a| a.iter()).cloned().collect());
         }
         let tcx = self.tcx;
         let controller_body_with_facts =
@@ -151,12 +145,16 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 // dependencies (and thus not receive any data)
                 continue;
             }
-            let (_, (defid, _, _)) = match inner_body
+            let (_, (instance, _, _)) = match inner_body
                 .stmt_at_better_err(inner_location)
                 .right()
                 .ok_or("not a terminator".to_owned())
-                .and_then(|t| Ok((t, t.as_fn_and_args(tcx).map_err(|e| format!("{e:?}"))?)))
-            {
+                .and_then(|t| {
+                    Ok((
+                        t,
+                        t.as_instance_and_args(tcx).map_err(|e| format!("{e:?}"))?,
+                    ))
+                }) {
                 Ok(term) => term,
                 Err(err) => {
                     // We expect to always encounter function calls at this
@@ -172,10 +170,10 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     continue;
                 }
             };
+            let defid = instance.def_id();
             let call_site = CallSite::new(loc, defid, tcx);
             // Propagate annotations on the function object to the call site
             register_call_site(
-                tcx,
                 call_site_annotations,
                 defid,
                 defid
@@ -185,7 +183,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
             let interesting_output_types: HashSet<_> = self
                 .marker_ctx
-                .all_function_markers(defid)
+                .all_function_markers(instance)
                 .filter_map(|(_, t)| Some(identifier_for_item(self.tcx, t?.1)))
                 .collect();
             if !interesting_output_types.is_empty() {

@@ -19,7 +19,7 @@ pub type AttrMatchT = Vec<Symbol>;
 ///
 /// XXX: This needs to be adjusted to attach to the actual call site instead of
 /// the function `DefId`
-pub type CallSiteAnnotations = HashMap<DefId, (Vec<Annotation>, usize)>;
+pub type CallSiteAnnotations = HashMap<DefId, Vec<Annotation>>;
 
 #[allow(clippy::type_complexity)]
 /// This visitor traverses the items in the analyzed crate to discover

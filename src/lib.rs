@@ -48,6 +48,7 @@ pub mod rust {
     pub extern crate rustc_query_system;
     pub extern crate rustc_serialize;
     pub extern crate rustc_span;
+    pub extern crate rustc_target;
     pub extern crate rustc_type_ir;
     pub use super::rustc_index;
     pub use rustc_type_ir::sty;

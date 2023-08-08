@@ -1,4 +1,8 @@
-use crate::{mir::Place, utils::IntoBodyId, DefId, LocalDefId, MarkerCtx, TyCtxt};
+use crate::{
+    mir::Place,
+    utils::{FnResolution, IntoBodyId},
+    DefId, LocalDefId, MarkerCtx, TyCtxt,
+};
 
 pub struct InlineJudge<'tcx> {
     marker_ctx: MarkerCtx<'tcx>,
@@ -24,27 +28,23 @@ impl<'tcx> InlineJudge<'tcx> {
         args: &[Option<Place<'tcx>>],
         place_has_dependencies: impl Fn(Place<'tcx>) -> bool,
     ) -> bool {
-        if let Some(body_id) = func.into_body_id(self.tcx) {
-            !self.marker_ctx.marker_is_reachable(body_id)
-                && !self.probably_performs_side_effects(func, &args, place_has_dependencies)
-        } else {
-            false
-        }
+        debug!("Checking if {func:?} can be elided");
+        !self.marker_ctx.marker_is_reachable(func)
+            && !self.probably_performs_side_effects(func, &args, place_has_dependencies)
     }
 
     pub fn new(marker_ctx: MarkerCtx<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         Self { marker_ctx, tcx }
     }
 
-    pub fn should_inline(&self, def_id: LocalDefId) -> bool {
+    pub fn should_inline(&self, function: FnResolution<'tcx>) -> bool {
         self.marker_ctx
-            .all_function_markers(def_id.to_def_id())
+            .all_function_markers(function)
             .next()
             .is_none()
     }
 
-    pub fn marker_is_reachable(&self, def_id: LocalDefId) -> bool {
-        self.marker_ctx
-            .marker_is_reachable(def_id.into_body_id(self.tcx).unwrap())
+    pub fn marker_is_reachable(&self, def_id: DefId) -> bool {
+        self.marker_ctx.marker_is_reachable(def_id)
     }
 }

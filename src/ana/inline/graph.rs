@@ -1,8 +1,8 @@
 use crate::{
-    ir::{regal, GlobalLocation},
+    ir::{regal, GlobalLocation, GLI},
     mir, serde,
-    utils::{write_sep, DisplayViaDebug, TinyBitSet},
-    DefId, Either,
+    utils::{time, write_sep, DisplayViaDebug, FnResolution, IntoDefId, TinyBitSet},
+    BodyId, Either, HashMap, HashSet, Location, TyCtxt,
 };
 
 use super::algebra;
@@ -181,17 +181,17 @@ impl<'g> GlobalLocal<'g> {
 pub type Equation<L> = algebra::Equality<L, DisplayViaDebug<mir::Field>>;
 pub type Equations<L> = Vec<Equation<L>>;
 /// Common, parameterized graph type used in this module
-pub type GraphImpl<L> = pg::GraphMap<Node<(L, DefId)>, Edge, pg::Directed>;
+pub type GraphImpl<'tcx, L> = pg::GraphMap<Node<(L, FnResolution<'tcx>)>, Edge, pg::Directed>;
 
-pub struct InlinedGraph<'g> {
-    pub graph: GraphImpl<GlobalLocation<'g>>,
+pub struct InlinedGraph<'tcx, 'g> {
+    pub graph: GraphImpl<'tcx, GlobalLocation<'g>>,
     pub equations: Equations<GlobalLocal<'g>>,
     pub num_inlined: usize,
     pub max_call_stack_depth: usize,
 }
 
-impl<'g> InlinedGraph<'g> {
-    pub fn graph(&self) -> &GraphImpl<GlobalLocation<'g>> {
+impl<'tcx, 'g> InlinedGraph<'tcx, 'g> {
+    pub fn graph(&self) -> &GraphImpl<'tcx, GlobalLocation<'g>> {
         &self.graph
     }
 
@@ -213,6 +213,83 @@ impl<'g> InlinedGraph<'g> {
     pub fn max_call_stack_depth(&self) -> usize {
         self.max_call_stack_depth
     }
+
+    pub fn from_body(
+        gli: GLI<'g>,
+        body_id: BodyId,
+        body: &regal::Body<'tcx, DisplayViaDebug<Location>>,
+        tcx: TyCtxt<'tcx>,
+    ) -> Self {
+        time("Graph Construction From Regal Body", || {
+            let equations = to_global_equations(&body.equations, body_id, gli);
+            let mut gwr = InlinedGraph {
+                equations,
+                graph: Default::default(),
+                num_inlined: 0,
+                max_call_stack_depth: 0,
+            };
+            let g = &mut gwr.graph;
+            let call_map = body
+                .calls
+                .iter()
+                .map(|(loc, call)| (loc, call.function))
+                .collect::<HashMap<_, _>>();
+            let return_node = g.add_node(Node::Return);
+
+            let mut add_dep_edges =
+                |to, idx, deps: &HashSet<regal::Target<DisplayViaDebug<Location>>>| {
+                    for d in deps {
+                        use regal::Target;
+                        let from = match d {
+                            Target::Call(c) => regal::SimpleLocation::Call((
+                                gli.globalize_location(**c, body_id),
+                                *call_map.get(c).unwrap_or_else(|| {
+                                    panic!(
+                                        "Expected to find call at {c} in function {}",
+                                        tcx.def_path_debug_str(body_id.into_def_id(tcx))
+                                    )
+                                }),
+                            )),
+                            Target::Argument(a) => regal::SimpleLocation::Argument(*a),
+                        };
+                        if g.contains_edge(from, to) {
+                            g[(from, to)].add_type(idx)
+                        } else {
+                            let mut edge = Edge::empty();
+                            edge.add_type(idx);
+                            g.add_edge(from, to, edge);
+                        }
+                    }
+                };
+
+            for (&loc, call) in body.calls.iter() {
+                let n = Node::Call((gli.globalize_location(*loc, body_id), call.function));
+                for (idx, deps) in call.arguments.iter().enumerate() {
+                    if let Some((_, deps)) = deps {
+                        add_dep_edges(n, EdgeType::Data(idx as u32), deps)
+                    }
+                }
+                add_dep_edges(n, EdgeType::Control, &call.ctrl_deps);
+            }
+            add_dep_edges(return_node, EdgeType::Data(0_u32), &body.return_deps);
+            for (idx, deps) in body.return_arg_deps.iter().enumerate() {
+                add_dep_edges(Node::Argument(idx.into()), EdgeType::Data(0_u32), deps);
+            }
+
+            gwr
+        })
+    }
+}
+
+/// Globalize all locations mentioned in these equations.
+fn to_global_equations<'g>(
+    eqs: &Equations<DisplayViaDebug<mir::Local>>,
+    _body_id: BodyId,
+    _gli: GLI<'g>,
+) -> Equations<GlobalLocal<'g>> {
+    eqs.iter()
+        .map(|eq| eq.map_bases(|target| GlobalLocal::at_root(**target)))
+        .collect()
 }
 
 pub fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(

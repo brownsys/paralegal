@@ -363,191 +363,200 @@ pub mod graph {
     extern crate smallvec;
     use smallvec::SmallVec;
 
-    pub type Graph<B, F> = graphmap::GraphMap<B, Operators<F>, Directed>;
-
-    pub fn new<
-        B: Copy + Eq + Ord + Hash + Display,
-        F: Copy + Display,
-        GetEq: std::borrow::Borrow<Equality<B, F>>,
-        I: IntoIterator<Item = GetEq>,
-    >(
-        equations: I,
-    ) -> Graph<B, F> {
-        let mut graph = Graph::new();
-        for eq in equations {
-            let mut eq: Equality<_, _> = eq.borrow().clone();
-            eq.rearrange_left_to_right();
-            let from = *eq.rhs.base();
-            let to = *eq.lhs.base();
-            debug!(
-                "Adding {} -> {} {} ({})",
-                to,
-                from,
-                Print(|fmt| {
-                    fmt.write_char('[')?;
-                    write_sep(fmt, ", ", eq.rhs.terms.iter(), Display::fmt)?;
-                    fmt.write_char(']')
-                }),
-                Print(|fmt| {
-                    fmt.write_char('[')?;
-                    write_sep(fmt, ", ", eq.lhs.terms.iter(), Display::fmt)?;
-                    fmt.write_char(']')
-                }),
-            );
-            if let Some(w) = graph.edge_weight_mut(from, to) {
-                w.0.push(eq.rhs.terms)
-            } else {
-                graph.add_edge(from, to, Operators(SmallVec::from_iter([eq.rhs.terms])));
-            }
-        }
-        graph
+    pub struct Graph<D, B, F: Copy> {
+        graph: graphmap::GraphMap<B, Operators<F>, Directed>,
+        descriptor: D,
     }
 
-    #[allow(clippy::blocks_in_if_conditions)]
-    pub fn reachable<
-        B: Display + Copy + Hash + Eq + Ord,
-        F: Hash + Eq + Display + Copy,
-        T: Fn(B) -> bool,
-    >(
-        from: B,
-        is_target: T,
-        graph: &Graph<B, F>,
-    ) -> Option<(BitSet<usize>, Vec<Operator<F>>)> {
-        use visit::NodeIndexable;
-        let mut short_circuiting: HashMap<_, HashSet<_>> =
-            HashMap::from_iter([(from, HashSet::from_iter([Term::new_base(0)]))]);
-        let seen = BitSet::new_empty(graph.node_bound());
-        let mut queue = VecDeque::from_iter([(from, seen, Term::new_base(0))]);
-        while let Some((node, mut seen, projections)) = queue.pop_front() {
-            seen.insert(graph.to_index(node));
-            for next in graph
-                .edges(node)
-                .chain(graph.edges_directed(node, Incoming))
-            {
-                let (to, is_flipped) = if next.source() == node {
-                    (next.target(), false)
+    impl<D, B: Copy + Eq + Ord + Hash + Display, F: Copy + Display + Eq + Hash> Graph<D, B, F> {
+        pub fn new<GetEq: std::borrow::Borrow<Equality<B, F>>, I: IntoIterator<Item = GetEq>>(
+            equations: I,
+            descriptor: D,
+        ) -> Graph<D, B, F> {
+            let mut graph: graphmap::GraphMap<B, Operators<F>, Directed> = Default::default();
+            for eq in equations {
+                let mut eq: Equality<_, _> = eq.borrow().clone();
+                eq.rearrange_left_to_right();
+                let from = *eq.rhs.base();
+                let to = *eq.lhs.base();
+                debug!(
+                    "Adding {} -> {} {} ({})",
+                    to,
+                    from,
+                    Print(|fmt| {
+                        fmt.write_char('[')?;
+                        write_sep(fmt, ", ", eq.rhs.terms.iter(), Display::fmt)?;
+                        fmt.write_char(']')
+                    }),
+                    Print(|fmt| {
+                        fmt.write_char('[')?;
+                        write_sep(fmt, ", ", eq.lhs.terms.iter(), Display::fmt)?;
+                        fmt.write_char(']')
+                    }),
+                );
+                if let Some(w) = graph.edge_weight_mut(from, to) {
+                    w.0.push(eq.rhs.terms)
                 } else {
-                    (next.source(), true)
-                };
-                if seen.contains(graph.to_index(to)) {
-                    continue;
+                    graph.add_edge(from, to, Operators(SmallVec::from_iter([eq.rhs.terms])));
                 }
-                for weight in next.weight().0.iter() {
-                    debug!(
-                        "{node} {} {to} {}, {is_flipped}",
-                        Print(|fmt| {
-                            fmt.write_char('[')?;
-                            write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
-                            fmt.write_char(']')
-                        }),
-                        Print(|fmt| {
-                            fmt.write_char('[')?;
-                            write_sep(fmt, ", ", weight.iter(), Display::fmt)?;
-                            fmt.write_char(']')
-                        }),
-                    );
-                    let mut projections = projections.clone();
-                    if next.weight().0.is_empty()
-                        || {
-                            if is_flipped {
-                                projections = projections
-                                    .extend(weight.iter().copied().map(Operator::flip).rev());
-                            } else {
-                                projections = projections.extend(weight.iter().copied());
-                            }
-                            debug!(
-                                "{}",
-                                Print(|fmt| {
-                                    fmt.write_char('[')?;
-                                    write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
-                                    fmt.write_char(']')
-                                }),
-                            );
-                            match projections.simplify() {
-                                Simplified::Yes => true,
-                                Simplified::NonOverlapping => false,
-                                Simplified::Invalid(one, two) => {
-                                    let path = "algebra-invalidation-err.gv";
-                                    let mut outf = outfile_pls(path).unwrap();
-                                    use std::io::Write;
-                                    write!(
-                                        outf,
-                                        "{}",
-                                        petgraph::dot::Dot::with_attr_getters(
-                                            graph,
-                                            &[],
-                                            &|_, _| "".to_string(),
-                                            &|_, (n, _)| "shape=box,color=".to_string()
-                                                + if n == to {
-                                                    "red"
-                                                } else if is_target(n) {
-                                                    "green"
-                                                } else if n == from {
-                                                    "yellow"
-                                                } else if n == node {
-                                                    "purple"
-                                                } else if seen.contains(graph.to_index(n)) {
-                                                    "blue"
-                                                } else {
-                                                    "black"
-                                                }
+            }
+            Graph { graph, descriptor }
+        }
+
+        #[allow(clippy::blocks_in_if_conditions)]
+        pub fn reachable<T: Fn(B) -> bool>(
+            &self,
+            from: B,
+            is_target: T,
+        ) -> Option<(BitSet<usize>, Vec<Operator<F>>)>
+        where
+            D: Display,
+        {
+            let Self { graph, descriptor } = self;
+            use visit::NodeIndexable;
+            let mut short_circuiting: HashMap<_, HashSet<_>> =
+                HashMap::from_iter([(from, HashSet::from_iter([Term::new_base(0)]))]);
+            let seen = BitSet::new_empty(graph.node_bound());
+            let mut queue = VecDeque::from_iter([(from, seen, Term::new_base(0))]);
+            while let Some((node, mut seen, projections)) = queue.pop_front() {
+                seen.insert(graph.to_index(node));
+                for next in graph
+                    .edges(node)
+                    .chain(graph.edges_directed(node, Incoming))
+                {
+                    let (to, is_flipped) = if next.source() == node {
+                        (next.target(), false)
+                    } else {
+                        (next.source(), true)
+                    };
+                    if seen.contains(graph.to_index(to)) {
+                        continue;
+                    }
+                    for weight in next.weight().0.iter() {
+                        debug!(
+                            "{node} {} {to} {}, {is_flipped}",
+                            Print(|fmt| {
+                                fmt.write_char('[')?;
+                                write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
+                                fmt.write_char(']')
+                            }),
+                            Print(|fmt| {
+                                fmt.write_char('[')?;
+                                write_sep(fmt, ", ", weight.iter(), Display::fmt)?;
+                                fmt.write_char(']')
+                            }),
+                        );
+                        let mut projections = projections.clone();
+                        if next.weight().0.is_empty()
+                            || {
+                                if is_flipped {
+                                    projections = projections
+                                        .extend(weight.iter().copied().map(Operator::flip).rev());
+                                } else {
+                                    projections = projections.extend(weight.iter().copied());
+                                }
+                                debug!(
+                                    "{}",
+                                    Print(|fmt| {
+                                        fmt.write_char('[')?;
+                                        write_sep(
+                                            fmt,
+                                            ", ",
+                                            projections.terms.iter(),
+                                            Display::fmt,
+                                        )?;
+                                        fmt.write_char(']')
+                                    }),
+                                );
+                                match projections.simplify() {
+                                    Simplified::Yes => true,
+                                    Simplified::NonOverlapping => false,
+                                    Simplified::Invalid(one, two) => {
+                                        let path = "algebra-invalidation-err.gv";
+                                        let mut outf = outfile_pls(path).unwrap();
+                                        use std::io::Write;
+                                        write!(
+                                            outf,
+                                            "{}",
+                                            petgraph::dot::Dot::with_attr_getters(
+                                                graph,
+                                                &[],
+                                                &|_, _| "".to_string(),
+                                                &|_, (n, _)| "shape=box,color=".to_string()
+                                                    + if n == to {
+                                                        "red"
+                                                    } else if is_target(n) {
+                                                        "green"
+                                                    } else if n == from {
+                                                        "yellow"
+                                                    } else if n == node {
+                                                        "purple"
+                                                    } else if seen.contains(graph.to_index(n)) {
+                                                        "blue"
+                                                    } else {
+                                                        "black"
+                                                    }
+                                            )
                                         )
-                                    )
-                                    .unwrap();
-                                    panic!("Encountered invalid operator combination {one} {two} in {projections}: as op chain {}.\n  The state of the search on the operator graph at the time the error as found has been dumped to {path}.\n    Yellow is where the search started,\n    blue nodes were seen during the search,\n    the target is green,\n    the red node is the one we were trying to reach and\n    the purple node is where we tried to reach it from.", Print(|fmt| {
+                                        .unwrap();
+                                        panic!("Encountered invalid operator combination {one} {two} in {projections}: as op chain {}, while processing {descriptor}. \n  The state of the search on the operator graph at the time the error as found has been dumped to {path}.\n    Yellow is where the search started,\n    blue nodes were seen during the search,\n    the target is green,\n    the red node is the one we were trying to reach and\n    the purple node is where we tried to reach it from.", Print(|fmt| {
                                     fmt.write_char('[')?;
                                     write_sep(fmt, ", ", projections.terms.iter(), Display::fmt)?;
                                     fmt.write_char(']')
                                 }
                                 ));
+                                    }
                                 }
                             }
-                        }
-                    {
-                        if is_target(to) {
-                            return Some((seen, projections.terms));
-                        }
-                        if short_circuiting
-                            .entry(to)
-                            .or_insert_with(HashSet::new)
-                            .insert(projections.clone())
                         {
-                            queue.push_back((to, seen.clone(), projections));
+                            if is_target(to) {
+                                return Some((seen, projections.terms));
+                            }
+                            if short_circuiting
+                                .entry(to)
+                                .or_insert_with(HashSet::new)
+                                .insert(projections.clone())
+                            {
+                                queue.push_back((to, seen.clone(), projections));
+                            }
                         }
                     }
                 }
             }
+            None
         }
-        None
-    }
 
-    pub fn dump<
-        B: graphmap::NodeTrait + Display,
-        F: Copy + Display,
-        W: std::io::Write,
-        IsTarget: Fn(B) -> bool,
-        DiedHere: Fn(B) -> bool,
-    >(
-        mut w: W,
-        graph: &Graph<B, F>,
-        is_target: IsTarget,
-        died_here: DiedHere,
-    ) {
-        write!(
-            w,
-            "{}",
-            petgraph::dot::Dot::with_attr_getters(graph, &[], &|_, _| "".to_string(), &|_, n| {
-                if is_target(n.0) {
-                    "shape=box,color=green"
-                } else if died_here(n.0) {
-                    "shape=box,color=red"
-                } else {
-                    "shape=box"
-                }
-                .to_string()
-            })
-        )
-        .unwrap()
+        pub fn dump<W: std::io::Write, IsTarget: Fn(B) -> bool, DiedHere: Fn(B) -> bool>(
+            &self,
+            mut w: W,
+            is_target: IsTarget,
+            died_here: DiedHere,
+        ) where
+            B: Display,
+            F: Display,
+        {
+            let graph = &self.graph;
+            write!(
+                w,
+                "{}",
+                petgraph::dot::Dot::with_attr_getters(
+                    graph,
+                    &[],
+                    &|_, _| "".to_string(),
+                    &|_, n| {
+                        if is_target(n.0) {
+                            "shape=box,color=green"
+                        } else if died_here(n.0) {
+                            "shape=box,color=red"
+                        } else {
+                            "shape=box"
+                        }
+                        .to_string()
+                    }
+                )
+            )
+            .unwrap()
+        }
     }
     pub struct Operators<F: Copy>(SmallVec<[Vec<Operator<F>>; 1]>);
 

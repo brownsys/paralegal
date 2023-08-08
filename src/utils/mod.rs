@@ -19,6 +19,7 @@ use crate::{
         rustc_data_structures::fx::{FxHashMap, FxHashSet},
         rustc_data_structures::intern::Interned,
         rustc_span::symbol::Ident,
+        rustc_target::spec::abi::Abi,
         ty,
     },
     Either, HashMap, HashSet, Symbol, TyCtxt,
@@ -179,17 +180,70 @@ impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 pub enum FnResolution<'tcx> {
     Final(ty::Instance<'tcx>),
     Partial(DefId),
 }
 
-impl FnResolution<'_> {
-    fn def_id(self) -> DefId {
+impl<'tcx> PartialOrd for FnResolution<'tcx> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use FnResolution::*;
+        match (self, other) {
+            (Final(_), Partial(_)) => Some(std::cmp::Ordering::Greater),
+            (Partial(_), Final(_)) => Some(std::cmp::Ordering::Less),
+            (Partial(slf), Partial(otr)) => slf.partial_cmp(otr),
+            (Final(slf), Final(otr)) => match slf.def.partial_cmp(&otr.def) {
+                Some(std::cmp::Ordering::Equal) => slf.substs.partial_cmp(otr.substs),
+                result => result,
+            },
+        }
+    }
+}
+
+impl<'tcx> Ord for FnResolution<'tcx> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl<'tcx> FnResolution<'tcx> {
+    pub fn def_id(self) -> DefId {
         match self {
             FnResolution::Final(f) => f.def_id(),
             FnResolution::Partial(p) => p,
+        }
+    }
+
+    pub fn sig(self, tcx: TyCtxt<'tcx>) -> ty::PolyFnSig {
+        match self {
+            FnResolution::Final(sub) => {
+                let ty = sub.ty(tcx, ty::ParamEnv::reveal_all());
+                if ty.is_closure() {
+                    sub.substs.as_closure().sig()
+                } else if ty.is_generator() {
+                    let gen_sig = sub.substs.as_generator().sig();
+                    ty::Binder::dummy(ty::FnSig {
+                        inputs_and_output: tcx
+                            .mk_type_list(&[gen_sig.resume_ty, gen_sig.return_ty]),
+                        c_variadic: false,
+                        unsafety: hir::Unsafety::Normal,
+                        abi: Abi::Rust,
+                    })
+                } else {
+                    ty.fn_sig(tcx)
+                }
+            }
+            FnResolution::Partial(p) => tcx.fn_sig(p).skip_binder(),
+        }
+    }
+}
+
+impl<'tcx> std::fmt::Display for FnResolution<'tcx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FnResolution::Final(sub) => std::fmt::Debug::fmt(sub, f),
+            FnResolution::Partial(p) => std::fmt::Debug::fmt(p, f),
         }
     }
 }
@@ -737,13 +791,17 @@ impl IntoHirId for LocalDefId {
 /// Creates an `Identifier` for this `HirId`
 pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
     let did = did.into_def_id(tcx);
+    let get_parent = || identifier_for_item(tcx, tcx.parent(did));
     Identifier::new_intern(&format!(
         "{}_{:x}",
         tcx.opt_item_name(did)
+            .map(|n| n.to_string())
             .or_else(|| {
                 use hir::def::DefKind::*;
                 match tcx.def_kind(did) {
-                    OpaqueTy => Some(Symbol::intern("opaque")),
+                    OpaqueTy => Some("opaque".to_string()),
+                    Closure => Some(format!("{}_closure", get_parent())),
+                    Generator => Some(format!("{}_generator", get_parent())),
                     _ => None,
                 }
             })
