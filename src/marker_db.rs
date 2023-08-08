@@ -1,7 +1,6 @@
 //! Central repository for information about markers (and annotations).
-//! 
+//!
 //! All interactions happen through the central database object: [`MarkerCtx`].
-
 
 use crate::{
     args::Args,
@@ -23,19 +22,19 @@ type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 /// The marker context is a database which can be queried as to whether
 /// functions or types carry markers, whether markers are reachable in bodies,
 /// etc.
-/// 
+///
 /// The idea is that this struct provides basic information about the presence
 /// of markers and takes care of memoizing and caching such information
 /// efficiently but it does not interpret what this information means.
 /// Interpretation is done by [`crate::ana::inline::InlineJudge`].
-/// 
+///
 /// This is a smart-pointer wrapper around the actual payload ([`MarkerDatabase`]).
 #[derive(Clone)]
 pub struct MarkerCtx<'tcx>(Rc<MarkerDatabase<'tcx>>);
 
 impl<'tcx> MarkerCtx<'tcx> {
     /// Constructs a new marker database.
-    /// 
+    ///
     /// This also loads any external annotations, as specified in the `args`.
     pub fn new(tcx: TyCtxt<'tcx>, args: &Args) -> Self {
         Self(Rc::new(MarkerDatabase::init(tcx, args)))
@@ -53,7 +52,7 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     /// Retrieves the local annotations for this item. If no such annotations
     /// are present an empty slice is returned.
-    /// 
+    ///
     /// Query is cached.
     pub fn local_annotations(&self, def_id: LocalDefId) -> &[Annotation] {
         self.db()
@@ -65,7 +64,7 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     /// Retrieves any external markers on this item. If there are not such
     /// markers an empty slice is returned.
-    /// 
+    ///
     /// THe external marker database is populated at construction.
     pub fn external_markers<D: IntoDefId>(&self, did: D) -> &[MarkerAnnotation] {
         self.db()
@@ -74,8 +73,8 @@ impl<'tcx> MarkerCtx<'tcx> {
             .map_or(&[], |v| v.as_slice())
     }
 
-    /// All markers reachable for this item (local and external). 
-    /// 
+    /// All markers reachable for this item (local and external).
+    ///
     /// Queries are cached/precomputed so calling this repeatedly is cheap.
     pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
         def_id
@@ -83,10 +82,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             .map(|ldid| self.local_annotations(ldid))
             .into_iter()
             .flat_map(|anns| anns.iter().flat_map(Annotation::as_label_ann))
-            .chain(
-                self.external_markers(def_id)
-                    .iter()
-            )
+            .chain(self.external_markers(def_id).iter())
     }
 
     /// Are there any external markers on this item?
@@ -102,7 +98,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Are there any markers (local or external) on this item?
-    /// 
+    ///
     /// This is in contrast to [`Self::marker_is_reachable`] which also reports
     /// if markers are reachable from the body of this function (if it is one).
     pub fn is_marked<D: IntoDefId + Copy>(&self, did: D) -> bool {
@@ -110,8 +106,8 @@ impl<'tcx> MarkerCtx<'tcx> {
             || self.is_externally_marked(did)
     }
 
-    /// Return a complete set of local annotations that were discovered. 
-    /// 
+    /// Return a complete set of local annotations that were discovered.
+    ///
     /// Crucially this is a "readout" from the marker cache, which means only
     /// items reachable from the `dfpp::analyze` will end up in this collection.
     pub fn local_annotations_found(&self) -> Vec<(LocalDefId, &[Annotation])> {
@@ -130,10 +126,10 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Are there markers reachable from this (function)?
-    /// 
+    ///
     /// Returns true if the item itself carries a marker *or* if one of the
     /// functions called in its body are marked.
-    /// 
+    ///
     /// XXX Does not take into account reachable type markers
     pub fn marker_is_reachable(&self, def_id: DefId) -> bool {
         self.is_marked(def_id)

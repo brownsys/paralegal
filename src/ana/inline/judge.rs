@@ -2,7 +2,7 @@ use crate::{mir::Place, utils::FnResolution, AnalysisCtrl, DefId, MarkerCtx, TyC
 
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.
-/// 
+///
 /// [`MarkerCtx`] provides the information on which this judge bases its
 /// decisions. It also takes into account whether the respective configuration
 /// options have been set.

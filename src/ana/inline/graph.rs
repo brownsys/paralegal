@@ -24,19 +24,19 @@ impl<C> Node<C> {
 }
 
 /// Efficently tracks what flows along the edge between two graph nodes.
-/// 
+///
 /// The upstream node can influence the downstream node via control or via
 /// dataflow into one of its arguments. Use [`Self::into_type_iter`] to see all
 /// connections stored in this edge, or [`Self::has_type`] to query a specific
 /// type of connection.
-/// 
+///
 /// Construct an edge either with [`Self::empty`] and [`Self::add_type`] or use
 /// the [`FromIterator`] instance, e.g. calling `collect` on an iterator of
 /// [`EdgeType`].
-/// 
+///
 /// This struct is tiny (smaller than a pointer), which is why it is [`Copy`]
 /// and most methods take `self`.
-/// 
+///
 /// Be aware that data edges are only supported in the range `0..15` and setting
 /// or querying data edges outside of the range will cause panics.
 #[derive(Clone, Eq, PartialEq, Hash, Copy, serde::Serialize, serde::Deserialize)]
@@ -46,8 +46,8 @@ pub struct Edge {
 }
 
 impl Edge {
-    /// Are there no connections on this edge? 
-    /// 
+    /// Are there no connections on this edge?
+    ///
     /// Empty edges whould be avoided. They should only occur as a result of
     /// prunging with [`Self::remove_type`] and an `is_empty` edge should then
     /// be deleted from the graph.
@@ -56,7 +56,7 @@ impl Edge {
         !self.control && self.data.is_empty()
     }
     /// Register an additional type in this edge.
-    /// 
+    ///
     /// No errors are raised if the type already exists.
     #[inline]
     pub fn add_type(&mut self, t: EdgeType) {
@@ -74,7 +74,7 @@ impl Edge {
         }
     }
     /// Combine two edges
-    /// 
+    ///
     /// No errors are raised if the two overlap.
     #[inline]
     pub fn merge(&mut self, other: Self) {
@@ -95,14 +95,14 @@ impl Edge {
         self.data.into_iter_set_in_domain()
     }
     /// How many types of connections are combined in this edge?
-    /// 
+    ///
     /// More efficient version of `self.into_types_iter().count()`
     #[inline]
     pub fn count(self) -> u32 {
         self.data.count() + if self.control { 1 } else { 0 }
     }
     /// Delete this type from the edge.
-    /// 
+    ///
     /// No error is raised if this type was not present.
     #[inline]
     pub fn remove_type(&mut self, t: EdgeType) -> bool {
@@ -149,9 +149,9 @@ impl FromIterator<EdgeType> for Edge {
 }
 
 /// Describes the type of connections that can be stored in an [`Edge`].
-/// 
+///
 /// This is a supporting enum for [`Edge`] and used for most interactions with it.
-/// 
+///
 /// Be aware that the `Data` variant is only supported in the range of `0..15`.
 #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 pub enum EdgeType {
