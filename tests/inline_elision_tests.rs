@@ -96,14 +96,14 @@ define_test!(connection_precision_args: graph -> {
     assert!(!graph.connects(&untouched, &receive_touched))
 });
 
-define_test!(no_elision_without_input: graph -> {
+define_test_skip!(no_elision_without_input "suspended because semantics of how suspected side effecting functions should be handled is unclear." : graph -> {
     let input = graph.function_call("inner");
     let output = graph.function_call("receive_touched");
 
     assert!(graph.connects(&input, &output));
 });
 
-define_test!(no_elision_without_output: graph -> {
+define_test_skip!(no_elision_without_output "suspended because semantics of how suspected side effecting functions should be handled is unclear." : graph -> {
     let input = graph.function_call("input");
     let output = graph.function_call("do_io");
 

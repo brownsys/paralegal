@@ -669,11 +669,9 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
             .filter_map(|(id, location, function)| {
                 if recursive_analysis_enabled {
                     debug!("Recursive analysis enabled");
-                    if let Some(ac) = self.classify_special_function_handling(
-                        function.def_id(),
-                        id,
-                        &i_graph.graph,
-                    ) {
+                    if let Some(ac) =
+                        self.classify_special_function_handling(function.def_id(), id, &i_graph.graph)
+                    {
                         return Some((id, *location, InlineAction::Drop(ac)));
                     }
                     if let Some(local_id) = function.def_id().as_local()
