@@ -421,7 +421,7 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
         id: StdNode<'tcx, 'g>,
         g: &GraphImpl<'tcx, GlobalLocation<'g>>,
     ) -> Option<DropAction> {
-        if self.ana_ctrl.drop_poll() 
+        if self.ana_ctrl.drop_poll()
             && let Some(maybe_wrap) = is_part_of_async_desugar(self.tcx, id, g) {
                 Some(if let Some(wrap) = maybe_wrap {
                     DropAction::WrapReturn(vec![wrap])
@@ -669,9 +669,11 @@ impl<'tcx, 'g> Inliner<'tcx, 'g> {
             .filter_map(|(id, location, function)| {
                 if recursive_analysis_enabled {
                     debug!("Recursive analysis enabled");
-                    if let Some(ac) =
-                        self.classify_special_function_handling(function.def_id(), id, &i_graph.graph)
-                    {
+                    if let Some(ac) = self.classify_special_function_handling(
+                        function.def_id(),
+                        id,
+                        &i_graph.graph,
+                    ) {
                         return Some((id, *location, InlineAction::Drop(ac)));
                     }
                     if let Some(local_id) = function.def_id().as_local()

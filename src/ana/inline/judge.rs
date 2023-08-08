@@ -28,11 +28,7 @@ impl<'tcx> InlineJudge<'tcx> {
         self.analysis_control.avoid_inlining()
             && !self.function_has_markers(function)
             && !self.marker_is_reachable(function.def_id())
-            && !self.probably_performs_side_effects(
-                function.def_id(),
-                &args,
-                place_has_dependencies,
-            )
+            && !self.probably_performs_side_effects(function.def_id(), args, place_has_dependencies)
     }
 
     fn function_has_markers(&self, function: FnResolution<'tcx>) -> bool {

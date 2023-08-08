@@ -33,12 +33,12 @@ impl<'tcx> MarkerCtx<'tcx> {
         &self.0
     }
 
-    pub fn local_annotations(&self, def_id: LocalDefId) -> Option<&[Annotation]> {
+    pub fn local_annotations(&self, def_id: LocalDefId) -> &[Annotation] {
         self.db()
             .local_annotations
             .get(def_id, |_| self.retrieve_local_markers_for(def_id))
             .as_ref()
-            .map(|o| o.as_slice())
+            .map_or(&[], |o| o.as_slice())
     }
 
     pub fn external_markers<D: IntoDefId>(&self, did: D) -> Option<&Vec<MarkerAnnotation>> {
@@ -50,7 +50,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
         def_id
             .as_local()
-            .and_then(|ldid| self.local_annotations(ldid))
+            .map(|ldid| self.local_annotations(ldid))
             .into_iter()
             .flat_map(|anns| anns.iter().flat_map(Annotation::as_label_ann))
             .chain(
@@ -66,7 +66,8 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     pub fn is_locally_marked(&self, def_id: LocalDefId) -> bool {
         self.local_annotations(def_id)
-            .map_or(false, |anns| anns.iter().any(Annotation::is_label_ann))
+            .iter()
+            .any(Annotation::is_label_ann)
     }
 
     pub fn is_marked<D: IntoDefId + Copy>(&self, did: D) -> bool {
@@ -108,7 +109,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         let body = self.tcx().body_for_body_id(body_id).simplified_body();
         body.basic_blocks
             .iter()
-            .any(|bbdat| self.terminator_carries_marker(&body.local_decls, &bbdat.terminator()))
+            .any(|bbdat| self.terminator_carries_marker(&body.local_decls, bbdat.terminator()))
     }
 
     fn terminator_carries_marker(
@@ -135,7 +136,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         false
     }
 
-    fn retrieve_local_markers_for(&self, def_id: LocalDefId) -> Option<Box<Vec<Annotation>>> {
+    fn retrieve_local_markers_for(&self, def_id: LocalDefId) -> LocalAnnotations {
         let tcx = self.tcx();
         let hir = tcx.hir();
         let id = def_id.force_into_hir_id(tcx);
@@ -187,7 +188,6 @@ impl<'tcx> MarkerCtx<'tcx> {
         function: FnResolution<'tcx>,
     ) -> impl Iterator<Item = (&'a MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> {
         self.combined_markers(function.def_id())
-            .into_iter()
             .zip(std::iter::repeat(None))
             .chain(
                 self.all_type_markers(function.sig(self.tcx()).skip_binder().output())
@@ -212,9 +212,14 @@ fn force_into_body_id(tcx: TyCtxt, defid: LocalDefId) -> Option<BodyId> {
     })
 }
 
+/// We expect most local items won't have annotations. This structure is much
+/// smaller (8 bytes) than without the `Box` (24 Bytes).
+#[allow(clippy::box_collection)]
+type LocalAnnotations = Option<Box<Vec<Annotation>>>;
+
 struct MarkerDatabase<'tcx> {
     tcx: TyCtxt<'tcx>,
-    local_annotations: Cache<LocalDefId, Option<Box<Vec<Annotation>>>>,
+    local_annotations: Cache<LocalDefId, LocalAnnotations>,
     external_annotations: ExternalMarkers,
     marker_reachable_cache: CopyCache<BodyId, bool>,
 }

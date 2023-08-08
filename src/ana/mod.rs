@@ -178,7 +178,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 defid,
                 defid
                     .as_local()
-                    .map_or(None, |ldid| self.marker_ctx.local_annotations(ldid)),
+                    .map(|ldid| self.marker_ctx.local_annotations(ldid)),
             );
 
             let interesting_output_types: HashSet<_> = self

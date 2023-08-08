@@ -741,7 +741,7 @@ impl<'a, 'tcx, 'g, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inli
         if let Ok((func, args, _ret)) = terminator.as_instance_and_args(self.tcx)
             && self
                 .carries_marker
-                .can_be_elided(func, &args, 
+                .can_be_elided(func, &args,
                     |pl| !state.matrix().row(&pl).is_empty()
                 )
             && self.recurse_into_call(state, &terminator.kind, location)
