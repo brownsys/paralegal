@@ -1,5 +1,11 @@
 use crate::{mir::Place, utils::FnResolution, AnalysisCtrl, DefId, MarkerCtx, TyCtxt};
 
+/// The interpretation of marker placement as it pertains to inlining and inline
+/// elision.
+/// 
+/// [`MarkerCtx`] provides the information on which this judge bases its
+/// decisions. It also takes into account whether the respective configuration
+/// options have been set.
 pub struct InlineJudge<'tcx> {
     marker_ctx: MarkerCtx<'tcx>,
     tcx: TyCtxt<'tcx>,
@@ -7,6 +13,8 @@ pub struct InlineJudge<'tcx> {
 }
 
 impl<'tcx> InlineJudge<'tcx> {
+    /// Looking at the dependencies and type alone, do we think this function
+    /// performs side effects?
     fn probably_performs_side_effects(
         &self,
         func: DefId,
@@ -19,6 +27,8 @@ impl<'tcx> InlineJudge<'tcx> {
         has_no_outputs || !args.iter().cloned().flatten().any(place_has_dependencies)
     }
 
+    /// Is it safe to elide this function, e.g. abstract by its dataflow effects
+    /// alone?
     pub fn can_be_elided(
         &self,
         function: FnResolution<'tcx>,
@@ -31,6 +41,7 @@ impl<'tcx> InlineJudge<'tcx> {
             && !self.probably_performs_side_effects(function.def_id(), args, place_has_dependencies)
     }
 
+    /// Are there any markers on this function (direct or output type)?
     fn function_has_markers(&self, function: FnResolution<'tcx>) -> bool {
         self.marker_ctx
             .all_function_markers(function)
@@ -50,10 +61,12 @@ impl<'tcx> InlineJudge<'tcx> {
         }
     }
 
+    /// Should we perform inlining on this function?
     pub fn should_inline(&self, function: FnResolution<'tcx>) -> bool {
         self.analysis_control.use_recursive_analysis() && !self.function_has_markers(function)
     }
 
+    /// Is a marker reachable from this item?
     fn marker_is_reachable(&self, def_id: DefId) -> bool {
         self.marker_ctx.marker_is_reachable(def_id)
     }

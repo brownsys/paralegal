@@ -1,3 +1,8 @@
+//! Central repository for information about markers (and annotations).
+//! 
+//! All interactions happen through the central database object: [`MarkerCtx`].
+
+
 use crate::{
     args::Args,
     consts,
@@ -15,10 +20,23 @@ use std::rc::Rc;
 
 type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 
+/// The marker context is a database which can be queried as to whether
+/// functions or types carry markers, whether markers are reachable in bodies,
+/// etc.
+/// 
+/// The idea is that this struct provides basic information about the presence
+/// of markers and takes care of memoizing and caching such information
+/// efficiently but it does not interpret what this information means.
+/// Interpretation is done by [`crate::ana::inline::InlineJudge`].
+/// 
+/// This is a smart-pointer wrapper around the actual payload ([`MarkerDatabase`]).
 #[derive(Clone)]
 pub struct MarkerCtx<'tcx>(Rc<MarkerDatabase<'tcx>>);
 
 impl<'tcx> MarkerCtx<'tcx> {
+    /// Constructs a new marker database.
+    /// 
+    /// This also loads any external annotations, as specified in the `args`.
     pub fn new(tcx: TyCtxt<'tcx>, args: &Args) -> Self {
         Self(Rc::new(MarkerDatabase::init(tcx, args)))
     }
@@ -33,20 +51,32 @@ impl<'tcx> MarkerCtx<'tcx> {
         &self.0
     }
 
+    /// Retrieves the local annotations for this item. If no such annotations
+    /// are present an empty slice is returned.
+    /// 
+    /// Query is cached.
     pub fn local_annotations(&self, def_id: LocalDefId) -> &[Annotation] {
         self.db()
             .local_annotations
-            .get(def_id, |_| self.retrieve_local_markers_for(def_id))
+            .get(def_id, |_| self.retrieve_local_annotations_for(def_id))
             .as_ref()
             .map_or(&[], |o| o.as_slice())
     }
 
-    pub fn external_markers<D: IntoDefId>(&self, did: D) -> Option<&Vec<MarkerAnnotation>> {
+    /// Retrieves any external markers on this item. If there are not such
+    /// markers an empty slice is returned.
+    /// 
+    /// THe external marker database is populated at construction.
+    pub fn external_markers<D: IntoDefId>(&self, did: D) -> &[MarkerAnnotation] {
         self.db()
             .external_annotations
             .get(&did.into_def_id(self.tcx()))
+            .map_or(&[], |v| v.as_slice())
     }
 
+    /// All markers reachable for this item (local and external). 
+    /// 
+    /// Queries are cached/precomputed so calling this repeatedly is cheap.
     pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
         def_id
             .as_local()
@@ -55,26 +85,35 @@ impl<'tcx> MarkerCtx<'tcx> {
             .flat_map(|anns| anns.iter().flat_map(Annotation::as_label_ann))
             .chain(
                 self.external_markers(def_id)
-                    .into_iter()
-                    .flat_map(|v| v.iter()),
+                    .iter()
             )
     }
 
+    /// Are there any external markers on this item?
     pub fn is_externally_marked<D: IntoDefId>(&self, did: D) -> bool {
-        self.external_markers(did).is_some()
+        !self.external_markers(did).is_empty()
     }
 
+    /// Are there any local markers on this item?
     pub fn is_locally_marked(&self, def_id: LocalDefId) -> bool {
         self.local_annotations(def_id)
             .iter()
             .any(Annotation::is_label_ann)
     }
 
+    /// Are there any markers (local or external) on this item?
+    /// 
+    /// This is in contrast to [`Self::marker_is_reachable`] which also reports
+    /// if markers are reachable from the body of this function (if it is one).
     pub fn is_marked<D: IntoDefId + Copy>(&self, did: D) -> bool {
         matches!(did.into_def_id(self.tcx()).as_local(), Some(ldid) if self.is_locally_marked(ldid))
             || self.is_externally_marked(did)
     }
 
+    /// Return a complete set of local annotations that were discovered. 
+    /// 
+    /// Crucially this is a "readout" from the marker cache, which means only
+    /// items reachable from the `dfpp::analyze` will end up in this collection.
     pub fn local_annotations_found(&self) -> Vec<(LocalDefId, &[Annotation])> {
         self.db()
             .local_annotations
@@ -84,11 +123,18 @@ impl<'tcx> MarkerCtx<'tcx> {
             .collect()
     }
 
+    /// Direct access to the loaded database of external markers.
     #[inline]
     pub fn external_annotations(&self) -> &ExternalMarkers {
         &self.db().external_annotations
     }
 
+    /// Are there markers reachable from this (function)?
+    /// 
+    /// Returns true if the item itself carries a marker *or* if one of the
+    /// functions called in its body are marked.
+    /// 
+    /// XXX Does not take into account reachable type markers
     pub fn marker_is_reachable(&self, def_id: DefId) -> bool {
         self.is_marked(def_id)
             || def_id.as_local().map_or(false, |ldid| {
@@ -98,6 +144,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             })
     }
 
+    /// Queries the transitive marker cache.
     fn has_transitive_reachable_markers(&self, body_id: BodyId) -> bool {
         self.db()
             .marker_reachable_cache
@@ -105,6 +152,8 @@ impl<'tcx> MarkerCtx<'tcx> {
             .unwrap_or(false)
     }
 
+    /// If the transitive marker cache did not contain the answer, this is what
+    /// computes it.
     fn compute_marker_reachable(&self, body_id: BodyId) -> bool {
         let body = self.tcx().body_for_body_id(body_id).simplified_body();
         body.basic_blocks
@@ -112,6 +161,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             .any(|bbdat| self.terminator_carries_marker(&body.local_decls, bbdat.terminator()))
     }
 
+    /// Does this terminator carry a marker?
     fn terminator_carries_marker(
         &self,
         local_decls: &mir::LocalDecls,
@@ -136,7 +186,8 @@ impl<'tcx> MarkerCtx<'tcx> {
         false
     }
 
-    fn retrieve_local_markers_for(&self, def_id: LocalDefId) -> LocalAnnotations {
+    /// Retrieve and parse the local annotations for this item.
+    fn retrieve_local_annotations_for(&self, def_id: LocalDefId) -> LocalAnnotations {
         let tcx = self.tcx();
         let hir = tcx.hir();
         let id = def_id.force_into_hir_id(tcx);
@@ -171,6 +222,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         Some(Box::new(sink_matches))
     }
 
+    /// All the markers applied to this type and its subtypes.
     pub fn all_type_markers<'a>(
         &'a self,
         ty: ty::Ty<'tcx>,
@@ -183,6 +235,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         })
     }
 
+    /// All markers placed on this function, directly or through the type.
     pub fn all_function_markers<'a>(
         &'a self,
         function: FnResolution<'tcx>,
@@ -217,14 +270,19 @@ fn force_into_body_id(tcx: TyCtxt, defid: LocalDefId) -> Option<BodyId> {
 #[allow(clippy::box_collection)]
 type LocalAnnotations = Option<Box<Vec<Annotation>>>;
 
+/// The structure inside of [`MarkerCtx`].
 struct MarkerDatabase<'tcx> {
     tcx: TyCtxt<'tcx>,
+    /// Cache for parsed local annotations. They are created with
+    /// [`MarkerCtx::retrieve_local_annotations_for`].
     local_annotations: Cache<LocalDefId, LocalAnnotations>,
     external_annotations: ExternalMarkers,
+    /// Cache whether markers are reachable transitively.
     marker_reachable_cache: CopyCache<BodyId, bool>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
+    /// Construct a new database, loading external markers.
     fn init(tcx: TyCtxt<'tcx>, args: &Args) -> Self {
         Self {
             tcx,

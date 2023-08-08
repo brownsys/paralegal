@@ -23,6 +23,22 @@ impl<C> Node<C> {
     }
 }
 
+/// Efficently tracks what flows along the edge between two graph nodes.
+/// 
+/// The upstream node can influence the downstream node via control or via
+/// dataflow into one of its arguments. Use [`Self::into_type_iter`] to see all
+/// connections stored in this edge, or [`Self::has_type`] to query a specific
+/// type of connection.
+/// 
+/// Construct an edge either with [`Self::empty`] and [`Self::add_type`] or use
+/// the [`FromIterator`] instance, e.g. calling `collect` on an iterator of
+/// [`EdgeType`].
+/// 
+/// This struct is tiny (smaller than a pointer), which is why it is [`Copy`]
+/// and most methods take `self`.
+/// 
+/// Be aware that data edges are only supported in the range `0..15` and setting
+/// or querying data edges outside of the range will cause panics.
 #[derive(Clone, Eq, PartialEq, Hash, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Edge {
     data: TinyBitSet,
@@ -30,10 +46,18 @@ pub struct Edge {
 }
 
 impl Edge {
+    /// Are there no connections on this edge? 
+    /// 
+    /// Empty edges whould be avoided. They should only occur as a result of
+    /// prunging with [`Self::remove_type`] and an `is_empty` edge should then
+    /// be deleted from the graph.
     #[inline]
     pub fn is_empty(self) -> bool {
         !self.control && self.data.is_empty()
     }
+    /// Register an additional type in this edge.
+    /// 
+    /// No errors are raised if the type already exists.
     #[inline]
     pub fn add_type(&mut self, t: EdgeType) {
         match t {
@@ -41,6 +65,7 @@ impl Edge {
             EdgeType::Data(i) => self.data.set(i),
         }
     }
+    /// Construct a new empty edge.
     #[inline]
     pub fn empty() -> Self {
         Self {
@@ -48,11 +73,15 @@ impl Edge {
             data: TinyBitSet::new_empty(),
         }
     }
+    /// Combine two edges
+    /// 
+    /// No errors are raised if the two overlap.
     #[inline]
     pub fn merge(&mut self, other: Self) {
         self.control |= other.control;
         self.data |= other.data;
     }
+    /// Iterate all edge typers stored.
     #[inline]
     pub fn into_types_iter(self) -> impl Iterator<Item = EdgeType> {
         self.data
@@ -60,14 +89,21 @@ impl Edge {
             .map(EdgeType::Data)
             .chain(self.control.then_some(EdgeType::Control))
     }
+    /// Iterate only the data edges.
     #[inline]
     pub fn into_iter_data(self) -> impl Iterator<Item = u32> {
         self.data.into_iter_set_in_domain()
     }
+    /// How many types of connections are combined in this edge?
+    /// 
+    /// More efficient version of `self.into_types_iter().count()`
     #[inline]
     pub fn count(self) -> u32 {
         self.data.count() + if self.control { 1 } else { 0 }
     }
+    /// Delete this type from the edge.
+    /// 
+    /// No error is raised if this type was not present.
     #[inline]
     pub fn remove_type(&mut self, t: EdgeType) -> bool {
         let changed;
@@ -83,16 +119,19 @@ impl Edge {
         }
         changed
     }
+    /// Query if this connection type is present in the edge.
     pub fn has_type(self, t: EdgeType) -> bool {
         match t {
             EdgeType::Control => self.control,
             EdgeType::Data(dat) => self.data.is_set(dat),
         }
     }
+    /// Are there any data connections?
     #[inline]
     pub fn is_data(self) -> bool {
         !self.data.is_empty()
     }
+    /// Is there a control flow connection?
     #[inline]
     pub fn is_control(self) -> bool {
         self.control
@@ -109,6 +148,11 @@ impl FromIterator<EdgeType> for Edge {
     }
 }
 
+/// Describes the type of connections that can be stored in an [`Edge`].
+/// 
+/// This is a supporting enum for [`Edge`] and used for most interactions with it.
+/// 
+/// Be aware that the `Data` variant is only supported in the range of `0..15`.
 #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 pub enum EdgeType {
     Data(u32),
@@ -133,6 +177,7 @@ impl std::fmt::Display for Edge {
 }
 
 impl<'g> GlobalLocal<'g> {
+    /// Construct a new global local in a root function (no call chain)
     pub fn at_root(local: mir::Local) -> Self {
         Self {
             local,
@@ -140,6 +185,7 @@ impl<'g> GlobalLocal<'g> {
         }
     }
 
+    /// Construct a new global local relative to this call chain.
     pub fn relative(local: mir::Local, location: GlobalLocation<'g>) -> Self {
         Self {
             local,
@@ -159,6 +205,8 @@ impl std::fmt::Display for GlobalLocal<'_> {
     }
 }
 
+/// A [`mir::Local`] but also tracks the precise call chain it is reachable
+/// from.
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
 pub struct GlobalLocal<'g> {
     pub(super) local: mir::Local,
@@ -166,39 +214,50 @@ pub struct GlobalLocal<'g> {
 }
 
 impl<'g> GlobalLocal<'g> {
+    /// Access to the variable name.
     #[inline]
     pub fn local(self) -> mir::Local {
         self.local
     }
 
+    /// Access to the call chain.
     #[inline]
     pub fn location(self) -> Option<GlobalLocation<'g>> {
         self.location
     }
 }
 
-/// Common, parameterized equation type used by the [`GraphResolver`]s
+/// Common structure of equations used for inlining.
 pub type Equation<L> = algebra::Equality<L, DisplayViaDebug<mir::Field>>;
+/// Common structure of a collection of equations used for inlining.
 pub type Equations<L> = Vec<Equation<L>>;
 /// Common, parameterized graph type used in this module
 pub type GraphImpl<'tcx, L> = pg::GraphMap<Node<(L, FnResolution<'tcx>)>, Edge, pg::Directed>;
 
+/// A graph that has its subgraphs inlined (or is in the process of it).
 pub struct InlinedGraph<'tcx, 'g> {
-    pub graph: GraphImpl<'tcx, GlobalLocation<'g>>,
+    /// The global graph
+    pub(super) graph: GraphImpl<'tcx, GlobalLocation<'g>>,
+    /// The global equations
     pub equations: Equations<GlobalLocal<'g>>,
-    pub num_inlined: usize,
-    pub max_call_stack_depth: usize,
+    /// For statistics, how many functions did we inline
+    pub(super) num_inlined: usize,
+    /// For statistics: how deep a calll stack did we inline.
+    pub(super) max_call_stack_depth: usize,
 }
 
 impl<'tcx, 'g> InlinedGraph<'tcx, 'g> {
+    /// Access the actual graph.
     pub fn graph(&self) -> &GraphImpl<'tcx, GlobalLocation<'g>> {
         &self.graph
     }
 
+    /// Access the number of nodes.
     pub fn vertex_count(&self) -> usize {
         self.graph.node_count()
     }
 
+    /// Access the number of edges.
     pub fn edge_count(&self) -> usize {
         self.graph
             .all_edges()
@@ -206,14 +265,17 @@ impl<'tcx, 'g> InlinedGraph<'tcx, 'g> {
             .sum()
     }
 
+    /// How many functions did we inline?
     pub fn inlined_functions_count(&self) -> usize {
         self.num_inlined
     }
 
+    /// What is the maximum depth of call stack we inlined
     pub fn max_call_stack_depth(&self) -> usize {
         self.max_call_stack_depth
     }
 
+    /// Construct the initial graph from a [`regal::Body`]
     pub fn from_body(
         gli: GLI<'g>,
         body_id: BodyId,
@@ -292,6 +354,7 @@ fn to_global_equations<'g>(
         .collect()
 }
 
+/// Add or merge the `weight` to the edge from `source` to `target` (directed).
 pub fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
     g: &mut pg::GraphMap<N, Edge, D>,
     source: N,
