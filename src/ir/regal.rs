@@ -12,20 +12,19 @@ use crate::{
     ana::{
         algebra::{self, Equality, Term},
         df,
+        inline::InlineJudge,
     },
     hir::def_id::LocalDefId,
     mir::{self, BasicBlock, Field, HasLocalDecls, Location},
     rust::{
-        rustc_ast,
-        rustc_hir::{def_id::DefId, BodyId},
-        rustc_index::bit_set::HybridBitSet,
+        rustc_ast, rustc_hir::BodyId, rustc_index::bit_set::HybridBitSet,
         rustc_index::vec::IndexVec,
     },
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
-        DisplayViaDebug, IntoLocalDefId,
+        DisplayViaDebug, FnResolution, IntoLocalDefId,
     },
-    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, TyCtxt,
+    DumpArgs, Either, HashMap, HashSet, TyCtxt,
 };
 
 use std::fmt::{Display, Write};
@@ -97,14 +96,14 @@ impl<L: Display> Display for Target<L> {
 }
 
 #[derive(Debug)]
-pub struct Call<D> {
-    pub function: DefId,
+pub struct Call<'tcx, D> {
+    pub function: FnResolution<'tcx>,
     pub arguments: IndexVec<ArgumentIndex, Option<(mir::Local, D)>>,
     pub return_to: Option<mir::Local>,
     pub ctrl_deps: D,
 }
 
-impl<D> Call<D> {
+impl<'tcx, D> Call<'tcx, D> {
     pub fn argument_locals(&self) -> impl Iterator<Item = mir::Local> + '_ {
         self.arguments
             .iter()
@@ -151,7 +150,7 @@ fn fmt_deps<L: Display>(
     f.write_char('}')
 }
 
-impl<L: Display> Display for Call<Dependencies<L>> {
+impl<'tcx, L: Display> Display for Call<'tcx, Dependencies<L>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char('(')?;
         write_sep(f, ", ", self.arguments.iter(), |elem, f| {
@@ -187,13 +186,13 @@ impl<L> SimpleLocation<L> {
     }
 }
 
-impl<D: std::fmt::Display> std::fmt::Display for SimpleLocation<(D, DefId)> {
+impl<D: std::fmt::Display, O: std::fmt::Display> std::fmt::Display for SimpleLocation<(D, O)> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use SimpleLocation::*;
         match self {
             Return => f.write_str("ret"),
             Argument(a) => write!(f, "{a:?}"),
-            Call((gloc, did)) => write!(f, "{gloc} ({did:?})"),
+            Call((gloc, did)) => write!(f, "{gloc} ({did})"),
         }
     }
 }
@@ -209,14 +208,14 @@ impl<D: std::fmt::Display> std::fmt::Display for SimpleLocation<RelativePlace<D>
     }
 }
 #[derive(Debug)]
-pub struct Body<L> {
-    pub calls: HashMap<L, Call<Dependencies<L>>>,
+pub struct Body<'tcx, L> {
+    pub calls: HashMap<L, Call<'tcx, Dependencies<L>>>,
     pub return_deps: Dependencies<L>,
     pub return_arg_deps: Vec<Dependencies<L>>,
     pub equations: Vec<algebra::Equality<DisplayViaDebug<mir::Local>, DisplayViaDebug<Field>>>,
 }
 
-impl<L: Display + Ord> Display for Body<L> {
+impl<'tcx, L: Display + Ord> Display for Body<'tcx, L> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut ordered = self.calls.iter().collect::<Vec<_>>();
         ordered.sort_by_key(|t| t.0);
@@ -267,8 +266,8 @@ pub fn get_highest_local(body: &mir::Body) -> mir::Local {
     e.0.unwrap_or(mir::RETURN_PLACE)
 }
 
-impl Body<DisplayViaDebug<Location>> {
-    pub fn construct<'tcx, I: IntoIterator<Item = algebra::MirEquation>>(
+impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
+    pub fn construct<I: IntoIterator<Item = algebra::MirEquation>>(
         flow_analysis: df::FlowResults<'_, 'tcx, '_, '_>,
         equations: I,
         tcx: TyCtxt<'tcx>,
@@ -322,11 +321,12 @@ impl Body<DisplayViaDebug<Location>> {
                         .contains_key(&body.terminator_loc(*bb))
                 })
                 .filter_map(|(bb, bbdat)| {
-                    let (function, simple_args, ret) = match bbdat.terminator().as_fn_and_args() {
-                        Ok(p) => p,
-                        Err(AsFnAndArgsErr::NotAFunctionCall) => return None,
-                        Err(e) => panic!("{e:?}"),
-                    };
+                    let (function, simple_args, ret) =
+                        match bbdat.terminator().as_instance_and_args(tcx) {
+                            Ok(p) => p,
+                            Err(AsFnAndArgsErr::NotAFunctionCall) => return None,
+                            Err(e) => panic!("{e:?}"),
+                        };
                     let bbloc = DisplayViaDebug(body.terminator_loc(bb));
 
                     let arguments = IndexVec::from_raw(
@@ -562,22 +562,14 @@ pub fn compute_from_body_id<'tcx>(
     body_id: BodyId,
     tcx: TyCtxt<'tcx>,
     gli: GLI,
-    carries_marker: &df::MarkerCarryingOracle<'tcx, '_>,
-    analysis_control: &'static AnalysisCtrl,
-) -> Body<DisplayViaDebug<Location>> {
+    carries_marker: &InlineJudge<'tcx>,
+) -> Body<'tcx, DisplayViaDebug<Location>> {
     let local_def_id = body_id.into_local_def_id(tcx);
     info!("Analyzing function {}", body_name_pls(tcx, body_id));
     let body_with_facts =
         borrowck_facts::get_simplified_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
-    let flow = df::compute_flow_internal(
-        tcx,
-        gli,
-        body_id,
-        body_with_facts,
-        carries_marker,
-        analysis_control,
-    );
+    let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts, carries_marker);
     if dbg_opts.dump_callee_mir() {
         mir::pretty::write_mir_fn(
             tcx,

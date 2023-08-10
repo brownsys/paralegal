@@ -8,7 +8,7 @@ extern crate pretty;
 
 use std::hash::Hash;
 
-use crate::{ir::IsGlobalLocation, utils::IntoDefId, HashSet, ModelCtrl, TyCtxt};
+use crate::{HashSet, ModelCtrl, TyCtxt};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
@@ -856,7 +856,7 @@ impl ProgramDescription {
     pub fn serialize_forge<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
         &'a self,
         alloc: &'a D,
-        tcx: TyCtxt,
+        _tcx: TyCtxt,
         model_ctrl: &ModelCtrl,
     ) -> DocBuilder<'a, D, A>
     where
@@ -885,15 +885,16 @@ impl ProgramDescription {
             alloc.nil(),
             self.make_label_sigs(alloc),
             alloc.nil(),
-            alloc.lines(
-                self.all_call_sites().into_iter().map(|cs| {
-                    alloc.lines(
-                        [alloc.text("// ").append(cs.build_forge(alloc)).append(": "),
-                                alloc.text("//     ").append(format!("{:?}", tcx.def_path_debug_str(cs.location.innermost_function().into_def_id(tcx)))),
-                                alloc.text("//     ").append(format!("{}", cs.location)),
-                        ])
-                })
-            ),
+            // alloc.lines(
+            //     self.all_call_sites().into_iter().map(|cs| {
+            //         let function = cs.location.innermost_function().into_def_id(tcx);
+
+            //         alloc.lines(
+            //             [cs.build_forge(alloc).append(format!(" @ {}", cs.location)),
+            //                     alloc.text("   called from").append(format!("{} : {}", tcx.def_path_debug_str(function), tcx.fn_sig(function).skip_binder())),
+            //             ].into_iter().map(|l| alloc.text("// ").append(l)))
+            //     })
+            // ),
             alloc.nil(),
             alloc
                 .text("inst ")

@@ -48,6 +48,7 @@ pub mod rust {
     pub extern crate rustc_query_system;
     pub extern crate rustc_serialize;
     pub extern crate rustc_span;
+    pub extern crate rustc_target;
     pub extern crate rustc_type_ir;
     pub use super::rustc_index;
     pub use rustc_type_ir::sty;
@@ -64,6 +65,7 @@ pub mod rust {
     pub use ty::TyCtxt;
 
     pub use hir::def_id::{DefId, LocalDefId};
+    pub use hir::BodyId;
     pub use mir::Location;
 }
 
@@ -95,10 +97,13 @@ pub mod serializers;
 #[macro_use]
 pub mod utils;
 pub mod consts;
+pub mod marker_db;
 
 pub use args::{AnalysisCtrl, Args, DumpArgs, ModelCtrl};
 
 use crate::utils::outfile_pls;
+
+pub use crate::marker_db::MarkerCtx;
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -132,8 +137,6 @@ struct NoopCallbacks {}
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
 
-type RawExternalMarkers = HashMap<String, Vec<desc::MarkerAnnotation>>;
-
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct AdditionalInfo {
     #[serde(with = "crate::serializers::serde_map_via_vec")]
@@ -155,26 +158,12 @@ impl rustc_driver::Callbacks for Callbacks {
         compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        let external_annotations =
-            if let Some(annotation_file) = self.opts.modelctrl().external_annotations() {
-                toml::from_str(
-                    &std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
-                        panic!(
-                            "Could not open file {}/{}",
-                            std::env::current_dir().unwrap().display(),
-                            annotation_file.display()
-                        )
-                    }),
-                )
-                .unwrap()
-            } else {
-                HashMap::new()
-            };
         queries
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
-                let desc = discover::CollectingVisitor::new(tcx, self.opts, &external_annotations).run()?;
+                let marker_ctx = MarkerCtx::new(tcx, self.opts);
+                let desc = discover::CollectingVisitor::new(tcx, self.opts, marker_ctx).run()?;
                 if self.opts.dbg().dump_serialized_flow_graph() {
                     serde_json::to_writer(
                         &mut std::fs::OpenOptions::new()

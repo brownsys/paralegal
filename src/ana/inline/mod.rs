@@ -14,14 +14,9 @@
 
 use std::fmt::Write;
 
-use petgraph::{
-    prelude as pg,
-    visit::{EdgeRef, IntoNodeReferences},
-};
-
 use crate::{
     ana::algebra::{self, Term},
-    hir::{self, BodyId},
+    hir::BodyId,
     ir::{
         flows::CallOnlyFlow,
         global_location::IsGlobalLocation,
@@ -31,251 +26,38 @@ use crate::{
     mir,
     mir::Location,
     rust::hir::def_id::{DefId, LocalDefId},
+    rustc_target::abi::FieldIdx,
     ty,
     utils::{
-        body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, IntoDefId, IntoLocalDefId,
-        Print, RecursionBreakingCache, TinyBitSet,
+        body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, FnResolution, IntoDefId,
+        IntoLocalDefId, Print, RecursionBreakingCache,
     },
-    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, Symbol, TyCtxt,
+    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
 
-use super::df::MarkerCarryingOracle;
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
 
-/// This essentially describes a closure that determines for a given
-/// [`LocalDefId`] if it should be inlined. Originally this was in fact done by
-/// passing a closure, but it couldn't properly satisfy the type checker,
-/// because the selector has to be stored in `fluid_let` variable, which is a
-/// dynamically scoped variable. This means that the type needs to be valid for
-/// a static lifetime, which I believe closures are not.
-///
-/// In particular the way that this works is that values of this interface are
-/// then wrapped with [`RecurseSelector`], which is a flowistry interface that
-/// satisfies [`flowistry::extensions::RecurseSelector`]. The wrapper then
-/// simply dispatches to the [`InlineSelector`].
-///
-/// The reason for the two tiers of selectors is that
-///
-/// - Flowistry is a separate crate and so I wanted a way to control it that
-///   decouples from the specifics of dfpp
-/// - We use the selectors to skip functions with annotations, but I wanted to
-///   keep the construction of inlined flow graphs agnostic to any notion of
-///   annotations. Those are handled by the [`CollectingVisitor`]
-///
-/// The only implementation currently in use for this is
-/// [`SkipAnnotatedFunctionSelector`].
-pub trait Oracle {
-    fn should_inline(&self, did: LocalDefId) -> bool;
-    fn is_semantically_meaningful(&self, did: DefId) -> bool;
-    fn carries_marker(&self, did: DefId) -> bool;
-}
+mod graph;
+mod judge;
 
-impl<T: Oracle> Oracle for std::rc::Rc<T> {
-    fn should_inline(&self, did: LocalDefId) -> bool {
-        self.as_ref().should_inline(did)
-    }
-    fn is_semantically_meaningful(&self, did: DefId) -> bool {
-        self.as_ref().is_semantically_meaningful(did)
-    }
-    fn carries_marker(&self, did: DefId) -> bool {
-        self.as_ref().carries_marker(did)
-    }
-}
+pub use graph::{
+    add_weighted_edge, ArgNum, Edge, EdgeType, Equation, Equations, GlobalLocal, GraphImpl,
+    InlinedGraph, Node,
+};
 
-type ArgNum = u32;
+use petgraph::{
+    prelude as pg,
+    visit::{EdgeRef, IntoNodeReferences},
+};
 
-type Node<C> = regal::SimpleLocation<C>;
+pub use judge::InlineJudge;
 
-impl<C> Node<C> {
-    fn map_call<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Node<C0> {
-        match self {
-            Node::Return => Node::Return,
-            Node::Argument(a) => Node::Argument(*a),
-            Node::Call(c) => Node::Call(f(c)),
-        }
-    }
-}
+type StdNode<'tcx, 'g> = Node<(GlobalLocation<'g>, FnResolution<'tcx>)>;
 
-#[derive(Clone, Eq, PartialEq, Hash, Copy, serde::Serialize, serde::Deserialize)]
-pub struct Edge {
-    data: TinyBitSet,
-    control: bool,
-}
+type EdgeSet<'tcx, 'g> = HashSet<(StdNode<'tcx, 'g>, StdNode<'tcx, 'g>)>;
 
-impl Edge {
-    #[inline]
-    pub fn is_empty(self) -> bool {
-        !self.control && self.data.is_empty()
-    }
-    #[inline]
-    pub fn add_type(&mut self, t: EdgeType) {
-        match t {
-            EdgeType::Control => self.control = true,
-            EdgeType::Data(i) => self.data.set(i),
-        }
-    }
-    #[inline]
-    pub fn empty() -> Self {
-        Self {
-            control: false,
-            data: TinyBitSet::new_empty(),
-        }
-    }
-    #[inline]
-    pub fn merge(&mut self, other: Self) {
-        self.control |= other.control;
-        self.data |= other.data;
-    }
-    #[inline]
-    pub fn into_types_iter(self) -> impl Iterator<Item = EdgeType> {
-        self.data
-            .into_iter_set_in_domain()
-            .map(EdgeType::Data)
-            .chain(self.control.then_some(EdgeType::Control))
-    }
-    #[inline]
-    pub fn count(self) -> u32 {
-        self.data.count() + if self.control { 1 } else { 0 }
-    }
-    #[inline]
-    pub fn remove_type(&mut self, t: EdgeType) -> bool {
-        let changed;
-        match t {
-            EdgeType::Control => {
-                changed = self.control;
-                self.control = false;
-            }
-            EdgeType::Data(i) => {
-                changed = self.data.is_set(i);
-                self.data.clear(i);
-            }
-        }
-        changed
-    }
-    #[inline]
-    pub fn is_data(self) -> bool {
-        !self.data.is_empty()
-    }
-    #[inline]
-    pub fn is_control(self) -> bool {
-        self.control
-    }
-}
-
-impl FromIterator<EdgeType> for Edge {
-    fn from_iter<T: IntoIterator<Item = EdgeType>>(iter: T) -> Self {
-        let mut slf = Self::empty();
-        for i in iter {
-            slf.add_type(i)
-        }
-        slf
-    }
-}
-
-#[derive(Hash, Eq, PartialEq, Clone, Copy)]
-pub enum EdgeType {
-    Data(u32),
-    Control,
-}
-
-impl std::fmt::Display for Edge {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write_sep(
-            f,
-            ", ",
-            self.data
-                .into_iter_set_in_domain()
-                .map(Either::Left)
-                .chain(self.control.then_some(Either::Right(()))),
-            |elem, f| match elem {
-                Either::Left(i) => write!(f, "arg{i}"),
-                Either::Right(()) => write!(f, "ctrl"),
-            },
-        )
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
-pub struct GlobalLocal<'g> {
-    local: mir::Local,
-    location: Option<GlobalLocation<'g>>,
-}
-
-impl<'g> GlobalLocal<'g> {
-    pub fn at_root(local: mir::Local) -> Self {
-        Self {
-            local,
-            location: None,
-        }
-    }
-
-    pub fn relative(local: mir::Local, location: GlobalLocation<'g>) -> Self {
-        Self {
-            local,
-            location: Some(location),
-        }
-    }
-}
-
-impl std::fmt::Display for GlobalLocal<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} @ ", self.local)?;
-        if let Some(loc) = self.location {
-            write!(f, "{}", loc)
-        } else {
-            f.write_str("root")
-        }
-    }
-}
-
-/// Common, parameterized equation type used by the [`GraphResolver`]s
-pub type Equation<L> = algebra::Equality<L, DisplayViaDebug<mir::Field>>;
-pub type Equations<L> = Vec<Equation<L>>;
-/// Common, parameterized graph type used in this module
-pub type GraphImpl<L> = pg::GraphMap<Node<(L, DefId)>, Edge, pg::Directed>;
-
-pub struct InlinedGraph<'g> {
-    graph: GraphImpl<GlobalLocation<'g>>,
-    equations: Equations<GlobalLocal<'g>>,
-    num_inlined: usize,
-    max_call_stack_depth: usize,
-}
-
-impl<'g> InlinedGraph<'g> {
-    pub fn graph(&self) -> &GraphImpl<GlobalLocation<'g>> {
-        &self.graph
-    }
-
-    pub fn vertex_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    pub fn edge_count(&self) -> usize {
-        self.graph
-            .all_edges()
-            .map(|(_, _, w)| w.count() as usize)
-            .sum()
-    }
-
-    pub fn inlined_functions_count(&self) -> usize {
-        self.num_inlined
-    }
-
-    pub fn max_call_stack_depth(&self) -> usize {
-        self.max_call_stack_depth
-    }
-}
-
-type EdgeSet<'g> = HashSet<(
-    Node<(GlobalLocation<'g>, DefId)>,
-    Node<(GlobalLocation<'g>, DefId)>,
-)>;
-
-impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
-    fn edge_has_been_pruned_before(
-        from: Node<(GlobalLocation<'g>, DefId)>,
-        to: Node<(GlobalLocation<'g>, DefId)>,
-    ) -> bool {
+impl<'tcx, 'g> Inliner<'tcx, 'g> {
+    fn edge_has_been_pruned_before(from: StdNode<'tcx, 'g>, to: StdNode<'tcx, 'g>) -> bool {
         match (to, from) {
             (SimpleLocation::Call(c1), SimpleLocation::Call(c2)) => {
                 c1.0.outermost() == c2.0.outermost()
@@ -285,7 +67,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
-    fn find_prunable_edges(graph: &InlinedGraph<'g>) -> EdgeSet<'g> {
+    fn find_prunable_edges(graph: &InlinedGraph<'tcx, 'g>) -> EdgeSet<'tcx, 'g> {
         let graph = &graph.graph;
         graph
             .all_edges()
@@ -304,9 +86,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// that `r = *a.foo`.
     fn prune_impossible_edges(
         &self,
-        graph: &mut InlinedGraph<'g>,
+        graph: &mut InlinedGraph<'tcx, 'g>,
         name: Symbol,
-        edges_to_prune: &EdgeSet<'g>,
+        edges_to_prune: &EdgeSet<'tcx, 'g>,
         id: LocalDefId,
     ) {
         if edges_to_prune.is_empty() {
@@ -335,15 +117,16 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 })
             );
 
-            let locals_graph = algebra::graph::new(equations);
+            let locals_graph =
+                algebra::graph::Graph::new(equations, DisplayViaDebug(id.to_def_id()));
             if self.dbg_ctrl.dump_locals_graph() {
                 let f = dump_file_pls(self.tcx, id, "locals-graph.gv").unwrap();
-                algebra::graph::dump(f, &locals_graph, |_| false, |_| false);
+                locals_graph.dump(f, |_| false, |_| false);
             }
 
             for &(from, to) in edges_to_prune {
                 if let Some(weight) = graph.edge_weight_mut(from, to) {
-                    for idx in weight.data.into_iter_set_in_domain() {
+                    for idx in weight.into_iter_data() {
                         let to_target = self.node_to_local(&to, idx);
                         // This can be optimized (directly create function)
                         let targets = match from {
@@ -374,11 +157,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                                 f.write_char('}')
                             })
                         );
-                        let is_reachable = algebra::graph::reachable(
-                            to_target,
-                            |to| targets.contains(&to),
-                            &locals_graph,
-                        );
+                        let is_reachable =
+                            locals_graph.reachable(to_target, |to| targets.contains(&to));
 
                         if let Some((_visited, t)) = is_reachable {
                             debug!(
@@ -387,7 +167,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                             );
                         } else {
                             debug!("Found unreproducible edge {from} -> {to} (idx {idx})");
-                            weight.data.clear(idx)
+                            weight.remove_type(EdgeType::Data(idx));
                         }
                     }
                     if weight.is_empty() {
@@ -399,242 +179,107 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     }
 }
 
-impl<'g> InlinedGraph<'g> {
-    fn from_body(
-        gli: GLI<'g>,
-        body_id: BodyId,
-        body: &regal::Body<DisplayViaDebug<Location>>,
-        tcx: TyCtxt,
-    ) -> Self {
-        time("Graph Construction From Regal Body", || {
-            let equations = to_global_equations(&body.equations, body_id, gli);
-            let mut gwr = InlinedGraph {
-                equations,
-                graph: Default::default(),
-                num_inlined: 0,
-                max_call_stack_depth: 0,
-            };
-            let g = &mut gwr.graph;
-            let call_map = body
-                .calls
-                .iter()
-                .map(|(loc, call)| (loc, call.function))
-                .collect::<HashMap<_, _>>();
-            let return_node = g.add_node(Node::Return);
-
-            let mut add_dep_edges =
-                |to, idx, deps: &HashSet<regal::Target<DisplayViaDebug<Location>>>| {
-                    for d in deps {
-                        use regal::Target;
-                        let from = match d {
-                            Target::Call(c) => regal::SimpleLocation::Call((
-                                gli.globalize_location(**c, body_id),
-                                *call_map.get(c).unwrap_or_else(|| {
-                                    panic!(
-                                        "Expected to find call at {c} in function {}",
-                                        tcx.def_path_debug_str(body_id.into_def_id(tcx))
-                                    )
-                                }),
-                            )),
-                            Target::Argument(a) => regal::SimpleLocation::Argument(*a),
-                        };
-                        if g.contains_edge(from, to) {
-                            g[(from, to)].add_type(idx)
-                        } else {
-                            let mut edge = Edge::empty();
-                            edge.add_type(idx);
-                            g.add_edge(from, to, edge);
-                        }
-                    }
-                };
-
-            for (&loc, call) in body.calls.iter() {
-                let n =
-                    SimpleLocation::Call((gli.globalize_location(*loc, body_id), call.function));
-                for (idx, deps) in call.arguments.iter().enumerate() {
-                    if let Some((_, deps)) = deps {
-                        add_dep_edges(n, EdgeType::Data(idx as u32), deps)
-                    }
-                }
-                add_dep_edges(n, EdgeType::Control, &call.ctrl_deps);
-            }
-            add_dep_edges(return_node, EdgeType::Data(0_u32), &body.return_deps);
-            for (idx, deps) in body.return_arg_deps.iter().enumerate() {
-                add_dep_edges(
-                    SimpleLocation::Argument(idx.into()),
-                    EdgeType::Data(0_u32),
-                    deps,
-                );
-            }
-
-            gwr
-        })
-    }
-}
-
-type BodyCache = Cache<BodyId, regal::Body<DisplayViaDebug<Location>>>;
+type BodyCache<'tcx> = Cache<BodyId, regal::Body<'tcx, DisplayViaDebug<Location>>>;
 
 /// Essentially just a bunch of caches of analyses.
-pub struct Inliner<'tcx, 'g, 's> {
+pub struct Inliner<'tcx, 'g> {
     /// Memoized graphs created from single-procedure analyses
-    base_memo: BodyCache,
+    base_memo: BodyCache<'tcx>,
     /// Memoized graphs that have all their callees inlined. Unlike `base_memo`
     /// this has to be recursion breaking, since a function may call itself
     /// (possibly transitively).
-    inline_memo: RecursionBreakingCache<BodyId, InlinedGraph<'g>>,
-    /// Makes choices base on labels
-    oracle: &'s (dyn Oracle + 's),
+    inline_memo: RecursionBreakingCache<BodyId, InlinedGraph<'tcx, 'g>>,
     tcx: TyCtxt<'tcx>,
     gli: GLI<'g>,
     ana_ctrl: &'static AnalysisCtrl,
     dbg_ctrl: &'static DumpArgs,
-    marker_carrying: MarkerCarryingOracle<'tcx, 's>,
+    marker_carrying: InlineJudge<'tcx>,
 }
 
-/// Globalize all locations mentioned in these equations.
-fn to_global_equations<'g>(
-    eqs: &Equations<DisplayViaDebug<mir::Local>>,
-    _body_id: BodyId,
-    _gli: GLI<'g>,
-) -> Equations<GlobalLocal<'g>> {
-    eqs.iter()
-        .map(|eq| {
-            eq.map_bases(|target| GlobalLocal {
-                local: **target,
-                location: None,
-            })
-        })
-        .collect()
-}
-
-pub fn add_weighted_edge<N: petgraph::graphmap::NodeTrait, D: petgraph::EdgeType>(
-    g: &mut pg::GraphMap<N, Edge, D>,
-    source: N,
-    target: N,
-    weight: Edge,
-) {
-    if let Some(prior_weight) = g.edge_weight_mut(source, target) {
-        prior_weight.merge(weight)
-    } else {
-        g.add_edge(source, target, weight);
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-struct EdgesClassifier {
-    has_control_only: bool,
-    has_data_only: bool,
-    has_mix: bool,
-}
-
-impl std::iter::FromIterator<Edge> for EdgesClassifier {
-    fn from_iter<T: IntoIterator<Item = Edge>>(iter: T) -> Self {
-        iter.into_iter().fold(Self::default(), |mut slf, e| {
-            slf.merge_edge(e);
-            slf
-        })
-    }
-}
-
-impl EdgesClassifier {
-    fn merge_edge(&mut self, e: Edge) {
-        self.has_control_only |= !e.is_data() && e.is_control();
-        self.has_data_only |= !e.is_control() && e.is_data();
-        self.has_mix |= e.is_control() && e.is_data();
-    }
-
-    fn has_data(self) -> bool {
-        self.has_data_only || self.has_mix
-    }
-
-    fn has_control(self) -> bool {
-        self.has_control_only || self.has_mix
-    }
-
-    fn has_any_edge(self) -> bool {
-        self.has_control_only || self.has_data_only || self.has_mix
-    }
-}
-
-/// Check that this node is not "significant" in this graph as defined by the
-/// policy provided.
-///
-/// See what significance means in the documentation of
-/// [`InconsequentialCallRemovalPolicy`](crate::args::InconsequentialCallRemovalPolicy)
-fn node_is_insignificant<N: petgraph::graphmap::NodeTrait + Unpin>(
-    g: &pg::GraphMap<N, Edge, pg::Directed>,
-    n: N,
-    policy: crate::args::InconsequentialCallRemovalPolicy,
-    ctrl_flow_context_cache: &Cache<N, HashSet<N>>,
-) -> Option<(EdgesClassifier, EdgesClassifier)> {
-    let get_ctrl_flow_context = |node| {
-        ctrl_flow_context_cache.get(node, |_| {
-            g.edges_directed(node, petgraph::Incoming)
-                .filter(|(_, _, w)| w.is_control())
-                .map(|t| t.0)
-                .collect()
-        })
-    };
-    // XXX verify that if the incoming edge is ctrl,
-    // it's still safe to remove
-    let in_classifier: EdgesClassifier = g
-        .edges_directed(n, pg::Direction::Incoming)
-        .map(|t| *t.2)
-        .collect();
-    if !in_classifier.has_data() {
-        return None;
-    }
-    let my_ctrl_flow_context = get_ctrl_flow_context(n);
-    let mut children_have_same_ctrl_context = true;
-    let out_classifier: EdgesClassifier = g
-        .edges_directed(n, pg::Direction::Outgoing)
-        .map(|(_, to, weight)| {
-            // Specifically use '&&' here to allow short circuiting
-            children_have_same_ctrl_context = children_have_same_ctrl_context
-                && my_ctrl_flow_context.is_subset(get_ctrl_flow_context(to));
-            *weight
-        })
-        .collect();
-    // Since the conditions tested here are all already simple booleans I use
-    // '|' an '&' instead of the short circuiting '&&' and '||' which introduces
-    // control flow and is probably slower.
-    //
-    // probably side effecting if it doesn't
-    (out_classifier.has_any_edge()
-        // either we don't have ctrl influence or the policy allows its removal
-        & (!out_classifier.has_control() | policy.remove_ctrl_flow_source())
-        // going from control to data is invalid
-        & !(in_classifier.has_control_only & out_classifier.has_data() & !children_have_same_ctrl_context))
-    .then_some((in_classifier, out_classifier))
-}
-
-fn is_part_of_async_desugar<L: Copy + Ord + std::hash::Hash>(
-    lang_items: &hir::LanguageItems,
-    node: Node<(L, DefId)>,
-    graph: &GraphImpl<L>,
-) -> bool {
+fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Display>(
+    tcx: TyCtxt<'tcx>,
+    node: Node<(L, FnResolution<'tcx>)>,
+    graph: &GraphImpl<'tcx, L>,
+) -> Option<Option<algebra::Operator<DisplayViaDebug<FieldIdx>>>> {
+    let lang_items = tcx.lang_items();
+    // We use `?` here because if any of these functions aren't defined we can
+    // just abort.
     let mut seen = [
-        (lang_items.future_poll_fn(), false),
-        (lang_items.get_context_fn(), false),
-        (lang_items.into_future_fn(), false),
-        (lang_items.new_unchecked_fn(), false),
-    ]
-    .into_iter()
-    .collect::<HashMap<_, _>>();
+        (lang_items.get_context_fn()?, None, false),
+        (
+            lang_items
+                .into_future_fn()
+                .and_then(|f| tcx.trait_of_item(f))?,
+            None,
+            false,
+        ),
+        // I used to add a
+        // algebra::Operator::MemberOf(mir::Field::from_usize(0).into())
+        // here as well, but while that is technically correct in erms
+        // of what this function does, the new encoding for `poll`
+        // strips that away before calling the closure, so now I just
+        // don't. Probably cleaner would be to change the wrapping for
+        // `poll` but I'm lazy
+        (
+            lang_items.new_unchecked_fn()?,
+            Some(algebra::Operator::RefOf),
+            false,
+        ),
+    ];
+    let mut poll_fn_seen = false;
+    let poll_fn_wrap = Some(algebra::Operator::Downcast(0));
     let mut queue = vec![node];
+    let mut iterations = 0;
+    let mut wrap_needed = None;
+
+    // This complex abomination does a few things at once. Starting from the
+    // given node it explores the neigbors in turn to see if, fanning out, we
+    // find the entire pattern (all functions from `seen` *and* a `poll` style
+    // function).
+    //
+    // It tracks which functions it has seen by setting the booleans in `seen`
+    // to true. No node is visited twice. We also have `wrap_needed` which is
+    // set on the first iteration to the wrapping value stored for that
+    // function. The wrap is a projection in our algebra that encapsulates the
+    // behavior of the `node` (which will be replaced by this "algebraic
+    // interpretation").
+    //
+    // Dangers: A `poll` style function here is just matched as some closure. In
+    // theory it should be a special closure with a particular type. However
+    // since we match on the entire pattern only a function that is surrpounded
+    // by all other async-desugaring operators would ever be considered
+    // appropriate here so it is very unlikely to trigger for any non-async
+    // desugared closure. Perhaps important to mentionhere too is that in the
+    // pattern we look for the closure is in the middle of the other nodes. So
+    // if by chance a closure in the periphery of such a pattern started to
+    // match, the search over the pattern sould be abandoned and `None` returned
+    // as soon as the "actual" `poll` style closure is encountered (because the
+    // `poll` style function would already be marked as seen).
+
     while let Some(node) = queue.pop() {
-        if let SimpleLocation::Call((_, def_id)) = node {
-            if let Some(was_seen) = seen.get_mut(&Some(def_id)) {
-                if *was_seen {
-                    continue;
-                }
-                *was_seen = true;
-                queue.extend(graph.neighbors_directed(node, petgraph::Direction::Incoming));
-                queue.extend(graph.neighbors_directed(node, petgraph::Direction::Outgoing))
-            }
+        iterations += 1;
+        if let SimpleLocation::Call((_, inst)) = node
+            && let maybe_resolved_trait = tcx.impl_of_method(inst.def_id()).and_then(|impl_| tcx.trait_id_of_impl(impl_))
+            && let Some((wrap, was_seen)) = seen.iter_mut().find(|(k, _, _)| *k == inst.def_id() || Some(*k) == maybe_resolved_trait).map(|(_, w, t)| (&*w, t))
+                .or_else(|| {
+                    tcx.is_closure(inst.def_id()).then_some((&poll_fn_wrap, &mut poll_fn_seen))
+                })
+            && !*was_seen
+        {
+            wrap_needed.get_or_insert(*wrap);
+            *was_seen = true;
+            queue.extend(graph.neighbors_directed(node, petgraph::Direction::Incoming));
+            queue.extend(graph.neighbors_directed(node, petgraph::Direction::Outgoing))
+        } else if iterations > 0 {
+            debug!("{node} did not belong to pattern");
         }
     }
-    seen.values().all(|v| *v)
+    if poll_fn_seen || seen.iter().any(|v| v.2) {
+        debug!("Saw some async desugar pattern around node {node} in {iterations} iterations: \n   poll: {poll_fn_seen} {}", Print(|f| write_sep(f, "", seen, |elem, f| write!(f, "\n   {:?}: {}", elem.0, elem.2))))
+    }
+    (poll_fn_seen && seen.iter().all(|v| v.2))
+        .then_some(wrap_needed)
+        .flatten()
 }
 
 enum InlineAction {
@@ -647,23 +292,22 @@ enum DropAction {
     WrapReturn(Vec<algebra::Operator<DisplayViaDebug<mir::Field>>>),
 }
 
-impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
+impl<'tcx, 'g> Inliner<'tcx, 'g> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         gli: GLI<'g>,
-        recurse_selector: &'s (dyn Oracle + 's),
+        marker_ctx: MarkerCtx<'tcx>,
         ana_ctrl: &'static AnalysisCtrl,
         dbg_ctrl: &'static DumpArgs,
     ) -> Self {
         Self {
             tcx,
             gli,
-            oracle: recurse_selector,
             base_memo: Default::default(),
             inline_memo: Default::default(),
             ana_ctrl,
             dbg_ctrl,
-            marker_carrying: MarkerCarryingOracle::new(recurse_selector, tcx),
+            marker_carrying: InlineJudge::new(marker_ctx, tcx, ana_ctrl),
         }
     }
 
@@ -679,10 +323,10 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// Compute a procedure graph for this `body_id` (memoized). Actual
     /// computation performed by [`regal::compute_from_body_id`] and
     /// [`ProcedureGraph::from`]
-    fn get_procedure_graph<'a: 's>(
+    fn get_procedure_graph<'a>(
         &'a self,
         body_id: BodyId,
-    ) -> &regal::Body<DisplayViaDebug<Location>> {
+    ) -> &regal::Body<'tcx, DisplayViaDebug<Location>> {
         self.base_memo.get(body_id, |bid| {
             regal::compute_from_body_id(
                 self.dbg_ctrl,
@@ -690,18 +334,17 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 self.tcx,
                 self.gli,
                 &self.marker_carrying,
-                self.ana_ctrl,
             )
         })
     }
 
     /// Compute an inlined graph for this `body_id` (memoized)
-    pub fn get_inlined_graph(&self, body_id: BodyId) -> Option<&InlinedGraph<'g>> {
+    pub fn get_inlined_graph(&self, body_id: BodyId) -> Option<&InlinedGraph<'tcx, 'g>> {
         self.inline_memo.get(body_id, |bid| self.inline_graph(bid))
     }
 
     /// Convenience wrapper around [`Self::get_inlined_graph`]
-    fn get_inlined_graph_by_def_id(&self, def_id: LocalDefId) -> Option<&InlinedGraph<'g>> {
+    fn get_inlined_graph_by_def_id(&self, def_id: LocalDefId) -> Option<&InlinedGraph<'tcx, 'g>> {
         let hir = self.tcx.hir();
         let body_id = match hir.maybe_body_owned_by(def_id) {
             None => {
@@ -722,12 +365,12 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         gli: &'a GliAt<'g>,
     ) -> impl Iterator<Item = Equation<GlobalLocal<'g>>> + 'a {
         equations.iter().map(move |eq| {
-            eq.map_bases(|base| GlobalLocal {
-                local: base.local,
-                location: Some(
-                    base.location
+            eq.map_bases(|base| {
+                GlobalLocal::relative(
+                    base.local(),
+                    base.location()
                         .map_or_else(|| gli.as_global_location(), |prior| gli.relativize(prior)),
-                ),
+                )
             })
         })
     }
@@ -736,7 +379,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn get_call(
         &self,
         loc: GlobalLocation<'g>,
-    ) -> &regal::Call<regal::Dependencies<DisplayViaDebug<mir::Location>>> {
+    ) -> &regal::Call<'tcx, regal::Dependencies<DisplayViaDebug<mir::Location>>> {
         let body = self.get_procedure_graph(loc.innermost_function());
         &body.calls[&DisplayViaDebug(loc.innermost_location())]
     }
@@ -744,11 +387,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// Calculate the global local that corresponds to input index `idx` at this `node`.
     ///
     /// If the node is not a [`SimpleLocation::Call`], then the index is ignored.
-    fn node_to_local(
-        &self,
-        node: &Node<(GlobalLocation<'g>, DefId)>,
-        idx: ArgNum,
-    ) -> GlobalLocal<'g> {
+    fn node_to_local(&self, node: &StdNode<'tcx, 'g>, idx: ArgNum) -> GlobalLocal<'g> {
         match node {
             SimpleLocation::Return => GlobalLocal::at_root(mir::RETURN_PLACE),
             SimpleLocation::Argument(idx) => GlobalLocal::at_root((*idx).into()),
@@ -776,70 +415,19 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         })
     }
 
-    fn remove_inconsequential_calls(&self, gwr: &mut InlinedGraph<'g>) {
-        let remove_calls_policy = self.ana_ctrl.remove_inconsequential_calls();
-        let g = &mut gwr.graph;
-        let ctrl_flow_context_cache = Default::default();
-        for (n, (_in_classifier, _out_classifier)) in g
-            .nodes()
-            .filter_map(|n|
-                // The node has to be not semantically meaningful (e.g. no
-                // label), and it has to have neighbors before and after,
-                // because otherwise it's likely an I/O data source or sink
-                if matches!(n, SimpleLocation::Call((loc, defid))
-                    if loc.is_at_root()
-                        && !self.oracle.is_semantically_meaningful(defid)
-                        //&& Some(defid) != self.tcx.lang_items().from_generator_fn() 
-                        && defid.as_local().map_or(true, |ldid| !self.oracle.should_inline(ldid))) {
-                    node_is_insignificant(g, n, remove_calls_policy, &ctrl_flow_context_cache).map(|cls| (n, cls))
-                } else {
-                    None
-                })
-            .collect::<Vec<_>>()
-        {
-            for from in g
-                .edges_directed(n, pg::Direction::Incoming)
-                .filter_map(|(from, _, weight)|
-                    // invariant: The selector before ensures that if we inline
-                    // with control, the node below is already in the same
-                    // control flow scope
-                    weight.is_data().then_some(from))
-                .collect::<Vec<_>>()
-            {
-                for (to, weight) in g
-                    .edges_directed(n, pg::Direction::Outgoing)
-                    .map(|(_, to, weight)| (to, *weight))
-                    .collect::<Vec<_>>()
-                {
-                    add_weighted_edge(g, from, to, weight);
-                }
-            }
-            g.remove_node(n);
-        }
-    }
-
     fn classify_special_function_handling(
         &self,
         function: DefId,
-        id: Node<(GlobalLocation<'g>, DefId)>,
-        g: &GraphImpl<GlobalLocation<'g>>,
+        id: StdNode<'tcx, 'g>,
+        g: &GraphImpl<'tcx, GlobalLocation<'g>>,
     ) -> Option<DropAction> {
-        let language_items = self.tcx.lang_items();
-        if self.ana_ctrl.drop_poll() && is_part_of_async_desugar(language_items, id, g) {
-            Some(if Some(function) == language_items.new_unchecked_fn() {
-                // I used to add a
-                // algebra::Operator::MemberOf(mir::Field::from_usize(0).into())
-                // here as well, but while that is technically correct in erms
-                // of what this function does, the new encoding for `poll`
-                // strips that away before calling the closure, so now I just
-                // don't. Probably cleaner would be to change the wrapping for
-                // `poll` but I'm lazy
-                DropAction::WrapReturn(vec![algebra::Operator::RefOf])
-            } else if Some(function) == language_items.future_poll_fn() {
-                DropAction::WrapReturn(vec![algebra::Operator::Downcast(0)])
-            } else {
-                DropAction::None
-            })
+        if self.ana_ctrl.drop_poll()
+            && let Some(maybe_wrap) = is_part_of_async_desugar(self.tcx, id, g) {
+                Some(if let Some(wrap) = maybe_wrap {
+                    DropAction::WrapReturn(vec![wrap])
+                } else {
+                    DropAction::None
+                })
         } else if self.ana_ctrl.drop_clone() && self.is_clone_fn(function) {
             Some(DropAction::WrapReturn(vec![algebra::Operator::RefOf]))
         } else {
@@ -847,7 +435,11 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         }
     }
 
-    fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'g>, body_id: BodyId) -> bool {
+    fn try_inline_as_async_fn(
+        &self,
+        i_graph: &mut InlinedGraph<'tcx, 'g>,
+        body_id: BodyId,
+    ) -> bool {
         let local_def_id = body_id.into_local_def_id(self.tcx);
         let body_with_facts =
             borrowck_facts::get_simplified_body_with_borrowck_facts(self.tcx, local_def_id);
@@ -902,8 +494,8 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             .iter_mut()
             .flat_map(|eq| [&mut eq.rhs, &mut eq.lhs])
         {
-            assert!(term.base.location.is_none());
-            if term.base.local == mir::RETURN_PLACE {
+            assert!(term.base.location().is_none());
+            if term.base.local() == mir::RETURN_PLACE {
                 term.base.local = new_closure_local;
             }
         }
@@ -942,14 +534,14 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             equations: eqs,
             num_inlined,
             max_call_stack_depth,
-        }: &mut InlinedGraph<'g>,
+        }: &mut InlinedGraph<'tcx, 'g>,
         caller_function: BodyId,
         inlining_target: LocalDefId,
-        incoming: &[(SimpleLocation<(GlobalLocation<'g>, DefId)>, Edge)],
-        outgoing: &[(SimpleLocation<(GlobalLocation<'g>, DefId)>, Edge)],
+        incoming: &[(StdNode<'tcx, 'g>, Edge)],
+        outgoing: &[(StdNode<'tcx, 'g>, Edge)],
         arguments: &[Option<mir::Local>],
         return_to: Option<mir::Local>,
-        queue_for_pruning: &mut EdgeSet<'g>,
+        queue_for_pruning: &mut EdgeSet<'tcx, 'g>,
         root_location: GlobalLocation<'g>,
     ) {
         let grw_to_inline =
@@ -1003,7 +595,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         let to_inline = &grw_to_inline.graph;
 
         let mut connect_to =
-            |g: &mut GraphImpl<_>, source, target, weight: Edge, pruning_required| {
+            |g: &mut GraphImpl<'tcx, _>, source, target, weight: Edge, pruning_required| {
                 let mut add_edge = |source, register_for_pruning| {
                     debug!("Connecting {source} -> {target}");
                     if register_for_pruning {
@@ -1059,9 +651,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     fn perform_subfunction_inlining(
         &self,
         proc_g: &regal::Body<DisplayViaDebug<Location>>,
-        i_graph: &mut InlinedGraph<'g>,
+        i_graph: &mut InlinedGraph<'tcx, 'g>,
         body_id: BodyId,
-    ) -> EdgeSet<'g> {
+    ) -> EdgeSet<'tcx, 'g> {
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
         let mut queue_for_pruning = HashSet::new();
         if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, body_id) {
@@ -1076,14 +668,16 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
             })
             .filter_map(|(id, location, function)| {
                 if recursive_analysis_enabled {
-                    if let Some(ac) =
-                        self.classify_special_function_handling(*function, id, &i_graph.graph)
-                    {
+                    debug!("Recursive analysis enabled");
+                    if let Some(ac) = self.classify_special_function_handling(
+                        function.def_id(),
+                        id,
+                        &i_graph.graph,
+                    ) {
                         return Some((id, *location, InlineAction::Drop(ac)));
                     }
-                    if let Some(local_id) = function.as_local()
-                        && self.oracle.should_inline(local_id)
-                        && (!self.ana_ctrl.avoid_inlining() || self.marker_carrying.body_carries_marker(local_id))
+                    if let Some(local_id) = function.def_id().as_local()
+                        && self.marker_carrying.should_inline(*function)
                     {
                         debug!("Inlining {function:?}");
                         return Some((id, *location, InlineAction::SimpleInline(local_id)));
@@ -1092,7 +686,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                 let local_as_global = GlobalLocal::at_root;
                 let call = self.get_call(*location);
                 debug!("Abstracting {function:?}");
-                let fn_sig = self.tcx.fn_sig(function).skip_binder().skip_binder();
+                let fn_sig = function.sig(self.tcx).skip_binder();
                 let writeables = Self::writeable_arguments(&fn_sig)
                     .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
                     .chain(call.return_to.into_iter())
@@ -1148,7 +742,9 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
                     let incoming_closure = i_graph
                         .graph
                         .edges_directed(idx, pg::Direction::Incoming)
-                        .filter_map(|(from, _, weight)| weight.data.is_set(0).then_some(from))
+                        .filter_map(|(from, _, weight)| {
+                            weight.has_type(EdgeType::Data(0)).then_some(from)
+                        })
                         .collect::<Vec<_>>();
                     let outgoing = i_graph
                         .graph
@@ -1193,7 +789,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
     /// In spite of the name of this function it not only inlines the graph but
     /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
     /// it ([`to_global_graph`]).
-    fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'g> {
+    fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'tcx, 'g> {
         let proc_g = self.get_procedure_graph(body_id);
         let mut gwr = InlinedGraph::from_body(self.gli, body_id, proc_g, self.tcx);
 
@@ -1218,7 +814,7 @@ impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
         });
 
         if self.ana_ctrl.remove_inconsequential_calls().is_enabled() {
-            self.remove_inconsequential_calls(&mut gwr);
+            panic!("Removing inconsequential calls is no longer supported");
         }
 
         if self.dbg_ctrl.dump_global_equations() {
@@ -1277,12 +873,12 @@ fn dump_dot_graph<W: std::io::Write>(mut w: W, g: &InlinedGraph) -> std::io::Res
     )
 }
 
-impl<'tcx, 'g, 's> Inliner<'tcx, 'g, 's> {
+impl<'tcx, 'g> Inliner<'tcx, 'g> {
     /// Turn the output of the inliner into the format the rest of the dfpp pipeline
     /// understands.
     pub fn to_call_only_flow<A: FnMut(ArgNum) -> GlobalLocation<'g>>(
         &self,
-        InlinedGraph { graph: g, .. }: &InlinedGraph<'g>,
+        InlinedGraph { graph: g, .. }: &InlinedGraph<'tcx, 'g>,
         mut mk_arg: A,
     ) -> crate::ir::CallOnlyFlow<GlobalLocation<'g>> {
         let mut location_dependencies = HashMap::new();

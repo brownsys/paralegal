@@ -2,7 +2,6 @@
 
 extern crate smallvec;
 
-use hir::def::Res;
 use smallvec::SmallVec;
 
 use crate::{
@@ -11,13 +10,16 @@ use crate::{
         ast,
         hir::{
             self,
+            def::Res,
             def_id::{DefId, LocalDefId},
             hir_id::HirId,
             BodyId,
         },
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_data_structures::fx::{FxHashMap, FxHashSet},
+        rustc_data_structures::intern::Interned,
         rustc_span::symbol::Ident,
+        rustc_target::spec::abi::Abi,
         ty,
     },
     Either, HashMap, HashSet, Symbol, TyCtxt,
@@ -89,24 +91,27 @@ impl MetaItemMatch for ast::Attribute {
 
 /// Extension trait for [`ty::Ty`]. This lets us implement methods on
 /// [`ty::Ty`]. [`Self`] is only ever supposed to be instantiated as [`ty::Ty`].
-pub trait TyExt {
+pub trait TyExt: Sized {
     /// Extract a `DefId` if this type references an object that has one. This
     /// is true for most user defined types, including types form the standard
     /// library, but not builtin types, such as `u32`, arrays or ad-hoc types
     /// such as function pointers.
     ///
     /// Use with caution, this function might not be exhaustive (yet).
-    fn defid(self) -> Option<DefId>;
+    fn defid(self) -> Option<DefId> {
+        self.defid_ref().copied()
+    }
+    fn defid_ref(&self) -> Option<&DefId>;
 }
 
 impl<'tcx> TyExt for ty::Ty<'tcx> {
-    fn defid(self) -> Option<DefId> {
+    fn defid_ref(&self) -> Option<&DefId> {
         match self.kind() {
-            ty::TyKind::Adt(def, _) => Some(def.did()),
+            ty::TyKind::Adt(ty::AdtDef(Interned(ty::AdtDefData { did, .. }, _)), _) => Some(did),
             ty::TyKind::Foreign(did)
             | ty::TyKind::FnDef(did, _)
             | ty::TyKind::Closure(did, _)
-            | ty::TyKind::Generator(did, _, _) => Some(*did),
+            | ty::TyKind::Generator(did, _, _) => Some(did),
             _ => None,
         }
     }
@@ -175,6 +180,74 @@ impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+pub enum FnResolution<'tcx> {
+    Final(ty::Instance<'tcx>),
+    Partial(DefId),
+}
+
+impl<'tcx> PartialOrd for FnResolution<'tcx> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use FnResolution::*;
+        match (self, other) {
+            (Final(_), Partial(_)) => Some(std::cmp::Ordering::Greater),
+            (Partial(_), Final(_)) => Some(std::cmp::Ordering::Less),
+            (Partial(slf), Partial(otr)) => slf.partial_cmp(otr),
+            (Final(slf), Final(otr)) => match slf.def.partial_cmp(&otr.def) {
+                Some(std::cmp::Ordering::Equal) => slf.substs.partial_cmp(otr.substs),
+                result => result,
+            },
+        }
+    }
+}
+
+impl<'tcx> Ord for FnResolution<'tcx> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl<'tcx> FnResolution<'tcx> {
+    pub fn def_id(self) -> DefId {
+        match self {
+            FnResolution::Final(f) => f.def_id(),
+            FnResolution::Partial(p) => p,
+        }
+    }
+
+    pub fn sig(self, tcx: TyCtxt<'tcx>) -> ty::PolyFnSig {
+        match self {
+            FnResolution::Final(sub) => {
+                let ty = sub.ty(tcx, ty::ParamEnv::reveal_all());
+                if ty.is_closure() {
+                    sub.substs.as_closure().sig()
+                } else if ty.is_generator() {
+                    let gen_sig = sub.substs.as_generator().sig();
+                    ty::Binder::dummy(ty::FnSig {
+                        inputs_and_output: tcx
+                            .mk_type_list(&[gen_sig.resume_ty, gen_sig.return_ty]),
+                        c_variadic: false,
+                        unsafety: hir::Unsafety::Normal,
+                        abi: Abi::Rust,
+                    })
+                } else {
+                    ty.fn_sig(tcx)
+                }
+            }
+            FnResolution::Partial(p) => tcx.fn_sig(p).skip_binder(),
+        }
+    }
+}
+
+impl<'tcx> std::fmt::Display for FnResolution<'tcx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FnResolution::Final(sub) => std::fmt::Debug::fmt(sub, f),
+            FnResolution::Partial(p) => std::fmt::Debug::fmt(p, f),
+        }
+    }
+}
+
 /// A simplified version of the argument list that is stored in a
 /// `TerminatorKind::Call`.
 ///
@@ -201,14 +274,38 @@ pub type SimplifiedArguments<'tcx> = Vec<Option<Place<'tcx>>>;
 pub trait AsFnAndArgs<'tcx> {
     fn as_fn_and_args(
         &self,
-    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>>;
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>> {
+        self.as_instance_and_args(tcx)
+            .map(|(inst, args, ret)| (inst.def_id(), args, ret))
+    }
+
+    fn as_instance_and_args(
+        &self,
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<
+        (
+            FnResolution<'tcx>,
+            SimplifiedArguments<'tcx>,
+            mir::Place<'tcx>,
+        ),
+        AsFnAndArgsErr<'tcx>,
+    >;
 }
 
 impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
-    fn as_fn_and_args(
+    fn as_instance_and_args(
         &self,
-    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>> {
-        self.kind.as_fn_and_args()
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<
+        (
+            FnResolution<'tcx>,
+            SimplifiedArguments<'tcx>,
+            mir::Place<'tcx>,
+        ),
+        AsFnAndArgsErr<'tcx>,
+    > {
+        self.kind.as_instance_and_args(tcx)
     }
 }
 
@@ -218,12 +315,21 @@ pub enum AsFnAndArgsErr<'tcx> {
     NotFunctionType(ty::TyKind<'tcx>),
     NotValueLevelConstant(ty::Const<'tcx>),
     NotAFunctionCall,
+    InstanceResolutionErr,
 }
 
 impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
-    fn as_fn_and_args(
+    fn as_instance_and_args(
         &self,
-    ) -> Result<(DefId, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>> {
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<
+        (
+            FnResolution<'tcx>,
+            SimplifiedArguments<'tcx>,
+            mir::Place<'tcx>,
+        ),
+        AsFnAndArgsErr<'tcx>,
+    > {
         let mir::TerminatorKind::Call {
                 func,
                 args,
@@ -237,11 +343,14 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
             mir::ConstantKind::Ty(cst) => cst.ty(),
             mir::ConstantKind::Unevaluated { .. } => unreachable!(),
         };
-        let (ty::FnDef(defid, _) | ty::Closure(defid, _)) = ty.kind() else {
+        let (ty::FnDef(defid, gargs) | ty::Closure(defid, gargs)) = ty.kind() else {
                     return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()))
                 };
+        let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
+            .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
+            .map_or(FnResolution::Partial(*defid), FnResolution::Final);
         Ok((
-            *defid,
+            instance,
             args.iter().map(|a| a.place()).collect(),
             *destination,
         ))
@@ -398,24 +507,28 @@ pub trait IntoLocalDefId {
 }
 
 impl IntoLocalDefId for LocalDefId {
+    #[inline]
     fn into_local_def_id(self, _tcx: TyCtxt) -> LocalDefId {
         self
     }
 }
 
 impl IntoLocalDefId for BodyId {
+    #[inline]
     fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
         tcx.hir().body_owner_def_id(self)
     }
 }
 
 impl IntoLocalDefId for HirId {
+    #[inline]
     fn into_local_def_id(self, _: TyCtxt) -> LocalDefId {
         self.expect_owner().def_id
     }
 }
 
 impl<D: Copy + IntoLocalDefId> IntoLocalDefId for &'_ D {
+    #[inline]
     fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
         (*self).into_local_def_id(tcx)
     }
@@ -615,36 +728,42 @@ pub trait IntoDefId {
 }
 
 impl IntoDefId for DefId {
+    #[inline]
     fn into_def_id(self, _: TyCtxt) -> DefId {
         self
     }
 }
 
 impl IntoDefId for LocalDefId {
+    #[inline]
     fn into_def_id(self, _: TyCtxt) -> DefId {
         self.to_def_id()
     }
 }
 
 impl IntoDefId for HirId {
+    #[inline]
     fn into_def_id(self, tcx: TyCtxt) -> DefId {
         self.into_local_def_id(tcx).to_def_id()
     }
 }
 
 impl<D: Copy + IntoDefId> IntoDefId for &'_ D {
+    #[inline]
     fn into_def_id(self, tcx: TyCtxt) -> DefId {
         (*self).into_def_id(tcx)
     }
 }
 
 impl IntoDefId for BodyId {
+    #[inline]
     fn into_def_id(self, tcx: TyCtxt) -> DefId {
         tcx.hir().body_owner_def_id(self).into_def_id(tcx)
     }
 }
 
 impl IntoDefId for Res {
+    #[inline]
     fn into_def_id(self, _: TyCtxt) -> DefId {
         match self {
             Res::Def(_, did) => did,
@@ -653,16 +772,36 @@ impl IntoDefId for Res {
     }
 }
 
+pub trait IntoHirId: std::marker::Sized {
+    fn into_hir_id(self, tcx: TyCtxt) -> Option<HirId>;
+
+    #[inline]
+    fn force_into_hir_id(self, tcx: TyCtxt) -> HirId {
+        self.into_hir_id(tcx).unwrap()
+    }
+}
+
+impl IntoHirId for LocalDefId {
+    #[inline]
+    fn into_hir_id(self, tcx: TyCtxt) -> Option<HirId> {
+        Some(tcx.hir().local_def_id_to_hir_id(self))
+    }
+}
+
 /// Creates an `Identifier` for this `HirId`
 pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
     let did = did.into_def_id(tcx);
+    let get_parent = || identifier_for_item(tcx, tcx.parent(did));
     Identifier::new_intern(&format!(
         "{}_{:x}",
         tcx.opt_item_name(did)
+            .map(|n| n.to_string())
             .or_else(|| {
                 use hir::def::DefKind::*;
                 match tcx.def_kind(did) {
-                    OpaqueTy => Some(Symbol::intern("opaque")),
+                    OpaqueTy => Some("opaque".to_string()),
+                    Closure => Some(format!("{}_closure", get_parent())),
+                    Generator => Some(format!("{}_generator", get_parent())),
                     _ => None,
                 }
             })

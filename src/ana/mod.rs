@@ -10,7 +10,6 @@ use crate::{
 
 use hir::def_id::DefId;
 use mir::Location;
-use rustc_hir::def_id::LocalDefId;
 
 use rustc_utils::mir::borrowck_facts;
 
@@ -41,29 +40,22 @@ impl<'tcx> CollectingVisitor<'tcx> {
         &self,
         //_hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
-        interesting_fn_defs: &HashMap<DefId, (Vec<Annotation>, usize)>,
         target: FnToAnalyze,
         gli: GLI<'g>,
-        inliner: &inline::Inliner<'tcx, 'g, '_>,
+        inliner: &inline::Inliner<'tcx, 'g>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
         fn register_call_site(
-            tcx: TyCtxt<'_>,
             map: &mut CallSiteAnnotations,
             did: DefId,
             ann: Option<&[Annotation]>,
         ) {
             map.entry(did)
                 .and_modify(|e| {
-                    e.0.extend(ann.iter().flat_map(|a| a.iter()).cloned());
+                    e.extend(ann.iter().flat_map(|a| a.iter()).cloned());
                 })
-                .or_insert_with(|| {
-                    (
-                        ann.iter().flat_map(|a| a.iter()).cloned().collect(),
-                        tcx.fn_sig(did).skip_binder().skip_binder().inputs().len(),
-                    )
-                });
+                .or_insert_with(|| ann.iter().flat_map(|a| a.iter()).cloned().collect());
         }
         let tcx = self.tcx;
         let controller_body_with_facts =
@@ -106,7 +98,11 @@ impl<'tcx> CollectingVisitor<'tcx> {
         {
             let types = controller_body.args_iter().map(|l| {
                 let ty = controller_body.local_decls[l].ty;
-                let subtypes = self.annotated_subtypes(ty);
+                let subtypes = self
+                    .marker_ctx
+                    .all_type_markers(ty)
+                    .map(|t| Identifier::new(t.0.marker))
+                    .collect::<HashSet<_>>();
                 (DataSource::Argument(l.as_usize() - 1), subtypes)
             });
             flows.add_types(types);
@@ -149,12 +145,16 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 // dependencies (and thus not receive any data)
                 continue;
             }
-            let (terminator, (defid, _, _)) = match inner_body
+            let (_, (instance, _, _)) = match inner_body
                 .stmt_at_better_err(inner_location)
                 .right()
                 .ok_or("not a terminator".to_owned())
-                .and_then(|t| Ok((t, t.as_fn_and_args().map_err(|e| format!("{e:?}"))?)))
-            {
+                .and_then(|t| {
+                    Ok((
+                        t,
+                        t.as_instance_and_args(tcx).map_err(|e| format!("{e:?}"))?,
+                    ))
+                }) {
                 Ok(term) => term,
                 Err(err) => {
                     // We expect to always encounter function calls at this
@@ -170,36 +170,27 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     continue;
                 }
             };
+            let defid = instance.def_id();
             let call_site = CallSite::new(loc, defid, tcx);
             // Propagate annotations on the function object to the call site
             register_call_site(
-                tcx,
                 call_site_annotations,
                 defid,
-                interesting_fn_defs.get(&defid).map(|a| a.0.as_slice()),
+                defid
+                    .as_local()
+                    .map(|ldid| self.marker_ctx.local_annotations(ldid)),
             );
 
-            let stmt_anns = self.statement_anns_by_loc(defid, terminator);
-            let bound_sig = tcx.fn_sig(defid);
-            let interesting_output_types: HashSet<_> =
-                self.annotated_subtypes(bound_sig.skip_binder().skip_binder().output());
+            let interesting_output_types: HashSet<_> = self
+                .marker_ctx
+                .all_function_markers(instance)
+                .filter_map(|(_, t)| Some(identifier_for_item(self.tcx, t?.1)))
+                .collect();
             if !interesting_output_types.is_empty() {
                 flows.types.0.insert(
                     DataSource::FunctionCall(call_site.clone()),
                     interesting_output_types,
                 );
-            }
-            if let Some(_anns) = stmt_anns {
-                // This is currently commented out because hash verification is
-                // buggy
-                unimplemented!();
-                // for ann in anns.iter().filter_map(Annotation::as_exception_annotation) {
-                //     //hash_verifications.handle(ann, tcx, terminator, &body, loc, matrix);
-                // }
-                // TODO this is attaching to functions instead of call
-                // sites. Once we start actually tracking call sites
-                // this needs to be adjusted
-                // register_call_site(tcx, call_site_annotations, defid, Some(anns));
             }
 
             // Add ctrl flows to callsite.
@@ -259,16 +250,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
         let gli = GLI::new(&interner);
         let tcx = self.tcx;
         let mut targets = std::mem::take(&mut self.functions_to_analyze);
-        let interesting_fn_defs = self
-            .marked_objects
-            .as_ref()
-            .borrow()
-            .iter()
-            .filter_map(|(s, v)| match v.1 {
-                ObjectType::Function(i) => Some((s.to_def_id(), (v.0.clone(), i))),
-                _ => None,
-            })
-            .collect::<HashMap<_, _>>();
 
         if let LogLevelConfig::Targeted(s) = &*self.opts.debug() {
             assert!(
@@ -282,16 +263,10 @@ impl<'tcx> CollectingVisitor<'tcx> {
             )
         }
 
-        let recurse_selector = SkipAnnotatedFunctionSelector {
-            marked_objects: self.marked_objects.clone(),
-            external_annotations: &self.external_annotations,
-            tcx,
-        };
-
         let inliner = inline::Inliner::new(
             self.tcx,
             gli,
-            &recurse_selector,
+            self.marker_ctx.clone(),
             self.opts.anactrl(),
             self.opts.dbg(),
         );
@@ -306,7 +281,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         self.handle_target(
                             //hash_verifications,
                             &mut call_site_annotations,
-                            &interesting_fn_defs,
                             desc,
                             gli,
                             &inliner,
@@ -316,21 +290,27 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()
                 .map(|controllers| ProgramDescription {
                     controllers,
-                    annotations: self
-                        .marked_objects
-                        .as_ref()
-                        .borrow()
-                        .iter()
-                        .map(|(k, v)| (identifier_for_item(tcx, *k), v.clone()))
-                        .chain(self.external_annotations.iter().map(|(did, (anns, typ))| {
+                    annotations: self.marker_ctx.local_annotations_found()
+                        .into_iter()
+                        .map(|(k, v)| (k.to_def_id(), v.to_vec()))
+                        .chain(self.marker_ctx.external_annotations().iter().map(|(did, anns)| {
                             (
-                                identifier_for_item(tcx, did),
-                                (
-                                    anns.iter().cloned().map(Annotation::Label).collect(),
-                                    typ.clone(),
-                                ),
+                                *did,
+                                anns.iter().cloned().map(Annotation::Label).collect(),
                             )
                         }))
+                        .map(|(did, anns)| {
+                            let def_kind = tcx.def_kind(did);
+                            let obj_type = if def_kind.is_fn_like() {
+                                ObjectType::Function(
+                                    tcx.fn_sig(did).skip_binder().skip_binder().inputs().len(),
+                                )
+                            } else {
+                                // XXX add an actual match here
+                                ObjectType::Type
+                            };
+                            (identifier_for_item(tcx, did), (anns, obj_type))
+                        })
                         .collect(),
                 });
         //});
@@ -339,42 +319,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
             inliner.cache_size()
         );
         result
-    }
-
-    fn annotated_subtypes(&self, ty: ty::Ty) -> HashSet<TypeDescriptor> {
-        ty.walk()
-            .filter_map(|ty| {
-                ty.as_type()
-                    .and_then(TyExt::defid)
-                    //.and_then(DefId::as_local)
-                    .and_then(|def| {
-                        let maybe_item_name = self.tcx.opt_item_name(def);
-                        if maybe_item_name.is_none() {
-                            info!("Could not find item name for type {ty:?}");
-                        }
-                        let item_name = identifier_for_item(self.tcx, def);
-                        if def.as_local().map_or(false, |ldef| {
-                            self.marked_objects.as_ref().borrow().contains_key(&ldef)
-                        }) || self.external_annotations.contains_key(&def)
-                        {
-                            Some(item_name)
-                        } else {
-                            None
-                        }
-                    })
-            })
-            .collect()
-    }
-
-    /// Extract all types mentioned in this type for which we have annotations.
-    /// XXX: This selector is somewhat problematic. For one it matches via
-    /// source locations, rather than id, and for another we're using `find`
-    /// here, which would discard additional matching annotations.
-    fn statement_anns_by_loc(&self, p: DefId, t: &mir::Terminator<'tcx>) -> Option<&[Annotation]> {
-        self.marked_stmts
-            .iter()
-            .find(|(_, (_, s, f))| p == *f && s.contains(t.source_info.span))
-            .map(|t| t.1 .0 .0.as_slice())
     }
 }
 
@@ -386,49 +330,5 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
         with_temporary_logging_level(log::LevelFilter::Debug, f)
     } else {
         f()
-    }
-}
-
-/// The only implementation of [`InlineSelector`] currently in use. This skips
-/// inlining for all `LocalDefId` values that are found in the map of
-/// `self.marked_objects` i.e. all those functions that have annotations.
-#[derive(Clone)]
-struct SkipAnnotatedFunctionSelector<'tcx, 's> {
-    marked_objects: crate::discover::MarkedObjects,
-    tcx: TyCtxt<'tcx>,
-    external_annotations: &'s crate::discover::ExternalMarkers,
-}
-
-impl<'tcx, 's> SkipAnnotatedFunctionSelector<'tcx, 's> {
-    fn has_local_annotations<D: IntoLocalDefId>(&self, did: D) -> bool {
-        self.marked_objects
-            .as_ref()
-            .borrow()
-            .get(&did.into_local_def_id(self.tcx))
-            .map_or(false, |anns| !anns.0.is_empty())
-    }
-
-    fn has_external_annotations<D: IntoDefId>(&self, did: D) -> bool {
-        self.external_annotations
-            .get(&did.into_def_id(self.tcx))
-            .map_or(false, |anns| !anns.0.is_empty())
-    }
-
-    fn has_annotations<D: IntoDefId + Copy>(&self, did: D) -> bool {
-        matches!(did.into_def_id(self.tcx).as_local(), Some(ldid) if self.has_local_annotations(ldid))
-            || self.has_external_annotations(did)
-    }
-}
-
-impl<'tcx, 's> inline::Oracle for SkipAnnotatedFunctionSelector<'tcx, 's> {
-    fn should_inline(&self, did: LocalDefId) -> bool {
-        !self.has_annotations(did)
-    }
-
-    fn is_semantically_meaningful(&self, did: DefId) -> bool {
-        self.has_annotations(did)
-    }
-    fn carries_marker(&self, did: DefId) -> bool {
-        self.has_annotations(did)
     }
 }

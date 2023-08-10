@@ -4,7 +4,7 @@ extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
 use dfpp::{
-    desc::{DataSink, Identifier, ProgramDescription},
+    desc::{AnnotationMap, DataSink, DataSource, Identifier, ProgramDescription, TypeDescriptor},
     ir::{GlobalLocationS, IsGlobalLocation, RawGlobalLocation},
     serializers::Bodies,
     HashSet, Symbol,
@@ -60,6 +60,9 @@ pub fn run_dfpp_with_graph_dump(dir: impl AsRef<Path>) -> bool {
     run_dfpp_with_graph_dump_and::<_, &str>(dir, [])
 }
 
+/// Crates a basic invocation of `cargo dfpp`, ensuring that the `cargo-dfpp`
+/// and `dfpp` executables that were built from this project are (first) in the
+/// `PATH`.
 pub fn dfpp_command(dir: impl AsRef<Path>) -> std::process::Command {
     let mut cmd = std::process::Command::new("cargo");
     let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
@@ -136,16 +139,21 @@ where
 /// Define a test that is skipped. This can be used to temporarily disable the
 /// test. A message can be passed after the test name explaining why it was
 /// skipped and the message will be printed when the test is skipped.
+///
+/// Everything but the first ident and the message are ignored, so the idea is
+/// that whatever `define_test` macro you're using and whatever format that
+/// macro imposes this should still serve as a drop-in replacement so that you
+/// can later remove the `_skip` part and have your test back immediately.
 #[macro_export]
 macro_rules! define_test_skip {
-    ($name:ident : $graph:ident -> $block:block) => {
-        define_test_skip!($name "" : $graph -> $block);
-    };
-    ($name:ident $message:literal : $graph:ident -> $block:block) => {
+    ($name:ident $message:literal $($ignored:tt)*) => {
         #[test]
         fn $name() {
             eprintln!(concat!("Skipping test ", stringify!($name), " ", $message));
         }
+    };
+    ($name:ident $($ignored:tt)*) => {
+        define_test_skip!($name "" $($ignored)*);
     };
 }
 
@@ -176,6 +184,21 @@ macro_rules! define_G_test_template {
                     std::fs::remove_file(p).unwrap()
                 }
             });
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! define_flow_test_template {
+    ($analyze:expr, $crate_name:expr, $name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
+        #[test]
+        fn $name() {
+            assert!(*$analyze);
+            use_rustc(|| {
+                let graph = PreFrg::from_file_at($crate_name);
+                let $ctrl = graph.ctrl(stringify!($ctrl_name));
+                $block
+            })
         }
     };
 }
@@ -559,6 +582,10 @@ pub trait HasGraph<'g>: Sized + Copy {
                 .any(|m| m.marker == marker)
         })
     }
+
+    fn annotations(self) -> &'g AnnotationMap {
+        &self.graph().0.annotations
+    }
 }
 
 pub struct PreFrg(ProgramDescription);
@@ -678,6 +705,10 @@ impl<'g> CtrlRef<'g> {
         );
         cs.pop().unwrap()
     }
+
+    pub fn types_for(&'g self, target: &DataSource) -> Option<&'g HashSet<TypeDescriptor>> {
+        self.ctrl.types.0.get(target)
+    }
 }
 
 impl<'g> HasGraph<'g> for &FnRef<'g> {
@@ -774,6 +805,9 @@ impl<'g> CallSiteRef<'g> {
             }
         }
         false
+    }
+    pub fn call_site(&self) -> &dfpp::desc::CallSite {
+        self.call_site
     }
 }
 

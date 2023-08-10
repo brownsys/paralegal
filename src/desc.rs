@@ -40,6 +40,10 @@ impl Annotation {
         }
     }
 
+    pub fn is_label_ann(&self) -> bool {
+        matches!(self, Annotation::Label(_))
+    }
+
     pub fn as_otype_ann(&self) -> Option<&[TypeDescriptor]> {
         match self {
             Annotation::OType(t) => Some(t),
