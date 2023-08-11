@@ -20,7 +20,8 @@ Try to make your PR about one single concern or issue, unless they are mutually 
 
 ## Checklist
 
-- [ ] Every commit has a non-empty commit message
+- [ ] Above description has been filled out so that upon quash merge we have a
+  good record of what changed.
 - [ ] New functions, methods, types are documented. Old documentation is updated
   if necessary
 - [ ] Documentation in Notion has been updated
