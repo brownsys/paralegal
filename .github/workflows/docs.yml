@@ -1,4 +1,4 @@
-name: Rust
+name: Autodoc Update
 
 on:
   push:
@@ -16,9 +16,10 @@ jobs:
     - uses: actions/checkout@v3
       with:
         ref: 'github-actions-suck'
+        fetch-depth: 0
     # Similar to `updater_docs.sh` but does not run pandoc
     - name: Merge Main
-      run: git merge origin/autodoc-test --no-edit -sort -Xtheirs
+      run: git merge autodoc-test --no-edit -sort -Xtheirs
     - name: Prepare
       run: |
         cargo doc --document-private-items
