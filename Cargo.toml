@@ -32,6 +32,7 @@ simple_logger = "2"
 petgraph = "0.6"
 num-derive = "0.4"
 num-traits = "0.2"
+syn = { version = "2", features = ["full", "extra-traits"] }
 
 humantime = "2"
 indicatif = "0.17"

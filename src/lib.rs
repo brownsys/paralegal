@@ -29,6 +29,8 @@ extern crate petgraph;
 extern crate num_derive;
 extern crate num_traits;
 
+extern crate syn;
+
 #[macro_use]
 pub extern crate rustc_index;
 extern crate rustc_serialize;

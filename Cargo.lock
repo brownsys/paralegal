@@ -332,6 +332,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "simple_logger",
+ "syn",
  "toml",
  "trait_enum",
 ]
