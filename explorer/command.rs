@@ -93,7 +93,7 @@ impl std::str::FromStr for PathMetric {
 }
 
 /// Unique name of a node that also lets us recover a [`dfpp::ir::GlobalLocation`].
-/// 
+///
 /// Must be fully expanded basic block nodename, e.g. `bb39[2]@bb58[5]@bb0[4]`. You can find this in the
 /// comments in analysis_result.frg.
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
@@ -279,7 +279,6 @@ impl std::str::FromStr for Direction {
         }
     }
 }
-
 
 #[derive(Debug)]
 pub enum RunCommandErr<'g> {

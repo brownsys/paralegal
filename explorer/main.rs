@@ -9,20 +9,15 @@ extern crate serde_lexpr as sexpr;
 
 use clap::Parser;
 
-use dfpp::{
-    ir::global_location::*,
-    serializers::Bodies,
-    Either, HashMap,
-};
+use dfpp::{ir::global_location::*, serializers::Bodies, Either, HashMap};
 use ringbuffer::RingBufferWrite;
 
-mod graph;
 mod command;
+mod graph;
 mod run;
 
-use graph::*;
 use command::*;
-
+use graph::*;
 
 /// Command line arguments for the explorer.
 #[derive(Parser)]

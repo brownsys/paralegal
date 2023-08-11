@@ -11,16 +11,12 @@ use dfpp::{
     Either, HashMap,
 };
 
-use petgraph::visit::{
-    EdgeRef, IntoEdgesDirected,
-};
+use petgraph::visit::{EdgeRef, IntoEdgesDirected};
 
-use crate::graph::*;
 use crate::command::*;
+use crate::graph::*;
 
 use crate::Repl;
-
-
 
 impl<'g> Repl<'g> {
     fn translate_node(&self, name: NodeName) -> Result<Node<'g>, RunCommandErr<'g>> {
@@ -113,10 +109,7 @@ impl<'g> Repl<'g> {
                 Ok(Box::new(
                     [{
                         let paths = petgraph::algo::bellman_ford(
-                            &WithWeightedEdges::new(
-                                graph,
-                                &|_| 1.0,
-                            ),
+                            &WithWeightedEdges::new(graph, &|_| 1.0),
                             from,
                         )
                         .unwrap();
@@ -135,10 +128,7 @@ impl<'g> Repl<'g> {
                 Ok(Box::new(
                     [{
                         let paths = petgraph::algo::bellman_ford(
-                            &WithWeightedEdges::new(
-                                graph,
-                                &|_| 1.0,
-                            ),
+                            &WithWeightedEdges::new(graph, &|_| 1.0),
                             from,
                         )
                         .unwrap();
@@ -544,6 +534,4 @@ impl<'g> Repl<'g> {
         self.graph = Some(g);
         Ok(())
     }
-
-
 }

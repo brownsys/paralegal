@@ -2,16 +2,14 @@
 //! which can change the behavior of a graph witout copies.
 
 use dfpp::{
-    ir::GlobalLocation,
     ana::inline::{Edge, EdgeType},
+    ir::GlobalLocation,
 };
 
 use petgraph::visit::{
     Data, EdgeRef, GraphBase, GraphRef, IntoEdgeReferences, IntoEdges, IntoEdgesDirected,
     IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, NodeCount, NodeIndexable, Visitable,
 };
-
-
 
 /// The canonical representation fo a graph used by the explorer.
 pub type Graph<'g> = petgraph::graphmap::GraphMap<Node<'g>, Edge, petgraph::Directed>;
@@ -149,7 +147,7 @@ impl<'f, G: IntoNodeIdentifiers + IntoEdgeReferences> IntoNodeIdentifiers
 #[derive(Clone, Copy)]
 pub struct IgnoreCtrlEdges<G>(G);
 
-impl<G> From<G> for IgnoreCtrlEdges<G>{
+impl<G> From<G> for IgnoreCtrlEdges<G> {
     fn from(value: G) -> Self {
         Self(value)
     }
@@ -232,7 +230,7 @@ impl<E: EdgeRef<Weight = Edge>, I: Iterator<Item = E>> std::iter::Iterator
 
 /// One of the iterators for [`IgnoreCtrlEdges`] that are needed to run the
 /// algorithms in [`petgraph`].
-/// 
+///
 /// This is confusingly named I know, but the actual graph is
 /// [`IgnoreCtrlEdges`], wheras this is an iterator over edges with control
 /// edges ignored.
