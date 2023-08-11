@@ -24,11 +24,14 @@ jobs:
     # Similar to `updater_docs.sh` but does not run pandoc
     - name: Merge Main
       run: git merge origin/autodoc-test --no-edit -sort -Xtheirs
+    # Amonst other things this removes the `.github` directory, so we don't get
+    # permission issues of have this bot accidentally deploy a workflow
     - name: Prepare
       run: |
         cargo doc --document-private-items
         rm -R docs/libs
         cp -R target/doc docs/libs
+        rm -R .github
     - name: Commit Doc Update
       run: |
         git add docs
