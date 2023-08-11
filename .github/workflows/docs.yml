@@ -18,7 +18,7 @@ jobs:
         ref: 'github-actions-suck'
     # Similar to `updater_docs.sh` but does not run pandoc
     - name: Merge Main
-      run: git merge origin/autodoc-test --no-edit -s ort -X theirs
+      run: git merge origin/autodoc-test --no-edit -sort -Xtheirs
     - name: Prepare
       run: |
         cargo doc --document-private-items
