@@ -15,36 +15,25 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        ref: 'github-actions-suck'
+        ref: 'autodoc-test'
         fetch-depth: 0
     - name: Configure Git
       run: |
         git config --local user.email "docmaster+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
-    # Similar to `updater_docs.sh` but does not run pandoc
-    #
-    # First we must undo our deletion of the workflows (`.github` directory) so we
-    # don't get merge conflicts
-    - name: Merge Main
-      run: |
-        git merge origin/autodoc-test -sort -Xtheirs\ 
-          || (git checkout --theirs origin/autodoc-test -- .github\
-            && git commit --no-edit)
-    # Amonst other things this removes the `.github` directory, so we don't get
-    # permission issues of have this bot accidentally deploy a workflow
     - name: Prepare
       run: |
         cargo doc --document-private-items
         rm -R docs/libs
         cp -R target/doc docs/libs
         rm -R .github
-    - name: Commit Doc Update
+    - name: Commit Doc Generation
       run: |
         git add docs
-        git commit -m 'Regenerate Documentation'
+        git commit -m 'Generate Documentation'
     - name: Push Doc Update
       uses: ad-m/github-push-action@v0.6.0
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         branch: 'github-actions-suck'
-      
+        force: true
