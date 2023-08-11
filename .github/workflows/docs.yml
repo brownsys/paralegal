@@ -2,9 +2,7 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: [ "autodoc-test" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,11 +14,25 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Build
-      run: cargo doc --document-private-items
-    - name: Zip
-      run: cd target/doc && tar -zcf github-pages * && mv github-pages ../..
-    - uses: actions/upload-pages-artifact@main
-    - uses: actions/deploy-pages@v1
-    
+      with:
+        ref: 'github-actions-suck'
+    # Similar to `updater_docs.sh` but does not run pandoc
+    - name: Merge Main
+      run: git merge main --no-edit -s ort -X theirs
+    - name: Prepare
+      run: |
+        cargo doc --document-private-items
+        rm -R docs/libs
+        cp -R target/doc docs/libs
+    - name: Commit Doc Update
+      run: |
+        git config --local user.email "docmaster+github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add docs
+        git commit -m 'Regenerate Documentation'
+    - name: Push Doc Update
+      uses: ad-m/github-push-action@v0.6.0
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        branch: 'github-actions-suck'
       
