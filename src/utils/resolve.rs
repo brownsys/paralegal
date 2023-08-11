@@ -9,7 +9,7 @@ use hir::{
     def_id::LOCAL_CRATE,
     ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
 };
-use ty::{fast_reject::SimplifiedType::*, FloatTy, IntTy, UintTy};
+use ty::{fast_reject::SimplifiedType::{self, *}, FloatTy, IntTy, UintTy};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Res {
@@ -29,6 +29,17 @@ pub enum ResolutionError<'a> {
     EmptyStarts,
     UnconvertibleRes(def::Res),
     CouldNotResolveCrate(&'a str),
+    BadlyFormedBaseCrateName(&'a str),
+    ExpectedTraitInAsExpression(&'a str),
+    DoesNotResolveToType(&'a str),
+    NoTraitImplFound {
+        r#trait: DefId,
+        r#type: SimplifiedType,
+    },
+    TooManyImplsFor {
+        r#trait: DefId,
+        r#type: SimplifiedType,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +63,49 @@ impl Res {
         } else {
             panic!("Not a def")
         }
+    }
+}
+
+/// Splits rust paths, e.g. `split_path_segments("std::vec::Vec") == ["std",
+/// "vec", "Vec"]`.
+/// 
+/// But this is a bit fancier, because if the first element is encased in type
+/// brackets `<>` then it is returned as one element, e.g.
+/// `split_path_segments("<std::vec::Vec as
+/// std::iter::IntoIterator>::into_iter") == ["<std::vec::Vec as
+/// std::iter::IntoIterator>", "into_iter"]`.
+/// 
+/// Also ensures all whitespace of the output items has been stripped
+fn split_path_segments(path: &str) -> impl Iterator<Item=&str> {
+    let (first, rest) = if let Some(inner) = path.trim_start().strip_prefix('<') {
+        assert!(!inner.contains('<'), "Nested type brackets are not supported: {path}");
+        let (first, rest) = inner.split_once('>').unwrap_or_else(|| panic!("type brackets must be balanced: {path}"));
+        let trimmed_rest = rest.trim_start();
+        let rest = if let Some((empty, rest)) = trimmed_rest.split_once("::") {
+            assert!(empty.trim_start().is_empty());
+            rest
+        } else {
+            assert!(trimmed_rest.is_empty());
+            ""
+        };
+        (first, rest)
+    } else {
+        path.split_once("::").unwrap_or((path, ""))
+    };
+
+    std::iter::once(first)
+        .chain(rest.split("::"))
+        .map(|s| s.trim())
+}
+
+fn resolve_trait_impl<'tcx, 'a>(tcx: TyCtxt<'tcx>, r#type: SimplifiedType, r#trait: DefId) -> Result<DefId, ResolutionError<'a>> {
+    let impls = tcx.trait_impls_of(r#trait);
+    if let [did] = impls.non_blanket_impls().get(&r#type)
+        .ok_or(ResolutionError::NoTraitImplFound { r#trait, r#type })?
+        .as_slice() {
+        Ok(*did)
+    } else {
+        Err(ResolutionError::TooManyImplsFor { r#trait, r#type })
     }
 }
 
@@ -129,36 +183,39 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
     }
 
     fn find_primitive<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Option<&'tcx [DefId]> {
-        let single = |ty| Some(tcx.incoherent_impls(ty));
-        let empty = || None;
+        try_as_simplified_prim_ty(tcx, name).map(|prim| tcx.incoherent_impls(prim))
+    }
+
+    fn try_as_simplified_prim_ty<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Option<SimplifiedType> {
         match name {
-            "bool" => single(BoolSimplifiedType),
-            "char" => single(CharSimplifiedType),
-            "str" => single(StrSimplifiedType),
-            "array" => single(ArraySimplifiedType),
-            "slice" => single(SliceSimplifiedType),
+            "bool" => Some(BoolSimplifiedType),
+            "char" => Some(CharSimplifiedType),
+            "str" => Some(StrSimplifiedType),
+            "array" => Some(ArraySimplifiedType),
+            "slice" => Some(SliceSimplifiedType),
             // FIXME: rustdoc documents these two using just `pointer`.
             //
             // Maybe this is something we should do here too.
-            "const_ptr" => single(PtrSimplifiedType(Mutability::Not)),
-            "mut_ptr" => single(PtrSimplifiedType(Mutability::Mut)),
-            "isize" => single(IntSimplifiedType(IntTy::Isize)),
-            "i8" => single(IntSimplifiedType(IntTy::I8)),
-            "i16" => single(IntSimplifiedType(IntTy::I16)),
-            "i32" => single(IntSimplifiedType(IntTy::I32)),
-            "i64" => single(IntSimplifiedType(IntTy::I64)),
-            "i128" => single(IntSimplifiedType(IntTy::I128)),
-            "usize" => single(UintSimplifiedType(UintTy::Usize)),
-            "u8" => single(UintSimplifiedType(UintTy::U8)),
-            "u16" => single(UintSimplifiedType(UintTy::U16)),
-            "u32" => single(UintSimplifiedType(UintTy::U32)),
-            "u64" => single(UintSimplifiedType(UintTy::U64)),
-            "u128" => single(UintSimplifiedType(UintTy::U128)),
-            "f32" => single(FloatSimplifiedType(FloatTy::F32)),
-            "f64" => single(FloatSimplifiedType(FloatTy::F64)),
-            _ => empty(),
+            "const_ptr" => Some(PtrSimplifiedType(Mutability::Not)),
+            "mut_ptr" => Some(PtrSimplifiedType(Mutability::Mut)),
+            "isize" => Some(IntSimplifiedType(IntTy::Isize)),
+            "i8" => Some(IntSimplifiedType(IntTy::I8)),
+            "i16" => Some(IntSimplifiedType(IntTy::I16)),
+            "i32" => Some(IntSimplifiedType(IntTy::I32)),
+            "i64" => Some(IntSimplifiedType(IntTy::I64)),
+            "i128" => Some(IntSimplifiedType(IntTy::I128)),
+            "usize" => Some(UintSimplifiedType(UintTy::Usize)),
+            "u8" => Some(UintSimplifiedType(UintTy::U8)),
+            "u16" => Some(UintSimplifiedType(UintTy::U16)),
+            "u32" => Some(UintSimplifiedType(UintTy::U32)),
+            "u64" => Some(UintSimplifiedType(UintTy::U64)),
+            "u128" => Some(UintSimplifiedType(UintTy::U128)),
+            "f32" => Some(FloatSimplifiedType(FloatTy::F32)),
+            "f64" => Some(FloatSimplifiedType(FloatTy::F64)),
+            _ => None,
         }
     }
+
     fn find_crate(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
         tcx.crates(())
             .iter()
@@ -167,7 +224,7 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
             .map(CrateNum::as_def_id)
     }
 
-    let (base, first, path) = match *path {
+    let (mut base, first, path) = match *path {
         [base, first, ref path @ ..] => (base, first, path),
         [primitive] => {
             let sym = Symbol::intern(primitive);
@@ -183,6 +240,32 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
     } else {
         None
     };
+
+    base = base.trim();
+
+    if let Some(mut inner) = base.strip_prefix('<') {
+        inner = base.strip_suffix('>').ok_or(ResolutionError::BadlyFormedBaseCrateName(base))?;
+        if let Some((type_path, trait_path)) = inner.split_once("as") {
+            let type_path_segments = split_path_segments(type_path).collect::<Vec<_>>();
+            let r#type = 
+                if let Some(prim) = (type_path_segments.len() == 1).then(|| try_as_simplified_prim_ty(tcx, type_path)).flatten() {
+                    Ok(prim)
+                } else if let Res::Def(_, res) = def_path_res(tcx, &type_path_segments)? {
+                    Ok(SimplifiedType::AdtSimplifiedType(res))
+                } else {
+                    Err(ResolutionError::DoesNotResolveToType(type_path))
+                }?;
+            let trait_path_segments = split_path_segments(trait_path).collect::<Vec<_>>();
+            let Res::Def(DefKind::Trait, r#trait) = def_path_res(tcx, &trait_path_segments)? else {
+                return Err(ResolutionError::ExpectedTraitInAsExpression(trait_path))
+            };
+            let trait_impl = resolve_trait_impl(tcx, r#type, r#trait)?;
+            assert!(path.is_empty(), "Additional path segments are not allowed when using trait resolution");
+            item_child_by_name(tcx, trait_impl, first);
+        } else {
+            base = inner;
+        }
+    }
 
     let base_mods = find_primitive(tcx, base)
         .map(Cow::Borrowed)
