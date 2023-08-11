@@ -53,7 +53,6 @@ impl DeletionProp {
                 for t_src in &t_srcs {
                     for delete in &delete_cs {
                         if self.cx.flows_to(c_id, t_src, delete) {                            
-                            println!("{t_src:?}\n->\n{delete:?}\nin\n{c_id:?}");
                             return true;
                         }
                     }
