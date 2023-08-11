@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use crate::rustc_middle::traits::ImplSource;
 use crate::{ast, hir, ty, DefId, Symbol, TyCtxt};
 use ast::Mutability;
 use hir::{
@@ -9,9 +10,11 @@ use hir::{
     def_id::LOCAL_CRATE,
     ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
 };
+use ty::{
+    fast_reject::SimplifiedType::{self, *},
+    FloatTy, IntTy, UintTy,
+};
 use ty::{ParamEnv, TraitRef};
-use crate::rustc_middle::traits::ImplSource;
-use ty::{fast_reject::SimplifiedType::{self, *}, FloatTy, IntTy, UintTy};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Res {
@@ -72,18 +75,23 @@ impl Res {
 
 /// Splits rust paths, e.g. `split_path_segments("std::vec::Vec") == ["std",
 /// "vec", "Vec"]`.
-/// 
+///
 /// But this is a bit fancier, because if the first element is encased in type
 /// brackets `<>` then it is returned as one element, e.g.
 /// `split_path_segments("<std::vec::Vec as
 /// std::iter::IntoIterator>::into_iter") == ["<std::vec::Vec as
 /// std::iter::IntoIterator>", "into_iter"]`.
-/// 
+///
 /// Also ensures all whitespace of the output items has been stripped
-fn split_path_segments(path: &str) -> impl Iterator<Item=&str> {
+fn split_path_segments(path: &str) -> impl Iterator<Item = &str> {
     let (first, rest) = if let Some(inner) = path.trim_start().strip_prefix('<') {
-        assert!(!inner.contains('<'), "Nested type brackets are not supported: {path}");
-        let (first, rest) = inner.split_once('>').unwrap_or_else(|| panic!("type brackets must be balanced: {path}"));
+        assert!(
+            !inner.contains('<'),
+            "Nested type brackets are not supported: {path}"
+        );
+        let (first, rest) = inner
+            .split_once('>')
+            .unwrap_or_else(|| panic!("type brackets must be balanced: {path}"));
         let trimmed_rest = rest.trim_start();
         let rest = if let Some((empty, rest)) = trimmed_rest.split_once("::") {
             assert!(empty.trim_start().is_empty());
@@ -110,10 +118,15 @@ fn syn_ty_to_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &syn::Type) -> ty::Ty<'tcx> {
         Slice(t) => tcx.mk_ty_from_kind(ty::TyKind::Slice(syn_ty_to_ty(tcx, &t.elem))),
         Paren(p) => syn_ty_to_ty(tcx, &p.elem),
         Path(pth) => {
-            let path_strings = pth.path.segments.iter().map(|sgm| {
-                assert!(sgm.arguments.is_empty());
-                sgm.ident.to_string()
-            }).collect::<Vec<_>>();
+            let path_strings = pth
+                .path
+                .segments
+                .iter()
+                .map(|sgm| {
+                    assert!(sgm.arguments.is_empty());
+                    sgm.ident.to_string()
+                })
+                .collect::<Vec<_>>();
             let path = path_strings.iter().map(String::as_str).collect::<Vec<_>>();
             if let [name] = path.as_slice() {
                 if let Some(simplified) = try_as_simplified_prim_ty(tcx, name) {
@@ -125,38 +138,56 @@ fn syn_ty_to_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: &syn::Type) -> ty::Ty<'tcx> {
                         IntSimplifiedType(int) => Int(int),
                         FloatSimplifiedType(float) => Float(float),
                         _ => unreachable!(),
-                    })
+                    });
                 }
             }
             let Res::Def(_, did) = def_path_res(tcx, &path).unwrap() else {
                 unreachable!()
             };
             match tcx.def_kind(did) {
-                DefKind::Struct | DefKind::Enum => tcx.mk_ty_from_kind(ty::TyKind::Adt(tcx.adt_def(did), ty::List::empty())),
-                _ => panic!()
+                DefKind::Struct | DefKind::Enum => {
+                    tcx.mk_ty_from_kind(ty::TyKind::Adt(tcx.adt_def(did), ty::List::empty()))
+                }
+                _ => panic!(),
             }
-            
         }
         _ => panic!("Unhandled type {ty:?}"),
     }
 }
 
-fn resolve_trait_method_ref<'tcx, 'a>(tcx: TyCtxt<'tcx>, str_path: &'a str) -> Result<Res, ResolutionError<'tcx, 'a>> {
-
-    let path = &syn::parse_str::<syn::ExprPath>(str_path).map_err(ResolutionError::SynParseError)?;
+fn resolve_trait_method_ref<'tcx, 'a>(
+    tcx: TyCtxt<'tcx>,
+    str_path: &'a str,
+) -> Result<Res, ResolutionError<'tcx, 'a>> {
+    let path =
+        &syn::parse_str::<syn::ExprPath>(str_path).map_err(ResolutionError::SynParseError)?;
     let qself = path.qself.as_ref().unwrap();
     let ty = syn_ty_to_ty(tcx, &*qself.ty);
-    let trait_path_strings = path.path.segments.iter().take(qself.position).map(|seg| {
-        assert!(seg.arguments.is_empty());
-        seg.ident.to_string()
-    }).collect::<Vec<_>>();
-    let trait_path = trait_path_strings.iter().map(String::as_str).collect::<Vec<_>>();
+    let trait_path_strings = path
+        .path
+        .segments
+        .iter()
+        .take(qself.position)
+        .map(|seg| {
+            assert!(seg.arguments.is_empty());
+            seg.ident.to_string()
+        })
+        .collect::<Vec<_>>();
+    let trait_path = trait_path_strings
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     let Res::Def(_, r#trait) = def_path_res(tcx, &trait_path).unwrap() else {
         return Err(ResolutionError::ExpectedTraitInAsExpression(str_path))
     };
-    let trait_impl = resolve_trait_impl_proper_maybe(tcx, ty, r#trait)?;
+    let trait_impl = resolve_trait_impl_proper_maybe(tcx, ty::Binder::dummy(ty), r#trait)?;
 
-    let lingering_segments = path.path.segments.iter().skip(qself.position).collect::<Vec<_>>();
+    let lingering_segments = path
+        .path
+        .segments
+        .iter()
+        .skip(qself.position)
+        .collect::<Vec<_>>();
     let [assoc_item] = lingering_segments.as_slice() else {
         unreachable!()
     };
@@ -164,24 +195,37 @@ fn resolve_trait_method_ref<'tcx, 'a>(tcx: TyCtxt<'tcx>, str_path: &'a str) -> R
     assert!(assoc_item.arguments.is_empty());
 
     item_child_by_name(tcx, trait_impl, &assoc_item.ident.to_string()).unwrap()
-
 }
 
-fn resolve_trait_impl_simpl<'tcx, 'a>(tcx: TyCtxt<'tcx>, r#type: SimplifiedType, r#trait: DefId) -> Result<DefId, ResolutionError<'tcx, 'a>> {
+fn resolve_trait_impl_simpl<'tcx, 'a>(
+    tcx: TyCtxt<'tcx>,
+    r#type: SimplifiedType,
+    r#trait: DefId,
+) -> Result<DefId, ResolutionError<'tcx, 'a>> {
     let impls = tcx.trait_impls_of(r#trait);
-    if let [did] = impls.non_blanket_impls().get(&r#type)
+    if let [did] = impls
+        .non_blanket_impls()
+        .get(&r#type)
         .ok_or(ResolutionError::NoTraitImplFound { r#trait, r#type })?
-        .as_slice() {
+        .as_slice()
+    {
         Ok(*did)
     } else {
         Err(ResolutionError::TooManyImplsFor { r#trait, r#type })
     }
 }
 
-fn resolve_trait_impl_proper_maybe<'tcx, 'a>(tcx: TyCtxt<'tcx>, r#type: ty::Ty<'tcx>, r#trait: DefId) -> Result<DefId, ResolutionError<'tcx, 'a>>  {
-    let impl_source = tcx.codegen_select_candidate(
-        (ParamEnv::empty(), ty::Binder::dummy(TraitRef::from_method(tcx, r#trait, tcx.mk_substs(&[r#type.into()]))))
-    ).unwrap();
+fn resolve_trait_impl_proper_maybe<'tcx, 'a>(
+    tcx: TyCtxt<'tcx>,
+    r#type: ty::Binder<'tcx, ty::Ty<'tcx>>,
+    r#trait: DefId,
+) -> Result<DefId, ResolutionError<'tcx, 'a>> {
+    let impl_source = tcx
+        .codegen_select_candidate((
+            ParamEnv::empty(),
+            r#type.map_bound(|ty| TraitRef::from_method(tcx, r#trait, tcx.mk_substs(&[ty.into()]))),
+        ))
+        .unwrap();
     let ImplSource::UserDefined(udef) = impl_source else {
         return Err(ResolutionError::UnsupportedImplSource(impl_source));
     };
@@ -292,12 +336,13 @@ fn local_item_children_by_name<'tcx, 'a>(
 }
 
 /// Lifted from `clippy_utils`
-pub fn def_path_res<'tcx, 'a>(tcx: TyCtxt<'tcx>, path: &'a [&str]) -> Result<Res, ResolutionError<'tcx, 'a>> {
-
+pub fn def_path_res<'tcx, 'a>(
+    tcx: TyCtxt<'tcx>,
+    path: &'a [&str],
+) -> Result<Res, ResolutionError<'tcx, 'a>> {
     fn find_primitive<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Option<&'tcx [DefId]> {
         try_as_simplified_prim_ty(tcx, name).map(|prim| tcx.incoherent_impls(prim))
     }
-
 
     fn find_crate(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
         tcx.crates(())
@@ -318,7 +363,6 @@ pub fn def_path_res<'tcx, 'a>(tcx: TyCtxt<'tcx>, path: &'a [&str]) -> Result<Res
         [] => return Err(ResolutionError::PathIsEmpty),
     };
 
-
     let local_crate = if tcx.crate_name(LOCAL_CRATE) == Symbol::intern(base) || base == "crate" {
         Some(Cow::Owned(vec![LOCAL_CRATE.as_def_id()]))
     } else {
@@ -328,7 +372,9 @@ pub fn def_path_res<'tcx, 'a>(tcx: TyCtxt<'tcx>, path: &'a [&str]) -> Result<Res
     base = base.trim();
 
     if let Some(mut inner) = base.strip_prefix('<') {
-        inner = base.strip_suffix('>').ok_or(ResolutionError::BadlyFormedBaseCrateName(base))?;
+        inner = base
+            .strip_suffix('>')
+            .ok_or(ResolutionError::BadlyFormedBaseCrateName(base))?;
         if let Some((type_path, trait_path)) = inner.split_once("as") {
             return Ok(resolve_trait_method_ref(tcx, &path.join("::")).unwrap());
             let type_path_segments = split_path_segments(type_path).collect::<Vec<_>>();
@@ -341,26 +387,33 @@ pub fn def_path_res<'tcx, 'a>(tcx: TyCtxt<'tcx>, path: &'a [&str]) -> Result<Res
                 let resolved = def_path_res(tcx, &type_path_segments)?;
                 let ty = match resolved {
                     Res::PrimTy(prim) => unreachable!(),
-                    Res::Def(_, did) => tcx.mk_ty_from_kind(ty::TyKind::Adt(tcx.adt_def(did), ty::List::empty()))
+                    Res::Def(_, did) => {
+                        tcx.mk_ty_from_kind(ty::TyKind::Adt(tcx.adt_def(did), ty::List::empty()))
+                    }
                 };
-                resolve_trait_impl_proper_maybe(tcx, ty, r#trait)
-                } else { 
-                    let r#type = 
-                        if let Some(prim) = (type_path_segments.len() == 1).then(|| try_as_simplified_prim_ty(tcx, type_path)).flatten() {
-                            Ok(prim)
-                        } else if let Res::Def(_, res) = def_path_res(tcx, &type_path_segments)? {
-                            Ok(SimplifiedType::AdtSimplifiedType(res))
-                        } else {
-                            Err(ResolutionError::DoesNotResolveToType(type_path))
-                        }?;
-                    resolve_trait_impl_simpl(tcx, r#type, r#trait)
-                }?;
-                assert!(path.is_empty(), "Additional path segments are not allowed when using trait resolution");
-                return item_child_by_name(tcx, trait_impl, first).unwrap();
+                resolve_trait_impl_proper_maybe(tcx, ty::Binder::dummy(ty), r#trait)
             } else {
-                base = inner;
-            }
+                let r#type = if let Some(prim) = (type_path_segments.len() == 1)
+                    .then(|| try_as_simplified_prim_ty(tcx, type_path))
+                    .flatten()
+                {
+                    Ok(prim)
+                } else if let Res::Def(_, res) = def_path_res(tcx, &type_path_segments)? {
+                    Ok(SimplifiedType::AdtSimplifiedType(res))
+                } else {
+                    Err(ResolutionError::DoesNotResolveToType(type_path))
+                }?;
+                resolve_trait_impl_simpl(tcx, r#type, r#trait)
+            }?;
+            assert!(
+                path.is_empty(),
+                "Additional path segments are not allowed when using trait resolution"
+            );
+            return item_child_by_name(tcx, trait_impl, first).unwrap();
+        } else {
+            base = inner;
         }
+    }
 
     let base_mods = find_primitive(tcx, base)
         .map(Cow::Borrowed)
