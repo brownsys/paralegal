@@ -8,6 +8,11 @@
 
 use std::hash::Hash;
 
+use flowistry::{
+    indexed::{DefaultDomain, IndexedValue, ToIndex},
+    to_index_impl,
+};
+
 use crate::{
     ir::{IsGlobalLocation, RawGlobalLocation},
     rust::DefId,
@@ -388,6 +393,18 @@ pub enum DataSource {
     Argument(usize),
 }
 
+rustc_index::newtype_index! {
+    pub struct DataSourceIndex {}
+}
+
+to_index_impl!(DataSource);
+pub type DataSourceDomain = DefaultDomain<DataSourceIndex, DataSource>;
+
+impl IndexedValue for DataSource {
+    type Index = DataSourceIndex;
+    type Domain = DataSourceDomain;
+}
+
 impl DataSource {
     pub fn as_function_call(&self) -> Option<&CallSite> {
         match self {
@@ -419,6 +436,18 @@ impl DataSink {
             _ => None,
         }
     }
+}
+
+rustc_index::newtype_index! {
+    pub struct DataSinkIndex {}
+}
+
+to_index_impl!(DataSink);
+pub type DataSinkDomain = DefaultDomain<DataSinkIndex, DataSink>;
+
+impl IndexedValue for DataSink {
+    type Index = DataSinkIndex;
+    type Domain = DataSinkDomain;
 }
 
 /// Annotations on types in a controller. Only types that have annotations are
@@ -480,5 +509,9 @@ impl Ctrl {
         } else {
             m.insert(from.into_owned(), std::iter::once(to).collect());
         }
+    }
+
+    pub fn data_sinks(&self) -> impl Iterator<Item = &DataSink> + '_ {
+        self.data_flow.0.values().flatten()
     }
 }

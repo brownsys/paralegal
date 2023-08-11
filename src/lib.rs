@@ -92,6 +92,7 @@ pub mod desc;
 mod discover;
 pub mod frg;
 pub mod ir;
+pub mod query;
 //mod sah;
 pub mod serializers;
 #[macro_use]
