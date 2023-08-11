@@ -22,8 +22,13 @@ jobs:
         git config --local user.email "docmaster+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
     # Similar to `updater_docs.sh` but does not run pandoc
+    #
+    # First we must undo our deletion of the workflows (`.github` directory) so we
+    # don't get merge conflicts
     - name: Merge Main
-      run: git merge origin/autodoc-test --no-edit -sort -Xtheirs
+      run: |
+        git checkout --theirs autodoc-test -- .github
+        git merge origin/autodoc-test --no-edit -sort -Xtheirs
     # Amonst other things this removes the `.github` directory, so we don't get
     # permission issues of have this bot accidentally deploy a workflow
     - name: Prepare
