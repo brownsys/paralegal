@@ -27,7 +27,7 @@ jobs:
     # don't get merge conflicts
     - name: Merge Main
       run: |
-        git checkout --theirs autodoc-test -- .github
+        git checkout --theirs origin/autodoc-test -- .github
         git merge origin/autodoc-test --no-edit -sort -Xtheirs
     # Amonst other things this removes the `.github` directory, so we don't get
     # permission issues of have this bot accidentally deploy a workflow
