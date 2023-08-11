@@ -354,6 +354,12 @@ impl<X, Y> Relation<X, Y> {
 pub struct CallSite {
     pub location: RawGlobalLocation,
     pub function: Function,
+    #[serde(skip, default = "none")]
+    pub def_id: Option<DefId>,
+}
+
+fn none<T>() -> Option<T> {
+    None
 }
 
 impl CallSite {
@@ -361,6 +367,7 @@ impl CallSite {
         Self {
             location: loc.as_raw(),
             function: identifier_for_item(tcx, function),
+            def_id: Some(function),
         }
     }
 }

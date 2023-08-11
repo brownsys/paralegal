@@ -8,7 +8,7 @@ extern crate pretty;
 
 use std::hash::Hash;
 
-use crate::{HashSet, ModelCtrl, TyCtxt};
+use crate::{HashSet, ModelCtrl, TyCtxt, ir::IsGlobalLocation, utils::IntoDefId};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
 use crate::desc::{
@@ -856,7 +856,7 @@ impl ProgramDescription {
     pub fn serialize_forge<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
         &'a self,
         alloc: &'a D,
-        _tcx: TyCtxt,
+        tcx: TyCtxt,
         model_ctrl: &ModelCtrl,
     ) -> DocBuilder<'a, D, A>
     where
@@ -885,16 +885,27 @@ impl ProgramDescription {
             alloc.nil(),
             self.make_label_sigs(alloc),
             alloc.nil(),
-            // alloc.lines(
-            //     self.all_call_sites().into_iter().map(|cs| {
-            //         let function = cs.location.innermost_function().into_def_id(tcx);
+            alloc.lines(
+                self.all_call_sites().into_iter().map(|cs| {
+                    let function = cs.location.innermost_function().into_def_id(tcx);
 
-            //         alloc.lines(
-            //             [cs.build_forge(alloc).append(format!(" @ {}", cs.location)),
-            //                     alloc.text("   called from").append(format!("{} : {}", tcx.def_path_debug_str(function), tcx.fn_sig(function).skip_binder())),
-            //             ].into_iter().map(|l| alloc.text("// ").append(l)))
-            //     })
-            // ),
+                    alloc.lines(
+                        [
+                            cs.build_forge(alloc).append(format!(" @ {}", cs.location)),
+                            {
+                                let did = cs.def_id.unwrap();
+                                let base = alloc.text("   ").append(tcx.def_path_debug_str(did));
+                                if tcx.def_kind(did).is_fn_like() {
+                                    let sig = tcx.fn_sig(did).skip_binder().skip_binder();
+                                    base.append(format!(" : {sig:?}"))
+                                } else {
+                                    base
+                                }
+                            },
+                            alloc.text("   called from ").append(tcx.def_path_debug_str(function)),
+                        ].into_iter().map(|l| alloc.text("// ").append(l)))
+                })
+            ),
             alloc.nil(),
             alloc
                 .text("inst ")
