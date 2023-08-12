@@ -8,8 +8,6 @@
 //! expose methods, which do not correspond directly to those arguments but
 //! allow us to change the name and default value of the argument without having
 //! to migrate the code using that argument.
-//! 
-//! This is a test to see if these changes propagate to the docs
 
 use std::{borrow::Cow, str::FromStr};
 

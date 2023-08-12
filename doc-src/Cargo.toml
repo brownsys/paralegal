@@ -2,6 +2,7 @@
 name = "compose"
 version = "0.0.1"
 publish = false
+description = "Get, find and move the rustc docs to our documentation directory"
 
 
 [[bin]]
