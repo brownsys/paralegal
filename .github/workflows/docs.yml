@@ -23,7 +23,7 @@ jobs:
         git config --local user.name "github-actions[bot]"
     - name: Prepare
       run: |
-        cargo doc --document-private-items
+        cargo doc --document-private-items || true
         rm -R docs/libs
         cp -R target/doc docs/libs
         rm -R .github
