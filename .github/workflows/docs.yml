@@ -1,26 +1,46 @@
-name: Rust
+name: Automated Documentation Update
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
     branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  update-docs:
 
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v3
-    - name: Build
-      run: cargo doc --document-private-items
-    - name: Zip
-      run: cd target/doc && tar -zcf github-pages * && mv github-pages ../..
-    - uses: actions/upload-pages-artifact@main
-    - uses: actions/deploy-pages@v1
-    
-      
+      with:
+        ref: 'main'
+        fetch-depth: 0
+    - name: Configure Git
+      run: |
+        git config --local user.email "docmaster+github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+    - name: Prepare
+      run: |
+        cargo doc --document-private-items
+        mkdir docs
+        cp -R target/doc docs/libs
+        rm -R .github
+    - name: Copy Rustc Docs
+      run: |
+        cd doc-src && cargo run
+    - name: Build Index Page
+      uses: docker://pandoc/core
+      with:
+        args: "-s -o docs/index.html doc-src/index.md"
+    - name: Commit Doc Generation
+      run: |
+        git add docs
+        git commit -m 'Generate Documentation'
+    - name: Push Doc Update
+      uses: ad-m/github-push-action@v0.6.0
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        branch: 'github-actions-suck'
+        force: true
