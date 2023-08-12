@@ -64,7 +64,6 @@ name = "dfpp"
 name = "dfpp-explorer"
 path = "explorer/main.rs"
 
-
 [profile.release]
 debug = true
 

@@ -27,6 +27,9 @@ jobs:
         mkdir docs
         cp -R target/doc docs/libs
         rm -R .github
+    - name: Copy Rustc Docs
+      run: |
+        cd doc-src && cargo run
     - name: Build Index Page
       uses: docker://pandoc/core
       with:

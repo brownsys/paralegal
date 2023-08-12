@@ -1,0 +1,9 @@
+[package]
+name = "compose"
+version = "0.0.1"
+publish = false
+
+
+[[bin]]
+name = "compose"
+path = "compose.rs"
