@@ -1,4 +1,3 @@
-use std::fs::{rename, File};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -25,7 +24,5 @@ fn main() {
         src.push(part);
     }
     let target = Path::new("../docs/compiler");
-    assert!(src.exists());
-    assert!(target.parent().unwrap().exists());
-    //std::fs::rename(src, ).unwrap(target)
+    std::fs::rename(src, target).unwrap()
 }
