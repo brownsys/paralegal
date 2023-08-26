@@ -1,0 +1,12 @@
+[package]
+name = "dfgraph"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[dependencies]
+flowistry = { git = "https://github.com/brownsys/flowistry", rev = "f3b27bb1e06a13c599ea56beca7aa047f7d291e5" }
+serde = { version = "1", features = ["derive"] }
+log = "0.4"

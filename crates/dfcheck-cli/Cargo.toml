@@ -1,0 +1,18 @@
+[package]
+name = "dfcheck-cli"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[dependencies]
+dfgraph = { path = "../dfgraph" }
+dfcheck = { path = "../dfcheck" }
+
+anyhow = "1.0.72"
+log = "0.4"
+serde_json = "1"
+simple_logger = "2"
+dlopen = "0.1.8"
+dlopen_derive = "0.1.4"
