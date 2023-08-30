@@ -310,7 +310,7 @@ pub struct FlowAnalysis<'a, 'tcx, 'g, 's> {
     pub aliases: Aliases<'a, 'tcx>,
     pub gli: GLI<'g>,
     carries_marker: &'s InlineJudge<'tcx>,
-    recurse_cache: RecursionBreakingCache<BodyId, flowistry::infoflow::FlowResults<'a, 'tcx>>,
+    recurse_cache: RecursionBreakingCache<BodyId, flowistry::infoflow::FlowDomain<'tcx>>,
     elision_info: RefCell<HashMap<Location, HashSet<algebra::MirEquation>>>,
 }
 
@@ -582,27 +582,29 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
 
         let body_with_facts =
             crate::borrowck_facts::get_body_with_borrowck_facts(tcx, def_id.expect_local());
-        let Some(flow) = self.recurse_cache.get(body_id, |_| {
-            info!("Recursing into {}", tcx.def_path_debug_str(*def_id));
-            flowistry::infoflow::compute_flow(tcx, body_id, body_with_facts)
-        }) else { return false };
         let body = &body_with_facts.body;
+        let Some(return_state) = self.recurse_cache.get(body_id, |_| {
+            info!("Recursing into {}", tcx.def_path_debug_str(*def_id));
+            let flow = flowistry::infoflow::compute_flow(tcx, body_id, body_with_facts);
 
-        let mut return_state =
-            flowistry::infoflow::FlowDomain::new(flow.analysis.location_domain());
-        {
-            let return_locs =
-                body.basic_blocks
-                    .iter_enumerated()
-                    .filter_map(|(bb, data)| match data.terminator().kind {
-                        TerminatorKind::Return => Some(body.terminator_loc(bb)),
-                        _ => None,
-                    });
+            let mut return_state =
+                flowistry::infoflow::FlowDomain::new(flow.analysis.location_domain());
+            {
+                let return_locs =
+                    body.basic_blocks
+                        .iter_enumerated()
+                        .filter_map(|(bb, data)| match data.terminator().kind {
+                            TerminatorKind::Return => Some(body.terminator_loc(bb)),
+                            _ => None,
+                        });
 
-            for loc in return_locs {
-                return_state.join(flow.state_at(loc));
-            }
-        };
+                for loc in return_locs {
+                    return_state.join(flow.state_at(loc));
+                }
+            };
+
+            return_state
+        }) else { return false };
 
         let translate_child_to_parent =
             |child: Place<'tcx>, mutated: bool| -> Option<Place<'tcx>> {
