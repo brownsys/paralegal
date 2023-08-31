@@ -315,11 +315,9 @@ dependencies = [
  "chrono",
  "clap",
  "dfgraph",
- "dialoguer",
  "dot",
  "flowistry",
  "humantime",
- "indicatif",
  "itertools",
  "lazy_static",
  "log",
@@ -329,16 +327,27 @@ dependencies = [
  "ordermap",
  "petgraph",
  "pretty",
- "ringbuffer",
  "rustc_plugin 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc_utils 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
- "serde-lexpr",
  "serde_json",
  "serial_test",
  "simple_logger",
  "toml",
  "trait_enum",
+]
+
+[[package]]
+name = "dfpp-explorer"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dfpp",
+ "dialoguer",
+ "indicatif",
+ "petgraph",
+ "ringbuffer",
+ "serde-lexpr",
 ]
 
 [[package]]

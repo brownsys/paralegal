@@ -1,6 +1,6 @@
 [workspace]
-exclude = ["crates/dfcheck/props/websubmit"]
-members = ["crates/*", ]
+members = ["crates/*"]
+exclude = ["props/websubmit", "props/lemmy"]
 
 
 [profile.release]
