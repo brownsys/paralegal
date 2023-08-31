@@ -123,6 +123,6 @@ impl Context {
                 _ => None,
             })
             .next()
-            .unwrap_or_else(Vec::new)
+            .unwrap_or_default()
     }
 }
