@@ -20,6 +20,7 @@ use crate::{
     Symbol,
 };
 use ast::{token, tokenstream};
+use dfgraph::Identifier;
 use token::*;
 use tokenstream::*;
 
@@ -312,7 +313,7 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::AttrArgs) -> MarkerAnnotation {
                 let (i, refinement) = nom::combinator::cond(cont.is_some(), refinements_parser)(i)?;
                 let (_, _) = nom::combinator::eof(i)?;
                 Ok(MarkerAnnotation {
-                    marker: label,
+                    marker: Identifier::new(label),
                     refinement: refinement.unwrap_or_else(MarkerRefinement::empty),
                 })
             };

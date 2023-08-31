@@ -1,7 +1,6 @@
 [workspace]
 members = ["crates/*"]
-exclude = ["props/websubmit", "props/lemmy"]
-
+exclude = ["props", "crates/dfpp/tests"]
 
 [profile.release]
 debug = true

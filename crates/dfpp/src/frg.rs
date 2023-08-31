@@ -592,10 +592,9 @@ impl ProgramDescriptionExt for ProgramDescription {
             .flat_map(|v| v.0.iter())
             .filter_map(Annotation::as_label_ann)
             .map(|a| a.marker)
-            .chain(std::iter::once(crate::Symbol::intern(
+            .chain(std::iter::once(Identifier::new_intern(
                 name::EXCEPTIONS_LABEL,
             )))
-            .map(Identifier::new)
             .collect()
     }
 
@@ -721,7 +720,7 @@ impl ProgramDescriptionExt for ProgramDescription {
                             // This is necessary because otherwise captured variables escape
                             .collect::<Vec<_>>()
                             .into_iter(),
-                            std::iter::once(Identifier::new(a.marker).build_forge(alloc)),
+                            std::iter::once(a.marker.build_forge(alloc)),
                         )
                     })
             }))

@@ -1,19 +1,19 @@
 use dfgraph::{
     Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, Identifier, MarkerAnnotation,
-    MarkerRefinement, ProgramDescription, Symbol,
+    MarkerRefinement, ProgramDescription,
 };
 
-use flowistry::indexed::ToIndex;
+use indexical::ToIndex;
 use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
 
-pub type Label = Symbol;
+pub type Label = Identifier;
 pub type LabelIndex = HashMap<Label, Vec<(Identifier, MarkerRefinement)>>;
 pub type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
 
 pub struct Context {
-    label_to_ids: LabelIndex,
+    pub label_to_ids: LabelIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
 }
@@ -52,7 +52,7 @@ impl Context {
         let ctrl_flows = &self.flows_to[ctrl_id];
         ctrl_flows
             .flows_to
-            .row_set(src.to_index(&ctrl_flows.sources))
+            .row_set(&src.to_index(&ctrl_flows.sources))
             .contains(sink)
     }
 

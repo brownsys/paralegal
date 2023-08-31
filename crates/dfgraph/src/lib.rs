@@ -6,30 +6,113 @@
 //!
 //! The top-level type is [`ProgramDescription`]
 
-#![feature(rustc_private, min_specialization)]
+#![cfg_attr(feature = "rustc", feature(rustc_private))]
 
-extern crate either;
+#[cfg(feature = "rustc")]
+extern crate rustc_driver;
+#[cfg(feature = "rustc")]
 extern crate rustc_hir;
-extern crate rustc_index;
+#[cfg(feature = "rustc")]
 extern crate rustc_middle;
-extern crate rustc_serialize;
+#[cfg(feature = "rustc")]
 extern crate rustc_span;
 
-mod serializers;
+#[cfg(feature = "rustc")]
+mod rustc;
+#[cfg(feature = "rustc")]
+use self::rustc::*;
+use indexical::define_index_type;
+#[cfg(feature = "rustc")]
+use rustc_hir::{self as hir, def_id};
+#[cfg(feature = "rustc")]
+use rustc_middle::mir;
+
 pub mod tiny_bitset;
 
 use crate::tiny_bitset::TinyBitSet;
-use flowistry::{
-    indexed::{DefaultDomain, IndexedValue, ToIndex},
-    to_index_impl,
-};
+use internment::Intern;
 use log::warn;
-use rustc_hir::BodyId;
-use rustc_middle::mir::Location;
+use serde::{Deserialize, Serialize};
 use std::{fmt, hash::Hash};
 
-pub use rustc_span::Symbol;
 pub use std::collections::{HashMap, HashSet};
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "rustc", serde(remote = "mir::BasicBlock"))]
+pub struct BasicBlock {
+    #[cfg_attr(feature = "rustc", serde(getter = "bbref_to_usize"))]
+    private: usize,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "rustc", serde(remote = "mir::Location"))]
+pub struct Location {
+    #[cfg(feature = "rustc")]
+    #[serde(with = "BasicBlock")]
+    pub block: mir::BasicBlock,
+    #[cfg(not(feature = "rustc"))]
+    pub block: BasicBlock,
+    pub statement_index: usize,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "rustc", serde(remote = "hir::ItemLocalId"))]
+pub struct ItemLocalId {
+    #[cfg_attr(feature = "rustc", serde(getter = "item_local_id_as_u32"))]
+    private: u32,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "rustc", serde(remote = "def_id::DefIndex"))]
+struct DefIndex {
+    #[cfg_attr(feature = "rustc", serde(getter = "def_index_as_u32"))]
+    private: u32,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "rustc", serde(remote = "def_id::LocalDefId"))]
+struct LocalDefId {
+    #[cfg(feature = "rustc")]
+    #[serde(with = "DefIndex")]
+    local_def_index: def_id::DefIndex,
+    #[cfg(not(feature = "rustc"))]
+    local_def_index: DefIndex,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "rustc", serde(remote = "hir::hir_id::OwnerId"))]
+struct OwnerId {
+    #[cfg(feature = "rustc")]
+    #[serde(with = "LocalDefId")]
+    def_id: def_id::LocalDefId,
+    #[cfg(not(feature = "rustc"))]
+    def_id: LocalDefId,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "rustc", serde(remote = "hir::HirId"))]
+struct HirId {
+    #[cfg(feature = "rustc")]
+    #[serde(with = "OwnerId")]
+    owner: hir::OwnerId,
+    #[cfg(not(feature = "rustc"))]
+    owner: OwnerId,
+    #[cfg(feature = "rustc")]
+    #[serde(with = "ItemLocalId")]
+    local_id: hir::ItemLocalId,
+    #[cfg(not(feature = "rustc"))]
+    local_id: ItemLocalId,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "rustc", serde(remote = "hir::BodyId"))]
+pub struct BodyId {
+    #[cfg(feature = "rustc")]
+    #[serde(with = "HirId")]
+    hir_id: hir::HirId,
+    #[cfg(not(feature = "rustc"))]
+    hir_id: HirId,
+}
 
 pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
@@ -87,8 +170,7 @@ pub struct ExceptionAnnotation {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MarkerAnnotation {
     /// The (unchanged) name of the label as provided by the user
-    #[serde(with = "crate::serializers::ser_sym")]
-    pub marker: Symbol,
+    pub marker: Identifier,
     #[serde(flatten)]
     pub refinement: MarkerRefinement,
 }
@@ -209,7 +291,7 @@ pub type AnnotationMap = HashMap<Identifier, (Vec<Annotation>, ObjectType)>;
 
 /// A Forge friendly representation of the dataflow graphs we calculated and the
 /// annotations we found.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
     pub controllers: HashMap<Endpoint, Ctrl>,
     pub annotations: AnnotationMap,
@@ -305,20 +387,16 @@ impl ProgramDescription {
     }
 }
 
-#[derive(
-    Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, serde::Serialize, serde::Deserialize, Copy,
-)]
-pub struct Identifier(#[serde(with = "crate::serializers::ser_sym")] Symbol);
+#[derive(Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, Serialize, Deserialize, Copy)]
+pub struct Identifier(Intern<String>);
 
 impl Identifier {
-    pub fn new(s: Symbol) -> Self {
-        Identifier(s)
-    }
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
+
     pub fn new_intern(s: &str) -> Self {
-        Self::new(Symbol::intern(s))
+        Identifier(Intern::from_ref(s))
     }
 }
 
@@ -330,6 +408,7 @@ impl std::fmt::Display for Identifier {
 
 /// Because we need these kinds of associations so often I made a separate type
 /// for it. Also allows us to serialize it more conveniently.
+#[derive(Debug)]
 pub struct Relation<X, Y>(pub HashMap<X, HashSet<Y>>);
 
 impl<X: serde::Serialize, Y: serde::Serialize + std::hash::Hash + std::cmp::Eq> serde::Serialize
@@ -384,13 +463,21 @@ impl<X, Y> Relation<X, Y> {
 /// operate directly on the wrapper types and also na way that works with any
 /// global location type (both [`GlobalLocation`] as well as the serializable
 /// [`crate::serializers::RawGlobalLocation`])
-#[derive(PartialEq, Eq, Hash, Debug, Clone, serde::Deserialize, serde::Serialize, Copy)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Deserialize, Serialize, Copy)]
 pub struct GlobalLocationS {
+    #[cfg(feature = "rustc")]
+    #[serde(with = "BodyId")]
     /// The id of the body in which this location is located.
-    #[serde(with = "crate::serializers::BodyIdProxy")]
+    pub function: hir::BodyId,
+    #[cfg(not(feature = "rustc"))]
+    /// The id of the body in which this location is located.
     pub function: BodyId,
+    #[cfg(feature = "rustc")]
+    #[serde(with = "Location")]
     /// The location itself
-    #[serde(with = "crate::serializers::ser_loc")]
+    pub location: mir::Location,
+    #[cfg(not(feature = "rustc"))]
+    /// The location itself
     pub location: Location,
 }
 /// A serializable non-interned version of [`GlobalLocation`].
@@ -401,7 +488,7 @@ pub struct GlobalLocationS {
 /// interned.
 ///
 /// For information on the meaning of this struct see [`GlobalLocation`]
-#[derive(serde::Deserialize, serde::Serialize, PartialEq, Eq, Hash, Clone, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Hash, Clone, Debug)]
 pub struct RawGlobalLocation(pub Vec<GlobalLocationS>);
 
 pub fn write_sep<
@@ -492,16 +579,8 @@ pub enum DataSource {
     Argument(usize),
 }
 
-rustc_index::newtype_index! {
-    pub struct DataSourceIndex {}
-}
-
-to_index_impl!(DataSource);
-pub type DataSourceDomain = DefaultDomain<DataSourceIndex, DataSource>;
-
-impl IndexedValue for DataSource {
-    type Index = DataSourceIndex;
-    type Domain = DataSourceDomain;
+define_index_type! {
+    pub struct DataSourceIndex for DataSource = u32;
 }
 
 impl DataSource {
@@ -537,16 +616,8 @@ impl DataSink {
     }
 }
 
-rustc_index::newtype_index! {
-    pub struct DataSinkIndex {}
-}
-
-to_index_impl!(DataSink);
-pub type DataSinkDomain = DefaultDomain<DataSinkIndex, DataSink>;
-
-impl IndexedValue for DataSink {
-    type Index = DataSinkIndex;
-    type Domain = DataSinkDomain;
+define_index_type! {
+    pub struct DataSinkIndex for DataSink = u32;
 }
 
 /// Annotations on types in a controller. Only types that have annotations are
@@ -554,7 +625,7 @@ impl IndexedValue for DataSink {
 /// `map.get(k).is_empty() == false`.
 pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Ctrl {
     pub data_flow: Relation<DataSource, DataSink>,
     pub ctrl_flow: Relation<DataSource, CallSite>,

@@ -6,7 +6,7 @@ extern crate rustc_span;
 use dfpp::{
     desc::{AnnotationMap, DataSink, DataSource, Identifier, ProgramDescription, TypeDescriptor},
     ir::{GlobalLocationS, IsGlobalLocation, RawGlobalLocation},
-    serializers::Bodies,
+    serializers::{Bodies, InstructionProxy},
     HashSet, Symbol,
 };
 use hir::BodyId;
@@ -239,7 +239,7 @@ use dfpp::serializers::SerializableCallOnlyFlow;
 pub struct G {
     pub graph: SerializableCallOnlyFlow,
     pub body: Bodies,
-    pub ctrl_name: Symbol,
+    pub ctrl_name: Identifier,
 }
 
 pub trait GetCallSites {
@@ -487,10 +487,10 @@ impl G {
                 body.1
                      .0
                     .iter()
-                    .filter(|s| s.1.contains(pattern))
+                    .filter(|s| s.contents.contains(pattern))
                     .map(|s| GlobalLocationS {
                         function: *bid,
-                        location: s.0,
+                        location: s.location,
                     })
             })
             .collect()
@@ -515,7 +515,7 @@ impl G {
         Self {
             graph,
             body,
-            ctrl_name: s,
+            ctrl_name: Identifier::new(s),
         }
     }
     pub fn ctrl(&self) -> BodyId {
@@ -532,9 +532,9 @@ impl G {
         body.1
              .0
             .iter()
-            .find(|(_, s, _)| s == format!("Argument _{n}").as_str())
+            .find(|InstructionProxy { contents, .. }| contents == format!("Argument _{n}").as_str())
             .unwrap_or_else(|| panic!("Argument {n} not found in {:?}", body))
-            .0
+            .location
     }
 }
 
@@ -575,7 +575,7 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 
     fn has_marker(self, marker: &str) -> bool {
-        let marker = Symbol::intern(marker);
+        let marker = Identifier::new_intern(marker);
         self.graph().0.annotations.values().any(|v| {
             v.0.iter()
                 .filter_map(|a| a.as_label_ann())

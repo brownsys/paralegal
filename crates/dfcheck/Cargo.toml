@@ -4,16 +4,11 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-[package.metadata.rust-analyzer]
-rustc_private = true
-
 [dependencies]
 dfgraph = { path = "../dfgraph" }
-rustc_utils = "=0.6.0-nightly-2023-04-12"
 anyhow = "1.0.72"
 log = "0.4"
-flowistry = { git = "https://github.com/brownsys/flowistry", rev = "f3b27bb1e06a13c599ea56beca7aa047f7d291e5" }
 itertools = "0.11.0"
-
-[dev-dependencies]
-
+indexical = "0.1.1"
+serde_json = "1"
+simple_logger = "2"

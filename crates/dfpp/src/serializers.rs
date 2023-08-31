@@ -13,83 +13,25 @@
 //! Some types (such as [`mir::Body`]) first have to be explicitly transformed
 //! into the respective proxy type. In the case of [`mir::Body`] this can be
 //! done with [`BodyProxy::from_body_with_normalize`]
+use dfgraph::Identifier;
 use serde::Deserialize;
 
 use crate::{
+    hir,
     ir::{CallDeps, CallOnlyFlow, GlobalLocation, RawGlobalLocation},
     mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
     utils::{extract_places, read_places_with_provenance, DfppBodyExt},
-    Either, HashMap, HashSet, Symbol,
+    Either, HashMap, HashSet,
 };
 
-fn bbref_to_usize(r: &mir::BasicBlock) -> usize {
-    r.as_usize()
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(remote = "mir::BasicBlock")]
-struct BasicBlockProxy {
-    #[serde(getter = "bbref_to_usize")]
-    private: usize,
-}
-
-impl From<BasicBlockProxy> for mir::BasicBlock {
-    fn from(proxy: BasicBlockProxy) -> mir::BasicBlock {
-        mir::BasicBlock::from_usize(proxy.private)
-    }
-}
-
-#[derive(serde::Serialize, Eq, PartialEq, Hash, serde::Deserialize)]
-pub struct LocationProxy {
-    #[serde(with = "BasicBlockProxy")]
-    pub block: mir::BasicBlock,
-    pub statement_index: usize,
-}
-
-pub mod ser_loc {
-    //! Serialization of locations, bundled into a `mod` so that you can use it
-    //! like
-    //! [`#[serde(with="ser_loc")]`](https://serde.rs/field-attrs.html#with)
-    use crate::mir;
-    use serde::{Deserialize, Serialize};
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<mir::Location, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        super::LocationProxy::deserialize(deserializer).map(|s| s.into())
-    }
-
-    pub fn serialize<S>(s: &mir::Location, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        super::LocationProxy::from(*s).serialize(serializer)
-    }
-}
-
-impl From<mir::Location> for LocationProxy {
-    fn from(l: mir::Location) -> Self {
-        Self {
-            block: l.block,
-            statement_index: l.statement_index,
-        }
-    }
-}
-
-impl From<LocationProxy> for mir::Location {
-    fn from(proxy: LocationProxy) -> mir::Location {
-        let LocationProxy {
-            block,
-            statement_index,
-        } = proxy;
-        mir::Location {
-            block,
-            statement_index,
-        }
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InstructionProxy {
+    #[serde(with = "dfgraph::Location")]
+    pub location: mir::Location,
+    pub contents: String,
+    pub places: HashSet<Identifier>,
 }
 
 /// A serializable version of a `mir::Body`.
@@ -98,47 +40,12 @@ impl From<LocationProxy> for mir::Location {
 /// It records for each [`mir::Location`] a string representation of the
 /// statement or terminator at that location and a set of [`mir::Place`]s that
 /// are mentioned in the statement/terminator, also represented as strings
-/// (though using the efficient, interned [`Symbol`]s).
+/// (though using the efficient, interned [`Identifier`]s).
 ///
 /// Construct one with [`Self::from_body_with_normalize`].
-#[derive(Debug)]
-pub struct BodyProxy(pub Vec<(mir::Location, String, HashSet<Symbol>)>);
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BodyProxy(pub Vec<InstructionProxy>);
 
-impl Serialize for BodyProxy {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        self.0
-            .iter()
-            .map(|(l, s, h)| {
-                (
-                    (*l).into(),
-                    s,
-                    h.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-                )
-            })
-            .collect::<Vec<(LocationProxy, _, _)>>()
-            .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for BodyProxy {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        <Vec<(LocationProxy, String, Vec<SymbolProxy>)> as Deserialize<'de>>::deserialize(
-            deserializer,
-        )
-        .map(|v| {
-            v.into_iter()
-                .map(|(l, s, vs)| (l.into(), s, vs.into_iter().map(|s| s.into()).collect()))
-                .collect()
-        })
-        .map(BodyProxy)
-    }
-}
 fn iter_stmts<'a, 'tcx>(
     b: &'a mir::Body<'tcx>,
 ) -> impl Iterator<
@@ -175,15 +82,13 @@ impl<'tcx> From<&mir::Body<'tcx>> for BodyProxy {
     fn from(body: &mir::Body<'tcx>) -> Self {
         Self(
             iter_stmts(body)
-                .map(|(loc, stmt)| {
-                    (
-                        loc,
-                        stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
-                        extract_places(loc, body, false)
-                            .into_iter()
-                            .map(|p| Symbol::intern(&format!("{p:?}")))
-                            .collect(),
-                    )
+                .map(|(location, stmt)| InstructionProxy {
+                    location,
+                    contents: stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
+                    places: extract_places(location, body, false)
+                        .into_iter()
+                        .map(|p| Identifier::new_intern(&format!("{p:?}")))
+                        .collect(),
                 })
                 .collect::<Vec<_>>(),
         )
@@ -199,146 +104,20 @@ impl BodyProxy {
     pub fn from_body_with_normalize<'tcx>(body: &mir::Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         Self(
             iter_stmts(body)
-                .map(|(loc, stmt)| {
-                    (
-                        loc,
-                        stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
-                        read_places_with_provenance(loc, &body.stmt_at_better_err(loc), tcx)
-                            .map(|p| Symbol::intern(&format!("{p:?}")))
-                            .collect(),
+                .map(|(location, stmt)| InstructionProxy {
+                    location,
+                    contents: stmt.either(|s| format!("{:?}", s.kind), |t| format!("{:?}", t.kind)),
+                    places: read_places_with_provenance(
+                        location,
+                        &body.stmt_at_better_err(location),
+                        tcx,
                     )
+                    .map(|p| Identifier::new_intern(&format!("{p:?}")))
+                    .collect(),
                 })
                 .collect::<Vec<_>>(),
         )
     }
-}
-
-pub struct SymbolProxy(Symbol);
-
-pub mod ser_sym {
-    //! Serialization of [`Symbol`]s, bundled into a `mod` so that you can use it
-    //! like
-    //! [`#[serde(with="ser_sym")]`](https://serde.rs/field-attrs.html#with)
-    use crate::Symbol;
-    use serde::{Deserialize, Serialize};
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Symbol, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        super::SymbolProxy::deserialize(deserializer).map(|s| s.into())
-    }
-
-    pub fn serialize<S>(s: &Symbol, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        super::SymbolProxy::from(*s).serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for SymbolProxy {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        String::deserialize(deserializer).map(|s| Self(Symbol::intern(&s)))
-    }
-}
-
-impl Serialize for SymbolProxy {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.as_str().serialize(serializer)
-    }
-}
-
-impl From<Symbol> for SymbolProxy {
-    fn from(sym: Symbol) -> Self {
-        Self(sym)
-    }
-}
-
-impl From<SymbolProxy> for Symbol {
-    fn from(proxy: SymbolProxy) -> Symbol {
-        proxy.0
-    }
-}
-
-use crate::rust::hir::{self, def_id};
-
-#[derive(Serialize, Deserialize)]
-struct LocationDomainProxy {
-    domain: Vec<LocationProxy>,
-    #[serde(with = "BasicBlockProxy")]
-    arg_block: mir::BasicBlock,
-    real_locations: usize,
-}
-
-fn item_local_id_as_u32(i: &hir::ItemLocalId) -> u32 {
-    i.as_u32()
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "hir::ItemLocalId")]
-struct ItemLocalIdProxy {
-    #[serde(getter = "item_local_id_as_u32")]
-    private: u32,
-}
-
-impl From<ItemLocalIdProxy> for hir::ItemLocalId {
-    fn from(proxy: ItemLocalIdProxy) -> hir::ItemLocalId {
-        hir::ItemLocalId::from_u32(proxy.private)
-    }
-}
-
-fn def_index_as_u32(i: &def_id::DefIndex) -> u32 {
-    i.as_u32()
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "def_id::DefIndex")]
-struct DefIndexProxy {
-    #[serde(getter = "def_index_as_u32")]
-    private: u32,
-}
-
-impl From<DefIndexProxy> for def_id::DefIndex {
-    fn from(proxy: DefIndexProxy) -> def_id::DefIndex {
-        def_id::DefIndex::from_u32(proxy.private)
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "def_id::LocalDefId")]
-struct LocalDefIdProxy {
-    #[serde(with = "DefIndexProxy")]
-    local_def_index: def_id::DefIndex,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "hir::hir_id::OwnerId")]
-struct OwnerIdProxy {
-    #[serde(with = "LocalDefIdProxy")]
-    def_id: crate::LocalDefId,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "hir::HirId")]
-struct HirIdProxy {
-    #[serde(with = "OwnerIdProxy")]
-    owner: hir::OwnerId,
-    #[serde(with = "ItemLocalIdProxy")]
-    local_id: hir::ItemLocalId,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(remote = "hir::BodyId")]
-pub struct BodyIdProxy {
-    #[serde(with = "HirIdProxy")]
-    hir_id: hir::HirId,
 }
 
 /// This exists because of serde's restrictions on how you derive serializers.
@@ -350,7 +129,7 @@ pub struct BodyIdProxy {
 /// and then dispatch to the `serialize` impl for the reconstructed data
 /// structure.
 #[derive(Serialize, Deserialize)]
-pub struct BodyIdProxy2(#[serde(with = "BodyIdProxy")] pub hir::BodyId);
+pub struct BodyIdProxy2(#[serde(with = "dfgraph::BodyId")] pub hir::BodyId);
 
 impl<'g> Serialize for GlobalLocation<'g> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -452,7 +231,7 @@ impl CallOnlyFlow<GlobalLocation<'_>> {
 /// A serializable version of [`mir::Body`]s, mapped to their [`hir::BodyId`] so
 /// that you can resolve the body belonging to a global location (see
 /// [`IsGlobalLocation::function`]).
-pub struct Bodies(pub HashMap<hir::BodyId, (Symbol, BodyProxy)>);
+pub struct Bodies(pub HashMap<hir::BodyId, (Identifier, BodyProxy)>);
 
 impl Serialize for Bodies {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -461,7 +240,7 @@ impl Serialize for Bodies {
     {
         self.0
             .iter()
-            .map(|(bid, (name, b))| (BodyIdProxy2(*bid), (SymbolProxy(*name), b)))
+            .map(|(bid, (name, b))| (BodyIdProxy2(*bid), *name, b))
             .collect::<Vec<_>>()
             .serialize(serializer)
     }
@@ -475,7 +254,7 @@ impl<'de> Deserialize<'de> for Bodies {
         Vec::deserialize(deserializer).map(|v| {
             Bodies(
                 v.into_iter()
-                    .map(|(BodyIdProxy2(bid), (SymbolProxy(s), v))| (bid, (s, v)))
+                    .map(|(BodyIdProxy2(bid), s, v)| (bid, (s, v)))
                     .collect(),
             )
         })

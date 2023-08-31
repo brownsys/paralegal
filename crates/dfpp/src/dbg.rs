@@ -8,6 +8,7 @@
 //! to stdout, a file or a log statement. Some take additional information (such
 //! as [TyCtxt]) to get contextual information that is used to make the output
 //! more useful.
+use dfgraph::Identifier;
 use flowistry::indexed::IndexedDomain;
 
 use crate::{
@@ -350,7 +351,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                 (
           bid,
           (
-            body_name_pls(tcx, bid).name,
+            Identifier::new(body_name_pls(tcx, bid).name),
             BodyProxy::from_body_with_normalize(
               rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
                 tcx,

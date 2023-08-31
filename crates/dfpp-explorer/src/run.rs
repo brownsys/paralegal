@@ -260,8 +260,8 @@ impl<'g> Repl<'g> {
             body.1
                  .0
                 .iter()
-                .find(|t| t.0 == n.location)
-                .map(|t| t.1.as_str())
+                .find(|t| t.location == n.location)
+                .map(|t| t.contents.as_str())
         }))
     }
 

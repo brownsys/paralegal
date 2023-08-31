@@ -101,7 +101,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 let subtypes = self
                     .marker_ctx
                     .all_type_markers(ty)
-                    .map(|t| Identifier::new(t.0.marker))
+                    .map(|t| t.0.marker)
                     .collect::<HashSet<_>>();
                 (DataSource::Argument(l.as_usize() - 1), subtypes)
             });

@@ -9,7 +9,7 @@ description = "A linter for user-defined privacy properties for Rust code"
 rustc_private = true
 
 [dependencies]
-dfgraph = { path = "../dfgraph" }
+dfgraph = { path = "../dfgraph", features = ["rustc"] }
 
 #flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "1759ef8" }
 #flowistry = { path = "../flowistry/crates/flowistry" }

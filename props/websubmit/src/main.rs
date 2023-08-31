@@ -1,5 +1,3 @@
-#![feature(rustc_private)]
-
 use std::sync::Arc;
 
 use dfcheck::{
@@ -17,7 +15,7 @@ impl DeletionProp {
     }
 
     fn flows_to_store(&self, t: &Identifier) -> bool {
-        let stores = Label::intern("stores");
+        let stores = Label::new_intern("stores");
 
         for (c_id, c) in &self.cx.desc().controllers {
             let t_srcs = self.cx.srcs_with_type(c, t);
@@ -39,7 +37,7 @@ impl DeletionProp {
     }
 
     fn flows_to_deletion(&self, t: &Identifier) -> bool {
-        let deletes = Label::intern("deletes");
+        let deletes = Label::new_intern("deletes");
 
         let mut ots = self.cx.otypes(t);
         ots.push(*t);
@@ -68,7 +66,7 @@ impl DeletionProp {
     // Asserts that there exists one controller which calls a deletion
     // function on every value (or an equivalent type) that is ever stored.
     pub fn check(&self) {
-        let sensitive = Label::intern("sensitive");
+        let sensitive = Label::new_intern("sensitive");
         for (t, _) in self.cx.labelled(sensitive) {
             if self.flows_to_store(t) && !self.flows_to_deletion(t) {
                 println!("Found an error for type: {t:?}");
@@ -77,7 +75,6 @@ impl DeletionProp {
     }
 }
 
-#[no_mangle]
-pub fn run(cx: Arc<Context>) {
-    DeletionProp::new(cx).check();
+pub fn main() {
+    dfcheck::cli(|cx| DeletionProp::new(cx).check())
 }
