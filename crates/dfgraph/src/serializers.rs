@@ -15,10 +15,9 @@
 //! done with [`BodyProxy::from_body_with_normalize`]
 use serde::Deserialize;
 
-use crate::{HashMap, HashSet};
-use either::Either;
+use crate::HashSet;
 use rustc_hir::{self as hir, def_id};
-use rustc_middle::{mir, ty::TyCtxt};
+use rustc_middle::mir;
 use rustc_span::Symbol;
 use serde::{Serialize, Serializer};
 
@@ -142,38 +141,6 @@ impl<'de> Deserialize<'de> for BodyProxy {
         .map(BodyProxy)
     }
 }
-fn iter_stmts<'a, 'tcx>(
-    b: &'a mir::Body<'tcx>,
-) -> impl Iterator<
-    Item = (
-        mir::Location,
-        Either<&'a mir::Statement<'tcx>, &'a mir::Terminator<'tcx>>,
-    ),
-> {
-    b.basic_blocks.iter_enumerated().flat_map(|(block, bbdat)| {
-        bbdat
-            .statements
-            .iter()
-            .enumerate()
-            .map(move |(statement_index, stmt)| {
-                (
-                    mir::Location {
-                        block,
-                        statement_index,
-                    },
-                    Either::Left(stmt),
-                )
-            })
-            .chain(std::iter::once((
-                mir::Location {
-                    block,
-                    statement_index: bbdat.statements.len(),
-                },
-                Either::Right(bbdat.terminator()),
-            )))
-    })
-}
-
 pub struct SymbolProxy(Symbol);
 
 pub mod ser_sym {
@@ -310,54 +277,3 @@ pub struct BodyIdProxy {
 /// structure.
 #[derive(Serialize, Deserialize)]
 pub struct BodyIdProxy2(#[serde(with = "BodyIdProxy")] pub hir::BodyId);
-
-pub mod serde_map_via_vec {
-    //! Serialize a [`HashMap`] by converting it to a [`Vec`], lifting
-    //! restrictions on the types of permissible keys.
-    //!
-    //! The JSON serializer for [`HashMap`] needs the keys to serialize to a
-    //! JSON string object, but sometimes that is not the case. Since the
-    //! [`HashMap`] struct only requires its keys be [`Eq`] and [`Hash`] other
-    //! non-string values may have been used as key (such is the case in
-    //! [`Bodies`](super::Bodies)). Unfortunately you can still use the
-    //! [`Serialize`] trait on [`HashMap`], even if the keys do not serialize to
-    //! strings. Instead a runtime error will be thrown when a non-string key is
-    //! encountered.
-    //!
-    //! This module converts the [`HashMap`] into a [`Vec`] of tuples and
-    //! (de)serializes that, which permits arbitrary types to be used for the
-    //! keys.
-    //!
-    //! You are meant to use both [`serialize`] and [`deserialize`], because the
-    //! [`Serialize`] and [`Deserialize`] instances of [`HashMap`] do not work
-    //! together with these functions.
-
-    use crate::HashMap;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    /// Serialize a [`HashMap`] by first converting to a [`Vec`] of tuples and
-    /// then serializing the vector.
-    ///
-    /// See module level documentation for usage information.
-    pub fn serialize<S: Serializer, K: Serialize, V: Serialize>(
-        map: &HashMap<K, V>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        map.iter().collect::<Vec<_>>().serialize(serializer)
-    }
-
-    /// Deserialize a [`HashMap`] by first deserializing a [`Vec`] of tuples and
-    /// then converting.
-    ///
-    /// See module level documentation for usage information.
-    pub fn deserialize<
-        'de,
-        D: Deserializer<'de>,
-        K: Deserialize<'de> + std::cmp::Eq + std::hash::Hash,
-        V: Deserialize<'de>,
-    >(
-        deserializer: D,
-    ) -> Result<HashMap<K, V>, D::Error> {
-        Ok(Vec::deserialize(deserializer)?.into_iter().collect())
-    }
-}

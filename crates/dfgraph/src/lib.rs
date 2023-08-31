@@ -7,7 +7,6 @@
 //! The top-level type is [`ProgramDescription`]
 
 #![feature(rustc_private, min_specialization)]
-#![allow(warnings)]
 
 extern crate either;
 extern crate rustc_hir;
@@ -26,16 +25,11 @@ use flowistry::{
 };
 use log::warn;
 use rustc_hir::BodyId;
-use rustc_middle::{mir::Location, ty::TyCtxt};
+use rustc_middle::mir::Location;
 use std::{fmt, hash::Hash};
 
 pub use rustc_span::Symbol;
 pub use std::collections::{HashMap, HashSet};
-
-// use crate::{
-//     ir::{IsGlobalLocation},
-//     utils::{identifier_for_item, TinyBitSet},
-// };
 
 pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
