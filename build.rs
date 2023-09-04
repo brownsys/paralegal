@@ -15,6 +15,8 @@ fn add_link_search_path_for_compiler_binaries(s: impl std::fmt::Display) {
     add_link_arg_for_compiler_binaries(format!("-Wl,-rpath,{s}"))
 }
 
+/// The "SYSROOT" path for the toolchain we're compiling against.
+/// ($RUSTUP_HOME/toolchains/$RUSTUP_TOOLCHAIN)
 fn rustup_toolchain_path() -> PathBuf {
     let rustup_home = env::var("RUSTUP_HOME").unwrap();
     let rustup_tc = env::var("RUSTUP_TOOLCHAIN").unwrap();
