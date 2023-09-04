@@ -43,6 +43,8 @@ dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c
 
 serde_json = "1"
 toml = "0.7"
+syn = { version = "2", features = ["full", "visit"] }
+regex = "1"
 
 dialoguer = { version = "0.10", features = ["history", "fuzzy-select"] }
 ringbuffer = "0.13"
@@ -64,6 +66,9 @@ name = "dfpp"
 name = "dfpp-explorer"
 path = "explorer/main.rs"
 
+[[bin]]
+name = "dfpp-auto-marker"
+path = "auto-marker/main.rs"
 
 [profile.release]
 debug = true
