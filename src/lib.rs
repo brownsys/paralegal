@@ -230,6 +230,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         rustc_plugin::RustcPluginArgs {
             args: Args::from_parseable(args.args).unwrap(),
             filter: CrateFilter::OnlyWorkspace,
+            env: vec![("SYSROOT".into(), env!("SYSROOT_PATH").into())],
         }
     }
 
