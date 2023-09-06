@@ -153,6 +153,27 @@ impl MarkerRefinement {
     }
 }
 
+impl FromIterator<MarkerRefinementKind> for MarkerRefinement {
+    fn from_iter<T: IntoIterator<Item = MarkerRefinementKind>>(iter: T) -> Self {
+        iter.into_iter()
+            .fold(MarkerRefinement::empty(), |base, elem| {
+                base.merge_kind(elem).unwrap()
+            })
+    }
+}
+
+impl From<MarkerRefinementKind> for MarkerRefinement {
+    fn from(value: MarkerRefinementKind) -> Self {
+        MarkerRefinement::empty().merge_kind(value).unwrap()
+    }
+}
+
+impl Default for MarkerRefinement {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ObjectType {
     Function(usize),
