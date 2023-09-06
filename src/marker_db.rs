@@ -289,7 +289,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
     }
 }
 
-type RawExternalMarkers = HashMap<String, Vec<crate::desc::MarkerAnnotation>>;
+pub type RawExternalMarkers = HashMap<String, Vec<crate::desc::MarkerAnnotation>>;
 
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.
