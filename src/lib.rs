@@ -230,7 +230,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
 
         // Override the SYSROOT so that it points to the version we were
         // compiled against.
-        // 
+        //
         // This is actually not necessary for *this* binary, but it will bne
         // inherited by the calls to `cargo` and `rustc` does by `rustc_plugin`
         // and thus those will link against the version of `std` that we
