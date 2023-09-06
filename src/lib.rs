@@ -227,10 +227,19 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
     ) -> rustc_plugin::RustcPluginArgs<Self::Args> {
         use clap::Parser;
         let args = ArgWrapper::parse();
+
+        // Override the SYSROOT so that it points to the version we were
+        // compiled against.
+        // 
+        // This is actually not necessary for *this* binary, but it will bne
+        // inherited by the calls to `cargo` and `rustc` does by `rustc_plugin`
+        // and thus those will link against the version of `std` that we
+        // require.
+        std::env::set_var("SYSROOT", env!("SYSROOT_PATH"));
+
         rustc_plugin::RustcPluginArgs {
             args: Args::from_parseable(args.args).unwrap(),
             filter: CrateFilter::OnlyWorkspace,
-            env: vec![("SYSROOT".into(), env!("SYSROOT_PATH").into())],
         }
     }
 
