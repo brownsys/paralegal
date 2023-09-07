@@ -330,21 +330,22 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
         AsFnAndArgsErr<'tcx>,
     > {
         let mir::TerminatorKind::Call {
-                func,
-                args,
-                destination,
-                ..
-            } = self else {
-                return Err(AsFnAndArgsErr::NotAFunctionCall)
-            };
+            func,
+            args,
+            destination,
+            ..
+        } = self
+        else {
+            return Err(AsFnAndArgsErr::NotAFunctionCall);
+        };
         let ty = match &func.constant().ok_or(AsFnAndArgsErr::NotAConstant)?.literal {
             mir::ConstantKind::Val(_, ty) => *ty,
             mir::ConstantKind::Ty(cst) => cst.ty(),
             mir::ConstantKind::Unevaluated { .. } => unreachable!(),
         };
         let (ty::FnDef(defid, gargs) | ty::Closure(defid, gargs)) = ty.kind() else {
-                    return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()))
-                };
+            return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
+        };
         let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
             .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
             .map_or(FnResolution::Partial(*defid), FnResolution::Final);

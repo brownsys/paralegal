@@ -24,16 +24,16 @@ impl<'g> Repl<'g> {
             .gloc_translation_map
             .as_ref()
             .ok_or(RunCommandErr::NoGraphLoaded)?;
-        map.get(&name)
+        map
+            .get(&name)
             .ok_or(())
-            .or_else(|()| {
+            .or_else(|()|
                 if self.prompt_for_missing_nodes {
-                    println!(
-            "Could not find the node '{name}', did you mean instead: (press 'ESC' to abort)"
-          );
+                    println!("Could not find the node '{name}', did you mean instead: (press 'ESC' to abort)");
                     let mut selection = dl::FuzzySelect::new();
                     let items = map.keys().collect::<Vec<_>>();
-                    selection.items(items.as_slice()).with_initial_text(&name);
+                    selection.items(items.as_slice())
+                        .with_initial_text(&name);
                     if let Some(idx) = selection.interact_opt()? {
                         Ok(&map[items[idx]])
                     } else {
@@ -41,8 +41,7 @@ impl<'g> Repl<'g> {
                     }
                 } else {
                     Err(RunCommandErr::NodeNotFound(name))
-                }
-            })
+                })
             .map(|r| *r)
     }
 
@@ -315,7 +314,7 @@ impl<'g> Repl<'g> {
                         &subg,
                         &[],
                         &|_, _| "".to_string(),
-                        &|_, _| { "shape=box".to_string() }
+                        &|_, _| "shape=box".to_string()
                     ),
                 )?;
                 if matches!(format, GraphOutputFormat::Pdf) {
@@ -447,69 +446,33 @@ impl<'g> Repl<'g> {
                         .ok_or(RunCommandErr::MinimalFlowParseError(
                             "Did not find 'arg_call_site' key",
                         ))?;
-                let mut graph: petgraph::prelude::GraphMap<&str, u16, petgraph::Directed> =
-                    petgraph::graphmap::GraphMap::from_edges(
-                        flow.list_iter()
-                            .ok_or(RunCommandErr::MinimalFlowParseError(
-                                "'minimal_subflow' is not an s-expression list",
-                            ))?
-                            .map(|v| {
-                                match v
-                  .to_ref_vec()
-                  .ok_or(RunCommandErr::MinimalFlowParseError(
-                    "'minimal_subflow' elements are not lists",
-                  ))?
-                  .as_slice()
-                {
-                  [_, from, to] => Ok((
-                    from
-                      .as_symbol()
-                      .ok_or(RunCommandErr::MinimalFlowParseError(
-                        "Second elements of 'minimal_subflow' elements should be a symbol",
-                      ))?,
-                    to.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError(
-                      "Third elements of 'minimal_subflow' elements should be a symbol",
-                    ))?,
-                    0,
-                  )),
-                  _ => Err(RunCommandErr::MinimalFlowParseError(
-                    "'minimal_subflow' list elements should be 3-tuples",
-                  )),
-                }
-                            })
-                            .collect::<Result<Vec<_>, _>>()?,
+                let mut graph: petgraph::prelude::GraphMap<&str, u16, petgraph::Directed> = petgraph::graphmap::GraphMap::from_edges(
+                    flow.list_iter()
+                        .ok_or(RunCommandErr::MinimalFlowParseError("'minimal_subflow' is not an s-expression list"))?
+                        .map(|v| match v.to_ref_vec().ok_or(RunCommandErr::MinimalFlowParseError("'minimal_subflow' elements are not lists"))?
+                        .as_slice()
+                        {
+                            [_, from, to] => Ok((
+                                from.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("Second elements of 'minimal_subflow' elements should be a symbol"))?, 
+                                to.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("Third elements of 'minimal_subflow' elements should be a symbol"))?, 
+                                0)),
+                            _ => Err(RunCommandErr::MinimalFlowParseError("'minimal_subflow' list elements should be 3-tuples"))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
                     );
 
-                for res in arg_call_site
-                    .list_iter()
-                    .ok_or(RunCommandErr::MinimalFlowParseError(
-                        "'arg_call_site' is not an s-expression list",
-                    ))?
-                    //.ok_or(RunCommandErr::MinimalFlowParseError)?
-                    .map(|v| {
-                        match v
-              .to_ref_vec()
-              .ok_or(RunCommandErr::MinimalFlowParseError(
-                "'arg_call_site' elements are not lists",
-              ))?
-              .as_slice()
-            {
-              [from, to] => Ok((
-                from
-                  .as_symbol()
-                  .ok_or(RunCommandErr::MinimalFlowParseError(
-                    "First elements of 'arg_call_site' elements should be a symbol",
-                  ))?,
-                to.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError(
-                  "Second elements of 'arg_call_site' elements should be a symbol",
-                ))?,
-              )),
-              _ => Err(RunCommandErr::MinimalFlowParseError(
-                "'arg_call_site' list elements should be 2-tuples",
-              )),
-            }
-                    })
-                {
+                for res in arg_call_site.list_iter()
+                            .ok_or(RunCommandErr::MinimalFlowParseError("'arg_call_site' is not an s-expression list"))?
+                            //.ok_or(RunCommandErr::MinimalFlowParseError)?
+                            .map(|v| match v.to_ref_vec().ok_or(RunCommandErr::MinimalFlowParseError("'arg_call_site' elements are not lists"))?
+                            .as_slice()
+                            {
+                                [from, to] => Ok((
+                                    from.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("First elements of 'arg_call_site' elements should be a symbol"))?, 
+                                    to.as_symbol().ok_or(RunCommandErr::MinimalFlowParseError("Second elements of 'arg_call_site' elements should be a symbol"))?, 
+                                    )),
+                                _ => Err(RunCommandErr::MinimalFlowParseError("'arg_call_site' list elements should be 2-tuples"))
+                            }) {
                     let (arg, fun) = res?;
                     if graph.contains_node(arg) && graph.contains_node(fun) {
                         graph.add_edge(arg, fun, 0);
@@ -524,7 +487,7 @@ impl<'g> Repl<'g> {
                         &graph,
                         &[],
                         &|_, _| "".to_string(),
-                        &|_, _| { "shape=box".to_string() }
+                        &|_, _| "shape=box".to_string()
                     )
                 )?;
                 Ok(())

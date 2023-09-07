@@ -193,13 +193,12 @@ impl<'tcx> MarkerCtx<'tcx> {
             .filter_map(|a| {
                 a.match_extract(&consts::MARKER_MARKER, |i| {
                     Annotation::Label(crate::ann_parse::ann_match_fn(i))
-                })
-                .or_else(|| {
+                }).or_else(||
                     a.match_extract(&consts::LABEL_MARKER, |i| {
-            warn!("The `dfpp::label` annotation is deprecated, use `dfpp::marker` instead");
-            Annotation::Label(crate::ann_parse::ann_match_fn(i))
-          })
-                })
+                        warn!("The `dfpp::label` annotation is deprecated, use `dfpp::marker` instead");
+                        Annotation::Label(crate::ann_parse::ann_match_fn(i))
+                    })
+                )
                 .or_else(|| {
                     a.match_extract(&consts::OTYPE_MARKER, |i| {
                         Annotation::OType(crate::ann_parse::otype_ann_match(i, tcx))

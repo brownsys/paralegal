@@ -349,19 +349,19 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
             .into_iter()
             .map(|bid| {
                 (
-          bid,
-          (
-            Identifier::new(body_name_pls(tcx, bid).name),
-            BodyProxy::from_body_with_normalize(
-              rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
-                tcx,
-                tcx.hir().body_owner_def_id(bid),
-              )
-              .simplified_body(),
-              tcx,
-            ),
-          ),
-        )
+                    bid,
+                    (
+                        Identifier::new(body_name_pls(tcx, bid).name),
+                        BodyProxy::from_body_with_normalize(
+                            rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
+                                tcx,
+                                tcx.hir().body_owner_def_id(bid),
+                            )
+                            .simplified_body(),
+                            tcx,
+                        ),
+                    ),
+                )
             })
             .collect::<HashMap<_, _>>(),
     );

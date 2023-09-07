@@ -590,13 +590,13 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             let mut return_state =
                 flowistry::infoflow::FlowDomain::new(flow.analysis.location_domain());
             {
-                let return_locs =
-                    body.basic_blocks
-                        .iter_enumerated()
-                        .filter_map(|(bb, data)| match data.terminator().kind {
-                            TerminatorKind::Return => Some(body.terminator_loc(bb)),
-                            _ => None,
-                        });
+                let return_locs = body
+                    .basic_blocks
+                    .iter_enumerated()
+                    .filter_map(|(bb, data)| match data.terminator().kind {
+                        TerminatorKind::Return => Some(body.terminator_loc(bb)),
+                        _ => None,
+                    });
 
                 for loc in return_locs {
                     return_state.join(flow.state_at(loc));
@@ -604,7 +604,9 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
             };
 
             return_state
-        }) else { return false };
+        }) else {
+            return false;
+        };
 
         let translate_child_to_parent =
             |child: Place<'tcx>, mutated: bool| -> Option<Place<'tcx>> {

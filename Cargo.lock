@@ -321,7 +321,6 @@ dependencies = [
  "internment",
  "log",
  "serde",
- "serde_json",
 ]
 
 [[package]]

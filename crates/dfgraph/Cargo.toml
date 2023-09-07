@@ -14,4 +14,3 @@ serde = { version = "1", features = ["derive"] }
 log = "0.4"
 internment = { version = "0.7.1", features = ["serde"] }
 indexical = "0.1.1"
-serde_json = "*"
