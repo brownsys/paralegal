@@ -91,8 +91,11 @@ jobs:
       with:
         path: ~/.rustup
         key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Perform Check
+    - name: Check main repo
       run: cargo fmt --check
+    - name: Check properties
+      run: cargo fmt --check
+      working-directory: props
 
   linting:
     name: Clippy
@@ -116,3 +119,6 @@ jobs:
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Here come the complaints
       run: cargo clippy --all -- -D warnings
+    - name: Complaints about properties
+      run: cargo clippy --all -- -D warnings
+      working-directory: props
