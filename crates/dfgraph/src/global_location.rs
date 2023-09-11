@@ -8,7 +8,7 @@
 //!
 //! Consider the following code:
 //!
-//! ```
+//! ```ignore
 //! fn bar() {
 //!     let x = 1;
 //! }
@@ -39,18 +39,16 @@
 //!
 //! # Construction
 //!
-//! [`GLI::globalize_location`] is used to construct global locations that are
+//! [`GlobalLocation::single`] is used to construct global locations that are
 //! not nested in a call chain (such as the location of `let x = 1` within
 //! `bar`). A nested location (such as nesting this one behind the call to `bar`
-//! in `foo`) is done using [`GLI::global_location_from_relative`].
+//! in `foo`) is done using [`GlobalLocation::relativize`].
 //!
 //! In the example we would first construct global locations for all locations
-//! in `bar` with (pseudocode) `bar_bb0[0] = `[`gli.globalize_location(bb0[0],
-//! bar_id)`](GLI::globalize_location) and then make the relative locations to
-//! foo with [`gli.global_location_from_relative(bar_bb0[0], bb0[0],
-//! foo_id)`](GLI::global_location_from_relative) and
-//! [`gli.global_location_from_relative(bar_bb0[0], bb1[0],
-//! foo_id)`](GLI::global_location_from_relative) for the first and second
+//! in `bar` with (pseudocode) `bar_bb0[0] = `[`GlobalLocation::single(bb0[0],
+//! bar_id)`](GlobalLocation::single) and then make the relative locations to
+//! foo with [`bar_bb0[0].relativize(bb0[0], foo_id)`](GlobalLocation::relativize) and
+//! [`bar_bb0[0].relativize(bb1[0], foo_id)`](GlobalLocation::relativize) for the first and second
 //! inlining respectively.
 //!
 //! # Representation
@@ -62,28 +60,11 @@
 //!
 //! The innermost location is what you'd want to look up if you are wanting to
 //! see the actual statement or terminator that this location refers to.
-//!
-//! # Usage
-//!
-//! Global locations are intended to be used via the [`IsGlobalLocation`] trait.
-//!
-//! ## Why we need a trait
-//!
-//! We intern global locations to make the fact that they are linked lists more
-//! efficient. However this makes serialization harder. Since we only use
-//! serialization for testing I am doing the lazy thing where I just serialize
-//! copies of the linked list. But this also means there's two ways to represent
-//! global location, one being the one that recurses with interned pointers, the
-//! other uses an owned (e.g. copied) `Box`. This trait lets you treat both of
-//! them the same for convenience. This is the reason this trait uses `&self`
-//! instead of `self`. For interned values using `self` would be fine, but the
-//! serializable version is an owned `Box` and as such would be moved with these
-//! function calls.
 
 #[cfg(feature = "rustc")]
 use crate::rustc::{hir, mir};
-use crate::{rustc_proxies, CallSite, DataSource};
-use internment::{Arena, ArenaIntern, Intern};
+use crate::rustc_proxies;
+use internment::Intern;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -101,26 +82,9 @@ pub type Location = mir::Location;
 #[cfg(not(feature = "rustc"))]
 pub type Location = rustc_proxies::Location;
 
-/// The payload type of a global location. You will probably want to operate on
-/// the interned wrapper type [`GlobalLocation`], which gives access to the same
-/// fields with methods such as [`function`](IsGlobalLocation::function),
-/// [`location`](IsGlobalLocation::location) and
-/// [`next`](IsGlobalLocation::next).
+/// The payload type of a global location.
 ///
-/// Other methods and general information for global locations is documented on
-/// [`GlobalLocation`].
-///
-/// The generic parameter `Inner` is typically instantiated recursively with the
-/// interned wrapper type `GlobalLocation<'g>`, forming an interned linked list.
-/// We use a generic parameter so that deserializers can instead instantiate
-/// them as [`GlobalLocationS`], i.e. a non-interned version of the same struct.
-/// This is necessary because in the derived deserializers we do not have access
-/// to the interner.
-///
-/// For convenience the trait [`IsGlobalLocation`] is provided which lets you
-/// operate directly on the wrapper types and also na way that works with any
-/// global location type (both [`GlobalLocation`] as well as the serializable
-/// [`crate::serializers::RawGlobalLocation`])
+/// You will probably want to operate on the interned wrapper type [`GlobalLocation`].
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct GlobalLocationS {
     #[cfg(feature = "rustc")]
@@ -232,31 +196,9 @@ impl From<&'_ RawGlobalLocation> for RawGlobalLocation {
     }
 }
 
-pub fn write_sep<
-    E,
-    I: IntoIterator<Item = E>,
-    F: FnMut(E, &mut fmt::Formatter<'_>) -> fmt::Result,
->(
-    fmt: &mut fmt::Formatter<'_>,
-    sep: &str,
-    it: I,
-    mut f: F,
-) -> fmt::Result {
-    let mut first = true;
-    for e in it {
-        if first {
-            first = false;
-        } else {
-            fmt.write_str(sep)?;
-        }
-        f(e, fmt)?;
-    }
-    Ok(())
-}
-
 impl fmt::Display for RawGlobalLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_sep(f, "@", self.as_slice().iter().rev(), |elem, f| {
+        crate::utils::write_sep(f, "@", self.as_slice().iter().rev(), |elem, f| {
             write!(
                 f,
                 "{:?}[{}]",
@@ -269,10 +211,10 @@ impl fmt::Display for RawGlobalLocation {
 /// The interned version of a global location. See the [module level documentation](super)
 /// information on usage and rational.
 ///
-/// To construct these values use [`GLI::globalize_location`] and
-/// [`GLI::global_location_from_relative`].
+/// To construct these values use [`GlobalLocation::single`] and
+/// [`GlobalLocation::relativize`].
 ///
-/// INVARIANT: self.0.len() > 0
+/// INVARIANT: `self.0.len() > 0`
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct GlobalLocation(Intern<RawGlobalLocation>);
 
@@ -330,5 +272,40 @@ impl GlobalLocation {
 
     pub fn relativize(&self, location: GlobalLocationS) -> Self {
         Self::intern(self.0.as_ref().relativize(location))
+    }
+}
+
+#[cfg(all(test, not(feature = "rustc")))]
+mod test {
+    use crate::rustc_proxies::{BasicBlock, DefIndex, HirId, ItemLocalId, LocalDefId, OwnerId};
+
+    use super::*;
+
+    #[test]
+    fn test_global_location() {
+        let location = Location {
+            block: BasicBlock { private: 0 },
+            statement_index: 0,
+        };
+
+        let function = BodyId {
+            hir_id: HirId {
+                owner: OwnerId {
+                    def_id: LocalDefId {
+                        local_def_index: DefIndex { private: 0 },
+                    },
+                },
+                local_id: ItemLocalId { private: 0 },
+            },
+        };
+
+        let g1 = GlobalLocation::single(location, function);
+        let g2 = GlobalLocation::single(location, function);
+
+        // Locations are structurally equal
+        assert_eq!(g1, g2);
+
+        // Interning ensures the pointers are the same
+        assert_eq!(g1.stable_id(), g2.stable_id());
     }
 }

@@ -1,3 +1,4 @@
+/// A bit-set implemented with a [`u16`], supporting domains up to 16 elements.
 #[derive(
     Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Copy, serde::Serialize, serde::Deserialize,
 )]
@@ -151,4 +152,18 @@ pub mod pretty {
             serializer,
         )
     }
+}
+
+#[test]
+fn test_tiny_bitset() {
+    let mut s = TinyBitSet::new_empty();
+    s.set(5);
+    assert_eq!(s.contains(5), Some(true));
+    assert_eq!(s.contains(0), Some(false));
+    assert_eq!(s.contains(16), None);
+
+    let before = s.0;
+    s.set(16);
+    let after = s.0;
+    assert_eq!(before, after);
 }

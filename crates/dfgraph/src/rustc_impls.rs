@@ -1,9 +1,6 @@
 use super::rustc_proxies::*;
 use super::*;
-use crate::{
-    global_location::GlobalLocationS,
-    rustc::{def_id, hir, mir, span},
-};
+use crate::rustc::{def_id, hir, mir, span};
 
 pub fn bbref_to_u32(r: &mir::BasicBlock) -> u32 {
     r.as_u32()

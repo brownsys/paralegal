@@ -5,7 +5,6 @@
 //! a `rustc_private` dependency on dfgraph clients, we provide proxies in the
 //! [`rustc_proxies`] module for all Rustc types within the PDG.
 
-#![allow(warnings)]
 #![cfg_attr(feature = "rustc", feature(rustc_private))]
 
 #[cfg(feature = "rustc")]
@@ -24,13 +23,15 @@ pub mod global_location;
 mod rustc_impls;
 pub mod rustc_proxies;
 mod tiny_bitset;
+pub mod utils;
 
 use global_location::GlobalLocation;
 use indexical::define_index_type;
 use internment::Intern;
+use itertools::Itertools;
 use log::warn;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{fmt, hash::Hash};
+use std::{borrow::Cow, hash::Hash, iter};
 
 pub use crate::tiny_bitset::TinyBitSet;
 pub use std::collections::{HashMap, HashSet};
@@ -52,6 +53,7 @@ pub enum Annotation {
 }
 
 impl Annotation {
+    /// If this is an [`Annotation::Label`], returns the underlying [`MarkerAnnotation`].
     pub fn as_label_ann(&self) -> Option<&MarkerAnnotation> {
         match self {
             Annotation::Label(l) => Some(l),
@@ -59,10 +61,12 @@ impl Annotation {
         }
     }
 
+    /// Returns true if this is an [`Annotation::Label`].
     pub fn is_label_ann(&self) -> bool {
         matches!(self, Annotation::Label(_))
     }
 
+    /// If this is an [`Annotation::OType`], returns the underlying [`TypeDescriptor`].
     pub fn as_otype_ann(&self) -> Option<&[TypeDescriptor]> {
         match self {
             Annotation::OType(t) => Some(t),
@@ -70,6 +74,7 @@ impl Annotation {
         }
     }
 
+    /// If this is an [`Annotation::Exception`], returns the underlying [`ExceptionAnnotation`].
     pub fn as_exception_annotation(&self) -> Option<&ExceptionAnnotation> {
         match self {
             Annotation::Exception(e) => Some(e),
@@ -111,12 +116,9 @@ pub struct MarkerRefinement {
     on_return: bool,
 }
 
-/// TODO: document me
 #[derive(Clone, Deserialize, Serialize)]
 pub enum MarkerRefinementKind {
-    /// TODO: document me
     Argument(#[serde(with = "crate::tiny_bitset::pretty")] TinyBitSet),
-    /// TODO: document me
     Return,
 }
 
@@ -210,11 +212,13 @@ impl ObjectType {
 
 pub type AnnotationMap = HashMap<Identifier, (Vec<Annotation>, ObjectType)>;
 
-/// A Forge friendly representation of the dataflow graphs we calculated and the
-/// annotations we found.
+/// The annotated program dependence graph.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
+    /// Mapping from function names to dependencies within the function.
     pub controllers: HashMap<Endpoint, Ctrl>,
+
+    /// Mapping from objects to annotations on those objects.
     pub annotations: AnnotationMap,
 }
 
@@ -361,15 +365,19 @@ impl<'de, X: Deserialize<'de> + Hash + Eq, Y: Deserialize<'de> + Hash + Eq> Dese
 }
 
 impl<X, Y> Relation<X, Y> {
+    /// Constructs an empty relation.
     pub fn empty() -> Self {
         Relation(HashMap::new())
     }
 }
 
-/// [`GlobalLocation`](crate::ir::GlobalLocation).
+/// A global location in the program where a function is being called.
 #[derive(Hash, Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub struct CallSite {
+    /// The location of the call.
     pub location: GlobalLocation,
+
+    /// The name of the function being called.
     pub function: Function,
 }
 
@@ -392,7 +400,7 @@ impl std::string::ToString for CallSite {
         format!(
             "cs_{}_{:x}",
             self.function.as_str(),
-            short_hash_pls(&self.location),
+            short_hash_pls(self.location),
         )
     }
 }
@@ -406,21 +414,26 @@ pub enum DataSource {
     /// The result of a function call in the controller body. Can be the return
     /// value or a mutable argument that was passed to the call.
     FunctionCall(CallSite),
+
     /// An argument to the controller function.
     Argument(usize),
 }
 
 define_index_type! {
+    /// Index over [`DataSource`], for use with `indexical` index sets.
     pub struct DataSourceIndex for DataSource = u32;
 }
 
 impl DataSource {
+    /// If this is a [`DataSource::FunctionCall`], then returns the underlying [`CallSite`].
     pub fn as_function_call(&self) -> Option<&CallSite> {
         match self {
             DataSource::FunctionCall(i) => Some(i),
             _ => None,
         }
     }
+
+    /// If this is a [`DataSource::Argument`], then returns the underlying argument index.
     pub fn as_argument(&self) -> Option<usize> {
         match self {
             DataSource::Argument(a) => Some(*a),
@@ -439,6 +452,7 @@ pub enum DataSink {
 }
 
 impl DataSink {
+    /// If this is a `DataSink::Argument`, then returns that branch's fields.
     pub fn as_argument(&self) -> Option<(&CallSite, usize)> {
         match self {
             DataSink::Argument { function, arg_slot } => Some((function, *arg_slot)),
@@ -448,18 +462,26 @@ impl DataSink {
 }
 
 define_index_type! {
+    /// Index over [`DataSink`], for use with `indexical` index sets.
     pub struct DataSinkIndex for DataSink = u32;
 }
 
-/// Annotations on types in a controller. Only types that have annotations are
-/// present in this map, meaning that it is guaranteed that for any key `k`
-/// `map.get(k).is_empty() == false`.
 pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
 
-#[derive(Deserialize, Serialize, Debug)]
+/// Dependencies within a controller function.
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Ctrl {
+    /// Non-transitive data dependencies between sources and sinks.
     pub data_flow: Relation<DataSource, DataSink>,
+
+    /// Transitive control dependencies between sources and call sites.
     pub ctrl_flow: Relation<DataSource, CallSite>,
+
+    /// Annotations on types in a controller.
+    ///
+    /// Only types that have annotations are present in this map, meaning
+    /// that it is guaranteed that for any key `k` that
+    /// `map.get(k).is_empty() == false`.
     pub types: CtrlTypes,
 }
 
@@ -474,20 +496,24 @@ impl Default for Ctrl {
 }
 
 impl Ctrl {
-    /// Extend the type annotations
-    pub fn add_types<I: IntoIterator<Item = (DataSource, HashSet<TypeDescriptor>)>>(
-        &mut self,
-        i: I,
-    ) {
-        i.into_iter().for_each(|(ident, set)| {
-            self.types
-                .0
-                .entry(ident)
-                .or_insert_with(HashSet::new)
-                .extend(set.into_iter())
-        })
+    /// Returns an iterator over all the data sinks in the `data_flow` relation.
+    pub fn data_sinks(&self) -> impl Iterator<Item = &DataSink> + '_ {
+        self.data_flow.0.values().flatten().unique()
     }
 
+    /*** Below are constructor methods intended for use within dfpp. ***/
+
+    /// Extend the `types` map with the input iterator.
+    pub fn add_types(
+        &mut self,
+        i: impl IntoIterator<Item = (DataSource, HashSet<TypeDescriptor>)>,
+    ) {
+        for (ident, set) in i {
+            self.types.0.entry(ident).or_default().extend(set);
+        }
+    }
+
+    /// Construct an empty controller with the given [`CtrlTypes`].
     pub fn with_input_types(types: CtrlTypes) -> Self {
         Ctrl {
             data_flow: Relation::empty(),
@@ -495,24 +521,24 @@ impl Ctrl {
             types,
         }
     }
-    pub fn add_data_flow(&mut self, from: std::borrow::Cow<DataSource>, to: DataSink) {
+
+    /// Add one data flow between `from` and `to`.
+    pub fn add_data_flow(&mut self, from: Cow<DataSource>, to: DataSink) {
         let m = &mut self.data_flow.0;
         if let Some(e) = m.get_mut(&from) {
             e.insert(to);
         } else {
-            m.insert(from.into_owned(), std::iter::once(to).collect());
+            m.insert(from.into_owned(), iter::once(to).collect());
         }
     }
-    pub fn add_ctrl_flow(&mut self, from: std::borrow::Cow<DataSource>, to: CallSite) {
+
+    /// Add one control flow between `from` and `to`.
+    pub fn add_ctrl_flow(&mut self, from: Cow<DataSource>, to: CallSite) {
         let m = &mut self.ctrl_flow.0;
         if let Some(e) = m.get_mut(&from) {
             e.insert(to);
         } else {
-            m.insert(from.into_owned(), std::iter::once(to).collect());
+            m.insert(from.into_owned(), iter::once(to).collect());
         }
-    }
-
-    pub fn data_sinks(&self) -> impl Iterator<Item = &DataSink> + '_ {
-        self.data_flow.0.values().flatten()
     }
 }

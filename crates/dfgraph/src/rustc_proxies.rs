@@ -18,7 +18,7 @@ use crate::{
 /// or the proxy type otherwise.
 macro_rules! proxy_struct {
     ($(
-      #[doc = $doc:expr]
+      $(#[$attr:meta])*
       $name:ident($rustc:expr) {
         $($field:ident : $rustc_ty:ty  => $proxy_ty:ty , $proxy_str:expr),*
       }
@@ -26,7 +26,7 @@ macro_rules! proxy_struct {
         $(
             #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
             #[cfg_attr(feature = "rustc", serde(remote = $rustc))]
-            #[doc = $doc]
+            $(#[$attr])*
             pub struct $name {
                 $(
                     #[cfg(feature = "rustc")]
@@ -43,13 +43,13 @@ macro_rules! proxy_struct {
 /// Generates a struct that is a proxy for a Rustc index type.
 macro_rules! proxy_index {
     ($(
-        #[doc = $doc:expr]
+        $(#[$attr:meta])*
         $name:ident($rustc:expr) from $fn:expr
     );*) => {
         $(
             #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
             #[cfg_attr(feature = "rustc", serde(remote = $rustc))]
-            #[doc = $doc]
+            $(#[$attr])*
             pub struct $name {
                 #[cfg_attr(feature = "rustc", serde(getter = $fn))]
                 pub(crate) private: u32
@@ -57,7 +57,7 @@ macro_rules! proxy_index {
 
             #[cfg(not(feature = "rustc"))]
             impl $name {
-                fn index(self) -> usize {
+                pub fn index(self) -> usize {
                     self.private as usize
                 }
             }
@@ -78,6 +78,7 @@ proxy_index! {
 
 proxy_struct! {
     /// Proxy for `mir::Location`
+    #[derive(PartialOrd, Ord)]
     Location("mir::Location") {
         block: mir::BasicBlock => BasicBlock, "BasicBlock",
         statement_index: usize => usize, "usize"
@@ -121,18 +122,6 @@ impl Ord for HirId {
 }
 
 impl PartialOrd for HirId {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Location {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        ((self.block, self.statement_index)).cmp(&(other.block, other.statement_index))
-    }
-}
-
-impl PartialOrd for Location {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }

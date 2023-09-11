@@ -319,6 +319,7 @@ version = "0.1.0"
 dependencies = [
  "indexical",
  "internment",
+ "itertools",
  "log",
  "serde",
 ]

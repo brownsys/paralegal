@@ -5,7 +5,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 use dfpp::{
     desc::{AnnotationMap, DataSink, DataSource, Identifier, ProgramDescription, TypeDescriptor},
-    ir::{CallOnlyFlow, GlobalLocation, GlobalLocation, GlobalLocationS},
+    ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, RawGlobalLocation},
     serializers::{Bodies, InstructionProxy},
     HashSet, Symbol,
 };
@@ -241,17 +241,17 @@ pub struct G {
 }
 
 pub trait GetCallSites {
-    fn get_call_sites<'a>(&'a self, g: &'a CallOnlyFlow) -> HashSet<&'a GlobalLocation>;
+    fn get_call_sites<'a>(&'a self, g: &'a CallOnlyFlow) -> HashSet<&'a RawGlobalLocation>;
 }
 
-impl GetCallSites for GlobalLocation {
-    fn get_call_sites<'a>(&'a self, _: &'a CallOnlyFlow) -> HashSet<&'a GlobalLocation> {
+impl GetCallSites for RawGlobalLocation {
+    fn get_call_sites<'a>(&'a self, _: &'a CallOnlyFlow) -> HashSet<&'a RawGlobalLocation> {
         [self].into_iter().collect()
     }
 }
 
 impl GetCallSites for GlobalLocationS {
-    fn get_call_sites<'a>(&'a self, g: &'a CallOnlyFlow) -> HashSet<&'a GlobalLocation> {
+    fn get_call_sites<'a>(&'a self, g: &'a CallOnlyFlow) -> HashSet<&'a RawGlobalLocation> {
         g.all_locations_iter()
             .filter(move |l| l.innermost() == *self)
             .map(|loc| &**loc)
@@ -260,17 +260,17 @@ impl GetCallSites for GlobalLocationS {
 }
 
 pub trait MatchCallSite {
-    fn match_(&self, call_site: &GlobalLocation) -> bool;
+    fn match_(&self, call_site: &RawGlobalLocation) -> bool;
 }
 
-impl MatchCallSite for GlobalLocation {
-    fn match_(&self, call_site: &GlobalLocation) -> bool {
+impl MatchCallSite for RawGlobalLocation {
+    fn match_(&self, call_site: &RawGlobalLocation) -> bool {
         self == call_site
     }
 }
 
 impl MatchCallSite for GlobalLocationS {
-    fn match_(&self, call_site: &GlobalLocation) -> bool {
+    fn match_(&self, call_site: &RawGlobalLocation) -> bool {
         *self == call_site.innermost()
     }
 }
@@ -293,7 +293,7 @@ impl EdgeSelection {
 
 impl G {
     /// Direct predecessor nodes of `n`
-    fn predecessors(&self, n: &GlobalLocation) -> impl Iterator<Item = &GlobalLocation> {
+    fn predecessors(&self, n: &GlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
         self.predecessors_configurable(n, EdgeSelection::Both)
     }
 
@@ -338,9 +338,9 @@ impl G {
 
     fn predecessors_configurable(
         &self,
-        n: &GlobalLocation,
+        n: &RawGlobalLocation,
         con_ty: EdgeSelection,
-    ) -> impl Iterator<Item = &GlobalLocation> {
+    ) -> impl Iterator<Item = &RawGlobalLocation> {
         self.graph
             .location_dependencies
             .get(&GlobalLocation::intern_ref(n))

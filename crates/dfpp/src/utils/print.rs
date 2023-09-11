@@ -1,4 +1,4 @@
-pub use dfgraph::global_location::write_sep;
+pub use dfgraph::utils::write_sep;
 use std::fmt::{Debug, Display, Formatter, Result};
 
 pub struct Print<F: Fn(&mut Formatter<'_>) -> Result>(pub F);
