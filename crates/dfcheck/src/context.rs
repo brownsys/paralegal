@@ -8,9 +8,11 @@ use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
 
+/// User-defined PDG markers.
 pub type Marker = Identifier;
-pub type MarkerIndex = HashMap<Marker, Vec<(Identifier, MarkerRefinement)>>;
-pub type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
+
+type MarkerIndex = HashMap<Marker, Vec<(Identifier, MarkerRefinement)>>;
+type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
 
 /// Data structures to be analyzed by user-defined properties.
 #[derive(Debug)]

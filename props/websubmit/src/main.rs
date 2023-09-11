@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use dfcheck::{
-    context::{Context, Marker},
-    dfgraph::Identifier,
-};
+use dfcheck::{dfgraph::Identifier, Context, Marker};
 
 pub struct DeletionProp {
     cx: Arc<Context>,

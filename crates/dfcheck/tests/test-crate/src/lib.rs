@@ -15,5 +15,3 @@ fn controller(a: Foo, b: Foo) {
     sink1(a);
     sink2(b);
 }
-
-

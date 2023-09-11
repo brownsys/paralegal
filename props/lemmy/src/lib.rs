@@ -1,8 +1,8 @@
 use std::{collections::HashSet, sync::Arc};
 
 use dfcheck::{
-    context::{Context, Marker},
     dfgraph::{CallSite, Ctrl, DataSource},
+    Context, Marker,
 };
 
 pub struct CommunityProp {

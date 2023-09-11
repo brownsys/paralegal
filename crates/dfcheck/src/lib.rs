@@ -14,7 +14,7 @@ use std::env;
 use std::fs::File;
 use std::sync::Arc;
 
-pub use self::{context::Context, flows_to::CtrlFlowsTo};
+pub use self::{context::*, flows_to::CtrlFlowsTo};
 pub use dfgraph;
 
 mod context;
