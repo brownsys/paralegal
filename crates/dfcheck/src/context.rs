@@ -8,12 +8,12 @@ use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
 
-pub type Label = Identifier;
-pub type LabelIndex = HashMap<Label, Vec<(Identifier, MarkerRefinement)>>;
+pub type Marker = Identifier;
+pub type MarkerIndex = HashMap<Marker, Vec<(Identifier, MarkerRefinement)>>;
 pub type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
 
 pub struct Context {
-    pub label_to_ids: LabelIndex,
+    pub marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
 }
@@ -21,13 +21,13 @@ pub struct Context {
 impl Context {
     pub fn new(desc: ProgramDescription) -> Self {
         Context {
-            label_to_ids: Self::build_index_on_labels(&desc),
+            marker_to_ids: Self::build_index_on_markers(&desc),
             flows_to: Self::build_flows_to(&desc),
             desc,
         }
     }
 
-    fn build_index_on_labels(desc: &ProgramDescription) -> LabelIndex {
+    fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
         desc.annotations
             .iter()
             .flat_map(|(id, (annots, _))| {
@@ -56,27 +56,27 @@ impl Context {
             .contains(sink)
     }
 
-    pub fn labelled(
+    pub fn marked(
         &self,
-        label: Label,
+        marker: Marker,
     ) -> impl Iterator<Item = &'_ (Identifier, MarkerRefinement)> + '_ {
-        self.label_to_ids
-            .get(&label)
+        self.marker_to_ids
+            .get(&marker)
             .into_iter()
             .flat_map(|v| v.iter())
     }
 
-    pub fn labeled_sinks<'a>(
+    pub fn marked_sinks<'a>(
         &'a self,
         dsts: impl IntoIterator<Item = &'a DataSink> + 'a,
-        label: Label,
+        marker: Marker,
     ) -> impl Iterator<Item = &'a DataSink> + 'a {
         dsts.into_iter().filter(move |dst| match dst {
             DataSink::Argument { function, arg_slot } => self
-                .label_to_ids
-                .get(&label)
-                .map(|labels| {
-                    labels.iter().any(|(id, refinement)| {
+                .marker_to_ids
+                .get(&marker)
+                .map(|markers| {
+                    markers.iter().any(|(id, refinement)| {
                         id == &function.function
                             && (refinement.on_self()
                                 || refinement.on_argument().contains(*arg_slot as u32).unwrap())
@@ -87,12 +87,12 @@ impl Context {
         })
     }
 
-    pub fn labeled_callsites<'a>(
+    pub fn marked_callsites<'a>(
         &'a self,
         dsts: impl IntoIterator<Item = &'a DataSink> + 'a,
-        label: Label,
+        marker: Marker,
     ) -> impl Iterator<Item = &'a CallSite> + 'a {
-        self.labeled_sinks(dsts, label)
+        self.marked_sinks(dsts, marker)
             .filter_map(|sink| match sink {
                 DataSink::Argument { function, .. } => Some(function),
                 _ => None,
