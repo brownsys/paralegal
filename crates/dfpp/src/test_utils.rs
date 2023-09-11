@@ -64,10 +64,11 @@ pub fn run_dfpp_with_graph_dump(dir: impl AsRef<Path>) -> bool {
 /// and `dfpp` executables that were built from this project are (first) in the
 /// `PATH`.
 pub fn dfpp_command(dir: impl AsRef<Path>) -> std::process::Command {
-    let mut cmd = std::process::Command::new("cargo");
     let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
     // Cargo gives us the path where it wrote `cargo-dfpp` to
-    let cargo_dfpp_path = Path::new(file!()).join("../../target/debug/cargo-dfpp");
+    let cargo_dfpp_path = Path::new("../../target/debug/cargo-dfpp")
+        .canonicalize()
+        .unwrap();
     let mut new_path =
         std::ffi::OsString::with_capacity(path.len() + cargo_dfpp_path.as_os_str().len() + 1);
     // We then append the parent (e.g. its directory) to the search path. THat
@@ -80,6 +81,7 @@ pub fn dfpp_command(dir: impl AsRef<Path>) -> std::process::Command {
     }));
     new_path.push(":");
     new_path.push(path);
+    let mut cmd = std::process::Command::new(cargo_dfpp_path);
     cmd.arg("dfpp").env("PATH", new_path).current_dir(dir);
     eprintln!("Command is {cmd:?}");
     cmd
