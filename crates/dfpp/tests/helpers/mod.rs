@@ -5,7 +5,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 use dfpp::{
     desc::{AnnotationMap, DataSink, DataSource, Identifier, ProgramDescription, TypeDescriptor},
-    ir::{GlobalLocationS, IsGlobalLocation, RawGlobalLocation},
+    ir::{CallOnlyFlow, GlobalLocation, GlobalLocation, GlobalLocationS},
     serializers::{Bodies, InstructionProxy},
     HashSet, Symbol,
 };
@@ -233,54 +233,44 @@ test expect {{
     outfile_pls(file).and_then(|mut f| f.write_all(content.as_bytes()))
 }
 
-use dfpp::serializers::SerializableCallOnlyFlow;
-
 /// A deserialized version of [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow)
 pub struct G {
-    pub graph: SerializableCallOnlyFlow,
+    pub graph: CallOnlyFlow,
     pub body: Bodies,
     pub ctrl_name: Identifier,
 }
 
 pub trait GetCallSites {
-    fn get_call_sites<'a>(
-        &'a self,
-        g: &'a SerializableCallOnlyFlow,
-    ) -> HashSet<&'a RawGlobalLocation>;
+    fn get_call_sites<'a>(&'a self, g: &'a CallOnlyFlow) -> HashSet<&'a GlobalLocation>;
 }
 
-impl GetCallSites for RawGlobalLocation {
-    fn get_call_sites<'a>(
-        &'a self,
-        _: &'a SerializableCallOnlyFlow,
-    ) -> HashSet<&'a RawGlobalLocation> {
+impl GetCallSites for GlobalLocation {
+    fn get_call_sites<'a>(&'a self, _: &'a CallOnlyFlow) -> HashSet<&'a GlobalLocation> {
         [self].into_iter().collect()
     }
 }
 
 impl GetCallSites for GlobalLocationS {
-    fn get_call_sites<'a>(
-        &'a self,
-        g: &'a SerializableCallOnlyFlow,
-    ) -> HashSet<&'a RawGlobalLocation> {
+    fn get_call_sites<'a>(&'a self, g: &'a CallOnlyFlow) -> HashSet<&'a GlobalLocation> {
         g.all_locations_iter()
             .filter(move |l| l.innermost() == *self)
+            .map(|loc| &**loc)
             .collect()
     }
 }
 
 pub trait MatchCallSite {
-    fn match_(&self, call_site: &RawGlobalLocation) -> bool;
+    fn match_(&self, call_site: &GlobalLocation) -> bool;
 }
 
-impl MatchCallSite for RawGlobalLocation {
-    fn match_(&self, call_site: &RawGlobalLocation) -> bool {
+impl MatchCallSite for GlobalLocation {
+    fn match_(&self, call_site: &GlobalLocation) -> bool {
         self == call_site
     }
 }
 
 impl MatchCallSite for GlobalLocationS {
-    fn match_(&self, call_site: &RawGlobalLocation) -> bool {
+    fn match_(&self, call_site: &GlobalLocation) -> bool {
         *self == call_site.innermost()
     }
 }
@@ -303,7 +293,7 @@ impl EdgeSelection {
 
 impl G {
     /// Direct predecessor nodes of `n`
-    fn predecessors(&self, n: &RawGlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
+    fn predecessors(&self, n: &GlobalLocation) -> impl Iterator<Item = &GlobalLocation> {
         self.predecessors_configurable(n, EdgeSelection::Both)
     }
 
@@ -348,12 +338,12 @@ impl G {
 
     fn predecessors_configurable(
         &self,
-        n: &RawGlobalLocation,
+        n: &GlobalLocation,
         con_ty: EdgeSelection,
-    ) -> impl Iterator<Item = &RawGlobalLocation> {
+    ) -> impl Iterator<Item = &GlobalLocation> {
         self.graph
             .location_dependencies
-            .get(n)
+            .get(&GlobalLocation::intern_ref(n))
             .into_iter()
             .flat_map(move |deps| {
                 con_ty
@@ -368,8 +358,9 @@ impl G {
                             .into_iter()
                             .flatten(),
                     )
-                    .flat_map(|s| s.iter())
+                    .flatten()
             })
+            .map(|dep| &**dep)
     }
     pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
         self.connects_configurable(from, to, EdgeSelection::Both)
@@ -475,7 +466,7 @@ impl G {
                 .graph
                 .return_dependencies
                 .iter()
-                .any(|r| self.connects(from, r))
+                .any(|r| self.connects(from, &**r))
     }
 
     /// Return all call sites for functions with names matching `pattern`.

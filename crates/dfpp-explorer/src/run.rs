@@ -5,7 +5,7 @@ use std::fmt::Display;
 
 use dfpp::{
     ana::inline::{add_weighted_edge, Edge, EdgeType},
-    ir::global_location::*,
+    ir::GlobalLocationS,
     serializers::Bodies,
     utils::{outfile_pls, write_sep, Print},
     Either, HashMap,
@@ -18,8 +18,8 @@ use crate::graph::*;
 
 use crate::Repl;
 
-impl<'g> Repl<'g> {
-    fn translate_node(&self, name: NodeName) -> Result<Node<'g>, RunCommandErr<'g>> {
+impl Repl {
+    fn translate_node(&self, name: NodeName) -> Result<Node, RunCommandErr> {
         let map = self
             .gloc_translation_map
             .as_ref()
@@ -45,20 +45,20 @@ impl<'g> Repl<'g> {
             .map(|r| *r)
     }
 
-    fn data_graph(&self) -> Result<IgnoreCtrlEdges<&'_ Graph<'g>>, RunCommandErr<'g>> {
+    fn data_graph(&self) -> Result<IgnoreCtrlEdges<&'_ Graph>, RunCommandErr> {
         Ok(self.graph()?.into())
     }
 
-    fn graph(&self) -> Result<&'_ Graph<'g>, RunCommandErr<'g>> {
+    fn graph(&self) -> Result<&'_ Graph, RunCommandErr> {
         self.graph.as_ref().ok_or(RunCommandErr::NoGraphLoaded)
     }
 
     fn create_subgraph(
         &self,
-        from: Node<'g>,
+        from: Node,
         depth: usize,
         direction: Direction,
-    ) -> Result<Graph<'g>, RunCommandErr<'g>> {
+    ) -> Result<Graph, RunCommandErr> {
         let graph = self.graph()?;
         let mut subg = Graph::new();
         subg.add_node(from);
@@ -97,12 +97,12 @@ impl<'g> Repl<'g> {
 
     fn run_paths_command(
         &mut self,
-        from: Node<'g>,
-        to: Node<'g>,
+        from: Node,
+        to: Node,
         path_type: PathType,
         metric: PathMetric,
         limit: Option<usize>,
-    ) -> Result<(), RunCommandErr<'g>> {
+    ) -> Result<(), RunCommandErr> {
         let paths = match path_type {
             PathType::Both if matches!(metric, PathMetric::Shortest) => {
                 let graph = self.graph()?;
@@ -121,7 +121,7 @@ impl<'g> Repl<'g> {
                         v
                     }]
                     .into_iter(),
-                ) as Box<dyn Iterator<Item = Vec<Node<'g>>>>)
+                ) as Box<dyn Iterator<Item = Vec<Node>>>)
             }
             PathType::Data if matches!(metric, PathMetric::Shortest) => {
                 let graph = self.data_graph()?;
@@ -141,7 +141,7 @@ impl<'g> Repl<'g> {
                         v
                     }]
                     .into_iter(),
-                ) as Box<dyn Iterator<Item = Vec<Node<'g>>>>)
+                ) as Box<dyn Iterator<Item = Vec<Node>>>)
             }
             PathType::Both => Ok(Box::new(petgraph::algo::all_simple_paths::<Vec<_>, _>(
                 self.graph()?,
@@ -149,7 +149,7 @@ impl<'g> Repl<'g> {
                 to,
                 0,
                 None,
-            )) as Box<dyn Iterator<Item = Vec<Node<'g>>>>),
+            )) as Box<dyn Iterator<Item = Vec<Node>>>),
             PathType::Data => Ok(Box::new(petgraph::algo::all_simple_paths::<Vec<_>, _>(
                 self.data_graph()?,
                 from,
@@ -246,7 +246,7 @@ impl<'g> Repl<'g> {
         Ok(())
     }
 
-    fn fn_name_for_node(&self, n: Node<'g>) -> Result<Option<&str>, RunCommandErr<'g>> {
+    fn fn_name_for_node(&self, n: Node) -> Result<Option<&str>, RunCommandErr> {
         if let Some(n) = n.location() {
             self.fn_name_for_loc(n.innermost())
         } else {
@@ -254,7 +254,7 @@ impl<'g> Repl<'g> {
         }
     }
 
-    fn fn_name_for_loc(&self, n: GlobalLocationS) -> Result<Option<&str>, RunCommandErr<'g>> {
+    fn fn_name_for_loc(&self, n: GlobalLocationS) -> Result<Option<&str>, RunCommandErr> {
         Ok(self.bodies()?.0.get(&n.function).and_then(|body| {
             body.1
                  .0
@@ -264,16 +264,12 @@ impl<'g> Repl<'g> {
         }))
     }
 
-    fn bodies(&self) -> Result<&'_ Bodies, RunCommandErr<'g>> {
+    fn bodies(&self) -> Result<&'_ Bodies, RunCommandErr> {
         self.bodies.as_ref().ok_or(RunCommandErr::NoGraphLoaded)
     }
 
-    fn run_edges<G: IntoEdgesDirected<NodeId = Node<'g>>>(
-        &self,
-        g: G,
-        node: Node<'g>,
-        direction: Direction,
-    ) where
+    fn run_edges<G: IntoEdgesDirected<NodeId = Node>>(&self, g: G, node: Node, direction: Direction)
+    where
         G::EdgeWeight: Display,
     {
         let mut num = 0;
@@ -292,7 +288,7 @@ impl<'g> Repl<'g> {
         println!("Found {num} edges");
     }
 
-    pub fn run_command(&mut self, command: Command) -> Result<(), RunCommandErr<'g>> {
+    pub fn run_command(&mut self, command: Command) -> Result<(), RunCommandErr> {
         match command {
             Command::Load { path } => self.load_graph(&path),
             Command::DotSubgraph {
@@ -495,14 +491,13 @@ impl<'g> Repl<'g> {
         }
     }
 
-    pub fn load_graph(&mut self, path: &std::path::Path) -> Result<(), RunCommandErr<'g>> {
+    pub fn load_graph(&mut self, path: &std::path::Path) -> Result<(), RunCommandErr> {
         let (flow, bodies) =
             dfpp::dbg::read_non_transitive_graph_and_body(std::fs::File::open(path).unwrap());
         let mut g = petgraph::graphmap::GraphMap::<_, _, petgraph::Directed>::new();
         let graph = &mut g;
 
-        for (to_raw, deps) in flow.location_dependencies.iter() {
-            let to = self.gli.from_vec(to_raw.as_slice().to_vec()).into();
+        for (to, deps) in flow.location_dependencies.iter() {
             for (weight, deps) in deps
                 .input_deps
                 .iter()
@@ -510,18 +505,16 @@ impl<'g> Repl<'g> {
                 .map(|(i, deps)| (Edge::from_iter([EdgeType::Data(i as u32)]), deps))
                 .chain([(Edge::from_iter([EdgeType::Control]), &deps.ctrl_deps)])
             {
-                for from_raw in deps {
-                    let from = self.gli.from_vec(from_raw.as_slice().to_vec()).into();
-                    add_weighted_edge(graph, from, to, weight);
+                for from in deps {
+                    add_weighted_edge(graph, (*from).into(), (*to).into(), weight);
                 }
             }
         }
 
-        for from_raw in &flow.return_dependencies {
-            let from = self.gli.from_vec(from_raw.as_slice().to_vec()).into();
+        for from in &flow.return_dependencies {
             add_weighted_edge(
                 graph,
-                from,
+                (*from).into(),
                 Node::return_(),
                 Edge::from_iter([EdgeType::Data(0)]),
             );

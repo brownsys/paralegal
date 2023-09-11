@@ -36,13 +36,12 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
     /// Perform the analysis for one `#[dfpp::analyze]` annotated function and
     /// return the representation suitable for emitting into Forge.
-    fn handle_target<'g>(
+    fn handle_target(
         &self,
         //_hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         target: FnToAnalyze,
-        gli: GLI<'g>,
-        inliner: &inline::Inliner<'tcx, 'g>,
+        inliner: &inline::Inliner<'tcx>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
         let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
@@ -78,7 +77,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             let i = inliner.get_inlined_graph(target.body_id).unwrap();
             info!("Graph statistics for {}\n  {:<w$} graph nodes\n  {:<w$} graph edges\n  {:<w$} inlined functions\n  {:<w$} max call stack depth", target.name(), i.vertex_count(), i.edge_count(), i.inlined_functions_count(), i.max_call_stack_depth());
             inliner.to_call_only_flow(i, |a| {
-                gli.globalize_location(
+                GlobalLocation::single(
                     Location {
                         block: mir::BasicBlock::from_usize(
                             controller_body_with_facts
@@ -245,9 +244,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
     ///
     /// Should only be called after the visit.
     fn analyze(mut self) -> std::io::Result<ProgramDescription> {
-        let arena = rustc_arena::TypedArena::default();
-        let interner = GlobalLocationInterner::new(&arena);
-        let gli = GLI::new(&interner);
         let tcx = self.tcx;
         let mut targets = std::mem::take(&mut self.functions_to_analyze);
 
@@ -265,7 +261,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
         let inliner = inline::Inliner::new(
             self.tcx,
-            gli,
             self.marker_ctx.clone(),
             self.opts.anactrl(),
             self.opts.dbg(),
@@ -282,7 +277,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
                             //hash_verifications,
                             &mut call_site_annotations,
                             desc,
-                            gli,
                             &inliner,
                         )
                     })

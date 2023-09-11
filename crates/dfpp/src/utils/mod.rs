@@ -2,10 +2,12 @@
 
 extern crate smallvec;
 
+use dfgraph::{CallSite, DataSource};
 use smallvec::SmallVec;
 
 use crate::{
     desc::Identifier,
+    ir::{GlobalLocation, GlobalLocationS},
     rust::{
         ast,
         hir::{
@@ -32,7 +34,7 @@ pub mod resolve;
 mod print;
 pub use print::*;
 
-pub use dfgraph::{hash_pls, short_hash_pls, tiny_bitset::TinyBitSet};
+pub use dfgraph::{hash_pls, short_hash_pls, TinyBitSet};
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
@@ -1022,5 +1024,60 @@ impl IntoBodyId for LocalDefId {
 impl IntoBodyId for DefId {
     fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
         self.as_local()?.into_body_id(tcx)
+    }
+}
+
+pub trait CallSiteExt {
+    fn new(loc: &GlobalLocation, function: DefId, tcx: TyCtxt<'_>) -> Self;
+}
+
+impl CallSiteExt for CallSite {
+    fn new(location: &GlobalLocation, function: DefId, tcx: TyCtxt<'_>) -> Self {
+        Self {
+            location: *location,
+            function: identifier_for_item(tcx, function),
+        }
+    }
+}
+
+pub trait GlobalLocationExt {
+    fn as_data_source<F: FnOnce(mir::Location) -> bool>(
+        &self,
+        tcx: TyCtxt,
+        is_real_location: F,
+    ) -> DataSource;
+}
+
+impl GlobalLocationExt for GlobalLocation {
+    /// Create a Forge friendly descriptor for this location as a source of data
+    /// in a model flow.
+    fn as_data_source<F: FnOnce(mir::Location) -> bool>(
+        &self,
+        tcx: TyCtxt,
+        is_real_location: F,
+    ) -> DataSource {
+        let GlobalLocationS {
+            location: dep_loc,
+            function: dep_fun,
+        } = self.innermost();
+        let is_real_location = is_real_location(dep_loc);
+        if self.is_at_root() && !is_real_location {
+            DataSource::Argument(self.outermost_location().statement_index - 1)
+        } else {
+            let terminator =
+                    tcx.body_for_body_id(dep_fun)
+                        .simplified_body()
+                        .maybe_stmt_at(dep_loc)
+                        .unwrap_or_else(|e|
+                            panic!("Could not convert {self} to data source with body {}. is at root: {}, is real: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun), self.is_at_root(), is_real_location)
+                        )
+                        .right()
+                        .expect("not a terminator");
+            DataSource::FunctionCall(CallSite::new(
+                self,
+                terminator.as_fn_and_args(tcx).unwrap().0,
+                tcx,
+            ))
+        }
     }
 }

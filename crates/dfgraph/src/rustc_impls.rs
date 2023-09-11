@@ -1,14 +1,17 @@
+use super::rustc_proxies::*;
 use super::*;
-use rustc_hir::{self as hir, def_id};
-use rustc_middle::mir;
+use crate::{
+    global_location::GlobalLocationS,
+    rustc::{def_id, hir, mir, span},
+};
 
-pub fn bbref_to_usize(r: &mir::BasicBlock) -> usize {
-    r.as_usize()
+pub fn bbref_to_u32(r: &mir::BasicBlock) -> u32 {
+    r.as_u32()
 }
 
 impl From<BasicBlock> for mir::BasicBlock {
     fn from(bb: BasicBlock) -> mir::BasicBlock {
-        mir::BasicBlock::from_usize(bb.private)
+        mir::BasicBlock::from_u32(bb.private)
     }
 }
 
@@ -61,7 +64,7 @@ impl From<DefIndex> for def_id::DefIndex {
 }
 
 impl Identifier {
-    pub fn new(s: rustc_span::Symbol) -> Self {
+    pub fn new(s: span::Symbol) -> Self {
         Identifier::new_intern(s.as_str())
     }
 }

@@ -12,7 +12,7 @@ use petgraph::visit::{
 };
 
 /// The canonical representation fo a graph used by the explorer.
-pub type Graph<'g> = petgraph::graphmap::GraphMap<Node<'g>, Edge, petgraph::Directed>;
+pub type Graph = petgraph::graphmap::GraphMap<Node, Edge, petgraph::Directed>;
 
 /// Assigns an edge weight via a closure.
 pub struct WithWeightedEdges<'f, G: IntoEdgeReferences> {
@@ -174,26 +174,26 @@ impl<G: Visitable> Visitable for IgnoreCtrlEdges<G> {
 /// Node representation as used by the canonical [`Graph`].
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Debug)]
 #[repr(transparent)]
-pub struct Node<'g>(Option<GlobalLocation<'g>>);
+pub struct Node(Option<GlobalLocation>);
 
-impl<'g> Node<'g> {
+impl Node {
     pub fn return_() -> Self {
         Self(None)
     }
 
     /// `None` means this is the return node
-    pub fn location(self) -> Option<GlobalLocation<'g>> {
+    pub fn location(self) -> Option<GlobalLocation> {
         self.0
     }
 }
 
-impl<'g> From<GlobalLocation<'g>> for Node<'g> {
-    fn from(loc: GlobalLocation<'g>) -> Self {
+impl From<GlobalLocation> for Node {
+    fn from(loc: GlobalLocation) -> Self {
         Self(Some(loc))
     }
 }
 
-impl<'g> std::fmt::Display for Node<'g> {
+impl std::fmt::Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(n) = self.0 {
             n.fmt(f)

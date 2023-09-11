@@ -7,7 +7,6 @@ use rustc_utils::{
     BodyExt,
 };
 
-use super::GLI;
 use crate::{
     ana::{
         algebra::{self, Equality, Term},
@@ -268,7 +267,7 @@ pub fn get_highest_local(body: &mir::Body) -> mir::Local {
 
 impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
     pub fn construct<I: IntoIterator<Item = algebra::MirEquation>>(
-        flow_analysis: df::FlowResults<'_, 'tcx, '_, '_>,
+        flow_analysis: df::FlowResults<'_, 'tcx, '_>,
         equations: I,
         tcx: TyCtxt<'tcx>,
         def_id: LocalDefId,
@@ -561,7 +560,6 @@ pub fn compute_from_body_id<'tcx>(
     dbg_opts: &DumpArgs,
     body_id: BodyId,
     tcx: TyCtxt<'tcx>,
-    gli: GLI,
     carries_marker: &InlineJudge<'tcx>,
 ) -> Body<'tcx, DisplayViaDebug<Location>> {
     let local_def_id = body_id.into_local_def_id(tcx);
@@ -569,7 +567,7 @@ pub fn compute_from_body_id<'tcx>(
     let body_with_facts =
         borrowck_facts::get_simplified_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
-    let flow = df::compute_flow_internal(tcx, gli, body_id, body_with_facts, carries_marker);
+    let flow = df::compute_flow_internal(tcx, body_id, body_with_facts, carries_marker);
     if dbg_opts.dump_callee_mir() {
         mir::pretty::write_mir_fn(
             tcx,

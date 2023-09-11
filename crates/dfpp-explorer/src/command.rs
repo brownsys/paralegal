@@ -281,10 +281,10 @@ impl std::str::FromStr for Direction {
 }
 
 #[derive(Debug)]
-pub enum RunCommandErr<'g> {
+pub enum RunCommandErr {
     NodeNotFound(NodeName),
     Unimplemented(&'static str),
-    EdgeWeightMissing(Node<'g>, Node<'g>),
+    EdgeWeightMissing(Node, Node),
     NonsensicalPathMetric(PathType, PathMetric),
     IOError(std::io::Error),
     DotError(Option<i32>),
@@ -293,19 +293,19 @@ pub enum RunCommandErr<'g> {
     NoGraphLoaded,
 }
 
-impl From<sexpr::parse::Error> for RunCommandErr<'_> {
+impl From<sexpr::parse::Error> for RunCommandErr {
     fn from(e: sexpr::parse::Error) -> Self {
         RunCommandErr::LispParseErr(e)
     }
 }
 
-impl From<std::io::Error> for RunCommandErr<'_> {
+impl From<std::io::Error> for RunCommandErr {
     fn from(err: std::io::Error) -> Self {
         RunCommandErr::IOError(err)
     }
 }
 
-impl<'g> std::fmt::Display for RunCommandErr<'g> {
+impl std::fmt::Display for RunCommandErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use RunCommandErr::*;
         match self {

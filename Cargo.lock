@@ -347,6 +347,7 @@ dependencies = [
  "rustc_plugin 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc_utils 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
+ "serde_bare",
  "serde_json",
  "serial_test",
  "simple_logger",
@@ -1058,6 +1059,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb4cda13396159f59e7946118cdac0beadeecfb7cf76b197f4147e546f4ead6f"
 dependencies = [
  "lexpr",
+ "serde",
+]
+
+[[package]]
+name = "serde_bare"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51c55386eed0f1ae957b091dc2ca8122f287b60c79c774cbe3d5f2b69fded660"
+dependencies = [
  "serde",
 ]
 

@@ -12,5 +12,5 @@ rustc = []
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 log = "0.4"
-internment = { version = "0.7.1", features = ["serde"] }
+internment = { version = "0.7.1", features = ["serde", "arena"] }
 indexical = "0.1.1"

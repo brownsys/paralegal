@@ -12,7 +12,7 @@ use dfgraph::Identifier;
 use flowistry::indexed::IndexedDomain;
 
 use crate::{
-    ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
+    ir::CallOnlyFlow,
     rust::{mir, TyCtxt},
     utils::body_name_pls,
     HashMap, HashSet,
@@ -69,7 +69,7 @@ pub mod call_only_flow_dot {
     use std::collections::HashSet;
 
     use crate::{
-        ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, IsGlobalLocation},
+        ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
         utils::{identifier_for_item, AsFnAndArgs, DfppBodyExt, LocationExt},
@@ -77,11 +77,11 @@ pub mod call_only_flow_dot {
     };
 
     /// `None` encodes the return state of the function
-    pub type N<'g> = Option<GlobalLocation<'g>>;
+    pub type N = Option<GlobalLocation>;
     #[derive(Clone)]
-    pub struct E<'g> {
-        from: N<'g>,
-        to: N<'g>,
+    pub struct E {
+        from: N,
+        to: N,
         into: To,
     }
     #[derive(Clone, PartialEq, Eq)]
@@ -95,10 +95,8 @@ pub mod call_only_flow_dot {
         detailed: bool,
     }
 
-    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N<'g>, E<'g>>
-        for G<'tcx, 'g, CallOnlyFlow<GlobalLocation<'g>>>
-    {
-        fn nodes(&'a self) -> dot::Nodes<'a, N<'g>> {
+    impl<'a, 'tcx, 'g> dot::GraphWalk<'a, N, E> for G<'tcx, 'g, CallOnlyFlow> {
+        fn nodes(&'a self) -> dot::Nodes<'a, N> {
             self.graph
                 .location_dependencies
                 .iter()
@@ -114,7 +112,7 @@ pub mod call_only_flow_dot {
                 .collect::<Vec<_>>()
                 .into()
         }
-        fn edges(&'a self) -> dot::Edges<'a, E<'g>> {
+        fn edges(&'a self) -> dot::Edges<'a, E> {
             self.graph
                 .location_dependencies
                 .iter()
@@ -137,39 +135,39 @@ pub mod call_only_flow_dot {
                 .collect::<Vec<_>>()
                 .into()
         }
-        fn source(&'a self, edge: &E<'g>) -> N<'g> {
+        fn source(&'a self, edge: &E) -> N {
             edge.from
         }
-        fn target(&'a self, edge: &E<'g>) -> N<'g> {
+        fn target(&'a self, edge: &E) -> N {
             edge.to
         }
     }
 
-    impl<'a, 'g, 'tcx, Flow> dot::Labeller<'a, N<'g>, E<'g>> for G<'tcx, 'g, Flow> {
+    impl<'a, 'g, 'tcx, Flow> dot::Labeller<'a, N, E> for G<'tcx, 'g, Flow> {
         fn graph_id(&'a self) -> dot::Id<'a> {
             dot::Id::new("g").unwrap()
         }
-        fn node_id(&'a self, n: &N<'g>) -> dot::Id<'a> {
+        fn node_id(&'a self, n: &N) -> dot::Id<'a> {
             if let Some(n) = n {
                 dot::Id::new(format!("n{}", n.stable_id())).unwrap()
             } else {
                 dot::Id::new("return").unwrap()
             }
         }
-        fn node_shape(&'a self, _node: &N<'g>) -> Option<dot::LabelText<'a>> {
+        fn node_shape(&'a self, _node: &N) -> Option<dot::LabelText<'a>> {
             Some(dot::LabelText::LabelStr("record".into()))
         }
 
         fn source_port_position(
             &'a self,
-            _e: &E<'g>,
+            _e: &E,
         ) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
             (Some(dot::Id::new("ret").unwrap()), None)
         }
 
         fn target_port_position(
             &'a self,
-            e: &E<'g>,
+            e: &E,
         ) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
             (
                 match e.into {
@@ -180,7 +178,7 @@ pub mod call_only_flow_dot {
             )
         }
 
-        fn node_label(&'a self, n: &N<'g>) -> dot::LabelText<'a> {
+        fn node_label(&'a self, n: &N) -> dot::LabelText<'a> {
             use std::fmt::Write;
             let GlobalLocationS {
                 location: loc,
@@ -273,7 +271,7 @@ pub mod call_only_flow_dot {
             dot::LabelText::LabelStr(s.into())
         }
 
-        fn edge_color(&'a self, e: &E<'g>) -> Option<dot::LabelText<'a>> {
+        fn edge_color(&'a self, e: &E) -> Option<dot::LabelText<'a>> {
             (e.into == To::Ctrl).then(|| dot::LabelText::LabelStr("aqua".into()))
         }
     }
@@ -304,13 +302,7 @@ pub mod call_only_flow_dot {
     }
 }
 
-impl<'g> GlobalLocation<'g> {
-    pub fn iter(&self) -> impl Iterator<Item = GlobalLocationS> + '_ {
-        self.as_slice().iter().copied()
-    }
-}
-
-use crate::serializers::{Bodies, BodyProxy, SerializableCallOnlyFlow};
+use crate::serializers::{Bodies, BodyProxy};
 
 /// All locations that a body has (helper)
 pub fn locations_of_body<'a: 'tcx, 'tcx>(
@@ -331,7 +323,7 @@ pub fn locations_of_body<'a: 'tcx, 'tcx>(
 /// [read_non_transitive_graph_and_body].
 pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
     tcx: TyCtxt,
-    flow: &CallOnlyFlow<GlobalLocation>,
+    flow: &CallOnlyFlow,
     mut out: W,
 ) {
     let bodies = Bodies(
@@ -365,7 +357,10 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
             })
             .collect::<HashMap<_, _>>(),
     );
-    serde_json::to_writer(&mut out, &(flow.make_serializable(), bodies)).unwrap()
+
+    // We use serde_bare because JSON doesn't allow for non-string hashmap keys,
+    // which we use in the CallOnlyFlow
+    serde_bare::to_writer(&mut out, &(flow, bodies)).unwrap()
 }
 
 /// Read a flow and a set of mentioned `mir::Body`s from the file. Is expected
@@ -373,8 +368,6 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
 ///
 /// The companion function [write_non_transitive_graph_and_body] can be used to
 /// create such a file.
-pub fn read_non_transitive_graph_and_body<R: std::io::Read>(
-    read: R,
-) -> (SerializableCallOnlyFlow, Bodies) {
-    serde_json::from_reader(read).unwrap()
+pub fn read_non_transitive_graph_and_body<R: std::io::Read>(read: R) -> (CallOnlyFlow, Bodies) {
+    serde_bare::from_reader(read).unwrap()
 }

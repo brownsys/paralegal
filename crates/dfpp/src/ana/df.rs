@@ -1,7 +1,6 @@
 use std::{borrow::Cow, cell::RefCell, fmt::Display, rc::Rc};
 
 use crate::{
-    ir::global_location::{GliAt, GLI},
     mir::{self, visit::Visitor, *},
     rustc_data_structures::fx::FxHashSet as HashSet,
     rustc_hir::{def_id::DefId, BodyId},
@@ -221,8 +220,8 @@ where
 
 use super::algebra;
 
-pub type FlowResults<'a, 'tcx, 'g, 'inliner> =
-    engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'g, 'inliner>>;
+pub type FlowResults<'a, 'tcx, 'inliner> =
+    engine::AnalysisResults<'tcx, FlowAnalysis<'a, 'tcx, 'inliner>>;
 
 pub type Dependency<'tcx> = (LocationOrArgIndex, Place<'tcx>);
 pub type LocationSet<'tcx> = HashSet<Dependency<'tcx>>;
@@ -302,33 +301,27 @@ impl<'tcx> JoinSemiLattice for FlowDomain<'tcx> {
     }
 }
 
-pub struct FlowAnalysis<'a, 'tcx, 'g, 's> {
+pub struct FlowAnalysis<'a, 'tcx, 's> {
     pub tcx: TyCtxt<'tcx>,
     pub def_id: DefId,
     pub body: &'a Body<'tcx>,
     pub control_dependencies: ControlDependencies<BasicBlock>,
     pub aliases: Aliases<'a, 'tcx>,
-    pub gli: GLI<'g>,
     carries_marker: &'s InlineJudge<'tcx>,
     recurse_cache: RecursionBreakingCache<BodyId, flowistry::infoflow::FlowDomain<'tcx>>,
     elision_info: RefCell<HashMap<Location, HashSet<algebra::MirEquation>>>,
 }
 
-impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
+impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
     pub fn elision_info(
         &self,
     ) -> impl std::ops::Deref<Target = HashMap<Location, HashSet<algebra::MirEquation>>> + '_ {
         self.elision_info.borrow()
     }
 
-    fn body_id(&self) -> BodyId {
-        self.tcx.hir().body_owned_by(self.def_id.expect_local())
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         tcx: TyCtxt<'tcx>,
-        gli: GLI<'g>,
         def_id: DefId,
         body: &'a Body<'tcx>,
         aliases: Aliases<'a, 'tcx>,
@@ -337,7 +330,6 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
     ) -> Self {
         FlowAnalysis {
             tcx,
-            gli,
             def_id,
             body,
             aliases,
@@ -352,9 +344,9 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
         self.aliases.location_domain()
     }
 
-    pub fn gli_at(&self, location: Location) -> GliAt<'g> {
-        self.gli.at(location, self.body_id())
-    }
+    // pub fn gli_at(&self, location: Location) -> GliAt<'g> {
+    //     self.gli.at(location, self.body_id())
+    // }
 
     pub fn location_to_index(&self, location: Location) -> LocationOrArgIndex {
         self.location_domain()
@@ -691,7 +683,7 @@ impl<'a, 'tcx, 'g, 's> FlowAnalysis<'a, 'tcx, 'g, 's> {
     }
 }
 
-impl<'a, 'tcx, 'g, 'inliner> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inliner> {
+impl<'a, 'tcx, 'inliner> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'inliner> {
     type Domain = FlowDomain<'tcx>;
     type Direction = Forward;
     const NAME: &'static str = "FlowAnalysis";
@@ -715,7 +707,7 @@ impl<'a, 'tcx, 'g, 'inliner> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'g,
     }
 }
 
-impl<'a, 'tcx, 'g, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inliner> {
+impl<'a, 'tcx, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'inliner> {
     fn apply_statement_effect(
         &self,
         state: &mut Self::Domain,
@@ -781,13 +773,12 @@ impl<'a, 'tcx, 'g, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'g, 'inli
     }
 }
 
-pub fn compute_flow_internal<'a, 'tcx, 'g, 's>(
+pub fn compute_flow_internal<'a, 'tcx, 's>(
     tcx: TyCtxt<'tcx>,
-    gli: GLI<'g>,
     body_id: BodyId,
     body_with_facts: &'a CachedSimplifedBodyWithFacts<'tcx>,
     carries_marker: &'s InlineJudge<'tcx>,
-) -> FlowResults<'a, 'tcx, 'g, 's> {
+) -> FlowResults<'a, 'tcx, 's> {
     //flowistry::infoflow::BODY_STACK.with(|body_stack| {
     //body_stack.borrow_mut().push(body_id);
     // debug!(
@@ -810,7 +801,6 @@ pub fn compute_flow_internal<'a, 'tcx, 'g, 's>(
 
         let analysis = FlowAnalysis::new(
             tcx,
-            gli,
             def_id,
             body,
             aliases,

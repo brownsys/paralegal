@@ -41,6 +41,7 @@ humantime = "2"
 dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106"}
 #dot = {path = "../../clones/dot-rust" }
 
+serde_bare = "0.5.0"
 serde_json = "1"
 toml = "0.7"
 

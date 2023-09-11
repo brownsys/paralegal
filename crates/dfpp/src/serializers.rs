@@ -17,9 +17,7 @@ use dfgraph::Identifier;
 use serde::Deserialize;
 
 use crate::{
-    hir,
-    ir::{CallDeps, CallOnlyFlow, GlobalLocation, RawGlobalLocation},
-    mir,
+    hir, mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
     utils::{extract_places, read_places_with_provenance, DfppBodyExt},
@@ -28,7 +26,7 @@ use crate::{
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InstructionProxy {
-    #[serde(with = "dfgraph::Location")]
+    #[serde(with = "dfgraph::rustc_proxies::Location")]
     pub location: mir::Location,
     pub contents: String,
     pub places: HashSet<Identifier>,
@@ -129,17 +127,7 @@ impl BodyProxy {
 /// and then dispatch to the `serialize` impl for the reconstructed data
 /// structure.
 #[derive(Serialize, Deserialize)]
-pub struct BodyIdProxy2(#[serde(with = "dfgraph::BodyId")] pub hir::BodyId);
-
-impl<'g> Serialize for GlobalLocation<'g> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        RawGlobalLocation::from(self).serialize(serializer)
-    }
-}
-pub type SerializableCallOnlyFlow = CallOnlyFlow<RawGlobalLocation>;
+pub struct BodyIdProxy2(#[serde(with = "dfgraph::rustc_proxies::BodyId")] pub hir::BodyId);
 
 pub mod serde_map_via_vec {
     //! Serialize a [`HashMap`] by converting it to a [`Vec`], lifting
@@ -192,42 +180,6 @@ pub mod serde_map_via_vec {
     }
 }
 
-impl SerializableCallOnlyFlow {
-    pub fn all_locations_iter(&self) -> impl Iterator<Item = &RawGlobalLocation> {
-        self.location_dependencies.iter().flat_map(|(from, deps)| {
-            std::iter::once(from).chain(
-                std::iter::once(&deps.ctrl_deps)
-                    .chain(deps.input_deps.iter())
-                    .flat_map(|d| d.iter()),
-            )
-        })
-    }
-}
-
-impl CallOnlyFlow<GlobalLocation<'_>> {
-    pub fn make_serializable(&self) -> SerializableCallOnlyFlow {
-        CallOnlyFlow {
-            location_dependencies: self
-                .location_dependencies
-                .iter()
-                .map(|(g, v)| {
-                    (
-                        g.into(),
-                        CallDeps {
-                            ctrl_deps: v.ctrl_deps.iter().map(|l| l.into()).collect(),
-                            input_deps: v
-                                .input_deps
-                                .iter()
-                                .map(|hs| hs.iter().map(|d| d.into()).collect())
-                                .collect(),
-                        },
-                    )
-                })
-                .collect(),
-            return_dependencies: self.return_dependencies.iter().map(|l| l.into()).collect(),
-        }
-    }
-}
 /// A serializable version of [`mir::Body`]s, mapped to their [`hir::BodyId`] so
 /// that you can resolve the body belonging to a global location (see
 /// [`IsGlobalLocation::function`]).

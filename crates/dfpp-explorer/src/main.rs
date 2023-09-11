@@ -9,7 +9,7 @@ extern crate serde_lexpr as sexpr;
 
 use clap::Parser;
 
-use dfpp::{ir::global_location::*, serializers::Bodies, Either, HashMap};
+use dfpp::{serializers::Bodies, Either, HashMap};
 use ringbuffer::RingBufferWrite;
 
 mod command;
@@ -30,18 +30,16 @@ struct Args {
 }
 
 /// State of the read-eval-print loop
-struct Repl<'g> {
-    gloc_translation_map: Option<HashMap<NodeName, Node<'g>>>,
-    graph: Option<Graph<'g>>,
+struct Repl {
+    gloc_translation_map: Option<HashMap<NodeName, Node>>,
+    graph: Option<Graph>,
     prompt_for_missing_nodes: bool,
     bodies: Option<Bodies>,
-    gli: GLI<'g>,
 }
 
-impl<'g> Repl<'g> {
-    fn empty(gli: GLI<'g>) -> Self {
+impl Repl {
+    fn empty() -> Self {
         Self {
-            gli,
             gloc_translation_map: None,
             graph: None,
             bodies: None,
@@ -74,10 +72,7 @@ fn main() {
     let args = Args::parse();
 
     dfpp::rust::rustc_span::create_default_session_if_not_set_then(|_| {
-        let arena = dfpp::rust::rustc_arena::TypedArena::default();
-        let interner = GlobalLocationInterner::new(&arena);
-        let gli = GLI::new(&interner);
-        let mut repl = Repl::empty(gli);
+        let mut repl = Repl::empty();
 
         if let Some(file) = args.file.as_ref() {
             repl.load_graph(file.as_path()).unwrap();

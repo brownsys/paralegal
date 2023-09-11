@@ -1,5 +1,5 @@
 use crate::{
-    ir::{regal, GlobalLocation, GLI},
+    ir::{regal, GlobalLocation},
     mir, serde,
     utils::{time, write_sep, DisplayViaDebug, FnResolution, IntoDefId, TinyBitSet},
     BodyId, Either, HashMap, HashSet, Location, TyCtxt,
@@ -176,7 +176,15 @@ impl std::fmt::Display for Edge {
     }
 }
 
-impl<'g> GlobalLocal<'g> {
+/// A [`mir::Local`] but also tracks the precise call chain it is reachable
+/// from.
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
+pub struct GlobalLocal {
+    pub(super) local: mir::Local,
+    location: Option<GlobalLocation>,
+}
+
+impl GlobalLocal {
     /// Construct a new global local in a root function (no call chain)
     pub fn at_root(local: mir::Local) -> Self {
         Self {
@@ -186,34 +194,13 @@ impl<'g> GlobalLocal<'g> {
     }
 
     /// Construct a new global local relative to this call chain.
-    pub fn relative(local: mir::Local, location: GlobalLocation<'g>) -> Self {
+    pub fn relative(local: mir::Local, location: GlobalLocation) -> Self {
         Self {
             local,
             location: Some(location),
         }
     }
-}
 
-impl std::fmt::Display for GlobalLocal<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} @ ", self.local)?;
-        if let Some(loc) = self.location {
-            write!(f, "{}", loc)
-        } else {
-            f.write_str("root")
-        }
-    }
-}
-
-/// A [`mir::Local`] but also tracks the precise call chain it is reachable
-/// from.
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
-pub struct GlobalLocal<'g> {
-    pub(super) local: mir::Local,
-    location: Option<GlobalLocation<'g>>,
-}
-
-impl<'g> GlobalLocal<'g> {
     /// Access to the variable name.
     #[inline]
     pub fn local(self) -> mir::Local {
@@ -222,8 +209,19 @@ impl<'g> GlobalLocal<'g> {
 
     /// Access to the call chain.
     #[inline]
-    pub fn location(self) -> Option<GlobalLocation<'g>> {
+    pub fn location(self) -> Option<GlobalLocation> {
         self.location
+    }
+}
+
+impl std::fmt::Display for GlobalLocal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} @ ", self.local)?;
+        if let Some(loc) = self.location {
+            write!(f, "{}", loc)
+        } else {
+            f.write_str("root")
+        }
     }
 }
 
@@ -235,20 +233,20 @@ pub type Equations<L> = Vec<Equation<L>>;
 pub type GraphImpl<'tcx, L> = pg::GraphMap<Node<(L, FnResolution<'tcx>)>, Edge, pg::Directed>;
 
 /// A graph that has its subgraphs inlined (or is in the process of it).
-pub struct InlinedGraph<'tcx, 'g> {
+pub struct InlinedGraph<'tcx> {
     /// The global graph
-    pub(super) graph: GraphImpl<'tcx, GlobalLocation<'g>>,
+    pub(super) graph: GraphImpl<'tcx, GlobalLocation>,
     /// The global equations
-    pub equations: Equations<GlobalLocal<'g>>,
+    pub equations: Equations<GlobalLocal>,
     /// For statistics, how many functions did we inline
     pub(super) num_inlined: usize,
     /// For statistics: how deep a calll stack did we inline.
     pub(super) max_call_stack_depth: usize,
 }
 
-impl<'tcx, 'g> InlinedGraph<'tcx, 'g> {
+impl<'tcx> InlinedGraph<'tcx> {
     /// Access the actual graph.
-    pub fn graph(&self) -> &GraphImpl<'tcx, GlobalLocation<'g>> {
+    pub fn graph(&self) -> &GraphImpl<'tcx, GlobalLocation> {
         &self.graph
     }
 
@@ -277,13 +275,12 @@ impl<'tcx, 'g> InlinedGraph<'tcx, 'g> {
 
     /// Construct the initial graph from a [`regal::Body`]
     pub fn from_body(
-        gli: GLI<'g>,
         body_id: BodyId,
         body: &regal::Body<'tcx, DisplayViaDebug<Location>>,
         tcx: TyCtxt<'tcx>,
     ) -> Self {
         time("Graph Construction From Regal Body", || {
-            let equations = to_global_equations(&body.equations, body_id, gli);
+            let equations = to_global_equations(&body.equations, body_id);
             let mut gwr = InlinedGraph {
                 equations,
                 graph: Default::default(),
@@ -304,7 +301,7 @@ impl<'tcx, 'g> InlinedGraph<'tcx, 'g> {
                         use regal::Target;
                         let from = match d {
                             Target::Call(c) => regal::SimpleLocation::Call((
-                                gli.globalize_location(**c, body_id),
+                                GlobalLocation::single(**c, body_id),
                                 *call_map.get(c).unwrap_or_else(|| {
                                     panic!(
                                         "Expected to find call at {c} in function {}",
@@ -325,7 +322,7 @@ impl<'tcx, 'g> InlinedGraph<'tcx, 'g> {
                 };
 
             for (&loc, call) in body.calls.iter() {
-                let n = Node::Call((gli.globalize_location(*loc, body_id), call.function));
+                let n = Node::Call((GlobalLocation::single(*loc, body_id), call.function));
                 for (idx, deps) in call.arguments.iter().enumerate() {
                     if let Some((_, deps)) = deps {
                         add_dep_edges(n, EdgeType::Data(idx as u32), deps)
@@ -344,11 +341,10 @@ impl<'tcx, 'g> InlinedGraph<'tcx, 'g> {
 }
 
 /// Globalize all locations mentioned in these equations.
-fn to_global_equations<'g>(
+fn to_global_equations(
     eqs: &Equations<DisplayViaDebug<mir::Local>>,
     _body_id: BodyId,
-    _gli: GLI<'g>,
-) -> Equations<GlobalLocal<'g>> {
+) -> Equations<GlobalLocal> {
     eqs.iter()
         .map(|eq| eq.map_bases(|target| GlobalLocal::at_root(**target)))
         .collect()
