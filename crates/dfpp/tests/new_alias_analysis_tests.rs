@@ -2,9 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use dfpp::Symbol;
-mod helpers;
-use helpers::*;
+use dfpp::{define_G_test_template, test_utils::*, Symbol};
 
 const CRATE_DIR: &str = "tests/new-alias-analysis-tests";
 

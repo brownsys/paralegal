@@ -3,9 +3,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-mod helpers;
-
-use helpers::*;
+use dfpp::{define_flow_test_template, test_utils::*};
 
 const TEST_CRATE_NAME: &str = "tests/marker-tests";
 

@@ -8,6 +8,9 @@ description = "A linter for user-defined privacy properties for Rust code"
 [package.metadata.rust-analyzer]
 rustc_private = true
 
+[features]
+test = []
+
 [dependencies]
 dfgraph = { path = "../dfgraph", features = ["rustc"] }
 
@@ -55,6 +58,9 @@ anyhow = "1.0.72"
 
 [build-dependencies]
 chrono = "0.4"
+
+[dev-dependencies]
+dfpp = {path = ".", features = ["test"]}
 
 [[bin]]
 name = "cargo-dfpp"

@@ -306,6 +306,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dfgraph",
+ "dfpp",
  "indexical",
  "itertools",
  "log",
@@ -333,6 +334,7 @@ dependencies = [
  "chrono",
  "clap",
  "dfgraph",
+ "dfpp",
  "dot",
  "flowistry",
  "humantime",
@@ -642,9 +644,9 @@ checksum = "74086667896a940438f2118212f313abba4aff3831fef6f4b17d02add5c8bb60"
 
 [[package]]
 name = "indexical"
-version = "0.1.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af17bf91a5e64eacbfe002c9757f2dc35737720865ac408e10e5f40cbf95f998"
+checksum = "9a9d86c3bde42e4b4e63825dbea763c7eecb2590af0222284f8be6641ba688bb"
 dependencies = [
  "bitvec",
  "fxhash",

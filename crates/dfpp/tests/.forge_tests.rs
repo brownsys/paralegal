@@ -2,8 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-mod helpers;
-use helpers::*;
+use dfpp::test_utils::*;
 use serial_test::serial;
 
 const TEST_CRATE_NAME: &str = "tests/forge-tests";

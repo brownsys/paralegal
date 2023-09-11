@@ -12,13 +12,18 @@ pub type Marker = Identifier;
 pub type MarkerIndex = HashMap<Marker, Vec<(Identifier, MarkerRefinement)>>;
 pub type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
 
+/// Data structures to be analyzed by user-defined properties.
+#[derive(Debug)]
 pub struct Context {
-    pub marker_to_ids: MarkerIndex,
+    marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
 }
 
 impl Context {
+    /// Construct a [`Context`] from a [`ProgramDescription`].
+    ///
+    /// This also precomputes some data structures like an index over markers.
     pub fn new(desc: ProgramDescription) -> Self {
         Context {
             marker_to_ids: Self::build_index_on_markers(&desc),
@@ -48,6 +53,7 @@ impl Context {
             .collect()
     }
 
+    /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
     pub fn flows_to(&self, ctrl_id: &Identifier, src: &DataSource, sink: &DataSink) -> bool {
         let ctrl_flows = &self.flows_to[ctrl_id];
         ctrl_flows
@@ -56,6 +62,7 @@ impl Context {
             .contains(sink)
     }
 
+    /// Returns an iterator over all objects marked with `marker`.
     pub fn marked(
         &self,
         marker: Marker,
@@ -66,6 +73,7 @@ impl Context {
             .flat_map(|v| v.iter())
     }
 
+    /// Returns an iterator over all sinks marked with `marker` out of the provided `dsts`.
     pub fn marked_sinks<'a>(
         &'a self,
         dsts: impl IntoIterator<Item = &'a DataSink> + 'a,
@@ -87,6 +95,7 @@ impl Context {
         })
     }
 
+    /// Returns an iterator over all the call sites marked with `marker` out of the provided `dsts`.
     pub fn marked_callsites<'a>(
         &'a self,
         dsts: impl IntoIterator<Item = &'a DataSink> + 'a,
@@ -99,6 +108,7 @@ impl Context {
             })
     }
 
+    /// Returns an iterator over the data sources within controller `c` that have type `t`.
     pub fn srcs_with_type<'a>(
         &self,
         c: &'a Ctrl,
@@ -110,10 +120,12 @@ impl Context {
             .filter_map(move |(src, ids)| ids.contains(t).then_some(src))
     }
 
+    /// Returns the input [`ProgramDescription`].
     pub fn desc(&self) -> &ProgramDescription {
         &self.desc
     }
 
+    /// Returns all the [`Annotation::OType`]s for a controller `id`.
     pub fn otypes(&self, id: &Identifier) -> Vec<Identifier> {
         self.desc().annotations[id]
             .0
@@ -125,4 +137,33 @@ impl Context {
             .next()
             .unwrap_or_default()
     }
+
+    /// Returns true if `id` identifies a function with name `name`.
+    pub fn is_function(&self, id: Identifier, name: &str) -> bool {
+        match id.as_str().split_once('_') {
+            Some((id_name, _)) => id_name == name,
+            None => false,
+        }
+    }
+}
+
+#[test]
+fn test_context() {
+    let ctx = crate::test_utils::test_ctx();
+    let input = Marker::new_intern("input");
+    let sink = Marker::new_intern("sink");
+    assert!(ctx
+        .marked(input)
+        .any(|(id, _)| id.as_str().starts_with("Foo")));
+
+    let desc = ctx.desc();
+    let controller = desc
+        .controllers
+        .keys()
+        .find(|id| ctx.is_function(**id, "controller"))
+        .unwrap();
+    let ctrl = &desc.controllers[controller];
+
+    assert_eq!(ctx.marked_sinks(ctrl.data_sinks(), input).count(), 0);
+    assert_eq!(ctx.marked_sinks(ctrl.data_sinks(), sink).count(), 2);
 }

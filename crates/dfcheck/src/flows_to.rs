@@ -1,22 +1,39 @@
 use dfgraph::{Ctrl, DataSink, DataSource, DataSourceIndex};
 
-use indexical::{impls::BitvecIndexMatrix as IndexMatrix, IndexedDomain, ToIndex};
+use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToIndex};
 use itertools::Itertools;
 
-use std::rc::Rc;
+use std::{fmt, sync::Arc};
 
+/// The transitive closure of the [`Ctrl::data_flow`] relation.
+///
+/// Implemented efficiently using an [`IndexedDomain`] over the
+/// [`DataSource`] and [`DataSink`] types.
 pub struct CtrlFlowsTo {
-    pub sources: Rc<IndexedDomain<DataSource>>,
-    pub sinks: Rc<IndexedDomain<DataSink>>,
+    /// The indexes of [`DataSource`]s in the controller.
+    pub sources: Arc<IndexedDomain<DataSource>>,
+
+    /// The indexes of [`DataSink`]s in the controller.
+    pub sinks: Arc<IndexedDomain<DataSink>>,
+
+    /// The transitive closure of the [`Ctrl::data_flow`] relation.
+    ///
+    /// See the [`IndexMatrix`] documentation for details on how to
+    /// query this representation of the relation.
     pub flows_to: IndexMatrix<DataSourceIndex, DataSink>,
 }
 
 impl CtrlFlowsTo {
+    /// Constructs the transitive closure from a [`Ctrl`].
     pub fn build(ctrl: &Ctrl) -> Self {
-        let sources = Rc::new(IndexedDomain::from_iter(ctrl.data_flow.0.keys().cloned()));
-        let sinks = Rc::new(IndexedDomain::from_iter(
+        // Collect all sources and sinks into indexed domains.
+        let sources = Arc::new(IndexedDomain::from_iter(ctrl.data_flow.0.keys().cloned()));
+        let sinks = Arc::new(IndexedDomain::from_iter(
             ctrl.data_flow.0.values().flatten().dedup().cloned(),
         ));
+
+        // Connect each function-argument sink to its corresponding function sources.
+        // This lets us compute the transitive closure by following through the `sink_to_source` map.
         let mut sink_to_source = IndexMatrix::new(&sources);
         for (sink_idx, sink) in sinks.as_vec().iter_enumerated() {
             for (src_idx, src) in sources.as_vec().iter_enumerated() {
@@ -30,8 +47,8 @@ impl CtrlFlowsTo {
             }
         }
 
+        // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
         let mut flows_to = IndexMatrix::new(&sinks);
-
         for (src, sinks) in &ctrl.data_flow.0 {
             let src = src.to_index(&sources);
             for sink in sinks {
@@ -39,6 +56,7 @@ impl CtrlFlowsTo {
             }
         }
 
+        // Compute the transitive closure to a fixpoint.
         loop {
             let mut changed = false;
 
@@ -67,4 +85,35 @@ impl CtrlFlowsTo {
             flows_to,
         }
     }
+}
+
+impl fmt::Debug for CtrlFlowsTo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.flows_to.fmt(f)
+    }
+}
+
+#[test]
+fn test_flows_to() {
+    let ctx = crate::test_utils::test_ctx();
+    let controller = ctx
+        .desc()
+        .controllers
+        .keys()
+        .find(|id| ctx.is_function(**id, "controller"))
+        .unwrap();
+    let src = DataSource::Argument(0);
+    let get_sink = |name| {
+        ctx.desc().controllers[&controller]
+            .data_sinks()
+            .find(|sink| match sink {
+                DataSink::Argument { function, .. } => ctx.is_function(function.function, name),
+                _ => false,
+            })
+            .unwrap()
+    };
+    let sink1 = get_sink("sink1");
+    let sink2 = get_sink("sink2");
+    assert!(ctx.flows_to(&controller, &src, sink1));
+    assert!(!ctx.flows_to(&controller, &src, sink2));
 }

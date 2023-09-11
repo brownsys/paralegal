@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-exclude = ["props", "crates/dfpp/tests"]
+exclude = ["props", "crates/dfpp/tests", "crates/dfcheck/tests"]
 
 [profile.release]
 debug = true

@@ -2,8 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-mod helpers;
-use helpers::*;
+use dfpp::test_utils::*;
 
 fn do_in_crate_dir<A, F: std::panic::UnwindSafe + FnOnce() -> A>(f: F) -> std::io::Result<A> {
     with_current_directory(CRATE_DIR, f)

@@ -66,11 +66,7 @@ use crate::rustc::{hir, mir};
 use crate::rustc_proxies;
 use internment::Intern;
 use serde::{Deserialize, Serialize};
-use std::{
-    cmp::Ordering,
-    fmt::{self, Display},
-    ops::Deref,
-};
+use std::{cmp::Ordering, fmt, ops::Deref};
 
 #[cfg(feature = "rustc")]
 pub type BodyId = hir::BodyId;
@@ -215,7 +211,7 @@ impl fmt::Display for RawGlobalLocation {
 /// [`GlobalLocation::relativize`].
 ///
 /// INVARIANT: `self.0.len() > 0`
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct GlobalLocation(Intern<RawGlobalLocation>);
 
 impl Deref for GlobalLocation {
@@ -226,9 +222,15 @@ impl Deref for GlobalLocation {
     }
 }
 
-impl Display for GlobalLocation {
+impl fmt::Debug for GlobalLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.as_ref())
+        self.0.as_ref().fmt(f)
+    }
+}
+
+impl fmt::Display for GlobalLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.as_ref().fmt(f)
     }
 }
 

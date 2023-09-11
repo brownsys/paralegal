@@ -315,7 +315,7 @@ impl ProgramDescription {
 /// An identifier for any kind of object (functions, markers, etc.).
 ///
 /// Implemented as an interned string, so identifiers are cheap to reuse.
-#[derive(Hash, Eq, PartialEq, Ord, Debug, PartialOrd, Clone, Serialize, Deserialize, Copy)]
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Serialize, Deserialize, Copy)]
 pub struct Identifier(Intern<String>);
 
 impl Identifier {
@@ -332,9 +332,15 @@ impl Identifier {
     }
 }
 
+impl std::fmt::Debug for Identifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        self.0.as_ref().fmt(f)
+    }
+}
+
 impl std::fmt::Display for Identifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.0.fmt(f)
+        self.0.as_ref().fmt(f)
     }
 }
 

@@ -97,6 +97,8 @@ pub mod serializers;
 pub mod utils;
 pub mod consts;
 pub mod marker_db;
+#[cfg(feature = "test")]
+pub mod test_utils;
 
 pub use dfgraph as desc;
 

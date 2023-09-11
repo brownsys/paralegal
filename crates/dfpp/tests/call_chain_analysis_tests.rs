@@ -3,9 +3,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-mod helpers;
-
-use helpers::*;
+use dfpp::{define_flow_test_template, define_test_skip, test_utils::*};
 
 const TEST_CRATE_NAME: &str = "tests/call-chain-analysis-tests";
 

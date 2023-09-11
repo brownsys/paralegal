@@ -3,10 +3,11 @@ extern crate either;
 extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
-use dfpp::{
+use crate::{
     desc::{AnnotationMap, DataSink, DataSource, Identifier, ProgramDescription, TypeDescriptor},
     ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, RawGlobalLocation},
     serializers::{Bodies, InstructionProxy},
+    utils::outfile_pls,
     HashSet, Symbol,
 };
 use hir::BodyId;
@@ -14,7 +15,6 @@ use rustc_middle::mir;
 
 use either::Either;
 
-use dfpp::utils::outfile_pls;
 use std::borrow::Cow;
 use std::io::prelude::*;
 use std::path::Path;
@@ -52,10 +52,10 @@ pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
 
 /// Run dfpp in the current directory, passing the
 /// `--dump-serialized-non-transitive-graph` flag, which dumps a
-/// [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow) for each controller.
+/// [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow) for each controller.
 ///
 /// The result is suitable for reading with
-/// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
+/// [`read_non_transitive_graph_and_body`](crate::dbg::read_non_transitive_graph_and_body).
 pub fn run_dfpp_with_graph_dump(dir: impl AsRef<Path>) -> bool {
     run_dfpp_with_graph_dump_and::<_, &str>(dir, [])
 }
@@ -67,7 +67,7 @@ pub fn dfpp_command(dir: impl AsRef<Path>) -> std::process::Command {
     let mut cmd = std::process::Command::new("cargo");
     let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
     // Cargo gives us the path where it wrote `cargo-dfpp` to
-    let cargo_dfpp_path = std::path::Path::new(env!("CARGO_BIN_EXE_cargo-dfpp"));
+    let cargo_dfpp_path = Path::new(file!()).join("../../target/debug/cargo-dfpp");
     let mut new_path =
         std::ffi::OsString::with_capacity(path.len() + cargo_dfpp_path.as_os_str().len() + 1);
     // We then append the parent (e.g. its directory) to the search path. THat
@@ -87,10 +87,10 @@ pub fn dfpp_command(dir: impl AsRef<Path>) -> std::process::Command {
 
 /// Run dfpp in the current directory, passing the
 /// `--dump-serialized-non-transitive-graph` flag, which dumps a
-/// [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow) for each controller.
+/// [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow) for each controller.
 ///
 /// The result is suitable for reading with
-/// [`read_non_transitive_graph_and_body`](dfpp::dbg::read_non_transitive_graph_and_body).
+/// [`read_non_transitive_graph_and_body`](crate::dbg::read_non_transitive_graph_and_body).
 ///
 /// Allows for additional arguments to be passed to dfpp
 pub fn run_dfpp_with_graph_dump_and<I, S>(dir: impl AsRef<Path>, extra: I) -> bool
@@ -226,14 +226,14 @@ test expect {{
 }}
 	",
         property,
-        dfpp::frg::name::FLOWS_PREDICATE,
+        crate::frg::name::FLOWS_PREDICATE,
         result
     );
 
     outfile_pls(file).and_then(|mut f| f.write_all(content.as_bytes()))
 }
 
-/// A deserialized version of [`CallOnlyFlow`](dfpp::ir::flows::CallOnlyFlow)
+/// A deserialized version of [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow)
 pub struct G {
     pub graph: CallOnlyFlow,
     pub body: Bodies,
@@ -500,7 +500,7 @@ impl G {
 
     /// Deserialize from a `.ntgb.json` file for the controller named `s`
     pub fn from_file(s: Symbol) -> Self {
-        let (graph, body) = dfpp::dbg::read_non_transitive_graph_and_body(
+        let (graph, body) = crate::dbg::read_non_transitive_graph_and_body(
             std::fs::File::open(format!("{}.ntgb.json", s.as_str())).unwrap(),
         );
         Self {
@@ -579,7 +579,7 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 }
 
-pub struct PreFrg(ProgramDescription);
+pub struct PreFrg(pub ProgramDescription);
 
 impl<'g> HasGraph<'g> for &'g PreFrg {
     fn graph(self) -> &'g PreFrg {
@@ -594,7 +594,7 @@ impl PreFrg {
                 serde_json::from_reader(
                     &mut std::fs::File::open(format!(
                         "{dir}/{}",
-                        dfpp::consts::FLOW_GRAPH_OUT_NAME
+                        crate::consts::FLOW_GRAPH_OUT_NAME
                     ))
                     .unwrap(),
                 )
@@ -608,7 +608,7 @@ impl PreFrg {
 pub struct CtrlRef<'g> {
     graph: &'g PreFrg,
     ident: Identifier,
-    ctrl: &'g dfpp::desc::Ctrl,
+    ctrl: &'g crate::desc::Ctrl,
 }
 
 impl<'g> PartialEq for CtrlRef<'g> {
@@ -644,7 +644,7 @@ impl<'g> CtrlRef<'g> {
                     .data_flow
                     .0
                     .keys()
-                    .filter_map(dfpp::desc::DataSource::as_function_call)
+                    .filter_map(crate::desc::DataSource::as_function_call)
                     .map(|f| CallSiteRef {
                         function: fun,
                         call_site: f,
@@ -656,7 +656,7 @@ impl<'g> CtrlRef<'g> {
                     .ctrl_flow
                     .0
                     .keys()
-                    .filter_map(dfpp::desc::DataSource::as_function_call)
+                    .filter_map(crate::desc::DataSource::as_function_call)
                     .map(|f| CallSiteRef {
                         function: fun,
                         call_site: f,
@@ -721,12 +721,12 @@ impl<'g> FnRef<'g> {
 
 pub struct CallSiteRef<'g> {
     function: &'g FnRef<'g>,
-    call_site: &'g dfpp::desc::CallSite,
+    call_site: &'g crate::desc::CallSite,
     ctrl: Cow<'g, CtrlRef<'g>>,
 }
 
-impl<'g> PartialEq<dfpp::desc::CallSite> for CallSiteRef<'g> {
-    fn eq(&self, other: &dfpp::desc::CallSite) -> bool {
+impl<'g> PartialEq<crate::desc::CallSite> for CallSiteRef<'g> {
+    fn eq(&self, other: &crate::desc::CallSite) -> bool {
         self.call_site == other
     }
 }
@@ -751,12 +751,12 @@ impl<'g> CallSiteRef<'g> {
     }
 
     pub fn flows_to(&self, sink: &DataSinkRef) -> bool {
-        let next_hop = |src: dfpp::desc::CallSite| {
+        let next_hop = |src: crate::desc::CallSite| {
             self.ctrl
                 .ctrl
                 .data_flow
                 .0
-                .get(&dfpp::desc::DataSource::FunctionCall(src.clone()))
+                .get(&crate::desc::DataSource::FunctionCall(src.clone()))
                 .iter()
                 .flat_map(|i| i.iter())
                 .map(Either::Left)
@@ -765,7 +765,7 @@ impl<'g> CallSiteRef<'g> {
                         .ctrl
                         .ctrl_flow
                         .0
-                        .get(&dfpp::desc::DataSource::FunctionCall(src))
+                        .get(&crate::desc::DataSource::FunctionCall(src))
                         .iter()
                         .flat_map(|i| i.iter())
                         .map(Either::Right),
@@ -797,7 +797,7 @@ impl<'g> CallSiteRef<'g> {
         }
         false
     }
-    pub fn call_site(&self) -> &dfpp::desc::CallSite {
+    pub fn call_site(&self) -> &crate::desc::CallSite {
         self.call_site
     }
 }
@@ -810,7 +810,7 @@ impl<'g> HasGraph<'g> for &CallSiteRef<'g> {
 
 pub struct DataSinkRef<'g> {
     call_site: Either<&'g CallSiteRef<'g>, &'g PreFrg>,
-    sink: &'g dfpp::desc::DataSink,
+    sink: &'g crate::desc::DataSink,
 }
 
 impl<'g> HasGraph<'g> for &DataSinkRef<'g> {
@@ -822,8 +822,8 @@ impl<'g> HasGraph<'g> for &DataSinkRef<'g> {
     }
 }
 
-impl PartialEq<dfpp::desc::DataSink> for DataSinkRef<'_> {
-    fn eq(&self, other: &dfpp::desc::DataSink) -> bool {
+impl PartialEq<crate::desc::DataSink> for DataSinkRef<'_> {
+    fn eq(&self, other: &crate::desc::DataSink) -> bool {
         self.sink == other
     }
 }
