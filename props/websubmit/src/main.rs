@@ -72,6 +72,6 @@ impl DeletionProp {
     }
 }
 
-pub fn main() {
+fn main() {
     dfcheck::cli(|cx| DeletionProp::new(cx).check())
 }

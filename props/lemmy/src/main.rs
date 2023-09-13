@@ -47,6 +47,6 @@ impl CommunityProp {
     }
 }
 
-fn main(cx: Arc<Context>) {
-    CommunityProp::new(cx).check();
+fn main() {
+    dfcheck::cli(|cx| CommunityProp::new(cx).check())
 }
