@@ -345,7 +345,7 @@ impl G {
     ) -> impl Iterator<Item = &RawGlobalLocation> {
         self.graph
             .location_dependencies
-            .get(&GlobalLocation::intern_ref(n))
+            .get(&GlobalLocation::intern(n))
             .into_iter()
             .flat_map(move |deps| {
                 con_ty

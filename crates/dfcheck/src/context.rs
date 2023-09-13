@@ -129,15 +129,19 @@ impl Context {
 
     /// Returns all the [`Annotation::OType`]s for a controller `id`.
     pub fn otypes(&self, id: &Identifier) -> Vec<Identifier> {
-        self.desc().annotations[id]
-            .0
-            .iter()
-            .filter_map(|annot| match annot {
-                Annotation::OType(ids) => Some(ids.clone()),
-                _ => None,
-            })
-            .next()
-            .unwrap_or_default()
+        let inner = || -> Option<_> {
+            self.desc()
+                .annotations
+                .get(id)?
+                .0
+                .iter()
+                .filter_map(|annot| match annot {
+                    Annotation::OType(ids) => Some(ids.clone()),
+                    _ => None,
+                })
+                .next()
+        };
+        inner().unwrap_or_default()
     }
 
     /// Returns true if `id` identifies a function with name `name`.

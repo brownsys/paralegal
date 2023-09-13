@@ -47,7 +47,6 @@ impl CommunityProp {
     }
 }
 
-#[no_mangle]
-pub fn run(cx: Arc<Context>) {
+fn main(cx: Arc<Context>) {
     CommunityProp::new(cx).check();
 }

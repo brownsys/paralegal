@@ -13,7 +13,7 @@
 //!     let x = 1;
 //! }
 //!
-//! @[dfpp::analyze]
+//! #[dfpp::analyze]
 //! fn foo {
 //!     bar();
 //!     bar();
@@ -53,7 +53,7 @@
 //!
 //! # Representation
 //!
-//! It is organized from the outside in i.e. the top-level function call is the
+//! It is organized from the outside-in, i.e., the top-level function call is the
 //! outermost location which calls `next` at `location` going one level deeper
 //! and so forth. You may access the innermost location using
 //! `GlobalLocation::innermost_location_and_body`.
@@ -90,6 +90,7 @@ pub struct GlobalLocationS {
     #[cfg(not(feature = "rustc"))]
     /// The id of the body in which this location is located.
     pub function: rustc_proxies::BodyId,
+
     #[cfg(feature = "rustc")]
     #[serde(with = "rustc_proxies::Location")]
     /// The location itself
@@ -99,11 +100,18 @@ pub struct GlobalLocationS {
     pub location: rustc_proxies::Location,
 }
 
+impl GlobalLocationS {
+    pub fn relativize(self, location: GlobalLocation) -> GlobalLocation {
+        let mut location = location.to_owned();
+        location.0.insert(0, self);
+        GlobalLocation::into_intern(location)
+    }
+}
+
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Deserialize, Serialize)]
 pub struct RawGlobalLocation(Vec<GlobalLocationS>);
 
 impl RawGlobalLocation {
-    /// Get the `next` field of the underlying location.
     pub fn as_slice(&self) -> &[GlobalLocationS] {
         &self.0
     }
@@ -152,12 +160,6 @@ impl RawGlobalLocation {
     pub fn iter_parents(&self) -> impl Iterator<Item = &[GlobalLocationS]> {
         let slc = self.as_slice();
         (1..slc.len()).map(|i| &slc[0..i])
-    }
-
-    pub fn relativize(&self, location: GlobalLocationS) -> Self {
-        let mut this = self.clone();
-        this.0.insert(0, location);
-        this
     }
 
     pub fn iter(&self) -> impl Iterator<Item = GlobalLocationS> + '_ {
@@ -253,27 +255,23 @@ impl GlobalLocation {
         } else {
             let mut this = self.to_owned();
             this.0.pop();
-            Some(Self::intern(this))
+            Some(Self::into_intern(this))
         }
     }
 
-    pub fn intern(path: RawGlobalLocation) -> Self {
+    pub fn into_intern(path: RawGlobalLocation) -> Self {
         GlobalLocation(Intern::new(path))
     }
 
-    pub fn intern_ref(path: &RawGlobalLocation) -> Self {
+    pub fn intern(path: &RawGlobalLocation) -> Self {
         GlobalLocation(Intern::from_ref(path))
     }
 
     pub fn single(location: Location, function: BodyId) -> Self {
-        Self::intern(RawGlobalLocation(vec![GlobalLocationS {
+        Self::into_intern(RawGlobalLocation(vec![GlobalLocationS {
             location,
             function,
         }]))
-    }
-
-    pub fn relativize(&self, location: GlobalLocationS) -> Self {
-        Self::intern(self.0.as_ref().relativize(location))
     }
 }
 

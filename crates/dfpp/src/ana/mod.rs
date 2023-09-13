@@ -195,7 +195,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             // Add ctrl flows to callsite.
             for dep in deps.ctrl_deps.iter() {
                 flows.add_ctrl_flow(
-                    Cow::Owned(dep.as_data_source(tcx, check_realness)),
+                    Cow::Owned(data_source_from_global_location(*dep, tcx, check_realness)),
                     call_site.clone(),
                 )
             }
@@ -223,7 +223,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 for dep in arg_deps.iter() {
                     debug!("    to {dep}");
                     flows.add_data_flow(
-                        Cow::Owned(dep.as_data_source(tcx, check_realness)),
+                        Cow::Owned(data_source_from_global_location(*dep, tcx, check_realness)),
                         to.clone(),
                     );
                 }
@@ -231,7 +231,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         }
         for dep in flow.return_dependencies.iter() {
             flows.add_data_flow(
-                Cow::Owned(dep.as_data_source(tcx, check_realness)),
+                Cow::Owned(data_source_from_global_location(*dep, tcx, check_realness)),
                 DataSink::Return,
             );
         }

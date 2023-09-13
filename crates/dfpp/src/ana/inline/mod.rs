@@ -360,7 +360,7 @@ impl<'tcx> Inliner<'tcx> {
                     base.local(),
                     base.location().map_or_else(
                         || GlobalLocation::single(here.location, here.function),
-                        |prior| prior.relativize(here),
+                        |prior| here.relativize(prior),
                     ),
                 )
             })
@@ -597,7 +597,7 @@ impl<'tcx> Inliner<'tcx> {
             };
             match source {
                 Node::Call((loc, did)) => {
-                    add_edge(Node::Call((loc.relativize(here), did)), pruning_required)
+                    add_edge(Node::Call((here.relativize(loc), did)), pruning_required)
                 }
                 Node::Return => unreachable!(),
                 Node::Argument(a) => {
@@ -613,7 +613,7 @@ impl<'tcx> Inliner<'tcx> {
         };
 
         for old in to_inline.nodes() {
-            let new = old.map_call(|(location, function)| (location.relativize(here), *function));
+            let new = old.map_call(|(location, function)| (here.relativize(*location), *function));
             g.add_node(new);
             debug!(
                 "Handling {old} (now {new}) {} incoming edges",

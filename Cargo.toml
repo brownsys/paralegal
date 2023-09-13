@@ -2,6 +2,10 @@
 members = ["crates/*"]
 exclude = ["props", "crates/dfpp/tests", "crates/dfcheck/tests"]
 
+[workspace.dependencies]
+indexical = "0.2.2"
+serde = "1.0.188"
+
 [profile.release]
 debug = true
 

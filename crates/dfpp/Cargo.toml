@@ -26,7 +26,7 @@ rustc_utils = "=0.6.0-nightly-2023-04-12"
 rustc_plugin = "=0.6.0-nightly-2023-04-12"
 
 clap = { version = "=4.3.24", features = ["derive", "cargo", "env"] }
-serde = { version = "1", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 lazy_static = "1"
 ordermap = "0.3"
 trait_enum = "0.5"
