@@ -1,12 +1,9 @@
 ## What Changed?
 
-<!-- 
 A summary of what you are proposing to change.
--->
 
 ## Why Does It Need To?
 
-<!-- 
 Describe the concern this change addresses. 
 
 Reference any issues that are related and use closing words such as "fixes" or
@@ -16,7 +13,6 @@ You can find out more about closing words here:
 https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests
 
 Try to make your PR about one single concern or issue, unless they are mutually dependent.
--->
 
 ## Checklist
 
