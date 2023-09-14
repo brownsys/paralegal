@@ -1,8 +1,9 @@
 use dfgraph::{
-    Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, Identifier, MarkerAnnotation,
-    MarkerRefinement, ProgramDescription,
+    Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
+    MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
+use anyhow::{anyhow, ensure, Result};
 use indexical::ToIndex;
 use itertools::Itertools;
 
@@ -150,6 +151,132 @@ impl Context {
             Some((id_name, _)) => id_name == name,
             None => false,
         }
+    }
+
+    /// Enforce that on every path from the `starting_points` to `is_terminal` a
+    /// node satisfying `is_checkpoint` is passed.
+    /// 
+    /// Fails if `ctrl` is not found.
+    /// 
+    /// The return value contains some statistics information about the
+    /// traversal. The property holds if [`AlwaysHappensBefore::holds`] is true.
+    pub fn always_happens_before(
+        &self,
+        ctrl: Identifier,
+        starting_points: impl Iterator<Item = DataSource>,
+        mut is_checkpoint: impl FnMut(&DataSink) -> bool,
+        mut is_terminal: impl FnMut(&DataSink) -> bool,
+    ) -> Result<AlwaysHappensBefore> {
+        let mut seen = HashSet::<&DataSink>::new();
+        let mut num_seen = 0;
+        let mut num_violated = 0;
+
+        let mut queue = starting_points
+            .zip(std::iter::repeat(true))
+            .collect::<Vec<_>>();
+
+        let started_with = queue.len();
+
+        while let Some((current, mut is_violated)) = queue.pop() {
+            for sink in self
+                .desc()
+                .controllers
+                .get(&ctrl)
+                .ok_or_else(|| anyhow!("Controller {ctrl} not found"))?
+                .data_flow
+                .0
+                .get(&current)
+                .into_iter()
+                .flatten()
+            {
+                if is_checkpoint(sink) {
+                    is_violated = false;
+                }
+                match sink {
+                    _ if is_terminal(sink) => {
+                        num_seen += 1;
+                        if is_violated {
+                            num_violated += 1;
+                        }
+                    }
+                    DataSink::Return => {
+                        num_seen += 1;
+                        if is_violated {
+                            num_violated += 1;
+                        }
+                    }
+                    DataSink::Argument {
+                        function,
+                        arg_slot: _,
+                    } => {
+                        if seen.insert(sink) {
+                            queue.push((DataSource::FunctionCall(function.clone()), is_violated));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(AlwaysHappensBefore {
+            num_seen,
+            num_violated,
+            started_with,
+        })
+    }
+}
+
+/// Statistics about the result of running [`Context::always_happens_before`]
+/// that are useful to understand how the property failed.
+/// 
+/// The [`std::fmt::Display`] implementation presents the information in human
+/// readable form.
+/// 
+/// The stable API of this struct is [`Self::holds`], [`Self::assert_holds`] and
+/// [`Self::found_any`]. Otherwise the information in this struct and its
+/// printed representations should be considered unstable and
+/// for-human-eyes-only.
+pub struct AlwaysHappensBefore {
+    /// How many paths terminated in `is_terminal`.
+    num_seen: i32,
+    /// How many terminating paths violated the property.
+    num_violated: i32,
+    /// How large was the set of initial nodes this traversal started with.
+    started_with: usize,
+}
+
+impl std::fmt::Display for AlwaysHappensBefore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            num_seen,
+            num_violated,
+            started_with,
+        } = self;
+        write!(
+            f,
+            "Saw {num_seen} paths, {num_violated} violations, started with {started_with} nodes"
+        )
+    }
+}
+
+impl AlwaysHappensBefore {
+    /// Returns `true` if the property that created these statistics holds.
+    pub fn holds(&self) -> bool {
+        self.num_violated == 0
+    }
+
+    /// Fails if [`Self::holds`] is false.
+    pub fn assert_holds(&self) -> Result<()> {
+        ensure!(
+            self.holds(),
+            "AlwaysHappensBefore failed: found {} violating paths",
+            self.num_violated
+        );
+        Ok(())
+    }
+
+    /// Were any paths covered by this policy?
+    pub fn found_any(&self) -> bool {
+        self.num_seen != 0
     }
 }
 
