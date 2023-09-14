@@ -8,3 +8,6 @@ description = "Get, find and move the rustc docs to our documentation directory"
 [[bin]]
 name = "compose"
 path = "compose.rs"
+
+# Needed to separate this script from the worspace above
+[workspace]
