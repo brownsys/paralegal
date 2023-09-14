@@ -1,4 +1,4 @@
-/target/
+target/
 
 
 /rust-dfpp-patch
@@ -8,3 +8,8 @@ flow-graph.json
 .cargo/config.toml
 *.eqs
 *.info.json
+
+props/Cargo.lock
+
+# Delete this if we want to include a rustfmt configuration
+.rustfmt.toml
