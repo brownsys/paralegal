@@ -13,3 +13,6 @@ indicatif = "0.17"
 serde-lexpr = "0.1"
 dialoguer = { version = "0.10", features = ["history", "fuzzy-select"] }
 ringbuffer = "0.13"
+
+[build-dependencies]
+chrono = "0.4"
