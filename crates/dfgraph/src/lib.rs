@@ -404,7 +404,7 @@ impl ShortHash {
 
 impl fmt::Display for ShortHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:06}", self.0)
+        write!(f, "{:06x}", self.0)
     }
 }
 
