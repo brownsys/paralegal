@@ -34,7 +34,7 @@ pub mod resolve;
 mod print;
 pub use print::*;
 
-pub use dfgraph::{hash_pls, short_hash_pls, TinyBitSet};
+pub use dfgraph::{ShortHash, TinyBitSet};
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
@@ -568,7 +568,7 @@ pub fn body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Ident {
 pub fn unique_and_terse_body_name_pls<I: IntoLocalDefId>(tcx: TyCtxt, id: I) -> Symbol {
     let def_id = id.into_local_def_id(tcx);
     let ident = body_name_pls(tcx, def_id);
-    Symbol::intern(&format!("{}_{:x}", ident.name, short_hash_pls(def_id)))
+    Symbol::intern(&format!("{}_{}", ident.name, ShortHash::new(def_id)))
 }
 
 /// Create a file for dumping an `ext` kind of output for `id`. The name of the
@@ -781,7 +781,7 @@ pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> I
     let did = did.into_def_id(tcx);
     let get_parent = || identifier_for_item(tcx, tcx.parent(did));
     Identifier::new_intern(&format!(
-        "{}_{:x}",
+        "{}_{}",
         tcx.opt_item_name(did)
             .map(|n| n.to_string())
             .or_else(|| {
@@ -798,7 +798,7 @@ pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> I
                 tcx.def_path_debug_str(did),
                 tcx.def_kind(did)
             )),
-        short_hash_pls(did),
+        ShortHash::new(did),
     ))
 }
 
