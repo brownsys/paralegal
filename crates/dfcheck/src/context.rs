@@ -57,8 +57,8 @@ impl Context {
     }
 
     /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn flows_to(&self, ctrl_id: &Identifier, src: &DataSource, sink: &DataSink) -> bool {
-        let ctrl_flows = &self.flows_to[ctrl_id];
+    pub fn flows_to(&self, ctrl_id: Identifier, src: &DataSource, sink: &DataSink) -> bool {
+        let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .flows_to
             .row_set(&src.to_index(&ctrl_flows.sources))
@@ -115,12 +115,12 @@ impl Context {
     pub fn srcs_with_type<'a>(
         &self,
         c: &'a Ctrl,
-        t: &'a Identifier,
+        t: Identifier,
     ) -> impl Iterator<Item = &'a DataSource> + 'a {
         c.types
             .0
             .iter()
-            .filter_map(move |(src, ids)| ids.contains(t).then_some(src))
+            .filter_map(move |(src, ids)| ids.contains(&t).then_some(src))
     }
 
     /// Returns the input [`ProgramDescription`].
@@ -129,11 +129,11 @@ impl Context {
     }
 
     /// Returns all the [`Annotation::OType`]s for a controller `id`.
-    pub fn otypes(&self, id: &Identifier) -> Vec<Identifier> {
+    pub fn otypes(&self, id: Identifier) -> Vec<Identifier> {
         let inner = || -> Option<_> {
             self.desc()
                 .annotations
-                .get(id)?
+                .get(&id)?
                 .0
                 .iter()
                 .filter_map(|annot| match annot {
