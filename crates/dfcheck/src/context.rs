@@ -147,7 +147,7 @@ impl Context {
 
     /// Returns true if `id` identifies a function with name `name`.
     pub fn is_function(&self, id: Identifier, name: &str) -> bool {
-        match id.as_str().split_once('_') {
+        match id.as_str().rsplit_once('_') {
             Some((id_name, _)) => id_name == name,
             None => false,
         }
@@ -293,4 +293,105 @@ fn test_context() {
 
     assert_eq!(ctx.marked_sinks(ctrl.data_sinks(), input).count(), 0);
     assert_eq!(ctx.marked_sinks(ctrl.data_sinks(), sink).count(), 2);
+}
+
+#[test]
+fn test_happens_before() -> Result<()> {
+    let ctx = crate::test_utils::test_ctx();
+    let desc = ctx.desc();
+
+    fn has_marker(desc: &ProgramDescription, sink: &DataSink, marker: Identifier) -> bool {
+        if let DataSink::Argument { function, arg_slot } = sink {
+            desc.annotations
+                .get(&function.function)
+                .map_or(false, |(anns, _)| {
+                    anns.iter().filter_map(Annotation::as_label_ann).any(|ann| {
+                        ann.marker == marker
+                            && (ann
+                                .refinement
+                                .on_argument()
+                                .contains(*arg_slot as u32)
+                                .unwrap()
+                                || ann.refinement.on_self())
+                    })
+                })
+        } else {
+            false
+        }
+    }
+
+    fn is_checkpoint(desc: &ProgramDescription, checkpoint: &DataSink) -> bool {
+        has_marker(desc, checkpoint, Identifier::new_intern("bless"))
+    }
+    fn is_terminal(end: &DataSink) -> bool {
+        matches!(end, DataSink::Return)
+    }
+
+    fn marked_sources(
+        desc: &ProgramDescription,
+        ctrl_name: Identifier,
+        marker: Marker,
+    ) -> impl Iterator<Item = &DataSource> {
+        desc.controllers[&ctrl_name]
+            .data_flow
+            .0
+            .keys()
+            .filter(move |source| match source {
+                DataSource::Argument(arg) => desc.annotations[&ctrl_name]
+                    .0
+                    .iter()
+                    .filter_map(Annotation::as_label_ann)
+                    .any(|ann| {
+                        ann.marker == marker
+                            && (ann.refinement.on_self()
+                                || ann
+                                    .refinement
+                                    .on_argument()
+                                    .contains(*arg as u32)
+                                    .unwrap_or(false))
+                    }),
+                DataSource::FunctionCall(cs) => desc.annotations[&cs.function]
+                    .0
+                    .iter()
+                    .filter_map(Annotation::as_label_ann)
+                    .any(|ann| {
+                        ann.marker == marker
+                            && (ann.refinement.on_self() || ann.refinement.on_return())
+                    }),
+            })
+    }
+
+    let ctrl_name = *desc
+        .controllers
+        .keys()
+        .find(|id| ctx.is_function(**id, "happens_before_pass"))
+        .unwrap();
+
+    let pass = ctx.always_happens_before(
+        ctrl_name,
+        marked_sources(desc, ctrl_name, Identifier::new_intern("start")).cloned(),
+        |checkpoint| is_checkpoint(desc, checkpoint),
+        is_terminal,
+    )?;
+
+    ensure!(pass.holds());
+    ensure!(!pass.is_vacuous(), "{pass}");
+
+    let ctrl_name = *desc
+        .controllers
+        .keys()
+        .find(|id| ctx.is_function(**id, "happens_before_fail"))
+        .unwrap();
+
+    let fail = ctx.always_happens_before(
+        ctrl_name,
+        marked_sources(desc, ctrl_name, Identifier::new_intern("start")).cloned(),
+        |check| is_checkpoint(desc, check),
+        is_terminal,
+    )?;
+
+    ensure!(!fail.holds());
+    ensure!(!fail.is_vacuous());
+
+    Ok(())
 }
