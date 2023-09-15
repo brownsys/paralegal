@@ -64,7 +64,7 @@ impl SPDGGenCommand {
 
     /// Use a custom binary or base invocation as command.
     pub fn custom(mut cmd: Command) -> Self {
-        cmd.args(&["--dump", "serialized-flow-graph"]);
+        cmd.args(["--dump", "serialized-flow-graph"]);
         Self(cmd)
     }
 
