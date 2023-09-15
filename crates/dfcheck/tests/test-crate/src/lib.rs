@@ -15,3 +15,24 @@ fn controller(a: Foo, b: Foo) {
     sink1(a);
     sink2(b);
 }
+
+#[dfpp::marker(start, return)]
+fn create() -> u32 {
+    9
+}
+
+#[dfpp::marker(bless, arguments = [0])]
+fn id<T>(t: T) -> T {
+    t
+}
+
+#[dfpp::analyze]
+fn happens_before_pass() -> u32 {
+    id(create())
+}
+
+#[dfpp::analyze]
+fn happens_before_fail() -> u32 {
+    let val = create();
+    id(val) + val
+}
