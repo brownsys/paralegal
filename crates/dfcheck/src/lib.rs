@@ -1,17 +1,17 @@
 //! This crate is the engine of the property checker. It consumes a PDG output
 //! by `dfpp` and checks user-defined properties on the PDG.
-//! 
+//!
 //! We also define a programmatic way to invoke the graph generator via
 //! [`SPDGGenCommand`]. The most common workflow (relies on `dfpp` having been
 //! installed globally) is
-//! 
+//!
 //! ```ignore
 //! let ctx = SPDGGenCommand::global()
-//!     .run("target-dir")?
+//!     .run("project/dir/to/analyze")?
 //!     .build_context()?;
 //! my_property(ctx)
 //! ```
-//! 
+//!
 //! If you do not wish to run the graph generation programmatically you can also
 //! point your analysis at the graph file manually with [`GraphLocation::std`]
 //! (uses the default name for the graph file in the specified directory) or
@@ -27,9 +27,14 @@
 #![warn(missing_docs)]
 
 use anyhow::{ensure, Result};
-use dfgraph::ProgramDescription;
 pub use dfgraph;
-use std::{fs::File, path::{PathBuf, Path}, process::Command, sync::Arc};
+use dfgraph::ProgramDescription;
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Arc,
+};
 
 mod context;
 mod flows_to;
@@ -38,12 +43,11 @@ mod test_utils;
 
 pub use self::{context::*, flows_to::CtrlFlowsTo};
 
-
 /// Configuration of the `cargo dfpp` command.
-/// 
+///
 /// Takes care of passing the right kinds of arguments to produce the
-/// [`ProgramDescription`] graph that the properties consume. 
-/// 
+/// [`ProgramDescription`] graph that the properties consume.
+///
 /// Construct the command with [`Self::global`] or [`Self::custom`], customize
 /// it further with [`Self::get_command`] and once you are ready, execute it
 /// with [`Self::run`].
@@ -70,10 +74,10 @@ impl SPDGGenCommand {
     }
 
     /// Consume the created command and execute it in the specified directory.
-    /// 
+    ///
     /// Errors if executing the underlying [`Command`] fails or if it does not
     /// terminate successfully.
-    /// 
+    ///
     /// To run yor properties on the results see [`GraphLocation`].
     pub fn run(mut self, dir: impl AsRef<Path>) -> Result<GraphLocation> {
         let status = self.0.current_dir(dir.as_ref()).status()?;
@@ -83,6 +87,10 @@ impl SPDGGenCommand {
 }
 
 /// A path to a [`ProgramDescription`] file.
+///
+/// Can be created programmatically and automatically by running
+/// [`SPDGGenCommand::run`] or you can create one manually if you can `cargo
+/// dfpp` by hand with [`Self::custom`].
 pub struct GraphLocation(PathBuf);
 
 impl GraphLocation {
@@ -96,7 +104,8 @@ impl GraphLocation {
         Self(path)
     }
 
-    /// Read and parse this graph file and run the provided property on it.
+    /// Read and parse this graph file, returning a [`Context`] suitable for
+    /// property enforcement.
     pub fn build_context(&self) -> Result<Arc<Context>> {
         simple_logger::init_with_env().unwrap();
 
