@@ -96,7 +96,7 @@ impl fmt::Debug for CtrlFlowsTo {
 #[test]
 fn test_flows_to() {
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx
+    let controller = *ctx
         .desc()
         .controllers
         .keys()
@@ -114,6 +114,6 @@ fn test_flows_to() {
     };
     let sink1 = get_sink("sink1");
     let sink2 = get_sink("sink2");
-    assert!(ctx.flows_to(&controller, &src, sink1));
-    assert!(!ctx.flows_to(&controller, &src, sink2));
+    assert!(ctx.flows_to(controller, &src, sink1));
+    assert!(!ctx.flows_to(controller, &src, sink2));
 }

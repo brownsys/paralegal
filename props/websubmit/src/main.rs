@@ -14,7 +14,7 @@ impl DeletionProp {
         DeletionProp { cx }
     }
 
-    fn flows_to_store(&self, t: &Identifier) -> bool {
+    fn flows_to_store(&self, t: Identifier) -> bool {
         let stores = Marker::new_intern("stores");
 
         for (c_id, c) in &self.cx.desc().controllers {
@@ -26,7 +26,7 @@ impl DeletionProp {
 
             for t_src in t_srcs {
                 for store in &store_cs {
-                    if self.cx.flows_to(c_id, t_src, store) {
+                    if self.cx.flows_to(*c_id, t_src, store) {
                         return true;
                     }
                 }
@@ -36,15 +36,15 @@ impl DeletionProp {
         false
     }
 
-    fn flows_to_deletion(&self, t: &Identifier) -> bool {
+    fn flows_to_deletion(&self, t: Identifier) -> bool {
         let deletes = Marker::new_intern("deletes");
 
         let mut ots = self.cx.otypes(t);
-        ots.push(*t);
+        ots.push(t);
 
         for (c_id, c) in &self.cx.desc().controllers {
             for ot in &ots {
-                let t_srcs = self.cx.srcs_with_type(c, ot).collect::<Vec<_>>();
+                let t_srcs = self.cx.srcs_with_type(c, *ot).collect::<Vec<_>>();
                 let delete_cs = self
                     .cx
                     .marked_sinks(c.data_sinks(), deletes)
@@ -52,7 +52,7 @@ impl DeletionProp {
 
                 for t_src in &t_srcs {
                     for delete in &delete_cs {
-                        if self.cx.flows_to(c_id, t_src, delete) {
+                        if self.cx.flows_to(*c_id, t_src, delete) {
                             return true;
                         }
                     }
@@ -68,7 +68,7 @@ impl DeletionProp {
     pub fn check(&self) {
         let sensitive = Marker::new_intern("sensitive");
         for (t, _) in self.cx.marked(sensitive) {
-            if self.flows_to_store(t) && !self.flows_to_deletion(t) {
+            if self.flows_to_store(*t) && !self.flows_to_deletion(*t) {
                 println!("Found an error for type: {t:?}");
             }
         }
