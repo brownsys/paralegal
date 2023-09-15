@@ -155,9 +155,9 @@ impl Context {
 
     /// Enforce that on every path from the `starting_points` to `is_terminal` a
     /// node satisfying `is_checkpoint` is passed.
-    /// 
+    ///
     /// Fails if `ctrl` is not found.
-    /// 
+    ///
     /// The return value contains some statistics information about the
     /// traversal. The property holds if [`AlwaysHappensBefore::holds`] is true.
     pub fn always_happens_before(
@@ -227,10 +227,10 @@ impl Context {
 
 /// Statistics about the result of running [`Context::always_happens_before`]
 /// that are useful to understand how the property failed.
-/// 
+///
 /// The [`std::fmt::Display`] implementation presents the information in human
 /// readable form.
-/// 
+///
 /// The stable API of this struct is [`Self::holds`], [`Self::assert_holds`] and
 /// [`Self::found_any`]. Otherwise the information in this struct and its
 /// printed representations should be considered unstable and
