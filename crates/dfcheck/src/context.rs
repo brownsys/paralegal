@@ -266,9 +266,11 @@ impl AlwaysHappensBefore {
         Ok(())
     }
 
-    /// Were any paths covered by this policy?
+    /// `true` if this policy applied to no paths. E.g. either no starting nodes
+    /// or no path from them can reach the terminal or the checkpoints (the
+    /// graphs are disjoined).
     pub fn is_vacuous(&self) -> bool {
-        self.num_checkpointed + self.num_reached != 0
+        self.num_checkpointed + self.num_reached == 0
     }
 }
 
