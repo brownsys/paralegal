@@ -275,7 +275,7 @@ impl AlwaysHappensBefore {
     }
 
     /// Were any paths covered by this policy?
-    pub fn found_any(&self) -> bool {
+    pub fn is_vacuous(&self) -> bool {
         self.num_seen != 0
     }
 }
