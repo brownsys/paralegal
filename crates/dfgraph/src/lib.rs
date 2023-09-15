@@ -393,6 +393,12 @@ pub fn short_hash_pls<T: Hash>(t: T) -> u64 {
     hash_pls(t) % 0x1_000_000
 }
 
+#[test]
+fn short_hash_always_six_digits() {
+    assert_eq!(format!("{}", ShortHash(0x0)).len(), 6);
+    assert_eq!(format!("{}", ShortHash(0x57110)).len(), 6);
+}
+
 /// Calculate a hash for this object
 pub fn hash_pls<T: Hash>(t: T) -> u64 {
     use std::hash::Hasher;
