@@ -81,7 +81,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             .as_local()
             .map(|ldid| self.local_annotations(ldid))
             .into_iter()
-            .flat_map(|anns| anns.iter().flat_map(Annotation::as_label_ann))
+            .flat_map(|anns| anns.iter().flat_map(Annotation::as_marker))
             .chain(self.external_markers(def_id).iter())
     }
 
@@ -94,7 +94,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn is_locally_marked(&self, def_id: LocalDefId) -> bool {
         self.local_annotations(def_id)
             .iter()
-            .any(Annotation::is_label_ann)
+            .any(Annotation::is_marker)
     }
 
     /// Are there any markers (local or external) on this item?
@@ -192,11 +192,11 @@ impl<'tcx> MarkerCtx<'tcx> {
             .iter()
             .filter_map(|a| {
                 a.match_extract(&consts::MARKER_MARKER, |i| {
-                    Annotation::Label(crate::ann_parse::ann_match_fn(i))
+                    Annotation::Marker(crate::ann_parse::ann_match_fn(i))
                 }).or_else(||
                     a.match_extract(&consts::LABEL_MARKER, |i| {
                         warn!("The `dfpp::label` annotation is deprecated, use `dfpp::marker` instead");
-                        Annotation::Label(crate::ann_parse::ann_match_fn(i))
+                        Annotation::Marker(crate::ann_parse::ann_match_fn(i))
                     })
                 )
                 .or_else(|| {

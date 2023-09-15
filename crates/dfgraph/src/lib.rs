@@ -18,6 +18,8 @@ pub(crate) mod rustc {
     pub use middle::mir;
 }
 
+extern crate strum;
+
 pub mod global_location;
 #[cfg(feature = "rustc")]
 mod rustc_impls;
@@ -29,7 +31,6 @@ use global_location::GlobalLocation;
 use indexical::define_index_type;
 use internment::Intern;
 use itertools::Itertools;
-use log::warn;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{borrow::Cow, hash::Hash, iter};
 
@@ -43,31 +44,27 @@ pub type Function = Identifier;
 /// Types of annotations we support.
 ///
 /// Usually you'd expect one of those annotation types in any given situation.
-/// For convenience the match methods [`Self::as_label_ann`],
-/// [`Self::as_otype_ann`] and [`Self::as_exception_annotation`] are provided. These are particularly useful in conjunction with e.g. [`Iterator::filter_map`]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize)]
+/// For convenience the match methods [`Self::as_marker`], [`Self::as_otype`]
+/// and [`Self::as_exception`] are provided. These are particularly useful in
+/// conjunction with e.g. [`Iterator::filter_map`]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, strum::EnumIs)]
 pub enum Annotation {
-    Label(MarkerAnnotation),
+    Marker(MarkerAnnotation),
     OType(Vec<TypeDescriptor>),
     Exception(ExceptionAnnotation),
 }
 
 impl Annotation {
-    /// If this is an [`Annotation::Label`], returns the underlying [`MarkerAnnotation`].
-    pub fn as_label_ann(&self) -> Option<&MarkerAnnotation> {
+    /// If this is an [`Annotation::Marker`], returns the underlying [`MarkerAnnotation`].
+    pub fn as_marker(&self) -> Option<&MarkerAnnotation> {
         match self {
-            Annotation::Label(l) => Some(l),
+            Annotation::Marker(l) => Some(l),
             _ => None,
         }
     }
 
-    /// Returns true if this is an [`Annotation::Label`].
-    pub fn is_label_ann(&self) -> bool {
-        matches!(self, Annotation::Label(_))
-    }
-
     /// If this is an [`Annotation::OType`], returns the underlying [`TypeDescriptor`].
-    pub fn as_otype_ann(&self) -> Option<&[TypeDescriptor]> {
+    pub fn as_otype(&self) -> Option<&[TypeDescriptor]> {
         match self {
             Annotation::OType(t) => Some(t),
             _ => None,
@@ -75,7 +72,7 @@ impl Annotation {
     }
 
     /// If this is an [`Annotation::Exception`], returns the underlying [`ExceptionAnnotation`].
-    pub fn as_exception_annotation(&self) -> Option<&ExceptionAnnotation> {
+    pub fn as_exception(&self) -> Option<&ExceptionAnnotation> {
         match self {
             Annotation::Exception(e) => Some(e),
             _ => None,
@@ -92,10 +89,10 @@ pub struct ExceptionAnnotation {
     pub verification_hash: Option<VerificationHash>,
 }
 
-/// A label annotation and its refinements.
+/// A marker annotation and its refinements.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
 pub struct MarkerAnnotation {
-    /// The (unchanged) name of the label as provided by the user
+    /// The (unchanged) name of the marker as provided by the user
     pub marker: Identifier,
     #[serde(flatten)]
     pub refinement: MarkerRefinement,
@@ -105,7 +102,7 @@ fn const_false() -> bool {
     false
 }
 
-/// Refinements in the label targeting. The default (no refinement provided) is
+/// Refinements in the marker targeting. The default (no refinement provided) is
 /// `on_argument == vec![]` and `on_return == false`, which is also what is
 /// returned from [`Self::empty`].
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize)]
@@ -116,6 +113,8 @@ pub struct MarkerRefinement {
     on_return: bool,
 }
 
+/// Disaggregated version of [`MarkerRefinement`]. Can be added to an existing
+/// refinement [`MarkerRefinement::merge_kind`].
 #[derive(Clone, Deserialize, Serialize)]
 pub enum MarkerRefinementKind {
     Argument(#[serde(with = "crate::tiny_bitset::pretty")] TinyBitSet),
@@ -158,10 +157,12 @@ impl MarkerRefinement {
         }
     }
 
+    /// Get the refinements on arguments
     pub fn on_argument(&self) -> TinyBitSet {
         self.on_argument
     }
 
+    /// Is this refinement targeting the return value?
     pub fn on_return(&self) -> bool {
         self.on_return
     }
@@ -173,7 +174,7 @@ impl MarkerRefinement {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, strum::EnumIs)]
 pub enum ObjectType {
     Function(usize),
     Type,
@@ -181,32 +182,12 @@ pub enum ObjectType {
 }
 
 impl ObjectType {
-    pub fn is_function(&self) -> Option<usize> {
+    /// If this is [`Self::Function`], then return the payload.
+    pub fn as_function(&self) -> Option<usize> {
         match self {
             ObjectType::Function(f) => Some(*f),
             _ => None,
         }
-    }
-    pub fn merge(&mut self, other: &Self) {
-        if self != other {
-            warn!(
-                "Merging two different object types {:?} and {:?}!",
-                self, other
-            );
-            match (self, other) {
-                (ObjectType::Function(ref mut i), ObjectType::Function(j)) => {
-                    if j > i {
-                        *i = *j
-                    }
-                }
-                (slf, other) => {
-                    panic!("Cannot merge two different object types {slf:?} and {other:?}")
-                }
-            }
-        }
-    }
-    pub fn is_type(&self) -> bool {
-        matches!(self, ObjectType::Type)
     }
 }
 
@@ -305,7 +286,7 @@ impl ProgramDescription {
             .chain(
                 self.annotations
                     .iter()
-                    .filter(|f| f.1 .1.is_function().is_some())
+                    .filter(|f| f.1 .1.as_function().is_some())
                     .map(|f| f.0),
             )
             .collect()
