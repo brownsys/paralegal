@@ -160,6 +160,10 @@ impl Context {
     ///
     /// The return value contains some statistics information about the
     /// traversal. The property holds if [`AlwaysHappensBefore::holds`] is true.
+    ///
+    /// Note that `is_checkpoint` and `is_terminal` will be called many times
+    /// and should thus be efficient computations. In addition they should
+    /// always return the same result for the same input.
     pub fn always_happens_before(
         &self,
         ctrl: Identifier,
@@ -168,58 +172,38 @@ impl Context {
         mut is_terminal: impl FnMut(&DataSink) -> bool,
     ) -> Result<AlwaysHappensBefore> {
         let mut seen = HashSet::<&DataSink>::new();
-        let mut num_seen = 0;
-        let mut num_violated = 0;
+        let mut num_reached = 0;
+        let mut num_checkpointed = 0;
 
-        let mut queue = starting_points
-            .zip(std::iter::repeat(true))
-            .collect::<Vec<_>>();
+        let mut queue = starting_points.collect::<Vec<_>>();
 
         let started_with = queue.len();
 
-        while let Some((current, mut is_violated)) = queue.pop() {
-            for sink in self
-                .desc()
-                .controllers
-                .get(&ctrl)
-                .ok_or_else(|| anyhow!("Controller {ctrl} not found"))?
-                .data_flow
-                .0
-                .get(&current)
-                .into_iter()
-                .flatten()
-            {
+        let flow = &self
+            .desc()
+            .controllers
+            .get(&ctrl)
+            .ok_or_else(|| anyhow!("Controller {ctrl} not found"))?
+            .data_flow
+            .0;
+
+        while let Some(current) = queue.pop() {
+            for sink in flow.get(&current).into_iter().flatten() {
                 if is_checkpoint(sink) {
-                    is_violated = false;
-                }
-                match sink {
-                    _ if is_terminal(sink) => {
-                        num_seen += 1;
-                        if is_violated {
-                            num_violated += 1;
-                        }
-                    }
-                    DataSink::Return => {
-                        num_seen += 1;
-                        if is_violated {
-                            num_violated += 1;
-                        }
-                    }
-                    DataSink::Argument {
-                        function,
-                        arg_slot: _,
-                    } => {
-                        if seen.insert(sink) {
-                            queue.push((DataSource::FunctionCall(function.clone()), is_violated));
-                        }
+                    num_checkpointed += 1;
+                } else if is_terminal(sink) {
+                    num_reached += 1;
+                } else if let DataSink::Argument { function, .. } = sink {
+                    if seen.insert(sink) {
+                        queue.push(DataSource::FunctionCall(function.clone()));
                     }
                 }
             }
         }
 
         Ok(AlwaysHappensBefore {
-            num_seen,
-            num_violated,
+            num_reached,
+            num_checkpointed,
             started_with,
         })
     }
@@ -231,15 +215,21 @@ impl Context {
 /// The [`std::fmt::Display`] implementation presents the information in human
 /// readable form.
 ///
+/// Note: Both the number of seen paths and the number of violation paths are
+/// approximations. This is because the traversal terminates when it reaches a
+/// node that was already seen. However it is guaranteed that if there
+/// are any violating paths, then the number of reaching paths reported in this
+/// struct is at least one (e.g. [`Self::holds`] is sound).
+///
 /// The stable API of this struct is [`Self::holds`], [`Self::assert_holds`] and
 /// [`Self::found_any`]. Otherwise the information in this struct and its
 /// printed representations should be considered unstable and
 /// for-human-eyes-only.
 pub struct AlwaysHappensBefore {
-    /// How many paths terminated in `is_terminal`.
-    num_seen: i32,
-    /// How many terminating paths violated the property.
-    num_violated: i32,
+    /// How many paths terminated at the end?
+    num_reached: i32,
+    /// How many paths lead to the checkpoints?
+    num_checkpointed: i32,
     /// How large was the set of initial nodes this traversal started with.
     started_with: usize,
 }
@@ -247,13 +237,15 @@ pub struct AlwaysHappensBefore {
 impl std::fmt::Display for AlwaysHappensBefore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
-            num_seen,
-            num_violated,
+            num_reached,
+            num_checkpointed,
             started_with,
         } = self;
         write!(
             f,
-            "Saw {num_seen} paths, {num_violated} violations, started with {started_with} nodes"
+            "{num_reached} paths reached the terminal, \
+            {num_checkpointed} paths reached the checkpoints, \
+            started with {started_with} nodes"
         )
     }
 }
@@ -261,7 +253,7 @@ impl std::fmt::Display for AlwaysHappensBefore {
 impl AlwaysHappensBefore {
     /// Returns `true` if the property that created these statistics holds.
     pub fn holds(&self) -> bool {
-        self.num_violated == 0
+        self.num_reached == 0
     }
 
     /// Fails if [`Self::holds`] is false.
@@ -269,14 +261,14 @@ impl AlwaysHappensBefore {
         ensure!(
             self.holds(),
             "AlwaysHappensBefore failed: found {} violating paths",
-            self.num_violated
+            self.num_reached
         );
         Ok(())
     }
 
     /// Were any paths covered by this policy?
     pub fn is_vacuous(&self) -> bool {
-        self.num_seen != 0
+        self.num_checkpointed + self.num_reached != 0
     }
 }
 
