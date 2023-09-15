@@ -31,7 +31,7 @@ use internment::Intern;
 use itertools::Itertools;
 use log::warn;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{borrow::Cow, hash::Hash, iter};
+use std::{borrow::Cow, fmt, hash::Hash, iter};
 
 pub use crate::tiny_bitset::TinyBitSet;
 pub use std::collections::{HashMap, HashSet};
@@ -388,9 +388,24 @@ pub struct CallSite {
 }
 
 /// Create a hash for this object that is no longer than six hex digits
-pub fn short_hash_pls<T: Hash>(t: T) -> u64 {
+///
+/// The intent for this is to be used as a pre- or postfix to make a non-unique
+/// name for the object `T` unique. The [`fmt::Display`] implementation should be
+/// used for canonical formatting.
+#[derive(Debug, Clone, Copy)]
+pub struct ShortHash(u64);
+
+impl ShortHash {
+    pub fn new<T: Hash>(t: T) -> Self {
     // Six digits in hex
-    hash_pls(t) % 0x1_000_000
+        Self(hash_pls(t) % 0x1_000_000)
+    }
+}
+
+impl fmt::Display for ShortHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:06}", self.0)
+    }
 }
 
 #[test]
@@ -400,7 +415,7 @@ fn short_hash_always_six_digits() {
 }
 
 /// Calculate a hash for this object
-pub fn hash_pls<T: Hash>(t: T) -> u64 {
+fn hash_pls<T: Hash>(t: T) -> u64 {
     use std::hash::Hasher;
     let mut hasher = std::collections::hash_map::DefaultHasher::default();
     t.hash(&mut hasher);
@@ -410,9 +425,9 @@ pub fn hash_pls<T: Hash>(t: T) -> u64 {
 impl std::string::ToString for CallSite {
     fn to_string(&self) -> String {
         format!(
-            "cs_{}_{:x}",
+            "cs_{}_{}",
             self.function.as_str(),
-            short_hash_pls(self.location),
+            ShortHash::new(self.location),
         )
     }
 }
