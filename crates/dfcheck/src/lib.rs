@@ -19,9 +19,10 @@
 //! run your property use [`GraphLocation::build_context`].
 //!
 //! *Note:* This crate defines both the interface to the property checkers (via
-//! [`Context`]) and the implementation of the engine (via [`with_graph`]). A
-//! future version of this crate should ideally separate those out so property
-//! checkers do not need to depend on the checker implementation.
+//! [`Context`]) and the implementation of the engine (via
+//! [`GraphLocation::build_context`]). A future version of this crate should
+//! ideally separate those out so property checkers do not need to depend on the
+//! checker implementation.
 
 #![warn(missing_docs)]
 
