@@ -1,3 +1,6 @@
+extern crate anyhow;
+
+use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
 use dfcheck::{dfgraph::Identifier, Context, Marker};
@@ -72,6 +75,14 @@ impl DeletionProp {
     }
 }
 
-fn main() {
-    dfcheck::cli(|cx| DeletionProp::new(cx).check())
+fn main() -> Result<()> {
+    let ws_dir = std::env::args()
+        .skip(1)
+        .next()
+        .ok_or_else(|| anyhow!("expected an argument"))?;
+    let ctx = dfcheck::SPDGGenCommand::global()
+        .run(ws_dir)?
+        .build_context()?;
+    DeletionProp::new(ctx).check();
+    Ok(())
 }

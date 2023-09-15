@@ -1,3 +1,6 @@
+extern crate anyhow;
+
+use anyhow::{anyhow, Result};
 use std::{collections::HashSet, sync::Arc};
 
 use dfcheck::{
@@ -47,6 +50,14 @@ impl CommunityProp {
     }
 }
 
-fn main() {
-    dfcheck::cli(|cx| CommunityProp::new(cx).check())
+fn main() -> Result<()> {
+    let lemmy_dir = std::env::args()
+        .skip(1)
+        .next()
+        .ok_or_else(|| anyhow!("expected an argument"))?;
+    let ctx = dfcheck::SPDGGenCommand::global()
+        .run(lemmy_dir)?
+        .build_context()?;
+    CommunityProp::new(ctx).check();
+    Ok(())
 }

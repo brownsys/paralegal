@@ -40,6 +40,10 @@ pub type Endpoint = Identifier;
 pub type TypeDescriptor = Identifier;
 pub type Function = Identifier;
 
+/// Name of the file used for emitting the JSON serialized
+/// [`ProgramDescription`](crate::desc::ProgramDescription).
+pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
+
 /// Types of annotations we support.
 ///
 /// Usually you'd expect one of those annotation types in any given situation.
