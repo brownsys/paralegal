@@ -305,17 +305,15 @@ fn test_happens_before() -> Result<()> {
             desc.annotations
                 .get(&function.function)
                 .map_or(false, |(anns, _)| {
-                    anns.iter()
-                        .filter_map(Annotation::as_marker)
-                        .any(|ann| {
-                            ann.marker == marker
-                                && (ann
-                                    .refinement
-                                    .on_argument()
-                                    .contains(*arg_slot as u32)
-                                    .unwrap()
-                                    || ann.refinement.on_self())
-                        })
+                    anns.iter().filter_map(Annotation::as_marker).any(|ann| {
+                        ann.marker == marker
+                            && (ann
+                                .refinement
+                                .on_argument()
+                                .contains(*arg_slot as u32)
+                                .unwrap()
+                                || ann.refinement.on_self())
+                    })
                 })
         } else {
             false
