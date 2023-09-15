@@ -397,7 +397,7 @@ pub struct ShortHash(u64);
 
 impl ShortHash {
     pub fn new<T: Hash>(t: T) -> Self {
-    // Six digits in hex
+        // Six digits in hex
         Self(hash_pls(t) % 0x1_000_000)
     }
 }
