@@ -77,8 +77,7 @@ impl DeletionProp {
 
 fn main() -> Result<()> {
     let ws_dir = std::env::args()
-        .skip(1)
-        .next()
+        .nth(1)
         .ok_or_else(|| anyhow!("expected an argument"))?;
     let ctx = dfcheck::SPDGGenCommand::global()
         .run(ws_dir)?
