@@ -48,8 +48,6 @@ pub fn link_rustc_lib() {
 }
 
 fn main() {
-    let build_dir = std::env::var("OUT_DIR").unwrap();
-    eprintln!("Build dir is {}", build_dir);
     link_rustc_lib();
     println!(
         "cargo:rustc-env=COMMIT_HASH={}",
