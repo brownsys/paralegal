@@ -290,7 +290,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         .chain(self.marker_ctx.external_annotations().iter().map(|(did, anns)| {
                             (
                                 *did,
-                                anns.iter().cloned().map(Annotation::Label).collect(),
+                                anns.iter().cloned().map(Annotation::Marker).collect(),
                             )
                         }))
                         .map(|(did, anns)| {
