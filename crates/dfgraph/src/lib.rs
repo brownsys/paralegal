@@ -24,6 +24,7 @@ pub mod global_location;
 #[cfg(feature = "rustc")]
 mod rustc_impls;
 pub mod rustc_proxies;
+pub mod rustc_portable;
 mod tiny_bitset;
 pub mod utils;
 
