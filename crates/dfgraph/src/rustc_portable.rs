@@ -1,9 +1,9 @@
 //! Exports either rustc identifiers or their proxies depending on whether the
 //! `rustc` feature is enabled.
-//! 
+//!
 //! The idea is that you can then define your data structure over this
 //! (including serialization) like so, using `cfg_attr:
-//! 
+//!
 //! ```
 //! pub struct GlobalLocationS {
 //!     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::BodyId"))]
