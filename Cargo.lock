@@ -318,6 +318,7 @@ dependencies = [
 name = "dfgraph"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "indexical",
  "internment",
  "itertools",

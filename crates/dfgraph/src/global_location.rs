@@ -61,43 +61,25 @@
 //! The innermost location is what you'd want to look up if you are wanting to
 //! see the actual statement or terminator that this location refers to.
 
-#[cfg(feature = "rustc")]
-use crate::rustc::{hir, mir};
 use crate::rustc_proxies;
 use internment::Intern;
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fmt, ops::Deref};
 
-#[cfg(feature = "rustc")]
-pub type BodyId = hir::BodyId;
-#[cfg(not(feature = "rustc"))]
-pub type BodyId = rustc_proxies::BodyId;
-
-#[cfg(feature = "rustc")]
-pub type Location = mir::Location;
-#[cfg(not(feature = "rustc"))]
-pub type Location = rustc_proxies::Location;
+use crate::rustc_portable::*;
 
 /// The payload type of a global location.
 ///
 /// You will probably want to operate on the interned wrapper type [`GlobalLocation`].
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct GlobalLocationS {
-    #[cfg(feature = "rustc")]
-    #[serde(with = "rustc_proxies::BodyId")]
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::BodyId"))]
     /// The id of the body in which this location is located.
-    pub function: hir::BodyId,
-    #[cfg(not(feature = "rustc"))]
-    /// The id of the body in which this location is located.
-    pub function: rustc_proxies::BodyId,
+    pub function: BodyId,
 
-    #[cfg(feature = "rustc")]
-    #[serde(with = "rustc_proxies::Location")]
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::Location"))]
     /// The location itself
-    pub location: mir::Location,
-    #[cfg(not(feature = "rustc"))]
-    /// The location itself
-    pub location: rustc_proxies::Location,
+    pub location: Location,
 }
 
 impl GlobalLocationS {

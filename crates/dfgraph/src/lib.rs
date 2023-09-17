@@ -23,6 +23,7 @@ extern crate strum;
 pub mod global_location;
 #[cfg(feature = "rustc")]
 mod rustc_impls;
+pub mod rustc_portable;
 pub mod rustc_proxies;
 mod tiny_bitset;
 pub mod utils;
