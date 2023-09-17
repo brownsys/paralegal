@@ -40,7 +40,7 @@ impl Context {
             .iter()
             .flat_map(|(id, (annots, _))| {
                 annots.iter().filter_map(move |annot| match annot {
-                    Annotation::Label(MarkerAnnotation { marker, refinement }) => {
+                    Annotation::Marker(MarkerAnnotation { marker, refinement }) => {
                         Some((*marker, (*id, refinement.clone())))
                     }
                     _ => None,
@@ -305,7 +305,7 @@ fn test_happens_before() -> Result<()> {
             desc.annotations
                 .get(&function.function)
                 .map_or(false, |(anns, _)| {
-                    anns.iter().filter_map(Annotation::as_label_ann).any(|ann| {
+                    anns.iter().filter_map(Annotation::as_marker).any(|ann| {
                         ann.marker == marker
                             && (ann
                                 .refinement
@@ -340,7 +340,7 @@ fn test_happens_before() -> Result<()> {
                 DataSource::Argument(arg) => desc.annotations[&ctrl_name]
                     .0
                     .iter()
-                    .filter_map(Annotation::as_label_ann)
+                    .filter_map(Annotation::as_marker)
                     .any(|ann| {
                         ann.marker == marker
                             && (ann.refinement.on_self()
@@ -353,7 +353,7 @@ fn test_happens_before() -> Result<()> {
                 DataSource::FunctionCall(cs) => desc.annotations[&cs.function]
                     .0
                     .iter()
-                    .filter_map(Annotation::as_label_ann)
+                    .filter_map(Annotation::as_marker)
                     .any(|ann| {
                         ann.marker == marker
                             && (ann.refinement.on_self() || ann.refinement.on_return())

@@ -571,7 +571,7 @@ pub trait HasGraph<'g>: Sized + Copy {
         let marker = Identifier::new_intern(marker);
         self.graph().0.annotations.values().any(|v| {
             v.0.iter()
-                .filter_map(|a| a.as_label_ann())
+                .filter_map(|a| a.as_marker())
                 .any(|m| m.marker == marker)
         })
     }

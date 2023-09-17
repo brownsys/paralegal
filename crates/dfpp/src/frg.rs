@@ -590,7 +590,7 @@ impl ProgramDescriptionExt for ProgramDescription {
         self.annotations
             .values()
             .flat_map(|v| v.0.iter())
-            .filter_map(Annotation::as_label_ann)
+            .filter_map(Annotation::as_marker)
             .map(|a| a.marker)
             .chain(std::iter::once(Identifier::new_intern(
                 name::EXCEPTIONS_LABEL,
@@ -678,51 +678,52 @@ impl ProgramDescriptionExt for ProgramDescription {
                 // Part of why we choose this behavior is because there is no
                 // call-site-independent representation for arguments, so the
                 // label has to be attached to the call site argument.
-                anns.iter()
-                    .filter_map(Annotation::as_label_ann)
-                    .map(move |a| {
-                        (
-                            if a.refinement.on_return() {
-                                Some(self.all_sources_with_ctrl().into_iter().filter(|(_, s)| {
-                                    s.as_function_call().map_or(false, |c| &c.function == id)
-                                }))
-                            } else {
-                                None
-                            }
-                            .into_iter()
-                            .flatten()
-                            .map(|(ctrl, ds)| data_source_as_forge(ds, alloc, ctrl))
-                            .chain(
-                                self.all_sinks()
-                                    .into_iter()
-                                    .filter(|s| {
-                                        matches!(
-                                            s,
-                                            DataSink::Argument{function, arg_slot} if
-                                            &function.function == id
-                                                && a.refinement
-                                                    .on_argument()
-                                                    .is_set(*arg_slot as u32)
-                                        )
-                                    })
-                                    .map(|s| s.build_forge(alloc)),
-                            )
-                            .chain([id.build_forge(alloc)])
-                            .chain(a.refinement.on_argument().into_iter_set_in_domain().map(
-                                |slot| {
+                anns.iter().filter_map(Annotation::as_marker).map(move |a| {
+                    (
+                        if a.refinement.on_return() {
+                            Some(self.all_sources_with_ctrl().into_iter().filter(|(_, s)| {
+                                s.as_function_call().map_or(false, |c| &c.function == id)
+                            }))
+                        } else {
+                            None
+                        }
+                        .into_iter()
+                        .flatten()
+                        .map(|(ctrl, ds)| data_source_as_forge(ds, alloc, ctrl))
+                        .chain(
+                            self.all_sinks()
+                                .into_iter()
+                                .filter(|s| {
+                                    matches!(
+                                        s,
+                                        DataSink::Argument{function, arg_slot} if
+                                        &function.function == id
+                                            && a.refinement
+                                                .on_argument()
+                                                .is_set(*arg_slot as u32)
+                                    )
+                                })
+                                .map(|s| s.build_forge(alloc)),
+                        )
+                        .chain([id.build_forge(alloc)])
+                        .chain(
+                            a.refinement
+                                .on_argument()
+                                .into_iter_set_in_domain()
+                                .map(|slot| {
                                     FormalParameter {
                                         function: *id,
                                         position: slot as u16,
                                     }
                                     .build_forge(alloc)
-                                },
-                            ))
-                            // This is necessary because otherwise captured variables escape
-                            .collect::<Vec<_>>()
-                            .into_iter(),
-                            std::iter::once(a.marker.build_forge(alloc)),
+                                }),
                         )
-                    })
+                        // This is necessary because otherwise captured variables escape
+                        .collect::<Vec<_>>()
+                        .into_iter(),
+                        std::iter::once(a.marker.build_forge(alloc)),
+                    )
+                })
             }))
             .append(" +")
             .append(alloc.hardline())
@@ -730,7 +731,7 @@ impl ProgramDescriptionExt for ProgramDescription {
                 alloc.forge_relation(self.annotations.iter().map(|(id, (anns, _))| {
                     (
                         anns.iter()
-                            .filter_map(Annotation::as_exception_annotation)
+                            .filter_map(Annotation::as_exception)
                             .next()
                             .map(|_| id.build_forge(alloc))
                             .into_iter(),
@@ -783,7 +784,7 @@ impl ProgramDescriptionExt for ProgramDescription {
             (
                 std::iter::once(o.build_forge(alloc)),
                 anns.iter()
-                    .filter_map(Annotation::as_otype_ann)
+                    .filter_map(Annotation::as_otype)
                     .flat_map(|v| v.iter())
                     .map(|t| t.build_forge(alloc)),
             )
@@ -1144,7 +1145,7 @@ impl ProgramDescriptionExt for ProgramDescription {
                                         alloc.forge_relation_with_arity(3,
                                             self.annotations.iter()
                                                 .flat_map(|(ident, (anns, _))|
-                                                    anns.iter().filter_map(Annotation::as_label_ann)
+                                                    anns.iter().filter_map(Annotation::as_marker)
                                                         .flat_map(|label|
                                                             label.refinement.on_argument().into_iter_set_in_domain().map(|i|
                                                                 (
