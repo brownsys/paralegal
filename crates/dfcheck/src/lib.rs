@@ -1,9 +1,11 @@
-//! This crate is the engine of the property checker. It consumes a PDG output
-//! by `dfpp` and checks user-defined properties on the PDG.
-//!
-//! We also define a programmatic way to invoke the graph generator via
-//! [`SPDGGenCommand`]. The most common workflow (relies on `dfpp` having been
-//! installed globally) is
+//! The query engine and framework for defining paralegal policies. 
+//! 
+//! It provides a state machine for programmatically extracting and parsing a
+//! Semantic Program Dependence Graph (SPDG) and provides combinators and
+//! queries on this graph for you to compose into policies.
+//! 
+//! Next we show you the most common workflow, then explain the steps and show
+//! you how to customize them to your needs.
 //!
 //! ```ignore
 //! let ctx = SPDGGenCommand::global()
@@ -11,12 +13,32 @@
 //!     .build_context()?;
 //! my_property(ctx)
 //! ```
-//!
-//! If you do not wish to run the graph generation programmatically you can also
-//! point your analysis at the graph file manually with [`GraphLocation::std`]
-//! (uses the default name for the graph file in the specified directory) or
-//! [`GraphLocation::custom`] for a completely custom graph file location. To
-//! run your property use [`GraphLocation::build_context`].
+//! 
+//! 1. [`SPDGGenCommand`] lets you programmatically invoke the SDPG extractor.
+//!    The [`::global()`](SPDGGenCommand::global) method uses `cargo dfpp` for
+//!    this purpose, e.g. a global installation of `cargo-dfpp` that was
+//!    performed with `cargo install`.
+//! 
+//!    - [`::custom()`](SPDGGenCommand::custom) lets you instead pick a
+//!      different binary to run, for instance from a local installation.
+//!    - [`.get_command()`](SPDGGenCommand::get_command) lets you customize the
+//!      command, for instance by passing additional arguments such as `--debug`
+//!      or `--dump`.
+//! 2. [`.run(dir)`](SPDGGenCommand::run) invokes the extractor in `dir`,
+//!    returning the path (as a [`GraphLocation`]) where the SPDG was written
+//!    to.
+//! 
+//!    Re-running this command often is cheap, because rustc skips the execution
+//!    if there are no changes.
+//! 
+//!    You may generate the graph manually and skip steps 1 and 2. In this case
+//!    you can specify the [`GraphLocation`] with
+//!    [`::std()`](GraphLocation::std), which uses the default graph file name
+//!    or [`::custom()`](GraphLocation::custom) to use a custom file name.
+//! 3. [`.build_context()`](GraphLocation::build_context) reads and parses the
+//!    graph file, returning a [`Context`] on which you can run your policy.
+//! 
+//! For information about how to specify policies see the [`Context`] struct.
 //!
 //! *Note:* This crate defines both the interface to the property checkers (via
 //! [`Context`]) and the implementation of the engine (via
@@ -86,7 +108,8 @@ impl SPDGGenCommand {
     }
 }
 
-/// A path to a [`ProgramDescription`] file.
+/// A path to a [`ProgramDescription`] file from which a [`Context`] can be
+/// created.
 ///
 /// Can be created programmatically and automatically by running
 /// [`SPDGGenCommand::run`] or you can create one manually if you can `cargo
