@@ -239,8 +239,14 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.combined_markers(function.def_id())
             .zip(std::iter::repeat(None))
             .chain(
-                self.all_type_markers(function.sig(self.tcx()).skip_binder().output())
-                    .map(|(marker, typeinfo)| (marker, Some(typeinfo))),
+                // XXX This is unsafe, because if the type is constructed inline it won't be marked.
+                (!function.def_id().is_local())
+                    .then(|| {
+                        self.all_type_markers(function.sig(self.tcx()).skip_binder().output())
+                            .map(|(marker, typeinfo)| (marker, Some(typeinfo)))
+                    })
+                    .into_iter()
+                    .flatten(),
             )
     }
 }

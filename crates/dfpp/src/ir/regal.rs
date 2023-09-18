@@ -14,7 +14,7 @@ use crate::{
         inline::InlineJudge,
     },
     hir::def_id::LocalDefId,
-    mir::{self, BasicBlock, Field, HasLocalDecls, Location},
+    mir::{self, AggregateKind, BasicBlock, Field, HasLocalDecls, Location, Rvalue},
     rust::{
         rustc_ast, rustc_hir::BodyId, rustc_index::bit_set::HybridBitSet,
         rustc_index::vec::IndexVec,
@@ -23,7 +23,7 @@ use crate::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
         DisplayViaDebug, FnResolution, IntoLocalDefId,
     },
-    DumpArgs, Either, HashMap, HashSet, TyCtxt,
+    DumpArgs, Either, HashMap, HashSet, MarkerCtx, TyCtxt,
 };
 
 use std::fmt::{Display, Write};
@@ -556,6 +556,37 @@ fn recursive_ctrl_deps<
     dependencies
 }
 
+fn warn_if_marked_type_constructed<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    marker_ctx: MarkerCtx<'tcx>,
+    def_id: crate::DefId,
+    body: &mir::Body<'tcx>,
+) {
+    struct WarnVisitor<'tcx> {
+        marker_ctx: MarkerCtx<'tcx>,
+        tcx: TyCtxt<'tcx>,
+        fun: crate::DefId,
+    }
+
+    impl<'tcx> mir::visit::Visitor<'tcx> for WarnVisitor<'tcx> {
+        fn visit_rvalue(&mut self, rvalue: &mir::Rvalue<'tcx>, location: Location) {
+            if let Rvalue::Aggregate(box AggregateKind::Adt(did, ..), _) = rvalue
+                && self.marker_ctx.is_marked(did)
+            {
+                warn!("Found constructor for marked ADT type {} in {} at {:?}. This can cause unsoundness as this value will not carry the marker.", self.tcx.def_path_debug_str(*did), self.tcx.def_path_debug_str(self.fun), location)
+            }
+        }
+    }
+
+    let mut vis = WarnVisitor {
+        tcx,
+        fun: def_id,
+        marker_ctx,
+    };
+
+    mir::visit::Visitor::visit_body(&mut vis, body)
+}
+
 pub fn compute_from_body_id<'tcx>(
     dbg_opts: &DumpArgs,
     body_id: BodyId,
@@ -567,6 +598,12 @@ pub fn compute_from_body_id<'tcx>(
     let body_with_facts =
         borrowck_facts::get_simplified_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
+    warn_if_marked_type_constructed(
+        tcx,
+        carries_marker.context().clone(),
+        local_def_id.to_def_id(),
+        body,
+    );
     let flow = df::compute_flow_internal(tcx, body_id, body_with_facts, carries_marker);
     if dbg_opts.dump_callee_mir() {
         mir::pretty::write_mir_fn(

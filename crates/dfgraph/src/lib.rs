@@ -33,7 +33,12 @@ use indexical::define_index_type;
 use internment::Intern;
 use itertools::Itertools;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{borrow::Cow, fmt, hash::Hash, iter};
+use std::{
+    borrow::Cow,
+    fmt::{self, Display},
+    hash::Hash,
+    iter,
+};
 
 pub use crate::tiny_bitset::TinyBitSet;
 pub use std::collections::{HashMap, HashSet};
@@ -320,7 +325,7 @@ impl Identifier {
 
 impl std::fmt::Debug for Identifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.0.as_ref().fmt(f)
+        std::fmt::Debug::fmt(&self.0.as_ref(), f)
     }
 }
 
@@ -430,6 +435,15 @@ pub enum DataSource {
 
     /// An argument to the controller function.
     Argument(usize),
+}
+
+impl Display for DataSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FunctionCall(fun) => f.write_str(&fun.to_string()),
+            Self::Argument(num) => write!(f, "arg_{num}"),
+        }
+    }
 }
 
 define_index_type! {

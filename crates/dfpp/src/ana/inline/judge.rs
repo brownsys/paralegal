@@ -70,4 +70,8 @@ impl<'tcx> InlineJudge<'tcx> {
     fn marker_is_reachable(&self, def_id: DefId) -> bool {
         self.marker_ctx.marker_is_reachable(def_id)
     }
+
+    pub fn context(&self) -> &MarkerCtx<'tcx> {
+        &self.marker_ctx
+    }
 }

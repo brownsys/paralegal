@@ -1,8 +1,8 @@
-use std::{io::Write, process::exit};
+use std::{fmt::Display, io::Write, process::exit};
 
 use dfgraph::{
-    Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
-    MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    utils::write_sep, Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet,
+    Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 use anyhow::{anyhow, ensure, Result};
@@ -266,10 +266,12 @@ impl Context {
         mut is_terminal: impl FnMut(&DataSink) -> bool,
     ) -> Result<AlwaysHappensBefore> {
         let mut seen = HashSet::<&DataSink>::new();
-        let mut num_reached = 0;
-        let mut num_checkpointed = 0;
+        let mut reached = vec![];
+        let mut checkpointed = vec![];
 
-        let mut queue = starting_points.collect::<Vec<_>>();
+        let mut queue = starting_points
+            .zip(std::iter::repeat(true))
+            .collect::<Vec<_>>();
 
         let started_with = queue.len();
 
@@ -281,23 +283,27 @@ impl Context {
             .data_flow
             .0;
 
-        while let Some(current) = queue.pop() {
+        let mut current_start = None;
+        while let Some((current, is_start)) = queue.pop() {
+            if is_start {
+                current_start.replace(current.clone());
+            }
             for sink in flow.get(&current).into_iter().flatten() {
                 if is_checkpoint(sink) {
-                    num_checkpointed += 1;
+                    checkpointed.push(current_start.clone().unwrap());
                 } else if is_terminal(sink) {
-                    num_reached += 1;
+                    reached.push(current_start.clone().unwrap());
                 } else if let DataSink::Argument { function, .. } = sink {
                     if seen.insert(sink) {
-                        queue.push(DataSource::FunctionCall(function.clone()));
+                        queue.push((DataSource::FunctionCall(function.clone()), false));
                     }
                 }
             }
         }
 
         Ok(AlwaysHappensBefore {
-            num_reached,
-            num_checkpointed,
+            reached,
+            checkpointed,
             started_with,
         })
     }
@@ -321,9 +327,9 @@ impl Context {
 /// for-human-eyes-only.
 pub struct AlwaysHappensBefore {
     /// How many paths terminated at the end?
-    num_reached: i32,
+    reached: Vec<DataSource>,
     /// How many paths lead to the checkpoints?
-    num_checkpointed: i32,
+    checkpointed: Vec<DataSource>,
     /// How large was the set of initial nodes this traversal started with.
     started_with: usize,
 }
@@ -331,16 +337,36 @@ pub struct AlwaysHappensBefore {
 impl std::fmt::Display for AlwaysHappensBefore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
-            num_reached,
-            num_checkpointed,
+            reached,
+            checkpointed,
             started_with,
         } = self;
-        write!(
+        writeln!(
             f,
-            "{num_reached} paths reached the terminal, \
-            {num_checkpointed} paths reached the checkpoints, \
-            started with {started_with} nodes"
-        )
+            "{} paths reached the terminal, \
+            {} paths reached the checkpoints, \
+            started with {started_with} nodes",
+            reached.len(),
+            checkpointed.len()
+        )?;
+        let cutoff = 5;
+        if !self.reached.is_empty() {
+            write!(f, "  reached from: [")?;
+            write_sep(f, ", ", &self.reached[0..cutoff], Display::fmt)?;
+            if self.reached.len() > cutoff {
+                write!(f, ", ...")?;
+            }
+            writeln!(f, "]")?;
+        }
+        if !self.checkpointed.is_empty() {
+            write!(f, "  checkpointed from: [")?;
+            write_sep(f, ", ", &self.reached[0..cutoff], Display::fmt)?;
+            if self.checkpointed.len() > cutoff {
+                write!(f, ", ...")?;
+            }
+            writeln!(f, "]")?;
+        }
+        Ok(())
     }
 }
 
@@ -363,7 +389,7 @@ impl AlwaysHappensBefore {
 
     /// Returns `true` if the property that created these statistics holds.
     pub fn holds(&self) -> bool {
-        self.num_reached == 0
+        self.reached.is_empty()
     }
 
     /// Fails if [`Self::holds`] is false.
@@ -371,7 +397,7 @@ impl AlwaysHappensBefore {
         ensure!(
             self.holds(),
             "AlwaysHappensBefore failed: found {} violating paths",
-            self.num_reached
+            self.reached.len()
         );
         Ok(())
     }
@@ -380,7 +406,7 @@ impl AlwaysHappensBefore {
     /// or no path from them can reach the terminal or the checkpoints (the
     /// graphs are disjoined).
     pub fn is_vacuous(&self) -> bool {
-        self.num_checkpointed + self.num_reached == 0
+        self.checkpointed.is_empty() && self.reached.is_empty()
     }
 }
 
