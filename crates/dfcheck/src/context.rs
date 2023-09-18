@@ -1,3 +1,5 @@
+use std::{process::exit, io::Write};
+
 use dfgraph::{
     Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
     MarkerAnnotation, MarkerRefinement, ProgramDescription,
@@ -9,11 +11,35 @@ use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
 
+use crate::diagnostics::{Diagnostics, Severity};
+
+pub use crate::diagnostics::DiagnosticMessage;
+
 /// User-defined PDG markers.
 pub type Marker = Identifier;
 
 type MarkerIndex = HashMap<Marker, Vec<(Identifier, MarkerRefinement)>>;
 type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
+
+/// Check the condition and emit a [`Context::error`] if it fails.
+#[macro_export]
+macro_rules! assert_error {
+    ($ctx:expr, $cond: expr, $msg:expr) => {
+        if $cond {
+            $ctx.error($msg);
+        }
+    };
+}
+
+/// Check the condition and emit a [`Context::warning`] if it fails.
+#[macro_export]
+macro_rules! assert_warning {
+    ($ctx:expr, $cond: expr, $msg:expr) => {
+        if $cond {
+            $ctx.warning($msg);
+        }
+    };
+}
 
 /// Data structures to be analyzed by user-defined properties.
 #[derive(Debug)]
@@ -21,6 +47,7 @@ pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
+    diagnostics: Diagnostics,
 }
 
 impl Context {
@@ -32,7 +59,29 @@ impl Context {
             marker_to_ids: Self::build_index_on_markers(&desc),
             flows_to: Self::build_flows_to(&desc),
             desc,
+            diagnostics: Default::default(),
         }
+    }
+
+    /// Dispatch and drain all queued diagnostics, aborts the program if any of
+    /// them demand failure.
+    pub fn emit_diagnostics(&self, w: impl Write) -> Result<()> {
+        if !self.diagnostics.emit(w)? {
+            exit(1)
+        }
+        Ok(())
+    }
+
+    /// Record a message to the user indicating a problem that will not cause
+    /// verification to fail.
+    pub fn warning(&self, msg: impl Into<DiagnosticMessage>) {
+        self.diagnostics.record(msg, Severity::Warning)
+    }
+
+    /// Record a message to the user for a problem that will cause verification
+    /// to fail.
+    pub fn error(&self, msg: impl Into<DiagnosticMessage>) {
+        self.diagnostics.record(msg, Severity::Fail)
     }
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {

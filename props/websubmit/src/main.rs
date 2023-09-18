@@ -3,7 +3,7 @@ extern crate anyhow;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
-use dfcheck::{dfgraph::Identifier, Context, Marker};
+use dfcheck::{assert_error, dfgraph::Identifier, Context, Marker};
 
 pub struct DeletionProp {
     cx: Arc<Context>,
@@ -68,9 +68,11 @@ impl DeletionProp {
     pub fn check(&self) {
         let sensitive = Marker::new_intern("sensitive");
         for (t, _) in self.cx.marked(sensitive) {
-            if self.flows_to_store(*t) && !self.flows_to_deletion(*t) {
-                println!("Found an error for type: {t:?}");
-            }
+            assert_error!(
+                self.cx,
+                self.flows_to_store(*t) && !self.flows_to_deletion(*t),
+                format!("Found an error for type: {t:?}")
+            )
         }
     }
 }
@@ -79,9 +81,7 @@ fn main() -> Result<()> {
     let ws_dir = std::env::args()
         .nth(1)
         .ok_or_else(|| anyhow!("expected an argument"))?;
-    let ctx = dfcheck::SPDGGenCommand::global()
+    dfcheck::SPDGGenCommand::global()
         .run(ws_dir)?
-        .build_context()?;
-    DeletionProp::new(ctx).check();
-    Ok(())
+        .with_context(|ctx| Ok(DeletionProp::new(ctx).check()))
 }
