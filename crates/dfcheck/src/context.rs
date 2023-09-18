@@ -24,8 +24,8 @@ type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
 /// Check the condition and emit a [`Context::error`] if it fails.
 #[macro_export]
 macro_rules! assert_error {
-    ($ctx:expr, $cond: expr, $msg:expr) => {
-        if $cond {
+    ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
+        if !$cond {
             $ctx.error($msg);
         }
     };
@@ -34,8 +34,8 @@ macro_rules! assert_error {
 /// Check the condition and emit a [`Context::warning`] if it fails.
 #[macro_export]
 macro_rules! assert_warning {
-    ($ctx:expr, $cond: expr, $msg:expr) => {
-        if $cond {
+    ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
+        if !$cond {
             $ctx.warning($msg);
         }
     };
