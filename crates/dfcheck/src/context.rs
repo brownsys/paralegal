@@ -25,7 +25,7 @@ type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
 #[macro_export]
 macro_rules! assert_error {
     ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
-        if !$cond {
+        if $cond {
             $ctx.error($msg);
         }
     };
@@ -35,7 +35,7 @@ macro_rules! assert_error {
 #[macro_export]
 macro_rules! assert_warning {
     ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
-        if !$cond {
+        if $cond {
             $ctx.warning($msg);
         }
     };
