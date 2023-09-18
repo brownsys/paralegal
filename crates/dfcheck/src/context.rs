@@ -41,7 +41,23 @@ macro_rules! assert_warning {
     };
 }
 
-/// Data structures to be analyzed by user-defined properties.
+/// Interface for defining policies.
+///
+/// Holds a PDG ([`Self::desc`]) and defines basic queries like
+/// [`Self::marked_sinks`] and combinators such as
+/// [`Self::always_happens_before`]. These should be composed into more complex
+/// policies.
+///
+/// To communicate the results of your policies with the user you can emit
+/// diagnostic messages. To communicate a policy failure use [`Self::error`] or
+/// the [`assert_error`] macro. To communicate suspicious circumstances that are
+/// not outright cause for failure use [`Self::warning`] or [`assert_warning`].
+/// 
+/// Note that these methods just queue the diagnostics messages. To emit them
+/// (and potentially terminate the program if the policy does not hold) use
+/// [`Self::emit_diagnostics`]. If you used
+/// [`super::GraphLocation::with_context`] this will be done automatically for
+/// you.
 #[derive(Debug)]
 pub struct Context {
     marker_to_ids: MarkerIndex,

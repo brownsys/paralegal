@@ -8,10 +8,9 @@
 //! you how to customize them to your needs.
 //!
 //! ```ignore
-//! let ctx = SPDGGenCommand::global()
+//! SPDGGenCommand::global()
 //!     .run("project/dir/to/analyze")?
-//!     .build_context()?;
-//! my_property(ctx)
+//!     .with_context(|ctx| my_property(ctx))
 //! ```
 //!
 //! 1. [`SPDGGenCommand`] lets you programmatically invoke the SDPG extractor.
@@ -35,8 +34,10 @@
 //!    you can specify the [`GraphLocation`] with
 //!    [`::std()`](GraphLocation::std), which uses the default graph file name
 //!    or [`::custom()`](GraphLocation::custom) to use a custom file name.
-//! 3. [`.build_context()`](GraphLocation::build_context) reads and parses the
-//!    graph file, returning a [`Context`] on which you can run your policy.
+//! 3. [`.with_context()`](GraphLocation::with_context) reads and parses the
+//!    graph file, then invokes the provided closure with a [`Context`]. After
+//!    the closure returns it automatically invokes
+//!    [`Context::emit_diagnostics`].
 //!
 //! For information about how to specify policies see the [`Context`] struct.
 //!
