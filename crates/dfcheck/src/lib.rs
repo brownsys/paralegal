@@ -1,9 +1,9 @@
-//! The query engine and framework for defining paralegal policies. 
-//! 
+//! The query engine and framework for defining paralegal policies.
+//!
 //! It provides a state machine for programmatically extracting and parsing a
 //! Semantic Program Dependence Graph (SPDG) and provides combinators and
 //! queries on this graph for you to compose into policies.
-//! 
+//!
 //! Next we show you the most common workflow, then explain the steps and show
 //! you how to customize them to your needs.
 //!
@@ -13,12 +13,12 @@
 //!     .build_context()?;
 //! my_property(ctx)
 //! ```
-//! 
+//!
 //! 1. [`SPDGGenCommand`] lets you programmatically invoke the SDPG extractor.
 //!    The [`::global()`](SPDGGenCommand::global) method uses `cargo dfpp` for
 //!    this purpose, e.g. a global installation of `cargo-dfpp` that was
 //!    performed with `cargo install`.
-//! 
+//!
 //!    - [`::custom()`](SPDGGenCommand::custom) lets you instead pick a
 //!      different binary to run, for instance from a local installation.
 //!    - [`.get_command()`](SPDGGenCommand::get_command) lets you customize the
@@ -27,17 +27,17 @@
 //! 2. [`.run(dir)`](SPDGGenCommand::run) invokes the extractor in `dir`,
 //!    returning the path (as a [`GraphLocation`]) where the SPDG was written
 //!    to.
-//! 
+//!
 //!    Re-running this command often is cheap, because rustc skips the execution
 //!    if there are no changes.
-//! 
+//!
 //!    You may generate the graph manually and skip steps 1 and 2. In this case
 //!    you can specify the [`GraphLocation`] with
 //!    [`::std()`](GraphLocation::std), which uses the default graph file name
 //!    or [`::custom()`](GraphLocation::custom) to use a custom file name.
 //! 3. [`.build_context()`](GraphLocation::build_context) reads and parses the
 //!    graph file, returning a [`Context`] on which you can run your policy.
-//! 
+//!
 //! For information about how to specify policies see the [`Context`] struct.
 //!
 //! *Note:* This crate defines both the interface to the property checkers (via
@@ -130,7 +130,7 @@ impl GraphLocation {
     }
 
     /// Builds a context, then runs the property.
-    /// 
+    ///
     /// Emits any recorded diagnostic messages to stdout and aborts the program
     /// if they were severe enough.
     pub fn with_context<A>(&self, prop: impl FnOnce(Arc<Context>) -> Result<A>) -> Result<A> {
@@ -142,7 +142,7 @@ impl GraphLocation {
 
     /// Read and parse this graph file, returning a [`Context`] suitable for
     /// property enforcement.
-    /// 
+    ///
     /// Prefer using [`Self::with_context`] which takes care of emitting any
     /// diagnostic messages after the property is done.
     pub fn build_context(&self) -> Result<Arc<Context>> {

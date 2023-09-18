@@ -83,5 +83,8 @@ fn main() -> Result<()> {
         .ok_or_else(|| anyhow!("expected an argument"))?;
     dfcheck::SPDGGenCommand::global()
         .run(ws_dir)?
-        .with_context(|ctx| Ok(DeletionProp::new(ctx).check()))
+        .with_context(|ctx| {
+            DeletionProp::new(ctx).check();
+            Ok(())
+        })
 }

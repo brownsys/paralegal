@@ -1,4 +1,4 @@
-use std::{process::exit, io::Write};
+use std::{io::Write, process::exit};
 
 use dfgraph::{
     Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,

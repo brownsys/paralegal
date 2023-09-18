@@ -55,5 +55,8 @@ fn main() -> Result<()> {
         .ok_or_else(|| anyhow!("expected an argument"))?;
     dfcheck::SPDGGenCommand::global()
         .run(lemmy_dir)?
-        .with_context(|ctx| Ok(CommunityProp::new(ctx).check()))
+        .with_context(|ctx| {
+            CommunityProp::new(ctx).check();
+            Ok(())
+        })
 }

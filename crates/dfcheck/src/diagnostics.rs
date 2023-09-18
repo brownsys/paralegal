@@ -1,4 +1,3 @@
-
 use std::io::Write;
 
 /// A message that should be delivered to the user.
@@ -50,11 +49,14 @@ pub struct Diagnostics(std::sync::Mutex<Vec<Diagnostic>>);
 impl Diagnostics {
     /// Record a diagnostic message.
     pub fn record(&self, msg: impl Into<DiagnosticMessage>, severity: Severity) {
-        self.0.lock().unwrap().push(Diagnostic { message: msg.into(), severity })
+        self.0.lock().unwrap().push(Diagnostic {
+            message: msg.into(),
+            severity,
+        })
     }
 
     /// Emit queued diagnostics, draining the internal queue of diagnostics.
-    /// 
+    ///
     /// A return `true` means the program may continue, on `false` it should be
     /// aborted.
     pub fn emit(&self, mut w: impl Write) -> std::io::Result<bool> {
