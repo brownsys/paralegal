@@ -8,9 +8,7 @@
 use crate::discover::AttrMatchT;
 use crate::Symbol;
 
-/// Name of the file used for emitting the JSON serialized
-/// [`ProgramDescription`](crate::desc::ProgramDescription).
-pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
+pub use dfgraph::FLOW_GRAPH_OUT_NAME;
 
 lazy_static! {
     /// The symbol `arguments` which we use for refinement in a `#[dfpp::label(...)]`

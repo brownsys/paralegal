@@ -1,6 +1,10 @@
+extern crate anyhow;
+
+use anyhow::{anyhow, Result};
 use std::{collections::HashSet, sync::Arc};
 
 use dfcheck::{
+    assert_error,
     dfgraph::{CallSite, Ctrl, DataSource},
     Context, Marker,
 };
@@ -38,15 +42,21 @@ impl CommunityProp {
                 for write_sink in self.cx.marked_callsites(dsts, db_community_write) {
                     let ok = self.flow_to_auth(c, write_sink, community_delete_check)
                         && self.flow_to_auth(c, write_sink, community_ban_check);
-                    if !ok {
-                        println!("Found an failure!");
-                    }
+                    assert_error!(self.cx, !ok, "Found a failure!");
                 }
             }
         }
     }
 }
 
-fn main() {
-    dfcheck::cli(|cx| CommunityProp::new(cx).check())
+fn main() -> Result<()> {
+    let lemmy_dir = std::env::args()
+        .nth(1)
+        .ok_or_else(|| anyhow!("expected an argument"))?;
+    dfcheck::SPDGGenCommand::global()
+        .run(lemmy_dir)?
+        .with_context(|ctx| {
+            CommunityProp::new(ctx).check();
+            Ok(())
+        })
 }
