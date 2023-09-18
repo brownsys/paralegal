@@ -11,7 +11,7 @@ use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
 
-use crate::diagnostics::{Diagnostics, Severity};
+use crate::diagnostics::{DiagnosticContext, DiagnosticContextStack, Diagnostics, Severity};
 
 pub use crate::diagnostics::DiagnosticMessage;
 
@@ -24,8 +24,8 @@ type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
 /// Check the condition and emit a [`Context::error`] if it fails.
 #[macro_export]
 macro_rules! assert_error {
-    ($ctx:expr, $cond: expr, $msg:expr) => {
-        if $cond {
+    ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
+        if !$cond {
             $ctx.error($msg);
         }
     };
@@ -34,8 +34,8 @@ macro_rules! assert_error {
 /// Check the condition and emit a [`Context::warning`] if it fails.
 #[macro_export]
 macro_rules! assert_warning {
-    ($ctx:expr, $cond: expr, $msg:expr) => {
-        if $cond {
+    ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
+        if !$cond {
             $ctx.warning($msg);
         }
     };
@@ -64,6 +64,7 @@ pub struct Context {
     desc: ProgramDescription,
     flows_to: FlowsTo,
     diagnostics: Diagnostics,
+    diagnostic_context: DiagnosticContextStack,
 }
 
 impl Context {
@@ -76,6 +77,7 @@ impl Context {
             flows_to: Self::build_flows_to(&desc),
             desc,
             diagnostics: Default::default(),
+            diagnostic_context: Default::default(),
         }
     }
 
@@ -91,13 +93,40 @@ impl Context {
     /// Record a message to the user indicating a problem that will not cause
     /// verification to fail.
     pub fn warning(&self, msg: impl Into<DiagnosticMessage>) {
-        self.diagnostics.record(msg, Severity::Warning)
+        self.diagnostics
+            .record(msg, Severity::Warning, self.diagnostic_context.clone())
     }
 
     /// Record a message to the user for a problem that will cause verification
     /// to fail.
     pub fn error(&self, msg: impl Into<DiagnosticMessage>) {
-        self.diagnostics.record(msg, Severity::Fail)
+        self.diagnostics
+            .record(msg, Severity::Fail, self.diagnostic_context.clone())
+    }
+
+    fn with_diagnostic_location<A>(
+        &mut self,
+        loc: DiagnosticContext,
+        prop: impl FnOnce(&mut Self) -> A,
+    ) -> A {
+        self.diagnostic_context.push(loc);
+        let result = prop(self);
+        self.diagnostic_context.pop();
+        result
+    }
+
+    /// Perform checks as part of the named policy `name`
+    pub fn named_policy<A>(&mut self, name: Identifier, policy: impl FnOnce(&mut Self) -> A) -> A {
+        self.with_diagnostic_location(DiagnosticContext::Policy(name), policy)
+    }
+
+    /// Perform checks as part of the named combinator `name`
+    pub fn named_combinator<A>(
+        &mut self,
+        name: Identifier,
+        combinator: impl FnOnce(&mut Self) -> A,
+    ) -> A {
+        self.with_diagnostic_location(DiagnosticContext::Combinator(name), combinator)
     }
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
@@ -315,7 +344,23 @@ impl std::fmt::Display for AlwaysHappensBefore {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref ALWAYS_HAPPENS_BEFORE_NAME: Identifier = Identifier::new_intern("always_happens_before");
+}
+
 impl AlwaysHappensBefore {
+    /// Check this property holds and report it as diagnostics in the context.
+    ///
+    /// Additionally reports if the property was vacuous or had no starting
+    /// nodes.
+    pub fn report(&self, ctx: &mut Context) {
+        ctx.named_combinator(*ALWAYS_HAPPENS_BEFORE_NAME, |ctx| {
+            assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.",);
+            assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.",);
+            assert_error!(ctx, self.holds(), format!("Violation detected: {}", self));
+        })
+    }
+
     /// Returns `true` if the property that created these statistics holds.
     pub fn holds(&self) -> bool {
         self.num_reached == 0

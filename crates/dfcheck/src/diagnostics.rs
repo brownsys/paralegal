@@ -1,4 +1,8 @@
-use std::io::Write;
+use std::{fmt::Display, io::Write};
+
+use smallvec::SmallVec;
+
+use dfgraph::Identifier;
 
 /// A message that should be delivered to the user.
 ///
@@ -37,10 +41,28 @@ impl Severity {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum DiagnosticContext {
+    Policy(Identifier),
+    Combinator(Identifier),
+}
+
+impl Display for DiagnosticContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Policy(name) => write!(f, "policy: {name}"),
+            Self::Combinator(name) => name.fmt(f),
+        }
+    }
+}
+
+pub type DiagnosticContextStack = SmallVec<[DiagnosticContext; 2]>;
+
 #[derive(Debug)]
 struct Diagnostic {
     message: DiagnosticMessage,
     severity: Severity,
+    context: DiagnosticContextStack,
 }
 
 #[derive(Debug, Default)]
@@ -48,10 +70,16 @@ pub struct Diagnostics(std::sync::Mutex<Vec<Diagnostic>>);
 
 impl Diagnostics {
     /// Record a diagnostic message.
-    pub fn record(&self, msg: impl Into<DiagnosticMessage>, severity: Severity) {
+    pub fn record(
+        &self,
+        msg: impl Into<DiagnosticMessage>,
+        severity: Severity,
+        context: impl IntoIterator<Item = DiagnosticContext>,
+    ) {
         self.0.lock().unwrap().push(Diagnostic {
             message: msg.into(),
             severity,
+            context: context.into_iter().collect(),
         })
     }
 
@@ -63,7 +91,10 @@ impl Diagnostics {
         let w = &mut w;
         let mut can_continue = true;
         for diag in self.0.lock().unwrap().drain(..) {
-            write!(w, "{}", diag.message)?;
+            for ctx in diag.context {
+                write!(w, "[{ctx}] ")?;
+            }
+            writeln!(w, "{}", diag.message)?;
             can_continue |= diag.severity.must_abort();
         }
         Ok(can_continue)

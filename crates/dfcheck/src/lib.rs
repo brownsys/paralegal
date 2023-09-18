@@ -56,7 +56,6 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
 };
 
 mod context;
@@ -134,9 +133,9 @@ impl GraphLocation {
     ///
     /// Emits any recorded diagnostic messages to stdout and aborts the program
     /// if they were severe enough.
-    pub fn with_context<A>(&self, prop: impl FnOnce(Arc<Context>) -> Result<A>) -> Result<A> {
-        let ctx = self.build_context()?;
-        let result = prop(ctx.clone())?;
+    pub fn with_context<A>(&self, prop: impl FnOnce(&mut Context) -> Result<A>) -> Result<A> {
+        let mut ctx = self.build_context()?;
+        let result = prop(&mut ctx)?;
         ctx.emit_diagnostics(std::io::stdout())?;
         Ok(result)
     }
@@ -146,13 +145,16 @@ impl GraphLocation {
     ///
     /// Prefer using [`Self::with_context`] which takes care of emitting any
     /// diagnostic messages after the property is done.
-    pub fn build_context(&self) -> Result<Arc<Context>> {
+    pub fn build_context(&self) -> Result<Context> {
         simple_logger::init_with_env().unwrap();
 
         let desc = {
             let mut f = File::open(&self.0)?;
-            serde_json::from_reader::<_, ProgramDescription>(&mut f)?
+            anyhow::Context::with_context(
+                serde_json::from_reader::<_, ProgramDescription>(&mut f),
+                || format!("Reading SPDG (JSON) from {}", self.0.display()),
+            )?
         };
-        Ok(Arc::new(Context::new(desc)))
+        Ok(Context::new(desc))
     }
 }

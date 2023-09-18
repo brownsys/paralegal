@@ -309,9 +309,11 @@ dependencies = [
  "dfpp",
  "indexical",
  "itertools",
+ "lazy_static",
  "log",
  "serde_json",
  "simple_logger",
+ "smallvec",
 ]
 
 [[package]]
