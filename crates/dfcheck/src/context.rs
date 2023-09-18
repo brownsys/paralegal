@@ -52,7 +52,7 @@ macro_rules! assert_warning {
 /// diagnostic messages. To communicate a policy failure use [`Self::error`] or
 /// the [`assert_error`] macro. To communicate suspicious circumstances that are
 /// not outright cause for failure use [`Self::warning`] or [`assert_warning`].
-/// 
+///
 /// Note that these methods just queue the diagnostics messages. To emit them
 /// (and potentially terminate the program if the policy does not hold) use
 /// [`Self::emit_diagnostics`]. If you used
