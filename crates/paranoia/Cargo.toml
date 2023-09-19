@@ -3,6 +3,7 @@ name = "paranoia"
 version = "0.1.0"
 edition = "2021"
 publish = false
+description = "A framework for writing policies over graphs defined in `paragraph` and extracted from Rust programs with `parable`."
 
 [dependencies]
 paragraph = { path = "../paragraph" }

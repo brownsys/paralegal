@@ -2,6 +2,7 @@
 name = "paragraph"
 version = "0.1.0"
 edition = "2021"
+description = "Graph structure created by the `parable` etractor and consumed by policies written with the `paranoia` framework."
 
 [package.metadata.rust-analyzer]
 rustc_private = true
