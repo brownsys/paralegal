@@ -2,7 +2,7 @@ use std::{io::Write, process::exit};
 
 use dfgraph::{
     Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
-    MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    MarkerAnnotation, MarkerRefinement, ProgramDescription, rustc_portable::DefId,
 };
 
 use anyhow::{anyhow, ensure, Result};
@@ -18,7 +18,7 @@ pub use crate::diagnostics::DiagnosticMessage;
 /// User-defined PDG markers.
 pub type Marker = Identifier;
 
-type MarkerIndex = HashMap<Marker, Vec<(Identifier, MarkerRefinement)>>;
+type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
 type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
 
 /// Check the condition and emit a [`Context::error`] if it fails.

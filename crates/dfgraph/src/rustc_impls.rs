@@ -54,6 +54,16 @@ pub fn def_index_as_u32(i: &def_id::DefIndex) -> u32 {
     i.as_u32()
 }
 
+pub fn crate_num_as_u32(num: &hir::def_id::CrateNum) -> u32 {
+    (*num).into()
+}
+
+impl From<CrateNum> for hir::def_id::CrateNum {
+    fn from(value: CrateNum) -> Self {
+        hir::def_id::CrateNum::from_u32(value.private)
+    }
+}
+
 impl From<DefIndex> for def_id::DefIndex {
     fn from(proxy: DefIndex) -> def_id::DefIndex {
         def_id::DefIndex::from_u32(proxy.private)
