@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-dfcheck = { path = "../../crates/dfcheck" }
+para-noia = { path = "../../crates/para-noia" }
 anyhow = "1"

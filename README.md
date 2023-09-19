@@ -1,4 +1,4 @@
-# DFPP
+# PARABLE
 
 A Rust compiler plugin for extracting Forge model code via dataflow analysis powered by Flowistry.
 

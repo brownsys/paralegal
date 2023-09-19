@@ -1,0 +1,5 @@
+extern crate rustc_plugin;
+
+fn main() {
+    rustc_plugin::driver_main(parable::DfppPlugin);
+}

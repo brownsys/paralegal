@@ -3,9 +3,9 @@ extern crate anyhow;
 use anyhow::{anyhow, Result};
 use std::{collections::HashSet, sync::Arc};
 
-use dfcheck::{
+use paranoia::{
     assert_error,
-    dfgraph::{CallSite, Ctrl, DataSource},
+    paragraph::{CallSite, Ctrl, DataSource},
     Context, Marker,
 };
 
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
     let lemmy_dir = std::env::args()
         .nth(1)
         .ok_or_else(|| anyhow!("expected an argument"))?;
-    dfcheck::SPDGGenCommand::global()
+    paranoia::SPDGGenCommand::global()
         .run(lemmy_dir)?
         .with_context(|ctx| {
             CommunityProp::new(ctx).check();
