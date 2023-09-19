@@ -19,7 +19,8 @@ cfg_if::cfg_if! {
         use crate::rustc::{hir, mir, def_id};
         pub use mir::{Location, BasicBlock};
         pub use hir::{BodyId, ItemLocalId, hir_id::OwnerId, HirId};
-        pub use def_id::{DefIndex, LocalDefId, DefId};
+        pub use def_id::{DefIndex, LocalDefId};
+        pub type DefId = def_id::DefId;
     } else {
         pub use crate::rustc_proxies::*;
     }

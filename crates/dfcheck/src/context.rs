@@ -18,8 +18,11 @@ pub use crate::diagnostics::DiagnosticMessage;
 /// User-defined PDG markers.
 pub type Marker = Identifier;
 
+pub type ControllerId = DefId;
+pub type FunctionId = DefId;
+
 type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
-type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
+type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
 /// Check the condition and emit a [`Context::error`] if it fails.
 #[macro_export]
@@ -122,7 +125,7 @@ impl Context {
     }
 
     /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn flows_to(&self, ctrl_id: Identifier, src: &DataSource, sink: &DataSink) -> bool {
+    pub fn flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .flows_to
@@ -134,7 +137,7 @@ impl Context {
     pub fn marked(
         &self,
         marker: Marker,
-    ) -> impl Iterator<Item = &'_ (Identifier, MarkerRefinement)> + '_ {
+    ) -> impl Iterator<Item = &'_ (DefId, MarkerRefinement)> + '_ {
         self.marker_to_ids
             .get(&marker)
             .into_iter()
@@ -194,7 +197,7 @@ impl Context {
     }
 
     /// Returns all the [`Annotation::OType`]s for a controller `id`.
-    pub fn otypes(&self, id: Identifier) -> Vec<Identifier> {
+    pub fn otypes(&self, id: DefId) -> Vec<Identifier> {
         let inner = || -> Option<_> {
             self.desc()
                 .annotations
@@ -231,7 +234,7 @@ impl Context {
     /// always return the same result for the same input.
     pub fn always_happens_before(
         &self,
-        ctrl: Identifier,
+        ctrl: ControllerId,
         starting_points: impl Iterator<Item = DataSource>,
         mut is_checkpoint: impl FnMut(&DataSink) -> bool,
         mut is_terminal: impl FnMut(&DataSink) -> bool,
@@ -248,7 +251,7 @@ impl Context {
             .desc()
             .controllers
             .get(&ctrl)
-            .ok_or_else(|| anyhow!("Controller {ctrl} not found"))?
+            .ok_or_else(|| anyhow!("Controller not found"))?
             .data_flow
             .0;
 
