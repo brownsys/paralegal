@@ -8,8 +8,8 @@
 //! to stdout, a file or a log statement. Some take additional information (such
 //! as [TyCtxt]) to get contextual information that is used to make the output
 //! more useful.
-use paragraph::Identifier;
 use flowistry::indexed::IndexedDomain;
+use paragraph::Identifier;
 
 use crate::{
     ir::CallOnlyFlow,
