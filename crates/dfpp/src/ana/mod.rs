@@ -292,7 +292,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
     fn make_program_description(&self, controllers: HashMap<DefId, Ctrl>) -> ProgramDescription {
         let tcx = self.tcx;
-        let annotations = self
+        let annotations: HashMap<DefId, (Vec<Annotation>, ObjectType)> = self
             .marker_ctx
             .local_annotations_found()
             .into_iter()
@@ -316,7 +316,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 (did.into_def_id(tcx), (anns, obj_type))
             })
             .collect();
-        let known_def_ids = def_ids_from_controllers(&controllers, tcx);
+        let mut known_def_ids = def_ids_from_controllers(&controllers, tcx);
+        known_def_ids.extend(annotations.keys().copied());
         let def_info = known_def_ids
             .into_iter()
             .map(|id| (id, def_info_for_item(id, tcx)))
@@ -331,7 +332,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
 fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
     use hir::def;
-    let name = Identifier::new(tcx.item_name(id));
+    let name = crate::utils::identifier_for_item(tcx, id);
     let kind = match tcx.def_kind(id) {
         kind if kind.is_fn_like() => DefKind::Function,
         def::DefKind::Struct

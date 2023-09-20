@@ -72,7 +72,7 @@ pub mod call_only_flow_dot {
         ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{identifier_for_item, AsFnAndArgs, DfppBodyExt, LocationExt},
+        utils::{unique_identifier_for_item, AsFnAndArgs, DfppBodyExt, LocationExt},
         Either,
     };
 
@@ -228,7 +228,7 @@ pub mod call_only_flow_dot {
                     match stmt {
                         Either::Right(term) => {
                             if let Ok((fun, args, _)) = term.as_fn_and_args(self.tcx) {
-                                let fun_name = identifier_for_item(self.tcx, fun);
+                                let fun_name = unique_identifier_for_item(self.tcx, fun);
                                 write!(s, "{{{{")?;
                                 for (i, arg) in args.iter().enumerate() {
                                     write!(s, "<a{}>", i)?;

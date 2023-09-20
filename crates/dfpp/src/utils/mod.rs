@@ -780,10 +780,35 @@ impl IntoHirId for LocalDefId {
     }
 }
 
-/// Creates an `Identifier` for this `HirId`
+/// Get a reasonable, but not guaranteed unique name for this item
 pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
+    // TODO Make a generic version instead of just copying `unique_identifier_for_item`
     let did = did.into_def_id(tcx);
     let get_parent = || identifier_for_item(tcx, tcx.parent(did));
+    Identifier::new_intern(
+        &tcx.opt_item_name(did)
+            .map(|n| n.to_string())
+            .or_else(|| {
+                use hir::def::DefKind::*;
+                match tcx.def_kind(did) {
+                    OpaqueTy => Some("Opaque".to_string()),
+                    Closure => Some(format!("{}_closure", get_parent())),
+                    Generator => Some(format!("{}_generator", get_parent())),
+                    _ => None,
+                }
+            })
+            .unwrap_or_else(|| panic!(
+                "Could not name {} {:?}",
+                tcx.def_path_debug_str(did),
+                tcx.def_kind(did)
+            )),
+    )
+}
+
+/// Creates an `Identifier` for this `HirId`
+pub fn unique_identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
+    let did = did.into_def_id(tcx);
+    let get_parent = || unique_identifier_for_item(tcx, tcx.parent(did));
     Identifier::new_intern(&format!(
         "{}_{}",
         tcx.opt_item_name(did)

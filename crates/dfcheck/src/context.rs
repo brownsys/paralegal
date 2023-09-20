@@ -1,9 +1,11 @@
 use std::{io::Write, process::exit};
 
 use dfgraph::{
-    rustc_portable::DefId, Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet,
+    Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet,
     Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
+
+pub use dfgraph::rustc_portable::DefId;
 
 use anyhow::{anyhow, bail, ensure, Result};
 use indexical::ToIndex;
@@ -399,7 +401,7 @@ fn test_context() {
     let sink = Marker::new_intern("sink");
     assert!(ctx
         .marked(input)
-        .any(|(id, _)| ctx.desc.def_info[&id].name.as_str().starts_with("Foo")));
+        .any(|(id, _)| ctx.desc.def_info.get(&id).map_or(false, |info| info.name.as_str().starts_with("Foo"))));
 
     let desc = ctx.desc();
     let controller = ctx.find_by_name("controller").unwrap();
