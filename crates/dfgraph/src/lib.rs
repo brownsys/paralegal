@@ -34,18 +34,13 @@ use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{
-    borrow::Cow,
-    fmt::{self, Display},
-    hash::Hash,
-    iter,
-};
+use std::{borrow::Cow, fmt, hash::Hash, iter};
 
 pub use crate::tiny_bitset::TinyBitSet;
 pub use std::collections::{HashMap, HashSet};
 
 pub type Endpoint = DefId;
-pub type TypeDescriptor = Identifier;
+pub type TypeDescriptor = DefId;
 pub type Function = Identifier;
 
 /// Name of the file used for emitting the JSON serialized
@@ -61,7 +56,7 @@ pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, strum::EnumIs)]
 pub enum Annotation {
     Marker(MarkerAnnotation),
-    OType(Vec<TypeDescriptor>),
+    OType(#[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))] TypeDescriptor),
     Exception(ExceptionAnnotation),
 }
 
@@ -75,9 +70,9 @@ impl Annotation {
     }
 
     /// If this is an [`Annotation::OType`], returns the underlying [`TypeDescriptor`].
-    pub fn as_otype(&self) -> Option<&[TypeDescriptor]> {
+    pub fn as_otype(&self) -> Option<TypeDescriptor> {
         match self {
-            Annotation::OType(t) => Some(t),
+            Annotation::OType(t) => Some(*t),
             _ => None,
         }
     }
@@ -501,15 +496,6 @@ pub enum DataSource {
     Argument(usize),
 }
 
-impl Display for DataSource {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::FunctionCall(fun) => f.write_str(&fun.to_string()),
-            Self::Argument(num) => write!(f, "arg_{num}"),
-        }
-    }
-}
-
 define_index_type! {
     /// Index over [`DataSource`], for use with `indexical` index sets.
     pub struct DataSourceIndex for DataSource = u32;
@@ -559,6 +545,42 @@ define_index_type! {
 
 pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
 
+#[cfg(feature = "rustc")]
+mod ser_ctrl_types {
+    use serde::{Deserialize, Serialize};
+
+    use crate::rustc_proxies;
+
+    #[derive(Serialize, Deserialize)]
+    struct Helper(#[serde(with = "rustc_proxies::DefId")] super::DefId);
+
+    pub fn serialize<S: serde::Serializer>(
+        map: &super::CtrlTypes,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        map.iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.into_iter().copied().map(Helper).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<super::CtrlTypes, D::Error> {
+        Ok(crate::Relation(
+            Vec::deserialize(deserializer)?
+                .into_iter()
+                .map(|(k, v): (_, Vec<_>)| (k, v.into_iter().map(|Helper(id)| id).collect()))
+                .collect(),
+        ))
+    }
+}
+
 /// Dependencies within a controller function.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Ctrl {
@@ -568,6 +590,7 @@ pub struct Ctrl {
     /// Transitive control dependencies between sources and call sites.
     pub ctrl_flow: Relation<DataSource, CallSite>,
 
+    #[cfg_attr(feature = "rustc", serde(with = "ser_ctrl_types"))]
     /// Annotations on types in a controller.
     ///
     /// Only types that have annotations are present in this map, meaning

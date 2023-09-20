@@ -1,9 +1,8 @@
 use std::{fmt::Display, io::Write, process::exit};
 
 use dfgraph::{
-    utils::write_sep,
-    rustc_portable::DefId, Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet,
-    Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    rustc_portable::DefId, utils::write_sep, Annotation, CallSite, Ctrl, DataSink, DataSource,
+    DefInfo, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 use anyhow::{anyhow, bail, ensure, Result};
@@ -268,7 +267,7 @@ impl Context {
     pub fn srcs_with_type<'a>(
         &self,
         c: &'a Ctrl,
-        t: Identifier,
+        t: DefId,
     ) -> impl Iterator<Item = &'a DataSource> + 'a {
         c.types
             .0
@@ -282,20 +281,18 @@ impl Context {
     }
 
     /// Returns all the [`Annotation::OType`]s for a controller `id`.
-    pub fn otypes(&self, id: DefId) -> Vec<Identifier> {
-        let inner = || -> Option<_> {
-            self.desc()
-                .annotations
-                .get(&id)?
-                .0
-                .iter()
-                .filter_map(|annot| match annot {
+    pub fn otypes(&self, id: DefId) -> Vec<DefId> {
+        self.desc()
+            .annotations
+            .get(&id)
+            .into_iter()
+            .flat_map(|(anns, _)| {
+                anns.iter().filter_map(|annot| match annot {
                     Annotation::OType(ids) => Some(ids.clone()),
                     _ => None,
                 })
-                .next()
-        };
-        inner().unwrap_or_default()
+            })
+            .collect()
     }
 
     /// Enforce that on every path from the `starting_points` to `is_terminal` a
@@ -385,8 +382,38 @@ pub struct AlwaysHappensBefore {
     started_with: usize,
 }
 
-impl std::fmt::Display for AlwaysHappensBefore {
+/// See [`AlwaysHappensBefore::display`].
+pub struct AlwaysHappensBeforeDisplay<'a> {
+    data: &'a AlwaysHappensBefore,
+    def_info: &'a HashMap<DefId, DefInfo>,
+}
+
+impl std::fmt::Display for AlwaysHappensBeforeDisplay<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.data.format(f, self.def_info)
+    }
+}
+
+impl AlwaysHappensBefore {
+    /// Create a struct that can format the results of this combinator with
+    /// [`std::fmt::Display`]
+    pub fn display<'a>(
+        &'a self,
+        def_info: &'a HashMap<DefId, DefInfo>,
+    ) -> AlwaysHappensBeforeDisplay<'a> {
+        AlwaysHappensBeforeDisplay {
+            data: self,
+            def_info,
+        }
+    }
+
+    /// Format the results of this combinator, using the `def_info` to print
+    /// readable names instead of ids
+    pub fn format(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        def_info: &HashMap<DefId, DefInfo>,
+    ) -> std::fmt::Result {
         let Self {
             reached,
             checkpointed,
@@ -403,7 +430,9 @@ impl std::fmt::Display for AlwaysHappensBefore {
         let cutoff = 5;
         if !self.reached.is_empty() {
             write!(f, "  reached from: [")?;
-            write_sep(f, ", ", &self.reached[0..cutoff], Display::fmt)?;
+            write_sep(f, ", ", &self.reached[0..cutoff], |elem, f| {
+                fmt_data_source(elem, f, def_info)
+            })?;
             if self.reached.len() > cutoff {
                 write!(f, ", ...")?;
             }
@@ -411,13 +440,35 @@ impl std::fmt::Display for AlwaysHappensBefore {
         }
         if !self.checkpointed.is_empty() {
             write!(f, "  checkpointed from: [")?;
-            write_sep(f, ", ", &self.reached[0..cutoff], Display::fmt)?;
+            write_sep(f, ", ", &self.reached[0..cutoff], |elem, f| {
+                fmt_data_source(elem, f, def_info)
+            })?;
             if self.checkpointed.len() > cutoff {
                 write!(f, ", ...")?;
             }
             writeln!(f, "]")?;
         }
         Ok(())
+    }
+}
+
+fn fmt_data_source(
+    src: &DataSource,
+    f: &mut std::fmt::Formatter<'_>,
+    def_info: &HashMap<DefId, DefInfo>,
+) -> std::fmt::Result {
+    match src {
+        DataSource::FunctionCall(fun) => {
+            let info = &def_info[&fun.function];
+            let path = info
+                .path
+                .iter()
+                .chain(std::iter::once(&info.name))
+                .map(Identifier::as_str)
+                .collect::<Vec<_>>();
+            write!(f, "{}", path.join("::"))
+        }
+        DataSource::Argument(num) => write!(f, "arg_{num}"),
     }
 }
 
@@ -434,7 +485,11 @@ impl AlwaysHappensBefore {
         ctx.named_combinator(*ALWAYS_HAPPENS_BEFORE_NAME, |ctx| {
             assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
             assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
-            assert_error!(ctx, self.holds(), format!("Violation detected: {}", self));
+            assert_error!(
+                ctx,
+                self.holds(),
+                format!("Violation detected: {}", self.display(&ctx.desc().def_info))
+            );
         })
     }
 
@@ -554,7 +609,7 @@ fn test_happens_before() -> Result<()> {
     )?;
 
     ensure!(pass.holds());
-    ensure!(!pass.is_vacuous(), "{pass}");
+    ensure!(!pass.is_vacuous(), "{}", pass.display(&ctx.desc().def_info));
 
     let ctrl_name = ctx.find_by_name("happens_before_fail")?;
 

@@ -187,30 +187,23 @@ impl<'tcx> MarkerCtx<'tcx> {
         let tcx = self.tcx();
         let hir = tcx.hir();
         let id = def_id.force_into_hir_id(tcx);
-        let sink_matches = hir
-            .attrs(id)
-            .iter()
-            .filter_map(|a| {
-                a.match_extract(&consts::MARKER_MARKER, |i| {
-                    Annotation::Marker(crate::ann_parse::ann_match_fn(i))
-                }).or_else(||
-                    a.match_extract(&consts::LABEL_MARKER, |i| {
-                        warn!("The `dfpp::label` annotation is deprecated, use `dfpp::marker` instead");
-                        Annotation::Marker(crate::ann_parse::ann_match_fn(i))
-                    })
-                )
-                .or_else(|| {
-                    a.match_extract(&consts::OTYPE_MARKER, |i| {
-                        Annotation::OType(crate::ann_parse::otype_ann_match(i, tcx))
-                    })
-                })
-                .or_else(|| {
-                    a.match_extract(&consts::EXCEPTION_MARKER, |i| {
-                        Annotation::Exception(crate::ann_parse::match_exception(i))
-                    })
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut sink_matches = vec![];
+        for a in hir.attrs(id) {
+            if let Some(i) = a.match_get_ref(&consts::MARKER_MARKER) {
+                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)));
+            } else if let Some(i) = a.match_get_ref(&consts::LABEL_MARKER) {
+                warn!("The `dfpp::label` annotation is deprecated, use `dfpp::marker` instead");
+                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)))
+            } else if let Some(i) = a.match_get_ref(&consts::OTYPE_MARKER) {
+                sink_matches.extend(
+                    crate::ann_parse::otype_ann_match(i, tcx)
+                        .into_iter()
+                        .map(Annotation::OType),
+                );
+            } else if let Some(i) = a.match_get_ref(&consts::EXCEPTION_MARKER) {
+                sink_matches.push(Annotation::Exception(crate::ann_parse::match_exception(i)));
+            }
+        }
         if sink_matches.is_empty() {
             return None;
         }
@@ -219,6 +212,10 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// All the markers applied to this type and its subtypes.
+    ///
+    /// Returns `(ann, (ty, did))` tuples which are the marker annotation `ann`,
+    /// the specific type `ty` that it was applied to and the `did` [`Defid`] of
+    /// that type that was used to look up the annotations.
     pub fn all_type_markers<'a>(
         &'a self,
         ty: ty::Ty<'tcx>,

@@ -58,16 +58,20 @@ pub trait MetaItemMatch {
     /// functions see the source for
     /// [`match_exception`](crate::ann_parse::match_exception) or
     /// [`ann_match_fn`](crate::ann_parse::ann_match_fn).
-    fn match_extract<A, F: Fn(&ast::AttrArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A>;
+    fn match_extract<A, F: Fn(&ast::AttrArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A> {
+        self.match_get_ref(path).map(parse)
+    }
     /// Check that this attribute matches the provided path. All attribute
     /// payload is ignored (i.e. no error if there is a payload).
     fn matches_path(&self, path: &[Symbol]) -> bool {
-        self.match_extract(path, |_| ()).is_some()
+        self.match_get_ref(path).is_some()
     }
+
+    fn match_get_ref(&self, path: &[Symbol]) -> Option<&ast::AttrArgs>;
 }
 
 impl MetaItemMatch for ast::Attribute {
-    fn match_extract<A, F: Fn(&ast::AttrArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A> {
+    fn match_get_ref(&self, path: &[Symbol]) -> Option<&ast::AttrArgs> {
         match &self.kind {
             ast::AttrKind::Normal(normal) => match &normal.item {
                 ast::AttrItem {
@@ -81,7 +85,7 @@ impl MetaItemMatch for ast::Attribute {
                         .zip(path)
                         .all(|(seg, i)| seg.ident.name == *i) =>
                 {
-                    Some(parse(args))
+                    Some(args)
                 }
                 _ => None,
             },

@@ -769,7 +769,6 @@ impl<'tcx> ForgeConverter<'tcx> {
                 std::iter::once(o.build_forge(tcx, alloc)),
                 anns.iter()
                     .filter_map(Annotation::as_otype)
-                    .flat_map(|v| v.iter())
                     .map(|t| t.build_forge(tcx, alloc)),
             )
         }))
