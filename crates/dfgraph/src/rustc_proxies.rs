@@ -108,6 +108,7 @@ proxy_struct! {
         hir_id: hir::HirId => HirId, "HirId"
     }
 
+    #[derive(Ord, PartialOrd)]
     /// Proxy for [`def_id::DefId`]
     DefId("def_id::DefId") {
         index: def_id::DefIndex => DefIndex, "DefIndex",

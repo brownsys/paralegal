@@ -8,7 +8,7 @@ extern crate pretty;
 
 use std::hash::Hash;
 
-use crate::{utils::identifier_for_item, HashSet, ModelCtrl, TyCtxt};
+use crate::{utils::unique_identifier_for_item, HashSet, ModelCtrl, TyCtxt};
 use dfgraph::{rustc_portable::DefId, ShortHash};
 use pretty::{DocAllocator, DocBuilder, Pretty};
 
@@ -180,7 +180,7 @@ impl<'a, 'tcx, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, 'tcx, A, D> for &'a st
 
 impl<'a, 'tcx, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, 'tcx, A, D> for DefId {
     fn build_forge(self, tcx: TyCtxt<'tcx>, alloc: &'a D) -> DocBuilder<'a, D, A> {
-        identifier_for_item(tcx, self.expect_local()).build_forge(tcx, alloc)
+        unique_identifier_for_item(tcx, self).build_forge(tcx, alloc)
     }
 }
 
@@ -193,7 +193,7 @@ impl<'a, 'tcx, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, 'tcx, A, D> for &'a De
 pub fn call_site_to_string(tcx: TyCtxt, cs: &CallSite) -> String {
     format!(
         "cs_{}_{}",
-        identifier_for_item(tcx, cs.function.expect_local()),
+        unique_identifier_for_item(tcx, cs.function),
         ShortHash::new(cs.location),
     )
 }
@@ -526,7 +526,7 @@ impl<'a, 'tcx, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, 'tcx, A, D> for Formal
             .append(alloc.as_string(self.position))
             .append("_")
             .append(
-                identifier_for_item(tcx, self.function.expect_local())
+                unique_identifier_for_item(tcx, self.function)
                     .as_str()
                     .to_string(),
             )
