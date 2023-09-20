@@ -1,8 +1,8 @@
 use std::{io::Write, process::exit};
 
 use dfgraph::{
-    Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet,
-    Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
+    MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use dfgraph::rustc_portable::DefId;
@@ -352,10 +352,7 @@ pub struct AlwaysHappensBefore {
 impl std::fmt::Display for AlwaysHappensBefore {
     /// Format the results of this combinator, using the `def_info` to print
     /// readable names instead of ids
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             num_reached,
             num_checkpointed,
@@ -399,9 +396,11 @@ fn test_context() {
     let ctx = crate::test_utils::test_ctx();
     let input = Marker::new_intern("input");
     let sink = Marker::new_intern("sink");
-    assert!(ctx
-        .marked(input)
-        .any(|(id, _)| ctx.desc.def_info.get(&id).map_or(false, |info| info.name.as_str().starts_with("Foo"))));
+    assert!(ctx.marked(input).any(|(id, _)| ctx
+        .desc
+        .def_info
+        .get(&id)
+        .map_or(false, |info| info.name.as_str().starts_with("Foo"))));
 
     let desc = ctx.desc();
     let controller = ctx.find_by_name("controller").unwrap();

@@ -797,11 +797,13 @@ pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> I
                     _ => None,
                 }
             })
-            .unwrap_or_else(|| panic!(
-                "Could not name {} {:?}",
-                tcx.def_path_debug_str(did),
-                tcx.def_kind(did)
-            )),
+            .unwrap_or_else(|| {
+                panic!(
+                    "Could not name {} {:?}",
+                    tcx.def_path_debug_str(did),
+                    tcx.def_kind(did)
+                )
+            }),
     )
 }
 

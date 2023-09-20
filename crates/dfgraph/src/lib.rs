@@ -213,7 +213,7 @@ mod ser_defid_map {
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         map.iter()
-            .map(|(k, v)| (Helper(*k), v.clone()))
+            .map(|(k, v)| (Helper(*k), v))
             .collect::<Vec<_>>()
             .serialize(serializer)
     }
@@ -559,12 +559,7 @@ mod ser_ctrl_types {
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         map.iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    v.into_iter().copied().map(Helper).collect::<Vec<_>>(),
-                )
-            })
+            .map(|(k, v)| (k.clone(), v.iter().copied().map(Helper).collect::<Vec<_>>()))
             .collect::<Vec<_>>()
             .serialize(serializer)
     }
