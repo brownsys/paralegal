@@ -238,7 +238,7 @@ impl Context {
     pub fn srcs_with_type<'a>(
         &self,
         c: &'a Ctrl,
-        t: Identifier,
+        t: DefId,
     ) -> impl Iterator<Item = &'a DataSource> + 'a {
         c.types
             .0
@@ -252,20 +252,18 @@ impl Context {
     }
 
     /// Returns all the [`Annotation::OType`]s for a controller `id`.
-    pub fn otypes(&self, id: DefId) -> Vec<Identifier> {
-        let inner = || -> Option<_> {
-            self.desc()
-                .annotations
-                .get(&id)?
-                .0
-                .iter()
-                .filter_map(|annot| match annot {
+    pub fn otypes(&self, id: DefId) -> Vec<DefId> {
+        self.desc()
+            .annotations
+            .get(&id)
+            .into_iter()
+            .flat_map(|(anns, _)| {
+                anns.iter().filter_map(|annot| match annot {
                     Annotation::OType(ids) => Some(ids.clone()),
                     _ => None,
                 })
-                .next()
-        };
-        inner().unwrap_or_default()
+            })
+            .collect()
     }
 
     /// Enforce that on every path from the `starting_points` to `is_terminal` a
@@ -350,7 +348,12 @@ pub struct AlwaysHappensBefore {
 }
 
 impl std::fmt::Display for AlwaysHappensBefore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    /// Format the results of this combinator, using the `def_info` to print
+    /// readable names instead of ids
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         let Self {
             num_reached,
             num_checkpointed,
@@ -482,7 +485,7 @@ fn test_happens_before() -> Result<()> {
     )?;
 
     ensure!(pass.holds());
-    ensure!(!pass.is_vacuous(), "{pass}");
+    ensure!(!pass.is_vacuous(), "{}", pass);
 
     let ctrl_name = ctx.find_by_name("happens_before_fail")?;
 

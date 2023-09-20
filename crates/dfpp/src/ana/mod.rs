@@ -100,7 +100,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 let subtypes = self
                     .marker_ctx
                     .all_type_markers(ty)
-                    .map(|t| t.0.marker)
+                    .map(|t| t.1 .1)
                     .collect::<HashSet<_>>();
                 (DataSource::Argument(l.as_usize() - 1), subtypes)
             });
@@ -183,7 +183,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             let interesting_output_types: HashSet<_> = self
                 .marker_ctx
                 .all_function_markers(instance)
-                .filter_map(|(_, t)| Some(identifier_for_item(self.tcx, t?.1)))
+                .filter_map(|(_, t)| Some(t?.1))
                 .collect();
             if !interesting_output_types.is_empty() {
                 flows.types.0.insert(
