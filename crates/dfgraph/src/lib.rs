@@ -32,6 +32,7 @@ use global_location::GlobalLocation;
 use indexical::define_index_type;
 use internment::Intern;
 use itertools::Itertools;
+use rustc_portable::DefId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     borrow::Cow,
@@ -43,7 +44,7 @@ use std::{
 pub use crate::tiny_bitset::TinyBitSet;
 pub use std::collections::{HashMap, HashSet};
 
-pub type Endpoint = Identifier;
+pub type Endpoint = DefId;
 pub type TypeDescriptor = Identifier;
 pub type Function = Identifier;
 
@@ -201,16 +202,64 @@ impl ObjectType {
     }
 }
 
-pub type AnnotationMap = HashMap<Identifier, (Vec<Annotation>, ObjectType)>;
+pub type AnnotationMap = HashMap<DefId, (Vec<Annotation>, ObjectType)>;
+
+#[cfg(feature = "rustc")]
+mod ser_defid_map {
+    use serde::{Deserialize, Serialize};
+
+    use crate::rustc_proxies;
+
+    #[derive(Serialize, Deserialize)]
+    struct Helper(#[serde(with = "rustc_proxies::DefId")] super::DefId);
+
+    pub fn serialize<S: serde::Serializer, V: serde::Serialize>(
+        map: &super::HashMap<super::DefId, V>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        map.iter()
+            .map(|(k, v)| (Helper(*k), v.clone()))
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>, V: serde::Deserialize<'de>>(
+        deserializer: D,
+    ) -> Result<super::HashMap<super::DefId, V>, D::Error> {
+        Ok(Vec::deserialize(deserializer)?
+            .into_iter()
+            .map(|(Helper(k), v)| (k, v))
+            .collect())
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct DefInfo {
+    pub name: Identifier,
+    pub path: Vec<Identifier>,
+    pub kind: DefKind,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum DefKind {
+    Function,
+    Type,
+}
 
 /// The annotated program dependence graph.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Mapping from function names to dependencies within the function.
     pub controllers: HashMap<Endpoint, Ctrl>,
 
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Mapping from objects to annotations on those objects.
     pub annotations: AnnotationMap,
+
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    /// Metadata about the `DefId`s
+    pub def_info: HashMap<DefId, DefInfo>,
 }
 
 impl ProgramDescription {
@@ -232,7 +281,7 @@ impl ProgramDescription {
     /// Gather all [`DataSource`]s that are mentioned in this program description.
     ///
     /// Essentially just `self.controllers.flat_map(|c| c.keys())`
-    pub fn all_sources_with_ctrl(&self) -> HashSet<(Identifier, &DataSource)> {
+    pub fn all_sources_with_ctrl(&self) -> HashSet<(DefId, &DataSource)> {
         self.controllers
             .iter()
             .flat_map(|(name, c)| {
@@ -289,15 +338,15 @@ impl ProgramDescription {
     /// Gather all function identifiers that are mentioned in this program description.
     ///
     /// Essentially just `self.all_call_sites().map(|cs| cs.function)`
-    pub fn all_functions(&self) -> HashSet<&Identifier> {
+    pub fn all_functions(&self) -> HashSet<DefId> {
         self.all_call_sites()
             .into_iter()
-            .map(|cs| &cs.function)
+            .map(|cs| cs.function)
             .chain(
                 self.annotations
                     .iter()
                     .filter(|f| f.1 .1.as_function().is_some())
-                    .map(|f| f.0),
+                    .map(|f| *f.0),
             )
             .collect()
     }
@@ -340,6 +389,20 @@ impl std::fmt::Display for Identifier {
 #[derive(Debug)]
 pub struct Relation<X, Y>(pub HashMap<X, HashSet<Y>>);
 
+impl<X, Y> std::ops::Deref for Relation<X, Y> {
+    type Target = HashMap<X, HashSet<Y>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<X, Y> std::ops::DerefMut for Relation<X, Y> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl<X: Serialize, Y: Serialize + Hash + Eq> Serialize for Relation<X, Y> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -374,8 +437,9 @@ pub struct CallSite {
     /// The location of the call.
     pub location: GlobalLocation,
 
-    /// The name of the function being called.
-    pub function: Function,
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    /// The id of the function being called.
+    pub function: DefId,
 }
 
 /// Create a hash for this object that is no longer than six hex digits
@@ -413,15 +477,15 @@ fn hash_pls<T: Hash>(t: T) -> u64 {
     hasher.finish()
 }
 
-impl std::string::ToString for CallSite {
-    fn to_string(&self) -> String {
-        format!(
-            "cs_{}_{}",
-            self.function.as_str(),
-            ShortHash::new(self.location),
-        )
-    }
-}
+// impl std::string::ToString for CallSite {
+//     fn to_string(&self) -> String {
+//         format!(
+//             "cs_{}_{}",
+//             self.function.as_str(),
+//             ShortHash::new(self.location),
+//         )
+//     }
+// }
 
 /// A representation of something that can emit data into the flow.
 ///

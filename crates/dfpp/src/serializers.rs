@@ -118,17 +118,6 @@ impl BodyProxy {
     }
 }
 
-/// This exists because of serde's restrictions on how you derive serializers.
-/// [`BodyIdProxy`] can be used to serialize a [`BodyId`](hir::BodyId) but if
-/// the [`BodyId`](hir::BodyId) is used as e.g. a key in a map or in a vector it
-/// does not dispatch to the remote impl on [`BodyIdProxy`]. Implementing the
-/// serializers for the map or vector by hand is annoying so instead you can map
-/// over the datastructure, wrap each [`BodyId`](hir::BodyId) in this proxy type
-/// and then dispatch to the `serialize` impl for the reconstructed data
-/// structure.
-#[derive(Serialize, Deserialize)]
-pub struct BodyIdProxy2(#[serde(with = "dfgraph::rustc_proxies::BodyId")] pub hir::BodyId);
-
 pub mod serde_map_via_vec {
     //! Serialize a [`HashMap`] by converting it to a [`Vec`], lifting
     //! restrictions on the types of permissible keys.
@@ -179,6 +168,17 @@ pub mod serde_map_via_vec {
         Ok(Vec::deserialize(deserializer)?.into_iter().collect())
     }
 }
+
+/// This exists because of serde's restrictions on how you derive serializers.
+/// [`BodyIdProxy`] can be used to serialize a [`BodyId`](hir::BodyId) but if
+/// the [`BodyId`](hir::BodyId) is used as e.g. a key in a map or in a vector it
+/// does not dispatch to the remote impl on [`BodyIdProxy`]. Implementing the
+/// serializers for the map or vector by hand is annoying so instead you can map
+/// over the datastructure, wrap each [`BodyId`](hir::BodyId) in this proxy type
+/// and then dispatch to the `serialize` impl for the reconstructed data
+/// structure.
+#[derive(Serialize, Deserialize)]
+pub struct BodyIdProxy2(#[serde(with = "dfgraph::rustc_proxies::BodyId")] pub hir::BodyId);
 
 /// A serializable version of [`mir::Body`]s, mapped to their [`hir::BodyId`] so
 /// that you can resolve the body belonging to a global location (see

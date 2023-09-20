@@ -1035,7 +1035,7 @@ impl CallSiteExt for CallSite {
     fn new(location: &GlobalLocation, function: DefId, tcx: TyCtxt<'_>) -> Self {
         Self {
             location: *location,
-            function: identifier_for_item(tcx, function),
+            function,
         }
     }
 }

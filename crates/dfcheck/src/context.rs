@@ -1,11 +1,12 @@
 use std::{fmt::Display, io::Write, process::exit};
 
 use dfgraph::{
-    utils::write_sep, Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet,
+    utils::write_sep,
+    rustc_portable::DefId, Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet,
     Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use indexical::ToIndex;
 use itertools::Itertools;
 
@@ -18,8 +19,11 @@ pub use crate::diagnostics::DiagnosticMessage;
 /// User-defined PDG markers.
 pub type Marker = Identifier;
 
-type MarkerIndex = HashMap<Marker, Vec<(Identifier, MarkerRefinement)>>;
-type FlowsTo = HashMap<Identifier, CtrlFlowsTo>;
+pub type ControllerId = DefId;
+pub type FunctionId = DefId;
+
+type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
+type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
 /// Check the condition and emit a [`Context::error`] if it fails.
 #[macro_export]
@@ -65,6 +69,7 @@ pub struct Context {
     flows_to: FlowsTo,
     diagnostics: Diagnostics,
     diagnostic_context: DiagnosticContextStack,
+    name_map: HashMap<Identifier, Vec<DefId>>,
 }
 
 impl Context {
@@ -72,13 +77,67 @@ impl Context {
     ///
     /// This also precomputes some data structures like an index over markers.
     pub fn new(desc: ProgramDescription) -> Self {
+        let name_map = desc
+            .def_info
+            .iter()
+            .map(|(k, v)| (v.name, *k))
+            .into_group_map();
         Context {
             marker_to_ids: Self::build_index_on_markers(&desc),
             flows_to: Self::build_flows_to(&desc),
             desc,
             diagnostics: Default::default(),
             diagnostic_context: Default::default(),
+            name_map,
         }
+    }
+
+    /// Find a type, controller or function id by its name.
+    ///
+    /// Since many often share the same name this can fail with too many
+    /// candidates. To handle such cases use [`Self::find_by_path`] or
+    /// [`Self::find_all_by_name`].
+    pub fn find_by_name(&self, name: impl AsRef<str>) -> Result<DefId> {
+        let name = name.as_ref();
+        match self.find_all_by_name(name)? {
+            [one] => Ok(*one),
+            [] => bail!("Impossible, group cannot be empty ({name})"),
+            _other => bail!("Too many candidates for name '{name}'"),
+        }
+    }
+
+    /// Find all types, controllers and functions with this name.
+    pub fn find_all_by_name(&self, name: impl AsRef<str>) -> Result<&[DefId]> {
+        let name = Identifier::new_intern(name.as_ref());
+        self.name_map
+            .get(&name)
+            .ok_or_else(|| anyhow!("Did not know the name {name}"))
+            .map(Vec::as_slice)
+    }
+
+    /// Find a type, controller or function with this path.
+    pub fn find_by_path(&self, path: impl AsRef<[Identifier]>) -> Result<DefId> {
+        let slc = path.as_ref();
+        let (name, path) = slc
+            .split_last()
+            .ok_or_else(|| anyhow!("Path must be at least of length 1"))?;
+        let matching = self
+            .name_map
+            .get(name)
+            .ok_or_else(|| anyhow!("Did not know the name {name}"))?;
+        for candidate in matching.iter() {
+            if self
+                .desc()
+                .def_info
+                .get(candidate)
+                .ok_or_else(|| anyhow!("Impossible"))?
+                .path
+                == path
+            {
+                return Ok(*candidate);
+            }
+        }
+        Err(anyhow!("Found no candidate matching the path."))
     }
 
     /// Dispatch and drain all queued diagnostics, aborts the program if any of
@@ -151,7 +210,7 @@ impl Context {
     }
 
     /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn flows_to(&self, ctrl_id: Identifier, src: &DataSource, sink: &DataSink) -> bool {
+    pub fn flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .flows_to
@@ -163,7 +222,7 @@ impl Context {
     pub fn marked(
         &self,
         marker: Marker,
-    ) -> impl Iterator<Item = &'_ (Identifier, MarkerRefinement)> + '_ {
+    ) -> impl Iterator<Item = &'_ (DefId, MarkerRefinement)> + '_ {
         self.marker_to_ids
             .get(&marker)
             .into_iter()
@@ -223,7 +282,7 @@ impl Context {
     }
 
     /// Returns all the [`Annotation::OType`]s for a controller `id`.
-    pub fn otypes(&self, id: Identifier) -> Vec<Identifier> {
+    pub fn otypes(&self, id: DefId) -> Vec<Identifier> {
         let inner = || -> Option<_> {
             self.desc()
                 .annotations
@@ -239,14 +298,6 @@ impl Context {
         inner().unwrap_or_default()
     }
 
-    /// Returns true if `id` identifies a function with name `name`.
-    pub fn is_function(&self, id: Identifier, name: &str) -> bool {
-        match id.as_str().rsplit_once('_') {
-            Some((id_name, _)) => id_name == name,
-            None => false,
-        }
-    }
-
     /// Enforce that on every path from the `starting_points` to `is_terminal` a
     /// node satisfying `is_checkpoint` is passed.
     ///
@@ -260,7 +311,7 @@ impl Context {
     /// always return the same result for the same input.
     pub fn always_happens_before(
         &self,
-        ctrl: Identifier,
+        ctrl: ControllerId,
         starting_points: impl Iterator<Item = DataSource>,
         mut is_checkpoint: impl FnMut(&DataSink) -> bool,
         mut is_terminal: impl FnMut(&DataSink) -> bool,
@@ -279,7 +330,7 @@ impl Context {
             .desc()
             .controllers
             .get(&ctrl)
-            .ok_or_else(|| anyhow!("Controller {ctrl} not found"))?
+            .ok_or_else(|| anyhow!("Controller not found"))?
             .data_flow
             .0;
 
@@ -417,15 +468,11 @@ fn test_context() {
     let sink = Marker::new_intern("sink");
     assert!(ctx
         .marked(input)
-        .any(|(id, _)| id.as_str().starts_with("Foo")));
+        .any(|(id, _)| ctx.desc.def_info[&id].name.as_str().starts_with("Foo")));
 
     let desc = ctx.desc();
-    let controller = desc
-        .controllers
-        .keys()
-        .find(|id| ctx.is_function(**id, "controller"))
-        .unwrap();
-    let ctrl = &desc.controllers[controller];
+    let controller = ctx.find_by_name("controller").unwrap();
+    let ctrl = &desc.controllers[&controller];
 
     assert_eq!(ctx.marked_sinks(ctrl.data_sinks(), input).count(), 0);
     assert_eq!(ctx.marked_sinks(ctrl.data_sinks(), sink).count(), 2);
@@ -465,7 +512,7 @@ fn test_happens_before() -> Result<()> {
 
     fn marked_sources(
         desc: &ProgramDescription,
-        ctrl_name: Identifier,
+        ctrl_name: DefId,
         marker: Marker,
     ) -> impl Iterator<Item = &DataSource> {
         desc.controllers[&ctrl_name]
@@ -497,11 +544,7 @@ fn test_happens_before() -> Result<()> {
             })
     }
 
-    let ctrl_name = *desc
-        .controllers
-        .keys()
-        .find(|id| ctx.is_function(**id, "happens_before_pass"))
-        .unwrap();
+    let ctrl_name = ctx.find_by_name("happens_before_pass")?;
 
     let pass = ctx.always_happens_before(
         ctrl_name,
@@ -513,11 +556,7 @@ fn test_happens_before() -> Result<()> {
     ensure!(pass.holds());
     ensure!(!pass.is_vacuous(), "{pass}");
 
-    let ctrl_name = *desc
-        .controllers
-        .keys()
-        .find(|id| ctx.is_function(**id, "happens_before_fail"))
-        .unwrap();
+    let ctrl_name = ctx.find_by_name("happens_before_fail")?;
 
     let fail = ctx.always_happens_before(
         ctrl_name,

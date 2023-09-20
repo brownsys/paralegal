@@ -10,11 +10,13 @@ use crate::{
     utils::outfile_pls,
     HashSet, Symbol,
 };
+use dfgraph::{rustc_portable::DefId, DefInfo};
 use hir::BodyId;
 use rustc_middle::mir;
 
 use either::Either;
 
+use itertools::Itertools;
 use std::borrow::Cow;
 use std::io::prelude::*;
 use std::path::Path;
@@ -534,11 +536,21 @@ impl G {
 pub trait HasGraph<'g>: Sized + Copy {
     fn graph(self) -> &'g PreFrg;
 
-    fn function(self, name: &str) -> FnRef<'g> {
+    fn function(self, name: impl AsRef<str>) -> FnRef<'g> {
+        let name = Identifier::new_intern(name.as_ref());
+        let id = match self.graph().name_map[&name].as_slice() {
+            [one] => *one,
+            [] => panic!("Did not find name {name}"),
+            _ => panic!("Found too many function matching name {name}"),
+        };
         FnRef {
             graph: self.graph(),
-            ident: Identifier::new_intern(name),
+            ident: id,
         }
+    }
+
+    fn info_for(self, id: DefId) -> &'g DefInfo {
+        &self.graph().desc.def_info[&id]
     }
 
     fn ctrl(self, name: &str) -> CtrlRef<'g> {
@@ -546,30 +558,21 @@ pub trait HasGraph<'g>: Sized + Copy {
         CtrlRef {
             graph: self.graph(),
             ident,
-            ctrl: &self.graph().0.controllers[&self.ctrl_hashed(name)],
+            ctrl: &self.graph().desc.controllers[&self.ctrl_hashed(name)],
         }
     }
 
-    fn ctrl_hashed(self, name: &str) -> Identifier {
-        match self
-            .graph()
-            .0
-            .controllers
-            .iter()
-            .filter(|(id, _)| id.as_str().starts_with(name) && id.as_str().len() == name.len() + 7)
-            .map(|i| i.0)
-            .collect::<Vec<_>>()
-            .as_slice()
-        {
+    fn ctrl_hashed(self, name: &str) -> DefId {
+        match self.graph().name_map[&Identifier::new_intern(name)].as_slice() {
             [] => panic!("Could not find controller '{name}'"),
-            [ctrl] => **ctrl,
+            [ctrl] => *ctrl,
             more => panic!("Too many matching controllers, found candidates: {more:?}"),
         }
     }
 
     fn has_marker(self, marker: &str) -> bool {
         let marker = Identifier::new_intern(marker);
-        self.graph().0.annotations.values().any(|v| {
+        self.graph().desc.annotations.values().any(|v| {
             v.0.iter()
                 .filter_map(|a| a.as_marker())
                 .any(|m| m.marker == marker)
@@ -577,11 +580,14 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 
     fn annotations(self) -> &'g AnnotationMap {
-        &self.graph().0.annotations
+        &self.graph().desc.annotations
     }
 }
 
-pub struct PreFrg(pub ProgramDescription);
+pub struct PreFrg {
+    pub desc: ProgramDescription,
+    pub name_map: crate::HashMap<Identifier, Vec<crate::DefId>>,
+}
 
 impl<'g> HasGraph<'g> for &'g PreFrg {
     fn graph(self) -> &'g PreFrg {
@@ -592,16 +598,17 @@ impl<'g> HasGraph<'g> for &'g PreFrg {
 impl PreFrg {
     pub fn from_file_at(dir: &str) -> Self {
         use_rustc(|| {
-            Self(
-                serde_json::from_reader(
-                    &mut std::fs::File::open(format!(
-                        "{dir}/{}",
-                        crate::consts::FLOW_GRAPH_OUT_NAME
-                    ))
+            let desc: ProgramDescription = serde_json::from_reader(
+                &mut std::fs::File::open(format!("{dir}/{}", crate::consts::FLOW_GRAPH_OUT_NAME))
                     .unwrap(),
-                )
-                .unwrap(),
             )
+            .unwrap();
+            let name_map = desc
+                .def_info
+                .iter()
+                .map(|(def_id, info)| (info.name, *def_id))
+                .into_group_map();
+            Self { desc, name_map }
         })
     }
 }
@@ -677,12 +684,7 @@ impl<'g> CtrlRef<'g> {
                         ctrl: Cow::Borrowed(self),
                     }),
             )
-            .filter(|ref_| {
-                ref_.call_site
-                    .function
-                    .as_str()
-                    .starts_with(ref_.function.ident.as_str())
-            })
+            .filter(|ref_| ref_.call_site.function == fun.ident)
             .collect();
         all.dedup_by_key(|r| r.call_site);
         all
@@ -693,7 +695,7 @@ impl<'g> CtrlRef<'g> {
         assert!(
             cs.len() == 1,
             "expected only one call site for {}, found {}",
-            fun.ident,
+            fun.info_for(fun.ident).name,
             cs.len()
         );
         cs.pop().unwrap()
@@ -712,7 +714,7 @@ impl<'g> HasGraph<'g> for &FnRef<'g> {
 
 pub struct FnRef<'g> {
     graph: &'g PreFrg,
-    ident: Identifier,
+    ident: DefId,
 }
 
 impl<'g> FnRef<'g> {

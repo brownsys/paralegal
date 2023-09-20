@@ -73,7 +73,10 @@ proxy_index! {
     ItemLocalId("hir::ItemLocalId") from "item_local_id_as_u32";
 
     /// Proxy for `def_id::DefIndex`
-    DefIndex("def_id::DefIndex") from "def_index_as_u32"
+    DefIndex("def_id::DefIndex") from "def_index_as_u32";
+
+    /// Proxy for [`hir::def_id::CrateNum`]
+    CrateNum("hir::def_id::CrateNum") from "crate_num_as_u32"
 }
 
 proxy_struct! {
@@ -103,6 +106,12 @@ proxy_struct! {
     /// Proxy for `hir::BodyId`
     BodyId("hir::BodyId") {
         hir_id: hir::HirId => HirId, "HirId"
+    }
+
+    /// Proxy for [`def_id::DefId`]
+    DefId("def_id::DefId") {
+        index: def_id::DefIndex => DefIndex, "DefIndex",
+        krate: hir::def_id::CrateNum => CrateNum, "CrateNum"
     }
 }
 
