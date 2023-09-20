@@ -235,7 +235,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 DataSink::Return,
             );
         }
-        Ok((identifier_for_item(tcx, target.body_id), flows))
+        Ok((target.body_id.into_def_id(tcx), flows))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -303,7 +303,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                                 // XXX add an actual match here
                                 ObjectType::Type
                             };
-                            (identifier_for_item(tcx, did), (anns, obj_type))
+                            (did.into_def_id(tcx), (anns, obj_type))
                         })
                         .collect(),
                 });

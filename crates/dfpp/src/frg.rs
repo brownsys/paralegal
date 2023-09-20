@@ -191,7 +191,7 @@ impl<'a, 'tcx, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, 'tcx, A, D> for &'a De
     }
 }
 
-fn call_site_to_string(tcx: TyCtxt, cs: &CallSite) -> String {
+pub fn call_site_to_string(tcx: TyCtxt, cs: &CallSite) -> String {
     format!(
         "cs_{}_{}",
         identifier_for_item(tcx, cs.function.expect_local()),
@@ -534,12 +534,19 @@ impl<'a, 'tcx, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, 'tcx, A, D> for Formal
     }
 }
 
-struct ForgeConverter<'tcx> {
+pub struct ForgeConverter<'tcx> {
     description: ProgramDescription,
     tcx: TyCtxt<'tcx>,
 }
 
 impl<'tcx> ForgeConverter<'tcx> {
+    pub fn new(
+        description: ProgramDescription,
+        tcx: TyCtxt<'tcx>,
+    ) -> Self {
+        Self { description, tcx }
+    }
+
     /// Returns all labels in this program description, including the special
     /// [`name::EXCEPTIONS_LABEL`] label.
     fn used_labels(&self) -> HashSet<Identifier> {
@@ -926,7 +933,7 @@ impl<'tcx> ForgeConverter<'tcx> {
         }
     }
 
-    fn serialize_forge<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
+    pub fn serialize_forge<'a, A: 'a + Clone, D: DocAllocator<'a, A>>(
         &'a self,
         alloc: &'a D,
         model_ctrl: &ModelCtrl,
