@@ -95,19 +95,18 @@ impl fmt::Debug for CtrlFlowsTo {
 
 #[test]
 fn test_flows_to() {
+    use dfgraph::Identifier;
     let ctx = crate::test_utils::test_ctx();
-    let controller = *ctx
-        .desc()
-        .controllers
-        .keys()
-        .find(|id| ctx.is_function(**id, "controller"))
-        .unwrap();
+    let controller = ctx.find_by_name("controller").unwrap();
     let src = DataSource::Argument(0);
     let get_sink = |name| {
+        let name = Identifier::new_intern(name);
         ctx.desc().controllers[&controller]
             .data_sinks()
             .find(|sink| match sink {
-                DataSink::Argument { function, .. } => ctx.is_function(function.function, name),
+                DataSink::Argument { function, .. } => {
+                    ctx.desc().def_info[&function.function].name == name
+                }
                 _ => false,
             })
             .unwrap()

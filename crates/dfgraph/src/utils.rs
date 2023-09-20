@@ -21,5 +21,3 @@ pub fn write_sep<
     }
     Ok(())
 }
-
-

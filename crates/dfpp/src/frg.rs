@@ -180,8 +180,7 @@ impl<'a, 'tcx, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, 'tcx, A, D> for &'a st
 
 impl<'a, 'tcx, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, 'tcx, A, D> for DefId {
     fn build_forge(self, tcx: TyCtxt<'tcx>, alloc: &'a D) -> DocBuilder<'a, D, A> {
-        identifier_for_item(tcx, self.expect_local())
-            .build_forge(tcx, alloc)
+        identifier_for_item(tcx, self.expect_local()).build_forge(tcx, alloc)
     }
 }
 
@@ -540,10 +539,11 @@ pub struct ForgeConverter<'tcx> {
 }
 
 impl<'tcx> ForgeConverter<'tcx> {
-    pub fn new(
-        description: ProgramDescription,
-        tcx: TyCtxt<'tcx>,
-    ) -> Self {
+    pub fn desc(&self) -> &ProgramDescription {
+        &self.description
+    }
+
+    pub fn new(description: ProgramDescription, tcx: TyCtxt<'tcx>) -> Self {
         Self { description, tcx }
     }
 

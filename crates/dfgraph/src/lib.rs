@@ -228,6 +228,19 @@ mod ser_defid_map {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct DefInfo {
+    pub name: Identifier,
+    pub path: Vec<Identifier>,
+    pub kind: DefKind,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum DefKind {
+    Function,
+    Type,
+}
+
 /// The annotated program dependence graph.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
@@ -238,6 +251,10 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Mapping from objects to annotations on those objects.
     pub annotations: AnnotationMap,
+
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    /// Metadata about the `DefId`s
+    pub def_info: HashMap<DefId, DefInfo>,
 }
 
 impl ProgramDescription {
@@ -366,6 +383,20 @@ impl std::fmt::Display for Identifier {
 /// for it. Also allows us to serialize it more conveniently.
 #[derive(Debug)]
 pub struct Relation<X, Y>(pub HashMap<X, HashSet<Y>>);
+
+impl<X, Y> std::ops::Deref for Relation<X, Y> {
+    type Target = HashMap<X, HashSet<Y>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<X, Y> std::ops::DerefMut for Relation<X, Y> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 impl<X: Serialize, Y: Serialize + Hash + Eq> Serialize for Relation<X, Y> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
