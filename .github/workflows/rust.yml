@@ -46,6 +46,10 @@ jobs:
         cargo test -p dfpp --test new_alias_analysis_tests
         cargo test -p dfpp --test async_tests
         cargo test -p dfpp --test inline_elision_tests
+    - name: Build Test Policies
+      run: |
+        cd props
+        cargo build --verbose
 
   intergration-tests:
     name: Integration Tests
