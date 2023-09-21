@@ -796,7 +796,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a86ed3f5f244b372d6b1a00b72ef7f8876d0bc6a78a4c9985c53614041512063"
 
 [[package]]
-name = "parable"
+name = "paralegal-explore"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "dialoguer",
+ "indicatif",
+ "paralegal-flow",
+ "petgraph",
+ "ringbuffer",
+ "serde-lexpr",
+]
+
+[[package]]
+name = "paralegal-flow"
 version = "0.0.1"
 dependencies = [
  "anyhow",
@@ -813,8 +827,8 @@ dependencies = [
  "num-derive",
  "num-traits",
  "ordermap",
- "parable",
- "paragraph",
+ "paralegal-flow",
+ "paralegal-spdg",
  "petgraph",
  "pretty",
  "rustc_plugin 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -829,21 +843,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "parachute"
+name = "paralegal-policy"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "clap",
- "dialoguer",
- "indicatif",
- "parable",
- "petgraph",
- "ringbuffer",
- "serde-lexpr",
+ "anyhow",
+ "indexical",
+ "itertools",
+ "log",
+ "paralegal-flow",
+ "paralegal-spdg",
+ "serde_json",
+ "simple_logger",
 ]
 
 [[package]]
-name = "paragraph"
+name = "paralegal-spdg"
 version = "0.1.0"
 dependencies = [
  "cfg-if",
@@ -853,20 +867,6 @@ dependencies = [
  "log",
  "serde",
  "strum",
-]
-
-[[package]]
-name = "paranoia"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "indexical",
- "itertools",
- "log",
- "parable",
- "paragraph",
- "serde_json",
- "simple_logger",
 ]
 
 [[package]]

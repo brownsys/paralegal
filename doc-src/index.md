@@ -9,5 +9,5 @@ The compiler docs do not interlink with the docs for the `dfpp` crate and its
 dependencies, because I haven't yet figured out how to build them such that they
 do. As a result the two documentations are hosted here separately.
 
-- [Link to the parable crate documentation](libs/parable/index.html) (dependent, non-rustc crates are linked)
+- [Link to the paralegal-flow crate documentation](libs/paralegal-flow/index.html) (dependent, non-rustc crates are linked)
 - [Link to the rustc 1.63.0 documentation](compiler/index.html)

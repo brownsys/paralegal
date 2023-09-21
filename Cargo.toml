@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-exclude = ["props", "crates/parable/tests", "crates/paranoia/tests"]
+exclude = ["props", "crates/paralegal-flow/tests", "crates/paralegal-policy/tests"]
 
 [workspace.dependencies]
 indexical = "0.2.2"

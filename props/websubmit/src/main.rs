@@ -3,7 +3,7 @@ extern crate anyhow;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
-use paranoia::{assert_error, paragraph::Identifier, Context, Marker};
+use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Context, Marker};
 
 pub struct DeletionProp {
     cx: Arc<Context>,
@@ -81,7 +81,7 @@ fn main() -> Result<()> {
     let ws_dir = std::env::args()
         .nth(1)
         .ok_or_else(|| anyhow!("expected an argument"))?;
-    paranoia::SPDGGenCommand::global()
+    paralegal_policy::SPDGGenCommand::global()
         .run(ws_dir)?
         .with_context(|ctx| {
             DeletionProp::new(ctx).check();
