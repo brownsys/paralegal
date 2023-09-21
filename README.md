@@ -12,7 +12,7 @@ For your convenience during development the documentation for the code and rustc
 
 - `crates`: The source code of the various parts and tools that comprise
   Paralegal
-  - `paralegal-spdg`
-  - `paralegal-flow`
-  - `paralegal-policy`
-  - `paralegal-explore`
+  - `paralegal-spdg`: Definition of the Semantic Program Dependence Graph
+  - `paralegal-flow`: Rustc plugin that extracts an SPDG by means of control and data flow analysis
+  - `paralegal-policy`: Framework for defining policies as graph queries
+  - `paralegal-explore`: Query and visualize parts of an SPDG
