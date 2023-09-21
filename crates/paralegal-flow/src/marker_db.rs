@@ -8,8 +8,8 @@ use crate::{
     desc::{Annotation, MarkerAnnotation},
     mir, ty,
     utils::{
-        AsFnAndArgs, FnResolution, GenericArgExt, IntoDefId, IntoHirId, MetaItemMatch,
-        TyCtxtExt, TyExt,
+        AsFnAndArgs, FnResolution, GenericArgExt, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt,
+        TyExt,
     },
     DefId, HashMap, LocalDefId, TyCtxt,
 };
@@ -132,8 +132,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     ///
     /// XXX Does not take into account reachable type markers
     pub fn marker_is_reachable(&self, def_id: DefId) -> bool {
-        self.is_marked(def_id)
-            || self.has_transitive_reachable_markers(def_id)
+        self.is_marked(def_id) || self.has_transitive_reachable_markers(def_id)
     }
 
     /// Queries the transitive marker cache.
@@ -237,7 +236,6 @@ impl<'tcx> MarkerCtx<'tcx> {
             )
     }
 }
-
 
 /// We expect most local items won't have annotations. This structure is much
 /// smaller (8 bytes) than without the `Box` (24 Bytes).

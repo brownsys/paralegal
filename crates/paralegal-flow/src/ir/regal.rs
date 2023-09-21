@@ -16,10 +16,7 @@ use crate::{
     },
     hir::def_id::LocalDefId,
     mir::{self, BasicBlock, Field, HasLocalDecls, Location},
-    rust::{
-        rustc_ast, rustc_index::bit_set::HybridBitSet,
-        rustc_index::vec::IndexVec,
-    },
+    rust::{rustc_ast, rustc_index::bit_set::HybridBitSet, rustc_index::vec::IndexVec},
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
         DisplayViaDebug, FnResolution,

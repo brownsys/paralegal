@@ -13,7 +13,7 @@
 //! Some types (such as [`mir::Body`]) first have to be explicitly transformed
 //! into the respective proxy type. In the case of [`mir::Body`] this can be
 //! done with [`BodyProxy::from_body_with_normalize`]
-use paralegal_spdg::{Identifier, rustc_portable::DefId};
+use paralegal_spdg::{rustc_portable::DefId, Identifier};
 use serde::Deserialize;
 
 use crate::{

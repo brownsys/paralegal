@@ -853,7 +853,7 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     ) -> &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx> {
         rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
             self,
-            b.expect_local()
+            b.expect_local(),
         )
     }
 }

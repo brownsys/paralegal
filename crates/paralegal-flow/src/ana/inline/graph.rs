@@ -1,7 +1,8 @@
 use crate::{
     ir::{regal, GlobalLocation},
     mir, serde,
-    utils::{time, write_sep, DisplayViaDebug, FnResolution, TinyBitSet}, Either, HashMap, HashSet, Location, TyCtxt,
+    utils::{time, write_sep, DisplayViaDebug, FnResolution, TinyBitSet},
+    Either, HashMap, HashSet, Location, TyCtxt,
 };
 
 use super::algebra;
@@ -341,9 +342,7 @@ impl<'tcx> InlinedGraph<'tcx> {
 }
 
 /// Globalize all locations mentioned in these equations.
-fn to_global_equations(
-    eqs: &Equations<DisplayViaDebug<mir::Local>>,
-) -> Equations<GlobalLocal> {
+fn to_global_equations(eqs: &Equations<DisplayViaDebug<mir::Local>>) -> Equations<GlobalLocal> {
     eqs.iter()
         .map(|eq| eq.map_bases(|target| GlobalLocal::at_root(**target)))
         .collect()

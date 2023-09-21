@@ -9,7 +9,7 @@
 //! as [TyCtxt]) to get contextual information that is used to make the output
 //! more useful.
 use flowistry::indexed::IndexedDomain;
-use paralegal_spdg::{Identifier, rustc_portable::DefId};
+use paralegal_spdg::{rustc_portable::DefId, Identifier};
 
 use crate::{
     ir::CallOnlyFlow,
@@ -188,8 +188,7 @@ pub mod call_only_flow_dot {
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
-            let body_with_facts =
-                self.tcx.body_for_body_id(body_id);
+            let body_with_facts = self.tcx.body_for_body_id(body_id);
             let body = &body_with_facts.simplified_body();
             let write_label = |s: &mut String| -> std::fmt::Result {
                 write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;

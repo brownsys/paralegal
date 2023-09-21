@@ -86,7 +86,7 @@ pub struct GlobalLocationS {
 impl std::cmp::PartialOrd for GlobalLocationS {
     /// Compares in order crate, index and location, returning the first value
     /// that is not `Some(Ordering::Equal)`.
-    /// 
+    ///
     /// The implementation is a bit inefficient, because we're always running
     /// all comparisons and only return after, but it makes it much easier to
     /// read and cleaner, plus we can use `Ordering::then` and know that it

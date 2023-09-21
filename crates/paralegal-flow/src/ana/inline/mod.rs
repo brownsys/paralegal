@@ -27,7 +27,8 @@ use crate::{
     rustc_target::abi::FieldIdx,
     ty,
     utils::{
-        body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, FnResolution, Print, RecursionBreakingCache,
+        body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, FnResolution, Print,
+        RecursionBreakingCache,
     },
     AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
@@ -824,12 +825,7 @@ impl<'tcx> Inliner<'tcx> {
                 }
                 queue_for_pruning
             };
-            self.prune_impossible_edges(
-                &mut gwr,
-                name,
-                &edges_to_prune,
-                local_def_id,
-            );
+            self.prune_impossible_edges(&mut gwr, name, &edges_to_prune, local_def_id);
             if self.dbg_ctrl.dump_inlined_pruned_graph() {
                 dump_dot_graph(
                     dump_file_pls(self.tcx, local_def_id, "inlined-pruned.gv").unwrap(),
