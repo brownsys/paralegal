@@ -3,7 +3,7 @@ extern crate anyhow;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
-use dfcheck::{assert_error, Context, Marker, DefId};
+use dfcheck::{assert_error, Context, DefId, Marker};
 
 pub struct DeletionProp {
     cx: Arc<Context>,
