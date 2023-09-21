@@ -40,12 +40,12 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: |
-        cargo test -p dfpp --test non_transitive_graph_tests 
-        cargo test -p dfpp --test call_chain_analysis_tests 
-        cargo test -p dfpp --test control_flow_tests
-        cargo test -p dfpp --test new_alias_analysis_tests
-        cargo test -p dfpp --test async_tests
-        cargo test -p dfpp --test inline_elision_tests
+        cargo test -p paralegal-flow --test non_transitive_graph_tests 
+        cargo test -p paralegal-flow --test call_chain_analysis_tests 
+        cargo test -p paralegal-flow --test control_flow_tests
+        cargo test -p paralegal-flow --test new_alias_analysis_tests
+        cargo test -p paralegal-flow --test async_tests
+        cargo test -p paralegal-flow --test inline_elision_tests
     - name: Build Test Policies
       run: |
         cd props
@@ -81,7 +81,7 @@ jobs:
         cd forge
         raco pkg install --auto || raco setup forge
     - name: Run Tests
-      run: cargo test -p dfpp --test external_annotation_tests 
+      run: cargo test -p paralegal-flow --test external_annotation_tests 
 
   format-check:
     name: Format Control
