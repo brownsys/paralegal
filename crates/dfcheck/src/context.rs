@@ -263,7 +263,7 @@ impl Context {
             .into_iter()
             .flat_map(|(anns, _)| {
                 anns.iter().filter_map(|annot| match annot {
-                    Annotation::OType(ids) => Some(ids.clone()),
+                    Annotation::OType(id) => Some(*id),
                     _ => None,
                 })
             })

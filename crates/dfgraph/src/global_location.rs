@@ -61,6 +61,7 @@
 //! The innermost location is what you'd want to look up if you are wanting to
 //! see the actual statement or terminator that this location refers to.
 
+#[cfg(feature = "rustc")]
 use crate::rustc_proxies;
 use internment::Intern;
 use serde::{Deserialize, Serialize};
