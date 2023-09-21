@@ -20,7 +20,9 @@ pub use crate::diagnostics::DiagnosticMessage;
 /// User-defined PDG markers.
 pub type Marker = Identifier;
 
+/// The type identifying a controller
 pub type ControllerId = DefId;
+/// The type identifying a function that is used in call sites.
 pub type FunctionId = DefId;
 
 type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;

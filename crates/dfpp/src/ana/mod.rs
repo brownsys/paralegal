@@ -170,7 +170,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 }
             };
             let defid = instance.def_id();
-            let call_site = CallSite::new(loc, defid, tcx);
+            let call_site = CallSite::new(loc, defid);
             // Propagate annotations on the function object to the call site
             register_call_site(
                 call_site_annotations,

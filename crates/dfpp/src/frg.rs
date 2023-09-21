@@ -173,7 +173,7 @@ where
 }
 
 impl<'a, 'tcx, A: 'a, D: DocAllocator<'a, A>> ToForge<'a, 'tcx, A, D> for &'a str {
-    fn build_forge(self, tcx: TyCtxt<'tcx>, alloc: &'a D) -> DocBuilder<'a, D, A> {
+    fn build_forge(self, _tcx: TyCtxt<'tcx>, alloc: &'a D) -> DocBuilder<'a, D, A> {
         alloc.text(self)
     }
 }

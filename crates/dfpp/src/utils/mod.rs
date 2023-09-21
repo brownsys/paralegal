@@ -1059,11 +1059,11 @@ impl IntoBodyId for DefId {
 }
 
 pub trait CallSiteExt {
-    fn new(loc: &GlobalLocation, function: DefId, tcx: TyCtxt<'_>) -> Self;
+    fn new(loc: &GlobalLocation, function: DefId) -> Self;
 }
 
 impl CallSiteExt for CallSite {
-    fn new(location: &GlobalLocation, function: DefId, tcx: TyCtxt<'_>) -> Self {
+    fn new(location: &GlobalLocation, function: DefId) -> Self {
         Self {
             location: *location,
             function,
@@ -1098,7 +1098,6 @@ pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
         DataSource::FunctionCall(CallSite::new(
             &loc,
             terminator.as_fn_and_args(tcx).unwrap().0,
-            tcx,
         ))
     }
 }
