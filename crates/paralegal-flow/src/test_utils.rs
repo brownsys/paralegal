@@ -10,8 +10,8 @@ use crate::{
     utils::outfile_pls,
     HashSet, Symbol,
 };
-use paralegal_spdg::{rustc_portable::DefId, DefInfo};
 use hir::BodyId;
+use paralegal_spdg::{rustc_portable::DefId, DefInfo};
 use rustc_middle::mir;
 
 use either::Either;
