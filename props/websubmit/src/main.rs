@@ -3,7 +3,7 @@ extern crate anyhow;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
-use dfcheck::{assert_error, Context, DefId, Marker};
+use paralegal_policy::{assert_error, Context, DefId, Marker};
 
 pub struct DeletionProp {
     cx: Arc<Context>,
@@ -81,7 +81,7 @@ fn main() -> Result<()> {
     let ws_dir = std::env::args()
         .nth(1)
         .ok_or_else(|| anyhow!("expected an argument"))?;
-    dfcheck::SPDGGenCommand::global()
+    paralegal_policy::SPDGGenCommand::global()
         .run(ws_dir)?
         .with_context(|ctx| {
             DeletionProp::new(ctx).check();
