@@ -13,11 +13,11 @@
 //! Some types (such as [`mir::Body`]) first have to be explicitly transformed
 //! into the respective proxy type. In the case of [`mir::Body`] this can be
 //! done with [`BodyProxy::from_body_with_normalize`]
-use paralegal_spdg::Identifier;
+use paralegal_spdg::{Identifier, rustc_portable::DefId};
 use serde::Deserialize;
 
 use crate::{
-    hir, mir,
+    mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
     utils::{extract_places, read_places_with_provenance, DfppBodyExt},
@@ -178,12 +178,12 @@ pub mod serde_map_via_vec {
 /// and then dispatch to the `serialize` impl for the reconstructed data
 /// structure.
 #[derive(Serialize, Deserialize)]
-pub struct BodyIdProxy2(#[serde(with = "paralegal_spdg::rustc_proxies::BodyId")] pub hir::BodyId);
+pub struct BodyIdProxy2(#[serde(with = "paralegal_spdg::rustc_proxies::DefId")] pub DefId);
 
 /// A serializable version of [`mir::Body`]s, mapped to their [`hir::BodyId`] so
 /// that you can resolve the body belonging to a global location (see
 /// [`IsGlobalLocation::function`]).
-pub struct Bodies(pub HashMap<hir::BodyId, (Identifier, BodyProxy)>);
+pub struct Bodies(pub HashMap<DefId, (Identifier, BodyProxy)>);
 
 impl Serialize for Bodies {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

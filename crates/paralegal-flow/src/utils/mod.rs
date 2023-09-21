@@ -842,18 +842,18 @@ pub trait TyCtxtExt<'tcx> {
     /// memoizes its results so this is actually a cheap query.
     fn body_for_body_id(
         self,
-        b: BodyId,
+        b: DefId,
     ) -> &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     fn body_for_body_id(
         self,
-        b: BodyId,
+        b: DefId,
     ) -> &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx> {
         rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
             self,
-            self.hir().body_owner_def_id(b),
+            b.expect_local()
         )
     }
 }
@@ -1091,7 +1091,7 @@ pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
                     .simplified_body()
                     .maybe_stmt_at(dep_loc)
                     .unwrap_or_else(|e|
-                        panic!("Could not convert {loc} to data source with body {}. is at root: {}, is real: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun), loc.is_at_root(), is_real_location)
+                        panic!("Could not convert {loc} to data source with body {}. is at root: {}, is real: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun.expect_local()), loc.is_at_root(), is_real_location)
                     )
                     .right()
                     .expect("not a terminator");

@@ -74,13 +74,30 @@ use crate::rustc_portable::*;
 /// You will probably want to operate on the interned wrapper type [`GlobalLocation`].
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct GlobalLocationS {
-    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::BodyId"))]
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
     /// The id of the body in which this location is located.
-    pub function: BodyId,
+    pub function: DefId,
 
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::Location"))]
     /// The location itself
     pub location: Location,
+}
+
+impl std::cmp::PartialOrd for GlobalLocationS {
+    /// Compares in order crate, index and location, returning the first value
+    /// that is not `Some(Ordering::Equal)`.
+    /// 
+    /// The implementation is a bit inefficient, because we're always running
+    /// all comparisons and only return after, but it makes it much easier to
+    /// read and cleaner, plus we can use `Ordering::then` and know that it
+    /// handles the chaining correctly. (In fact the earlier version of this
+    /// comparison was buggy precisely because of this.)
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let krate_cmp = self.function.krate.partial_cmp(&other.function.krate)?;
+        let index_cmp = self.function.index.partial_cmp(&other.function.index)?;
+        let location_cmp = self.location.partial_cmp(&other.location)?;
+        Some(krate_cmp.then(index_cmp).then(location_cmp))
+    }
 }
 
 impl GlobalLocationS {
@@ -104,7 +121,7 @@ impl RawGlobalLocation {
     }
 
     /// Get the `function` field of the underlying location.
-    pub fn outermost_function(&self) -> BodyId {
+    pub fn outermost_function(&self) -> DefId {
         self.outermost().function
     }
 
@@ -121,7 +138,7 @@ impl RawGlobalLocation {
         self.innermost().location
     }
 
-    pub fn innermost_function(&self) -> BodyId {
+    pub fn innermost_function(&self) -> DefId {
         self.innermost().function
     }
 
@@ -152,16 +169,7 @@ impl RawGlobalLocation {
 
 impl PartialOrd for RawGlobalLocation {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        for (slf, othr) in self.as_slice().iter().zip(other.as_slice().iter()) {
-            if slf.function != othr.function {
-                return slf.function.hir_id.partial_cmp(&othr.function.hir_id);
-            }
-            if slf.location == othr.location {
-                return slf.location.partial_cmp(&othr.location);
-            }
-        }
-
-        self.as_slice().len().partial_cmp(&other.as_slice().len())
+        self.as_slice().partial_cmp(other.as_slice())
     }
 }
 
@@ -250,7 +258,7 @@ impl GlobalLocation {
         GlobalLocation(Intern::from_ref(path))
     }
 
-    pub fn single(location: Location, function: BodyId) -> Self {
+    pub fn single(location: Location, function: DefId) -> Self {
         Self::into_intern(RawGlobalLocation(vec![GlobalLocationS {
             location,
             function,

@@ -44,7 +44,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         inliner: &inline::Inliner<'tcx>,
     ) -> std::io::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
-        let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
+        let local_def_id = target.body_id.expect_local();
         fn register_call_site(
             map: &mut CallSiteAnnotations,
             did: DefId,

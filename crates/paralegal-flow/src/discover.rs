@@ -43,7 +43,7 @@ pub struct CollectingVisitor<'tcx> {
 /// [`CollectingVisitor::handle_target`].
 pub struct FnToAnalyze {
     pub name: Ident,
-    pub body_id: BodyId,
+    pub body_id: DefId,
 }
 
 impl FnToAnalyze {
@@ -99,7 +99,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
             {
                 self.functions_to_analyze.push(FnToAnalyze {
                     name: *name,
-                    body_id,
+                    body_id: id.to_def_id(),
                 });
             }
             _ => (),

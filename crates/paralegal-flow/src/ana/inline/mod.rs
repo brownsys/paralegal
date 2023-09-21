@@ -16,7 +16,6 @@ use std::fmt::Write;
 
 use crate::{
     ana::algebra::{self, Term},
-    hir::BodyId,
     ir::{
         flows::CallOnlyFlow,
         regal::{self, SimpleLocation},
@@ -28,8 +27,7 @@ use crate::{
     rustc_target::abi::FieldIdx,
     ty,
     utils::{
-        body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, FnResolution, IntoDefId,
-        IntoLocalDefId, Print, RecursionBreakingCache,
+        body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, FnResolution, Print, RecursionBreakingCache,
     },
     AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
@@ -178,7 +176,7 @@ impl<'tcx> Inliner<'tcx> {
     }
 }
 
-type BodyCache<'tcx> = Cache<BodyId, regal::Body<'tcx, DisplayViaDebug<Location>>>;
+type BodyCache<'tcx> = Cache<DefId, regal::Body<'tcx, DisplayViaDebug<Location>>>;
 
 /// Essentially just a bunch of caches of analyses.
 pub struct Inliner<'tcx> {
@@ -187,7 +185,7 @@ pub struct Inliner<'tcx> {
     /// Memoized graphs that have all their callees inlined. Unlike `base_memo`
     /// this has to be recursion breaking, since a function may call itself
     /// (possibly transitively).
-    inline_memo: RecursionBreakingCache<BodyId, InlinedGraph<'tcx>>,
+    inline_memo: RecursionBreakingCache<DefId, InlinedGraph<'tcx>>,
     tcx: TyCtxt<'tcx>,
     ana_ctrl: &'static AnalysisCtrl,
     dbg_ctrl: &'static DumpArgs,
@@ -321,7 +319,7 @@ impl<'tcx> Inliner<'tcx> {
     /// [`ProcedureGraph::from`]
     fn get_procedure_graph<'a>(
         &'a self,
-        body_id: BodyId,
+        body_id: DefId,
     ) -> &regal::Body<'tcx, DisplayViaDebug<Location>> {
         self.base_memo.get(body_id, |bid| {
             regal::compute_from_body_id(self.dbg_ctrl, bid, self.tcx, &self.marker_carrying)
@@ -329,24 +327,14 @@ impl<'tcx> Inliner<'tcx> {
     }
 
     /// Compute an inlined graph for this `body_id` (memoized)
-    pub fn get_inlined_graph(&self, body_id: BodyId) -> Option<&InlinedGraph<'tcx>> {
+    pub fn get_inlined_graph(&self, body_id: DefId) -> Option<&InlinedGraph<'tcx>> {
         self.inline_memo.get(body_id, |bid| self.inline_graph(bid))
     }
 
     /// Convenience wrapper around [`Self::get_inlined_graph`]
     fn get_inlined_graph_by_def_id(&self, def_id: LocalDefId) -> Option<&InlinedGraph<'tcx>> {
-        let hir = self.tcx.hir();
-        let body_id = match hir.maybe_body_owned_by(def_id) {
-            None => {
-                warn!(
-                    "no body id for {:?}",
-                    self.tcx.def_path_debug_str(def_id.into_def_id(self.tcx))
-                );
-                return None;
-            }
-            Some(b) => b,
-        };
-        self.get_inlined_graph(body_id)
+        let _hir = self.tcx.hir();
+        self.get_inlined_graph(def_id.to_def_id())
     }
 
     /// Make the set of equations relative to the call site described by `gli`
@@ -427,8 +415,8 @@ impl<'tcx> Inliner<'tcx> {
         }
     }
 
-    fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'tcx>, body_id: BodyId) -> bool {
-        let local_def_id = body_id.into_local_def_id(self.tcx);
+    fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'tcx>, body_id: DefId) -> bool {
+        let local_def_id = body_id.expect_local();
         let body_with_facts =
             borrowck_facts::get_simplified_body_with_borrowck_facts(self.tcx, local_def_id);
         let body = body_with_facts.simplified_body();
@@ -523,7 +511,7 @@ impl<'tcx> Inliner<'tcx> {
             num_inlined,
             max_call_stack_depth,
         }: &mut InlinedGraph<'tcx>,
-        caller_function: BodyId,
+        caller_function: DefId,
         inlining_target: LocalDefId,
         incoming: &[(StdNode<'tcx>, Edge)],
         outgoing: &[(StdNode<'tcx>, Edge)],
@@ -642,7 +630,7 @@ impl<'tcx> Inliner<'tcx> {
         &self,
         proc_g: &regal::Body<DisplayViaDebug<Location>>,
         i_graph: &mut InlinedGraph<'tcx>,
-        body_id: BodyId,
+        body_id: DefId,
     ) -> EdgeSet<'tcx> {
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
         let mut queue_for_pruning = HashSet::new();
@@ -779,20 +767,21 @@ impl<'tcx> Inliner<'tcx> {
     /// In spite of the name of this function it not only inlines the graph but
     /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
     /// it ([`to_global_graph`]).
-    fn inline_graph(&self, body_id: BodyId) -> InlinedGraph<'tcx> {
+    fn inline_graph(&self, body_id: DefId) -> InlinedGraph<'tcx> {
+        let local_def_id = body_id.expect_local();
         let proc_g = self.get_procedure_graph(body_id);
         let mut gwr = InlinedGraph::from_body(body_id, proc_g, self.tcx);
 
-        let name = body_name_pls(self.tcx, body_id).name;
+        let name = body_name_pls(self.tcx, local_def_id).name;
         if self.dbg_ctrl.dump_pre_inline_graph() {
             dump_dot_graph(
-                dump_file_pls(self.tcx, body_id, "pre-inline.gv").unwrap(),
+                dump_file_pls(self.tcx, local_def_id, "pre-inline.gv").unwrap(),
                 &gwr,
             )
             .unwrap();
         }
         if self.dbg_ctrl.dump_local_equations() {
-            let mut eqout = dump_file_pls(self.tcx, body_id, "local.eqs").unwrap();
+            let mut eqout = dump_file_pls(self.tcx, local_def_id, "local.eqs").unwrap();
             for eq in &gwr.equations {
                 use std::io::Write;
                 writeln!(eqout, "{eq}").unwrap();
@@ -808,7 +797,7 @@ impl<'tcx> Inliner<'tcx> {
         }
 
         if self.dbg_ctrl.dump_global_equations() {
-            let mut eqout = dump_file_pls(self.tcx, body_id, "global.eqs").unwrap();
+            let mut eqout = dump_file_pls(self.tcx, local_def_id, "global.eqs").unwrap();
             for eq in &gwr.equations {
                 use std::io::Write;
                 writeln!(eqout, "{eq}").unwrap();
@@ -816,7 +805,7 @@ impl<'tcx> Inliner<'tcx> {
         }
         if self.dbg_ctrl.dump_inlined_graph() {
             dump_dot_graph(
-                dump_file_pls(self.tcx, body_id, "inlined.gv").unwrap(),
+                dump_file_pls(self.tcx, local_def_id, "inlined.gv").unwrap(),
                 &gwr,
             )
             .unwrap();
@@ -839,11 +828,11 @@ impl<'tcx> Inliner<'tcx> {
                 &mut gwr,
                 name,
                 &edges_to_prune,
-                body_id.into_local_def_id(self.tcx),
+                local_def_id,
             );
             if self.dbg_ctrl.dump_inlined_pruned_graph() {
                 dump_dot_graph(
-                    dump_file_pls(self.tcx, body_id, "inlined-pruned.gv").unwrap(),
+                    dump_file_pls(self.tcx, local_def_id, "inlined-pruned.gv").unwrap(),
                     &gwr,
                 )
                 .unwrap();

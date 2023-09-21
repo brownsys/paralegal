@@ -10,7 +10,7 @@ use crate::{
     utils::outfile_pls,
     HashSet, Symbol,
 };
-use hir::BodyId;
+
 use paralegal_spdg::{rustc_portable::DefId, DefInfo};
 use rustc_middle::mir;
 
@@ -516,7 +516,7 @@ impl G {
             ctrl_name: Identifier::new(s),
         }
     }
-    pub fn ctrl(&self) -> BodyId {
+    pub fn ctrl(&self) -> DefId {
         *self
             .body
             .0
@@ -525,7 +525,7 @@ impl G {
             .unwrap()
     }
     /// Get the `n`th argument for this `bid` body.
-    pub fn argument(&self, bid: BodyId, n: usize) -> mir::Location {
+    pub fn argument(&self, bid: DefId, n: usize) -> mir::Location {
         let body = &self.body.0[&bid];
         body.1
              .0

@@ -401,7 +401,7 @@ fn test_context() {
     assert!(ctx.marked(input).any(|(id, _)| ctx
         .desc
         .def_info
-        .get(&id)
+        .get(id)
         .map_or(false, |info| info.name.as_str().starts_with("Foo"))));
 
     let desc = ctx.desc();

@@ -6,12 +6,12 @@ use crate::{
     args::Args,
     consts,
     desc::{Annotation, MarkerAnnotation},
-    hir, mir, ty,
+    mir, ty,
     utils::{
-        AsFnAndArgs, FnResolution, GenericArgExt, IntoBodyId, IntoDefId, IntoHirId, MetaItemMatch,
+        AsFnAndArgs, FnResolution, GenericArgExt, IntoDefId, IntoHirId, MetaItemMatch,
         TyCtxtExt, TyExt,
     },
-    BodyId, DefId, HashMap, LocalDefId, TyCtxt,
+    DefId, HashMap, LocalDefId, TyCtxt,
 };
 use rustc_utils::cache::{Cache, CopyCache};
 
@@ -133,15 +133,11 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// XXX Does not take into account reachable type markers
     pub fn marker_is_reachable(&self, def_id: DefId) -> bool {
         self.is_marked(def_id)
-            || def_id.as_local().map_or(false, |ldid| {
-                force_into_body_id(self.tcx(), ldid).map_or(false, |body_id| {
-                    self.has_transitive_reachable_markers(body_id)
-                })
-            })
+            || self.has_transitive_reachable_markers(def_id)
     }
 
     /// Queries the transitive marker cache.
-    fn has_transitive_reachable_markers(&self, body_id: BodyId) -> bool {
+    fn has_transitive_reachable_markers(&self, body_id: DefId) -> bool {
         self.db()
             .marker_reachable_cache
             .get_maybe_recursive(body_id, |_| self.compute_marker_reachable(body_id))
@@ -150,7 +146,7 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
-    fn compute_marker_reachable(&self, body_id: BodyId) -> bool {
+    fn compute_marker_reachable(&self, body_id: DefId) -> bool {
         let body = self.tcx().body_for_body_id(body_id).simplified_body();
         body.basic_blocks
             .iter()
@@ -242,21 +238,6 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 }
 
-fn force_into_body_id(tcx: TyCtxt, defid: LocalDefId) -> Option<BodyId> {
-    defid.into_body_id(tcx).or_else(|| {
-        let kind = tcx.def_kind(defid);
-        let name = tcx.def_path_debug_str(defid.to_def_id());
-        if matches!(kind, hir::def::DefKind::AssocFn) {
-            warn!(
-                "Inline elision and inling for associated functions is not yet implemented {}",
-                name
-            );
-            None
-        } else {
-            panic!("Could not get a body id for {name}, def kind {kind:?}")
-        }
-    })
-}
 
 /// We expect most local items won't have annotations. This structure is much
 /// smaller (8 bytes) than without the `Box` (24 Bytes).
@@ -271,7 +252,7 @@ struct MarkerDatabase<'tcx> {
     local_annotations: Cache<LocalDefId, LocalAnnotations>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
-    marker_reachable_cache: CopyCache<BodyId, bool>,
+    marker_reachable_cache: CopyCache<DefId, bool>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {

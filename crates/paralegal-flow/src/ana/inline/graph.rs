@@ -1,12 +1,12 @@
 use crate::{
     ir::{regal, GlobalLocation},
     mir, serde,
-    utils::{time, write_sep, DisplayViaDebug, FnResolution, IntoDefId, TinyBitSet},
-    BodyId, Either, HashMap, HashSet, Location, TyCtxt,
+    utils::{time, write_sep, DisplayViaDebug, FnResolution, TinyBitSet}, Either, HashMap, HashSet, Location, TyCtxt,
 };
 
 use super::algebra;
 
+use paralegal_spdg::rustc_portable::DefId;
 use petgraph::prelude as pg;
 
 pub type ArgNum = u32;
@@ -275,12 +275,12 @@ impl<'tcx> InlinedGraph<'tcx> {
 
     /// Construct the initial graph from a [`regal::Body`]
     pub fn from_body(
-        body_id: BodyId,
+        body_id: DefId,
         body: &regal::Body<'tcx, DisplayViaDebug<Location>>,
         tcx: TyCtxt<'tcx>,
     ) -> Self {
         time("Graph Construction From Regal Body", || {
-            let equations = to_global_equations(&body.equations, body_id);
+            let equations = to_global_equations(&body.equations);
             let mut gwr = InlinedGraph {
                 equations,
                 graph: Default::default(),
@@ -305,7 +305,7 @@ impl<'tcx> InlinedGraph<'tcx> {
                                 *call_map.get(c).unwrap_or_else(|| {
                                     panic!(
                                         "Expected to find call at {c} in function {}",
-                                        tcx.def_path_debug_str(body_id.into_def_id(tcx))
+                                        tcx.def_path_debug_str(body_id)
                                     )
                                 }),
                             )),
@@ -343,7 +343,6 @@ impl<'tcx> InlinedGraph<'tcx> {
 /// Globalize all locations mentioned in these equations.
 fn to_global_equations(
     eqs: &Equations<DisplayViaDebug<mir::Local>>,
-    _body_id: BodyId,
 ) -> Equations<GlobalLocal> {
     eqs.iter()
         .map(|eq| eq.map_bases(|target| GlobalLocal::at_root(**target)))

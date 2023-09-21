@@ -2,6 +2,7 @@ use flowistry::indexed::{
     impls::{build_location_arg_domain, LocationOrArg},
     IndexedDomain,
 };
+use paralegal_spdg::rustc_portable::DefId;
 use rustc_utils::{
     mir::{borrowck_facts, control_dependencies::ControlDependencies},
     BodyExt,
@@ -16,12 +17,12 @@ use crate::{
     hir::def_id::LocalDefId,
     mir::{self, BasicBlock, Field, HasLocalDecls, Location},
     rust::{
-        rustc_ast, rustc_hir::BodyId, rustc_index::bit_set::HybridBitSet,
+        rustc_ast, rustc_index::bit_set::HybridBitSet,
         rustc_index::vec::IndexVec,
     },
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,
-        DisplayViaDebug, FnResolution, IntoLocalDefId,
+        DisplayViaDebug, FnResolution,
     },
     DumpArgs, Either, HashMap, HashSet, TyCtxt,
 };
@@ -558,12 +559,12 @@ fn recursive_ctrl_deps<
 
 pub fn compute_from_body_id<'tcx>(
     dbg_opts: &DumpArgs,
-    body_id: BodyId,
+    body_id: DefId,
     tcx: TyCtxt<'tcx>,
     carries_marker: &InlineJudge<'tcx>,
 ) -> Body<'tcx, DisplayViaDebug<Location>> {
-    let local_def_id = body_id.into_local_def_id(tcx);
-    info!("Analyzing function {}", body_name_pls(tcx, body_id));
+    let local_def_id = body_id.expect_local();
+    info!("Analyzing function {}", body_name_pls(tcx, local_def_id));
     let body_with_facts =
         borrowck_facts::get_simplified_body_with_borrowck_facts(tcx, local_def_id);
     let body = body_with_facts.simplified_body();
@@ -573,13 +574,13 @@ pub fn compute_from_body_id<'tcx>(
             tcx,
             body,
             &mut |_, _| Ok(()),
-            &mut dump_file_pls(tcx, body_id, "mir").unwrap(),
+            &mut dump_file_pls(tcx, local_def_id, "mir").unwrap(),
         )
         .unwrap();
     }
     if dbg_opts.dump_dataflow_analysis_result() {
         use std::io::Write;
-        let states_out = &mut dump_file_pls(tcx, body_id, "df").unwrap();
+        let states_out = &mut dump_file_pls(tcx, local_def_id, "df").unwrap();
         for l in body.all_locations() {
             writeln!(states_out, "{l:?}: {}", flow.state_at(l)).unwrap();
         }
@@ -594,7 +595,7 @@ pub fn compute_from_body_id<'tcx>(
     );
     let r = Body::construct(flow, equations, tcx, local_def_id, body_with_facts);
     if dbg_opts.dump_regal_ir() {
-        let mut out = dump_file_pls(tcx, body_id, "regal").unwrap();
+        let mut out = dump_file_pls(tcx, local_def_id, "regal").unwrap();
         use std::io::Write;
         write!(&mut out, "{}", r).unwrap();
     }
