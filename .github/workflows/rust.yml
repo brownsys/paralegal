@@ -46,6 +46,10 @@ jobs:
         cargo test -p paralegal-flow --test new_alias_analysis_tests
         cargo test -p paralegal-flow --test async_tests
         cargo test -p paralegal-flow --test inline_elision_tests
+    - name: Build Test Policies
+      run: |
+        cd props
+        cargo build --verbose
 
   intergration-tests:
     name: Integration Tests
