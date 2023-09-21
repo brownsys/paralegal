@@ -66,7 +66,7 @@ pub fn run_paralegal_flow_with_graph_dump(dir: impl AsRef<Path>) -> bool {
 pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
     let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
     // Cargo gives us the path where it wrote `cargo-paralegal_flow` to
-    let cargo_paralegal_flow_path = Path::new("../../target/debug/cargo-paralegal_flow")
+    let cargo_paralegal_flow_path = Path::new("../../target/debug/cargo-paralegal-flow")
         .canonicalize()
         .unwrap();
     let mut new_path = std::ffi::OsString::with_capacity(

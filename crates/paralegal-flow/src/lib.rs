@@ -221,7 +221,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
     }
 
     fn driver_name(&self) -> std::borrow::Cow<'static, str> {
-        "paralegal_flow".into()
+        "paralegal-flow".into()
     }
 
     fn args(
