@@ -492,8 +492,9 @@ impl Repl {
     }
 
     pub fn load_graph(&mut self, path: &std::path::Path) -> Result<(), RunCommandErr> {
-        let (flow, bodies) =
-            paralegal_flow::dbg::read_non_transitive_graph_and_body(std::fs::File::open(path).unwrap());
+        let (flow, bodies) = paralegal_flow::dbg::read_non_transitive_graph_and_body(
+            std::fs::File::open(path).unwrap(),
+        );
         let mut g = petgraph::graphmap::GraphMap::<_, _, petgraph::Directed>::new();
         let graph = &mut g;
 

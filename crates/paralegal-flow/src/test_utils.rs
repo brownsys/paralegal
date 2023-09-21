@@ -69,8 +69,9 @@ pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
     let cargo_paralegal_flow_path = Path::new("../../target/debug/cargo-paralegal_flow")
         .canonicalize()
         .unwrap();
-    let mut new_path =
-        std::ffi::OsString::with_capacity(path.len() + cargo_paralegal_flow_path.as_os_str().len() + 1);
+    let mut new_path = std::ffi::OsString::with_capacity(
+        path.len() + cargo_paralegal_flow_path.as_os_str().len() + 1,
+    );
     // We then append the parent (e.g. its directory) to the search path. THat
     // directory (we presume) contains both `paralegal_flow` and `cargo-paralegal_flow`.
     new_path.push(cargo_paralegal_flow_path.parent().unwrap_or_else(|| {
@@ -82,7 +83,9 @@ pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
     new_path.push(":");
     new_path.push(path);
     let mut cmd = std::process::Command::new(cargo_paralegal_flow_path);
-    cmd.arg("paralegal_flow").env("PATH", new_path).current_dir(dir);
+    cmd.arg("paralegal_flow")
+        .env("PATH", new_path)
+        .current_dir(dir);
     eprintln!("Command is {cmd:?}");
     cmd
 }
