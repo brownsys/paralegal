@@ -13,11 +13,9 @@ env:
   racket_version: 8.1
 
 jobs:
-  compiler-tests:
-    name: Compiler Tests
-
+  get_and_cache:
+    name: Get Code and Cache Toolchain
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v3
     # just triggers rustup to download the toolchain
@@ -36,8 +34,21 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
+  build:
+    name: Build Paralegal
+    runs-on: ubuntu-latest
+    needs: get_and_cache
+    steps:
     - name: Build
       run: cargo build --verbose
+
+  compiler-tests:
+    name: Compiler Tests
+
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
     - name: Run tests
       run: |
         cargo test -p dfpp --test non_transitive_graph_tests 
@@ -47,17 +58,15 @@ jobs:
         cargo test -p dfpp --test async_tests
         cargo test -p dfpp --test inline_elision_tests
     - name: Build Test Policies
-      run: |
-        cd props
-        cargo build --verbose
+      run: cargo build --verbose
+      working-directory: props
 
   intergration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
+    needs: build
+
     steps:
-    - uses: actions/checkout@v3
-    - name: Build Compiler
-      run: cargo build --verbose
     - name: Cache Racket dependencies
       uses: actions/cache@v3
       with:
@@ -86,15 +95,9 @@ jobs:
   format-check:
     name: Format Control
     runs-on: ubuntu-latest
+    needs: get_and_cache
 
     steps:
-    - uses: actions/checkout@v3
-    # just triggers rustup to download the toolchain
-    - name: Cache Toolchain
-      uses: actions/cache@v3
-      with:
-        path: ~/.rustup
-        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
     - name: Check main repo
       run: cargo fmt --check
     - name: Check properties
@@ -104,23 +107,9 @@ jobs:
   linting:
     name: Clippy
     runs-on: ubuntu-latest
+    needs: get_and_cache
+
     steps:
-    - uses: actions/checkout@v3
-    - name: Cache Toolchain
-      uses: actions/cache@v3
-      with:
-        path: ~/.rustup
-        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Cache Dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Here come the complaints
       run: cargo clippy --all -- -D warnings
     - name: Complaints about properties
