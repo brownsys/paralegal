@@ -514,7 +514,7 @@ impl Ctrl {
         self.data_flow.0.values().flatten().unique()
     }
 
-    /*** Below are constructor methods intended for use within paralegal_flow. ***/
+    /*** Below are constructor methods intended for use within paralegal-flow. ***/
 
     /// Extend the `types` map with the input iterator.
     pub fn add_types(
