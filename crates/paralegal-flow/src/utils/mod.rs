@@ -852,28 +852,31 @@ pub trait TyCtxtExt<'tcx> {
     /// because it internally uses flowistry's body resolution
     /// ([`flowistry::mir::borrowck_facts::get_body_with_borrowck_facts`]) which
     /// memoizes its results so this is actually a cheap query.
-    /// 
+    ///
     /// Returns `None` if the id does not refer to a function or if its body is
     /// unavailable.
     fn body_for_body_id(
         self,
         b: DefId,
-    ) -> Result<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>, BodyResolutionError>;
+    ) -> Result<
+        &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
+        BodyResolutionError,
+    >;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     fn body_for_body_id(
         self,
         b: DefId,
-    ) -> Result<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>, BodyResolutionError> {
+    ) -> Result<
+        &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
+        BodyResolutionError,
+    > {
         let def_id = b.as_local().ok_or(BodyResolutionError::External)?;
         if !self.def_kind(def_id).is_fn_like() {
             return Err(BodyResolutionError::NotAFunction);
         }
-        Ok(rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
-            self,
-            def_id,
-        ))
+        Ok(rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(self, def_id))
     }
 }
 

@@ -149,10 +149,15 @@ impl<'tcx> MarkerCtx<'tcx> {
         let body = match self.tcx().body_for_body_id(body_id) {
             Ok(body) => body,
             Err(e) => {
-                warn!("Marker reachability for {} was asked but is unknown ({})", self.tcx().def_path_debug_str(body_id), e);
-                return false
-            },
-        }.simplified_body();
+                warn!(
+                    "Marker reachability for {} was asked but is unknown ({})",
+                    self.tcx().def_path_debug_str(body_id),
+                    e
+                );
+                return false;
+            }
+        }
+        .simplified_body();
         body.basic_blocks
             .iter()
             .any(|bbdat| self.terminator_carries_marker(&body.local_decls, bbdat.terminator()))
