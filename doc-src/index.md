@@ -10,5 +10,7 @@ linking against. The compiler docs do not interlink with the docs for the
 how to build them such that they do. As a result the two documentations are
 hosted here separately.
 
-- [Link to the paralegal-flow crate documentation](libs/paralegal_flow/index.html) (dependent, non-rustc crates are linked)
+- Generated rustdocs (dependent, non-rustc crates are linked).
+  - Doc for the [property definition framework](libs/paralegal_policy/index.html)
+  - Internal doc for the [flow analyzer](libs/paralegal_flow/index.html)
 - [Link to the rustc 1.63.0 documentation](compiler/index.html)
