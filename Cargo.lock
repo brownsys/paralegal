@@ -301,82 +301,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2696e8a945f658fd14dc3b87242e6b80cd0f36ff04ea560fa39082368847946"
 
 [[package]]
-name = "dfcheck"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dfgraph",
- "dfpp",
- "indexical",
- "itertools",
- "lazy_static",
- "log",
- "serde_json",
- "simple_logger",
- "smallvec",
-]
-
-[[package]]
-name = "dfgraph"
-version = "0.1.0"
-dependencies = [
- "cfg-if",
- "indexical",
- "internment",
- "itertools",
- "log",
- "serde",
- "strum",
-]
-
-[[package]]
-name = "dfpp"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "camino",
- "chrono",
- "clap",
- "dfgraph",
- "dfpp",
- "dot",
- "flowistry",
- "humantime",
- "itertools",
- "lazy_static",
- "log",
- "nom",
- "num-derive",
- "num-traits",
- "ordermap",
- "petgraph",
- "pretty",
- "rustc_plugin 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustc_utils 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde",
- "serde_bare",
- "serde_json",
- "serial_test",
- "simple_logger",
- "toml",
- "trait_enum",
-]
-
-[[package]]
-name = "dfpp-explorer"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "dfpp",
- "dialoguer",
- "indicatif",
- "petgraph",
- "ringbuffer",
- "serde-lexpr",
-]
-
-[[package]]
 name = "dialoguer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -872,6 +796,83 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a86ed3f5f244b372d6b1a00b72ef7f8876d0bc6a78a4c9985c53614041512063"
 
 [[package]]
+name = "paralegal-explore"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "dialoguer",
+ "indicatif",
+ "paralegal-flow",
+ "petgraph",
+ "ringbuffer",
+ "serde-lexpr",
+]
+
+[[package]]
+name = "paralegal-flow"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "camino",
+ "chrono",
+ "clap",
+ "dot",
+ "flowistry",
+ "humantime",
+ "itertools",
+ "lazy_static",
+ "log",
+ "nom",
+ "num-derive",
+ "num-traits",
+ "ordermap",
+ "paralegal-flow",
+ "paralegal-spdg",
+ "petgraph",
+ "pretty",
+ "rustc_plugin 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustc_utils 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+ "serde_bare",
+ "serde_json",
+ "serial_test",
+ "simple_logger",
+ "thiserror",
+ "toml",
+ "trait_enum",
+]
+
+[[package]]
+name = "paralegal-policy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "indexical",
+ "itertools",
+ "lazy_static",
+ "log",
+ "paralegal-flow",
+ "paralegal-spdg",
+ "serde_json",
+ "simple_logger",
+ "smallvec",
+]
+
+[[package]]
+name = "paralegal-spdg"
+version = "0.1.0"
+dependencies = [
+ "cfg-if",
+ "indexical",
+ "internment",
+ "itertools",
+ "log",
+ "serde",
+ "strum",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1243,6 +1244,26 @@ dependencies = [
  "redox_syscall",
  "rustix",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "thiserror"
+version = "1.0.48"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d6d7a740b8a666a7e828dd00da9c0dc290dff53154ea77ac109281de90589b7"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.48"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49922ecae66cc8a249b77e68d1d0623c1b2c514f0060c27cdc68bd62a1219d35"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
