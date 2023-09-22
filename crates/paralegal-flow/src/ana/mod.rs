@@ -11,7 +11,7 @@ use crate::{
 use hir::def_id::DefId;
 use mir::Location;
 
-use rustc_utils::mir::borrowck_facts;
+use anyhow::Result;
 
 use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 
@@ -27,7 +27,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
-    pub fn run(mut self) -> std::io::Result<ProgramDescription> {
+    pub fn run(mut self) -> Result<ProgramDescription> {
         let tcx = self.tcx;
         tcx.hir().visit_all_item_likes_in_crate(&mut self);
         //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
@@ -42,9 +42,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
         call_site_annotations: &mut CallSiteAnnotations,
         target: FnToAnalyze,
         inliner: &inline::Inliner<'tcx>,
-    ) -> std::io::Result<(Endpoint, Ctrl)> {
+    ) -> anyhow::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
-        let local_def_id = target.body_id.expect_local();
         fn register_call_site(
             map: &mut CallSiteAnnotations,
             did: DefId,
@@ -57,8 +56,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 .or_insert_with(|| ann.iter().flat_map(|a| a.iter()).cloned().collect());
         }
         let tcx = self.tcx;
-        let controller_body_with_facts =
-            borrowck_facts::get_simplified_body_with_borrowck_facts(tcx, local_def_id);
+        let controller_body_with_facts = tcx.body_for_body_id(target.body_id)?;
 
         if self.opts.dbg().dump_ctrl_mir() {
             mir::graphviz::write_mir_fn_graphviz(
@@ -136,7 +134,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             // We need to make sure to fetch the body again here, because we
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.
-            let inner_body_with_facts = tcx.body_for_body_id(inner_body_id);
+            let inner_body_with_facts = tcx.body_for_body_id(inner_body_id).unwrap();
             let inner_body = &inner_body_with_facts.simplified_body();
             if !inner_location.is_real(inner_body) {
                 assert!(loc.is_at_root());
@@ -243,7 +241,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
-    fn analyze(mut self) -> std::io::Result<ProgramDescription> {
+    fn analyze(mut self) -> Result<ProgramDescription> {
         let mut targets = std::mem::take(&mut self.functions_to_analyze);
 
         if let LogLevelConfig::Targeted(s) = &*self.opts.debug() {
@@ -280,7 +278,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         )
                     })
                 })
-                .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()
+                .collect::<Result<HashMap<Endpoint, Ctrl>>>()
                 .map(|controllers| self.make_program_description(controllers)
                 );
         info!(

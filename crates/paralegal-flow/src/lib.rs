@@ -205,7 +205,7 @@ impl rustc_driver::Callbacks for Callbacks {
 
                 serde_json::to_writer(outfile_pls(info_path2)?, &info)?;
                 warn!("Due to potential overwrite issues with --result-path (with multiple targets in a crate) outputs were written to {} and {}", self.opts.result_path().display(), &result_path.display());
-                Ok::<_, std::io::Error>(
+                anyhow::Ok(
                     if self.opts.abort_after_analysis() {
                         rustc_driver::Compilation::Stop
                     } else {

@@ -1,6 +1,7 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
+use thiserror::Error;
 
 use paralegal_spdg::{CallSite, DataSource};
 use smallvec::SmallVec;
@@ -833,28 +834,46 @@ pub fn unique_identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: 
     ))
 }
 
+#[derive(Error, Debug)]
+pub enum BodyResolutionError {
+    #[error("not a function-like object")]
+    /// The provided id did not refer to a function-like object.
+    NotAFunction,
+    #[error("body not available")]
+    /// The provided id refers to an external entity and we have no access to
+    /// its body
+    External,
+}
+
 /// Extension trait for [`TyCtxt`]
 pub trait TyCtxtExt<'tcx> {
-    /// Resolve this [`BodyId`] to its actual body. Returns
+    /// Resolve this [`DefId`] to a body. Returns
     /// [`BodyWithBorrowckFacts`](crate::rust::rustc_borrowck::BodyWithBorrowckFacts),
     /// because it internally uses flowistry's body resolution
     /// ([`flowistry::mir::borrowck_facts::get_body_with_borrowck_facts`]) which
     /// memoizes its results so this is actually a cheap query.
+    /// 
+    /// Returns `None` if the id does not refer to a function or if its body is
+    /// unavailable.
     fn body_for_body_id(
         self,
         b: DefId,
-    ) -> &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>;
+    ) -> Result<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>, BodyResolutionError>;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     fn body_for_body_id(
         self,
         b: DefId,
-    ) -> &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx> {
-        rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
+    ) -> Result<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>, BodyResolutionError> {
+        let def_id = b.as_local().ok_or(BodyResolutionError::External)?;
+        if !self.def_kind(def_id).is_fn_like() {
+            return Err(BodyResolutionError::NotAFunction);
+        }
+        Ok(rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
             self,
-            b.expect_local(),
-        )
+            def_id,
+        ))
     }
 }
 
@@ -1088,6 +1107,7 @@ pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
     } else {
         let terminator =
                 tcx.body_for_body_id(dep_fun)
+                    .unwrap()
                     .simplified_body()
                     .maybe_stmt_at(dep_loc)
                     .unwrap_or_else(|e|

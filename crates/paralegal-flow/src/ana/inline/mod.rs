@@ -28,7 +28,7 @@ use crate::{
     ty,
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, FnResolution, Print,
-        RecursionBreakingCache,
+        RecursionBreakingCache, TyCtxtExt,
     },
     AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
@@ -417,9 +417,7 @@ impl<'tcx> Inliner<'tcx> {
     }
 
     fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'tcx>, body_id: DefId) -> bool {
-        let local_def_id = body_id.expect_local();
-        let body_with_facts =
-            borrowck_facts::get_simplified_body_with_borrowck_facts(self.tcx, local_def_id);
+        let body_with_facts = self.tcx.body_for_body_id(body_id).unwrap();
         let body = body_with_facts.simplified_body();
         let num_args = body.args_iter().count();
         // XXX This might become invalid if functions other than `async` can create generators
@@ -486,7 +484,7 @@ impl<'tcx> Inliner<'tcx> {
 
         debug!(
             "Recognized {} as an async function",
-            self.tcx.def_path_debug_str(local_def_id.to_def_id())
+            self.tcx.def_path_debug_str(body_id)
         );
         self.inline_one_function(
             i_graph,

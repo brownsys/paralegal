@@ -14,7 +14,7 @@ use paralegal_spdg::{rustc_portable::DefId, Identifier};
 use crate::{
     ir::CallOnlyFlow,
     rust::{mir, TyCtxt},
-    utils::body_name_pls,
+    utils::{body_name_pls, TyCtxtExt},
     HashMap, HashSet,
 };
 extern crate dot;
@@ -188,7 +188,7 @@ pub mod call_only_flow_dot {
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
-            let body_with_facts = self.tcx.body_for_body_id(body_id);
+            let body_with_facts = self.tcx.body_for_body_id(body_id).unwrap();
             let body = &body_with_facts.simplified_body();
             let write_label = |s: &mut String| -> std::fmt::Result {
                 write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
@@ -341,10 +341,10 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                     (
                         Identifier::new(body_name_pls(tcx, bid.expect_local()).name),
                         BodyProxy::from_body_with_normalize(
-                            rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
-                                tcx,
-                                bid.expect_local(),
+                            tcx.body_for_body_id(
+                                bid
                             )
+                            .unwrap()
                             .simplified_body(),
                             tcx,
                         ),
