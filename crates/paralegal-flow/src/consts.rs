@@ -11,10 +11,10 @@ use crate::Symbol;
 pub use paralegal_spdg::FLOW_GRAPH_OUT_NAME;
 
 lazy_static! {
-    /// The symbol `arguments` which we use for refinement in a `#[paralegal_flow::label(...)]`
+    /// The symbol `arguments` which we use for refinement in a `#[paralegal_flow::marker(...)]`
     /// annotation.
     pub static ref ARG_SYM: Symbol = Symbol::intern("arguments");
-    /// The symbol `return` which we use for refinement in a `#[paralegal_flow::label(...)]`
+    /// The symbol `return` which we use for refinement in a `#[paralegal_flow::marker(...)]`
     /// annotation.
     pub static ref RETURN_SYM: Symbol = Symbol::intern("return");
     /// The symbol `verification_hash` which we use for refinement in a

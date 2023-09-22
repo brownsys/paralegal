@@ -14,8 +14,8 @@
 //! ```
 //!
 //! 1. [`SPDGGenCommand`] lets you programmatically invoke the SDPG extractor.
-//!    The [`::global()`](SPDGGenCommand::global) method uses `cargo paralegal_flow` for
-//!    this purpose, e.g. a global installation of `cargo-paralegal_flow` that was
+//!    The [`::global()`](SPDGGenCommand::global) method uses `cargo paralegal-flow` for
+//!    this purpose, e.g. a global installation of `cargo-paralegal-flow` that was
 //!    performed with `cargo install`.
 //!
 //!    - [`::custom()`](SPDGGenCommand::custom) lets you instead pick a
@@ -68,7 +68,7 @@ mod test_utils;
 
 pub use self::{context::*, flows_to::CtrlFlowsTo};
 
-/// Configuration of the `cargo paralegal_flow` command.
+/// Configuration of the `cargo paralegal-flow` command.
 ///
 /// Takes care of passing the right kinds of arguments to produce the
 /// [`ProgramDescription`] graph that the properties consume.
@@ -80,7 +80,7 @@ pub use self::{context::*, flows_to::CtrlFlowsTo};
 pub struct SPDGGenCommand(Command);
 
 impl SPDGGenCommand {
-    /// Use a global installation of `paralegal_flow` via `cargo paralegal_flow`.
+    /// Use a global installation of `paralegal-flow` via `cargo paralegal-flow`.
     pub fn global() -> Self {
         let mut cmd = Command::new("cargo");
         cmd.arg("paralegal-flow");
@@ -116,7 +116,7 @@ impl SPDGGenCommand {
 ///
 /// Can be created programmatically and automatically by running
 /// [`SPDGGenCommand::run`] or you can create one manually if you can `cargo
-/// paralegal_flow` by hand with [`Self::custom`].
+/// paralegal-flow` by hand with [`Self::custom`].
 pub struct GraphLocation(PathBuf);
 
 impl GraphLocation {

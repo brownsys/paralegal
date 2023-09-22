@@ -2,7 +2,7 @@
 //!
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `paralegal_flow` and
-//! `cargo-paralegal_flow` (a structure suggested by [rustc_plugin]).
+//! `cargo-paralegal-flow` (a structure suggested by [rustc_plugin]).
 #![feature(
     rustc_private,
     min_specialization,
@@ -112,14 +112,14 @@ pub use crate::marker_db::MarkerCtx;
 pub struct DfppPlugin;
 
 /// Top level argument structure. This is only used for parsing. The actual
-/// configuration of paralegal_flow [`struct@Args`] which is stored in `args`. `cargo_args` is
+/// configuration of paralegal-flow [`struct@Args`] which is stored in `args`. `cargo_args` is
 /// forwarded and `_progname` is only to comply with the calling convention of
 /// `cargo` (it passes the program name as first argument).
 #[derive(clap::Parser)]
 #[clap(version = concat!(crate_version!(), "\nbuilt ", env!("BUILD_TIME"), "\ncommit ", env!("COMMIT_HASH")), about)]
 struct ArgWrapper {
-    /// This argument doesn't do anything, but when cargo invokes `cargo-paralegal_flow`
-    /// it always provides "paralegal_flow" as the first argument and since we parse with
+    /// This argument doesn't do anything, but when cargo invokes `cargo-paralegal-flow`
+    /// it always provides "paralegal-flow" as the first argument and since we parse with
     /// clap it otherwise complains about the superfluous argument.
     _progname: String,
 

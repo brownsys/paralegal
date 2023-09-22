@@ -50,7 +50,7 @@ pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
     rustc_span::create_default_session_if_not_set_then(|_| f())
 }
 
-/// Run paralegal_flow in the current directory, passing the
+/// Run paralegal-flow in the current directory, passing the
 /// `--dump-serialized-non-transitive-graph` flag, which dumps a
 /// [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow) for each controller.
 ///
@@ -60,44 +60,43 @@ pub fn run_paralegal_flow_with_graph_dump(dir: impl AsRef<Path>) -> bool {
     run_paralegal_flow_with_graph_dump_and::<_, &str>(dir, [])
 }
 
-/// Crates a basic invocation of `cargo paralegal_flow`, ensuring that the `cargo-paralegal_flow`
-/// and `paralegal_flow` executables that were built from this project are (first) in the
+/// Crates a basic invocation of `cargo paralegal-flow`, ensuring that the `cargo-paralegal-flow`
+/// and `paralegal-flow` executables that were built from this project are (first) in the
 /// `PATH`.
 pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
     let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
-    // Cargo gives us the path where it wrote `cargo-paralegal_flow` to
     let cargo_paralegal_flow_path = Path::new("../../target/debug/cargo-paralegal-flow")
         .canonicalize()
         .unwrap();
     let mut new_path = std::ffi::OsString::with_capacity(
         path.len() + cargo_paralegal_flow_path.as_os_str().len() + 1,
     );
-    // We then append the parent (e.g. its directory) to the search path. THat
-    // directory (we presume) contains both `paralegal_flow` and `cargo-paralegal_flow`.
+    // We then append the parent (e.g. its directory) to the search path. That
+    // directory (we presume) contains both `paralegal-flow` and `cargo-paralegal-flow`.
     new_path.push(cargo_paralegal_flow_path.parent().unwrap_or_else(|| {
         panic!(
-            "cargo-paralegal_flow path {} had no parent",
+            "cargo-paralegal-flow path {} had no parent",
             cargo_paralegal_flow_path.display()
         )
     }));
     new_path.push(":");
     new_path.push(path);
     let mut cmd = std::process::Command::new(cargo_paralegal_flow_path);
-    cmd.arg("paralegal_flow")
+    cmd.arg("paralegal-flow")
         .env("PATH", new_path)
         .current_dir(dir);
     eprintln!("Command is {cmd:?}");
     cmd
 }
 
-/// Run paralegal_flow in the current directory, passing the
+/// Run paralegal-flow in the current directory, passing the
 /// `--dump-serialized-non-transitive-graph` flag, which dumps a
 /// [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow) for each controller.
 ///
 /// The result is suitable for reading with
 /// [`read_non_transitive_graph_and_body`](crate::dbg::read_non_transitive_graph_and_body).
 ///
-/// Allows for additional arguments to be passed to paralegal_flow
+/// Allows for additional arguments to be passed to paralegal-flow
 pub fn run_paralegal_flow_with_graph_dump_and<I, S>(dir: impl AsRef<Path>, extra: I) -> bool
 where
     I: IntoIterator<Item = S>,
@@ -114,7 +113,7 @@ where
         .unwrap()
         .success()
 }
-/// Run paralegal_flow in the current directory, passing the
+/// Run paralegal-flow in the current directory, passing the
 /// `--dump-serialized-flow-graph` which dumps the [`ProgramDescription`] as
 /// JSON.
 ///
@@ -123,7 +122,7 @@ pub fn run_paralegal_flow_with_flow_graph_dump(dir: impl AsRef<Path>) -> bool {
     run_paralegal_flow_with_flow_graph_dump_and::<_, &str>(dir, [])
 }
 
-/// Run paralegal_flow in the current directory, passing the
+/// Run paralegal-flow in the current directory, passing the
 /// `--dump-serialized-flow-graph` which dumps the [`ProgramDescription`] as
 /// JSON.
 ///
