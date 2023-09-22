@@ -315,12 +315,17 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AsFnAndArgsErr<'tcx> {
+    #[error("not a constant")]
     NotAConstant,
+    #[error("is not a function type: {0:?}")]
     NotFunctionType(ty::TyKind<'tcx>),
+    #[error("is not a `Val` constant: {0}")]
     NotValueLevelConstant(ty::Const<'tcx>),
+    #[error("terminator is not a `Call`")]
     NotAFunctionCall,
+    #[error("function instance could not be resolved")]
     InstanceResolutionErr,
 }
 
@@ -480,9 +485,7 @@ impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
     }
 }
 
-/// Old version of [`places_read`](../fn.places_read.html) and
-/// [`places_read_with_provenance`](../fn.places_read_with_provenance.html).
-/// Should be considered deprecated.
+/// Old version of [`places_read`], should be considered deprecated.
 pub fn extract_places<'tcx>(
     l: mir::Location,
     body: &mir::Body<'tcx>,
@@ -850,7 +853,7 @@ pub trait TyCtxtExt<'tcx> {
     /// Resolve this [`DefId`] to a body. Returns
     /// [`BodyWithBorrowckFacts`](crate::rust::rustc_borrowck::BodyWithBorrowckFacts),
     /// because it internally uses flowistry's body resolution
-    /// ([`flowistry::mir::borrowck_facts::get_body_with_borrowck_facts`]) which
+    /// ([`rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts`]) which
     /// memoizes its results so this is actually a cheap query.
     ///
     /// Returns `None` if the id does not refer to a function or if its body is
