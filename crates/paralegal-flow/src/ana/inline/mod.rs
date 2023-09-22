@@ -33,7 +33,7 @@ use crate::{
     AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
 
-use rustc_utils::{cache::Cache, mir::borrowck_facts};
+use rustc_utils::cache::Cache;
 
 mod graph;
 mod judge;

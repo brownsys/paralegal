@@ -3,10 +3,7 @@ use flowistry::indexed::{
     IndexedDomain,
 };
 use paralegal_spdg::rustc_portable::DefId;
-use rustc_utils::{
-    mir::{borrowck_facts, control_dependencies::ControlDependencies},
-    BodyExt,
-};
+use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt};
 
 use crate::{
     ana::{
