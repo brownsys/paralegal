@@ -83,7 +83,7 @@ impl SPDGGenCommand {
     /// Use a global installation of `paralegal_flow` via `cargo paralegal_flow`.
     pub fn global() -> Self {
         let mut cmd = Command::new("cargo");
-        cmd.arg("paralegal_flow");
+        cmd.arg("paralegal-flow");
         Self::custom(cmd)
     }
 
