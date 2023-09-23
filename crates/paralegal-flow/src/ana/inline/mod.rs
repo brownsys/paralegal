@@ -847,7 +847,7 @@ fn dump_dot_graph<W: std::io::Write>(mut w: W, g: &InlinedGraph) -> std::io::Res
 }
 
 impl<'tcx> Inliner<'tcx> {
-    /// Turn the output of the inliner into the format the rest of the paralegal_flow pipeline
+    /// Turn the output of the inliner into the format the rest of the paralegal-flow pipeline
     /// understands.
     pub fn to_call_only_flow<A: FnMut(ArgNum) -> GlobalLocation>(
         &self,
