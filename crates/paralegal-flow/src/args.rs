@@ -44,7 +44,7 @@ impl Args {
                 },
         } = value;
         let mut dump: DumpArgs = dump.into();
-        if let Ok(from_env) = std::env::var("PARABLE_DUMP") {
+        if let Ok(from_env) = std::env::var("PARALEGAL_DUMP") {
             let from_env = DumpArgs::from_str(&from_env, false)?;
             dump.0 |= from_env.0;
         }
@@ -74,7 +74,7 @@ impl Args {
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 struct GArgs<DA: clap::FromArgMatches + clap::Args> {
     /// Print additional logging output (up to the "info" level)
-    #[clap(short, long, env = "PARABLE_VERBOSE")]
+    #[clap(short, long, env = "PARALEGAL_VERBOSE")]
     verbose: bool,
     /// Print additional logging output (up to the "debug" level).
     ///
@@ -82,18 +82,18 @@ struct GArgs<DA: clap::FromArgMatches + clap::Args> {
     /// output globally. You may instead pass the name of a specific target
     /// function and then only during analysis of that function the debug output
     /// is enabled.
-    #[clap(long, env = "PARABLE_DEBUG")]
+    #[clap(long, env = "PARALEGAL_DEBUG")]
     debug: bool,
-    #[clap(long, env = "PARABLE_DEBUG_TARGET")]
+    #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
     debug_target: Option<String>,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
-    #[clap(long, env = "PARABLE_RELAXED")]
+    #[clap(long, env = "PARALEGAL_RELAXED")]
     relaxed: bool,
 
-    #[clap(long, env = "PARABLE_TARGET")]
+    #[clap(long, env = "PARALEGAL_TARGET")]
     target: Option<String>,
     /// Abort the compilation after finishing the analysis
     #[clap(long, env)]
@@ -116,7 +116,7 @@ pub struct ParseableDumpArgs {
     /// more comprehensive explanation refer to the [notion page on
     /// dumping](https://www.notion.so/justus-adam/Dumping-Intermediate-Representations-4bd66ec11f8f4c459888a8d8cfb10e93).
     ///
-    /// Can also be supplied as a comma-separated list (no spaces) and be set with the `PARABLE_DUMP` variable.
+    /// Can also be supplied as a comma-separated list (no spaces) and be set with the `PARALEGAL_DUMP` variable.
     #[clap(long, value_enum)]
     dump: Vec<DumpArgs>,
 }
