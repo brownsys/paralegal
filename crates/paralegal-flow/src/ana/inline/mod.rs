@@ -320,16 +320,16 @@ impl<'tcx> Inliner<'tcx> {
     /// [`ProcedureGraph::from`]
     fn get_procedure_graph<'a>(
         &'a self,
-        body_id: DefId,
+        def_id: DefId,
     ) -> &regal::Body<'tcx, DisplayViaDebug<Location>> {
-        self.base_memo.get(body_id, |bid| {
-            regal::compute_from_body_id(self.dbg_ctrl, bid, self.tcx, &self.marker_carrying)
+        self.base_memo.get(def_id, |_| {
+            regal::compute_from_def_id(self.dbg_ctrl, def_id, self.tcx, &self.marker_carrying)
         })
     }
 
     /// Compute an inlined graph for this `body_id` (memoized)
-    pub fn get_inlined_graph(&self, body_id: DefId) -> Option<&InlinedGraph<'tcx>> {
-        self.inline_memo.get(body_id, |bid| self.inline_graph(bid))
+    pub fn get_inlined_graph(&self, def_id: DefId) -> Option<&InlinedGraph<'tcx>> {
+        self.inline_memo.get(def_id, |bid| self.inline_graph(bid))
     }
 
     /// Convenience wrapper around [`Self::get_inlined_graph`]
@@ -416,8 +416,8 @@ impl<'tcx> Inliner<'tcx> {
         }
     }
 
-    fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'tcx>, body_id: DefId) -> bool {
-        let body_with_facts = self.tcx.body_for_body_id(body_id).unwrap();
+    fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'tcx>, def_id: DefId) -> bool {
+        let body_with_facts = self.tcx.body_for_def_id(def_id).unwrap();
         let body = body_with_facts.simplified_body();
         let num_args = body.args_iter().count();
         // XXX This might become invalid if functions other than `async` can create generators
@@ -449,7 +449,7 @@ impl<'tcx> Inliner<'tcx> {
             _ => unreachable!(),
         };
 
-        let root_location = GlobalLocation::single(return_location, body_id);
+        let root_location = GlobalLocation::single(return_location, def_id);
 
         // Following we must sumilate two code rewrites to the body of this
         // function to simulate calling the closure. We make the closure
@@ -484,11 +484,11 @@ impl<'tcx> Inliner<'tcx> {
 
         debug!(
             "Recognized {} as an async function",
-            self.tcx.def_path_debug_str(body_id)
+            self.tcx.def_path_debug_str(def_id)
         );
         self.inline_one_function(
             i_graph,
-            body_id,
+            def_id,
             closure_fn.expect_local(),
             &incoming,
             &outgoing,
@@ -629,11 +629,11 @@ impl<'tcx> Inliner<'tcx> {
         &self,
         proc_g: &regal::Body<DisplayViaDebug<Location>>,
         i_graph: &mut InlinedGraph<'tcx>,
-        body_id: DefId,
+        def_id: DefId,
     ) -> EdgeSet<'tcx> {
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
         let mut queue_for_pruning = HashSet::new();
-        if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, body_id) {
+        if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, def_id) {
             return queue_for_pruning;
         };
         let targets = i_graph
@@ -705,7 +705,7 @@ impl<'tcx> Inliner<'tcx> {
                         .collect::<Vec<_>>();
                     self.inline_one_function(
                         i_graph,
-                        body_id,
+                        def_id,
                         did,
                         &incoming,
                         &outgoing,
@@ -766,10 +766,10 @@ impl<'tcx> Inliner<'tcx> {
     /// In spite of the name of this function it not only inlines the graph but
     /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
     /// it ([`to_global_graph`]).
-    fn inline_graph(&self, body_id: DefId) -> InlinedGraph<'tcx> {
-        let local_def_id = body_id.expect_local();
-        let proc_g = self.get_procedure_graph(body_id);
-        let mut gwr = InlinedGraph::from_body(body_id, proc_g, self.tcx);
+    fn inline_graph(&self, def_id: DefId) -> InlinedGraph<'tcx> {
+        let local_def_id = def_id.expect_local();
+        let proc_g = self.get_procedure_graph(def_id);
+        let mut gwr = InlinedGraph::from_body(def_id, proc_g, self.tcx);
 
         let name = body_name_pls(self.tcx, local_def_id).name;
         if self.dbg_ctrl.dump_pre_inline_graph() {
@@ -788,7 +788,7 @@ impl<'tcx> Inliner<'tcx> {
         }
 
         let mut queue_for_pruning = time(&format!("Inlining subgraphs into '{name}'"), || {
-            self.perform_subfunction_inlining(proc_g, &mut gwr, body_id)
+            self.perform_subfunction_inlining(proc_g, &mut gwr, def_id)
         });
 
         if self.ana_ctrl.remove_inconsequential_calls().is_enabled() {

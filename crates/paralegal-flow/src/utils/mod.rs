@@ -858,9 +858,9 @@ pub trait TyCtxtExt<'tcx> {
     ///
     /// Returns `None` if the id does not refer to a function or if its body is
     /// unavailable.
-    fn body_for_body_id(
+    fn body_for_def_id(
         self,
-        b: DefId,
+        def_id: DefId,
     ) -> Result<
         &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
         BodyResolutionError,
@@ -868,14 +868,14 @@ pub trait TyCtxtExt<'tcx> {
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
-    fn body_for_body_id(
+    fn body_for_def_id(
         self,
-        b: DefId,
+        def_id: DefId,
     ) -> Result<
         &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
         BodyResolutionError,
     > {
-        let def_id = b.as_local().ok_or(BodyResolutionError::External)?;
+        let def_id = def_id.as_local().ok_or(BodyResolutionError::External)?;
         if !self.def_kind(def_id).is_fn_like() {
             return Err(BodyResolutionError::NotAFunction);
         }
@@ -1112,7 +1112,7 @@ pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
         DataSource::Argument(loc.outermost_location().statement_index - 1)
     } else {
         let terminator =
-                tcx.body_for_body_id(dep_fun)
+                tcx.body_for_def_id(dep_fun)
                     .unwrap()
                     .simplified_body()
                     .maybe_stmt_at(dep_loc)

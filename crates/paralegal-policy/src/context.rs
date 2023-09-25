@@ -488,7 +488,7 @@ fn test_happens_before() -> Result<()> {
     )?;
 
     ensure!(pass.holds());
-    ensure!(!pass.is_vacuous(), "{}", pass);
+    ensure!(!pass.is_vacuous(), "{pass}");
 
     let ctrl_name = ctx.find_by_name("happens_before_fail")?;
 

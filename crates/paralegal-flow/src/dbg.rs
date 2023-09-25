@@ -188,7 +188,7 @@ pub mod call_only_flow_dot {
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
-            let body_with_facts = self.tcx.body_for_body_id(body_id).unwrap();
+            let body_with_facts = self.tcx.body_for_def_id(body_id).unwrap();
             let body = &body_with_facts.simplified_body();
             let write_label = |s: &mut String| -> std::fmt::Result {
                 write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
@@ -341,7 +341,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                     (
                         Identifier::new(body_name_pls(tcx, bid.expect_local()).name),
                         BodyProxy::from_body_with_normalize(
-                            tcx.body_for_body_id(bid).unwrap().simplified_body(),
+                            tcx.body_for_def_id(bid).unwrap().simplified_body(),
                             tcx,
                         ),
                     ),
