@@ -1,20 +1,20 @@
 extern crate anyhow;
 
 use anyhow::{anyhow, Result};
-use std::{collections::HashSet, sync::Arc};
+use std::collections::HashSet;
 
 use paralegal_policy::{
     assert_error,
-    paralegal_spdg::{CallSite, Ctrl, DataSource},
+    paralegal_spdg::{CallSite, Ctrl, DataSource, Identifier},
     Context, Marker,
 };
 
-pub struct CommunityProp {
-    cx: Arc<Context>,
+pub struct CommunityProp<'ctx> {
+    cx: &'ctx mut Context,
 }
 
-impl CommunityProp {
-    pub fn new(cx: Arc<Context>) -> Self {
+impl<'ctx> CommunityProp<'ctx> {
+    pub fn new(cx: &'ctx mut Context) -> Self {
         CommunityProp { cx }
     }
 
@@ -32,7 +32,7 @@ impl CommunityProp {
         influence_sink.any(|cs| auth_callsites.contains(cs))
     }
 
-    pub fn check(&self) {
+    pub fn check(&mut self) {
         let db_community_write = Marker::new_intern("db_community_write");
         let community_delete_check = Marker::new_intern("community_delete_check");
         let community_ban_check = Marker::new_intern("community_ban_check");
@@ -56,7 +56,9 @@ fn main() -> Result<()> {
     paralegal_policy::SPDGGenCommand::global()
         .run(lemmy_dir)?
         .with_context(|ctx| {
-            CommunityProp::new(ctx).check();
-            Ok(())
+            ctx.named_policy(Identifier::new_intern("Community Policy"), |ctx| {
+                CommunityProp::new(ctx).check();
+                Ok(())
+            })
         })
 }
