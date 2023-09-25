@@ -9,12 +9,12 @@
 //! as [TyCtxt]) to get contextual information that is used to make the output
 //! more useful.
 use flowistry::indexed::IndexedDomain;
-use paralegal_spdg::Identifier;
+use paralegal_spdg::{rustc_portable::DefId, Identifier};
 
 use crate::{
     ir::CallOnlyFlow,
     rust::{mir, TyCtxt},
-    utils::body_name_pls,
+    utils::{body_name_pls, TyCtxtExt},
     HashMap, HashSet,
 };
 extern crate dot;
@@ -72,7 +72,7 @@ pub mod call_only_flow_dot {
         ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{identifier_for_item, AsFnAndArgs, DfppBodyExt, LocationExt},
+        utils::{unique_identifier_for_item, AsFnAndArgs, DfppBodyExt, LocationExt, TyCtxtExt},
         Either,
     };
 
@@ -188,11 +188,7 @@ pub mod call_only_flow_dot {
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
-            let body_with_facts =
-                rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
-                    self.tcx,
-                    self.tcx.hir().body_owner_def_id(body_id),
-                );
+            let body_with_facts = self.tcx.body_for_def_id(body_id).unwrap();
             let body = &body_with_facts.simplified_body();
             let write_label = |s: &mut String| -> std::fmt::Result {
                 write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
@@ -228,7 +224,7 @@ pub mod call_only_flow_dot {
                     match stmt {
                         Either::Right(term) => {
                             if let Ok((fun, args, _)) = term.as_fn_and_args(self.tcx) {
-                                let fun_name = identifier_for_item(self.tcx, fun);
+                                let fun_name = unique_identifier_for_item(self.tcx, fun);
                                 write!(s, "{{{{")?;
                                 for (i, arg) in args.iter().enumerate() {
                                     write!(s, "<a{}>", i)?;
@@ -337,19 +333,15 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                 )
             })
             .map(|l| l.innermost_function())
-            .collect::<HashSet<crate::rust::hir::BodyId>>()
+            .collect::<HashSet<DefId>>()
             .into_iter()
             .map(|bid| {
                 (
                     bid,
                     (
-                        Identifier::new(body_name_pls(tcx, bid).name),
+                        Identifier::new(body_name_pls(tcx, bid.expect_local()).name),
                         BodyProxy::from_body_with_normalize(
-                            rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
-                                tcx,
-                                tcx.hir().body_owner_def_id(bid),
-                            )
-                            .simplified_body(),
+                            tcx.body_for_def_id(bid).unwrap().simplified_body(),
                             tcx,
                         ),
                     ),

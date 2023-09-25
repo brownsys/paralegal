@@ -11,7 +11,7 @@ use crate::{
 use hir::def_id::DefId;
 use mir::Location;
 
-use rustc_utils::mir::borrowck_facts;
+use anyhow::Result;
 
 use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
 
@@ -27,7 +27,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
-    pub fn run(mut self) -> std::io::Result<ProgramDescription> {
+    pub fn run(mut self) -> Result<ProgramDescription> {
         let tcx = self.tcx;
         tcx.hir().visit_all_item_likes_in_crate(&mut self);
         //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
@@ -42,9 +42,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
         call_site_annotations: &mut CallSiteAnnotations,
         target: FnToAnalyze,
         inliner: &inline::Inliner<'tcx>,
-    ) -> std::io::Result<(Endpoint, Ctrl)> {
+    ) -> anyhow::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
-        let local_def_id = self.tcx.hir().body_owner_def_id(target.body_id);
         fn register_call_site(
             map: &mut CallSiteAnnotations,
             did: DefId,
@@ -57,8 +56,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 .or_insert_with(|| ann.iter().flat_map(|a| a.iter()).cloned().collect());
         }
         let tcx = self.tcx;
-        let controller_body_with_facts =
-            borrowck_facts::get_simplified_body_with_borrowck_facts(tcx, local_def_id);
+        let controller_body_with_facts = tcx.body_for_def_id(target.def_id)?;
 
         if self.opts.dbg().dump_ctrl_mir() {
             mir::graphviz::write_mir_fn_graphviz(
@@ -74,7 +72,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
         let flow = {
             let w = 6;
-            let i = inliner.get_inlined_graph(target.body_id).unwrap();
+            let i = inliner.get_inlined_graph(target.def_id).unwrap();
             info!("Graph statistics for {}\n  {:<w$} graph nodes\n  {:<w$} graph edges\n  {:<w$} inlined functions\n  {:<w$} max call stack depth", target.name(), i.vertex_count(), i.edge_count(), i.inlined_functions_count(), i.max_call_stack_depth());
             inliner.to_call_only_flow(i, |a| {
                 GlobalLocation::single(
@@ -87,7 +85,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         ),
                         statement_index: a as usize + 1,
                     },
-                    target.body_id,
+                    target.def_id,
                 )
             })
         };
@@ -100,7 +98,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 let subtypes = self
                     .marker_ctx
                     .all_type_markers(ty)
-                    .map(|t| t.0.marker)
+                    .map(|t| t.1 .1)
                     .collect::<HashSet<_>>();
                 (DataSource::Argument(l.as_usize() - 1), subtypes)
             });
@@ -136,7 +134,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             // We need to make sure to fetch the body again here, because we
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.
-            let inner_body_with_facts = tcx.body_for_body_id(inner_body_id);
+            let inner_body_with_facts = tcx.body_for_def_id(inner_body_id).unwrap();
             let inner_body = &inner_body_with_facts.simplified_body();
             if !inner_location.is_real(inner_body) {
                 assert!(loc.is_at_root());
@@ -170,7 +168,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 }
             };
             let defid = instance.def_id();
-            let call_site = CallSite::new(loc, defid, tcx);
+            let call_site = CallSite::new(loc, defid);
             // Propagate annotations on the function object to the call site
             register_call_site(
                 call_site_annotations,
@@ -183,7 +181,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             let interesting_output_types: HashSet<_> = self
                 .marker_ctx
                 .all_function_markers(instance)
-                .filter_map(|(_, t)| Some(identifier_for_item(self.tcx, t?.1)))
+                .filter_map(|(_, t)| Some(t?.1))
                 .collect();
             if !interesting_output_types.is_empty() {
                 flows.types.0.insert(
@@ -235,7 +233,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 DataSink::Return,
             );
         }
-        Ok((identifier_for_item(tcx, target.body_id), flows))
+        Ok((target.def_id.into_def_id(tcx), flows))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -243,8 +241,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
-    fn analyze(mut self) -> std::io::Result<ProgramDescription> {
-        let tcx = self.tcx;
+    fn analyze(mut self) -> Result<ProgramDescription> {
         let mut targets = std::mem::take(&mut self.functions_to_analyze);
 
         if let LogLevelConfig::Targeted(s) = &*self.opts.debug() {
@@ -281,39 +278,99 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         )
                     })
                 })
-                .collect::<std::io::Result<HashMap<Endpoint, Ctrl>>>()
-                .map(|controllers| ProgramDescription {
-                    controllers,
-                    annotations: self.marker_ctx.local_annotations_found()
-                        .into_iter()
-                        .map(|(k, v)| (k.to_def_id(), v.to_vec()))
-                        .chain(self.marker_ctx.external_annotations().iter().map(|(did, anns)| {
-                            (
-                                *did,
-                                anns.iter().cloned().map(Annotation::Marker).collect(),
-                            )
-                        }))
-                        .map(|(did, anns)| {
-                            let def_kind = tcx.def_kind(did);
-                            let obj_type = if def_kind.is_fn_like() {
-                                ObjectType::Function(
-                                    tcx.fn_sig(did).skip_binder().skip_binder().inputs().len(),
-                                )
-                            } else {
-                                // XXX add an actual match here
-                                ObjectType::Type
-                            };
-                            (identifier_for_item(tcx, did), (anns, obj_type))
-                        })
-                        .collect(),
-                });
-        //});
+                .collect::<Result<HashMap<Endpoint, Ctrl>>>()
+                .map(|controllers| self.make_program_description(controllers)
+                );
         info!(
             "Total number of analyzed functions {}",
             inliner.cache_size()
         );
         result
     }
+
+    fn make_program_description(&self, controllers: HashMap<DefId, Ctrl>) -> ProgramDescription {
+        let tcx = self.tcx;
+        let annotations: HashMap<DefId, (Vec<Annotation>, ObjectType)> = self
+            .marker_ctx
+            .local_annotations_found()
+            .into_iter()
+            .map(|(k, v)| (k.to_def_id(), v.to_vec()))
+            .chain(
+                self.marker_ctx
+                    .external_annotations()
+                    .iter()
+                    .map(|(did, anns)| {
+                        (*did, anns.iter().cloned().map(Annotation::Marker).collect())
+                    }),
+            )
+            .map(|(did, anns)| {
+                let def_kind = tcx.def_kind(did);
+                let obj_type = if def_kind.is_fn_like() {
+                    ObjectType::Function(tcx.fn_sig(did).skip_binder().skip_binder().inputs().len())
+                } else {
+                    // XXX add an actual match here
+                    ObjectType::Type
+                };
+                (did.into_def_id(tcx), (anns, obj_type))
+            })
+            .collect();
+        let mut known_def_ids = def_ids_from_controllers(&controllers, tcx);
+        known_def_ids.extend(annotations.keys().copied());
+        let def_info = known_def_ids
+            .into_iter()
+            .map(|id| (id, def_info_for_item(id, tcx)))
+            .collect();
+        ProgramDescription {
+            controllers,
+            annotations,
+            def_info,
+        }
+    }
+}
+
+fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
+    use hir::def;
+    let name = crate::utils::identifier_for_item(tcx, id);
+    let kind = match tcx.def_kind(id) {
+        kind if kind.is_fn_like() => DefKind::Function,
+        def::DefKind::Struct
+        | def::DefKind::AssocTy
+        | def::DefKind::OpaqueTy
+        | def::DefKind::TyAlias
+        | def::DefKind::Enum => DefKind::Type,
+        _ => unreachable!("{}", tcx.def_path_debug_str(id)),
+    };
+    let def_path = tcx.def_path(id);
+    let path = std::iter::once(Identifier::new(tcx.crate_name(def_path.krate)))
+        .chain(def_path.data.iter().filter_map(|segment| {
+            use hir::definitions::DefPathDataName::*;
+            match segment.data.name() {
+                Named(sym) => Some(Identifier::new(sym)),
+                Anon { .. } => None,
+            }
+        }))
+        .collect();
+    DefInfo { name, path, kind }
+}
+
+fn def_ids_from_controllers(map: &HashMap<DefId, Ctrl>, tcx: TyCtxt) -> HashSet<DefId> {
+    map.iter()
+        .flat_map(|(id, ctrl)| {
+            let from_dataflow = ctrl.data_flow.iter().flat_map(|(from, to)| {
+                from.as_function_call()
+                    .into_iter()
+                    .chain(to.iter().filter_map(|sink| sink.as_argument().map(|t| t.0)))
+            });
+            let from_ctrl_flow = ctrl
+                .ctrl_flow
+                .iter()
+                .flat_map(|(from, to)| from.as_function_call().into_iter().chain(to.iter()));
+            std::iter::once(*id).chain(from_dataflow.chain(from_ctrl_flow).flat_map(|cs| {
+                std::iter::once(cs.function)
+                    .chain(cs.location.iter().map(|loc| loc.function.into_def_id(tcx)))
+            }))
+        })
+        .collect()
 }
 
 /// A higher order function that increases the logging level if the `target`

@@ -104,7 +104,10 @@ pub use paralegal_spdg as desc;
 
 pub use args::{AnalysisCtrl, Args, DumpArgs, ModelCtrl};
 
-use crate::{frg::ProgramDescriptionExt, utils::outfile_pls};
+use crate::{
+    frg::{call_site_to_string, ForgeConverter},
+    utils::outfile_pls,
+};
 
 pub use crate::marker_db::MarkerCtx;
 
@@ -185,7 +188,8 @@ impl rustc_driver::Callbacks for Callbacks {
                     .with_extension("ana.frg");
                 let mut outf = outfile_pls(&result_path)?;
                 let doc_alloc = pretty::BoxAllocator;
-                let doc: DocBuilder<_, ()> = desc.serialize_forge(&doc_alloc, tcx, self.opts.modelctrl());
+                let converter = ForgeConverter::new(desc, tcx);
+                let doc: DocBuilder<_, ()> = converter.serialize_forge(&doc_alloc, self.opts.modelctrl());
                 doc.render(100, &mut outf)?;
                 let mut outf_2 = outfile_pls(self.opts.result_path())?;
                 doc.render(100, &mut outf_2)?;
@@ -193,7 +197,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 let info_path = compiler.build_output_filenames(compiler.session(), &[])
                     .with_extension("info.json");
                 let info = AdditionalInfo {
-                    call_sites: desc.all_call_sites().into_iter().map(|cs| (cs.to_string(), cs.clone())).collect()
+                    call_sites: converter.desc().all_call_sites().into_iter().map(|cs| (call_site_to_string(tcx, cs), cs.clone())).collect()
                 };
                 serde_json::to_writer(outfile_pls(info_path)?, &info)?;
 
@@ -201,7 +205,7 @@ impl rustc_driver::Callbacks for Callbacks {
 
                 serde_json::to_writer(outfile_pls(info_path2)?, &info)?;
                 warn!("Due to potential overwrite issues with --result-path (with multiple targets in a crate) outputs were written to {} and {}", self.opts.result_path().display(), &result_path.display());
-                Ok::<_, std::io::Error>(
+                anyhow::Ok(
                     if self.opts.abort_after_analysis() {
                         rustc_driver::Compilation::Stop
                     } else {

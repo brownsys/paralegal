@@ -25,5 +25,5 @@ define_test!(use_wrapper: ctrl -> {
     let cs = ctrl.call_site(&uwf);
     assert!(ctrl.types_for(&paralegal_flow::desc::DataSource::FunctionCall(cs.call_site().clone()))
         .expect("Type not found on method")
-        .iter().any(|t| t.as_str().strip_prefix("Wrapper").is_some()))
+        .iter().any(|t| ctrl.graph().desc.def_info[t].name.as_str() == "Wrapper"))
 });

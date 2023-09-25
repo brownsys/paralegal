@@ -6,12 +6,12 @@ use crate::{
     args::Args,
     consts,
     desc::{Annotation, MarkerAnnotation},
-    hir, mir, ty,
+    mir, ty,
     utils::{
-        AsFnAndArgs, FnResolution, GenericArgExt, IntoBodyId, IntoDefId, IntoHirId, MetaItemMatch,
-        TyCtxtExt, TyExt,
+        AsFnAndArgs, FnResolution, GenericArgExt, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt,
+        TyExt,
     },
-    BodyId, DefId, HashMap, LocalDefId, TyCtxt,
+    DefId, HashMap, LocalDefId, TyCtxt,
 };
 use rustc_utils::cache::{Cache, CopyCache};
 
@@ -132,26 +132,32 @@ impl<'tcx> MarkerCtx<'tcx> {
     ///
     /// XXX Does not take into account reachable type markers
     pub fn marker_is_reachable(&self, def_id: DefId) -> bool {
-        self.is_marked(def_id)
-            || def_id.as_local().map_or(false, |ldid| {
-                force_into_body_id(self.tcx(), ldid).map_or(false, |body_id| {
-                    self.has_transitive_reachable_markers(body_id)
-                })
-            })
+        self.is_marked(def_id) || self.has_transitive_reachable_markers(def_id)
     }
 
     /// Queries the transitive marker cache.
-    fn has_transitive_reachable_markers(&self, body_id: BodyId) -> bool {
+    fn has_transitive_reachable_markers(&self, def_id: DefId) -> bool {
         self.db()
             .marker_reachable_cache
-            .get_maybe_recursive(body_id, |_| self.compute_marker_reachable(body_id))
+            .get_maybe_recursive(def_id, |_| self.compute_marker_reachable(def_id))
             .unwrap_or(false)
     }
 
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
-    fn compute_marker_reachable(&self, body_id: BodyId) -> bool {
-        let body = self.tcx().body_for_body_id(body_id).simplified_body();
+    fn compute_marker_reachable(&self, def_id: DefId) -> bool {
+        let body = match self.tcx().body_for_def_id(def_id) {
+            Ok(body) => body,
+            Err(e) => {
+                warn!(
+                    "Marker reachability for {} was asked but is unknown ({})",
+                    self.tcx().def_path_debug_str(def_id),
+                    e
+                );
+                return false;
+            }
+        }
+        .simplified_body();
         body.basic_blocks
             .iter()
             .any(|bbdat| self.terminator_carries_marker(&body.local_decls, bbdat.terminator()))
@@ -187,30 +193,23 @@ impl<'tcx> MarkerCtx<'tcx> {
         let tcx = self.tcx();
         let hir = tcx.hir();
         let id = def_id.force_into_hir_id(tcx);
-        let sink_matches = hir
-            .attrs(id)
-            .iter()
-            .filter_map(|a| {
-                a.match_extract(&consts::MARKER_MARKER, |i| {
-                    Annotation::Marker(crate::ann_parse::ann_match_fn(i))
-                }).or_else(||
-                    a.match_extract(&consts::LABEL_MARKER, |i| {
-                        warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
-                        Annotation::Marker(crate::ann_parse::ann_match_fn(i))
-                    })
-                )
-                .or_else(|| {
-                    a.match_extract(&consts::OTYPE_MARKER, |i| {
-                        Annotation::OType(crate::ann_parse::otype_ann_match(i, tcx))
-                    })
-                })
-                .or_else(|| {
-                    a.match_extract(&consts::EXCEPTION_MARKER, |i| {
-                        Annotation::Exception(crate::ann_parse::match_exception(i))
-                    })
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut sink_matches = vec![];
+        for a in hir.attrs(id) {
+            if let Some(i) = a.match_get_ref(&consts::MARKER_MARKER) {
+                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)));
+            } else if let Some(i) = a.match_get_ref(&consts::LABEL_MARKER) {
+                warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
+                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)))
+            } else if let Some(i) = a.match_get_ref(&consts::OTYPE_MARKER) {
+                sink_matches.extend(
+                    crate::ann_parse::otype_ann_match(i, tcx)
+                        .into_iter()
+                        .map(Annotation::OType),
+                );
+            } else if let Some(i) = a.match_get_ref(&consts::EXCEPTION_MARKER) {
+                sink_matches.push(Annotation::Exception(crate::ann_parse::match_exception(i)));
+            }
+        }
         if sink_matches.is_empty() {
             return None;
         }
@@ -219,6 +218,10 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// All the markers applied to this type and its subtypes.
+    ///
+    /// Returns `(ann, (ty, did))` tuples which are the marker annotation `ann`,
+    /// the specific type `ty` that it was applied to and the `did` [`Defid`] of
+    /// that type that was used to look up the annotations.
     pub fn all_type_markers<'a>(
         &'a self,
         ty: ty::Ty<'tcx>,
@@ -245,22 +248,6 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 }
 
-fn force_into_body_id(tcx: TyCtxt, defid: LocalDefId) -> Option<BodyId> {
-    defid.into_body_id(tcx).or_else(|| {
-        let kind = tcx.def_kind(defid);
-        let name = tcx.def_path_debug_str(defid.to_def_id());
-        if matches!(kind, hir::def::DefKind::AssocFn) {
-            warn!(
-                "Inline elision and inling for associated functions is not yet implemented {}",
-                name
-            );
-            None
-        } else {
-            panic!("Could not get a body id for {name}, def kind {kind:?}")
-        }
-    })
-}
-
 /// We expect most local items won't have annotations. This structure is much
 /// smaller (8 bytes) than without the `Box` (24 Bytes).
 #[allow(clippy::box_collection)]
@@ -274,7 +261,7 @@ struct MarkerDatabase<'tcx> {
     local_annotations: Cache<LocalDefId, LocalAnnotations>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
-    marker_reachable_cache: CopyCache<BodyId, bool>,
+    marker_reachable_cache: CopyCache<DefId, bool>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {

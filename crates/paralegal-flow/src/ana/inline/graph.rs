@@ -1,12 +1,13 @@
 use crate::{
     ir::{regal, GlobalLocation},
     mir, serde,
-    utils::{time, write_sep, DisplayViaDebug, FnResolution, IntoDefId, TinyBitSet},
-    BodyId, Either, HashMap, HashSet, Location, TyCtxt,
+    utils::{time, write_sep, DisplayViaDebug, FnResolution, TinyBitSet},
+    Either, HashMap, HashSet, Location, TyCtxt,
 };
 
 use super::algebra;
 
+use paralegal_spdg::rustc_portable::DefId;
 use petgraph::prelude as pg;
 
 pub type ArgNum = u32;
@@ -275,12 +276,12 @@ impl<'tcx> InlinedGraph<'tcx> {
 
     /// Construct the initial graph from a [`regal::Body`]
     pub fn from_body(
-        body_id: BodyId,
+        def_id: DefId,
         body: &regal::Body<'tcx, DisplayViaDebug<Location>>,
         tcx: TyCtxt<'tcx>,
     ) -> Self {
         time("Graph Construction From Regal Body", || {
-            let equations = to_global_equations(&body.equations, body_id);
+            let equations = to_global_equations(&body.equations);
             let mut gwr = InlinedGraph {
                 equations,
                 graph: Default::default(),
@@ -301,11 +302,11 @@ impl<'tcx> InlinedGraph<'tcx> {
                         use regal::Target;
                         let from = match d {
                             Target::Call(c) => regal::SimpleLocation::Call((
-                                GlobalLocation::single(**c, body_id),
+                                GlobalLocation::single(**c, def_id),
                                 *call_map.get(c).unwrap_or_else(|| {
                                     panic!(
                                         "Expected to find call at {c} in function {}",
-                                        tcx.def_path_debug_str(body_id.into_def_id(tcx))
+                                        tcx.def_path_debug_str(def_id)
                                     )
                                 }),
                             )),
@@ -322,7 +323,7 @@ impl<'tcx> InlinedGraph<'tcx> {
                 };
 
             for (&loc, call) in body.calls.iter() {
-                let n = Node::Call((GlobalLocation::single(*loc, body_id), call.function));
+                let n = Node::Call((GlobalLocation::single(*loc, def_id), call.function));
                 for (idx, deps) in call.arguments.iter().enumerate() {
                     if let Some((_, deps)) = deps {
                         add_dep_edges(n, EdgeType::Data(idx as u32), deps)
@@ -341,10 +342,7 @@ impl<'tcx> InlinedGraph<'tcx> {
 }
 
 /// Globalize all locations mentioned in these equations.
-fn to_global_equations(
-    eqs: &Equations<DisplayViaDebug<mir::Local>>,
-    _body_id: BodyId,
-) -> Equations<GlobalLocal> {
+fn to_global_equations(eqs: &Equations<DisplayViaDebug<mir::Local>>) -> Equations<GlobalLocal> {
     eqs.iter()
         .map(|eq| eq.map_bases(|target| GlobalLocal::at_root(**target)))
         .collect()

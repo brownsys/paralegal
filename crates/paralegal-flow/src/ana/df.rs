@@ -775,7 +775,7 @@ impl<'a, 'tcx, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'inliner> {
 
 pub fn compute_flow_internal<'a, 'tcx, 's>(
     tcx: TyCtxt<'tcx>,
-    body_id: BodyId,
+    def_id: DefId,
     body_with_facts: &'a CachedSimplifedBodyWithFacts<'tcx>,
     carries_marker: &'s InlineJudge<'tcx>,
 ) -> FlowResults<'a, 'tcx, 's> {
@@ -788,7 +788,6 @@ pub fn compute_flow_internal<'a, 'tcx, 's>(
     // );
     // debug!("{}", body_with_facts.simplified_body().to_string(tcx).unwrap());
 
-    let def_id = tcx.hir().body_owner_def_id(body_id).to_def_id();
     let aliases = Aliases::build(tcx, def_id, body_with_facts.body_with_facts());
     let location_domain = aliases.location_domain().clone();
 

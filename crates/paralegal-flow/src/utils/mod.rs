@@ -1,6 +1,7 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
+use thiserror::Error;
 
 use paralegal_spdg::{CallSite, DataSource};
 use smallvec::SmallVec;
@@ -58,16 +59,20 @@ pub trait MetaItemMatch {
     /// functions see the source for
     /// [`match_exception`](crate::ann_parse::match_exception) or
     /// [`ann_match_fn`](crate::ann_parse::ann_match_fn).
-    fn match_extract<A, F: Fn(&ast::AttrArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A>;
+    fn match_extract<A, F: Fn(&ast::AttrArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A> {
+        self.match_get_ref(path).map(parse)
+    }
     /// Check that this attribute matches the provided path. All attribute
     /// payload is ignored (i.e. no error if there is a payload).
     fn matches_path(&self, path: &[Symbol]) -> bool {
-        self.match_extract(path, |_| ()).is_some()
+        self.match_get_ref(path).is_some()
     }
+
+    fn match_get_ref(&self, path: &[Symbol]) -> Option<&ast::AttrArgs>;
 }
 
 impl MetaItemMatch for ast::Attribute {
-    fn match_extract<A, F: Fn(&ast::AttrArgs) -> A>(&self, path: &[Symbol], parse: F) -> Option<A> {
+    fn match_get_ref(&self, path: &[Symbol]) -> Option<&ast::AttrArgs> {
         match &self.kind {
             ast::AttrKind::Normal(normal) => match &normal.item {
                 ast::AttrItem {
@@ -81,7 +86,7 @@ impl MetaItemMatch for ast::Attribute {
                         .zip(path)
                         .all(|(seg, i)| seg.ident.name == *i) =>
                 {
-                    Some(parse(args))
+                    Some(args)
                 }
                 _ => None,
             },
@@ -310,12 +315,17 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AsFnAndArgsErr<'tcx> {
+    #[error("not a constant")]
     NotAConstant,
+    #[error("is not a function type: {0:?}")]
     NotFunctionType(ty::TyKind<'tcx>),
+    #[error("is not a `Val` constant: {0}")]
     NotValueLevelConstant(ty::Const<'tcx>),
+    #[error("terminator is not a `Call`")]
     NotAFunctionCall,
+    #[error("function instance could not be resolved")]
     InstanceResolutionErr,
 }
 
@@ -475,9 +485,7 @@ impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
     }
 }
 
-/// Old version of [`places_read`](../fn.places_read.html) and
-/// [`places_read_with_provenance`](../fn.places_read_with_provenance.html).
-/// Should be considered deprecated.
+/// Old version of [`places_read`], should be considered deprecated.
 pub fn extract_places<'tcx>(
     l: mir::Location,
     body: &mir::Body<'tcx>,
@@ -776,10 +784,37 @@ impl IntoHirId for LocalDefId {
     }
 }
 
-/// Creates an `Identifier` for this `HirId`
+/// Get a reasonable, but not guaranteed unique name for this item
 pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
+    // TODO Make a generic version instead of just copying `unique_identifier_for_item`
     let did = did.into_def_id(tcx);
     let get_parent = || identifier_for_item(tcx, tcx.parent(did));
+    Identifier::new_intern(
+        &tcx.opt_item_name(did)
+            .map(|n| n.to_string())
+            .or_else(|| {
+                use hir::def::DefKind::*;
+                match tcx.def_kind(did) {
+                    OpaqueTy => Some("Opaque".to_string()),
+                    Closure => Some(format!("{}_closure", get_parent())),
+                    Generator => Some(format!("{}_generator", get_parent())),
+                    _ => None,
+                }
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "Could not name {} {:?}",
+                    tcx.def_path_debug_str(did),
+                    tcx.def_kind(did)
+                )
+            }),
+    )
+}
+
+/// Creates an `Identifier` for this `HirId`
+pub fn unique_identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
+    let did = did.into_def_id(tcx);
+    let get_parent = || unique_identifier_for_item(tcx, tcx.parent(did));
     Identifier::new_intern(&format!(
         "{}_{}",
         tcx.opt_item_name(did)
@@ -802,28 +837,49 @@ pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> I
     ))
 }
 
+#[derive(Error, Debug)]
+pub enum BodyResolutionError {
+    #[error("not a function-like object")]
+    /// The provided id did not refer to a function-like object.
+    NotAFunction,
+    #[error("body not available")]
+    /// The provided id refers to an external entity and we have no access to
+    /// its body
+    External,
+}
+
 /// Extension trait for [`TyCtxt`]
 pub trait TyCtxtExt<'tcx> {
-    /// Resolve this [`BodyId`] to its actual body. Returns
+    /// Resolve this [`DefId`] to a body. Returns
     /// [`BodyWithBorrowckFacts`](crate::rust::rustc_borrowck::BodyWithBorrowckFacts),
     /// because it internally uses flowistry's body resolution
-    /// ([`flowistry::mir::borrowck_facts::get_body_with_borrowck_facts`]) which
+    /// ([`rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts`]) which
     /// memoizes its results so this is actually a cheap query.
-    fn body_for_body_id(
+    ///
+    /// Returns `None` if the id does not refer to a function or if its body is
+    /// unavailable.
+    fn body_for_def_id(
         self,
-        b: BodyId,
-    ) -> &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>;
+        def_id: DefId,
+    ) -> Result<
+        &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
+        BodyResolutionError,
+    >;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
-    fn body_for_body_id(
+    fn body_for_def_id(
         self,
-        b: BodyId,
-    ) -> &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx> {
-        rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
-            self,
-            self.hir().body_owner_def_id(b),
-        )
+        def_id: DefId,
+    ) -> Result<
+        &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
+        BodyResolutionError,
+    > {
+        let def_id = def_id.as_local().ok_or(BodyResolutionError::External)?;
+        if !self.def_kind(def_id).is_fn_like() {
+            return Err(BodyResolutionError::NotAFunction);
+        }
+        Ok(rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(self, def_id))
     }
 }
 
@@ -1028,14 +1084,14 @@ impl IntoBodyId for DefId {
 }
 
 pub trait CallSiteExt {
-    fn new(loc: &GlobalLocation, function: DefId, tcx: TyCtxt<'_>) -> Self;
+    fn new(loc: &GlobalLocation, function: DefId) -> Self;
 }
 
 impl CallSiteExt for CallSite {
-    fn new(location: &GlobalLocation, function: DefId, tcx: TyCtxt<'_>) -> Self {
+    fn new(location: &GlobalLocation, function: DefId) -> Self {
         Self {
             location: *location,
-            function: identifier_for_item(tcx, function),
+            function,
         }
     }
 }
@@ -1056,18 +1112,18 @@ pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
         DataSource::Argument(loc.outermost_location().statement_index - 1)
     } else {
         let terminator =
-                tcx.body_for_body_id(dep_fun)
+                tcx.body_for_def_id(dep_fun)
+                    .unwrap()
                     .simplified_body()
                     .maybe_stmt_at(dep_loc)
                     .unwrap_or_else(|e|
-                        panic!("Could not convert {loc} to data source with body {}. is at root: {}, is real: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun), loc.is_at_root(), is_real_location)
+                        panic!("Could not convert {loc} to data source with body {}. is at root: {}, is real: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun.expect_local()), loc.is_at_root(), is_real_location)
                     )
                     .right()
                     .expect("not a terminator");
         DataSource::FunctionCall(CallSite::new(
             &loc,
             terminator.as_fn_and_args(tcx).unwrap().0,
-            tcx,
         ))
     }
 }

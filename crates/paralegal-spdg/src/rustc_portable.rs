@@ -17,9 +17,18 @@
 cfg_if::cfg_if! {
     if #[cfg(feature = "rustc")] {
         use crate::rustc::{hir, mir, def_id};
-        pub use mir::{Location, BasicBlock};
-        pub use hir::{BodyId, ItemLocalId, hir_id::OwnerId, HirId};
-        pub use def_id::{DefIndex, LocalDefId};
+        // We are redefining these here as a type alias instead of just `pub
+        // use`, because the latter requires of consumers of this library to use
+        // the `rustc_private` feature, whereas it doesn't with type aliases.
+        pub type Location = mir::Location;
+        pub type BasicBlock = mir::BasicBlock;
+        pub type BodyId = hir::BodyId;
+        pub type ItemLocalId = hir::ItemLocalId;
+        pub type OwnerId = hir::hir_id::OwnerId;
+        pub type HirId = hir::HirId;
+        pub type DefIndex = def_id::DefIndex;
+        pub type LocalDefId = def_id::LocalDefId;
+        pub type DefId = def_id::DefId;
     } else {
         pub use crate::rustc_proxies::*;
     }

@@ -13,11 +13,11 @@
 //! Some types (such as [`mir::Body`]) first have to be explicitly transformed
 //! into the respective proxy type. In the case of [`mir::Body`] this can be
 //! done with [`BodyProxy::from_body_with_normalize`]
-use paralegal_spdg::Identifier;
+use paralegal_spdg::{rustc_portable::DefId, Identifier};
 use serde::Deserialize;
 
 use crate::{
-    hir, mir,
+    mir,
     rust::TyCtxt,
     serde::{Serialize, Serializer},
     utils::{extract_places, read_places_with_provenance, DfppBodyExt},
@@ -118,17 +118,6 @@ impl BodyProxy {
     }
 }
 
-/// This exists because of serde's restrictions on how you derive serializers.
-/// [`BodyIdProxy`] can be used to serialize a [`BodyId`](hir::BodyId) but if
-/// the [`BodyId`](hir::BodyId) is used as e.g. a key in a map or in a vector it
-/// does not dispatch to the remote impl on [`BodyIdProxy`]. Implementing the
-/// serializers for the map or vector by hand is annoying so instead you can map
-/// over the datastructure, wrap each [`BodyId`](hir::BodyId) in this proxy type
-/// and then dispatch to the `serialize` impl for the reconstructed data
-/// structure.
-#[derive(Serialize, Deserialize)]
-pub struct BodyIdProxy2(#[serde(with = "paralegal_spdg::rustc_proxies::BodyId")] pub hir::BodyId);
-
 pub mod serde_map_via_vec {
     //! Serialize a [`HashMap`] by converting it to a [`Vec`], lifting
     //! restrictions on the types of permissible keys.
@@ -180,10 +169,21 @@ pub mod serde_map_via_vec {
     }
 }
 
+/// This exists because of serde's restrictions on how you derive serializers.
+/// [`BodyIdProxy`] can be used to serialize a [`BodyId`](hir::BodyId) but if
+/// the [`BodyId`](hir::BodyId) is used as e.g. a key in a map or in a vector it
+/// does not dispatch to the remote impl on [`BodyIdProxy`]. Implementing the
+/// serializers for the map or vector by hand is annoying so instead you can map
+/// over the datastructure, wrap each [`BodyId`](hir::BodyId) in this proxy type
+/// and then dispatch to the `serialize` impl for the reconstructed data
+/// structure.
+#[derive(Serialize, Deserialize)]
+pub struct BodyIdProxy2(#[serde(with = "paralegal_spdg::rustc_proxies::DefId")] pub DefId);
+
 /// A serializable version of [`mir::Body`]s, mapped to their [`hir::BodyId`] so
 /// that you can resolve the body belonging to a global location (see
 /// [`IsGlobalLocation::function`]).
-pub struct Bodies(pub HashMap<hir::BodyId, (Identifier, BodyProxy)>);
+pub struct Bodies(pub HashMap<DefId, (Identifier, BodyProxy)>);
 
 impl Serialize for Bodies {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

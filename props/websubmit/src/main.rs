@@ -3,7 +3,7 @@ extern crate anyhow;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
-use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Context, Marker};
+use paralegal_policy::{assert_error, Context, DefId, Marker};
 
 pub struct DeletionProp {
     cx: Arc<Context>,
@@ -14,7 +14,7 @@ impl DeletionProp {
         DeletionProp { cx }
     }
 
-    fn flows_to_store(&self, t: Identifier) -> bool {
+    fn flows_to_store(&self, t: DefId) -> bool {
         let stores = Marker::new_intern("stores");
 
         for (c_id, c) in &self.cx.desc().controllers {
@@ -36,7 +36,7 @@ impl DeletionProp {
         false
     }
 
-    fn flows_to_deletion(&self, t: Identifier) -> bool {
+    fn flows_to_deletion(&self, t: DefId) -> bool {
         let deletes = Marker::new_intern("deletes");
 
         let mut ots = self.cx.otypes(t);
