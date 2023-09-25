@@ -583,15 +583,15 @@ fn warn_if_marked_type_constructed<'tcx>(
     mir::visit::Visitor::visit_body(&mut vis, body)
 }
 
-pub fn compute_from_body_id<'tcx>(
+pub fn compute_from_def_id<'tcx>(
     dbg_opts: &DumpArgs,
-    body_id: DefId,
+    def_id: DefId,
     tcx: TyCtxt<'tcx>,
     carries_marker: &InlineJudge<'tcx>,
 ) -> Body<'tcx, DisplayViaDebug<Location>> {
-    let local_def_id = body_id.expect_local();
+    let local_def_id = def_id.expect_local();
     info!("Analyzing function {}", body_name_pls(tcx, local_def_id));
-    let body_with_facts = tcx.body_for_body_id(body_id).unwrap();
+    let body_with_facts = tcx.body_for_def_id(def_id).unwrap();
     let body = body_with_facts.simplified_body();
     warn_if_marked_type_constructed(
         tcx,
@@ -599,7 +599,7 @@ pub fn compute_from_body_id<'tcx>(
         local_def_id.to_def_id(),
         body,
     );
-    let flow = df::compute_flow_internal(tcx, body_id, body_with_facts, carries_marker);
+    let flow = df::compute_flow_internal(tcx, def_id, body_with_facts, carries_marker);
     if dbg_opts.dump_callee_mir() {
         mir::pretty::write_mir_fn(
             tcx,

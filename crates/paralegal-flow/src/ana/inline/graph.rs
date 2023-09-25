@@ -276,7 +276,7 @@ impl<'tcx> InlinedGraph<'tcx> {
 
     /// Construct the initial graph from a [`regal::Body`]
     pub fn from_body(
-        body_id: DefId,
+        def_id: DefId,
         body: &regal::Body<'tcx, DisplayViaDebug<Location>>,
         tcx: TyCtxt<'tcx>,
     ) -> Self {
@@ -302,11 +302,11 @@ impl<'tcx> InlinedGraph<'tcx> {
                         use regal::Target;
                         let from = match d {
                             Target::Call(c) => regal::SimpleLocation::Call((
-                                GlobalLocation::single(**c, body_id),
+                                GlobalLocation::single(**c, def_id),
                                 *call_map.get(c).unwrap_or_else(|| {
                                     panic!(
                                         "Expected to find call at {c} in function {}",
-                                        tcx.def_path_debug_str(body_id)
+                                        tcx.def_path_debug_str(def_id)
                                     )
                                 }),
                             )),
@@ -323,7 +323,7 @@ impl<'tcx> InlinedGraph<'tcx> {
                 };
 
             for (&loc, call) in body.calls.iter() {
-                let n = Node::Call((GlobalLocation::single(*loc, body_id), call.function));
+                let n = Node::Call((GlobalLocation::single(*loc, def_id), call.function));
                 for (idx, deps) in call.arguments.iter().enumerate() {
                     if let Some((_, deps)) = deps {
                         add_dep_edges(n, EdgeType::Data(idx as u32), deps)

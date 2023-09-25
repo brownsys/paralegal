@@ -136,22 +136,22 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Queries the transitive marker cache.
-    fn has_transitive_reachable_markers(&self, body_id: DefId) -> bool {
+    fn has_transitive_reachable_markers(&self, def_id: DefId) -> bool {
         self.db()
             .marker_reachable_cache
-            .get_maybe_recursive(body_id, |_| self.compute_marker_reachable(body_id))
+            .get_maybe_recursive(def_id, |_| self.compute_marker_reachable(def_id))
             .unwrap_or(false)
     }
 
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
-    fn compute_marker_reachable(&self, body_id: DefId) -> bool {
-        let body = match self.tcx().body_for_body_id(body_id) {
+    fn compute_marker_reachable(&self, def_id: DefId) -> bool {
+        let body = match self.tcx().body_for_def_id(def_id) {
             Ok(body) => body,
             Err(e) => {
                 warn!(
                     "Marker reachability for {} was asked but is unknown ({})",
-                    self.tcx().def_path_debug_str(body_id),
+                    self.tcx().def_path_debug_str(def_id),
                     e
                 );
                 return false;

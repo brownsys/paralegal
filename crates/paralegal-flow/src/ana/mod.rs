@@ -56,7 +56,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 .or_insert_with(|| ann.iter().flat_map(|a| a.iter()).cloned().collect());
         }
         let tcx = self.tcx;
-        let controller_body_with_facts = tcx.body_for_body_id(target.body_id)?;
+        let controller_body_with_facts = tcx.body_for_def_id(target.def_id)?;
 
         if self.opts.dbg().dump_ctrl_mir() {
             mir::graphviz::write_mir_fn_graphviz(
@@ -72,7 +72,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
         let flow = {
             let w = 6;
-            let i = inliner.get_inlined_graph(target.body_id).unwrap();
+            let i = inliner.get_inlined_graph(target.def_id).unwrap();
             info!("Graph statistics for {}\n  {:<w$} graph nodes\n  {:<w$} graph edges\n  {:<w$} inlined functions\n  {:<w$} max call stack depth", target.name(), i.vertex_count(), i.edge_count(), i.inlined_functions_count(), i.max_call_stack_depth());
             inliner.to_call_only_flow(i, |a| {
                 GlobalLocation::single(
@@ -85,7 +85,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                         ),
                         statement_index: a as usize + 1,
                     },
-                    target.body_id,
+                    target.def_id,
                 )
             })
         };
@@ -134,7 +134,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             // We need to make sure to fetch the body again here, because we
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.
-            let inner_body_with_facts = tcx.body_for_body_id(inner_body_id).unwrap();
+            let inner_body_with_facts = tcx.body_for_def_id(inner_body_id).unwrap();
             let inner_body = &inner_body_with_facts.simplified_body();
             if !inner_location.is_real(inner_body) {
                 assert!(loc.is_at_root());
@@ -233,7 +233,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 DataSink::Return,
             );
         }
-        Ok((target.body_id.into_def_id(tcx), flows))
+        Ok((target.def_id.into_def_id(tcx), flows))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -244,7 +244,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     fn analyze(mut self) -> Result<ProgramDescription> {
         let mut targets = std::mem::take(&mut self.functions_to_analyze);
 
-        if let LogLevelConfig::Targeted(s) = &*self.opts.debug() {
+        if let LogLevelConfig::Targeted(s) = self.opts.debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
                 "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
@@ -377,7 +377,7 @@ fn def_ids_from_controllers(map: &HashMap<DefId, Ctrl>, tcx: TyCtxt) -> HashSet<
 /// matches the one selected with the `debug` flag on the command line (and
 /// reset it afterward).
 fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
-    if matches!(&*opts.debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
+    if matches!(opts.debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
         with_temporary_logging_level(log::LevelFilter::Debug, f)
     } else {
         f()
