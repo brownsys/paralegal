@@ -1,0 +1,176 @@
+#![feature(register_tool)]
+#![register_tool(paralegal_flow)]
+
+
+// extern crate async_std;
+// use async_std::prelude::*;
+
+#[paralegal_flow::label(source)]
+fn get_user_data() -> UserData {
+    return UserData {
+        data: vec![1, 2, 3],
+    };
+}
+#[paralegal_flow::label(source)]
+fn get_user_data2() -> UserData {
+    return UserData {
+        data: vec![1, 2, 3],
+    };
+}
+#[paralegal_flow::label(yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
+fn dp_user_data(user_data: &mut UserData) {
+    for i in &mut user_data.data {
+        *i = 2;
+    }
+}
+
+#[paralegal_flow::label{ sink, arguments = [0] }]
+fn send_user_data(user_data: &UserData) {}
+
+#[paralegal_flow::label{ sink, arguments = [0] }]
+fn send_user_data2(user_data: &UserData) {}
+
+#[paralegal_flow::label(source)]
+async fn async_get_user_data() -> UserData {
+    return UserData {
+        data: vec![1, 2, 3],
+    };
+} 
+
+#[paralegal_flow::label(yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
+async fn async_dp_user_data(user_data: &mut UserData) {
+    for i in &mut user_data.data {
+        *i = 2;
+    }
+}
+
+async fn inlineable_async_dp_user_data(user_data: &mut UserData) {
+    dp_user_data(user_data)
+}
+
+
+
+#[paralegal_flow::label{ sink, arguments = [0] }]
+async fn async_send_user_data(user_data: &UserData) {}
+
+#[paralegal_flow::label(sensitive)]
+struct UserData {
+    pub data: Vec<i64>,
+}
+#[paralegal_flow::analyze]
+async fn top_level_inlining_happens() {
+    let mut user_data = get_user_data();
+    dp_user_data(&mut user_data);
+    send_user_data(&user_data);
+}
+
+#[paralegal_flow::analyze]
+async fn awaiting_works() {
+    let mut user_data = async_get_user_data().await;
+    async_dp_user_data(&mut user_data).await;
+    async_send_user_data(&user_data).await;
+}
+
+#[paralegal_flow::analyze]
+async fn two_data_over_boundary() {
+    let user_data1 = get_user_data();
+    let user_data2 = get_user_data2();
+    let _ = async_get_user_data().await;
+    send_user_data(&user_data1);
+    send_user_data2(&user_data2);
+}
+
+#[paralegal_flow::analyze]
+async fn arguments_work(d: UserData) {
+    send_user_data(&d);
+}
+
+#[paralegal_flow::analyze]
+async fn inlining_crate_local_async_fns() {
+    let mut user_data = get_user_data();
+    inlineable_async_dp_user_data(&mut user_data).await;
+    send_user_data(&user_data);
+}
+
+
+
+
+
+async fn arity2_inlineable_async_dp_user_data(_: &mut UserData, user_data: &mut UserData) {
+    dp_user_data(user_data)
+}
+
+#[paralegal_flow::analyze]
+async fn no_inlining_overtaint() {
+    let mut ud1 = get_user_data();
+    let mut ud2 = get_user_data2();
+    arity2_inlineable_async_dp_user_data(&mut ud1, &mut ud2);
+    send_user_data(&ud1);
+    send_user_data2(&ud2);
+}
+
+
+
+
+
+async fn send_both(ud1: &UserData, ud2: &UserData) {
+    send_user_data(&ud1);
+    send_user_data2(&ud2);
+}
+
+#[paralegal_flow::analyze]
+async fn no_immutable_inlining_overtaint() {
+    let mut ud1 = get_user_data();
+    let mut ud2 = get_user_data2();
+    send_both(&ud1, &ud2);
+}
+
+#[paralegal_flow::label(noinline)]
+async fn f() -> usize {
+    0
+}
+
+#[paralegal_flow::label(noinline)]
+fn some_input() -> usize {
+    0
+}
+
+#[paralegal_flow::label(noinline)]
+fn another_input() -> usize {
+    9
+}
+
+#[paralegal_flow::label(target)]
+fn target(i: usize) {
+
+}
+
+#[paralegal_flow::label(target)]
+fn another_target(i: usize) {
+
+}
+
+async fn id_fun<T>(t: T) -> T {
+    let _ = f();
+    t
+}
+
+#[paralegal_flow::analyze]
+async fn remove_poll_match() {
+    let p = some_input();
+    let x = f().await;
+    let y = target(p);
+    ()
+}
+
+#[paralegal_flow::analyze]
+async fn no_overtaint_over_poll() {
+    let p = some_input();
+    let q = another_input();
+    let t = id_fun((p, q)).await;
+    target(t.0);
+    another_target(t.1);
+}
+
+
+fn main() {}
