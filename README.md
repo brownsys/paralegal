@@ -8,7 +8,7 @@ for details on [getting started](https://www.notion.so/justus-adam/Getting-Start
 For your convenience during development the documentation for the code and rustc
 (which we use as a library) are hosted on our [github pages][docs]
 
-[docs]: https://brownsys.github.io/dfpp
+[docs]: https://brownsys.github.io/paralegal
 
 ## Repository Structure
 
