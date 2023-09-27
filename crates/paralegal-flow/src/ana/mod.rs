@@ -244,7 +244,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     fn analyze(mut self) -> Result<ProgramDescription> {
         let mut targets = std::mem::take(&mut self.functions_to_analyze);
 
-        if let LogLevelConfig::Targeted(s) = &*self.opts.debug() {
+        if let LogLevelConfig::Targeted(s) = self.opts.debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
                 "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
@@ -377,7 +377,7 @@ fn def_ids_from_controllers(map: &HashMap<DefId, Ctrl>, tcx: TyCtxt) -> HashSet<
 /// matches the one selected with the `debug` flag on the command line (and
 /// reset it afterward).
 fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
-    if matches!(&*opts.debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
+    if matches!(opts.debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
         with_temporary_logging_level(log::LevelFilter::Debug, f)
     } else {
         f()
