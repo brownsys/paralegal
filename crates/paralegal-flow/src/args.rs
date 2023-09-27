@@ -9,46 +9,17 @@
 //! allow us to change the name and default value of the argument without having
 //! to migrate the code using that argument.
 
-use std::{borrow::Cow, str::FromStr};
-
+use anyhow::Error;
 use clap::ValueEnum;
+use std::str::FromStr;
 
 use crate::utils::TinyBitSet;
-
 use crate::{num_derive, num_traits::FromPrimitive};
 
-#[derive(serde::Deserialize, serde::Serialize)]
-pub struct Args(GArgs<DumpArgs>);
-
-#[derive(clap::Args)]
-pub struct ParseableArgs {
-    #[clap(flatten)]
-    ignored: GArgs<ParseableDumpArgs>,
-}
-
-impl Args {
-    pub fn from_parseable(value: ParseableArgs) -> Result<Self, String> {
-        let ParseableArgs {
-            ignored:
-                GArgs {
-                    verbose,
-                    debug,
-                    debug_target,
-                    result_path,
-                    relaxed,
-                    target,
-                    abort_after_analysis,
-                    anactrl,
-                    modelctrl,
-                    dump,
-                },
-        } = value;
-        let mut dump: DumpArgs = dump.into();
-        if let Ok(from_env) = std::env::var("PARABLE_DUMP") {
-            let from_env = DumpArgs::from_str(&from_env, false)?;
-            dump.0 |= from_env.0;
-        }
-        Ok(Args(GArgs {
+impl TryFrom<ClapArgs> for Args {
+    type Error = Error;
+    fn try_from(value: ClapArgs) -> Result<Self, Self::Error> {
+        let ClapArgs {
             verbose,
             debug,
             debug_target,
@@ -59,22 +30,70 @@ impl Args {
             anactrl,
             modelctrl,
             dump,
-        }))
+        } = value;
+        let mut dump: DumpArgs = dump.into();
+        if let Ok(from_env) = std::env::var("PARALEGAL_DUMP") {
+            let from_env =
+                DumpArgs::from_str(&from_env, false).map_err(|s| anyhow::anyhow!("{}", s))?;
+            dump.0 |= from_env.0;
+        }
+        let build_config_file = std::path::Path::new("Paralegal.toml");
+        let build_config = if build_config_file.exists() {
+            toml::from_str(&std::fs::read_to_string(build_config_file)?)?
+        } else {
+            Default::default()
+        };
+        let log_level_config = match debug_target {
+            Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
+            _ if debug => LogLevelConfig::Enabled,
+            _ => LogLevelConfig::Disabled,
+        };
+        Ok(Args {
+            verbose,
+            log_level_config,
+            result_path,
+            relaxed,
+            target,
+            abort_after_analysis,
+            anactrl,
+            modelctrl,
+            dump,
+            build_config,
+        })
     }
 }
 
-/// Top level command line arguments
-///
-/// There are some shenanigans going on here wrt the `DA` type variable. This is
-/// because as of writing these docs Justus can't figure out how to directly
-/// collect the dump options into a set, so I first collect them into a vector
-/// and then compress it into a set.
-///
-/// This is what the `Parseable*` structs are trying to hide from the user.
-#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
-struct GArgs<DA: clap::FromArgMatches + clap::Args> {
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Args {
     /// Print additional logging output (up to the "info" level)
-    #[clap(short, long, env = "PARABLE_VERBOSE")]
+    verbose: bool,
+    log_level_config: LogLevelConfig,
+    /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
+    result_path: std::path::PathBuf,
+    /// Emit warnings instead of aborting the analysis on sanity checks
+    relaxed: bool,
+
+    target: Option<String>,
+    /// Abort the compilation after finishing the analysis
+    abort_after_analysis: bool,
+    /// Additional arguments that control the flow analysis specifically
+    anactrl: AnalysisCtrl,
+    /// Additional arguments that control the generation and composition of the model
+    modelctrl: ModelCtrl,
+    /// Additional arguments that control debug output specifically
+    dump: DumpArgs,
+    /// Additional configuration for the build process/rustc
+    build_config: BuildConfig,
+}
+
+/// Arguments as exposed on the command line.
+///
+/// You should then use `try_into` to convert this to [`Args`], the argument
+/// structure used internally.
+#[derive(clap::Args)]
+pub struct ClapArgs {
+    /// Print additional logging output (up to the "info" level)
+    #[clap(short, long, env = "PARALEGAL_VERBOSE")]
     verbose: bool,
     /// Print additional logging output (up to the "debug" level).
     ///
@@ -82,18 +101,18 @@ struct GArgs<DA: clap::FromArgMatches + clap::Args> {
     /// output globally. You may instead pass the name of a specific target
     /// function and then only during analysis of that function the debug output
     /// is enabled.
-    #[clap(long, env = "PARABLE_DEBUG")]
+    #[clap(long, env = "PARALEGAL_DEBUG")]
     debug: bool,
-    #[clap(long, env = "PARABLE_DEBUG_TARGET")]
+    #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
     debug_target: Option<String>,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
-    #[clap(long, env = "PARABLE_RELAXED")]
+    #[clap(long, env = "PARALEGAL_RELAXED")]
     relaxed: bool,
 
-    #[clap(long, env = "PARABLE_TARGET")]
+    #[clap(long, env = "PARALEGAL_TARGET")]
     target: Option<String>,
     /// Abort the compilation after finishing the analysis
     #[clap(long, env)]
@@ -106,17 +125,17 @@ struct GArgs<DA: clap::FromArgMatches + clap::Args> {
     modelctrl: ModelCtrl,
     /// Additional arguments that control debug args specifically
     #[clap(flatten)]
-    dump: DA,
+    dump: ParseableDumpArgs,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, clap::Args)]
+#[derive(Clone, clap::Args)]
 pub struct ParseableDumpArgs {
     /// Generate intermediate of various formats and at various stages of
     /// compilation. A short description of each value is provided here, for a
     /// more comprehensive explanation refer to the [notion page on
     /// dumping](https://www.notion.so/justus-adam/Dumping-Intermediate-Representations-4bd66ec11f8f4c459888a8d8cfb10e93).
     ///
-    /// Can also be supplied as a comma-separated list (no spaces) and be set with the `PARABLE_DUMP` variable.
+    /// Can also be supplied as a comma-separated list (no spaces) and be set with the `PARALEGAL_DUMP` variable.
     #[clap(long, value_enum)]
     dump: Vec<DumpArgs>,
 }
@@ -157,26 +176,6 @@ impl From<DumpOption> for DumpArgs {
 impl From<ParseableDumpArgs> for DumpArgs {
     fn from(value: ParseableDumpArgs) -> Self {
         value.dump.into_iter().flat_map(|opt| opt.iter()).collect()
-    }
-}
-
-/// See [`DumpArgs`]
-impl clap::FromArgMatches for DumpArgs {
-    fn from_arg_matches(_: &clap::ArgMatches) -> Result<Self, clap::Error> {
-        unimplemented!()
-    }
-    fn update_from_arg_matches(&mut self, _: &clap::ArgMatches) -> Result<(), clap::Error> {
-        unimplemented!()
-    }
-}
-
-/// See [`DumpArgs`]
-impl clap::Args for DumpArgs {
-    fn augment_args(_: clap::Command) -> clap::Command {
-        unimplemented!()
-    }
-    fn augment_args_for_update(_: clap::Command) -> clap::Command {
-        unimplemented!()
     }
 }
 
@@ -262,22 +261,22 @@ enum DumpOption {
 /// How a specific logging level was configured. (currently only used for the
 /// `--debug` level)
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-pub enum LogLevelConfig<'a> {
+pub enum LogLevelConfig {
     /// Logging for this level is only enabled for a specific target function
-    Targeted(Cow<'a, str>),
+    Targeted(String),
     /// Logging for this level is not directly enabled
     Disabled,
     /// Logging for this level was directly enabled
     Enabled,
 }
 
-impl std::fmt::Display for LogLevelConfig<'_> {
+impl std::fmt::Display for LogLevelConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
 }
 
-impl<'a> LogLevelConfig<'a> {
+impl LogLevelConfig {
     pub fn is_enabled(&self) -> bool {
         matches!(self, LogLevelConfig::Targeted(..) | LogLevelConfig::Enabled)
     }
@@ -285,43 +284,40 @@ impl<'a> LogLevelConfig<'a> {
 
 impl Args {
     pub fn target(&self) -> Option<&str> {
-        self.0.target.as_deref()
+        self.target.as_deref()
     }
     /// Returns the configuration specified for the `--debug` option
-    pub fn debug(&self) -> Cow<'_, LogLevelConfig<'_>> {
-        Cow::Owned(match &self.0.debug_target {
-            Some(target) if !target.is_empty() => {
-                LogLevelConfig::Targeted(Cow::Borrowed(target.as_str()))
-            }
-            _ if self.0.debug => LogLevelConfig::Enabled,
-            _ => LogLevelConfig::Disabled,
-        })
+    pub fn debug(&self) -> &LogLevelConfig {
+        &self.log_level_config
     }
     /// Access the debug arguments
     pub fn dbg(&self) -> &DumpArgs {
-        &self.0.dump
+        &self.dump
     }
     /// Access the argument controlling the analysis
     pub fn anactrl(&self) -> &AnalysisCtrl {
-        &self.0.anactrl
+        &self.anactrl
     }
     pub fn modelctrl(&self) -> &ModelCtrl {
-        &self.0.modelctrl
+        &self.modelctrl
     }
     /// the file to write results to
     pub fn result_path(&self) -> &std::path::Path {
-        self.0.result_path.as_path()
+        self.result_path.as_path()
     }
     /// Should we output additional log messages (level `info`)
     pub fn verbose(&self) -> bool {
-        self.0.verbose
+        self.verbose
     }
     /// Warn instead of crashing the program in case of non-fatal errors
     pub fn relaxed(&self) -> bool {
-        self.0.relaxed
+        self.relaxed
     }
     pub fn abort_after_analysis(&self) -> bool {
-        self.0.abort_after_analysis
+        self.abort_after_analysis
+    }
+    pub fn build_config(&self) -> &BuildConfig {
+        &self.build_config
     }
 }
 
@@ -552,4 +548,18 @@ impl DumpArgs {
     pub fn dump_locals_graph(&self) -> bool {
         self.has(DumpOption::LocalsGraph)
     }
+}
+
+/// Dependency specific configuration
+#[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
+pub struct DepConfig {
+    /// Additional rust features to enable
+    pub rust_features: Vec<String>,
+}
+
+/// Additional configuration for the build process/rustc
+#[derive(serde::Deserialize, serde::Serialize, Default, Debug)]
+pub struct BuildConfig {
+    /// Dependency specific configuration
+    pub dep: crate::HashMap<String, DepConfig>,
 }
