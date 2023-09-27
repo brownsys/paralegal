@@ -247,6 +247,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         rustc_plugin::RustcPluginArgs {
             args: args.args.try_into().unwrap(),
             filter: CrateFilter::AllCrates,
+            cargo_args: args.cargo_args,
         }
     }
 
