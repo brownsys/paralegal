@@ -61,7 +61,7 @@ use std::{
 mod context;
 mod flows_to;
 #[macro_use]
-mod diagnostics;
+pub mod diagnostics;
 #[cfg(test)]
 mod test_utils;
 
