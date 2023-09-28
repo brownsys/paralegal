@@ -73,15 +73,6 @@ impl ContextExt for Context {
     }
 }
 
-// all c : Ctrl | all u : labeled_objects_with_types[c, Object, user, labels] | some deleter: labeled_objects[CallArgument, to_delete, labels] |
-// (flows_to_unmodified[c, u, deleter, flow_set])
-// implies {
-//     all user_type : labeled_objects[Type, user_data, labels] | { // for all Types representing user data
-// 		some arg : labeled_objects[CallArgument, to_delete, labels] | {
-// 			flows_to[c, user_type, arg, flow_set] // that data is deleted
-// 		}
-// 	}
-// }
 fn check(ctx: Arc<Context>) -> Result<()> {
     let user_data_types = 
             ctx.marked_type(marker!(user_data))
