@@ -69,7 +69,7 @@ pub mod rust {
     pub use mir::Location;
 }
 
-use args::{LogLevelConfig, ClapArgs};
+use args::{ClapArgs, LogLevelConfig};
 use desc::utils::serde_map_via_vec;
 use pretty::DocBuilder;
 use rust::*;
