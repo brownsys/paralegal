@@ -11,4 +11,5 @@ debug = true
 
 [replace]
 "rustc_utils:0.6.0-nightly-2023-04-12" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "344ecb3bc056c641eaf9d06792571b3d81c8eb33" }
-"rustc_plugin:0.6.0-nightly-2023-04-12" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "344ecb3bc056c641eaf9d06792571b3d81c8eb33" }
+#"rustc_plugin:0.6.0-nightly-2023-04-12" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "344ecb3bc056c641eaf9d06792571b3d81c8eb33" }
+"rustc_plugin:0.6.0-nightly-2023-04-12" = { path = "../rustc_plugin/crates/rustc_plugin" }

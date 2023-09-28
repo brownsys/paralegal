@@ -15,7 +15,7 @@ use super::flows_to::CtrlFlowsTo;
 
 use crate::{
     assert_error, assert_warning,
-    diagnostics::{CombinatorContext, Diagnostics, DiagnosticsRecorder, HasDiagnosticsBase},
+    diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
 };
 
 /// User-defined PDG markers.
@@ -429,7 +429,7 @@ impl AlwaysHappensBefore {
         let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
         assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
         assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
-        assert_error!(ctx, self.holds(), format!("Violation detected: {}", self));
+        assert_error!(ctx, self.holds(), format!("Violation detected: {}", self.display(&ctx.desc.def_info)));
     }
 
     /// Returns `true` if the property that created these statistics holds.
