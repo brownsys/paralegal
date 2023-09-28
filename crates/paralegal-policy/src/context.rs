@@ -15,7 +15,7 @@ use super::flows_to::CtrlFlowsTo;
 
 use crate::{
     assert_error, assert_warning,
-    diagnostics::{CombinatorContext, Diagnostics, DiagnosticsRecorder, HasDiagnosticsBase},
+    diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
 };
 
 /// User-defined PDG markers.
