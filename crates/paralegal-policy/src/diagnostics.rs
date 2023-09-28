@@ -169,9 +169,9 @@ impl Diagnostics {
 
 impl HasDiagnostics for Context {
     /// Record a diagnostic message.
-    fn record(&self, msg: DiagnosticMessage, severity: Severity, context: DiagnosticContextStack) {
+    fn record(&self, message: DiagnosticMessage, severity: Severity, context: DiagnosticContextStack) {
         self.diagnostics.0.lock().unwrap().push(Diagnostic {
-            message: msg.into(),
+            message,
             severity,
             context,
         })
@@ -256,7 +256,7 @@ impl PolicyMsg {
     ) -> A {
         computation(Arc::new(CombinatorMsg {
             name: name.into(),
-            inner: self.clone(),
+            inner: self,
         }))
     }
 }
@@ -342,7 +342,7 @@ impl Context {
     ) -> A {
         policy(Arc::new(PolicyMsg {
             name: name.into(),
-            inner: self.clone() as Arc<_>,
+            inner: self as Arc<_>,
         }))
     }
 }
