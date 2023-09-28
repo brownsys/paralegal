@@ -6,24 +6,24 @@
 //! possible and emit additional errors, as those messages are useful for the
 //! user.
 //!
-//! This manifests for instance in [`Diagnostics::error`]. This function
-//! records a severe error that should fail the policy but it does not exit the
-//! program. Instead the message is recorded and emitted later, for instance by
+//! This manifests for instance in [`Diagnostics::error`]. This function records
+//! a severe error that should fail the policy but it does not exit the program.
+//! Instead the message is recorded and emitted later, for instance by
 //! [`Context::emit_diagnostics`].
 //!
 //! ## Emitting Messages
 //!
 //! The main interface for diagnostics is the [`Diagnostics`] trait which
-//! defines functions for emitting messages like [`error`][Diagnostics::error] for
-//! policy failures and [`warning`][Diagnostics::warning] for indicators
-//! to the user that something may be off, but not causing a policy failure.
+//! defines functions for emitting messages like [`error`][Diagnostics::error]
+//! for policy failures and [`warning`][Diagnostics::warning] for indicators to
+//! the user that something may be off, but not causing a policy failure.
 //!
 //! We also offer two convenience macros [`assert_error!`] and
 //! [`assert_warning!`] that correspond to either function. Much like
-//! [`assert!`] they emit their messages if the provided condition is `false`
-//! and they let you use format strings for the messages. They should be
-//! used like `assert_warning!(ctx, condition, "format string", ...format
-//! arguments)`. `ctx` here is anything that implements [`Diagnostics`].
+//! [`assert!`] they only evaluate and emit their messages if the provided
+//! condition is `false`. They should be used like `assert_warning!(ctx,
+//! condition, message)`. `ctx` here is anything that implements
+//! [`Diagnostics`].
 //!
 //! [`Diagnostics`] is implemented directly by [`Context`] so you can use
 //! `ctx.error()` or `ctx.warning()`. You can also call it on scoped contexts
@@ -31,12 +31,11 @@
 //!
 //! ## Scoping messages
 //!
-//! You may however add additional contextual
-//! information about which policy or combinator is currently executing.
-//! [`Context::named_policy`] returns a wrapper that can be used the same way
-//! that you use [`Context`], but when [`error`][Diagnostics::error] or
-//! [`warning`][Diagnostics::warning] is called it also appends the name
-//! of the policy to you specified.
+//! You may however add additional contextual information about which policy or
+//! combinator is currently executing. [`Context::named_policy`] returns a
+//! wrapper that can be used the same way that you use [`Context`], but when
+//! [`error`][Diagnostics::error] or [`warning`][Diagnostics::warning] is called
+//! it also appends the name of the policy to you specified.
 //!
 //! Similarly you can use [`Context::named_combinator`] or
 //! [`PolicyContext::named_combinator`] to add context about a named combinator.
