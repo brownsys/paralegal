@@ -7,7 +7,7 @@ use std::sync::Arc;
 use paralegal_policy::{
     assert_error,
     paralegal_spdg::{CallSite, Ctrl, DataSource, Identifier},
-    Diagnostics, Marker, PolicyContext,
+    Marker, PolicyContext,
 };
 
 pub struct CommunityProp {
