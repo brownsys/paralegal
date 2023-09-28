@@ -856,7 +856,6 @@ dependencies = [
  "paralegal-spdg",
  "serde_json",
  "simple_logger",
- "smallvec",
 ]
 
 [[package]]
