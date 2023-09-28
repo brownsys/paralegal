@@ -49,7 +49,7 @@
 
 #![warn(missing_docs)]
 
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context as ErrorContext, Result};
 pub use paralegal_spdg;
 use paralegal_spdg::ProgramDescription;
 use std::{
@@ -154,7 +154,8 @@ impl GraphLocation {
         simple_logger::init_with_env().unwrap();
 
         let desc = {
-            let mut f = File::open(&self.0)?;
+            let mut f = File::open(&self.0)
+                .with_context(|| format!("reading graph file: {}", self.0.display()))?;
             anyhow::Context::with_context(
                 serde_json::from_reader::<_, ProgramDescription>(&mut f),
                 || format!("Reading SPDG (JSON) from {}", self.0.display()),

@@ -1,8 +1,8 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
-    MarkerAnnotation, MarkerRefinement, ProgramDescription, DefInfo, utils::write_sep,
+    utils::write_sep, Annotation, CallSite, Ctrl, DataSink, DataSource, DefInfo, HashMap, HashSet,
+    Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -429,7 +429,11 @@ impl AlwaysHappensBefore {
         let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
         assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
         assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
-        assert_error!(ctx, self.holds(), format!("Violation detected: {}", self.display(&ctx.desc.def_info)));
+        assert_error!(
+            ctx,
+            self.holds(),
+            format!("Violation detected: {}", self.display(&ctx.desc.def_info))
+        );
     }
 
     /// Returns `true` if the property that created these statistics holds.

@@ -2,8 +2,8 @@ use flowistry::indexed::{
     impls::{build_location_arg_domain, LocationOrArg},
     IndexedDomain,
 };
-use paralegal_spdg::rustc_portable::DefId;
 use mir::{AggregateKind, Rvalue};
+use paralegal_spdg::rustc_portable::DefId;
 use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt};
 
 use crate::{

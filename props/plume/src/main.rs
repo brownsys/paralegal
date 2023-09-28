@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::sync::Arc;
 
 use paralegal_policy::{
     assert_error,
-    paralegal_spdg::{rustc_portable::DefId, Ctrl, DefKind},
-    Context, ControllerId, Marker,
+    paralegal_spdg::{rustc_portable::DefId, Ctrl, DefKind, DataSink, DataSource},
+    Context, ControllerId, Marker 
 };
 
 macro_rules! marker {
@@ -40,6 +40,7 @@ trait ContextExt {
     fn controllers<'a>(&'a self) -> Box<dyn Iterator<Item = (ControllerId, &'a Ctrl)> + 'a>;
     fn marked_type<'a>(&'a self, marker: Marker) -> Box<dyn Iterator<Item = DefId> + 'a>;
     fn describe_def<'a>(&'a self, def_id: DefId) -> DisplayDef<'a>;
+    fn any_flows<'a>(&self, ctrl_id: ControllerId, from: &[&'a DataSource], to: &[&'a DataSink]) -> Option<(&'a DataSource, &'a DataSink)>;
 }
 
 impl ContextExt for Context {
@@ -60,6 +61,17 @@ impl ContextExt for Context {
     fn describe_def<'a>(&'a self, def_id: DefId) -> DisplayDef<'a> {
         DisplayDef { ctx: self, def_id }
     }
+
+    fn any_flows<'a>(&self, ctrl_id: ControllerId, from: &[&'a DataSource], to: &[&'a DataSink]) -> Option<(&'a DataSource, &'a DataSink)> {
+        from.iter()
+            .find_map(|&src|
+                to.iter()
+                    .find_map(|&sink| 
+                        self.flows_to(ctrl_id, src, sink)
+                            .then_some((src, sink))
+                    )
+            )
+    }
 }
 
 // all c : Ctrl | all u : labeled_objects_with_types[c, Object, user, labels] | some deleter: labeled_objects[CallArgument, to_delete, labels] |
@@ -72,35 +84,45 @@ impl ContextExt for Context {
 // 	}
 // }
 fn check(ctx: Arc<Context>) -> Result<()> {
+    let user_data_types = 
+            ctx.marked_type(marker!(user_data))
+                .collect::<Vec<_>>();
+
     let found = ctx
         .controllers()
         .collect::<Vec<_>>()
         .into_iter()
-        .any(|(deleter_id, deleter)| {
-            ctx.marked_type(marker!(user_data))
-                .collect::<Vec<_>>()
-                .into_iter()
-                .all(|t| {
+        .find(|(deleter_id, deleter)| {
+            let delete_sinks = ctx.marked_sinks(deleter.data_sinks(), marker!(to_delete)).collect::<Vec<_>>();
+            user_data_types
+                .iter()
+                .all(|&t| {
                     let sources = ctx.srcs_with_type(deleter, t).collect::<Vec<_>>();
-                    deleter
-                        .data_flow
-                        .values()
-                        .flat_map(|snks| snks.iter())
-                        .any(|sink| {
-                            sources
-                                .iter()
-                                .any(|src| ctx.flows_to(deleter_id, src, sink))
-                        })
+                    ctx.any_flows(*deleter_id, &sources, &delete_sinks)
+                        .is_some()
                 })
         });
-    assert_error!(ctx, found, "Could not find a function deleting all types");
+    assert_error!(ctx, found.is_some(), "Could not find a function deleting all types");
+    if let Some((found, _)) = found {
+        println!("Found {} deletes all user data types", ctx.describe_def(found));
+        for t in user_data_types {
+            println!("Found user data {}", ctx.describe_def(t));
+        }
+    }
     Ok(())
 }
 
+#[derive(clap::Parser)]
+struct Args {
+    plume_dir: std::path::PathBuf,
+    #[clap(last = true)]
+    cargo_args: Vec<String>,
+}
+
 fn main() -> Result<()> {
-    let dir = std::env::args()
-        .nth(1)
-        .ok_or_else(|| anyhow!("expected plume directory as argument"))?;
+    use clap::Parser;
+    let args = Args::try_parse()?;
+
     let mut cmd = paralegal_policy::SPDGGenCommand::global();
     cmd.get_command().args([
         "--external-annotations",
@@ -109,10 +131,15 @@ fn main() -> Result<()> {
         "--inline-elision",
         "--target",
         "plume_models",
+        "--eager-local-markers",
         "--",
         "--no-default-features",
         "--features",
         "postgres",
+        "-p", "plume-models"
     ]);
-    cmd.run(dir)?.with_context(check)
+    cmd.get_command().args(args.cargo_args);
+    cmd.run(args.plume_dir)?.with_context(check)?;
+    println!("Successfully finished");
+    Ok(())
 }
