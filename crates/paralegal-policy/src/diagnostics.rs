@@ -89,6 +89,8 @@ macro_rules! assert_error {
     };
     ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
         if !$cond {
+            use $crate::diagnostics::Diagnostics;
+            Diagnostics::error(&$ctx, $msg);
             $ctx.error($msg);
         }
     };
@@ -102,7 +104,8 @@ macro_rules! assert_warning {
     };
     ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
         if !$cond {
-            $ctx.warning($msg);
+            use $crate::diagnostics::Diagnostics;
+            Diagnostics::warning(&$ctx, $msg);
         }
     };
 }
