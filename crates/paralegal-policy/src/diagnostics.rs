@@ -77,7 +77,7 @@
 //! [`report`][crate::AlwaysHappensBefore::report] functions.
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::Identifier;
+use paralegal_spdg::{rustc_portable::DefId, Identifier};
 
 use crate::Context;
 
@@ -223,7 +223,7 @@ impl<T: HasDiagnosticsBase> Diagnostics for T {}
 ///
 /// You may call any method and access any field defined on [`Context`]. In
 /// addition all diagnostics messages emitted from this struct will carry the
-/// name of the combinator.
+/// name of the policy.
 ///
 /// See the [module level documentation][self] for more information on
 /// diagnostic context management.
@@ -254,11 +254,90 @@ impl PolicyContext {
             inner: self,
         }))
     }
+
+    /// Run the computation in the diagnostic context of this controller
+    ///
+    /// See the [module level documentation][self] for more information on
+    /// diagnostic context management.
+    pub fn named_controller<A>(
+        self: Arc<Self>,
+        id: DefId,
+        policy: impl FnOnce(Arc<ControllerContext>) -> A,
+    ) -> A {
+        policy(Arc::new(ControllerContext {
+            id,
+            inner: self as Arc<_>,
+        }))
+    }
 }
 
 impl HasDiagnosticsBase for PolicyContext {
     fn record(&self, msg: String, severity: Severity, mut context: DiagnosticContextStack) {
         context.push(format!("[policy: {}]", self.name));
+        self.inner.record(msg, severity, context)
+    }
+
+    fn as_ctx(&self) -> &Context {
+        self.inner.as_ctx()
+    }
+}
+
+/// A context for controllers
+///
+/// You may call any method and access any field defined on [`Context`]. In
+/// addition all diagnostics messages emitted from this struct will carry the
+/// name of the controller.
+///
+/// See the [module level documentation][self] for more information on
+/// diagnostic context management.
+pub struct ControllerContext {
+    id: DefId,
+    inner: Arc<dyn HasDiagnosticsBase>,
+}
+
+impl std::ops::Deref for ControllerContext {
+    type Target = Context;
+    fn deref(&self) -> &Self::Target {
+        self.as_ctx()
+    }
+}
+
+impl ControllerContext {
+    /// Add a named combinator to the diagnostic context.
+    ///
+    /// See the [module level documentation][self] for more information on
+    /// diagnostic context management.
+    pub fn named_combinator<A>(
+        self: Arc<Self>,
+        name: impl Into<Identifier>,
+        computation: impl FnOnce(Arc<CombinatorContext>) -> A,
+    ) -> A {
+        computation(Arc::new(CombinatorContext {
+            name: name.into(),
+            inner: self,
+        }))
+    }
+
+    /// Add a policy to the diagnostic context.
+    ///
+    /// See the [module level documentation][self] for more information on
+    /// diagnostic context management.
+    pub fn named_policy<A>(
+        self: Arc<Self>,
+        name: impl Into<Identifier>,
+        policy: impl FnOnce(Arc<PolicyContext>) -> A,
+    ) -> A {
+        policy(Arc::new(PolicyContext {
+            name: name.into(),
+            inner: self as Arc<_>,
+        }))
+    }
+}
+
+impl HasDiagnosticsBase for ControllerContext {
+    fn record(&self, msg: String, severity: Severity, mut context: DiagnosticContextStack) {
+        let name = self.as_ctx().desc().def_info[&self.id].name;
+        context.push(format!("[controller: {}]", name));
         self.inner.record(msg, severity, context)
     }
 
@@ -331,6 +410,21 @@ impl Context {
     ) -> A {
         policy(Arc::new(PolicyContext {
             name: name.into(),
+            inner: self as Arc<_>,
+        }))
+    }
+
+    /// Run the computation in the diagnostic context of this controller
+    ///
+    /// See the [module level documentation][self] for more information on
+    /// diagnostic context management.
+    pub fn named_controller<A>(
+        self: Arc<Self>,
+        id: DefId,
+        policy: impl FnOnce(Arc<ControllerContext>) -> A,
+    ) -> A {
+        policy(Arc::new(ControllerContext {
+            id,
             inner: self as Arc<_>,
         }))
     }
