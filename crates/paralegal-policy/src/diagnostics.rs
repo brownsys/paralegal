@@ -169,7 +169,12 @@ impl Diagnostics {
 
 impl HasDiagnostics for Context {
     /// Record a diagnostic message.
-    fn record(&self, message: DiagnosticMessage, severity: Severity, context: DiagnosticContextStack) {
+    fn record(
+        &self,
+        message: DiagnosticMessage,
+        severity: Severity,
+        context: DiagnosticContextStack,
+    ) {
         self.diagnostics.0.lock().unwrap().push(Diagnostic {
             message,
             severity,
