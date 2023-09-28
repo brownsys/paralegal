@@ -2,19 +2,21 @@ extern crate anyhow;
 
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use paralegal_policy::{
     assert_error,
+    diagnostics::{HasDiagnosticsExt, PolicyMsg},
     paralegal_spdg::{CallSite, Ctrl, DataSource, Identifier},
-    Context, Marker,
+    Marker,
 };
 
-pub struct CommunityProp<'ctx> {
-    cx: &'ctx mut Context,
+pub struct CommunityProp {
+    cx: Arc<PolicyMsg>,
 }
 
-impl<'ctx> CommunityProp<'ctx> {
-    pub fn new(cx: &'ctx mut Context) -> Self {
+impl CommunityProp {
+    pub fn new(cx: Arc<PolicyMsg>) -> Self {
         CommunityProp { cx }
     }
 

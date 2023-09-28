@@ -56,6 +56,7 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 mod context;
@@ -133,9 +134,9 @@ impl GraphLocation {
     ///
     /// Emits any recorded diagnostic messages to stdout and aborts the program
     /// if they were severe enough.
-    pub fn with_context<A>(&self, prop: impl FnOnce(&mut Context) -> Result<A>) -> Result<A> {
-        let mut ctx = self.build_context()?;
-        let result = prop(&mut ctx)?;
+    pub fn with_context<A>(&self, prop: impl FnOnce(Arc<Context>) -> Result<A>) -> Result<A> {
+        let ctx = Arc::new(self.build_context()?);
+        let result = prop(ctx.clone())?;
         ctx.emit_diagnostics(std::io::stdout())?;
         Ok(result)
     }

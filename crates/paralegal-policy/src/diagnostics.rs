@@ -21,7 +21,7 @@
 //! [`DiagnosticMessage`], but currently only strings can be converted into
 //! those messages, so you can simply use string literals `"like this"` or
 //! [`String`]s directly, for instance via [`format!`].
-//! 
+//!
 //! We also offer two convenience macros [`assert_error!`] and
 //! [`assert_warning!`] that correspond to either function. Much like
 //! [`assert!`] they let you use format strings for the messages. They should be
@@ -35,13 +35,13 @@
 //! [`Context::named_policy`] returns a wrapper that can be used the same way
 //! that you use [`Context`], but when [`error`][HasDiagnosticsExt::error] or
 //! [`warning`][HasDiagnosticsExt::warning] is called it also appends the name
-//! of the policy to you specified. 
+//! of the policy to you specified.
 //!
 //! Similarly you can use [`Context::named_combinator`] or
-//! [`PolicyMsg::named_combinator`] to add context about a named combinator. 
-//! 
-//! The expected workflow is something like 
-//! 
+//! [`PolicyMsg::named_combinator`] to add context about a named combinator.
+//!
+//! The expected workflow is something like
+//!
 //! ```no_run
 //! fn my_check(ctx: Arc<Context>) {
 //!     ctx.named_policy("policy-1", |ctx| {
@@ -56,10 +56,10 @@
 //!         })
 //!         assert_error!(result_1 || result_2, "Combination failure");
 //!     })
-//! 
+//!
 //! }
 //! ```
-//! 
+//!
 //! Note that some methods, like [`Context::always_happens_before`] add a named
 //! combinator context by themselves when you use their
 //! [`report`][crate::AlwaysHappensBefore::report] functions.
@@ -306,7 +306,7 @@ impl CombinatorMsg {
         computation(Arc::new(Self::new(name, self)))
     }
 
-    pub(crate) fn new (name: impl Into<Identifier>, inner: Arc<dyn HasDiagnostics>) -> Self {
+    pub(crate) fn new(name: impl Into<Identifier>, inner: Arc<dyn HasDiagnostics>) -> Self {
         CombinatorMsg {
             name: name.into(),
             inner,

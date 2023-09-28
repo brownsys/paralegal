@@ -15,7 +15,7 @@ use super::flows_to::CtrlFlowsTo;
 
 use crate::{
     assert_error, assert_warning,
-    diagnostics::{Diagnostics, HasDiagnosticsExt, HasDiagnostics, CombinatorMsg}
+    diagnostics::{CombinatorMsg, Diagnostics, HasDiagnostics, HasDiagnosticsExt},
 };
 
 /// User-defined PDG markers.
@@ -28,8 +28,6 @@ pub type FunctionId = DefId;
 
 type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
-
-
 
 /// Interface for defining policies.
 ///
@@ -53,7 +51,7 @@ pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
-    pub(in crate) diagnostics: Arc<Diagnostics>,
+    pub(crate) diagnostics: Arc<Diagnostics>,
     name_map: HashMap<Identifier, Vec<DefId>>,
 }
 

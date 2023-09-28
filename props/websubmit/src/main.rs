@@ -1,15 +1,21 @@
 extern crate anyhow;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 
-use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Context, DefId, Marker};
+use paralegal_policy::{
+    assert_error,
+    diagnostics::{HasDiagnosticsExt, PolicyMsg},
+    paralegal_spdg::Identifier,
+    DefId, Marker,
+};
 
-pub struct DeletionProp<'ctx> {
-    cx: &'ctx mut Context,
+pub struct DeletionProp {
+    cx: Arc<PolicyMsg>,
 }
 
-impl<'ctx> DeletionProp<'ctx> {
-    pub fn new(cx: &'ctx mut Context) -> Self {
+impl DeletionProp {
+    pub fn new(cx: Arc<PolicyMsg>) -> Self {
         DeletionProp { cx }
     }
 
