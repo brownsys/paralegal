@@ -15,7 +15,7 @@ use super::flows_to::CtrlFlowsTo;
 
 use crate::{
     assert_error, assert_warning,
-    diagnostics::{CombinatorMsg, Diagnostics, HasDiagnostics, HasDiagnosticsExt},
+    diagnostics::{CombinatorContext, Diagnostics, DiagnosticsRecorder, HasDiagnosticsBase},
 };
 
 /// User-defined PDG markers.
@@ -51,7 +51,7 @@ pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
-    pub(crate) diagnostics: Arc<Diagnostics>,
+    pub(crate) diagnostics: Arc<DiagnosticsRecorder>,
     name_map: HashMap<Identifier, Vec<DefId>>,
 }
 
@@ -347,8 +347,8 @@ impl AlwaysHappensBefore {
     ///
     /// Additionally reports if the property was vacuous or had no starting
     /// nodes.
-    pub fn report(&self, ctx: Arc<dyn HasDiagnostics>) {
-        let ctx = CombinatorMsg::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
+    pub fn report(&self, ctx: Arc<dyn HasDiagnosticsBase>) {
+        let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
         assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
         assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
         assert_error!(ctx, self.holds(), format!("Violation detected: {}", self));

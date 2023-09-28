@@ -6,17 +6,16 @@ use std::sync::Arc;
 
 use paralegal_policy::{
     assert_error,
-    diagnostics::{HasDiagnosticsExt, PolicyMsg},
     paralegal_spdg::{CallSite, Ctrl, DataSource, Identifier},
-    Marker,
+    Diagnostics, Marker, PolicyContext,
 };
 
 pub struct CommunityProp {
-    cx: Arc<PolicyMsg>,
+    cx: Arc<PolicyContext>,
 }
 
 impl CommunityProp {
-    pub fn new(cx: Arc<PolicyMsg>) -> Self {
+    pub fn new(cx: Arc<PolicyContext>) -> Self {
         CommunityProp { cx }
     }
 

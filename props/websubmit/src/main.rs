@@ -4,18 +4,15 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 
 use paralegal_policy::{
-    assert_error,
-    diagnostics::{HasDiagnosticsExt, PolicyMsg},
-    paralegal_spdg::Identifier,
-    DefId, Marker,
+    assert_error, paralegal_spdg::Identifier, DefId, Diagnostics, Marker, PolicyContext,
 };
 
 pub struct DeletionProp {
-    cx: Arc<PolicyMsg>,
+    cx: Arc<PolicyContext>,
 }
 
 impl DeletionProp {
-    pub fn new(cx: Arc<PolicyMsg>) -> Self {
+    pub fn new(cx: Arc<PolicyContext>) -> Self {
         DeletionProp { cx }
     }
 

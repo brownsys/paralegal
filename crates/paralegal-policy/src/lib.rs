@@ -66,7 +66,11 @@ pub mod diagnostics;
 #[cfg(test)]
 mod test_utils;
 
-pub use self::{context::*, flows_to::CtrlFlowsTo};
+pub use self::{
+    context::*,
+    diagnostics::{CombinatorContext, Diagnostics, PolicyContext},
+    flows_to::CtrlFlowsTo,
+};
 
 /// Configuration of the `cargo paralegal-flow` command.
 ///
