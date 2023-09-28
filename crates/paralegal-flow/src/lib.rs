@@ -70,7 +70,6 @@ pub mod rust {
 }
 
 use args::{LogLevelConfig, ParseableArgs};
-use desc::utils::serde_map_via_vec;
 use pretty::DocBuilder;
 use rust::*;
 
@@ -103,7 +102,7 @@ pub mod test_utils;
 
 pub use paralegal_spdg as desc;
 
-pub use args::{AnalysisCtrl, Args, DumpArgs, ModelCtrl};
+pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
 use crate::{
     frg::{call_site_to_string, ForgeConverter},
@@ -129,7 +128,7 @@ struct ArgWrapper {
 
     /// The actual arguments
     #[clap(flatten)]
-    args: ParseableArgs,
+    args: ClapArgs,
 
     /// Pass through for additional cargo arguments (like --features)
     #[clap(last = true)]
@@ -246,14 +245,14 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         std::env::set_var("SYSROOT", env!("SYSROOT_PATH"));
 
         rustc_plugin::RustcPluginArgs {
-            args: Args::from_parseable(args.args).unwrap(),
-            filter: CrateFilter::OnlyWorkspace,
+            args: args.args.try_into().unwrap(),
+            filter: CrateFilter::AllCrates,
         }
     }
 
     fn run(
         self,
-        compiler_args: Vec<String>,
+        mut compiler_args: Vec<String>,
         plugin_args: Self::Args,
     ) -> rustc_interface::interface::Result<()> {
         // return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks { }).run();
@@ -269,17 +268,32 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
 
-        if let Some(k) = compiler_args
+        let crate_name = compiler_args
             .iter()
             .enumerate()
             .find_map(|(i, s)| (s == "--crate-name").then_some(i))
+            .and_then(|i| compiler_args.get(i + 1))
+            .cloned();
+
+        if let Some(dep_config) = crate_name
+            .as_ref()
+            .and_then(|s| plugin_args.build_config().dep.get(s))
         {
-            if let Some(s) = compiler_args.get(k + 1) {
-                if plugin_args.target().map_or(false, |t| t != s) {
-                    return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {})
-                        .run();
-                }
-            }
+            compiler_args.extend(
+                dep_config
+                    .rust_features
+                    .iter()
+                    .map(|f| format!("-Zcrate-attr=feature({})", f)),
+            );
+        }
+
+        let is_target = crate_name
+            .as_ref()
+            .and_then(|s| plugin_args.target().map(|t| s == t))
+            .unwrap_or(false);
+
+        if !is_target && std::env::var("CARGO_PRIMARY_PACKAGE").is_err() {
+            return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
         let lvl = if plugin_args.debug().is_enabled() {
