@@ -1,16 +1,18 @@
 extern crate anyhow;
-
-use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
-use paralegal_policy::{assert_error, Context, DefId, Marker};
+use anyhow::{anyhow, Result};
+
+use paralegal_policy::{
+    assert_error, paralegal_spdg::Identifier, DefId, Diagnostics, Marker, PolicyContext,
+};
 
 pub struct DeletionProp {
-    cx: Arc<Context>,
+    cx: Arc<PolicyContext>,
 }
 
 impl DeletionProp {
-    pub fn new(cx: Arc<Context>) -> Self {
+    pub fn new(cx: Arc<PolicyContext>) -> Self {
         DeletionProp { cx }
     }
 
@@ -65,7 +67,7 @@ impl DeletionProp {
 
     // Asserts that there exists one controller which calls a deletion
     // function on every value (or an equivalent type) that is ever stored.
-    pub fn check(&self) {
+    pub fn check(self) {
         let sensitive = Marker::new_intern("sensitive");
         for (t, _) in self.cx.marked(sensitive) {
             assert_error!(
@@ -84,7 +86,9 @@ fn main() -> Result<()> {
     paralegal_policy::SPDGGenCommand::global()
         .run(ws_dir)?
         .with_context(|ctx| {
-            DeletionProp::new(ctx).check();
-            Ok(())
+            ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
+                DeletionProp::new(ctx).check();
+                Ok(())
+            })
         })
 }

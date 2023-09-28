@@ -56,16 +56,21 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 mod context;
 mod flows_to;
 #[macro_use]
-mod diagnostics;
+pub mod diagnostics;
 #[cfg(test)]
 mod test_utils;
 
-pub use self::{context::*, flows_to::CtrlFlowsTo};
+pub use self::{
+    context::*,
+    diagnostics::{CombinatorContext, Diagnostics, PolicyContext},
+    flows_to::CtrlFlowsTo,
+};
 
 /// Configuration of the `cargo paralegal-flow` command.
 ///
@@ -133,9 +138,9 @@ impl GraphLocation {
     ///
     /// Emits any recorded diagnostic messages to stdout and aborts the program
     /// if they were severe enough.
-    pub fn with_context<A>(&self, prop: impl FnOnce(&mut Context) -> Result<A>) -> Result<A> {
-        let mut ctx = self.build_context()?;
-        let result = prop(&mut ctx)?;
+    pub fn with_context<A>(&self, prop: impl FnOnce(Arc<Context>) -> Result<A>) -> Result<A> {
+        let ctx = Arc::new(self.build_context()?);
+        let result = prop(ctx.clone())?;
         ctx.emit_diagnostics(std::io::stdout())?;
         Ok(result)
     }

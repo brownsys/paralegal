@@ -1,4 +1,4 @@
-use std::{io::Write, process::exit};
+use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
     Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
@@ -13,9 +13,10 @@ use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
 
-use crate::diagnostics::{DiagnosticContext, DiagnosticContextStack, Diagnostics, Severity};
-
-pub use crate::diagnostics::DiagnosticMessage;
+use crate::{
+    assert_error, assert_warning,
+    diagnostics::{CombinatorContext, Diagnostics, DiagnosticsRecorder, HasDiagnosticsBase},
+};
 
 /// User-defined PDG markers.
 pub type Marker = Identifier;
@@ -27,26 +28,6 @@ pub type FunctionId = DefId;
 
 type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
-
-/// Check the condition and emit a [`Context::error`] if it fails.
-#[macro_export]
-macro_rules! assert_error {
-    ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
-        if !$cond {
-            $ctx.error($msg);
-        }
-    };
-}
-
-/// Check the condition and emit a [`Context::warning`] if it fails.
-#[macro_export]
-macro_rules! assert_warning {
-    ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
-        if !$cond {
-            $ctx.warning($msg);
-        }
-    };
-}
 
 /// Interface for defining policies.
 ///
@@ -70,8 +51,7 @@ pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
-    diagnostics: Diagnostics,
-    diagnostic_context: DiagnosticContextStack,
+    pub(crate) diagnostics: Arc<DiagnosticsRecorder>,
     name_map: HashMap<Identifier, Vec<DefId>>,
 }
 
@@ -90,7 +70,6 @@ impl Context {
             flows_to: Self::build_flows_to(&desc),
             desc,
             diagnostics: Default::default(),
-            diagnostic_context: Default::default(),
             name_map,
         }
     }
@@ -150,45 +129,6 @@ impl Context {
             exit(1)
         }
         Ok(())
-    }
-
-    /// Record a message to the user indicating a problem that will not cause
-    /// verification to fail.
-    pub fn warning(&self, msg: impl Into<DiagnosticMessage>) {
-        self.diagnostics
-            .record(msg, Severity::Warning, self.diagnostic_context.clone())
-    }
-
-    /// Record a message to the user for a problem that will cause verification
-    /// to fail.
-    pub fn error(&self, msg: impl Into<DiagnosticMessage>) {
-        self.diagnostics
-            .record(msg, Severity::Fail, self.diagnostic_context.clone())
-    }
-
-    fn with_diagnostic_location<A>(
-        &mut self,
-        loc: DiagnosticContext,
-        prop: impl FnOnce(&mut Self) -> A,
-    ) -> A {
-        self.diagnostic_context.push(loc);
-        let result = prop(self);
-        self.diagnostic_context.pop();
-        result
-    }
-
-    /// Perform checks as part of the named policy `name`
-    pub fn named_policy<A>(&mut self, name: Identifier, policy: impl FnOnce(&mut Self) -> A) -> A {
-        self.with_diagnostic_location(DiagnosticContext::Policy(name), policy)
-    }
-
-    /// Perform checks as part of the named combinator `name`
-    pub fn named_combinator<A>(
-        &mut self,
-        name: Identifier,
-        combinator: impl FnOnce(&mut Self) -> A,
-    ) -> A {
-        self.with_diagnostic_location(DiagnosticContext::Combinator(name), combinator)
     }
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
@@ -485,16 +425,11 @@ impl AlwaysHappensBefore {
     ///
     /// Additionally reports if the property was vacuous or had no starting
     /// nodes.
-    pub fn report(&self, ctx: &mut Context) {
-        ctx.named_combinator(*ALWAYS_HAPPENS_BEFORE_NAME, |ctx| {
-            assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
-            assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
-            assert_error!(
-                ctx,
-                self.holds(),
-                format!("Violation detected: {}", self.display(&ctx.desc().def_info))
-            );
-        })
+    pub fn report(&self, ctx: Arc<dyn HasDiagnosticsBase>) {
+        let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
+        assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
+        assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
+        assert_error!(ctx, self.holds(), format!("Violation detected: {}", self));
     }
 
     /// Returns `true` if the property that created these statistics holds.
