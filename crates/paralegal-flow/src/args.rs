@@ -30,6 +30,7 @@ impl TryFrom<ClapArgs> for Args {
             anactrl,
             modelctrl,
             dump,
+            marker_control,
         } = value;
         let mut dump: DumpArgs = dump.into();
         if let Ok(from_env) = std::env::var("PARALEGAL_DUMP") {
@@ -59,6 +60,7 @@ impl TryFrom<ClapArgs> for Args {
             modelctrl,
             dump,
             build_config,
+            marker_control,
         })
     }
 }
@@ -76,6 +78,8 @@ pub struct Args {
     target: Option<String>,
     /// Abort the compilation after finishing the analysis
     abort_after_analysis: bool,
+    /// Additional arguments on marker assignment and discovery
+    marker_control: MarkerControl,
     /// Additional arguments that control the flow analysis specifically
     anactrl: AnalysisCtrl,
     /// Additional arguments that control the generation and composition of the model
@@ -120,6 +124,9 @@ pub struct ClapArgs {
     /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis")]
     anactrl: AnalysisCtrl,
+    /// Additional arguments which control marker assignment and discovery
+    #[clap(flatten, next_help_heading = "Marker Control")]
+    marker_control: MarkerControl,
     /// Additional arguments that control the generation and composition of the model
     #[clap(flatten, next_help_heading = "Model Generation")]
     modelctrl: ModelCtrl,
@@ -319,6 +326,10 @@ impl Args {
     pub fn build_config(&self) -> &BuildConfig {
         &self.build_config
     }
+
+    pub fn marker_control(&self) -> &MarkerControl {
+        &self.marker_control
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
@@ -354,6 +365,33 @@ impl ModelCtrl {
 
     pub fn skip_sigs(&self) -> bool {
         self.skip_sigs
+    }
+}
+
+/// Arguments which control marker assignment and discovery
+#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
+pub struct MarkerControl {
+    /// Eagerly load markers for local items. This guarantees that all markers
+    /// on local items are emitted in the model, even if those items are never
+    /// used in the flow.
+    #[clap(long, env = "PARALEGAL_EAGER_LOCAL_MARKERS")]
+    eager_local_markers: bool,
+    /// Don't mark the outputs of local functions if they are of a marked type.
+    ///
+    /// Be aware that disabling this can cause unsoundness as inline
+    /// construction of such types will not be emitted into the model. A warning
+    /// is however emitted in that case.
+    #[clap(long, env = "PARALEGAL_NO_LOCAL_FUNCTION_TYPE_MARKING")]
+    no_local_function_type_marking: bool,
+}
+
+impl MarkerControl {
+    pub fn lazy_local_markers(&self) -> bool {
+        !self.eager_local_markers
+    }
+
+    pub fn local_function_type_marking(&self) -> bool {
+        !self.no_local_function_type_marking
     }
 }
 

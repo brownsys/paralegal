@@ -7,7 +7,7 @@ description = "A framework for writing policies over graphs defined in `paralega
 
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg" }
-anyhow = "1.0.72"
+anyhow = { version = "1.0.72", features = ["backtrace"] }
 log = "0.4"
 itertools = "0.11.0"
 indexical = { workspace = true }

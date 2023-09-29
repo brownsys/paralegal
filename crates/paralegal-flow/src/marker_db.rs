@@ -3,7 +3,7 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
-    args::Args,
+    args::{Args, MarkerControl},
     consts,
     desc::{Annotation, MarkerAnnotation},
     mir, ty,
@@ -36,7 +36,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// Constructs a new marker database.
     ///
     /// This also loads any external annotations, as specified in the `args`.
-    pub fn new(tcx: TyCtxt<'tcx>, args: &Args) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, args: &'static Args) -> Self {
         Self(Rc::new(MarkerDatabase::init(tcx, args)))
     }
 
@@ -242,8 +242,13 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.combined_markers(function.def_id())
             .zip(std::iter::repeat(None))
             .chain(
-                self.all_type_markers(function.sig(self.tcx()).skip_binder().output())
-                    .map(|(marker, typeinfo)| (marker, Some(typeinfo))),
+                (self.0.config.local_function_type_marking() || !function.def_id().is_local())
+                    .then(|| {
+                        self.all_type_markers(function.sig(self.tcx()).skip_binder().output())
+                            .map(|(marker, typeinfo)| (marker, Some(typeinfo)))
+                    })
+                    .into_iter()
+                    .flatten(),
             )
     }
 }
@@ -262,16 +267,19 @@ struct MarkerDatabase<'tcx> {
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
     marker_reachable_cache: CopyCache<DefId, bool>,
+    /// Configuration options
+    config: &'static MarkerControl,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
     /// Construct a new database, loading external markers.
-    fn init(tcx: TyCtxt<'tcx>, args: &Args) -> Self {
+    fn init(tcx: TyCtxt<'tcx>, args: &'static Args) -> Self {
         Self {
             tcx,
             local_annotations: Cache::default(),
             external_annotations: resolve_external_markers(args, tcx),
             marker_reachable_cache: Default::default(),
+            config: args.marker_control(),
         }
     }
 }

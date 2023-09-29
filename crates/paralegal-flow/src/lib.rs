@@ -70,6 +70,7 @@ pub mod rust {
 }
 
 use args::{ClapArgs, LogLevelConfig};
+use desc::utils::serde_map_via_vec;
 use pretty::DocBuilder;
 use rust::*;
 
@@ -145,7 +146,7 @@ impl rustc_driver::Callbacks for NoopCallbacks {}
 
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct AdditionalInfo {
-    #[serde(with = "crate::serializers::serde_map_via_vec")]
+    #[serde(with = "serde_map_via_vec")]
     pub call_sites: HashMap<String, desc::CallSite>,
 }
 
@@ -247,6 +248,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         rustc_plugin::RustcPluginArgs {
             args: args.args.try_into().unwrap(),
             filter: CrateFilter::AllCrates,
+            cargo_args: args.cargo_args,
         }
     }
 
