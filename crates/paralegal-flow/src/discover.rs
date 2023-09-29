@@ -84,6 +84,13 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
         self.tcx.hir()
     }
 
+    fn visit_id(&mut self, hir_id: rustc_hir::HirId) {
+        if !self.opts.marker_control().lazy_local_markers()
+            && let Some(owner_id) = hir_id.as_owner() {
+            self.marker_ctx.is_locally_marked(owner_id.def_id);
+        }
+    }
+
     /// Finds the functions that have been marked as targets.
     fn visit_fn(
         &mut self,
