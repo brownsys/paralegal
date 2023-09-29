@@ -47,7 +47,7 @@ pub type TypeDescriptor = DefId;
 pub type Function = Identifier;
 
 /// Name of the file used for emitting the JSON serialized
-/// [`ProgramDescription`](crate::desc::ProgramDescription).
+/// [`ProgramDescription`](crate::ProgramDescription).
 pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
 
 /// Types of annotations we support.

@@ -29,11 +29,10 @@ pub mod serde_map_via_vec {
     //! The JSON serializer for [`HashMap`] needs the keys to serialize to a
     //! JSON string object, but sometimes that is not the case. Since the
     //! [`HashMap`] struct only requires its keys be [`Eq`] and [`Hash`] other
-    //! non-string values may have been used as key (such is the case in
-    //! [`Bodies`](super::Bodies)). Unfortunately you can still use the
-    //! [`Serialize`] trait on [`HashMap`], even if the keys do not serialize to
-    //! strings. Instead a runtime error will be thrown when a non-string key is
-    //! encountered.
+    //! non-string values may have been used as key. Unfortunately you can still
+    //! use the [`Serialize`] trait on [`HashMap`], even if the keys do not
+    //! serialize to strings. Instead a runtime error will be thrown when a
+    //! non-string key is encountered.
     //!
     //! This module converts the [`HashMap`] into a [`Vec`] of tuples and
     //! (de)serializes that, which permits arbitrary types to be used for the
