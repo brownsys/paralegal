@@ -36,6 +36,9 @@ use rustc_portable::DefId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{borrow::Cow, fmt, hash::Hash, iter};
 
+#[cfg(not(feature = "rustc"))]
+use utils::serde_map_via_vec;
+
 pub use crate::tiny_bitset::TinyBitSet;
 pub use std::collections::{HashMap, HashSet};
 
@@ -245,13 +248,16 @@ pub enum DefKind {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     /// Mapping from function names to dependencies within the function.
     pub controllers: HashMap<Endpoint, Ctrl>,
 
+    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Mapping from objects to annotations on those objects.
     pub annotations: AnnotationMap,
 
+    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
