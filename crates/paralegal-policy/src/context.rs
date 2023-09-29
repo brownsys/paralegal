@@ -37,9 +37,10 @@ type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 /// policies.
 ///
 /// To communicate the results of your policies with the user you can emit
-/// diagnostic messages. To communicate a policy failure use [`Self::error`] or
-/// the [`assert_error`] macro. To communicate suspicious circumstances that are
-/// not outright cause for failure use [`Self::warning`] or [`assert_warning`].
+/// diagnostic messages. To communicate a policy failure use
+/// [`error`](crate::Diagnostics::error) or the [`assert_error`] macro. To
+/// communicate suspicious circumstances that are not outright cause for failure
+/// use [`warning`](crate::Diagnostics::error) or [`assert_warning`].
 ///
 /// Note that these methods just queue the diagnostics messages. To emit them
 /// (and potentially terminate the program if the policy does not hold) use
