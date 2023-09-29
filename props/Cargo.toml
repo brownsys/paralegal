@@ -1,2 +1,2 @@
 [workspace]
-members = ["lemmy", "websubmit"]
+members = ["lemmy", "websubmit", "plume"]
