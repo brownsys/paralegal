@@ -126,3 +126,28 @@ jobs:
     - name: Complaints about properties
       run: cargo clippy --all -- -D warnings
       working-directory: props
+  
+  documentation:
+    name: Documentation Test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Cache Toolchain
+      uses: actions/cache@v3
+      with:
+        path: ~/.rustup
+        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+    - name: Cache Dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+    - name: Here come the complaints
+      run: |
+        cargo rustdoc -p paralegal-spdg -- -Drustdoc::all
+        cargo rustdoc -p paralegal-policy -- -Drustdoc::all

@@ -42,13 +42,13 @@
 //! [`GlobalLocation::single`] is used to construct global locations that are
 //! not nested in a call chain (such as the location of `let x = 1` within
 //! `bar`). A nested location (such as nesting this one behind the call to `bar`
-//! in `foo`) is done using [`GlobalLocation::relativize`].
+//! in `foo`) is done using [`GlobalLocationS::relativize`].
 //!
 //! In the example we would first construct global locations for all locations
 //! in `bar` with (pseudocode) `bar_bb0[0] = `[`GlobalLocation::single(bb0[0],
 //! bar_id)`](GlobalLocation::single) and then make the relative locations to
-//! foo with [`bar_bb0[0].relativize(bb0[0], foo_id)`](GlobalLocation::relativize) and
-//! [`bar_bb0[0].relativize(bb1[0], foo_id)`](GlobalLocation::relativize) for the first and second
+//! foo with [`bar_bb0[0].relativize(bb0[0], foo_id)`](GlobalLocationS::relativize) and
+//! [`bar_bb0[0].relativize(bb1[0], foo_id)`](GlobalLocationS::relativize) for the first and second
 //! inlining respectively.
 //!
 //! # Representation
@@ -69,9 +69,6 @@ use std::{cmp::Ordering, fmt, ops::Deref};
 
 use crate::rustc_portable::*;
 
-/// The payload type of a global location.
-///
-/// You will probably want to operate on the interned wrapper type [`GlobalLocation`].
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct GlobalLocationS {
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
@@ -201,7 +198,7 @@ impl fmt::Display for RawGlobalLocation {
 /// information on usage and rational.
 ///
 /// To construct these values use [`GlobalLocation::single`] and
-/// [`GlobalLocation::relativize`].
+/// [`GlobalLocationS::relativize`].
 ///
 /// INVARIANT: `self.0.len() > 0`
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
