@@ -308,7 +308,7 @@ impl Context {
 /// struct is at least one (e.g. [`Self::holds`] is sound).
 ///
 /// The stable API of this struct is [`Self::holds`], [`Self::assert_holds`] and
-/// [`Self::found_any`]. Otherwise the information in this struct and its
+/// [`Self::is_vacuous`]. Otherwise the information in this struct and its
 /// printed representations should be considered unstable and
 /// for-human-eyes-only.
 pub struct AlwaysHappensBefore {
