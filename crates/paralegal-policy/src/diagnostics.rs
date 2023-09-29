@@ -401,14 +401,7 @@ impl Context {
         name: impl Into<Identifier>,
         computation: impl FnOnce(Arc<CombinatorContext>) -> A,
     ) -> A {
-        computation(Arc::new(Self::new(name, self)))
-    }
-
-    pub(crate) fn new(name: impl Into<Identifier>, inner: Arc<dyn HasDiagnosticsBase>) -> Self {
-        CombinatorContext {
-            name: name.into(),
-            inner,
-        }
+        computation(Arc::new(CombinatorContext::new(name, self)))
     }
 }
 
