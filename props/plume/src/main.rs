@@ -114,6 +114,8 @@ fn check(ctx: Arc<Context>) -> Result<()> {
 #[derive(clap::Parser)]
 struct Args {
     plume_dir: std::path::PathBuf,
+    /// Additional arguments to pass to cargo, this is intended to be used to
+    /// enable the features that toggle the bugs, like `delete-comments`.
     #[clap(last = true)]
     cargo_args: Vec<String>,
 }
