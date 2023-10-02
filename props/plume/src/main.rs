@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use paralegal_policy::{
     paralegal_spdg::{rustc_portable::DefId, Ctrl, DataSink, DataSource, DefKind},
-    Context, ControllerId, Marker,
+    Context, ControllerId, Diagnostics, Marker,
 };
 
 macro_rules! marker {

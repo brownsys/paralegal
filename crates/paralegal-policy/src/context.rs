@@ -1,4 +1,4 @@
-use std::{io::Write, process::exit};
+use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
     Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
@@ -13,9 +13,10 @@ use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
 
-use crate::diagnostics::{Diagnostics, Severity};
-
-pub use crate::diagnostics::DiagnosticMessage;
+use crate::{
+    assert_error, assert_warning,
+    diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
+};
 
 /// User-defined PDG markers.
 pub type Marker = Identifier;
@@ -28,26 +29,6 @@ pub type FunctionId = DefId;
 type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
-/// Check the condition and emit a [`Context::error`] if it fails.
-#[macro_export]
-macro_rules! assert_error {
-    ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
-        if !$cond {
-            $ctx.error($msg);
-        }
-    };
-}
-
-/// Check the condition and emit a [`Context::warning`] if it fails.
-#[macro_export]
-macro_rules! assert_warning {
-    ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
-        if !$cond {
-            $ctx.warning($msg);
-        }
-    };
-}
-
 /// Interface for defining policies.
 ///
 /// Holds a PDG ([`Self::desc`]) and defines basic queries like
@@ -56,9 +37,10 @@ macro_rules! assert_warning {
 /// policies.
 ///
 /// To communicate the results of your policies with the user you can emit
-/// diagnostic messages. To communicate a policy failure use [`Self::error`] or
-/// the [`assert_error`] macro. To communicate suspicious circumstances that are
-/// not outright cause for failure use [`Self::warning`] or [`assert_warning`].
+/// diagnostic messages. To communicate a policy failure use
+/// [`error`](crate::Diagnostics::error) or the [`assert_error`] macro. To
+/// communicate suspicious circumstances that are not outright cause for failure
+/// use [`warning`](crate::Diagnostics::error) or [`assert_warning`].
 ///
 /// Note that these methods just queue the diagnostics messages. To emit them
 /// (and potentially terminate the program if the policy does not hold) use
@@ -70,7 +52,7 @@ pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
-    diagnostics: Diagnostics,
+    pub(crate) diagnostics: Arc<DiagnosticsRecorder>,
     name_map: HashMap<Identifier, Vec<DefId>>,
 }
 
@@ -148,18 +130,6 @@ impl Context {
             exit(1)
         }
         Ok(())
-    }
-
-    /// Record a message to the user indicating a problem that will not cause
-    /// verification to fail.
-    pub fn warning(&self, msg: impl Into<DiagnosticMessage>) {
-        self.diagnostics.record(msg, Severity::Warning)
-    }
-
-    /// Record a message to the user for a problem that will cause verification
-    /// to fail.
-    pub fn error(&self, msg: impl Into<DiagnosticMessage>) {
-        self.diagnostics.record(msg, Severity::Fail)
     }
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
@@ -369,7 +339,22 @@ impl std::fmt::Display for AlwaysHappensBefore {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref ALWAYS_HAPPENS_BEFORE_NAME: Identifier = Identifier::new_intern("always_happens_before");
+}
+
 impl AlwaysHappensBefore {
+    /// Check this property holds and report it as diagnostics in the context.
+    ///
+    /// Additionally reports if the property was vacuous or had no starting
+    /// nodes.
+    pub fn report(&self, ctx: Arc<dyn HasDiagnosticsBase>) {
+        let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
+        assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
+        assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
+        assert_error!(ctx, self.holds(), format!("Violation detected: {}", self));
+    }
+
     /// Returns `true` if the property that created these statistics holds.
     pub fn holds(&self) -> bool {
         self.num_reached == 0

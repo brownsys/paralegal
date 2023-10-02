@@ -62,11 +62,15 @@ use std::{
 mod context;
 mod flows_to;
 #[macro_use]
-mod diagnostics;
+pub mod diagnostics;
 #[cfg(test)]
 mod test_utils;
 
-pub use self::{context::*, flows_to::CtrlFlowsTo};
+pub use self::{
+    context::*,
+    diagnostics::{CombinatorContext, Diagnostics, PolicyContext},
+    flows_to::CtrlFlowsTo,
+};
 
 /// Configuration of the `cargo paralegal-flow` command.
 ///
@@ -135,7 +139,7 @@ impl GraphLocation {
     /// Emits any recorded diagnostic messages to stdout and aborts the program
     /// if they were severe enough.
     pub fn with_context<A>(&self, prop: impl FnOnce(Arc<Context>) -> Result<A>) -> Result<A> {
-        let ctx = self.build_context()?;
+        let ctx = Arc::new(self.build_context()?);
         let result = prop(ctx.clone())?;
         ctx.emit_diagnostics(std::io::stdout())?;
         Ok(result)
@@ -146,13 +150,16 @@ impl GraphLocation {
     ///
     /// Prefer using [`Self::with_context`] which takes care of emitting any
     /// diagnostic messages after the property is done.
-    pub fn build_context(&self) -> Result<Arc<Context>> {
+    pub fn build_context(&self) -> Result<Context> {
         simple_logger::init_with_env().unwrap();
 
         let desc = {
             let mut f = File::open(&self.0)?;
-            serde_json::from_reader::<_, ProgramDescription>(&mut f)?
+            anyhow::Context::with_context(
+                serde_json::from_reader::<_, ProgramDescription>(&mut f),
+                || format!("Reading SPDG (JSON) from {}", self.0.display()),
+            )?
         };
-        Ok(Arc::new(Context::new(desc)))
+        Ok(Context::new(desc))
     }
 }

@@ -907,6 +907,7 @@ dependencies = [
  "anyhow",
  "indexical",
  "itertools",
+ "lazy_static",
  "log",
  "paralegal-flow",
  "paralegal-spdg",
