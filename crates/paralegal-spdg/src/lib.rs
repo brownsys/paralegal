@@ -385,6 +385,12 @@ impl std::fmt::Display for Identifier {
     }
 }
 
+impl<'a> From<&'a str> for Identifier {
+    fn from(value: &'a str) -> Self {
+        Self::new_intern(value)
+    }
+}
+
 /// Because we need these kinds of associations so often I made a separate type
 /// for it. Also allows us to serialize it more conveniently.
 #[derive(Debug)]

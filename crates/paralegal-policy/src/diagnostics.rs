@@ -77,9 +77,9 @@
 //! [`report`][crate::AlwaysHappensBefore::report] functions.
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{rustc_portable::DefId, Identifier};
+use paralegal_spdg::{rustc_portable::DefId, Ctrl, Identifier};
 
-use crate::Context;
+use crate::{Context, ControllerId};
 
 /// Check the condition and emit a [`Diagnostics::error`] if it fails.
 #[macro_export]
@@ -232,6 +232,11 @@ impl PolicyContext {
             inner: self as Arc<_>,
         }))
     }
+
+    /// Iterate over all defined controllers as contexts
+    pub fn controller_contexts(self: &Arc<Self>) -> impl Iterator<Item = ControllerContext> {
+        ControllerContext::for_all(self.clone() as Arc<_>)
+    }
 }
 
 impl HasDiagnosticsBase for PolicyContext {
@@ -294,6 +299,30 @@ impl ControllerContext {
             name: name.into(),
             inner: self as Arc<_>,
         }))
+    }
+
+    /// Access the id for the controller of this context
+    pub fn id(&self) -> ControllerId {
+        self.id
+    }
+
+    /// Access the current controller contents
+    pub fn current(&self) -> &Ctrl {
+        &self.inner.as_ctx().desc().controllers[&self.id]
+    }
+
+    fn for_all(ctx: Arc<dyn HasDiagnosticsBase>) -> impl Iterator<Item = Self> {
+        ctx.as_ctx()
+            .desc()
+            .controllers
+            .keys()
+            .copied()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(move |id| Self {
+                id,
+                inner: ctx.clone(),
+            })
     }
 }
 
@@ -403,6 +432,11 @@ impl Context {
     ) -> A {
         computation(Arc::new(CombinatorContext::new(name, self)))
     }
+
+    /// Iterate over all defined controllers as contexts
+    pub fn controller_contexts(self: &Arc<Self>) -> impl Iterator<Item = ControllerContext> {
+        ControllerContext::for_all(self.clone() as Arc<_>)
+    }
 }
 
 /// Base database of emitted diagnostics.
@@ -419,10 +453,10 @@ impl DiagnosticsRecorder {
         let mut can_continue = true;
         for diag in self.0.lock().unwrap().drain(..) {
             for ctx in diag.context.iter().rev() {
-                write!(w, "[{ctx}] ")?;
+                write!(w, "{ctx} ")?;
             }
             writeln!(w, "{}", diag.message)?;
-            can_continue |= diag.severity.must_abort();
+            can_continue &= !diag.severity.must_abort();
         }
         Ok(can_continue)
     }
