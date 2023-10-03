@@ -9,7 +9,7 @@ use helpers::*;
 const CRATE_DIR: &str = "tests/contile-tests";
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = *helpers::PARABLE_INSTALLED
+    static ref TEST_CRATE_ANALYZED: bool = *helpers::PARALEGAL_INSTALLED
         && with_current_directory(CRATE_DIR, || {
             run_paralegal-flow_with_graph_dump_and(["--drop-poll", "--drop-clone"])
         })

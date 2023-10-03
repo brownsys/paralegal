@@ -75,7 +75,7 @@ proxy_index! {
     /// Proxy for `def_id::DefIndex`
     DefIndex("def_id::DefIndex") from "def_index_as_u32";
 
-    /// Proxy for [`hir::def_id::CrateNum`]
+    /// Proxy for `hir::def_id::CrateNum`
     CrateNum("hir::def_id::CrateNum") from "crate_num_as_u32"
 }
 
@@ -109,7 +109,7 @@ proxy_struct! {
     }
 
     #[derive(Ord, PartialOrd)]
-    /// Proxy for [`def_id::DefId`]
+    /// Proxy for `def_id::DefId`
     DefId("def_id::DefId") {
         index: def_id::DefIndex => DefIndex, "DefIndex",
         krate: hir::def_id::CrateNum => CrateNum, "CrateNum"

@@ -2,9 +2,8 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use paralegal_policy::{
-    assert_error,
-    paralegal_spdg::{rustc_portable::DefId, Ctrl, DefKind, DataSink, DataSource},
-    Context, ControllerId, Marker 
+    paralegal_spdg::{rustc_portable::DefId, Ctrl, DataSink, DataSource, DefKind},
+    Context, ControllerId, Diagnostics, Marker,
 };
 
 macro_rules! marker {
@@ -39,8 +38,13 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
 trait ContextExt {
     fn controllers<'a>(&'a self) -> Box<dyn Iterator<Item = (ControllerId, &'a Ctrl)> + 'a>;
     fn marked_type<'a>(&'a self, marker: Marker) -> Box<dyn Iterator<Item = DefId> + 'a>;
-    fn describe_def<'a>(&'a self, def_id: DefId) -> DisplayDef<'a>;
-    fn any_flows<'a>(&self, ctrl_id: ControllerId, from: &[&'a DataSource], to: &[&'a DataSink]) -> Option<(&'a DataSource, &'a DataSink)>;
+    fn describe_def(&self, def_id: DefId) -> DisplayDef;
+    fn any_flows<'a>(
+        &self,
+        ctrl_id: ControllerId,
+        from: &[&'a DataSource],
+        to: &[&'a DataSink],
+    ) -> Option<(&'a DataSource, &'a DataSink)>;
 }
 
 impl ContextExt for Context {
@@ -58,35 +62,25 @@ impl ContextExt for Context {
                 }),
         ) as Box<_>
     }
-    fn describe_def<'a>(&'a self, def_id: DefId) -> DisplayDef<'a> {
+    fn describe_def(&self, def_id: DefId) -> DisplayDef {
         DisplayDef { ctx: self, def_id }
     }
 
-    fn any_flows<'a>(&self, ctrl_id: ControllerId, from: &[&'a DataSource], to: &[&'a DataSink]) -> Option<(&'a DataSource, &'a DataSink)> {
-        from.iter()
-            .find_map(|&src|
-                to.iter()
-                    .find_map(|&sink| 
-                        self.flows_to(ctrl_id, src, sink)
-                            .then_some((src, sink))
-                    )
-            )
+    fn any_flows<'a>(
+        &self,
+        ctrl_id: ControllerId,
+        from: &[&'a DataSource],
+        to: &[&'a DataSink],
+    ) -> Option<(&'a DataSource, &'a DataSink)> {
+        from.iter().find_map(|&src| {
+            to.iter()
+                .find_map(|&sink| self.flows_to(ctrl_id, src, sink).then_some((src, sink)))
+        })
     }
 }
 
-// all c : Ctrl | all u : labeled_objects_with_types[c, Object, user, labels] | some deleter: labeled_objects[CallArgument, to_delete, labels] |
-// (flows_to_unmodified[c, u, deleter, flow_set])
-// implies {
-//     all user_type : labeled_objects[Type, user_data, labels] | { // for all Types representing user data
-// 		some arg : labeled_objects[CallArgument, to_delete, labels] | {
-// 			flows_to[c, user_type, arg, flow_set] // that data is deleted
-// 		}
-// 	}
-// }
 fn check(ctx: Arc<Context>) -> Result<()> {
-    let user_data_types = 
-            ctx.marked_type(marker!(user_data))
-                .collect::<Vec<_>>();
+    let user_data_types = ctx.marked_type(marker!(user_data)).collect::<Vec<_>>();
 
     let found = ctx
         .controllers()
@@ -115,6 +109,8 @@ fn check(ctx: Arc<Context>) -> Result<()> {
 #[derive(clap::Parser)]
 struct Args {
     plume_dir: std::path::PathBuf,
+    /// Additional arguments to pass to cargo, this is intended to be used to
+    /// enable the features that toggle the bugs, like `delete-comments`.
     #[clap(last = true)]
     cargo_args: Vec<String>,
 }
@@ -136,7 +132,8 @@ fn main() -> Result<()> {
         "--no-default-features",
         "--features",
         "postgres",
-        "-p", "plume-models"
+        "-p",
+        "plume-models",
     ]);
     cmd.get_command().args(args.cargo_args);
     cmd.run(args.plume_dir)?.with_context(check)?;

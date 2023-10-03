@@ -6,24 +6,24 @@
 //! possible and emit additional errors, as those messages are useful for the
 //! user.
 //!
-//! This manifests for instance in [`Diagnostics::error`]. This function
-//! records a severe error that should fail the policy but it does not exit the
-//! program. Instead the message is recorded and emitted later, for instance by
+//! This manifests for instance in [`Diagnostics::error`]. This function records
+//! a severe error that should fail the policy but it does not exit the program.
+//! Instead the message is recorded and emitted later, for instance by
 //! [`Context::emit_diagnostics`].
 //!
 //! ## Emitting Messages
 //!
 //! The main interface for diagnostics is the [`Diagnostics`] trait which
-//! defines functions for emitting messages like [`error`][Diagnostics::error] for
-//! policy failures and [`warning`][Diagnostics::warning] for indicators
-//! to the user that something may be off, but not causing a policy failure.
+//! defines functions for emitting messages like [`error`][Diagnostics::error]
+//! for policy failures and [`warning`][Diagnostics::warning] for indicators to
+//! the user that something may be off, but not causing a policy failure.
 //!
-//! We also offer two convenience macros [`assert_error!`] and
-//! [`assert_warning!`] that correspond to either function. Much like
-//! [`assert!`] they emit their messages if the provided condition is `false`
-//! and they let you use format strings for the messages. They should be
-//! used like `assert_warning!(ctx, condition, "format string", ...format
-//! arguments)`. `ctx` here is anything that implements [`Diagnostics`].
+//! We also offer two convenience macros [`assert_error!`](crate::assert_error) and
+//! [`assert_warning!`](crate::assert_warning) that correspond to either function. Much like
+//! [`assert!`] they only evaluate and emit their messages if the provided
+//! condition is `false`. They should be used like `assert_warning!(ctx,
+//! condition, message)`. `ctx` here is anything that implements
+//! [`Diagnostics`].
 //!
 //! [`Diagnostics`] is implemented directly by [`Context`] so you can use
 //! `ctx.error()` or `ctx.warning()`. You can also call it on scoped contexts
@@ -31,12 +31,11 @@
 //!
 //! ## Scoping messages
 //!
-//! You may however add additional contextual
-//! information about which policy or combinator is currently executing.
-//! [`Context::named_policy`] returns a wrapper that can be used the same way
-//! that you use [`Context`], but when [`error`][Diagnostics::error] or
-//! [`warning`][Diagnostics::warning] is called it also appends the name
-//! of the policy to you specified.
+//! You may however add additional contextual information about which policy or
+//! combinator is currently executing. [`Context::named_policy`] returns a
+//! wrapper that can be used the same way that you use [`Context`], but when
+//! [`error`][Diagnostics::error] or [`warning`][Diagnostics::warning] is called
+//! it also appends the name of the policy to you specified.
 //!
 //! Similarly you can use [`Context::named_combinator`] or
 //! [`PolicyContext::named_combinator`] to add context about a named combinator.
@@ -48,14 +47,14 @@
 //!     ctx.named_policy("cannot escape", |ctx| {
 //!         let result_1 = ctx.named_combinator("collect something", |ctx| {
 //!             /* actual computation */
-//!             assert_error!(ctx, "Oh oh, fail!");
+//!             assert_error!(ctx, 1 + 2 == 4, "Oh oh, fail!");
 //!             true
 //!         });
 //!         let result_2 = ctx.named_combinator("reach something", |ctx| {
-//!             assert_warning!(ctx, "maybe wrong?");
+//!             assert_warning!(ctx, 1 - 3 == 0, "maybe wrong?");
 //!             false
 //!         })
-//!         assert_error!(result_1 || result_2, "combination failure");
+//!         assert_error!(ctx, result_1 || result_2, "combination failure");
 //!     })
 //!
 //! }
@@ -78,11 +77,11 @@
 //! [`report`][crate::AlwaysHappensBefore::report] functions.
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{rustc_portable::DefId, Identifier};
+use paralegal_spdg::{rustc_portable::DefId, Ctrl, Identifier};
 
-use crate::Context;
+use crate::{Context, ControllerId};
 
-/// Check the condition and emit a [`Context::error`] if it fails.
+/// Check the condition and emit a [`Diagnostics::error`] if it fails.
 #[macro_export]
 macro_rules! assert_error {
     ($ctx:expr, $cond: expr $(,)?) => {
@@ -97,7 +96,7 @@ macro_rules! assert_error {
     };
 }
 
-/// Check the condition and emit a [`Context::warning`] if it fails.
+/// Check the condition and emit a [`Diagnostics::warning`] if it fails.
 #[macro_export]
 macro_rules! assert_warning {
     ($ctx:expr, $cond: expr $(,)?) => {
@@ -136,44 +135,6 @@ struct Diagnostic {
     context: DiagnosticContextStack,
 }
 
-/// Base database of emitted diagnostics.
-#[derive(Debug, Default)]
-pub(crate) struct DiagnosticsRecorder(std::sync::Mutex<Vec<Diagnostic>>);
-
-impl DiagnosticsRecorder {
-    /// Emit queued diagnostics, draining the internal queue of diagnostics.
-    ///
-    /// A return `true` means the program may continue, on `false` it should be
-    /// aborted.
-    pub(crate) fn emit(&self, mut w: impl Write) -> std::io::Result<bool> {
-        let w = &mut w;
-        let mut can_continue = true;
-        for diag in self.0.lock().unwrap().drain(..) {
-            for ctx in diag.context.iter().rev() {
-                write!(w, "[{ctx}] ")?;
-            }
-            writeln!(w, "{}", diag.message)?;
-            can_continue |= diag.severity.must_abort();
-        }
-        Ok(can_continue)
-    }
-}
-
-impl HasDiagnosticsBase for Context {
-    /// Record a diagnostic message.
-    fn record(&self, message: String, severity: Severity, context: DiagnosticContextStack) {
-        self.diagnostics.0.lock().unwrap().push(Diagnostic {
-            message,
-            severity,
-            context,
-        })
-    }
-
-    fn as_ctx(&self) -> &Context {
-        self
-    }
-}
-
 /// Low level machinery for diagnostics.
 ///
 /// As a user you should only be using methods from [`Diagnostics`]. It
@@ -183,7 +144,8 @@ pub trait HasDiagnosticsBase {
     /// Base function for recording new diagnostics.
     ///
     /// This should be used by implementors of new wrappers, users should use
-    /// high level functions like [`Self::error`] or [`Self::warning`] instead.
+    /// high level functions like [`Diagnostics::error`] or
+    /// [`Diagnostics::warning`] instead.
     fn record(&self, msg: String, severity: Severity, context: DiagnosticContextStack);
 
     /// Access to [`Context`], usually also available via [`std::ops::Deref`].
@@ -270,6 +232,11 @@ impl PolicyContext {
             inner: self as Arc<_>,
         }))
     }
+
+    /// Iterate over all defined controllers as contexts
+    pub fn controller_contexts(self: &Arc<Self>) -> impl Iterator<Item = ControllerContext> {
+        ControllerContext::for_all(self.clone() as Arc<_>)
+    }
 }
 
 impl HasDiagnosticsBase for PolicyContext {
@@ -332,6 +299,30 @@ impl ControllerContext {
             name: name.into(),
             inner: self as Arc<_>,
         }))
+    }
+
+    /// Access the id for the controller of this context
+    pub fn id(&self) -> ControllerId {
+        self.id
+    }
+
+    /// Access the current controller contents
+    pub fn current(&self) -> &Ctrl {
+        &self.inner.as_ctx().desc().controllers[&self.id]
+    }
+
+    fn for_all(ctx: Arc<dyn HasDiagnosticsBase>) -> impl Iterator<Item = Self> {
+        ctx.as_ctx()
+            .desc()
+            .controllers
+            .keys()
+            .copied()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(move |id| Self {
+                id,
+                inner: ctx.clone(),
+            })
     }
 }
 
@@ -428,5 +419,60 @@ impl Context {
             id,
             inner: self as Arc<_>,
         }))
+    }
+
+    /// Nest another named combinator into the diagnostic context.
+    ///
+    /// See the [module level documentation][self] for more information on
+    /// diagnostic context management.
+    pub fn named_combinator<A>(
+        self: Arc<Self>,
+        name: impl Into<Identifier>,
+        computation: impl FnOnce(Arc<CombinatorContext>) -> A,
+    ) -> A {
+        computation(Arc::new(CombinatorContext::new(name, self)))
+    }
+
+    /// Iterate over all defined controllers as contexts
+    pub fn controller_contexts(self: &Arc<Self>) -> impl Iterator<Item = ControllerContext> {
+        ControllerContext::for_all(self.clone() as Arc<_>)
+    }
+}
+
+/// Base database of emitted diagnostics.
+#[derive(Debug, Default)]
+pub(crate) struct DiagnosticsRecorder(std::sync::Mutex<Vec<Diagnostic>>);
+
+impl DiagnosticsRecorder {
+    /// Emit queued diagnostics, draining the internal queue of diagnostics.
+    ///
+    /// A return `true` means the program may continue, on `false` it should be
+    /// aborted.
+    pub(crate) fn emit(&self, mut w: impl Write) -> std::io::Result<bool> {
+        let w = &mut w;
+        let mut can_continue = true;
+        for diag in self.0.lock().unwrap().drain(..) {
+            for ctx in diag.context.iter().rev() {
+                write!(w, "{ctx} ")?;
+            }
+            writeln!(w, "{}", diag.message)?;
+            can_continue &= !diag.severity.must_abort();
+        }
+        Ok(can_continue)
+    }
+}
+
+impl HasDiagnosticsBase for Context {
+    /// Record a diagnostic message.
+    fn record(&self, message: String, severity: Severity, context: DiagnosticContextStack) {
+        self.diagnostics.0.lock().unwrap().push(Diagnostic {
+            message,
+            severity,
+            context,
+        })
+    }
+
+    fn as_ctx(&self) -> &Context {
+        self
     }
 }

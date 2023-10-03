@@ -913,7 +913,6 @@ dependencies = [
  "paralegal-spdg",
  "serde_json",
  "simple_logger",
- "smallvec",
 ]
 
 [[package]]
@@ -1040,6 +1039,14 @@ checksum = "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76"
 [[package]]
 name = "rustc_plugin"
 version = "0.6.0-nightly-2023-04-12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79b172d929863ef84797b5592af9b58160f954a484938991f5a6b2829e3c163a"
+replace = "rustc_plugin 0.6.0-nightly-2023-04-12 (git+https://github.com/JustusAdam/rustc_plugin?rev=80d92411810c709522119407be24745555adc87a)"
+
+[[package]]
+name = "rustc_plugin"
+version = "0.6.0-nightly-2023-04-12"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=80d92411810c709522119407be24745555adc87a#80d92411810c709522119407be24745555adc87a"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1048,13 +1055,6 @@ dependencies = [
  "serde_json",
  "toml",
 ]
-
-[[package]]
-name = "rustc_plugin"
-version = "0.6.0-nightly-2023-04-12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79b172d929863ef84797b5592af9b58160f954a484938991f5a6b2829e3c163a"
-replace = "rustc_plugin 0.6.0-nightly-2023-04-12"
 
 [[package]]
 name = "rustc_tools_util"

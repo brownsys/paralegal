@@ -37,9 +37,10 @@ type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 /// policies.
 ///
 /// To communicate the results of your policies with the user you can emit
-/// diagnostic messages. To communicate a policy failure use [`Self::error`] or
-/// the [`assert_error`] macro. To communicate suspicious circumstances that are
-/// not outright cause for failure use [`Self::warning`] or [`assert_warning`].
+/// diagnostic messages. To communicate a policy failure use
+/// [`error`](crate::Diagnostics::error) or the [`assert_error`] macro. To
+/// communicate suspicious circumstances that are not outright cause for failure
+/// use [`warning`](crate::Diagnostics::error) or [`assert_warning`].
 ///
 /// Note that these methods just queue the diagnostics messages. To emit them
 /// (and potentially terminate the program if the policy does not hold) use
@@ -51,7 +52,7 @@ pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
-    pub(crate) diagnostics: Arc<DiagnosticsRecorder>,
+    pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
 }
 
@@ -159,6 +160,19 @@ impl Context {
             .flows_to
             .row_set(&src.to_index(&ctrl_flows.sources))
             .contains(sink)
+    }
+
+    /// Iterate all sinks that are reachable from this source in the given controller.
+    pub fn reachable(
+        &self,
+        ctrl_id: ControllerId,
+        src: &DataSource,
+    ) -> impl Iterator<Item = &DataSink> {
+        let ctrl_flows = &self.flows_to[&ctrl_id];
+        ctrl_flows
+            .flows_to
+            .row_set(&src.to_index(&ctrl_flows.sources))
+            .iter()
     }
 
     /// Returns an iterator over all objects marked with `marker`.
@@ -314,7 +328,7 @@ impl Context {
 /// struct is at least one (e.g. [`Self::holds`] is sound).
 ///
 /// The stable API of this struct is [`Self::holds`], [`Self::assert_holds`] and
-/// [`Self::found_any`]. Otherwise the information in this struct and its
+/// [`Self::is_vacuous`]. Otherwise the information in this struct and its
 /// printed representations should be considered unstable and
 /// for-human-eyes-only.
 pub struct AlwaysHappensBefore {

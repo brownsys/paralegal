@@ -2,26 +2,17 @@
 
 A tool for enforcing privacy policies on Rust code.
 
-See our [Notion pages](https://www.notion.so/justus-adam/Dataflow-973fca6c36ca42a3ac8bc6be58edb909)
-for details on [getting started](https://www.notion.so/justus-adam/Getting-Started-40541156c25d48f8b6ad79a0e1b09b91)
+Hello there curious GitHub surfer. I don't know how you got here but welcome.
+This is the home of Paralegal, a static, data and control flow based Rust code
+policy enforcer.
 
-For your convenience during development the documentation for the code and rustc
-(which we use as a library) are hosted on our [github pages][docs]
+While you've certainly "come to the right place" our tool is not in a shape yet
+where the wider public can easily adopt it. However we are working hard to get
+to that point and we would be happy to let you know as soon as we're ready for
+you. You can leave a contact email in this [Google
+Form](https://forms.gle/QkijL7jSCksjirNP6) and we will send you a message once
+Paralegal goes fully public. 
 
-[docs]: https://brownsys.github.io/paralegal
-
-## Repository Structure
-
-- `crates`: The source code of the various parts and tools that comprise
-  Paralegal
-  - `paralegal-spdg`: Definition of the Semantic Program Dependence Graph
-  - `paralegal-flow`: Rustc plugin that extracts an SPDG by means of control and
-    data flow analysis
-  - `paralegal-policy`: Framework for defining policies as graph queries
-  - `paralegal-explore`: Query and visualize parts of an SPDG
-- `prop`: Sample policies we wrote for Open Source Rust applications
-  - `websubmit`: Policy for <https://github.com/ms705/websubmit-rs>
-  - `lemmy`: Policy for <https://github.com/LemmyNet/lemmy>
-- `scripts`: Helper scripts for auxillary tasks. Currently only holds a script
-  for counting lines in Forge files
-- `doc-src`: Sources for building the documentation. that is hosted on [GitHub pages][docs]
+You can also leave us a note in the form on how you want to apply our tool and
+if we find your use case particularly compelling, we will give you early access
+and personal support.

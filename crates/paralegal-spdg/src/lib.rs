@@ -47,7 +47,7 @@ pub type TypeDescriptor = DefId;
 pub type Function = Identifier;
 
 /// Name of the file used for emitting the JSON serialized
-/// [`ProgramDescription`](crate::desc::ProgramDescription).
+/// [`ProgramDescription`](crate::ProgramDescription).
 pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
 
 /// Types of annotations we support.
@@ -382,6 +382,12 @@ impl std::fmt::Debug for Identifier {
 impl std::fmt::Display for Identifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         self.0.as_ref().fmt(f)
+    }
+}
+
+impl<'a> From<&'a str> for Identifier {
+    fn from(value: &'a str) -> Self {
+        Self::new_intern(value)
     }
 }
 
