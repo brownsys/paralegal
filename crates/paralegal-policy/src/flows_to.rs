@@ -1,4 +1,4 @@
-use paralegal_spdg::{Ctrl, DataSink, DataSource, DataSourceIndex};
+use paralegal_spdg::{Ctrl, DataSink, DataSource, DataSourceIndex, DataSinkIndex, AnnotationMap};
 
 use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToIndex};
 use itertools::Itertools;
@@ -20,16 +20,23 @@ pub struct CtrlFlowsTo {
     ///
     /// See the [`IndexMatrix`] documentation for details on how to
     /// query this representation of the relation.
+    pub data_flows_to: IndexMatrix<DataSourceIndex, DataSink>,
+
+	/// The transitive closure of the [`Ctrl::ctrl_flow`] relation.
+    pub ctrl_flows_to: IndexMatrix<DataSourceIndex, DataSink>,
+
+	/// The transitive closure of the [`Ctrl::data_flow`] + [`Ctrl::ctrl_flow`] relation.
     pub flows_to: IndexMatrix<DataSourceIndex, DataSink>,
 }
 
 impl CtrlFlowsTo {
     /// Constructs the transitive closure from a [`Ctrl`].
-    pub fn build(ctrl: &Ctrl) -> Self {
+    pub fn build(ctrl: &Ctrl, annotations: &AnnotationMap) -> Self {
         // Collect all sources and sinks into indexed domains.
-        let sources = Arc::new(IndexedDomain::from_iter(ctrl.data_flow.0.keys().cloned()));
+		let sources = Arc::new(IndexedDomain::from_iter(
+			ctrl.all_sources().iter().map(|&s| s.clone())));
         let sinks = Arc::new(IndexedDomain::from_iter(
-            ctrl.data_flow.0.values().flatten().dedup().cloned(),
+            ctrl.all_sinks(annotations).iter().map(|&s| s.clone()),
         ));
 
         // Connect each function-argument sink to its corresponding function sources.
@@ -47,16 +54,50 @@ impl CtrlFlowsTo {
             }
         }
 
-        // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
-        let mut flows_to = IndexMatrix::new(&sinks);
+        // Initialize the `flows_to` relations with the data provided by `Ctrl::data_flow` and `Ctrl::ctrl_flow`.
+        let mut data_flows_to = IndexMatrix::new(&sinks);
+		let mut ctrl_flows_to = IndexMatrix::new(&sinks);
+		let mut flows_to = IndexMatrix::new(&sinks);
         for (src, sinks) in &ctrl.data_flow.0 {
             let src = src.to_index(&sources);
             for sink in sinks {
-                flows_to.insert(src, sink);
+                data_flows_to.insert(src, sink);
+				flows_to.insert(src, sink);
+            }
+        }
+        for (src, callsites) in &ctrl.ctrl_flow.0 {
+            let src = src.to_index(&sources);
+            for cs in callsites {
+                ctrl_flows_to.insert(src, DataSink::Argument { function: cs.clone(), arg_slot: 0 });
+				flows_to.insert(src, DataSink::Argument { function: cs.clone(), arg_slot: 0 });
+
+				for (_, sink) in sinks.as_vec().iter_enumerated() {
+					if let DataSink::Argument { function: arg_cs, .. } = sink {
+						if arg_cs == cs {
+							ctrl_flows_to.insert(src, sink);
+							flows_to.insert(src, sink);
+						}
+					}
+				}
             }
         }
 
-        // Compute the transitive closure to a fixpoint.
+		Self::iterate(&mut data_flows_to, &sources, &sink_to_source);
+		Self::iterate(&mut ctrl_flows_to, &sources, &sink_to_source);
+		Self::iterate(&mut flows_to, &sources, &sink_to_source);
+
+        CtrlFlowsTo {
+            sources,
+            sinks,
+            data_flows_to,
+			ctrl_flows_to,
+			flows_to
+        }
+    }
+
+	fn iterate(flows_to: &mut IndexMatrix<DataSourceIndex, DataSink>, 
+			sources: &Arc<IndexedDomain<DataSource>>, sink_to_source: &IndexMatrix<DataSinkIndex, DataSource>) {
+		// Compute the transitive closure to a fixpoint.
         loop {
             let mut changed = false;
 
@@ -78,18 +119,12 @@ impl CtrlFlowsTo {
                 break;
             }
         }
-
-        CtrlFlowsTo {
-            sources,
-            sinks,
-            flows_to,
-        }
-    }
+	}
 }
 
 impl fmt::Debug for CtrlFlowsTo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.flows_to.fmt(f)
+        self.data_flows_to.fmt(f)
     }
 }
 

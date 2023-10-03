@@ -264,34 +264,14 @@ pub struct ProgramDescription {
 }
 
 impl ProgramDescription {
-    /// Gather all [`DataSource`]s that are mentioned in this program description.
+    /// Gather all [`DataSource`]s that are mentioned in this program description including data and control flow.
     ///
     /// Essentially just `self.controllers.flat_map(|c| c.keys())`
-    pub fn all_sources(&self) -> HashSet<&DataSource> {
-        self.controllers
-            .values()
-            .flat_map(|c| {
-                c.data_flow
-                    .0
-                    .keys()
-                    .chain(c.types.0.keys())
-                    .chain(c.ctrl_flow.0.keys())
-            })
-            .collect()
-    }
-    /// Gather all [`DataSource`]s that are mentioned in this program description.
-    ///
-    /// Essentially just `self.controllers.flat_map(|c| c.keys())`
-    pub fn all_sources_with_ctrl(&self) -> HashSet<(DefId, &DataSource)> {
+    pub fn all_sources(&self) -> HashSet<(DefId, &DataSource)> {
         self.controllers
             .iter()
             .flat_map(|(name, c)| {
-                c.data_flow
-                    .0
-                    .keys()
-                    .chain(c.types.0.keys())
-                    .chain(c.ctrl_flow.0.keys())
-                    .map(|ds| (*name, ds))
+				c.all_sources().iter().map(|&ds| (*name, ds)).collect::<Vec<_>>()
             })
             .collect()
     }
@@ -301,7 +281,9 @@ impl ProgramDescription {
     pub fn all_sinks(&self) -> HashSet<&DataSink> {
         self.controllers
             .values()
-            .flat_map(|ctrl| ctrl.data_flow.0.values().flat_map(|v| v.iter()))
+            .flat_map(|ctrl| 
+				ctrl.all_sinks(&self.annotations)
+			)
             .collect()
     }
 
@@ -656,4 +638,20 @@ impl Ctrl {
             m.insert(from.into_owned(), iter::once(to).collect());
         }
     }
+
+	/// Gather all [`DataSource`]s that are mentioned in this controller including data and control flow.
+	pub fn all_sources(&self) -> HashSet<&DataSource> {
+		self.data_flow.0
+			.keys()
+			.chain(self.types.0.keys())
+			.chain(self.ctrl_flow.0.keys())
+			.dedup()
+			.collect()
+	}
+
+	/// Gather all [`DataSink`]s that are mentioned in this controller. Consists of sinks from data flow, the first argument and any arguments mentioned in annotations of all callsites in control flow.
+	pub fn all_sinks(&self, annotations: &AnnotationMap) -> HashSet<&DataSink> {
+		todo!()
+	} 
+
 }

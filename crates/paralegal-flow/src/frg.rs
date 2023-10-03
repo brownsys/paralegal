@@ -659,7 +659,7 @@ impl<'tcx> ForgeConverter<'tcx> {
                                 if a.refinement.on_return() {
                                     Some(
                                         self.description
-                                            .all_sources_with_ctrl()
+                                            .all_sources()
                                             .into_iter()
                                             .filter(|(_, s)| {
                                                 s.as_function_call()

@@ -179,7 +179,7 @@ impl Context {
     fn build_flows_to(desc: &ProgramDescription) -> FlowsTo {
         desc.controllers
             .iter()
-            .map(|(id, c)| (*id, CtrlFlowsTo::build(c)))
+            .map(|(id, c)| (*id, CtrlFlowsTo::build(c, &desc.annotations)))
             .collect()
     }
 
@@ -187,7 +187,7 @@ impl Context {
     pub fn flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
-            .flows_to
+            .data_flows_to
             .row_set(&src.to_index(&ctrl_flows.sources))
             .contains(sink)
     }
