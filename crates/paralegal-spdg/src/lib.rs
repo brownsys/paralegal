@@ -282,7 +282,7 @@ impl ProgramDescription {
         self.controllers
             .values()
             .flat_map(|ctrl| 
-				ctrl.all_sinks(&self.annotations)
+				ctrl.all_sinks()
 			)
             .collect()
     }
@@ -573,6 +573,9 @@ pub struct Ctrl {
     /// Transitive control dependencies between sources and call sites.
     pub ctrl_flow: Relation<DataSource, CallSite>,
 
+	/// Sinks for first arg of callsites in ctrl flow but not necessarily data flow
+	pub ctrl_sinks: HashSet<DataSink>,
+
     #[cfg_attr(feature = "rustc", serde(with = "ser_ctrl_types"))]
     /// Annotations on types in a controller.
     ///
@@ -587,6 +590,7 @@ impl Default for Ctrl {
         Ctrl {
             data_flow: Relation::empty(),
             ctrl_flow: Relation::empty(),
+			ctrl_sinks: HashSet::new(),
             types: Relation::empty(),
         }
     }
@@ -615,6 +619,7 @@ impl Ctrl {
         Ctrl {
             data_flow: Relation::empty(),
             ctrl_flow: Relation::empty(),
+			ctrl_sinks: HashSet::new(),
             types,
         }
     }
@@ -633,10 +638,11 @@ impl Ctrl {
     pub fn add_ctrl_flow(&mut self, from: Cow<DataSource>, to: CallSite) {
         let m = &mut self.ctrl_flow.0;
         if let Some(e) = m.get_mut(&from) {
-            e.insert(to);
+            e.insert(to.clone());
         } else {
-            m.insert(from.into_owned(), iter::once(to).collect());
+            m.insert(from.into_owned(), iter::once(to.clone()).collect());
         }
+		self.ctrl_sinks.insert(DataSink::Argument { function: to, arg_slot: 0 });
     }
 
 	/// Gather all [`DataSource`]s that are mentioned in this controller including data and control flow.
@@ -649,9 +655,12 @@ impl Ctrl {
 			.collect()
 	}
 
-	/// Gather all [`DataSink`]s that are mentioned in this controller. Consists of sinks from data flow, the first argument and any arguments mentioned in annotations of all callsites in control flow.
-	pub fn all_sinks(&self, annotations: &AnnotationMap) -> HashSet<&DataSink> {
-		todo!()
+	/// Gather all [`DataSink`]s that are mentioned in this controller. Consists of sinks from data flow, the first argument of all callsites in control flow.
+	pub fn all_sinks(&self) -> HashSet<&DataSink> {
+		self.data_flow.0.values().flatten()
+			.chain(self.ctrl_sinks.iter())
+			.dedup()
+			.collect()
 	} 
 
 }

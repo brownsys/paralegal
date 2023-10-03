@@ -31,12 +31,12 @@ pub struct CtrlFlowsTo {
 
 impl CtrlFlowsTo {
     /// Constructs the transitive closure from a [`Ctrl`].
-    pub fn build(ctrl: &Ctrl, annotations: &AnnotationMap) -> Self {
+    pub fn build(ctrl: &Ctrl) -> Self {
         // Collect all sources and sinks into indexed domains.
 		let sources = Arc::new(IndexedDomain::from_iter(
 			ctrl.all_sources().iter().map(|&s| s.clone())));
         let sinks = Arc::new(IndexedDomain::from_iter(
-            ctrl.all_sinks(annotations).iter().map(|&s| s.clone()),
+            ctrl.all_sinks().iter().map(|&s| s.clone()),
         ));
 
         // Connect each function-argument sink to its corresponding function sources.

@@ -179,7 +179,7 @@ impl Context {
     fn build_flows_to(desc: &ProgramDescription) -> FlowsTo {
         desc.controllers
             .iter()
-            .map(|(id, c)| (*id, CtrlFlowsTo::build(c, &desc.annotations)))
+            .map(|(id, c)| (*id, CtrlFlowsTo::build(c)))
             .collect()
     }
 
