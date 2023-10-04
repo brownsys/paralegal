@@ -183,11 +183,29 @@ impl Context {
             .collect()
     }
 
-    /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
+    /// Returns true if `src` has a data+ctrl-flow to `sink` in the controller `ctrl_id`
     pub fn flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .data_flows_to
+            .row_set(&src.to_index(&ctrl_flows.sources))
+            .contains(sink)
+    }
+
+	/// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
+    pub fn data_flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+        let ctrl_flows = &self.flows_to[&ctrl_id];
+        ctrl_flows
+            .data_flows_to
+            .row_set(&src.to_index(&ctrl_flows.sources))
+            .contains(sink)
+    }
+
+	/// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
+    pub fn ctrl_flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+        let ctrl_flows = &self.flows_to[&ctrl_id];
+        ctrl_flows
+            .ctrl_flows_to
             .row_set(&src.to_index(&ctrl_flows.sources))
             .contains(sink)
     }
