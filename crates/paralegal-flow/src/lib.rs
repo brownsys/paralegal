@@ -70,13 +70,14 @@ pub mod rust {
 }
 
 use args::{ClapArgs, LogLevelConfig};
-use desc::utils::serde_map_via_vec;
+use desc::utils::{serde_map_via_vec, write_sep};
 use pretty::DocBuilder;
 use rust::*;
 
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
+use std::fmt::{Write, Display};
 
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
@@ -107,7 +108,7 @@ pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
 use crate::{
     frg::{call_site_to_string, ForgeConverter},
-    utils::outfile_pls,
+    utils::{outfile_pls, Print},
 };
 
 pub use crate::marker_db::MarkerCtx;
@@ -183,6 +184,7 @@ impl rustc_driver::Callbacks for Callbacks {
                     )
                     .unwrap();
                 }
+                tcx.sess.abort_if_errors();
                 info!("All elems walked");
                 let result_path = compiler
                     .build_output_filenames(compiler.session(), &[])
@@ -294,7 +296,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .and_then(|s| plugin_args.target().map(|t| s == t))
             .unwrap_or(false);
 
-        if !is_target && std::env::var("CARGO_PRIMARY_PACKAGE").is_err() {
+        let is_build_script = crate_name.as_ref().map_or(false, |n| n == "build_script_build");
+
+        if !is_target && (std::env::var("CARGO_PRIMARY_PACKAGE").is_err() || is_build_script) {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
@@ -320,6 +324,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             });
         }
         let opts = Box::leak(Box::new(plugin_args));
+        debug!("Arguments: {}", Print(|f| write_sep(f, " ", &compiler_args, Display::fmt)));
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }
 }

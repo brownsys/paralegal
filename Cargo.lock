@@ -1067,12 +1067,12 @@ name = "rustc_utils"
 version = "0.6.0-nightly-2023-04-12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3935b4a82abe6904308c9273afba6160cf36f20044e720c43839a08519eadfd8"
-replace = "rustc_utils 0.6.0-nightly-2023-04-12 (git+https://github.com/JustusAdam/rustc_plugin?rev=344ecb3bc056c641eaf9d06792571b3d81c8eb33)"
+replace = "rustc_utils 0.6.0-nightly-2023-04-12 (git+https://github.com/JustusAdam/rustc_plugin?rev=80d92411810c709522119407be24745555adc87a)"
 
 [[package]]
 name = "rustc_utils"
 version = "0.6.0-nightly-2023-04-12"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=344ecb3bc056c641eaf9d06792571b3d81c8eb33#344ecb3bc056c641eaf9d06792571b3d81c8eb33"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=80d92411810c709522119407be24745555adc87a#80d92411810c709522119407be24745555adc87a"
 dependencies = [
  "anyhow",
  "cfg-if",
