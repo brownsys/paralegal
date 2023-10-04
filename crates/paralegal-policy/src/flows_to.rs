@@ -132,7 +132,7 @@ impl fmt::Debug for CtrlFlowsTo {
 fn test_flows_to() {
     use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx.find_by_name("controller_with_ctrl").unwrap();
+    let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
     let src = DataSource::Argument(0);
     let get_sink = |name| {
         let name = Identifier::new_intern(name);
@@ -174,4 +174,26 @@ fn test_data_flows_to() {
     let sink2 = get_sink("sink2");
     assert!(ctx.data_flows_to(controller, &src, sink1));
     assert!(!ctx.data_flows_to(controller, &src, sink2));
+}
+
+#[test]
+fn test_ctrl_flows_to() {
+    use paralegal_spdg::Identifier;
+    let ctx = crate::test_utils::test_ctx();
+    let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
+    let src = DataSource::Argument(0);
+    let get_sink = |name| {
+        let name = Identifier::new_intern(name);
+        ctx.desc().controllers[&controller]
+            .data_sinks()
+            .find(|sink| match sink {
+                DataSink::Argument { function, .. } => {
+                    ctx.desc().def_info[&function.function].name == name
+                }
+                _ => false,
+            })
+            .unwrap()
+    };
+    let sink1 = get_sink("sink1");
+    assert!(ctx.flows_to(controller, &src, sink1));
 }

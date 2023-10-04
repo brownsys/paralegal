@@ -22,8 +22,15 @@ fn controller(a: Foo, b: Foo) {
 }
 
 #[paralegal_flow::analyze]
-fn controller_with_ctrl(a: Foo, b: Foo) {
+fn controller_data_ctrl(a: Foo, b: Foo) {
 	if cond(a) {
+		sink1(b);
+	}
+}
+
+#[paralegal_flow::analyze]
+fn controller_ctrl(a: bool, b: Foo) {
+	if a {
 		sink1(b);
 	}
 }
