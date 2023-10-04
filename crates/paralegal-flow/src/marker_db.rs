@@ -243,8 +243,10 @@ impl<'tcx> MarkerCtx<'tcx> {
             .zip(std::iter::repeat(None))
             .chain(
                 (self.0.config.local_function_type_marking() || !function.def_id().is_local())
-                    .then(|| {
-                        self.all_type_markers(function.sig(self.tcx()).skip_binder().output())
+                    .then(|| function.sig(self.tcx()))
+                    .and_then(Result::ok)
+                    .map(|sig| {
+                        self.all_type_markers(sig.output())
                             .map(|(marker, typeinfo)| (marker, Some(typeinfo)))
                     })
                     .into_iter()
@@ -305,9 +307,9 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
             .iter()
             .filter_map(|(path, marker)| {
                 let segment_vec = path.split("::").collect::<Vec<_>>();
-                let res = def_path_res(tcx, &segment_vec).map_err(|err|
-                    tcx.sess.err(format!("Could not resolve {path}: {err:?}"))
-                ).ok()?;
+                let res = def_path_res(tcx, &segment_vec)
+                    .map_err(|err| tcx.sess.err(format!("Could not resolve {path}: {err:?}")))
+                    .ok()?;
                 let did = match res {
                     Res::Def(_, did) => Some(did),
                     other => {

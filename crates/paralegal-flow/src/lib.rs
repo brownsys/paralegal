@@ -77,7 +77,7 @@ use rust::*;
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
-use std::fmt::{Write, Display};
+use std::fmt::Display;
 
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
@@ -296,7 +296,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .and_then(|s| plugin_args.target().map(|t| s == t))
             .unwrap_or(false);
 
-        let is_build_script = crate_name.as_ref().map_or(false, |n| n == "build_script_build");
+        let is_build_script = crate_name
+            .as_ref()
+            .map_or(false, |n| n == "build_script_build");
 
         if !is_target && (std::env::var("CARGO_PRIMARY_PACKAGE").is_err() || is_build_script) {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
@@ -324,7 +326,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             });
         }
         let opts = Box::leak(Box::new(plugin_args));
-        debug!("Arguments: {}", Print(|f| write_sep(f, " ", &compiler_args, Display::fmt)));
+        debug!(
+            "Arguments: {}",
+            Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
+        );
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }
 }
