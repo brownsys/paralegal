@@ -663,7 +663,7 @@ impl<'tcx> Inliner<'tcx> {
                 let local_as_global = GlobalLocal::at_root;
                 let call = self.get_call(*location);
                 debug!("Abstracting {function:?}");
-                let fn_sig = function.sig(self.tcx).skip_binder();
+                let fn_sig = function.sig(self.tcx).unwrap();
                 let writeables = Self::writeable_arguments(&fn_sig)
                     .filter_map(|idx| call.arguments[idx].as_ref().map(|i| i.0))
                     .chain(call.return_to.into_iter())

@@ -243,8 +243,10 @@ impl<'tcx> MarkerCtx<'tcx> {
             .zip(std::iter::repeat(None))
             .chain(
                 (self.0.config.local_function_type_marking() || !function.def_id().is_local())
-                    .then(|| {
-                        self.all_type_markers(function.sig(self.tcx()).skip_binder().output())
+                    .then(|| function.sig(self.tcx()))
+                    .and_then(Result::ok)
+                    .map(|sig| {
+                        self.all_type_markers(sig.output())
                             .map(|(marker, typeinfo)| (marker, Some(typeinfo)))
                     })
                     .into_iter()

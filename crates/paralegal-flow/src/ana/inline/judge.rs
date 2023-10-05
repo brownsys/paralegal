@@ -17,11 +17,14 @@ impl<'tcx> InlineJudge<'tcx> {
     /// performs side effects?
     fn probably_performs_side_effects(
         &self,
-        func: DefId,
+        func: FnResolution<'tcx>,
         args: &[Option<Place<'tcx>>],
         place_has_dependencies: impl Fn(Place<'tcx>) -> bool,
     ) -> bool {
-        let sig = self.tcx.fn_sig(func).skip_binder().skip_binder();
+        let Ok(sig) = func.sig(self.tcx) else {
+            return true;
+        };
+
         let has_no_outputs =
             sig.output().is_unit() && !sig.inputs().iter().any(|i| i.is_mutable_ptr());
         has_no_outputs || !args.iter().cloned().flatten().any(place_has_dependencies)
@@ -38,7 +41,7 @@ impl<'tcx> InlineJudge<'tcx> {
         self.analysis_control.avoid_inlining()
             && !self.function_has_markers(function)
             && !self.marker_is_reachable(function.def_id())
-            && !self.probably_performs_side_effects(function.def_id(), args, place_has_dependencies)
+            && !self.probably_performs_side_effects(function, args, place_has_dependencies)
     }
 
     /// Are there any markers on this function (direct or output type)?
