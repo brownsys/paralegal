@@ -183,6 +183,7 @@ impl rustc_driver::Callbacks for Callbacks {
                     )
                     .unwrap();
                 }
+                tcx.sess.abort_if_errors();
                 info!("All elems walked");
                 let result_path = compiler
                     .build_output_filenames(compiler.session(), &[])
