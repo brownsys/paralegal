@@ -136,7 +136,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Queries the transitive marker cache.
-    fn has_transitive_reachable_markers(&self, def_id: DefId) -> bool {
+    pub fn has_transitive_reachable_markers(&self, def_id: DefId) -> bool {
         self.db()
             .marker_reachable_cache
             .get_maybe_recursive(def_id, |_| self.compute_marker_reachable(def_id))

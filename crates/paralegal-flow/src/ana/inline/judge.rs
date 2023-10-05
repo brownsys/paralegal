@@ -69,6 +69,15 @@ impl<'tcx> InlineJudge<'tcx> {
         self.analysis_control.use_recursive_analysis() && !self.function_has_markers(function)
     }
 
+    /// Access to uninterpreted marker information
+    ///
+    /// This should only be used to issue warnings. For semnatically meaningful
+    /// interpretations of markers on function should be implemented on this
+    /// judge instead.
+    pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
+        &self.marker_ctx
+    }
+
     /// Is a marker reachable from this item?
     fn marker_is_reachable(&self, def_id: DefId) -> bool {
         self.marker_ctx.marker_is_reachable(def_id)
