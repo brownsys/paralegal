@@ -2,8 +2,8 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use paralegal_policy::{
-    paralegal_spdg::{rustc_portable::DefId, Ctrl, DataSink, DataSource, DefKind},
-    Context, ControllerId, Diagnostics, Marker,
+    paralegal_spdg::{rustc_portable::DefId, DefKind},
+    Context, Diagnostics, Marker,
 };
 
 macro_rules! marker {
@@ -48,20 +48,20 @@ impl ContextExt for Context {
 fn check(ctx: Arc<Context>) -> Result<()> {
     let user_data_types = ctx.marked_type(marker!(user_data)).collect::<Vec<_>>();
 
-    let found = ctx
-        .all_controllers()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .find(|(deleter_id, deleter)| {
-            let delete_sinks = ctx
-                .marked_sinks(deleter.data_sinks(), marker!(to_delete))
-                .collect::<Vec<_>>();
-            user_data_types.iter().all(|&t| {
-                let sources = ctx.srcs_with_type(deleter, t).collect::<Vec<_>>();
-                ctx.any_flows(*deleter_id, &sources, &delete_sinks)
-                    .is_some()
-            })
-        });
+    let found =
+        ctx.all_controllers()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .find(|(deleter_id, deleter)| {
+                let delete_sinks = ctx
+                    .marked_sinks(deleter.data_sinks(), marker!(to_delete))
+                    .collect::<Vec<_>>();
+                user_data_types.iter().all(|&t| {
+                    let sources = ctx.srcs_with_type(deleter, t).collect::<Vec<_>>();
+                    ctx.any_flows(*deleter_id, &sources, &delete_sinks)
+                        .is_some()
+                })
+            });
     if found.is_none() {
         ctx.error("Could not find a function deleting all types");
     }
