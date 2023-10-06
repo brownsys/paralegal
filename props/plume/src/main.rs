@@ -36,46 +36,12 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
 }
 
 trait ContextExt {
-    fn controllers<'a>(&'a self) -> Box<dyn Iterator<Item = (ControllerId, &'a Ctrl)> + 'a>;
-    fn marked_type<'a>(&'a self, marker: Marker) -> Box<dyn Iterator<Item = DefId> + 'a>;
     fn describe_def(&self, def_id: DefId) -> DisplayDef;
-    fn any_flows<'a>(
-        &self,
-        ctrl_id: ControllerId,
-        from: &[&'a DataSource],
-        to: &[&'a DataSink],
-    ) -> Option<(&'a DataSource, &'a DataSink)>;
 }
 
 impl ContextExt for Context {
-    fn controllers<'a>(&'a self) -> Box<dyn Iterator<Item = (ControllerId, &'a Ctrl)> + 'a> {
-        Box::new(self.desc().controllers.iter().map(|(k, v)| (*k, v))) as Box<_>
-    }
-
-    fn marked_type<'a>(&'a self, marker: Marker) -> Box<dyn Iterator<Item = DefId> + 'a> {
-        Box::new(
-            self.marked(marker)
-                .filter(|(did, _)| self.desc().def_info[did].kind == DefKind::Type)
-                .map(|(did, refinement)| {
-                    assert!(refinement.on_self());
-                    *did
-                }),
-        ) as Box<_>
-    }
     fn describe_def(&self, def_id: DefId) -> DisplayDef {
         DisplayDef { ctx: self, def_id }
-    }
-
-    fn any_flows<'a>(
-        &self,
-        ctrl_id: ControllerId,
-        from: &[&'a DataSource],
-        to: &[&'a DataSink],
-    ) -> Option<(&'a DataSource, &'a DataSink)> {
-        from.iter().find_map(|&src| {
-            to.iter()
-                .find_map(|&sink| self.flows_to(ctrl_id, src, sink).then_some((src, sink)))
-        })
     }
 }
 

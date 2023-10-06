@@ -1,8 +1,8 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
-    MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    Annotation, CallSite, Ctrl, DataSink, DataSource, DefKind, HashMap,
+    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -293,6 +293,35 @@ impl Context {
             num_checkpointed,
             started_with,
         })
+    }
+
+    /// Return all types that are marked with `marker`
+    pub fn marked_type<'a>(&'a self, marker: Marker) -> impl Iterator<Item = DefId> + 'a {
+        self.marked(marker)
+            .filter(|(did, _)| self.desc().def_info[did].kind == DefKind::Type)
+            .map(|(did, refinement)| {
+                assert!(refinement.on_self());
+                *did
+            })
+    }
+
+    /// Return an example pair for a flow from an source from `from` to a sink
+    /// in `to` if any exist.
+    pub fn any_flows<'a>(
+        &self,
+        ctrl_id: ControllerId,
+        from: &[&'a DataSource],
+        to: &[&'a DataSink],
+    ) -> Option<(&'a DataSource, &'a DataSink)> {
+        from.iter().find_map(|&src| {
+            to.iter()
+                .find_map(|&sink| self.flows_to(ctrl_id, src, sink).then_some((src, sink)))
+        })
+    }
+
+    /// Iterate over all defined controllers
+    pub fn all_controllers<'a>(&'a self) -> impl Iterator<Item = (ControllerId, &'a Ctrl)> + 'a {
+        self.desc().controllers.iter().map(|(k, v)| (*k, v))
     }
 }
 

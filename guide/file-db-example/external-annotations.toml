@@ -1,0 +1,3 @@
+[["std::fs::remove_file"]]
+marker = "delete"
+on_argument = [0]
