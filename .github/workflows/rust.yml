@@ -104,6 +104,12 @@ jobs:
     - name: Check properties
       run: cargo fmt --check
       working-directory: props
+    - name: Check Guide Project
+      run: cargo fmt --check
+      working-directory: guide/file-db-example
+    - name: Check Guide Policy
+      run: cargo fmt --check
+      working-directory: guide/deletion-policy
 
   linting:
     name: Clippy
