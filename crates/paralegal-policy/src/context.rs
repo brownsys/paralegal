@@ -1,8 +1,8 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    Annotation, CallSite, Ctrl, DataSink, DataSource, DefKind, HashMap,
-    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    Annotation, CallSite, Ctrl, DataSink, DataSource, DefKind, HashMap, HashSet, Identifier,
+    MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -295,6 +295,8 @@ impl Context {
         })
     }
 
+    // This lifetime is actually needed but clippy doesn't understand that
+    #[allow(clippy::needless_lifetimes)]
     /// Return all types that are marked with `marker`
     pub fn marked_type<'a>(&'a self, marker: Marker) -> impl Iterator<Item = DefId> + 'a {
         self.marked(marker)
@@ -320,7 +322,7 @@ impl Context {
     }
 
     /// Iterate over all defined controllers
-    pub fn all_controllers<'a>(&'a self) -> impl Iterator<Item = (ControllerId, &'a Ctrl)> + 'a {
+    pub fn all_controllers(&self) -> impl Iterator<Item = (ControllerId, &Ctrl)> {
         self.desc().controllers.iter().map(|(k, v)| (*k, v))
     }
 }

@@ -49,7 +49,7 @@ fn check(ctx: Arc<Context>) -> Result<()> {
     let user_data_types = ctx.marked_type(marker!(user_data)).collect::<Vec<_>>();
 
     let found = ctx
-        .controllers()
+        .all_controllers()
         .collect::<Vec<_>>()
         .into_iter()
         .find(|(deleter_id, deleter)| {
