@@ -58,6 +58,10 @@ fn delete(user: User) {
     for doc in Document::for_user(&user) {
         doc.delete()
     }
+
+    for img in Image::for_user(&user) {
+        img.delete()
+    }
 }
 
 fn main() {
