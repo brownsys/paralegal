@@ -29,7 +29,8 @@ impl Image {
             std::path::Path::new("db")
                 .join("img")
                 .join(format!("{}-{}.jpg", self.user.name, self.name)),
-        ).unwrap()
+        )
+        .unwrap()
     }
 }
 
@@ -49,7 +50,8 @@ impl Document {
             std::path::Path::new("db")
                 .join("doc")
                 .join(format!("{}-{}.txt", self.user.name, self.name)),
-        ).unwrap()
+        )
+        .unwrap()
     }
 }
 
