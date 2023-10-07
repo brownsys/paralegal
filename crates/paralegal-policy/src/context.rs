@@ -2,7 +2,7 @@ use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
     Annotation, CallSite, Ctrl, DataSink, DataSource, HashMap, HashSet, Identifier,
-    MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    MarkerAnnotation, MarkerRefinement, ProgramDescription, CallSiteOrDataSink,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -154,7 +154,16 @@ impl Context {
     }
 
     /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+    pub fn data_flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+        let ctrl_flows = &self.flows_to[&ctrl_id];
+        ctrl_flows
+            .data_flows_to
+            .row_set(&src.to_index(&ctrl_flows.sources))
+            .contains(sink)
+    }
+
+	/// Returns true if `src` has a data+ctrl-flow to `sink` in the controller `ctrl_id`
+    pub fn flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &CallSiteOrDataSink) -> bool {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .flows_to
