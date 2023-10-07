@@ -168,7 +168,7 @@ impl Context {
         ctrl_flows
             .data_flows_to
             .row_set(&src.to_index(&ctrl_flows.sources))
-            .contains(sink)
+            .contains(CallSiteOrDataSink::DataSink(sink.clone()))
     }
 
     /// Returns true if `src` has a data+ctrl-flow to `sink` in the controller `ctrl_id`
