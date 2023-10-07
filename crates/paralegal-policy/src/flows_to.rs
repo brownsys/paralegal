@@ -1,5 +1,4 @@
-use paralegal_spdg::{
-    CallSite, CallSiteOrDataSink, CallSiteOrDataSinkIndex, Ctrl, DataSink, DataSource,
+use paralegal_spdg::{CallSiteOrDataSink, CallSiteOrDataSinkIndex, Ctrl, DataSink, DataSource,
     DataSourceIndex,
 };
 
