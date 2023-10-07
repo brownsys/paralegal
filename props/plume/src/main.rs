@@ -2,8 +2,8 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use paralegal_policy::{
-    paralegal_spdg::{rustc_portable::DefId, Ctrl, DataSink, DataSource, DefKind},
-    Context, ControllerId, Diagnostics, Marker,
+    paralegal_spdg::{rustc_portable::DefId, DefKind},
+    Context, Diagnostics, Marker,
 };
 
 macro_rules! marker {
@@ -36,66 +36,32 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
 }
 
 trait ContextExt {
-    fn controllers<'a>(&'a self) -> Box<dyn Iterator<Item = (ControllerId, &'a Ctrl)> + 'a>;
-    fn marked_type<'a>(&'a self, marker: Marker) -> Box<dyn Iterator<Item = DefId> + 'a>;
     fn describe_def(&self, def_id: DefId) -> DisplayDef;
-    fn any_flows<'a>(
-        &self,
-        ctrl_id: ControllerId,
-        from: &[&'a DataSource],
-        to: &[&'a DataSink],
-    ) -> Option<(&'a DataSource, &'a DataSink)>;
 }
 
 impl ContextExt for Context {
-    fn controllers<'a>(&'a self) -> Box<dyn Iterator<Item = (ControllerId, &'a Ctrl)> + 'a> {
-        Box::new(self.desc().controllers.iter().map(|(k, v)| (*k, v))) as Box<_>
-    }
-
-    fn marked_type<'a>(&'a self, marker: Marker) -> Box<dyn Iterator<Item = DefId> + 'a> {
-        Box::new(
-            self.marked(marker)
-                .filter(|(did, _)| self.desc().def_info[did].kind == DefKind::Type)
-                .map(|(did, refinement)| {
-                    assert!(refinement.on_self());
-                    *did
-                }),
-        ) as Box<_>
-    }
     fn describe_def(&self, def_id: DefId) -> DisplayDef {
         DisplayDef { ctx: self, def_id }
-    }
-
-    fn any_flows<'a>(
-        &self,
-        ctrl_id: ControllerId,
-        from: &[&'a DataSource],
-        to: &[&'a DataSink],
-    ) -> Option<(&'a DataSource, &'a DataSink)> {
-        from.iter().find_map(|&src| {
-            to.iter()
-                .find_map(|&sink| self.flows_to(ctrl_id, src, sink).then_some((src, sink)))
-        })
     }
 }
 
 fn check(ctx: Arc<Context>) -> Result<()> {
     let user_data_types = ctx.marked_type(marker!(user_data)).collect::<Vec<_>>();
 
-    let found = ctx
-        .controllers()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .find(|(deleter_id, deleter)| {
-            let delete_sinks = ctx
-                .marked_sinks(deleter.data_sinks(), marker!(to_delete))
-                .collect::<Vec<_>>();
-            user_data_types.iter().all(|&t| {
-                let sources = ctx.srcs_with_type(deleter, t).collect::<Vec<_>>();
-                ctx.any_flows(*deleter_id, &sources, &delete_sinks)
-                    .is_some()
-            })
-        });
+    let found =
+        ctx.all_controllers()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .find(|(deleter_id, deleter)| {
+                let delete_sinks = ctx
+                    .marked_sinks(deleter.data_sinks(), marker!(to_delete))
+                    .collect::<Vec<_>>();
+                user_data_types.iter().all(|&t| {
+                    let sources = ctx.srcs_with_type(deleter, t).collect::<Vec<_>>();
+                    ctx.any_flows(*deleter_id, &sources, &delete_sinks)
+                        .is_some()
+                })
+            });
     if found.is_none() {
         ctx.error("Could not find a function deleting all types");
     }
