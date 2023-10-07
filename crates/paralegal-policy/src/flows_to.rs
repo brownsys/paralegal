@@ -1,4 +1,4 @@
-use paralegal_spdg::{Ctrl, DataSink, DataSource, DataSourceIndex, CallSiteOrDataSink};
+use paralegal_spdg::{CallSiteOrDataSink, Ctrl, DataSink, DataSource, DataSourceIndex};
 
 use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToIndex};
 use itertools::Itertools;
@@ -22,7 +22,7 @@ pub struct CtrlFlowsTo {
     /// query this representation of the relation.
     pub data_flows_to: IndexMatrix<DataSourceIndex, DataSink>,
 
-	/// The transitive closure of the [`Ctrl::data_flow`] and [`Ctrl::ctrl_flow`] relations.
+    /// The transitive closure of the [`Ctrl::data_flow`] and [`Ctrl::ctrl_flow`] relations.
     pub flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
 }
 
@@ -31,7 +31,8 @@ impl CtrlFlowsTo {
     pub fn build(ctrl: &Ctrl) -> Self {
         // Collect all sources and sinks into indexed domains.
         let sources = Arc::new(IndexedDomain::from_iter(
-			ctrl.all_sources().iter().map(|&s| s.clone())));
+            ctrl.all_sources().iter().map(|&s| s.clone()),
+        ));
         let sinks = Arc::new(IndexedDomain::from_iter(
             ctrl.data_flow.0.values().flatten().dedup().cloned(),
         ));
@@ -65,7 +66,11 @@ impl CtrlFlowsTo {
             let mut changed = false;
 
             for (src_idx, _src) in sources.as_vec().iter_enumerated() {
-                for sink_idx in data_flows_to.row_set(&src_idx).indices().collect::<Vec<_>>() {
+                for sink_idx in data_flows_to
+                    .row_set(&src_idx)
+                    .indices()
+                    .collect::<Vec<_>>()
+                {
                     for trans_src_idx in sink_to_source.row_set(&sink_idx).indices() {
                         for trans_sink_idx in data_flows_to
                             .row_set(&trans_src_idx)
@@ -83,37 +88,46 @@ impl CtrlFlowsTo {
             }
         }
 
-		let callsite_or_sinks = Arc::new(IndexedDomain::from_iter(
-            ctrl.data_flow.0.values().flatten().map(
-				|s| CallSiteOrDataSink::DataSink(s.clone()))
-			.chain(ctrl.ctrl_flow.0.values().flatten().map(
-				|cs| CallSiteOrDataSink::CallSite(cs.clone())
-			))
-			.dedup(),
-		));
+        let callsite_or_sinks = Arc::new(IndexedDomain::from_iter(
+            ctrl.data_flow
+                .0
+                .values()
+                .flatten()
+                .map(|s| CallSiteOrDataSink::DataSink(s.clone()))
+                .chain(
+                    ctrl.ctrl_flow
+                        .0
+                        .values()
+                        .flatten()
+                        .map(|cs| CallSiteOrDataSink::CallSite(cs.clone())),
+                )
+                .dedup(),
+        ));
 
         // Connect each function-argument sink to its corresponding function sources.
         // This lets us compute the transitive closure by following through the `sink_to_source` map.
         let mut sink_to_source_or_cs = IndexMatrix::new(&sources);
         for (idx, callsite_or_sink) in callsite_or_sinks.as_vec().iter_enumerated() {
             for (src_idx, src) in sources.as_vec().iter_enumerated() {
-                if let (DataSource::FunctionCall(f1), CallSiteOrDataSink::DataSink(DataSink::Argument { function: f2, .. })) =
-                    (src, callsite_or_sink)
+                if let (
+                    DataSource::FunctionCall(f1),
+                    CallSiteOrDataSink::DataSink(DataSink::Argument { function: f2, .. }),
+                ) = (src, callsite_or_sink)
                 {
                     if f1 == f2 {
                         sink_to_source_or_cs.insert(idx, src_idx);
                     }
                 } else if let (DataSource::FunctionCall(f1), CallSiteOrDataSink::CallSite(f2)) =
-				(src, callsite_or_sink) 
-				{
-					if f1 == f2 {
+                    (src, callsite_or_sink)
+                {
+                    if f1 == f2 {
                         sink_to_source_or_cs.insert(idx, src_idx);
                     }
-				}
+                }
             }
         }
 
-		// Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
+        // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
         let mut flows_to = IndexMatrix::new(&callsite_or_sinks);
         for (src, sinks) in &ctrl.data_flow.0 {
             let src = src.to_index(&sources);
@@ -121,7 +135,7 @@ impl CtrlFlowsTo {
                 flows_to.insert(src, CallSiteOrDataSink::DataSink(sink.clone()));
             }
         }
-		for (src, callsites) in &ctrl.ctrl_flow.0 {
+        for (src, callsites) in &ctrl.ctrl_flow.0 {
             let src = src.to_index(&sources);
             for cs in callsites {
                 flows_to.insert(src, CallSiteOrDataSink::CallSite(cs.clone()));
@@ -155,7 +169,7 @@ impl CtrlFlowsTo {
             sources,
             sinks,
             data_flows_to,
-			flows_to
+            flows_to,
         }
     }
 }
@@ -196,7 +210,7 @@ fn test_flows_to() {
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
     let src_a = DataSource::Argument(0);
-	let src_b = DataSource::Argument(1);
+    let src_b = DataSource::Argument(1);
     let get_datasink = |name| {
         let name = Identifier::new_intern(name);
         ctx.desc().controllers[&controller]
@@ -209,20 +223,18 @@ fn test_flows_to() {
             })
             .unwrap()
     };
-	
-	let get_callsite = |name| {
+
+    let get_callsite = |name| {
         let name = Identifier::new_intern(name);
         ctx.desc().controllers[&controller]
             .call_sites()
-            .find(|callsite| {
-				ctx.desc().def_info[&callsite.function].name == name
-            })
+            .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
             .unwrap()
     };
     let sink = CallSiteOrDataSink::DataSink(get_datasink("sink1").clone());
-	let cs = CallSiteOrDataSink::CallSite(get_callsite("sink1").clone());
-	// a flows to the sink1 callsite (by ctrl flow)
-    assert!(ctx.flows_to(controller, &src_a, &cs)); 
-	// b flows to the sink1 datasink (by data flow)
+    let cs = CallSiteOrDataSink::CallSite(get_callsite("sink1").clone());
+    // a flows to the sink1 callsite (by ctrl flow)
+    assert!(ctx.flows_to(controller, &src_a, &cs));
+    // b flows to the sink1 datasink (by data flow)
     assert!(ctx.flows_to(controller, &src_b, &sink));
 }
