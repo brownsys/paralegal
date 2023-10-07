@@ -689,20 +689,20 @@ impl Ctrl {
             .collect()
     }
 
-	/// Gather all [`DataSink`]s or [`CallSite`]s that are mentioned in this controller including data and control flow.
-	pub fn all_call_sites_or_sinks(&self) -> impl Iterator<Item = CallSiteOrDataSink> + '_ {
-		self.data_flow
-                .0
-                .values()
-                .flatten()
-                .map(|s| CallSiteOrDataSink::DataSink(s.clone()))
-                .chain(
-                    self.ctrl_flow
-                        .0
-                        .values()
-                        .flatten()
-                        .map(|cs| CallSiteOrDataSink::CallSite(cs.clone())),
-                )
-                .dedup()
-	}
+    /// Gather all [`DataSink`]s or [`CallSite`]s that are mentioned in this controller including data and control flow.
+    pub fn all_call_sites_or_sinks(&self) -> impl Iterator<Item = CallSiteOrDataSink> + '_ {
+        self.data_flow
+            .0
+            .values()
+            .flatten()
+            .map(|s| CallSiteOrDataSink::DataSink(s.clone()))
+            .chain(
+                self.ctrl_flow
+                    .0
+                    .values()
+                    .flatten()
+                    .map(|cs| CallSiteOrDataSink::CallSite(cs.clone())),
+            )
+            .dedup()
+    }
 }
