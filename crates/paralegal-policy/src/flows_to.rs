@@ -1,5 +1,6 @@
 use paralegal_spdg::{
-    CallSiteOrDataSink, CallSiteOrDataSinkIndex, Ctrl, DataSink, DataSource, DataSourceIndex,
+    CallSite, CallSiteOrDataSink, CallSiteOrDataSinkIndex, Ctrl, DataSink, DataSource,
+    DataSourceIndex,
 };
 
 use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToIndex};
@@ -18,13 +19,15 @@ pub struct CtrlFlowsTo {
     pub sinks: Arc<IndexedDomain<CallSiteOrDataSink>>,
 
     /// The transitive closure of the [`Ctrl::data_flow`] relation.
-    /// If a source flows to a DataSink, it also flows into the DataSink's CallSite
+    /// If a source flows to a [`DataSink::Argument`], it also flows into its [`CallSite`].
     ///
     /// See the [`IndexMatrix`] documentation for details on how to
     /// query this representation of the relation.
     pub data_flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
 
-    /// The transitive closure of the [`Ctrl::data_flow`] and [`Ctrl::ctrl_flow`] relations. If a source flows to a DataSink, it also flows into the DataSink's CallSite and vice versa.
+    /// The transitive closure of the [`Ctrl::data_flow`] and [`Ctrl::ctrl_flow`] relations. 
+	/// If a source data-flows to a [`DataSink::Argument`], it flows into its [`CallSite`].
+	/// If a source control-flows into a [`CallSite`], it also flows into all of the [`DataSink::Argument`]s related to it.
     pub flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
 }
 
