@@ -451,8 +451,8 @@ define_index_type! {
 // Either CallSite or DataSink type
 #[derive(Hash, Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub enum CallSiteOrDataSink {
-	CallSite(CallSite),
-	DataSink(DataSink)
+    CallSite(CallSite),
+    DataSink(DataSink),
 }
 define_index_type! {
     /// Index over [`CallSite`], for use with `indexical` index sets.
@@ -632,7 +632,7 @@ impl Ctrl {
         self.data_flow.0.values().flatten().unique()
     }
 
-	/// Returns an iterator over all the callsites in the `ctrl_flow` relation.
+    /// Returns an iterator over all the callsites in the `ctrl_flow` relation.
     pub fn call_sites(&self) -> impl Iterator<Item = &CallSite> + '_ {
         self.ctrl_flow.0.values().flatten().unique()
     }
@@ -678,13 +678,14 @@ impl Ctrl {
         }
     }
 
-	/// Gather all [`DataSource`]s that are mentioned in this controller including data and control flow.
-	pub fn all_sources(&self) -> HashSet<&DataSource> {
-		self.data_flow.0
-			.keys()
-			.chain(self.types.0.keys())
-			.chain(self.ctrl_flow.0.keys())
-			.dedup()
-			.collect()
-	}
+    /// Gather all [`DataSource`]s that are mentioned in this controller including data and control flow.
+    pub fn all_sources(&self) -> HashSet<&DataSource> {
+        self.data_flow
+            .0
+            .keys()
+            .chain(self.types.0.keys())
+            .chain(self.ctrl_flow.0.keys())
+            .dedup()
+            .collect()
+    }
 }
