@@ -127,7 +127,7 @@ impl CtrlFlowsTo {
             }
         }
 
-        // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
+        // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow` and `Ctrl::ctrl_flow`.
         let mut flows_to = IndexMatrix::new(&callsite_or_sinks);
         for (src, sinks) in &ctrl.data_flow.0 {
             let src = src.to_index(&sources);
