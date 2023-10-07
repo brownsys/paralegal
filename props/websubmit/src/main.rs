@@ -26,7 +26,7 @@ impl DeletionProp {
 
             for t_src in t_srcs {
                 for store in &store_cs {
-                    if self.cx.flows_to(*c_id, t_src, store) {
+                    if self.cx.data_flows_to(*c_id, t_src, store) {
                         return true;
                     }
                 }
@@ -52,7 +52,7 @@ impl DeletionProp {
 
                 for t_src in &t_srcs {
                     for delete in &delete_cs {
-                        if self.cx.flows_to(*c_id, t_src, delete) {
+                        if self.cx.data_flows_to(*c_id, t_src, delete) {
                             return true;
                         }
                     }
