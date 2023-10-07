@@ -18,6 +18,8 @@ use crate::{
     diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
 };
 
+use either::Either;
+
 /// User-defined PDG markers.
 pub type Marker = Identifier;
 
@@ -28,6 +30,13 @@ pub type FunctionId = DefId;
 
 type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
+
+/// Enum for identifying an edge type (data, control or both)
+pub enum EdgeType {
+	Data,
+	Control,
+	DataOrControl,
+}
 
 /// Interface for defining policies.
 ///
@@ -154,7 +163,7 @@ impl Context {
     }
 
     /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn data_flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+    pub fn old_data_flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .data_flows_to
@@ -163,7 +172,7 @@ impl Context {
     }
 
     /// Returns true if `src` has a data+ctrl-flow to `sink` in the controller `ctrl_id`
-    pub fn flows_to(
+    pub fn old_flows_to(
         &self,
         ctrl_id: ControllerId,
         src: &DataSource,
@@ -175,6 +184,21 @@ impl Context {
             .row_set(&src.to_index(&ctrl_flows.sources))
             .contains(sink)
     }
+
+	pub fn flows_to<A, B>(&self, ctrl_id: Option<ControllerId>, 
+		src: Either<&DataSource, A>, 
+		sink: Either<&CallSiteOrDataSink, B>, 
+		edgeType: EdgeType) -> bool 
+		where 
+			A: FnMut(&DataSource) -> bool,
+			B: FnMut(&CallSiteOrDataSink) -> bool,
+	{
+		match edgeType {
+			EdgeType::Data => todo!(),
+			EdgeType::Control => todo!(),
+			EdgeType::DataOrControl => todo!(),
+		}
+	}
 
     /// Returns an iterator over all objects marked with `marker`.
     pub fn marked(
@@ -331,7 +355,7 @@ impl Context {
     ) -> Option<(&'a DataSource, &'a DataSink)> {
         from.iter().find_map(|&src| {
             to.iter().find_map(|&sink| {
-                self.data_flows_to(ctrl_id, src, sink)
+                self.old_data_flows_to(ctrl_id, src, sink)
                     .then_some((src, sink))
             })
         })

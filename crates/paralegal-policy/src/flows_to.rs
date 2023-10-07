@@ -106,7 +106,7 @@ impl CtrlFlowsTo {
 
         // Connect each function-argument sink to its corresponding function sources.
         // This lets us compute the transitive closure by following through the `sink_to_source` map.
-        let mut sink_to_source_or_cs = IndexMatrix::new(&sources);
+        let mut sink_or_cs_to_source = IndexMatrix::new(&sources);
         for (idx, callsite_or_sink) in callsite_or_sinks.as_vec().iter_enumerated() {
             for (src_idx, src) in sources.as_vec().iter_enumerated() {
                 if let (
@@ -115,13 +115,13 @@ impl CtrlFlowsTo {
                 ) = (src, callsite_or_sink)
                 {
                     if f1 == f2 {
-                        sink_to_source_or_cs.insert(idx, src_idx);
+                        sink_or_cs_to_source.insert(idx, src_idx);
                     }
                 } else if let (DataSource::FunctionCall(f1), CallSiteOrDataSink::CallSite(f2)) =
                     (src, callsite_or_sink)
                 {
                     if f1 == f2 {
-                        sink_to_source_or_cs.insert(idx, src_idx);
+                        sink_or_cs_to_source.insert(idx, src_idx);
                     }
                 }
             }
@@ -148,7 +148,7 @@ impl CtrlFlowsTo {
 
             for (src_idx, _src) in sources.as_vec().iter_enumerated() {
                 for sink_idx in flows_to.row_set(&src_idx).indices().collect::<Vec<_>>() {
-                    for trans_src_idx in sink_to_source_or_cs.row_set(&sink_idx).indices() {
+                    for trans_src_idx in sink_or_cs_to_source.row_set(&sink_idx).indices() {
                         for trans_sink_idx in flows_to
                             .row_set(&trans_src_idx)
                             .indices()
@@ -200,8 +200,8 @@ fn test_data_flows_to() {
     };
     let sink1 = get_sink("sink1");
     let sink2 = get_sink("sink2");
-    assert!(ctx.data_flows_to(controller, &src, sink1));
-    assert!(!ctx.data_flows_to(controller, &src, sink2));
+    assert!(ctx.old_data_flows_to(controller, &src, sink1));
+    assert!(!ctx.old_data_flows_to(controller, &src, sink2));
 }
 
 #[test]
@@ -234,7 +234,7 @@ fn test_flows_to() {
     let sink = CallSiteOrDataSink::DataSink(get_datasink("sink1").clone());
     let cs = CallSiteOrDataSink::CallSite(get_callsite("sink1").clone());
     // a flows to the sink1 callsite (by ctrl flow)
-    assert!(ctx.flows_to(controller, &src_a, &cs));
+    assert!(ctx.old_flows_to(controller, &src_a, &cs));
     // b flows to the sink1 datasink (by data flow)
-    assert!(ctx.flows_to(controller, &src_b, &sink));
+    assert!(ctx.old_flows_to(controller, &src_b, &sink));
 }

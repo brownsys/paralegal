@@ -905,6 +905,7 @@ name = "paralegal-policy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "either",
  "indexical",
  "itertools",
  "lazy_static",
