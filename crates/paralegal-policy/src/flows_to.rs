@@ -127,6 +127,22 @@ impl CtrlFlowsTo {
             }
         }
 
+		// Connect each callsite to its function-argument sinks
+		let mut cs_to_sink = IndexMatrix::new(&callsite_or_sinks);
+		for (callsite_idx, callsite) in callsite_or_sinks.as_vec().iter_enumerated() {
+            for (sink_idx, sink) in callsite_or_sinks.as_vec().iter_enumerated() {
+                if let (
+                    CallSiteOrDataSink::DataSink(DataSink::Argument{function: f1, ..}),
+                    CallSiteOrDataSink::CallSite(f2),
+                ) = (sink, callsite)
+                {
+                    if f1 == f2 {
+                        cs_to_sink.insert(callsite_idx, sink_idx);
+                    }
+                }
+            }
+        }
+
         // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
         let mut flows_to = IndexMatrix::new(&callsite_or_sinks);
         for (src, sinks) in &ctrl.data_flow.0 {
@@ -140,6 +156,7 @@ impl CtrlFlowsTo {
             for cs in callsites {
                 flows_to.insert(src, CallSiteOrDataSink::CallSite(cs.clone()));
             }
+			// for sink_idx in cs_to_sink.row_set()
         }
 
         // Compute the transitive closure to a fixpoint.
