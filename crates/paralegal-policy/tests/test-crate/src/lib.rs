@@ -12,7 +12,7 @@ fn sink2(_f: Foo) {}
 
 #[paralegal_flow::marker{ cond, arguments = [0] }]
 fn cond(_f: Foo) -> bool {
-	return true
+    return true;
 }
 
 #[paralegal_flow::analyze]
@@ -23,9 +23,9 @@ fn controller(a: Foo, b: Foo) {
 
 #[paralegal_flow::analyze]
 fn controller_data_ctrl(a: Foo, b: Foo) {
-	if cond(a) {
-		sink1(b);
-	}
+    if cond(a) {
+        sink1(b);
+    }
 }
 
 #[paralegal_flow::marker(start, return)]

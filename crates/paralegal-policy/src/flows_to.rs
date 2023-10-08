@@ -24,7 +24,7 @@ pub struct CtrlFlowsTo {
     /// query this representation of the relation.
     pub data_flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
 
-    /// The transitive closure of the [`Ctrl::data_flow`] and [`Ctrl::ctrl_flow`] relations.
+    /// The transitive closure of the [`Ctrl::data_flow`] and [`Ctrl::ctrl_flow`] relations representing mixed flows of data and control.
     /// If a source data-flows to a [`DataSink::Argument`], it flows into its CallSite.
     /// If a source control-flows into a CallSite, it also flows into all of the [`DataSink::Argument`]s related to it.
     pub flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
@@ -44,33 +44,33 @@ impl CtrlFlowsTo {
         let mut sink_to_source = IndexMatrix::new(&sources);
         for (sink_idx, sink) in sinks.as_vec().iter_enumerated() {
             for (src_idx, src) in sources.as_vec().iter_enumerated() {
-                if let (
-                    DataSource::FunctionCall(f1),
-                    CallSiteOrDataSink::DataSink(DataSink::Argument { function: f2, .. }),
-                ) = (src, sink)
-                {
-                    if f1 == f2 {
-                        sink_to_source.insert(sink_idx, src_idx);
+                match (src, sink) {
+                    (
+                        DataSource::FunctionCall(f1),
+                        CallSiteOrDataSink::DataSink(DataSink::Argument { function: f2, .. }),
+                    ) => {
+                        if f1 == f2 {
+                            sink_to_source.insert(sink_idx, src_idx);
+                        }
                     }
-                } else if let (DataSource::FunctionCall(f1), CallSiteOrDataSink::CallSite(f2)) =
-                    (src, sink)
-                {
-                    if f1 == f2 {
-                        sink_to_source.insert(sink_idx, src_idx);
+                    (DataSource::FunctionCall(f1), CallSiteOrDataSink::CallSite(f2)) => {
+                        if f1 == f2 {
+                            sink_to_source.insert(sink_idx, src_idx);
+                        }
                     }
+                    _ => (),
                 }
             }
         }
 
+        /// Compute the `flows_to` transitive closure to a fixpoint.
         fn iterate(
             sources: &Arc<IndexedDomain<DataSource>>,
             flows_to: &mut IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
             sink_to_source: &IndexMatrix<CallSiteOrDataSinkIndex, DataSource>,
         ) {
-            // Compute the transitive closure to a fixpoint.
-            loop {
-                let mut changed = false;
-
+            let mut changed = false;
+            while changed {
                 for (src_idx, _src) in sources.as_vec().iter_enumerated() {
                     for sink_idx in flows_to.row_set(&src_idx).indices().collect::<Vec<_>>() {
                         for trans_src_idx in sink_to_source.row_set(&sink_idx).indices() {
@@ -83,10 +83,6 @@ impl CtrlFlowsTo {
                             }
                         }
                     }
-                }
-
-                if !changed {
-                    break;
                 }
             }
         }
