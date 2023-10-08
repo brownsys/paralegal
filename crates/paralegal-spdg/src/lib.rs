@@ -690,13 +690,20 @@ impl Ctrl {
     }
 
     /// Gather all [`DataSink`]s or [`CallSite`]s that are mentioned in this controller including data and control flow.
-    /// NOTE/TODO: Currently does not add [`CallSite`]s that are mentioned in data flow but not control flow.
     pub fn all_call_sites_or_sinks(&self) -> impl Iterator<Item = CallSiteOrDataSink> + '_ {
         self.data_flow
             .0
             .values()
             .flatten()
-            .map(|s| CallSiteOrDataSink::DataSink(s.clone()))
+            .flat_map(|s| {
+                let as_or = CallSiteOrDataSink::DataSink(s.clone());
+                match s {
+                    DataSink::Argument { function, .. } => {
+                        vec![CallSiteOrDataSink::CallSite(function.clone()), as_or]
+                    }
+                    _ => vec![as_or],
+                }
+            })
             .chain(
                 self.ctrl_flow
                     .0

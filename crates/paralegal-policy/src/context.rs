@@ -345,9 +345,9 @@ impl Context {
             })
     }
 
-    /// Return an example pair for a flow from an source from `from` to a sink
+    /// Return an example pair for a data flow from an source from `from` to a sink
     /// in `to` if any exist.
-    pub fn any_flows<'a>(
+    pub fn any_data_flows<'a>(
         &self,
         ctrl_id: ControllerId,
         from: &[&'a DataSource],
