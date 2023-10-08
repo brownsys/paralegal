@@ -694,13 +694,16 @@ impl Ctrl {
         self.data_flow
             .0
             .values()
-			.flatten()
+            .flatten()
             .flat_map(|s| {
-				let as_or = CallSiteOrDataSink::DataSink(s.clone()); 
-				match s { 
-					DataSink::Argument { function, .. } => vec![CallSiteOrDataSink::CallSite(function.clone()), as_or], 
-					_ => vec![as_or] }
-			})
+                let as_or = CallSiteOrDataSink::DataSink(s.clone());
+                match s {
+                    DataSink::Argument { function, .. } => {
+                        vec![CallSiteOrDataSink::CallSite(function.clone()), as_or]
+                    }
+                    _ => vec![as_or],
+                }
+            })
             .chain(
                 self.ctrl_flow
                     .0
