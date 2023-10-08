@@ -146,7 +146,10 @@ impl CtrlFlowsTo {
 
 impl fmt::Debug for CtrlFlowsTo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.data_flows_to.fmt(f)
+        f.debug_struct("CtrlFlowsTo")
+            .field("flows_to", &self.flows_to)
+            .field("data_flows_to", &self.data_flows_to)
+            .finish()
     }
 }
 
