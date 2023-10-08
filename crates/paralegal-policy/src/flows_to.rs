@@ -69,8 +69,9 @@ impl CtrlFlowsTo {
             flows_to: &mut IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
             sink_to_source: &IndexMatrix<CallSiteOrDataSinkIndex, DataSource>,
         ) {
-            let mut changed = false;
+            let mut changed = true;
             while changed {
+                changed = false;
                 for (src_idx, _src) in sources.as_vec().iter_enumerated() {
                     for sink_idx in flows_to.row_set(&src_idx).indices().collect::<Vec<_>>() {
                         for trans_src_idx in sink_to_source.row_set(&sink_idx).indices() {
