@@ -31,7 +31,8 @@ fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
             .collect::<Vec<_>>();
         user_data_types.iter().all(|&t| {
             let sources = ctx.srcs_with_type(deleter, t).collect::<Vec<_>>();
-            ctx.any_flows(deleter_id, &sources, &delete_sinks).is_some()
+            ctx.any_data_flows(deleter_id, &sources, &delete_sinks)
+                .is_some()
         })
     });
     assert_error!(ctx, found, "Could not find a controller deleting all types");
