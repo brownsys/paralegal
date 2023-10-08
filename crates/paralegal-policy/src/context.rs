@@ -33,9 +33,9 @@ type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
 /// Enum for identifying an edge type (data, control or both)
 pub enum EdgeType {
-	Data,
-	Control,
-	DataOrControl,
+    Data,
+    Control,
+    DataOrControl,
 }
 
 /// Interface for defining policies.
@@ -163,7 +163,12 @@ impl Context {
     }
 
     /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn old_data_flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+    pub fn old_data_flows_to(
+        &self,
+        ctrl_id: ControllerId,
+        src: &DataSource,
+        sink: &DataSink,
+    ) -> bool {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .data_flows_to
@@ -185,20 +190,78 @@ impl Context {
             .contains(sink)
     }
 
-	pub fn flows_to<A, B>(&self, ctrl_id: Option<ControllerId>, 
-		src: Either<&DataSource, A>, 
-		sink: Either<&CallSiteOrDataSink, B>, 
-		edgeType: EdgeType) -> bool 
-		where 
-			A: FnMut(&DataSource) -> bool,
-			B: FnMut(&CallSiteOrDataSink) -> bool,
-	{
-		match edgeType {
-			EdgeType::Data => todo!(),
-			EdgeType::Control => todo!(),
-			EdgeType::DataOrControl => todo!(),
-		}
-	}
+    /// Returns whether a node or set of nodes that match some condition flows to a node or set of nodes that match another condition through the configured edge type.
+    pub fn flows_to<A, B>(
+        &self,
+        ctrl_id: Option<ControllerId>,
+        src: Either<&DataSource, A>,
+        sink: Either<&CallSiteOrDataSink, B>,
+        edge_type: EdgeType,
+    ) -> bool
+    where
+        A: FnMut(&DataSource) -> bool,
+        B: FnMut(&CallSiteOrDataSink) -> bool,
+    {
+        let ctrl_flow_ids = match &ctrl_id {
+            Some(id) => vec![id],
+            None => self.flows_to.keys().into_iter().collect(),
+        };
+
+        match edge_type {
+            EdgeType::Data | EdgeType::DataOrControl => {
+                let flows = |cf_id| match edge_type {
+                    EdgeType::Data => &self.flows_to[&cf_id].data_flows_to,
+                    EdgeType::DataOrControl => &self.flows_to[&cf_id].flows_to,
+                    EdgeType::Control => panic!("impossible"),
+                };
+                match (src, sink) {
+                    (Either::Left(src_ds), Either::Left(sink_cs_or_ds)) => {
+                        ctrl_flow_ids.iter().any(|cf_id| {
+                            flows(**cf_id)
+                                .row_set(&src_ds.to_index(&self.flows_to[&cf_id].sources))
+                                .contains(sink_cs_or_ds)
+                        })
+                    }
+                    (Either::Left(src_ds), Either::Right(mut sink_cond)) => {
+                        ctrl_flow_ids.iter().any(|cf_id| {
+                            flows(**cf_id)
+                                .row_set(&src_ds.to_index(&self.flows_to[&cf_id].sources))
+                                .iter()
+                                .any(|s| sink_cond(s))
+                        })
+                    }
+                    // TODO: Add reverse flows_to to `CtrlFlowsTo`
+                    (Either::Right(_), Either::Left(_)) => todo!(),
+                    (Either::Right(_), Either::Right(_)) => todo!(),
+                }
+            }
+            EdgeType::Control => match (src, sink) {
+                (Either::Left(src_ds), Either::Left(sink_cs_or_ds)) => {
+                    let cs = match sink_cs_or_ds {
+                        CallSiteOrDataSink::CallSite(cs) => cs,
+                        CallSiteOrDataSink::DataSink(ds) => match ds {
+                            DataSink::Argument { function, .. } => function,
+                            DataSink::Return => return false,
+                        },
+                    };
+                    ctrl_flow_ids.iter().any(|cf_id| {
+                        self.desc.controllers[cf_id].ctrl_flow[src_ds]
+                            .iter()
+                            .contains(cs)
+                    })
+                }
+                (Either::Left(src_ds), Either::Right(mut sink_cond)) => {
+                    ctrl_flow_ids.iter().any(|cf_id| {
+                        self.desc.controllers[cf_id].ctrl_flow[src_ds]
+                            .iter()
+                            .any(|sink| sink_cond(&CallSiteOrDataSink::CallSite(sink.clone())))
+                    })
+                }
+                (Either::Right(_), Either::Left(_)) => todo!(),
+                (Either::Right(_), Either::Right(_)) => todo!(),
+            },
+        }
+    }
 
     /// Returns an iterator over all objects marked with `marker`.
     pub fn marked(
