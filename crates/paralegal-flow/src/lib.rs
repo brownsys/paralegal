@@ -183,6 +183,7 @@ impl rustc_driver::Callbacks for Callbacks {
                     )
                     .unwrap();
                 }
+                tcx.sess.abort_if_errors();
                 info!("All elems walked");
                 let result_path = compiler
                     .build_output_filenames(compiler.session(), &[])
@@ -294,7 +295,11 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .and_then(|s| plugin_args.target().map(|t| s == t))
             .unwrap_or(false);
 
-        if !is_target && std::env::var("CARGO_PRIMARY_PACKAGE").is_err() {
+        let is_build_script = crate_name
+            .as_ref()
+            .map_or(false, |n| n == "build_script_build");
+
+        if !is_target && (std::env::var("CARGO_PRIMARY_PACKAGE").is_err() || is_build_script) {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
