@@ -419,10 +419,10 @@ impl DiagnosticsRecorder {
         let mut can_continue = true;
         for diag in self.0.lock().unwrap().drain(..) {
             for ctx in diag.context.iter().rev() {
-                write!(w, "[{ctx}] ")?;
+                write!(w, "{ctx} ")?;
             }
             writeln!(w, "{}", diag.message)?;
-            can_continue |= diag.severity.must_abort();
+            can_continue &= !diag.severity.must_abort();
         }
         Ok(can_continue)
     }

@@ -25,6 +25,7 @@ use crate::{
         rustc_target::spec::abi::Abi,
         ty,
     },
+    rustc_span::ErrorGuaranteed,
     Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
@@ -221,26 +222,102 @@ impl<'tcx> FnResolution<'tcx> {
         }
     }
 
-    pub fn sig(self, tcx: TyCtxt<'tcx>) -> ty::PolyFnSig {
-        match self {
-            FnResolution::Final(sub) => {
-                let ty = sub.ty(tcx, ty::ParamEnv::reveal_all());
-                if ty.is_closure() {
-                    sub.substs.as_closure().sig()
-                } else if ty.is_generator() {
-                    let gen_sig = sub.substs.as_generator().sig();
-                    ty::Binder::dummy(ty::FnSig {
-                        inputs_and_output: tcx
-                            .mk_type_list(&[gen_sig.resume_ty, gen_sig.return_ty]),
-                        c_variadic: false,
-                        unsafety: hir::Unsafety::Normal,
-                        abi: Abi::Rust,
-                    })
-                } else {
-                    ty.fn_sig(tcx)
-                }
+    /// Get the most precise type signature we can for this function, erase any
+    /// regions and discharge binders.
+    ///
+    /// Returns an error if it was impossible to get any signature.
+    ///
+    /// Emits warnings if a precise signature could not be obtained or there
+    /// were type variables not instantiated.
+    pub fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed> {
+        let sess = tcx.sess;
+        let def_id = self.def_id();
+        let def_span = tcx.def_span(def_id);
+        let fn_kind = FunctionKind::for_def_id(tcx, def_id)?;
+        let late_bound_sig = match (self, fn_kind) {
+            (FnResolution::Final(sub), FunctionKind::Generator) => {
+                let gen = sub.substs.as_generator();
+                ty::Binder::dummy(ty::FnSig {
+                    inputs_and_output: tcx.mk_type_list(&[gen.resume_ty(), gen.return_ty()]),
+                    c_variadic: false,
+                    unsafety: hir::Unsafety::Normal,
+                    abi: Abi::Rust,
+                })
             }
-            FnResolution::Partial(p) => tcx.fn_sig(p).skip_binder(),
+            (FnResolution::Final(sub), FunctionKind::Closure) => sub.substs.as_closure().sig(),
+            (FnResolution::Final(sub), FunctionKind::Plain) => {
+                sub.ty(tcx, ty::ParamEnv::reveal_all()).fn_sig(tcx)
+            }
+            (FnResolution::Partial(_), FunctionKind::Closure) => {
+                if let Some(local) = def_id.as_local() {
+                    sess.span_warn(
+                        def_span,
+                        "Precise variable instantiation for \
+                            closure not known, using user type annotation.",
+                    );
+                    let sig = tcx.closure_user_provided_sig(local);
+                    Ok(sig.value)
+                } else {
+                    Err(sess.span_err(
+                        def_span,
+                        format!(
+                            "Could not determine type signature for external closure {def_id:?}"
+                        ),
+                    ))
+                }?
+            }
+            (FnResolution::Partial(_), FunctionKind::Generator) => Err(sess.span_err(
+                def_span,
+                format!(
+                    "Cannot determine signature of generator {def_id:?} without monomorphization"
+                ),
+            ))?,
+            (FnResolution::Partial(_), FunctionKind::Plain) => {
+                let sig = tcx.fn_sig(def_id);
+                sig.no_bound_vars().unwrap_or_else(|| {
+                        sess.span_warn(def_span, format!("Cannot discharge bound variables for {sig:?}, they will not be considered by the analysis"));
+                        sig.skip_binder()
+                    })
+            }
+        };
+        Ok(tcx
+            .try_normalize_erasing_late_bound_regions(ty::ParamEnv::reveal_all(), late_bound_sig)
+            .unwrap_or_else(|e| {
+                sess.span_warn(
+                    def_span,
+                    format!("Could not erase regions in {late_bound_sig:?}: {e:?}"),
+                );
+                late_bound_sig.skip_binder()
+            }))
+    }
+}
+
+/// This exists to distinguish different types of functions, which is necessary
+/// because depending on the type of function, the method of requesting its
+/// signature from `TyCtxt` differs.
+///
+/// In addition generators also return true for `TyCtxt::is_closure` but must
+/// request their signature differently. Thus we factor that determination out
+/// into this enum.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FunctionKind {
+    Closure,
+    Generator,
+    Plain,
+}
+
+impl FunctionKind {
+    fn for_def_id(tcx: TyCtxt, def_id: DefId) -> Result<Self, ErrorGuaranteed> {
+        if tcx.generator_kind(def_id).is_some() {
+            Ok(Self::Generator)
+        } else if tcx.is_closure(def_id) {
+            Ok(Self::Closure)
+        } else if tcx.def_kind(def_id).is_fn_like() {
+            Ok(Self::Plain)
+        } else {
+            Err(tcx
+                .sess
+                .span_err(tcx.def_span(def_id), "Expected this item to be a function."))
         }
     }
 }

@@ -234,22 +234,42 @@ impl<'tcx> MarkerCtx<'tcx> {
         })
     }
 
-    /// All markers placed on this function, directly or through the type.
+    /// All markers placed on this function, directly or through the type plus
+    /// the type that was marked (if any).
     pub fn all_function_markers<'a>(
         &'a self,
         function: FnResolution<'tcx>,
     ) -> impl Iterator<Item = (&'a MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> {
-        self.combined_markers(function.def_id())
-            .zip(std::iter::repeat(None))
-            .chain(
-                (self.0.config.local_function_type_marking() || !function.def_id().is_local())
-                    .then(|| {
-                        self.all_type_markers(function.sig(self.tcx()).skip_binder().output())
-                            .map(|(marker, typeinfo)| (marker, Some(typeinfo)))
-                    })
-                    .into_iter()
-                    .flatten(),
+        // Markers not coming from types, hence the "None"
+        let direct_markers = self
+            .combined_markers(function.def_id())
+            .zip(std::iter::repeat(None));
+        let get_type_markers = || {
+            let sig = function.sig(self.tcx()).ok()?;
+            let output = sig.output();
+            // XXX I'm not entirely sure this is how we should do
+            // this. For now I'm calling this "okay" because it's
+            // basically the old behavior
+            if output.is_closure() || output.is_generator() {
+                return None;
+            }
+            Some(
+                self.all_type_markers(output)
+                    .map(|(marker, typeinfo)| (marker, Some(typeinfo))),
             )
+        };
+
+        let include_type_markers =
+            self.0.config.local_function_type_marking() || !function.def_id().is_local();
+        direct_markers.chain(
+            if include_type_markers {
+                get_type_markers()
+            } else {
+                None
+            }
+            .into_iter()
+            .flatten(),
+        )
     }
 }
 
