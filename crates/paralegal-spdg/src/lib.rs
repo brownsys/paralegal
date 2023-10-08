@@ -443,6 +443,22 @@ pub struct CallSite {
     pub function: DefId,
 }
 
+define_index_type! {
+    /// Index over [`CallSite`], for use with `indexical` index sets.
+    pub struct CallSiteIndex for CallSite = u32;
+}
+
+// Either CallSite or DataSink type
+#[derive(Hash, Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
+pub enum CallSiteOrDataSink {
+    CallSite(CallSite),
+    DataSink(DataSink),
+}
+define_index_type! {
+    /// Index over [`CallSite`], for use with `indexical` index sets.
+    pub struct CallSiteOrDataSinkIndex for CallSiteOrDataSink = u32;
+}
+
 /// Create a hash for this object that is no longer than six hex digits
 ///
 /// The intent for this is to be used as a pre- or postfix to make a non-unique
@@ -616,6 +632,11 @@ impl Ctrl {
         self.data_flow.0.values().flatten().unique()
     }
 
+    /// Returns an iterator over all the callsites in the `ctrl_flow` relation.
+    pub fn call_sites(&self) -> impl Iterator<Item = &CallSite> + '_ {
+        self.ctrl_flow.0.values().flatten().unique()
+    }
+
     /*** Below are constructor methods intended for use within paralegal-flow. ***/
 
     /// Extend the `types` map with the input iterator.
@@ -655,5 +676,41 @@ impl Ctrl {
         } else {
             m.insert(from.into_owned(), iter::once(to).collect());
         }
+    }
+
+    /// Gather all [`DataSource`]s that are mentioned in this controller including data and control flow.
+    pub fn all_sources(&self) -> HashSet<&DataSource> {
+        self.data_flow
+            .0
+            .keys()
+            .chain(self.types.0.keys())
+            .chain(self.ctrl_flow.0.keys())
+            .dedup()
+            .collect()
+    }
+
+    /// Gather all [`DataSink`]s or [`CallSite`]s that are mentioned in this controller including data and control flow.
+    pub fn all_call_sites_or_sinks(&self) -> impl Iterator<Item = CallSiteOrDataSink> + '_ {
+        self.data_flow
+            .0
+            .values()
+            .flatten()
+            .flat_map(|s| {
+                let as_or = CallSiteOrDataSink::DataSink(s.clone());
+                match s {
+                    DataSink::Argument { function, .. } => {
+                        vec![CallSiteOrDataSink::CallSite(function.clone()), as_or]
+                    }
+                    _ => vec![as_or],
+                }
+            })
+            .chain(
+                self.ctrl_flow
+                    .0
+                    .values()
+                    .flatten()
+                    .map(|cs| CallSiteOrDataSink::CallSite(cs.clone())),
+            )
+            .dedup()
     }
 }

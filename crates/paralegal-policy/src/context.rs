@@ -1,8 +1,8 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    Annotation, CallSite, Ctrl, DataSink, DataSource, DefKind, HashMap, HashSet, Identifier,
-    MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap,
+    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -154,7 +154,21 @@ impl Context {
     }
 
     /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+    pub fn data_flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+        let ctrl_flows = &self.flows_to[&ctrl_id];
+        ctrl_flows
+            .data_flows_to
+            .row_set(&src.to_index(&ctrl_flows.sources))
+            .contains(CallSiteOrDataSink::DataSink(sink.clone()))
+    }
+
+    /// Returns true if `src` has a data+ctrl-flow to `sink` in the controller `ctrl_id`
+    pub fn flows_to(
+        &self,
+        ctrl_id: ControllerId,
+        src: &DataSource,
+        sink: &CallSiteOrDataSink,
+    ) -> bool {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .flows_to
@@ -307,17 +321,19 @@ impl Context {
             })
     }
 
-    /// Return an example pair for a flow from an source from `from` to a sink
+    /// Return an example pair for a data flow from an source from `from` to a sink
     /// in `to` if any exist.
-    pub fn any_flows<'a>(
+    pub fn any_data_flows<'a>(
         &self,
         ctrl_id: ControllerId,
         from: &[&'a DataSource],
         to: &[&'a DataSink],
     ) -> Option<(&'a DataSource, &'a DataSink)> {
         from.iter().find_map(|&src| {
-            to.iter()
-                .find_map(|&sink| self.flows_to(ctrl_id, src, sink).then_some((src, sink)))
+            to.iter().find_map(|&sink| {
+                self.data_flows_to(ctrl_id, src, sink)
+                    .then_some((src, sink))
+            })
         })
     }
 
