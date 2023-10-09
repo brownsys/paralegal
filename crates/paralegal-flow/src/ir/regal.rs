@@ -595,7 +595,7 @@ pub fn compute_from_def_id<'tcx>(
     let body = body_with_facts.simplified_body();
     warn_if_marked_type_constructed(
         tcx,
-        carries_marker.context().clone(),
+        carries_marker.marker_ctx().clone(),
         local_def_id.to_def_id(),
         body,
     );

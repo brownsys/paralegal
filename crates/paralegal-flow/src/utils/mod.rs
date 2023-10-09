@@ -252,10 +252,8 @@ impl<'tcx> FnResolution<'tcx> {
                 if let Some(local) = def_id.as_local() {
                     sess.span_warn(
                         def_span,
-                        format!(
-                            "Precise variable instantiation for \
-                                closure not known, using user type annotation."
-                        ),
+                        "Precise variable instantiation for \
+                            closure not known, using user type annotation.",
                     );
                     let sig = tcx.closure_user_provided_sig(local);
                     Ok(sig.value)
@@ -317,10 +315,9 @@ impl FunctionKind {
         } else if tcx.def_kind(def_id).is_fn_like() {
             Ok(Self::Plain)
         } else {
-            Err(tcx.sess.span_err(
-                tcx.def_span(def_id),
-                format!("Expected this item to be a function."),
-            ))
+            Err(tcx
+                .sess
+                .span_err(tcx.def_span(def_id), "Expected this item to be a function."))
         }
     }
 }

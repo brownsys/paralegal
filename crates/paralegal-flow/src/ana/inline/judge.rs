@@ -21,14 +21,13 @@ impl<'tcx> InlineJudge<'tcx> {
         args: &[Option<Place<'tcx>>],
         place_has_dependencies: impl Fn(Place<'tcx>) -> bool,
     ) -> bool {
-        let has_no_input_deps = || !args.iter().cloned().flatten().any(place_has_dependencies);
         let Ok(sig) = func.sig(self.tcx) else {
             return true;
         };
 
         let has_no_outputs =
             sig.output().is_unit() && !sig.inputs().iter().any(|i| i.is_mutable_ptr());
-        has_no_outputs || has_no_input_deps()
+        has_no_outputs || !args.iter().cloned().flatten().any(place_has_dependencies)
     }
 
     /// Is it safe to elide this function, e.g. abstract by its dataflow effects

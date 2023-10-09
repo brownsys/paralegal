@@ -1,8 +1,8 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    utils::write_sep, Annotation, CallSite, Ctrl, DataSink, DataSource, DefInfo, HashMap, HashSet,
-    Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap,
+    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription, utils::write_sep, DefInfo,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -154,7 +154,21 @@ impl Context {
     }
 
     /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+    pub fn data_flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
+        let ctrl_flows = &self.flows_to[&ctrl_id];
+        ctrl_flows
+            .data_flows_to
+            .row_set(&src.to_index(&ctrl_flows.sources))
+            .contains(CallSiteOrDataSink::DataSink(sink.clone()))
+    }
+
+    /// Returns true if `src` has a data+ctrl-flow to `sink` in the controller `ctrl_id`
+    pub fn flows_to(
+        &self,
+        ctrl_id: ControllerId,
+        src: &DataSource,
+        sink: &CallSiteOrDataSink,
+    ) -> bool {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .flows_to
@@ -173,6 +187,7 @@ impl Context {
             .flows_to
             .row_set(&src.to_index(&ctrl_flows.sources))
             .iter()
+            .filter_map(CallSiteOrDataSink::as_data_sink)
     }
 
     /// Returns an iterator over all objects marked with `marker`.
@@ -312,6 +327,39 @@ impl Context {
             checkpointed,
             started_with,
         })
+    }
+
+    // This lifetime is actually needed but clippy doesn't understand that
+    #[allow(clippy::needless_lifetimes)]
+    /// Return all types that are marked with `marker`
+    pub fn marked_type<'a>(&'a self, marker: Marker) -> impl Iterator<Item = DefId> + 'a {
+        self.marked(marker)
+            .filter(|(did, _)| self.desc().def_info[did].kind == DefKind::Type)
+            .map(|(did, refinement)| {
+                assert!(refinement.on_self());
+                *did
+            })
+    }
+
+    /// Return an example pair for a data flow from an source from `from` to a sink
+    /// in `to` if any exist.
+    pub fn any_data_flows<'a>(
+        &self,
+        ctrl_id: ControllerId,
+        from: &[&'a DataSource],
+        to: &[&'a DataSink],
+    ) -> Option<(&'a DataSource, &'a DataSink)> {
+        from.iter().find_map(|&src| {
+            to.iter().find_map(|&sink| {
+                self.data_flows_to(ctrl_id, src, sink)
+                    .then_some((src, sink))
+            })
+        })
+    }
+
+    /// Iterate over all defined controllers
+    pub fn all_controllers(&self) -> impl Iterator<Item = (ControllerId, &Ctrl)> {
+        self.desc().controllers.iter().map(|(k, v)| (*k, v))
     }
 }
 

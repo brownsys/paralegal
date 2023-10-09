@@ -660,16 +660,14 @@ impl<'tcx> Inliner<'tcx> {
                     {
                         debug!("Inlining {function:?}");
                         return Some((id, *location, InlineAction::SimpleInline(local_id)));
-                    } else {
-                        if self.marker_carrying.marker_ctx().has_transitive_reachable_markers(def_id) {
-                            self.tcx.sess.struct_span_warn(
-                                self.tcx.def_span(def_id),
-                                "This function is not being inlined, but a marker is reachable from its inside.",
-                            ).span_note(
-                                (caller_local_def_id, location.innermost_location()).span(self.tcx),
-                                "Called from here"
-                            ).emit()
-                        }
+                    } else if self.marker_carrying.marker_ctx().has_transitive_reachable_markers(def_id) {
+                        self.tcx.sess.struct_span_warn(
+                            self.tcx.def_span(def_id),
+                            "This function is not being inlined, but a marker is reachable from its inside.",
+                        ).span_note(
+                            (caller_local_def_id, location.innermost_location()).span(self.tcx),
+                            "Called from here"
+                        ).emit()
                     }
                 }
                 let local_as_global = GlobalLocal::at_root;
