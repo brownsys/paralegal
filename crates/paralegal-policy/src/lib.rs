@@ -81,7 +81,10 @@ pub use self::{
 /// it further with [`Self::get_command`] and once you are ready, execute it
 /// with [`Self::run`].
 #[derive(Debug)]
-pub struct SPDGGenCommand(Command);
+pub struct SPDGGenCommand {
+    cmd: Command,
+    must_succeed: bool,
+}
 
 impl SPDGGenCommand {
     /// Use a global installation of `paralegal-flow` via `cargo paralegal-flow`.
@@ -94,12 +97,27 @@ impl SPDGGenCommand {
     /// Use a custom binary or base invocation as command.
     pub fn custom(mut cmd: Command) -> Self {
         cmd.args(["--dump", "serialized-flow-graph"]);
-        Self(cmd)
+        Self {
+            cmd,
+            must_succeed: true,
+        }
     }
 
     /// Mutably borrow the command to perform further customization.
     pub fn get_command(&mut self) -> &mut Command {
-        &mut self.0
+        &mut self.cmd
+    }
+
+    pub fn external_annotations(&mut self, file: impl AsRef<Path>) -> &mut Self {
+        self.cmd
+            .args(["--external-annotations".as_ref(), file.as_ref().as_os_str()]);
+        self
+    }
+
+    pub fn abort_after_analysis(&mut self) -> &mut Self {
+        self.cmd.arg("--abort-after-analysis");
+        self.must_succeed = false;
+        self
     }
 
     /// Consume the created command and execute it in the specified directory.
@@ -109,8 +127,8 @@ impl SPDGGenCommand {
     ///
     /// To run yor properties on the results see [`GraphLocation`].
     pub fn run(mut self, dir: impl AsRef<Path>) -> Result<GraphLocation> {
-        let status = self.0.current_dir(dir.as_ref()).status()?;
-        ensure!(status.success(), "Compilation failed");
+        let status = self.cmd.current_dir(dir.as_ref()).status()?;
+        ensure!(status.success() || !self.must_succeed, "Compilation failed");
         Ok(GraphLocation::std(dir.as_ref()))
     }
 }
