@@ -24,7 +24,7 @@ macro_rules! proxy_struct {
       }
     )*) => {
         $(
-            #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+            #[derive(PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
             #[cfg_attr(feature = "rustc", serde(remote = $rustc))]
             $(#[$attr])*
             pub struct $name {
@@ -47,7 +47,7 @@ macro_rules! proxy_index {
         $name:ident($rustc:expr) from $fn:expr
     );*) => {
         $(
-            #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+            #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
             #[cfg_attr(feature = "rustc", serde(remote = $rustc))]
             $(#[$attr])*
             pub struct $name {
@@ -69,12 +69,15 @@ proxy_index! {
     /// Proxy for `mir::BasicBlock`
     BasicBlock("mir::BasicBlock") from "bbref_to_u32";
 
+    #[derive(Debug)]
     /// Proxy for `hir::ItemLocalId`
     ItemLocalId("hir::ItemLocalId") from "item_local_id_as_u32";
 
+    #[derive(Debug)]
     /// Proxy for `def_id::DefIndex`
     DefIndex("def_id::DefIndex") from "def_index_as_u32";
 
+    #[derive(Debug)]
     /// Proxy for `hir::def_id::CrateNum`
     CrateNum("hir::def_id::CrateNum") from "crate_num_as_u32"
 }
@@ -87,27 +90,32 @@ proxy_struct! {
         statement_index: usize => usize, "usize"
     }
 
+    #[derive(Debug)]
     /// Proxy for `def_id::LocalDefId`
     LocalDefId("def_id::LocalDefId") {
         local_def_index: def_id::DefIndex => DefIndex, "DefIndex"
     }
 
+    #[derive(Debug)]
     /// Proxy for `hir_id::OwnerHid`
     OwnerId("hir::hir_id::OwnerId") {
         def_id: def_id::LocalDefId => LocalDefId, "LocalDefId"
     }
 
+    #[derive(Debug)]
     /// Proxy for `hir::HirId`
     HirId("hir::HirId") {
         owner: hir::OwnerId => OwnerId, "OwnerId",
         local_id: hir::ItemLocalId => ItemLocalId, "ItemLocalId"
     }
 
+    #[derive(Debug)]
     /// Proxy for `hir::BodyId`
     BodyId("hir::BodyId") {
         hir_id: hir::HirId => HirId, "HirId"
     }
 
+    #[derive(Debug)]
     #[derive(Ord, PartialOrd)]
     /// Proxy for `def_id::DefId`
     DefId("def_id::DefId") {
@@ -134,5 +142,17 @@ impl Ord for HirId {
 impl PartialOrd for HirId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl std::fmt::Debug for BasicBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "bb{}", self.private)
+    }
+}
+
+impl std::fmt::Debug for Location {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}[{}]", self.block, self.statement_index)
     }
 }

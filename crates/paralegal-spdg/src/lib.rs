@@ -449,6 +449,12 @@ pub struct CallSite {
     pub function: DefId,
 }
 
+impl std::fmt::Display for CallSite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.location.fmt(f)
+    }
+}
+
 /// Create a hash for this object that is no longer than six hex digits
 ///
 /// The intent for this is to be used as a pre- or postfix to make a non-unique
@@ -508,6 +514,15 @@ pub enum DataSource {
     Argument(usize),
 }
 
+impl std::fmt::Display for DataSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DataSource::Argument(a) => write!(f, "a{a}"),
+            DataSource::FunctionCall(cs) => cs.fmt(f),
+        }
+    }
+}
+
 define_index_type! {
     /// Index over [`DataSource`], for use with `indexical` index sets.
     pub struct DataSourceIndex for DataSource = u32;
@@ -546,6 +561,15 @@ impl DataSink {
         match self {
             DataSink::Argument { function, arg_slot } => Some((function, *arg_slot)),
             _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for DataSink {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DataSink::Return => f.write_str("return"),
+            DataSink::Argument { function, arg_slot } => write!(f, "a{arg_slot} of {function}"),
         }
     }
 }
