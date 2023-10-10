@@ -55,7 +55,7 @@ fn check(ctx: Arc<Context>) -> Result<()> {
             .find(|(deleter_id, deleter)| {
                 let delete_sinks = ctx
                     .marked_sinks(deleter.data_sinks(), marker!(to_delete))
-                    .map(|s| CallSiteOrDataSink::DataSink(s.clone()))
+                    .map(|s| s.into())
                     .collect::<Vec<_>>();
                 let delete_sinks_borrowed = delete_sinks.iter().collect::<Vec<_>>();
                 user_data_types.iter().all(|&t| {
