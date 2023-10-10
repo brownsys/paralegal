@@ -2,7 +2,7 @@ name: Automated Documentation Update
 
 on:
   push:
-    branches: [ "main", "doc-redirect" ]
+    branches: [ "doc-redirect" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,7 +15,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        ref: 'main'
+        ref: 'doc-redirect'
         fetch-depth: 0
     - name: Configure Git
       run: |
@@ -34,6 +34,7 @@ jobs:
       run: |
         echo $(pwd)
         ls
+        ls doc-src
         cp doc-src/index.html docs/index.html
     - name: Commit Doc Generation
       run: |
