@@ -80,6 +80,14 @@ impl DeletionProp {
     // function on every value (or an equivalent type) that is ever stored.
     pub fn check(self) {
         let sensitive = Marker::new_intern("sensitive");
+		let sensitive_types = self.cx.marked(sensitive).filter(|s| {
+			for (_, c) in &self.cs.desc().controllers {
+				// self.cx.srcs_with_type(c, t).any(|src| )
+				// TODO: change to reaches
+			}
+		})
+
+        let sensitive = Marker::new_intern("sensitive");
         for (t, _) in self.cx.marked(sensitive) {
             assert_error!(
                 self.cx,
@@ -94,12 +102,17 @@ fn main() -> Result<()> {
     let ws_dir = std::env::args()
         .nth(1)
         .ok_or_else(|| anyhow!("expected an argument"))?;
-    paralegal_policy::SPDGGenCommand::global()
-        .run(ws_dir)?
-        .with_context(|ctx| {
-            ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
-                DeletionProp::new(ctx).check();
-                Ok(())
-            })
+    let mut cmd = paralegal_policy::SPDGGenCommand::global();
+    cmd.get_command().args([
+        "--external-annotations",
+        "baseline-external-annotations.toml",
+        "--abort-after-analysis",
+        "--inline-elision",
+    ]);
+    cmd.run(ws_dir)?.with_context(|ctx| {
+        ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
+            DeletionProp::new(ctx).check();
+            Ok(())
         })
+    })
 }
