@@ -177,18 +177,18 @@ impl Context {
         };
 
         match edge_type {
-            EdgeType::Data | EdgeType::DataOrControl => {
-                let flows = |cf_id| match edge_type {
-                    EdgeType::Data => &self.flows_to[&cf_id].data_flows_to,
-                    EdgeType::DataOrControl => &self.flows_to[&cf_id].flows_to,
-                    EdgeType::Control => panic!("impossible"),
-                };
-                ctrl_flow_ids.iter().any(|cf_id| {
-                    flows(**cf_id)
-                        .row_set(&src.to_index(&self.flows_to[cf_id].sources))
-                        .contains(sink)
-                })
-            }
+            EdgeType::Data => ctrl_flow_ids.iter().any(|cf_id| {
+                self.flows_to[&cf_id]
+                    .data_flows_to
+                    .row_set(&src.to_index(&self.flows_to[cf_id].sources))
+                    .contains(sink)
+            }),
+            EdgeType::DataOrControl => ctrl_flow_ids.iter().any(|cf_id| {
+                self.flows_to[&cf_id]
+                    .flows_to
+                    .row_set(&src.to_index(&self.flows_to[cf_id].sources))
+                    .contains(sink)
+            }),
             EdgeType::Control => {
                 let cs = match sink {
                     CallSiteOrDataSink::CallSite(cs) => cs,
