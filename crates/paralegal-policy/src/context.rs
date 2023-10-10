@@ -179,13 +179,13 @@ impl Context {
 
         match edge_type {
             EdgeType::Data => ctrl_flow_ids.iter().any(|cf_id| {
-                self.flows_to[&cf_id]
+                self.flows_to[cf_id]
                     .data_flows_to
                     .row_set(&src.to_index(&self.flows_to[cf_id].sources))
                     .contains(sink)
             }),
             EdgeType::DataAndControl => ctrl_flow_ids.iter().any(|cf_id| {
-                self.flows_to[&cf_id]
+                self.flows_to[cf_id]
                     .flows_to
                     .row_set(&src.to_index(&self.flows_to[cf_id].sources))
                     .contains(sink)
