@@ -28,6 +28,16 @@ fn controller_data_ctrl(a: Foo, b: Foo) {
     }
 }
 
+#[paralegal_flow::analyze]
+fn controller_ctrl(a: bool, b: Foo, c: bool, d: Foo) {
+    if a {
+        sink1(b);
+        if c {
+            sink2(d);
+        }
+    }
+}
+
 #[paralegal_flow::marker(start, return)]
 fn create() -> u32 {
     9

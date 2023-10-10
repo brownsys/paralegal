@@ -189,6 +189,42 @@ fn test_data_flows_to() {
 }
 
 #[test]
+fn test_ctrl_flows_to() {
+    use paralegal_spdg::Identifier;
+    let ctx = crate::test_utils::test_ctx();
+    let controller = ctx.find_by_name("controller_ctrl").unwrap();
+    let src_a = DataSource::Argument(0);
+    let src_c = DataSource::Argument(2);
+    let get_callsite = |name| {
+        let name = Identifier::new_intern(name);
+        ctx.desc().controllers[&controller]
+            .call_sites()
+            .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
+            .unwrap()
+    };
+    let cs1 = CallSiteOrDataSink::CallSite(get_callsite("sink1").clone());
+    let cs2 = CallSiteOrDataSink::CallSite(get_callsite("sink2").clone());
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_a,
+        &cs1,
+        crate::EdgeType::Control
+    ));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_c,
+        &cs2,
+        crate::EdgeType::Control
+    ));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_a,
+        &cs2,
+        crate::EdgeType::Control
+    ));
+}
+
+#[test]
 fn test_flows_to() {
     use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
@@ -207,7 +243,6 @@ fn test_flows_to() {
             })
             .unwrap()
     };
-
     let get_callsite = |name| {
         let name = Identifier::new_intern(name);
         ctx.desc().controllers[&controller]

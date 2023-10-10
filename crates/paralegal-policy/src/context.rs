@@ -18,8 +18,6 @@ use crate::{
     diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
 };
 
-use either::Either;
-
 /// User-defined PDG markers.
 pub type Marker = Identifier;
 
