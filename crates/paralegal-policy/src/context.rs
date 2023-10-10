@@ -31,8 +31,11 @@ type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
 /// Enum for identifying an edge type (data, control or both)
 pub enum EdgeType {
+    /// Only consider dataflow edges
     Data,
+    /// Only consider control flow edges
     Control,
+    /// Consider both types of edges
     DataOrControl,
 }
 
@@ -170,7 +173,7 @@ impl Context {
     ) -> bool {
         let ctrl_flow_ids = match &ctrl_id {
             Some(id) => vec![id],
-            None => self.flows_to.keys().into_iter().collect(),
+            None => self.flows_to.keys().collect(),
         };
 
         match edge_type {
@@ -182,7 +185,7 @@ impl Context {
                 };
                 ctrl_flow_ids.iter().any(|cf_id| {
                     flows(**cf_id)
-                        .row_set(&src.to_index(&self.flows_to[&cf_id].sources))
+                        .row_set(&src.to_index(&self.flows_to[cf_id].sources))
                         .contains(sink)
                 })
             }
