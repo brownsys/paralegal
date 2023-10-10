@@ -199,8 +199,8 @@ impl Context {
         edge_type: EdgeType,
     ) -> bool
     where
-        A: FnMut(&DataSource) -> bool,
-        B: FnMut(&CallSiteOrDataSink) -> bool,
+        A: FnMut(DataSource) -> bool,
+        B: FnMut(CallSiteOrDataSink) -> bool,
     {
         let ctrl_flow_ids = match &ctrl_id {
             Some(id) => vec![id],
@@ -227,7 +227,7 @@ impl Context {
                             flows(**cf_id)
                                 .row_set(&src_ds.to_index(&self.flows_to[&cf_id].sources))
                                 .iter()
-                                .any(|s| sink_cond(s))
+                                .any(|s| sink_cond(s.clone()))
                         })
                     }
                     // TODO: Add reverse flows_to to `CtrlFlowsTo`
@@ -254,9 +254,10 @@ impl Context {
                     ctrl_flow_ids.iter().any(|cf_id| {
                         self.desc.controllers[cf_id].ctrl_flow[src_ds]
                             .iter()
-                            .any(|sink| sink_cond(&CallSiteOrDataSink::CallSite(sink.clone())))
+                            .any(|sink| sink_cond(CallSiteOrDataSink::CallSite(sink.clone())))
                     })
                 }
+                // TODO: Add reverse ctrl_flows_to to `CtrlFlowsTo`
                 (Either::Right(_), Either::Left(_)) => todo!(),
                 (Either::Right(_), Either::Right(_)) => todo!(),
             },
@@ -420,6 +421,13 @@ impl Context {
             to.iter().find_map(|&sink| {
                 self.old_data_flows_to(ctrl_id, src, sink)
                     .then_some((src, sink))
+                // self.flows_to(
+                //     Some(ctrl_id),
+                //     Either::Left::<&DataSource, _>(src),
+                //     Either::Left(&CallSiteOrDataSink::DataSink(sink.clone())),
+                //     EdgeType::Data,
+                // )
+                // .then_some((src, sink))
             })
         })
     }
