@@ -28,7 +28,7 @@ use crate::{
     ty,
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, FnResolution, Print,
-        RecursionBreakingCache, TyCtxtExt,
+        RecursionBreakingCache, Spanned, TyCtxtExt,
     },
     AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
@@ -631,6 +631,7 @@ impl<'tcx> Inliner<'tcx> {
         i_graph: &mut InlinedGraph<'tcx>,
         def_id: DefId,
     ) -> EdgeSet<'tcx> {
+        let caller_local_def_id = def_id.expect_local();
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
         let mut queue_for_pruning = HashSet::new();
         if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, def_id) {
@@ -645,6 +646,7 @@ impl<'tcx> Inliner<'tcx> {
             })
             .filter_map(|(id, location, function)| {
                 if recursive_analysis_enabled {
+                    let def_id = function.def_id();
                     debug!("Recursive analysis enabled");
                     if let Some(ac) = self.classify_special_function_handling(
                         function.def_id(),
@@ -653,11 +655,19 @@ impl<'tcx> Inliner<'tcx> {
                     ) {
                         return Some((id, *location, InlineAction::Drop(ac)));
                     }
-                    if let Some(local_id) = function.def_id().as_local()
+                    if let Some(local_id) = def_id.as_local()
                         && self.marker_carrying.should_inline(*function)
                     {
                         debug!("Inlining {function:?}");
                         return Some((id, *location, InlineAction::SimpleInline(local_id)));
+                    } else if self.marker_carrying.marker_ctx().has_transitive_reachable_markers(def_id) {
+                        self.tcx.sess.struct_span_warn(
+                            self.tcx.def_span(def_id),
+                            "This function is not being inlined, but a marker is reachable from its inside.",
+                        ).span_note(
+                            (caller_local_def_id, location.innermost_location()).span(self.tcx),
+                            "Called from here"
+                        ).emit()
                     }
                 }
                 let local_as_global = GlobalLocal::at_root;

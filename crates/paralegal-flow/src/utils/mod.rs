@@ -21,7 +21,7 @@ use crate::{
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_data_structures::fx::{FxHashMap, FxHashSet},
         rustc_data_structures::intern::Interned,
-        rustc_span::symbol::Ident,
+        rustc_span::{symbol::Ident, Span},
         rustc_target::spec::abi::Abi,
         ty,
     },
@@ -1202,5 +1202,42 @@ pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
             &loc,
             terminator.as_fn_and_args(tcx).unwrap().0,
         ))
+    }
+}
+
+pub trait Spanned<'tcx> {
+    fn span(&self, tcx: TyCtxt<'tcx>) -> Span;
+}
+
+impl<'tcx> Spanned<'tcx> for mir::Terminator<'tcx> {
+    fn span(&self, _tcx: TyCtxt<'tcx>) -> Span {
+        self.source_info.span
+    }
+}
+
+impl<'tcx> Spanned<'tcx> for mir::Statement<'tcx> {
+    fn span(&self, _tcx: TyCtxt<'tcx>) -> Span {
+        self.source_info.span
+    }
+}
+
+impl<'tcx> Spanned<'tcx> for (&mir::Body<'tcx>, mir::Location) {
+    fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
+        self.0
+            .stmt_at(self.1)
+            .either(|e| e.span(tcx), |e| e.span(tcx))
+    }
+}
+
+impl<'tcx> Spanned<'tcx> for DefId {
+    fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
+        tcx.def_span(*self)
+    }
+}
+
+impl<'tcx> Spanned<'tcx> for (LocalDefId, mir::Location) {
+    fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
+        let body = tcx.body_for_def_id(self.0.to_def_id()).unwrap();
+        (body.simplified_body(), self.1).span(tcx)
     }
 }
