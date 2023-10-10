@@ -57,7 +57,7 @@ fn check(ctx: Arc<Context>) -> Result<()> {
                     .marked_sinks(deleter.data_sinks(), marker!(to_delete))
                     .map(|s| CallSiteOrDataSink::DataSink(s.clone()))
                     .collect::<Vec<_>>();
-                let delete_sinks_borrowed = delete_sinks.iter().map(|s| s).collect::<Vec<_>>();
+                let delete_sinks_borrowed = delete_sinks.iter().collect::<Vec<_>>();
                 user_data_types.iter().all(|&t| {
                     let sources = ctx.srcs_with_type(deleter, t).collect::<Vec<_>>();
                     ctx.any_flows(
