@@ -2,7 +2,7 @@ name: Automated Documentation Update
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "doc-redirect" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,12 +28,10 @@ jobs:
         cp -R target/doc docs/libs
         rm -R .github
     - name: Copy Rustc Docs
-      run: |
-        cd doc-src && cargo run
-    - name: Build Index Page
-      uses: docker://pandoc/core
-      with:
-        args: "-s -o docs/index.html doc-src/index.md"
+      run: cargo run
+      working-directory: doc-src
+    - name: Copy index page
+      run: cp doc-src/index.html docs/index.html
     - name: Commit Doc Generation
       run: |
         git add docs
