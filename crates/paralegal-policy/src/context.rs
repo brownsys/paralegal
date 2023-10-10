@@ -240,19 +240,6 @@ impl Context {
         })
     }
 
-    /// Returns an iterator over all the call sites marked with `marker` out of the provided `dsts`.
-    pub fn marked_callsites<'a>(
-        &'a self,
-        dsts: impl IntoIterator<Item = &'a DataSink> + 'a,
-        marker: Marker,
-    ) -> impl Iterator<Item = &'a CallSite> + 'a {
-        self.marked_sinks(dsts, marker)
-            .filter_map(|sink| match sink {
-                DataSink::Argument { function, .. } => Some(function),
-                _ => None,
-            })
-    }
-
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
     pub fn srcs_with_type<'a>(
         &self,

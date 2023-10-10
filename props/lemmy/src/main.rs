@@ -22,7 +22,11 @@ impl CommunityProp {
     fn flow_to_auth(&self, c: &Ctrl, sink: &CallSite, marker: Marker) -> bool {
         let auth_callsites = self
             .cx
-            .marked_callsites(c.data_flow.0.values().flatten(), marker)
+            .marked_sinks(c.data_flow.0.values().flatten(), marker)
+            .filter_map(|sink| match sink {
+                DataSink::Argument { function, .. } => Some(function),
+                _ => None,
+            })
             .collect::<HashSet<_>>();
 
         let mut influence_sink = c.ctrl_flow.0.iter().filter_map(|(src, dsts)| match src {
@@ -40,7 +44,14 @@ impl CommunityProp {
 
         for c in self.cx.desc().controllers.values() {
             for dsts in c.data_flow.0.values() {
-                for write_sink in self.cx.marked_callsites(dsts, db_community_write) {
+                for write_sink in
+                    self.cx
+                        .marked_sinks(dsts, db_community_write)
+                        .filter_map(|sink| match sink {
+                            DataSink::Argument { function, .. } => Some(function),
+                            _ => None,
+                        })
+                {
                     let ok = self.flow_to_auth(c, write_sink, community_delete_check)
                         && self.flow_to_auth(c, write_sink, community_ban_check);
                     assert_error!(self.cx, !ok, "Found a failure!");
