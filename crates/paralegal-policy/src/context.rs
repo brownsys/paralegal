@@ -1,8 +1,9 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap,
-    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription, utils::write_sep, DefInfo,
+    utils::write_sep, Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource,
+    DefInfo, DefKind, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement,
+    ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -132,6 +133,15 @@ impl Context {
         Ok(())
     }
 
+    /// Emit a warning if this marker was not found in the source code.
+    pub fn report_marker_if_absent(&self, marker: Marker) {
+        assert_warning!(
+            *self,
+            self.marker_to_ids.contains_key(&marker),
+            format!("Marker {marker} is mentioned in the policy but not defined in source")
+        )
+    }
+
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
         desc.annotations
             .iter()
@@ -195,6 +205,7 @@ impl Context {
         &self,
         marker: Marker,
     ) -> impl Iterator<Item = &'_ (DefId, MarkerRefinement)> + '_ {
+        self.report_marker_if_absent(marker);
         self.marker_to_ids
             .get(&marker)
             .into_iter()
@@ -207,6 +218,7 @@ impl Context {
         dsts: impl IntoIterator<Item = &'a DataSink> + 'a,
         marker: Marker,
     ) -> impl Iterator<Item = &'a DataSink> + 'a {
+        self.report_marker_if_absent(marker);
         dsts.into_iter().filter(move |dst| match dst {
             DataSink::Argument { function, arg_slot } => self
                 .marker_to_ids
@@ -229,6 +241,7 @@ impl Context {
         dsts: impl IntoIterator<Item = &'a DataSink> + 'a,
         marker: Marker,
     ) -> impl Iterator<Item = &'a CallSite> + 'a {
+        self.report_marker_if_absent(marker);
         self.marked_sinks(dsts, marker)
             .filter_map(|sink| match sink {
                 DataSink::Argument { function, .. } => Some(function),
@@ -333,6 +346,7 @@ impl Context {
     #[allow(clippy::needless_lifetimes)]
     /// Return all types that are marked with `marker`
     pub fn marked_type<'a>(&'a self, marker: Marker) -> impl Iterator<Item = DefId> + 'a {
+        self.report_marker_if_absent(marker);
         self.marked(marker)
             .filter(|(did, _)| self.desc().def_info[did].kind == DefKind::Type)
             .map(|(did, refinement)| {
