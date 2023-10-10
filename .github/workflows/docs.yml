@@ -31,7 +31,10 @@ jobs:
       run: cargo run
       working-directory: doc-src
     - name: Copy index page
-      run: cp doc-src/index.html docs/index.html
+      run: |
+        echo $(pwd)
+        ls
+        cp doc-src/index.html docs/index.html
     - name: Commit Doc Generation
       run: |
         git add docs
