@@ -3,10 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 
-use paralegal_policy::{
-    assert_error, paralegal_spdg::CallSiteOrDataSink, paralegal_spdg::Identifier, DefId, Marker,
-    PolicyContext,
-};
+use paralegal_policy::{assert_error, paralegal_spdg::Identifier, DefId, Marker, PolicyContext};
 
 pub struct DeletionProp {
     cx: Arc<PolicyContext>,
