@@ -32,7 +32,7 @@ impl DeletionProp {
                     if self.cx.flows_to(
                         Some(*c_id),
                         t_src,
-                        &CallSiteOrDataSink::DataSink(store.clone()),
+                        &store.into(),
                         paralegal_policy::EdgeType::Data,
                     ) {
                         return true;
@@ -63,7 +63,7 @@ impl DeletionProp {
                         if self.cx.flows_to(
                             Some(*c_id),
                             t_src,
-                            &CallSiteOrDataSink::DataSink(delete.clone()),
+                            &delete.into(),
                             paralegal_policy::EdgeType::Data,
                         ) {
                             return true;

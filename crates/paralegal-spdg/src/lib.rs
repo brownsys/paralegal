@@ -459,6 +459,18 @@ define_index_type! {
     pub struct CallSiteOrDataSinkIndex for CallSiteOrDataSink = u32;
 }
 
+impl From<&CallSite> for CallSiteOrDataSink {
+    fn from(cs: &CallSite) -> Self {
+        CallSiteOrDataSink::CallSite(cs.clone())
+    }
+}
+
+impl From<&DataSink> for CallSiteOrDataSink {
+    fn from(ds: &DataSink) -> Self {
+        CallSiteOrDataSink::DataSink(ds.clone())
+    }
+}
+
 /// Create a hash for this object that is no longer than six hex digits
 ///
 /// The intent for this is to be used as a pre- or postfix to make a non-unique
@@ -695,22 +707,13 @@ impl Ctrl {
             .0
             .values()
             .flatten()
-            .flat_map(|s| {
-                let as_or = CallSiteOrDataSink::DataSink(s.clone());
-                match s {
-                    DataSink::Argument { function, .. } => {
-                        vec![CallSiteOrDataSink::CallSite(function.clone()), as_or]
-                    }
-                    _ => vec![as_or],
+            .flat_map(|s| match s {
+                DataSink::Argument { function, .. } => {
+                    vec![function.into(), s.into()]
                 }
+                _ => vec![s.into()],
             })
-            .chain(
-                self.ctrl_flow
-                    .0
-                    .values()
-                    .flatten()
-                    .map(|cs| CallSiteOrDataSink::CallSite(cs.clone())),
-            )
+            .chain(self.ctrl_flow.0.values().flatten().map(|cs| cs.into()))
             .dedup()
     }
 }

@@ -30,13 +30,14 @@ type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
 /// Enum for identifying an edge type (data, control or both)
+#[derive(Clone)]
 pub enum EdgeType {
     /// Only consider dataflow edges
     Data,
     /// Only consider control flow edges
     Control,
     /// Consider both types of edges
-    DataOrControl,
+    DataAndControl,
 }
 
 /// Interface for defining policies.
@@ -183,7 +184,7 @@ impl Context {
                     .row_set(&src.to_index(&self.flows_to[cf_id].sources))
                     .contains(sink)
             }),
-            EdgeType::DataOrControl => ctrl_flow_ids.iter().any(|cf_id| {
+            EdgeType::DataAndControl => ctrl_flow_ids.iter().any(|cf_id| {
                 self.flows_to[&cf_id]
                     .flows_to
                     .row_set(&src.to_index(&self.flows_to[cf_id].sources))
@@ -353,21 +354,17 @@ impl Context {
 
     /// Return an example pair for a flow from an source from `from` to a sink
     /// in `to` if any exist.
-    pub fn any_data_flows<'a>(
+    pub fn any_flows<'a>(
         &self,
-        ctrl_id: ControllerId,
+        ctrl_id: Option<ControllerId>,
         from: &[&'a DataSource],
-        to: &[&'a DataSink],
-    ) -> Option<(&'a DataSource, &'a DataSink)> {
+        to: &[&'a CallSiteOrDataSink],
+        edge_type: EdgeType,
+    ) -> Option<(&'a DataSource, &'a CallSiteOrDataSink)> {
         from.iter().find_map(|&src| {
             to.iter().find_map(|&sink| {
-                self.flows_to(
-                    Some(ctrl_id),
-                    src,
-                    &CallSiteOrDataSink::DataSink(sink.clone()),
-                    EdgeType::Data,
-                )
-                .then_some((src, sink))
+                self.flows_to(ctrl_id, src, sink, edge_type.clone())
+                    .then_some((src, sink))
             })
         })
     }
