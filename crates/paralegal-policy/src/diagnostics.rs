@@ -234,7 +234,7 @@ impl PolicyContext {
     }
 
     /// Iterate over all defined controllers as contexts
-    pub fn controller_contexts(self: &Arc<Self>) -> impl Iterator<Item = ControllerContext> {
+    pub fn controller_contexts(self: &Arc<Self>) -> impl Iterator<Item = Arc<ControllerContext>> {
         ControllerContext::for_all(self.clone() as Arc<_>)
     }
 }
@@ -311,7 +311,7 @@ impl ControllerContext {
         &self.inner.as_ctx().desc().controllers[&self.id]
     }
 
-    fn for_all(ctx: Arc<dyn HasDiagnosticsBase>) -> impl Iterator<Item = Self> {
+    fn for_all(ctx: Arc<dyn HasDiagnosticsBase>) -> impl Iterator<Item = Arc<Self>> {
         ctx.as_ctx()
             .desc()
             .controllers
@@ -323,6 +323,7 @@ impl ControllerContext {
                 id,
                 inner: ctx.clone(),
             })
+            .map(Arc::new)
     }
 }
 
@@ -434,7 +435,7 @@ impl Context {
     }
 
     /// Iterate over all defined controllers as contexts
-    pub fn controller_contexts(self: &Arc<Self>) -> impl Iterator<Item = ControllerContext> {
+    pub fn controller_contexts(self: &Arc<Self>) -> impl Iterator<Item = Arc<ControllerContext>> {
         ControllerContext::for_all(self.clone() as Arc<_>)
     }
 }
