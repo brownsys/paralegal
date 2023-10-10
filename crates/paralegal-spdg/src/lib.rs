@@ -471,7 +471,7 @@ impl CallSiteOrDataSink {
     pub fn as_call_site(&self) -> Option<&CallSite> {
         match self {
             Self::CallSite(cs) => Some(cs),
-            _ => None
+            _ => None,
         }
     }
 
@@ -480,6 +480,18 @@ impl CallSiteOrDataSink {
             Self::DataSink(ds) => Some(ds),
             _ => None,
         }
+    }
+}
+
+impl From<CallSite> for CallSiteOrDataSink {
+    fn from(value: CallSite) -> Self {
+        CallSiteOrDataSink::CallSite(value)
+    }
+}
+
+impl From<DataSink> for CallSiteOrDataSink {
+    fn from(value: DataSink) -> Self {
+        CallSiteOrDataSink::DataSink(value)
     }
 }
 
