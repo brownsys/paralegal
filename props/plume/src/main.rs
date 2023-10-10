@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use paralegal_policy::{
-    paralegal_spdg::{rustc_portable::DefId, CallSiteOrDataSink, DefKind},
+    paralegal_spdg::{rustc_portable::DefId, DefKind},
     Context, Diagnostics, Marker,
 };
 
