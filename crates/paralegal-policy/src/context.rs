@@ -162,46 +162,14 @@ impl Context {
             .collect()
     }
 
-    /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn old_data_flows_to(
-        &self,
-        ctrl_id: ControllerId,
-        src: &DataSource,
-        sink: &DataSink,
-    ) -> bool {
-        let ctrl_flows = &self.flows_to[&ctrl_id];
-        ctrl_flows
-            .data_flows_to
-            .row_set(&src.to_index(&ctrl_flows.sources))
-            .contains(CallSiteOrDataSink::DataSink(sink.clone()))
-    }
-
-    /// Returns true if `src` has a data+ctrl-flow to `sink` in the controller `ctrl_id`
-    pub fn old_flows_to(
-        &self,
-        ctrl_id: ControllerId,
-        src: &DataSource,
-        sink: &CallSiteOrDataSink,
-    ) -> bool {
-        let ctrl_flows = &self.flows_to[&ctrl_id];
-        ctrl_flows
-            .flows_to
-            .row_set(&src.to_index(&ctrl_flows.sources))
-            .contains(sink)
-    }
-
     /// Returns whether a node or set of nodes that match some condition flows to a node or set of nodes that match another condition through the configured edge type.
-    pub fn flows_to<A, B>(
+    pub fn flows_to(
         &self,
         ctrl_id: Option<ControllerId>,
-        src: Either<&DataSource, A>,
-        sink: Either<&CallSiteOrDataSink, B>,
+        src: &DataSource,
+        sink: &CallSiteOrDataSink,
         edge_type: EdgeType,
-    ) -> bool
-    where
-        A: FnMut(DataSource) -> bool,
-        B: FnMut(CallSiteOrDataSink) -> bool,
-    {
+    ) -> bool {
         let ctrl_flow_ids = match &ctrl_id {
             Some(id) => vec![id],
             None => self.flows_to.keys().into_iter().collect(),
@@ -214,53 +182,26 @@ impl Context {
                     EdgeType::DataOrControl => &self.flows_to[&cf_id].flows_to,
                     EdgeType::Control => panic!("impossible"),
                 };
-                match (src, sink) {
-                    (Either::Left(src_ds), Either::Left(sink_cs_or_ds)) => {
-                        ctrl_flow_ids.iter().any(|cf_id| {
-                            flows(**cf_id)
-                                .row_set(&src_ds.to_index(&self.flows_to[&cf_id].sources))
-                                .contains(sink_cs_or_ds)
-                        })
-                    }
-                    (Either::Left(src_ds), Either::Right(mut sink_cond)) => {
-                        ctrl_flow_ids.iter().any(|cf_id| {
-                            flows(**cf_id)
-                                .row_set(&src_ds.to_index(&self.flows_to[&cf_id].sources))
-                                .iter()
-                                .any(|s| sink_cond(s.clone()))
-                        })
-                    }
-                    // TODO: Add reverse flows_to to `CtrlFlowsTo`
-                    (Either::Right(_), Either::Left(_)) => todo!(),
-                    (Either::Right(_), Either::Right(_)) => todo!(),
-                }
+                ctrl_flow_ids.iter().any(|cf_id| {
+                    flows(**cf_id)
+                        .row_set(&src.to_index(&self.flows_to[&cf_id].sources))
+                        .contains(sink)
+                })
             }
-            EdgeType::Control => match (src, sink) {
-                (Either::Left(src_ds), Either::Left(sink_cs_or_ds)) => {
-                    let cs = match sink_cs_or_ds {
-                        CallSiteOrDataSink::CallSite(cs) => cs,
-                        CallSiteOrDataSink::DataSink(ds) => match ds {
-                            DataSink::Argument { function, .. } => function,
-                            DataSink::Return => return false,
-                        },
-                    };
-                    ctrl_flow_ids.iter().any(|cf_id| {
-                        self.desc.controllers[cf_id].ctrl_flow[src_ds]
-                            .iter()
-                            .contains(cs)
-                    })
-                }
-                (Either::Left(src_ds), Either::Right(mut sink_cond)) => {
-                    ctrl_flow_ids.iter().any(|cf_id| {
-                        self.desc.controllers[cf_id].ctrl_flow[src_ds]
-                            .iter()
-                            .any(|sink| sink_cond(CallSiteOrDataSink::CallSite(sink.clone())))
-                    })
-                }
-                // TODO: Add reverse ctrl_flows_to to `CtrlFlowsTo`
-                (Either::Right(_), Either::Left(_)) => todo!(),
-                (Either::Right(_), Either::Right(_)) => todo!(),
-            },
+            EdgeType::Control => {
+                let cs = match sink {
+                    CallSiteOrDataSink::CallSite(cs) => cs,
+                    CallSiteOrDataSink::DataSink(ds) => match ds {
+                        DataSink::Argument { function, .. } => function,
+                        DataSink::Return => return false,
+                    },
+                };
+                ctrl_flow_ids.iter().any(|cf_id| {
+                    self.desc.controllers[cf_id].ctrl_flow[src]
+                        .iter()
+                        .contains(cs)
+                })
+            }
         }
     }
 
@@ -409,7 +350,7 @@ impl Context {
             })
     }
 
-    /// Return an example pair for a data flow from an source from `from` to a sink
+    /// Return an example pair for a flow from an source from `from` to a sink
     /// in `to` if any exist.
     pub fn any_data_flows<'a>(
         &self,
@@ -419,15 +360,13 @@ impl Context {
     ) -> Option<(&'a DataSource, &'a DataSink)> {
         from.iter().find_map(|&src| {
             to.iter().find_map(|&sink| {
-                self.old_data_flows_to(ctrl_id, src, sink)
-                    .then_some((src, sink))
-                // self.flows_to(
-                //     Some(ctrl_id),
-                //     Either::Left::<&DataSource, _>(src),
-                //     Either::Left(&CallSiteOrDataSink::DataSink(sink.clone())),
-                //     EdgeType::Data,
-                // )
-                // .then_some((src, sink))
+                self.flows_to(
+                    Some(ctrl_id),
+                    src,
+                    &CallSiteOrDataSink::DataSink(sink.clone()),
+                    EdgeType::Data,
+                )
+                .then_some((src, sink))
             })
         })
     }

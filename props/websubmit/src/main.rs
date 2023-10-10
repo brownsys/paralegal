@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 
-use paralegal_policy::{assert_error, paralegal_spdg::Identifier, DefId, Marker, PolicyContext};
+use paralegal_policy::{
+    assert_error, paralegal_spdg::CallSiteOrDataSink, paralegal_spdg::Identifier, DefId, Marker,
+    PolicyContext,
+};
 
 pub struct DeletionProp {
     cx: Arc<PolicyContext>,
@@ -25,8 +28,13 @@ impl DeletionProp {
                 .collect::<Vec<_>>();
 
             for t_src in t_srcs {
-                for store in &store_cs {
-                    if self.cx.data_flows_to(*c_id, t_src, store) {
+                for &store in &store_cs {
+                    if self.cx.flows_to(
+                        Some(*c_id),
+                        t_src,
+                        &CallSiteOrDataSink::DataSink(store.clone()),
+                        paralegal_policy::EdgeType::Data,
+                    ) {
                         return true;
                     }
                 }
@@ -51,8 +59,13 @@ impl DeletionProp {
                     .collect::<Vec<_>>();
 
                 for t_src in &t_srcs {
-                    for delete in &delete_cs {
-                        if self.cx.data_flows_to(*c_id, t_src, delete) {
+                    for &delete in &delete_cs {
+                        if self.cx.flows_to(
+                            Some(*c_id),
+                            t_src,
+                            &CallSiteOrDataSink::DataSink(delete.clone()),
+                            paralegal_policy::EdgeType::Data,
+                        ) {
                             return true;
                         }
                     }

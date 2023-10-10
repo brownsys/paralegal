@@ -172,10 +172,20 @@ fn test_data_flows_to() {
             })
             .unwrap()
     };
-    let sink1 = get_sink("sink1");
-    let sink2 = get_sink("sink2");
-    assert!(ctx.old_data_flows_to(controller, &src, sink1));
-    assert!(!ctx.old_data_flows_to(controller, &src, sink2));
+    let sink1 = CallSiteOrDataSink::DataSink(get_sink("sink1").clone());
+    let sink2 = CallSiteOrDataSink::DataSink(get_sink("sink2").clone());
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src,
+        &sink1,
+        crate::EdgeType::Data
+    ));
+    assert!(!ctx.flows_to(
+        Some(controller.clone()),
+        &src,
+        &sink2,
+        crate::EdgeType::Data
+    ));
 }
 
 #[test]
@@ -208,7 +218,24 @@ fn test_flows_to() {
     let sink = CallSiteOrDataSink::DataSink(get_datasink("sink1").clone());
     let cs = CallSiteOrDataSink::CallSite(get_callsite("sink1").clone());
     // a flows to the sink1 callsite (by ctrl flow)
-    assert!(ctx.old_flows_to(controller, &src_a, &cs));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_a,
+        &cs,
+        crate::EdgeType::DataOrControl
+    ));
+    assert!(!ctx.flows_to(Some(controller.clone()), &src_a, &cs, crate::EdgeType::Data));
     // b flows to the sink1 datasink (by data flow)
-    assert!(ctx.old_flows_to(controller, &src_b, &sink));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_b,
+        &sink,
+        crate::EdgeType::DataOrControl
+    ));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_b,
+        &sink,
+        crate::EdgeType::Data
+    ));
 }
