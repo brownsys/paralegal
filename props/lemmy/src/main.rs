@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use paralegal_policy::{
     assert_error,
-    paralegal_spdg::{CallSite, Ctrl, DataSource, Identifier},
+    paralegal_spdg::{CallSite, Ctrl, DataSink, DataSource, Identifier},
     Marker, PolicyContext,
 };
 
