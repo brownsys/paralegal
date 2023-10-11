@@ -29,6 +29,17 @@ pub type FunctionId = DefId;
 type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
+/// Enum for identifying an edge type (data, control or both)
+#[derive(Clone, Copy)]
+pub enum EdgeType {
+    /// Only consider dataflow edges
+    Data,
+    /// Only consider control flow edges
+    Control,
+    /// Consider both types of edges
+    DataAndControl,
+}
+
 /// Interface for defining policies.
 ///
 /// Holds a PDG ([`Self::desc`]) and defines basic queries like
@@ -153,27 +164,48 @@ impl Context {
             .collect()
     }
 
-    /// Returns true if `src` has a data-flow to `sink` in the controller `ctrl_id`
-    pub fn data_flows_to(&self, ctrl_id: ControllerId, src: &DataSource, sink: &DataSink) -> bool {
-        let ctrl_flows = &self.flows_to[&ctrl_id];
-        ctrl_flows
-            .data_flows_to
-            .row_set(&src.to_index(&ctrl_flows.sources))
-            .contains(CallSiteOrDataSink::DataSink(sink.clone()))
-    }
-
-    /// Returns true if `src` has a data+ctrl-flow to `sink` in the controller `ctrl_id`
+    /// Returns whether a node or set of nodes that match some condition flows to a node or set of nodes that match another condition through the configured edge type.
     pub fn flows_to(
         &self,
-        ctrl_id: ControllerId,
+        ctrl_id: Option<ControllerId>,
         src: &DataSource,
         sink: &CallSiteOrDataSink,
+        edge_type: EdgeType,
     ) -> bool {
-        let ctrl_flows = &self.flows_to[&ctrl_id];
-        ctrl_flows
-            .flows_to
-            .row_set(&src.to_index(&ctrl_flows.sources))
-            .contains(sink)
+        let ctrl_flow_ids = match &ctrl_id {
+            Some(id) => vec![id],
+            None => self.flows_to.keys().collect(),
+        };
+
+        match edge_type {
+            EdgeType::Data => ctrl_flow_ids.iter().any(|cf_id| {
+                self.flows_to[cf_id]
+                    .data_flows_to
+                    .row_set(&src.to_index(&self.flows_to[cf_id].sources))
+                    .contains(sink)
+            }),
+            EdgeType::DataAndControl => ctrl_flow_ids.iter().any(|cf_id| {
+                self.flows_to[cf_id]
+                    .flows_to
+                    .row_set(&src.to_index(&self.flows_to[cf_id].sources))
+                    .contains(sink)
+            }),
+            EdgeType::Control => {
+                let cs = match sink {
+                    CallSiteOrDataSink::CallSite(cs) => cs,
+                    CallSiteOrDataSink::DataSink(ds) => match ds {
+                        DataSink::Argument { function, .. } => function,
+                        DataSink::Return => return false,
+                    },
+                };
+                ctrl_flow_ids.iter().any(|cf_id| {
+                    match self.desc.controllers[cf_id].ctrl_flow.get(src) {
+                        Some(callsites) => callsites.iter().contains(cs),
+                        None => false,
+                    }
+                })
+            }
+        }
     }
 
     /// Returns an iterator over all objects marked with `marker`.
@@ -321,17 +353,18 @@ impl Context {
             })
     }
 
-    /// Return an example pair for a data flow from an source from `from` to a sink
+    /// Return an example pair for a flow from an source from `from` to a sink
     /// in `to` if any exist.
-    pub fn any_data_flows<'a>(
+    pub fn any_flows<'a>(
         &self,
-        ctrl_id: ControllerId,
+        ctrl_id: Option<ControllerId>,
         from: &[&'a DataSource],
-        to: &[&'a DataSink],
-    ) -> Option<(&'a DataSource, &'a DataSink)> {
+        to: &[&'a CallSiteOrDataSink],
+        edge_type: EdgeType,
+    ) -> Option<(&'a DataSource, &'a CallSiteOrDataSink)> {
         from.iter().find_map(|&src| {
             to.iter().find_map(|&sink| {
-                self.data_flows_to(ctrl_id, src, sink)
+                self.flows_to(ctrl_id, src, sink, edge_type)
                     .then_some((src, sink))
             })
         })

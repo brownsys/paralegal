@@ -25,8 +25,13 @@ impl DeletionProp {
                 .collect::<Vec<_>>();
 
             for t_src in t_srcs {
-                for store in &store_cs {
-                    if self.cx.data_flows_to(*c_id, t_src, store) {
+                for &store in &store_cs {
+                    if self.cx.flows_to(
+                        Some(*c_id),
+                        t_src,
+                        &store.clone().into(),
+                        paralegal_policy::EdgeType::Data,
+                    ) {
                         return true;
                     }
                 }
@@ -51,8 +56,13 @@ impl DeletionProp {
                     .collect::<Vec<_>>();
 
                 for t_src in &t_srcs {
-                    for delete in &delete_cs {
-                        if self.cx.data_flows_to(*c_id, t_src, delete) {
+                    for &delete in &delete_cs {
+                        if self.cx.flows_to(
+                            Some(*c_id),
+                            t_src,
+                            &delete.clone().into(),
+                            paralegal_policy::EdgeType::Data,
+                        ) {
                             return true;
                         }
                     }

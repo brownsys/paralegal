@@ -125,7 +125,7 @@ impl CtrlFlowsTo {
         for (src, callsites) in &ctrl.ctrl_flow.0 {
             let src = src.to_index(&sources);
             for cs in callsites {
-                let new_call_site = CallSiteOrDataSink::CallSite(cs.clone());
+                let new_call_site: CallSiteOrDataSink = cs.clone().into();
                 flows_to.insert(src, &new_call_site);
                 // initialize with flows from the DataSource to all of the CallSite's DataSinks
                 for sink in cs_to_sink.row_set(&sinks.index(&new_call_site)).iter() {
@@ -172,10 +172,69 @@ fn test_data_flows_to() {
             })
             .unwrap()
     };
-    let sink1 = get_sink("sink1");
-    let sink2 = get_sink("sink2");
-    assert!(ctx.data_flows_to(controller, &src, sink1));
-    assert!(!ctx.data_flows_to(controller, &src, sink2));
+    let sink1: CallSiteOrDataSink = get_sink("sink1").clone().into();
+    let sink2: CallSiteOrDataSink = get_sink("sink2").clone().into();
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src,
+        &sink1,
+        crate::EdgeType::Data
+    ));
+    assert!(!ctx.flows_to(
+        Some(controller.clone()),
+        &src,
+        &sink2,
+        crate::EdgeType::Data
+    ));
+}
+
+#[test]
+fn test_ctrl_flows_to() {
+    use paralegal_spdg::Identifier;
+    let ctx = crate::test_utils::test_ctx();
+    let controller = ctx.find_by_name("controller_ctrl").unwrap();
+    let src_a = DataSource::Argument(0);
+    let src_b = DataSource::Argument(1);
+    let src_c = DataSource::Argument(2);
+    let get_callsite = |name| {
+        let name = Identifier::new_intern(name);
+        ctx.desc().controllers[&controller]
+            .call_sites()
+            .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
+            .unwrap()
+    };
+    let cs1: CallSiteOrDataSink = get_callsite("sink1").clone().into();
+    let cs2: CallSiteOrDataSink = get_callsite("sink2").clone().into();
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_a,
+        &cs1,
+        crate::EdgeType::Control
+    ));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_c,
+        &cs2,
+        crate::EdgeType::Control
+    ));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_a,
+        &cs2,
+        crate::EdgeType::Control
+    ));
+    assert!(!ctx.flows_to(
+        Some(controller.clone()),
+        &src_b,
+        &cs1,
+        crate::EdgeType::Control
+    ));
+    assert!(!ctx.flows_to(
+        Some(controller.clone()),
+        &src_b,
+        &cs2,
+        crate::EdgeType::Control
+    ));
 }
 
 #[test]
@@ -197,7 +256,6 @@ fn test_flows_to() {
             })
             .unwrap()
     };
-
     let get_callsite = |name| {
         let name = Identifier::new_intern(name);
         ctx.desc().controllers[&controller]
@@ -205,10 +263,27 @@ fn test_flows_to() {
             .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
             .unwrap()
     };
-    let sink = CallSiteOrDataSink::DataSink(get_datasink("sink1").clone());
-    let cs = CallSiteOrDataSink::CallSite(get_callsite("sink1").clone());
+    let sink: CallSiteOrDataSink = get_datasink("sink1").clone().into();
+    let cs: CallSiteOrDataSink = get_callsite("sink1").clone().into();
     // a flows to the sink1 callsite (by ctrl flow)
-    assert!(ctx.flows_to(controller, &src_a, &cs));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_a,
+        &cs,
+        crate::EdgeType::DataAndControl
+    ));
+    assert!(!ctx.flows_to(Some(controller.clone()), &src_a, &cs, crate::EdgeType::Data));
     // b flows to the sink1 datasink (by data flow)
-    assert!(ctx.flows_to(controller, &src_b, &sink));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_b,
+        &sink,
+        crate::EdgeType::DataAndControl
+    ));
+    assert!(ctx.flows_to(
+        Some(controller.clone()),
+        &src_b,
+        &sink,
+        crate::EdgeType::Data
+    ));
 }
