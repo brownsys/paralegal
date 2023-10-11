@@ -108,6 +108,7 @@ impl ScopedStorageProp {
     // Storing data in the database must be associated to a user. This is necessary for e.g. the deletion to work.
     pub fn check(self) {
         for (c_id, c) in &self.cx.desc().controllers {
+            // TODO: scoped objects, then transform that into sources
             let scopes_srcs = self
                 .cx
                 .marked_sources(c, c.data_sources(), marker!(scopes))
@@ -139,7 +140,7 @@ impl ScopedStorageProp {
                                 )
                             })
                         }
-                        _ => false,
+                        DataSink::Return => false, // TODO: maybe can scope the return?
                     })
                 })
             });
