@@ -29,7 +29,7 @@ impl DeletionProp {
                     if self.cx.flows_to(
                         Some(*c_id),
                         t_src,
-                        &store.into(),
+                        &store.clone().into(),
                         paralegal_policy::EdgeType::Data,
                     ) {
                         return true;
@@ -60,7 +60,7 @@ impl DeletionProp {
                         if self.cx.flows_to(
                             Some(*c_id),
                             t_src,
-                            &delete.into(),
+                            &delete.clone().into(),
                             paralegal_policy::EdgeType::Data,
                         ) {
                             return true;
