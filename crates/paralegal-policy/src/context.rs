@@ -218,6 +218,44 @@ impl Context {
             .flat_map(|v| v.iter())
     }
 
+    /// Returns an iterator over all sources directly marked with `marker` or marked through its type out of the provided `srcs`.
+    pub fn marked_sources<'a>(
+        &'a self,
+        c: &'a Ctrl, // TODO: gross?
+        srcs: impl IntoIterator<Item = &'a DataSource> + 'a,
+        marker: Marker,
+    ) -> impl Iterator<Item = &'a DataSource> + 'a {
+        srcs.into_iter()
+            .filter(move |source| match source {
+                DataSource::Argument(arg) => self
+                    .marker_to_ids
+                    .get(&marker)
+                    .map(|markers| {
+                        markers.iter().any(|(_, refinement)| {
+                            refinement.on_self()
+                                || refinement
+                                    .on_argument()
+                                    .contains(*arg as u32)
+                                    .unwrap_or(false)
+                        })
+                    }) // This seems incorrect. where are we restricting that it is an argument to the controller?
+                    .unwrap_or(false),
+                DataSource::FunctionCall(cs) => self
+                    .marker_to_ids
+                    .get(&marker)
+                    .map(|markers| {
+                        markers.iter().any(|(id, refinement)| {
+                            id == &cs.function && (refinement.on_self() || refinement.on_return())
+                        })
+                    })
+                    .unwrap_or(false),
+            })
+            .chain(
+                self.marked_type(marker)
+                    .flat_map(|ty| self.srcs_with_type(c, ty)),
+            )
+    }
+
     /// Returns an iterator over all sinks marked with `marker` out of the provided `dsts`.
     pub fn marked_sinks<'a>(
         &'a self,

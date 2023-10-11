@@ -34,9 +34,7 @@ impl CtrlFlowsTo {
     /// Constructs the transitive closure from a [`Ctrl`].
     pub fn build(ctrl: &Ctrl) -> Self {
         // Collect all sources and sinks into indexed domains.
-        let sources = Arc::new(IndexedDomain::from_iter(
-            ctrl.all_sources().iter().map(|&s| s.clone()),
-        ));
+        let sources = Arc::new(IndexedDomain::from_iter(ctrl.data_sources().cloned()));
         let sinks = Arc::new(IndexedDomain::from_iter(ctrl.all_call_sites_or_sinks()));
 
         // Connect each function-argument sink to its corresponding function sources.
