@@ -30,7 +30,7 @@ type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
 /// Enum for identifying an edge type (data, control or both)
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum EdgeType {
     /// Only consider dataflow edges
     Data,
@@ -199,9 +199,10 @@ impl Context {
                     },
                 };
                 ctrl_flow_ids.iter().any(|cf_id| {
-                    self.desc.controllers[cf_id].ctrl_flow[src]
-                        .iter()
-                        .contains(cs)
+                    match self.desc.controllers[cf_id].ctrl_flow.get(src) {
+                        Some(callsites) => callsites.iter().contains(cs),
+                        None => return false,
+                    }
                 })
             }
         }
@@ -363,7 +364,7 @@ impl Context {
     ) -> Option<(&'a DataSource, &'a CallSiteOrDataSink)> {
         from.iter().find_map(|&src| {
             to.iter().find_map(|&sink| {
-                self.flows_to(ctrl_id, src, sink, edge_type.clone())
+                self.flows_to(ctrl_id, src, sink, edge_type)
                     .then_some((src, sink))
             })
         })
