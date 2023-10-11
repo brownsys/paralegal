@@ -28,7 +28,7 @@ fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
     let found = ctx.all_controllers().any(|(deleter_id, deleter)| {
         let delete_sinks = ctx
             .marked_sinks(deleter.data_sinks(), Marker::new_intern("deletes"))
-            .map(|s| s.into())
+            .map(|s| s.clone().into())
             .collect::<Vec<_>>();
         let delete_sinks_borrowed = delete_sinks.iter().collect::<Vec<_>>();
         user_data_types.iter().all(|&t| {
