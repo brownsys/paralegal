@@ -1,8 +1,8 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap,
-    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    Annotation, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap, HashSet,
+    Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -239,19 +239,6 @@ impl Context {
                 .unwrap_or(false),
             _ => false,
         })
-    }
-
-    /// Returns an iterator over all the call sites marked with `marker` out of the provided `dsts`.
-    pub fn marked_callsites<'a>(
-        &'a self,
-        dsts: impl IntoIterator<Item = &'a DataSink> + 'a,
-        marker: Marker,
-    ) -> impl Iterator<Item = &'a CallSite> + 'a {
-        self.marked_sinks(dsts, marker)
-            .filter_map(|sink| match sink {
-                DataSink::Argument { function, .. } => Some(function),
-                _ => None,
-            })
     }
 
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
