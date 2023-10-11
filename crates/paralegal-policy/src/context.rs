@@ -201,7 +201,7 @@ impl Context {
                 ctrl_flow_ids.iter().any(|cf_id| {
                     match self.desc.controllers[cf_id].ctrl_flow.get(src) {
                         Some(callsites) => callsites.iter().contains(cs),
-                        None => return false,
+                        None => false,
                     }
                 })
             }
