@@ -157,10 +157,10 @@ impl rustc_driver::Callbacks for Callbacks {
     }
 
     // This used to run `after_parsing` but that now makes `tcx.crates()` empty
-    // (which interferes with external anotation resolution). So now it runs
+    // (which interferes with external annotation resolution). So now it runs
     // `after_expansion` and so far that doesn't seem to break anything, but I'm
     // explaining this here in case that flowistry has some sort of issue with
-    // that (when retrieveing the MIR bodies for instance)
+    // that (when retrieving the MIR bodies for instance)
     fn after_expansion<'tcx>(
         &mut self,
         compiler: &rustc_interface::interface::Compiler,
@@ -170,6 +170,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
+                tcx.sess.abort_if_errors();
                 let marker_ctx = MarkerCtx::new(tcx, self.opts);
                 let desc = discover::CollectingVisitor::new(tcx, self.opts, marker_ctx).run()?;
                 if self.opts.dbg().dump_serialized_flow_graph() {
