@@ -22,6 +22,14 @@ pub fn write_sep<
     Ok(())
 }
 
+pub struct Print<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result>(pub F);
+
+impl<F: Fn(&mut fmt::Formatter<'_>) -> fmt::Result> fmt::Display for Print<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (self.0)(f)
+    }
+}
+
 pub mod serde_map_via_vec {
     //! Serialize a [`HashMap`] by converting it to a [`Vec`], lifting
     //! restrictions on the types of permissible keys.

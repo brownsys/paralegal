@@ -1,13 +1,7 @@
 pub use paralegal_spdg::utils::write_sep;
 use std::fmt::{Debug, Display, Formatter, Result};
 
-pub struct Print<F: Fn(&mut Formatter<'_>) -> Result>(pub F);
-
-impl<F: Fn(&mut Formatter<'_>) -> Result> Display for Print<F> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        (self.0)(f)
-    }
-}
+pub use paralegal_spdg::utils::Print;
 
 #[derive(Hash, Eq, Ord, PartialEq, PartialOrd, Clone, Copy)]
 pub struct DisplayViaDebug<T>(pub T);
