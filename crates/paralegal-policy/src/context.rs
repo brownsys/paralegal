@@ -1,9 +1,14 @@
-use std::{io::Write, process::exit, sync::Arc};
+use std::{
+    fmt::write,
+    io::{self, Write},
+    process::exit,
+    sync::Arc,
+};
 
 use paralegal_spdg::{
-    utils::write_sep, Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource,
-    DefInfo, DefKind, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement,
-    ProgramDescription,
+    utils::{write_sep, Print},
+    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefInfo, DefKind,
+    HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -324,9 +329,9 @@ impl Context {
             }
             for sink in flow.get(&current).into_iter().flatten() {
                 if is_checkpoint(sink) {
-                    checkpointed.push(current_start.clone().unwrap());
+                    checkpointed.push((current_start.clone().unwrap(), sink.clone()));
                 } else if is_terminal(sink) {
-                    reached.push(current_start.clone().unwrap());
+                    reached.push((current_start.clone().unwrap(), sink.clone()));
                 } else if let DataSink::Argument { function, .. } = sink {
                     if seen.insert(sink) {
                         queue.push((DataSource::FunctionCall(function.clone()), false));
@@ -339,6 +344,7 @@ impl Context {
             reached,
             checkpointed,
             started_with,
+            ctrl,
         })
     }
 
@@ -375,6 +381,53 @@ impl Context {
     pub fn all_controllers(&self) -> impl Iterator<Item = (ControllerId, &Ctrl)> {
         self.desc().controllers.iter().map(|(k, v)| (*k, v))
     }
+
+    pub fn a_path_between(
+        &self,
+        ctrl_id: ControllerId,
+        from: &DataSource,
+        to: &DataSink,
+    ) -> Option<Vec<&DataSink>> {
+        let flows_to = &self.flows_to[&ctrl_id];
+        let to_as_either = &CallSiteOrDataSink::DataSink(to.clone());
+        let ctrl = &self.desc.controllers[&ctrl_id];
+        let successors = |from| ctrl.data_flow[&from].iter().peekable();
+        let mut path = vec![(None, successors(from.clone()))];
+        let mut seen = HashSet::new();
+
+        while let Some((_, nexts)) = path.last_mut() {
+            if let Some(next) = nexts.next() {
+                if next == to {
+                    return Some(path.into_iter().filter_map(|(snk, _)| snk).collect());
+                }
+                if !seen.insert(next) {
+                    continue;
+                }
+                let cs = match next {
+                    DataSink::Argument {
+                        function,
+                        arg_slot: _,
+                    } => function,
+                    DataSink::Return => {
+                        continue;
+                    }
+                };
+                let src = DataSource::FunctionCall(cs.clone());
+
+                if flows_to.sources.contains(&src)
+                    && flows_to
+                        .data_flows_to
+                        .row_set(&(&src).to_index(&flows_to.sources))
+                        .contains(to_as_either)
+                {
+                    path.push((Some(next), successors(src)));
+                }
+            } else {
+                path.pop();
+            }
+        }
+        None
+    }
 }
 
 /// Statistics about the result of running [`Context::always_happens_before`]
@@ -395,36 +448,89 @@ impl Context {
 /// for-human-eyes-only.
 pub struct AlwaysHappensBefore {
     /// How many paths terminated at the end?
-    reached: Vec<DataSource>,
+    reached: Vec<(DataSource, DataSink)>,
     /// How many paths lead to the checkpoints?
-    checkpointed: Vec<DataSource>,
+    checkpointed: Vec<(DataSource, DataSink)>,
     /// How large was the set of initial nodes this traversal started with.
     started_with: usize,
+    ctrl: ControllerId,
 }
 
 /// See [`AlwaysHappensBefore::display`].
-pub struct AlwaysHappensBeforeDisplay<'a> {
+pub struct AlwaysHappensBeforeDisplay<'a, Ctx> {
     data: &'a AlwaysHappensBefore,
-    def_info: &'a HashMap<DefId, DefInfo>,
+    ctx: Ctx,
 }
 
-impl std::fmt::Display for AlwaysHappensBeforeDisplay<'_> {
+impl<Ctx: HasDiagnosticsBase> std::fmt::Display for AlwaysHappensBeforeDisplay<'_, Ctx> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.data.format(f, self.def_info)
+        self.data.format(f, &self.ctx.as_ctx().desc().def_info)
     }
+}
+
+fn fmt_path<'a>(
+    f: &mut std::fmt::Formatter<'_>,
+    path: impl IntoIterator<Item=&'a DataSink>,
+    def_info: &HashMap<DefId, DefInfo>,
+) -> std::fmt::Result {
+    for node in path {
+        write!(f, "\n  ")?;
+        match node {
+            DataSink::Argument { function, arg_slot } => {
+                write!(
+                    f,
+                    "influenced by {}",
+                    Print(|f| {
+                        fmt_function(f, function.function, def_info)?;
+                        write!(f, "({arg_slot})")
+                    })
+                )?;
+                for fun in function.location.as_slice() {
+                    write!(f, "\n    called in ")?;
+                    fmt_function(f, fun.function, def_info)?;
+                }
+                Ok(())
+            }
+            DataSink::Return => f.write_str("return"),
+        }?;
+        writeln!(f)?;
+    }
+    Ok(())
 }
 
 impl AlwaysHappensBefore {
     /// Create a struct that can format the results of this combinator with
     /// [`std::fmt::Display`]
-    pub fn display<'a>(
+    pub fn display<'a, Ctx: HasDiagnosticsBase>(
         &'a self,
-        def_info: &'a HashMap<DefId, DefInfo>,
-    ) -> AlwaysHappensBeforeDisplay<'a> {
-        AlwaysHappensBeforeDisplay {
-            data: self,
-            def_info,
+        ctx: Ctx,
+    ) -> AlwaysHappensBeforeDisplay<'a, Ctx> {
+        AlwaysHappensBeforeDisplay { data: self, ctx }
+    }
+
+    pub fn record_violations(
+        &self,
+        ctx: impl HasDiagnosticsBase,
+        file: &mut impl io::Write,
+    ) -> io::Result<()> {
+        let def_info = &ctx.as_ctx().desc().def_info;
+        if !self.reached.is_empty() {
+            for (from, to) in &self.reached {
+                writeln!(
+                    file,
+                    "{}",
+                    Print(|f| {
+                        fmt_data_source(from, f, def_info)?;
+                        if let Some(path) = ctx.as_ctx().a_path_between(self.ctrl, from, to) {
+                            fmt_path(f, path, def_info)
+                        } else {
+                            write!(f, "Invariant broken: No path found")
+                        }
+                    })
+                )?;
+            }
         }
+        Ok(())
     }
 
     /// Format the results of this combinator, using the `def_info` to print
@@ -438,6 +544,7 @@ impl AlwaysHappensBefore {
             reached,
             checkpointed,
             started_with,
+            ctrl,
         } = self;
         writeln!(
             f,
@@ -447,12 +554,21 @@ impl AlwaysHappensBefore {
             reached.len(),
             checkpointed.len()
         )?;
+        let fmt_from_to = |(from, to): &(DataSource, DataSink), f: &mut std::fmt::Formatter<'_>| {
+            fmt_data_source(from, f, def_info)?;
+            f.write_str(" -> ")?;
+            match to {
+                DataSink::Argument { function, arg_slot } => {
+                    fmt_function(f, function.function, def_info)?;
+                    write!(f, "({arg_slot})")
+                }
+                DataSink::Return => f.write_str("return"),
+            }
+        };
         let cutoff = 5;
         if !self.reached.is_empty() {
             write!(f, "  reached from: [")?;
-            write_sep(f, ", ", &self.reached[0..cutoff], |elem, f| {
-                fmt_data_source(elem, f, def_info)
-            })?;
+            write_sep(f, ", ", self.reached.iter().take(cutoff), fmt_from_to)?;
             if self.reached.len() > cutoff {
                 write!(f, ", ...")?;
             }
@@ -460,9 +576,7 @@ impl AlwaysHappensBefore {
         }
         if !self.checkpointed.is_empty() {
             write!(f, "  checkpointed from: [")?;
-            write_sep(f, ", ", &self.reached[0..cutoff], |elem, f| {
-                fmt_data_source(elem, f, def_info)
-            })?;
+            write_sep(f, ", ", self.checkpointed.iter().take(cutoff), fmt_from_to)?;
             if self.checkpointed.len() > cutoff {
                 write!(f, ", ...")?;
             }
@@ -472,22 +586,32 @@ impl AlwaysHappensBefore {
     }
 }
 
+fn path_to_str(info: &DefInfo) -> String {
+    info.path
+        .iter()
+        .chain(std::iter::once(&info.name))
+        .map(Identifier::as_str)
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn fmt_function(
+    f: &mut std::fmt::Formatter<'_>,
+    function: DefId,
+    def_info: &HashMap<DefId, DefInfo>,
+) -> std::fmt::Result {
+    let info = &def_info[&function];
+    let path = path_to_str(info);
+    write!(f, "{}", path)
+}
+
 fn fmt_data_source(
     src: &DataSource,
     f: &mut std::fmt::Formatter<'_>,
     def_info: &HashMap<DefId, DefInfo>,
 ) -> std::fmt::Result {
     match src {
-        DataSource::FunctionCall(fun) => {
-            let info = &def_info[&fun.function];
-            let path = info
-                .path
-                .iter()
-                .chain(std::iter::once(&info.name))
-                .map(Identifier::as_str)
-                .collect::<Vec<_>>();
-            write!(f, "{}", path.join("::"))
-        }
+        DataSource::FunctionCall(fun) => fmt_function(f, fun.function, def_info),
         DataSource::Argument(num) => write!(f, "arg_{num}"),
     }
 }
@@ -502,13 +626,13 @@ impl AlwaysHappensBefore {
     /// Additionally reports if the property was vacuous or had no starting
     /// nodes.
     pub fn report(&self, ctx: Arc<dyn HasDiagnosticsBase>) {
-        let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
+        let ctx = &CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
         assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
         assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
         assert_error!(
             ctx,
             self.holds(),
-            format!("Violation detected: {}", self.display(&ctx.desc.def_info))
+            format!("Violation detected: {}", self.display(ctx))
         );
     }
 
@@ -556,7 +680,7 @@ fn test_context() {
 
 #[test]
 fn test_happens_before() -> Result<()> {
-    let ctx = crate::test_utils::test_ctx();
+    let ctx = Arc::new(crate::test_utils::test_ctx());
     let desc = ctx.desc();
 
     fn has_marker(desc: &ProgramDescription, sink: &DataSink, marker: Identifier) -> bool {
@@ -630,7 +754,7 @@ fn test_happens_before() -> Result<()> {
     )?;
 
     ensure!(pass.holds());
-    ensure!(!pass.is_vacuous(), "{}", pass.display(&ctx.desc().def_info));
+    ensure!(!pass.is_vacuous(), "{}", pass.display(ctx));
 
     let ctrl_name = ctx.find_by_name("happens_before_fail")?;
 
