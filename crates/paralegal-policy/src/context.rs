@@ -1,8 +1,8 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    Annotation, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap, HashSet,
-    Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap,
+    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -38,6 +38,114 @@ pub enum EdgeType {
     Control,
     /// Consider both types of edges
     DataAndControl,
+}
+
+/// Data type representing nodes in the SPDG for a particular controller.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CtrlNode<'a> {
+    /// ControllerId of the node.
+    pub ctrl_id: &'a ControllerId,
+    /// The data of the node.
+    pub node: Node<'a>,
+}
+
+/// Enum identifying the different types of nodes in the SPDG
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Node<'a> {
+    /// Corresponds to [`DataSource::Argument`].
+    CtrlArgument(&'a DataSource),
+
+    /// Corresponds to a [`CallSite`] or [`DataSource::FunctionCall`].
+    CallSite(&'a CallSite),
+
+    /// Corresponds to a [`DataSink::Argument`].
+    CallArgument(&'a DataSink),
+
+    /// Corresponds to a [`DataSink::Return`].
+    Return(&'a DataSink),
+}
+
+impl<'a> From<&'a CallSite> for Node<'a> {
+    fn from(cs: &'a CallSite) -> Self {
+        Node::CallSite(cs)
+    }
+}
+
+impl<'a> From<&'a DataSink> for Node<'a> {
+    fn from(ds: &'a DataSink) -> Self {
+        match ds {
+            DataSink::Argument { .. } => Node::CallArgument(ds),
+            DataSink::Return => Node::Return(ds),
+        }
+    }
+}
+
+impl<'a> From<&'a CallSiteOrDataSink> for Node<'a> {
+    fn from(x: &'a CallSiteOrDataSink) -> Self {
+        match x {
+            CallSiteOrDataSink::CallSite(cs) => cs.into(),
+            CallSiteOrDataSink::DataSink(ds) => ds.into(),
+        }
+    }
+}
+
+impl<'a> From<&'a DataSource> for Node<'a> {
+    fn from(ds: &'a DataSource) -> Self {
+        match ds {
+            DataSource::FunctionCall(cs) => Node::CallSite(cs),
+            DataSource::Argument(_) => Node::CtrlArgument(ds),
+        }
+    }
+}
+
+impl<'a> Node<'a> {
+    /// Transform a Node into it's corresponding CallSite - only works for CallSites and CallArguments.
+    pub fn as_call_site(&self) -> Option<&CallSite> {
+        match self {
+            Node::CtrlArgument(_) => None,
+            Node::CallSite(cs) => Some(cs),
+            Node::CallArgument(ds) => match ds {
+                DataSink::Argument { function, .. } => Some(function),
+                DataSink::Return => None,
+            },
+            Node::Return(_) => None,
+        }
+    }
+
+    /// Transform a Node into it's corresponding DataSink - only works for CallArgs and Returns.
+    pub fn as_data_sink(&self) -> Option<&DataSink> {
+        match self {
+            Node::CtrlArgument(_) => None,
+            Node::CallSite(_) => None,
+            Node::CallArgument(ds) => Some(ds),
+            Node::Return(ds) => Some(ds),
+        }
+    }
+
+    /// Transform a Node into it's corresponding owned CallSiteOrDataSink - only works for CallSites, CallArgs and Returns. Clones the underlying data.
+    pub fn as_call_site_or_data_sink(&self) -> Option<CallSiteOrDataSink> {
+        match self {
+            Node::CtrlArgument(_) => None,
+            Node::CallSite(&ref cs) => Some(cs.clone().into()),
+            Node::CallArgument(&ref ds) => Some(ds.clone().into()),
+            Node::Return(&ref ds) => Some(ds.clone().into()),
+        }
+    }
+
+    /// Transform a Node into it's corresponding owned DataSource - only works for CtrlArgs, CallSites, and CallArguments. Clones underlying data.
+    pub fn as_data_source(&self) -> Option<DataSource> {
+        match self {
+            Node::CtrlArgument(&ref ds) => Some(ds.clone()),
+            Node::CallSite(&ref cs) => Some(DataSource::FunctionCall(cs.clone())),
+            Node::CallArgument(ds) => match ds {
+                DataSink::Argument { function, .. } => {
+                    Some(DataSource::FunctionCall(function.clone()))
+                }
+                DataSink::Return => None,
+            },
+            Node::Return(_) => None,
+        }
+    }
 }
 
 /// Interface for defining policies.
@@ -165,45 +273,40 @@ impl Context {
     }
 
     /// Returns whether a node or set of nodes that match some condition flows to a node or set of nodes that match another condition through the configured edge type.
-    pub fn flows_to(
-        &self,
-        ctrl_id: Option<ControllerId>,
-        src: &DataSource,
-        sink: &CallSiteOrDataSink,
-        edge_type: EdgeType,
-    ) -> bool {
-        let ctrl_flow_ids = match &ctrl_id {
-            Some(id) => vec![id],
-            None => self.flows_to.keys().collect(),
+    pub fn flows_to(&self, src: &CtrlNode, sink: &CtrlNode, edge_type: EdgeType) -> bool {
+        if src.ctrl_id != sink.ctrl_id {
+            return false;
+        }
+
+        let cf_id = &src.ctrl_id;
+        let src_datasource = match src.node.as_data_source() {
+            Some(ds) => ds,
+            None => return false,
+        };
+        let sink_cs_or_ds = match sink.node.as_call_site_or_data_sink() {
+            Some(s) => s,
+            None => return false,
         };
 
         match edge_type {
-            EdgeType::Data => ctrl_flow_ids.iter().any(|cf_id| {
-                self.flows_to[cf_id]
-                    .data_flows_to
-                    .row_set(&src.to_index(&self.flows_to[cf_id].sources))
-                    .contains(sink)
-            }),
-            EdgeType::DataAndControl => ctrl_flow_ids.iter().any(|cf_id| {
-                self.flows_to[cf_id]
-                    .flows_to
-                    .row_set(&src.to_index(&self.flows_to[cf_id].sources))
-                    .contains(sink)
-            }),
+            EdgeType::Data => self.flows_to[cf_id]
+                .data_flows_to
+                .row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
+                .contains(sink_cs_or_ds),
+            EdgeType::DataAndControl => self.flows_to[cf_id]
+                .flows_to
+                .row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
+                .contains(sink_cs_or_ds),
             EdgeType::Control => {
-                let cs = match sink {
-                    CallSiteOrDataSink::CallSite(cs) => cs,
-                    CallSiteOrDataSink::DataSink(ds) => match ds {
-                        DataSink::Argument { function, .. } => function,
-                        DataSink::Return => return false,
-                    },
+                let cs = match sink.node.as_call_site() {
+                    Some(cs) => cs,
+                    None => return false,
                 };
-                ctrl_flow_ids.iter().any(|cf_id| {
-                    match self.desc.controllers[cf_id].ctrl_flow.get(src) {
-                        Some(callsites) => callsites.iter().contains(cs),
-                        None => false,
-                    }
-                })
+
+                match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
+                    Some(callsites) => callsites.iter().contains(cs),
+                    None => false,
+                }
             }
         }
     }
@@ -219,38 +322,69 @@ impl Context {
             .flat_map(|v| v.iter())
     }
 
-    /// Returns an iterator over all sinks marked with `marker` out of the provided `dsts`.
-    pub fn marked_sinks<'a>(
-        &'a self,
-        dsts: impl IntoIterator<Item = &'a DataSink> + 'a,
-        marker: Marker,
-    ) -> impl Iterator<Item = &'a DataSink> + 'a {
-        dsts.into_iter().filter(move |dst| match dst {
-            DataSink::Argument { function, arg_slot } => self
-                .marker_to_ids
-                .get(&marker)
-                .map(|markers| {
-                    markers.iter().any(|(id, refinement)| {
-                        id == &function.function
-                            && (refinement.on_self()
-                                || refinement.on_argument().contains(*arg_slot as u32).unwrap())
+    /// Returns whether the given CtrlNode has the marker applied to it directly or via its type.
+    pub fn has_marker(&self, marker: Marker, node: &CtrlNode) -> bool {
+        match node.node {
+            Node::CtrlArgument(_) => false, // TODO: complete
+            Node::CallSite(_) => false,     // TODO: complete
+            Node::CallArgument(ds) => match ds {
+                DataSink::Argument { function, arg_slot } => self
+                    .marker_to_ids
+                    .get(&marker)
+                    .map(|markers| {
+                        markers.iter().any(|(id, refinement)| {
+                            id == &function.function
+                                && (refinement.on_self()
+                                    || refinement.on_argument().contains(*arg_slot as u32).unwrap())
+                        })
                     })
-                })
-                .unwrap_or(false),
-            _ => false,
-        })
+                    .unwrap_or(false),
+                // TODO: check the type as well
+                DataSink::Return => {
+                    panic!("impossible - CallArgument variant cannot be DataSink::Return")
+                }
+            },
+            Node::Return(_) => false, // TODO: complete
+        }
+    }
+
+    /// Returns all DataSources, DataSinks, and CallSites for a Controller as CtrlNodes.
+    pub fn all_nodes_for_ctrl<'a>(
+        &'a self,
+        ctrl_id: &'a ControllerId,
+    ) -> impl Iterator<Item = CtrlNode<'a>> {
+        let ctrl = &self.desc.controllers[ctrl_id];
+        ctrl.all_sources()
+            .map(|src| CtrlNode {
+                ctrl_id,
+                node: src.into(),
+            })
+            .chain(ctrl.data_sinks().map(|snk| CtrlNode {
+                ctrl_id,
+                node: snk.into(),
+            }))
+            .chain(ctrl.call_sites().map(|cs| CtrlNode {
+                ctrl_id,
+                node: cs.into(),
+            }))
     }
 
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
     pub fn srcs_with_type<'a>(
-        &self,
-        c: &'a Ctrl,
+        &'a self,
+        ctrl_id: &'a ControllerId,
         t: DefId,
-    ) -> impl Iterator<Item = &'a DataSource> + 'a {
-        c.types
+    ) -> impl Iterator<Item = CtrlNode> + 'a {
+        self.desc.controllers[ctrl_id]
+            .types
             .0
             .iter()
-            .filter_map(move |(src, ids)| ids.contains(&t).then_some(src))
+            .filter_map(move |(src, ids)| {
+                ids.contains(&t).then_some(CtrlNode {
+                    ctrl_id,
+                    node: src.into(),
+                })
+            })
     }
 
     /// Returns the input [`ProgramDescription`].
@@ -343,17 +477,14 @@ impl Context {
     /// Return an example pair for a flow from an source from `from` to a sink
     /// in `to` if any exist.
     pub fn any_flows<'a>(
-        &self,
-        ctrl_id: Option<ControllerId>,
-        from: &[&'a DataSource],
-        to: &[&'a CallSiteOrDataSink],
+        &'a self,
+        from: &[&'a CtrlNode],
+        to: &[&'a CtrlNode],
         edge_type: EdgeType,
-    ) -> Option<(&'a DataSource, &'a CallSiteOrDataSink)> {
+    ) -> Option<(&'a CtrlNode, &'a CtrlNode)> {
         from.iter().find_map(|&src| {
-            to.iter().find_map(|&sink| {
-                self.flows_to(ctrl_id, src, sink, edge_type)
-                    .then_some((src, sink))
-            })
+            to.iter()
+                .find_map(|&sink| self.flows_to(src, sink, edge_type).then_some((src, sink)))
         })
     }
 
@@ -456,12 +587,20 @@ fn test_context() {
         .get(id)
         .map_or(false, |info| info.name.as_str().starts_with("Foo"))));
 
-    let desc = ctx.desc();
     let controller = ctx.find_by_name("controller").unwrap();
-    let ctrl = &desc.controllers[&controller];
 
-    assert_eq!(ctx.marked_sinks(ctrl.data_sinks(), input).count(), 0);
-    assert_eq!(ctx.marked_sinks(ctrl.data_sinks(), sink).count(), 2);
+    assert_eq!(
+        ctx.all_nodes_for_ctrl(&controller)
+            .filter(|n| ctx.has_marker(input, n))
+            .count(),
+        0
+    );
+    assert_eq!(
+        ctx.all_nodes_for_ctrl(&controller)
+            .filter(|n| ctx.has_marker(sink, n))
+            .count(),
+        2
+    );
 }
 
 #[test]

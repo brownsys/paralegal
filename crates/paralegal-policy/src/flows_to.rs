@@ -2,6 +2,8 @@ use paralegal_spdg::{
     CallSiteOrDataSink, CallSiteOrDataSinkIndex, Ctrl, DataSink, DataSource, DataSourceIndex,
 };
 
+use crate::CtrlNode;
+
 use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToIndex};
 
 use std::{fmt, sync::Arc};
@@ -35,7 +37,7 @@ impl CtrlFlowsTo {
     pub fn build(ctrl: &Ctrl) -> Self {
         // Collect all sources and sinks into indexed domains.
         let sources = Arc::new(IndexedDomain::from_iter(
-            ctrl.all_sources().iter().map(|&s| s.clone()),
+            ctrl.all_sources().map(|s| s.clone()),
         ));
         let sinks = Arc::new(IndexedDomain::from_iter(ctrl.all_call_sites_or_sinks()));
 
@@ -159,10 +161,13 @@ fn test_data_flows_to() {
     use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller").unwrap();
-    let src = DataSource::Argument(0);
-    let get_sink = |name| {
+    let src = CtrlNode {
+        ctrl_id: &controller,
+        node: (&DataSource::Argument(0)).into(),
+    };
+    let get_sink_node = |name| {
         let name = Identifier::new_intern(name);
-        ctx.desc().controllers[&controller]
+        let node = ctx.desc().controllers[&controller]
             .data_sinks()
             .find(|sink| match sink {
                 DataSink::Argument { function, .. } => {
@@ -170,22 +175,16 @@ fn test_data_flows_to() {
                 }
                 _ => false,
             })
-            .unwrap()
+            .unwrap();
+        CtrlNode {
+            ctrl_id: &controller,
+            node: node.into(),
+        }
     };
-    let sink1: CallSiteOrDataSink = get_sink("sink1").clone().into();
-    let sink2: CallSiteOrDataSink = get_sink("sink2").clone().into();
-    assert!(ctx.flows_to(
-        Some(controller.clone()),
-        &src,
-        &sink1,
-        crate::EdgeType::Data
-    ));
-    assert!(!ctx.flows_to(
-        Some(controller.clone()),
-        &src,
-        &sink2,
-        crate::EdgeType::Data
-    ));
+    let sink1 = get_sink_node("sink1");
+    let sink2 = get_sink_node("sink2");
+    assert!(ctx.flows_to(&src, &sink1, crate::EdgeType::Data));
+    assert!(!ctx.flows_to(&src, &sink2, crate::EdgeType::Data));
 }
 
 #[test]
@@ -193,48 +192,36 @@ fn test_ctrl_flows_to() {
     use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_ctrl").unwrap();
-    let src_a = DataSource::Argument(0);
-    let src_b = DataSource::Argument(1);
-    let src_c = DataSource::Argument(2);
-    let get_callsite = |name| {
+    let src_a = CtrlNode {
+        ctrl_id: &controller,
+        node: (&DataSource::Argument(0)).into(),
+    };
+    let src_b = CtrlNode {
+        ctrl_id: &controller,
+        node: (&DataSource::Argument(1)).into(),
+    };
+    let src_c = CtrlNode {
+        ctrl_id: &controller,
+        node: (&DataSource::Argument(2)).into(),
+    };
+    let get_callsite_node = |name| {
         let name = Identifier::new_intern(name);
-        ctx.desc().controllers[&controller]
+        let node = ctx.desc().controllers[&controller]
             .call_sites()
             .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
-            .unwrap()
+            .unwrap();
+        CtrlNode {
+            ctrl_id: &controller,
+            node: node.into(),
+        }
     };
-    let cs1: CallSiteOrDataSink = get_callsite("sink1").clone().into();
-    let cs2: CallSiteOrDataSink = get_callsite("sink2").clone().into();
-    assert!(ctx.flows_to(
-        Some(controller.clone()),
-        &src_a,
-        &cs1,
-        crate::EdgeType::Control
-    ));
-    assert!(ctx.flows_to(
-        Some(controller.clone()),
-        &src_c,
-        &cs2,
-        crate::EdgeType::Control
-    ));
-    assert!(ctx.flows_to(
-        Some(controller.clone()),
-        &src_a,
-        &cs2,
-        crate::EdgeType::Control
-    ));
-    assert!(!ctx.flows_to(
-        Some(controller.clone()),
-        &src_b,
-        &cs1,
-        crate::EdgeType::Control
-    ));
-    assert!(!ctx.flows_to(
-        Some(controller.clone()),
-        &src_b,
-        &cs2,
-        crate::EdgeType::Control
-    ));
+    let cs1 = get_callsite_node("sink1");
+    let cs2 = get_callsite_node("sink2");
+    assert!(ctx.flows_to(&src_a, &cs1, crate::EdgeType::Control));
+    assert!(ctx.flows_to(&src_c, &cs2, crate::EdgeType::Control));
+    assert!(ctx.flows_to(&src_a, &cs2, crate::EdgeType::Control));
+    assert!(!ctx.flows_to(&src_b, &cs1, crate::EdgeType::Control));
+    assert!(!ctx.flows_to(&src_b, &cs2, crate::EdgeType::Control));
 }
 
 #[test]
@@ -242,11 +229,17 @@ fn test_flows_to() {
     use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
-    let src_a = DataSource::Argument(0);
-    let src_b = DataSource::Argument(1);
-    let get_datasink = |name| {
+    let src_a = CtrlNode {
+        ctrl_id: &controller,
+        node: (&DataSource::Argument(0)).into(),
+    };
+    let src_b = CtrlNode {
+        ctrl_id: &controller,
+        node: (&DataSource::Argument(1)).into(),
+    };
+    let get_sink_node = |name| {
         let name = Identifier::new_intern(name);
-        ctx.desc().controllers[&controller]
+        let node = ctx.desc().controllers[&controller]
             .data_sinks()
             .find(|sink| match sink {
                 DataSink::Argument { function, .. } => {
@@ -254,36 +247,29 @@ fn test_flows_to() {
                 }
                 _ => false,
             })
-            .unwrap()
+            .unwrap();
+        CtrlNode {
+            ctrl_id: &controller,
+            node: node.into(),
+        }
     };
-    let get_callsite = |name| {
+    let get_callsite_node = |name| {
         let name = Identifier::new_intern(name);
-        ctx.desc().controllers[&controller]
+        let node = ctx.desc().controllers[&controller]
             .call_sites()
             .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
-            .unwrap()
+            .unwrap();
+        CtrlNode {
+            ctrl_id: &controller,
+            node: node.into(),
+        }
     };
-    let sink: CallSiteOrDataSink = get_datasink("sink1").clone().into();
-    let cs: CallSiteOrDataSink = get_callsite("sink1").clone().into();
+    let sink = get_sink_node("sink1");
+    let cs = get_callsite_node("sink1");
     // a flows to the sink1 callsite (by ctrl flow)
-    assert!(ctx.flows_to(
-        Some(controller.clone()),
-        &src_a,
-        &cs,
-        crate::EdgeType::DataAndControl
-    ));
-    assert!(!ctx.flows_to(Some(controller.clone()), &src_a, &cs, crate::EdgeType::Data));
+    assert!(ctx.flows_to(&src_a, &cs, crate::EdgeType::DataAndControl));
+    assert!(!ctx.flows_to(&src_a, &cs, crate::EdgeType::Data));
     // b flows to the sink1 datasink (by data flow)
-    assert!(ctx.flows_to(
-        Some(controller.clone()),
-        &src_b,
-        &sink,
-        crate::EdgeType::DataAndControl
-    ));
-    assert!(ctx.flows_to(
-        Some(controller.clone()),
-        &src_b,
-        &sink,
-        crate::EdgeType::Data
-    ));
+    assert!(ctx.flows_to(&src_b, &sink, crate::EdgeType::DataAndControl));
+    assert!(ctx.flows_to(&src_b, &sink, crate::EdgeType::Data));
 }

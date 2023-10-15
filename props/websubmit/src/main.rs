@@ -18,20 +18,19 @@ impl DeletionProp {
         let stores = Marker::new_intern("stores");
 
         for (c_id, c) in &self.cx.desc().controllers {
-            let t_srcs = self.cx.srcs_with_type(c, t);
+            let t_srcs = self.cx.srcs_with_type(c_id, t);
             let store_cs = self
                 .cx
-                .marked_sinks(c.data_sinks(), stores)
+                .all_nodes_for_ctrl(ctrl_id)
+                .filter(|n| self.cx.has_marker(stores, n))
                 .collect::<Vec<_>>();
 
             for t_src in t_srcs {
                 for &store in &store_cs {
-                    if self.cx.flows_to(
-                        Some(*c_id),
-                        t_src,
-                        &store.clone().into(),
-                        paralegal_policy::EdgeType::Data,
-                    ) {
+                    if self
+                        .cx
+                        .flows_to(&t_src, &store, paralegal_policy::EdgeType::Data)
+                    {
                         return true;
                     }
                 }
@@ -49,20 +48,19 @@ impl DeletionProp {
 
         for (c_id, c) in &self.cx.desc().controllers {
             for ot in &ots {
-                let t_srcs = self.cx.srcs_with_type(c, *ot).collect::<Vec<_>>();
+                let t_srcs = self.cx.srcs_with_type(c_id, *ot).collect::<Vec<_>>();
                 let delete_cs = self
                     .cx
-                    .marked_sinks(c.data_sinks(), deletes)
+                    .all_nodes_for_ctrl(c_id)
+                    .filter(|n| self.cx.has_marker(deletes, n))
                     .collect::<Vec<_>>();
 
                 for t_src in &t_srcs {
                     for &delete in &delete_cs {
-                        if self.cx.flows_to(
-                            Some(*c_id),
-                            t_src,
-                            &delete.clone().into(),
-                            paralegal_policy::EdgeType::Data,
-                        ) {
+                        if self
+                            .cx
+                            .flows_to(&t_src, &delete, paralegal_policy::EdgeType::Data)
+                        {
                             return true;
                         }
                     }

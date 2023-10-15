@@ -48,27 +48,25 @@ impl ContextExt for Context {
 fn check(ctx: Arc<Context>) -> Result<()> {
     let user_data_types = ctx.marked_type(marker!(user_data)).collect::<Vec<_>>();
 
-    let found =
-        ctx.all_controllers()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .find(|(deleter_id, deleter)| {
-                let delete_sinks = ctx
-                    .marked_sinks(deleter.data_sinks(), marker!(to_delete))
-                    .map(|s| s.clone().into())
-                    .collect::<Vec<_>>();
-                let delete_sinks_borrowed = delete_sinks.iter().collect::<Vec<_>>();
-                user_data_types.iter().all(|&t| {
-                    let sources = ctx.srcs_with_type(deleter, t).collect::<Vec<_>>();
-                    ctx.any_flows(
-                        Some(*deleter_id),
-                        &sources,
-                        &delete_sinks_borrowed,
-                        paralegal_policy::EdgeType::Data,
-                    )
-                    .is_some()
-                })
-            });
+    let found = ctx
+        .all_controllers()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .find(|(deleter_id, _)| {
+            let delete_sinks = ctx
+                .all_nodes_for_ctrl(&deleter_id)
+                .filter(|n| ctx.has_marker(marker!(to_delete), n))
+                .collect::<Vec<_>>();
+            user_data_types.iter().all(|&t| {
+                let sources = ctx.srcs_with_type(&deleter_id, t).collect::<Vec<_>>();
+                ctx.any_flows(
+                    &sources.iter().collect::<Vec<_>>(),
+                    &delete_sinks.iter().collect::<Vec<_>>(),
+                    paralegal_policy::EdgeType::Data,
+                )
+                .is_some()
+            })
+        });
     if found.is_none() {
         ctx.error("Could not find a function deleting all types");
     }

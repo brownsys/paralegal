@@ -707,14 +707,13 @@ impl Ctrl {
     }
 
     /// Gather all [`DataSource`]s that are mentioned in this controller including data and control flow.
-    pub fn all_sources(&self) -> HashSet<&DataSource> {
+    pub fn all_sources(&self) -> impl Iterator<Item = &DataSource> + '_ {
         self.data_flow
             .0
             .keys()
             .chain(self.types.0.keys())
             .chain(self.ctrl_flow.0.keys())
             .dedup()
-            .collect()
     }
 
     /// Gather all [`DataSink`]s or [`CallSite`]s that are mentioned in this controller including data and control flow.
