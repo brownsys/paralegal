@@ -2,8 +2,6 @@ use paralegal_spdg::{
     CallSiteOrDataSink, CallSiteOrDataSinkIndex, Ctrl, DataSink, DataSource, DataSourceIndex,
 };
 
-use crate::CtrlNode;
-
 use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToIndex};
 
 use std::{fmt, sync::Arc};
@@ -159,7 +157,7 @@ fn test_data_flows_to() {
     use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller").unwrap();
-    let src = CtrlNode {
+    let src = crate::CtrlNode {
         ctrl_id: &controller,
         node: (&DataSource::Argument(0)).into(),
     };
@@ -174,7 +172,7 @@ fn test_data_flows_to() {
                 _ => false,
             })
             .unwrap();
-        CtrlNode {
+        crate::CtrlNode {
             ctrl_id: &controller,
             node: node.into(),
         }
@@ -190,15 +188,15 @@ fn test_ctrl_flows_to() {
     use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_ctrl").unwrap();
-    let src_a = CtrlNode {
+    let src_a = crate::CtrlNode {
         ctrl_id: &controller,
         node: (&DataSource::Argument(0)).into(),
     };
-    let src_b = CtrlNode {
+    let src_b = crate::CtrlNode {
         ctrl_id: &controller,
         node: (&DataSource::Argument(1)).into(),
     };
-    let src_c = CtrlNode {
+    let src_c = crate::CtrlNode {
         ctrl_id: &controller,
         node: (&DataSource::Argument(2)).into(),
     };
@@ -208,7 +206,7 @@ fn test_ctrl_flows_to() {
             .call_sites()
             .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
             .unwrap();
-        CtrlNode {
+        crate::CtrlNode {
             ctrl_id: &controller,
             node: node.into(),
         }
@@ -227,11 +225,11 @@ fn test_flows_to() {
     use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
-    let src_a = CtrlNode {
+    let src_a = crate::CtrlNode {
         ctrl_id: &controller,
         node: (&DataSource::Argument(0)).into(),
     };
-    let src_b = CtrlNode {
+    let src_b = crate::CtrlNode {
         ctrl_id: &controller,
         node: (&DataSource::Argument(1)).into(),
     };
@@ -246,7 +244,7 @@ fn test_flows_to() {
                 _ => false,
             })
             .unwrap();
-        CtrlNode {
+        crate::CtrlNode {
             ctrl_id: &controller,
             node: node.into(),
         }
@@ -257,7 +255,7 @@ fn test_flows_to() {
             .call_sites()
             .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
             .unwrap();
-        CtrlNode {
+        crate::CtrlNode {
             ctrl_id: &controller,
             node: node.into(),
         }
