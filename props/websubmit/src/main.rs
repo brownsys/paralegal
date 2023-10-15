@@ -17,11 +17,11 @@ impl DeletionProp {
     fn flows_to_store(&self, t: DefId) -> bool {
         let stores = Marker::new_intern("stores");
 
-        for (c_id, c) in &self.cx.desc().controllers {
+        for (c_id, _) in &self.cx.desc().controllers {
             let t_srcs = self.cx.srcs_with_type(c_id, t);
             let store_cs = self
                 .cx
-                .all_nodes_for_ctrl(ctrl_id)
+                .all_nodes_for_ctrl(c_id)
                 .filter(|n| self.cx.has_marker(stores, n))
                 .collect::<Vec<_>>();
 
@@ -46,7 +46,7 @@ impl DeletionProp {
         let mut ots = self.cx.otypes(t);
         ots.push(t);
 
-        for (c_id, c) in &self.cx.desc().controllers {
+        for (c_id, _) in &self.cx.desc().controllers {
             for ot in &ots {
                 let t_srcs = self.cx.srcs_with_type(c_id, *ot).collect::<Vec<_>>();
                 let delete_cs = self
@@ -59,7 +59,7 @@ impl DeletionProp {
                     for &delete in &delete_cs {
                         if self
                             .cx
-                            .flows_to(&t_src, &delete, paralegal_policy::EdgeType::Data)
+                            .flows_to(t_src, &delete, paralegal_policy::EdgeType::Data)
                         {
                             return true;
                         }

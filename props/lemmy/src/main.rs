@@ -4,11 +4,7 @@ use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use paralegal_policy::{
-    assert_error,
-    paralegal_spdg::{CallSite, Ctrl, DataSink, DataSource, Identifier},
-    ControllerId, CtrlNode, Marker, PolicyContext,
-};
+use paralegal_policy::{assert_error, paralegal_spdg::Identifier, CtrlNode, Marker, PolicyContext};
 
 pub struct CommunityProp {
     cx: Arc<PolicyContext>,

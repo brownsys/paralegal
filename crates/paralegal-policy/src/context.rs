@@ -151,7 +151,7 @@ impl<'a> Node<'a> {
 /// Interface for defining policies.
 ///
 /// Holds a PDG ([`Self::desc`]) and defines basic queries like
-/// [`Self::marked_sinks`] and combinators such as
+/// [`Self::all_nodes_for_ctrl`] and combinators such as
 /// [`Self::always_happens_before`]. These should be composed into more complex
 /// policies.
 ///

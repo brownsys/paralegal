@@ -54,11 +54,11 @@ fn check(ctx: Arc<Context>) -> Result<()> {
         .into_iter()
         .find(|(deleter_id, _)| {
             let delete_sinks = ctx
-                .all_nodes_for_ctrl(&deleter_id)
+                .all_nodes_for_ctrl(deleter_id)
                 .filter(|n| ctx.has_marker(marker!(to_delete), n))
                 .collect::<Vec<_>>();
             user_data_types.iter().all(|&t| {
-                let sources = ctx.srcs_with_type(&deleter_id, t).collect::<Vec<_>>();
+                let sources = ctx.srcs_with_type(deleter_id, t).collect::<Vec<_>>();
                 ctx.any_flows(
                     &sources.iter().collect::<Vec<_>>(),
                     &delete_sinks.iter().collect::<Vec<_>>(),
