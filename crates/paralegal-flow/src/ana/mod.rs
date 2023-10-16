@@ -332,7 +332,9 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
     use hir::def;
     let name = crate::utils::identifier_for_item(tcx, id);
     let kind = match tcx.def_kind(id) {
-        kind if kind.is_fn_like() => DefKind::Function,
+        def::DefKind::Closure => DefKind::Closure,
+        def::DefKind::Generator => DefKind::Generator,
+        kind if kind.is_fn_like() => DefKind::Fn,
         def::DefKind::Struct
         | def::DefKind::AssocTy
         | def::DefKind::OpaqueTy
