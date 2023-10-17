@@ -17,7 +17,7 @@ impl DeletionProp {
     fn flows_to_store(&self, t: DefId) -> bool {
         let stores = Marker::new_intern("stores");
 
-        for (c_id, _) in &self.cx.desc().controllers {
+        for c_id in self.cx.desc().controllers.keys() {
             let t_srcs = self.cx.srcs_with_type(c_id, t);
             let store_cs = self
                 .cx
@@ -46,7 +46,7 @@ impl DeletionProp {
         let mut ots = self.cx.otypes(t);
         ots.push(t);
 
-        for (c_id, _) in &self.cx.desc().controllers {
+        for c_id in self.cx.desc().controllers.keys() {
             for ot in &ots {
                 let t_srcs = self.cx.srcs_with_type(c_id, *ot).collect::<Vec<_>>();
                 let delete_cs = self
