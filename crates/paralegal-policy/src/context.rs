@@ -126,17 +126,17 @@ impl<'a> Node<'a> {
     pub fn as_call_site_or_data_sink(&self) -> Option<CallSiteOrDataSink> {
         match self {
             Node::CtrlArgument(_) => None,
-            Node::CallSite(&ref cs) => Some(cs.clone().into()),
-            Node::CallArgument(&ref ds) => Some(ds.clone().into()),
-            Node::Return(&ref ds) => Some(ds.clone().into()),
+            Node::CallSite(cs) => Some((*cs).clone().into()),
+            Node::CallArgument(ds) => Some((*ds).clone().into()),
+            Node::Return(ds) => Some((*ds).clone().into()),
         }
     }
 
     /// Transform a Node into it's corresponding owned DataSource - only works for CtrlArgs, CallSites, and CallArguments. Clones underlying data.
     pub fn as_data_source(&self) -> Option<DataSource> {
         match self {
-            Node::CtrlArgument(&ref ds) => Some(ds.clone()),
-            Node::CallSite(&ref cs) => Some(DataSource::FunctionCall(cs.clone())),
+            Node::CtrlArgument(ds) => Some((*ds).clone()),
+            Node::CallSite(cs) => Some(DataSource::FunctionCall((*cs).clone())),
             Node::CallArgument(ds) => match ds {
                 DataSink::Argument { function, .. } => {
                     Some(DataSource::FunctionCall(function.clone()))
