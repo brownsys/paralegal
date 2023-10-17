@@ -519,26 +519,24 @@ impl<C> AlwaysHappensBefore<C> {
         C: FnMut(&DataSink) -> bool,
     {
         let def_info = &ctx.as_ctx().desc().def_info;
-        if !self.reached.is_empty() {
-            for (from, to) in &self.reached {
-                let path =
-                    ctx.as_ctx()
-                        .a_path_between(self.ctrl, from, to, &mut self.is_checkpoint);
-                writeln!(
-                    file,
-                    "{}",
-                    Print(|f| {
-                        fmt_data_source(from, f, def_info)?;
-                        if let Some(path) = &path {
-                            fmt_path(f, path.into_iter().copied(), def_info)
-                        } else {
-                            write!(f, "Invariant broken: No path found")
-                        }
-                    })
-                )?;
-            }
-        }
-        Ok(())
+        let Some((from, to)) = self.reached.first() else {
+            return Ok(());
+        };
+        let path =
+            ctx.as_ctx()
+                .a_path_between(self.ctrl, from, to, &mut self.is_checkpoint);
+        writeln!(
+            file,
+            "{}",
+            Print(|f| {
+                fmt_data_source(from, f, def_info)?;
+                if let Some(path) = &path {
+                    fmt_path(f, path.into_iter().copied(), def_info)
+                } else {
+                    write!(f, "Invariant broken: No path found")
+                }
+            })
+        )
     }
 
     /// Format the results of this combinator, using the `def_info` to print
