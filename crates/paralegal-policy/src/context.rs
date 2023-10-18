@@ -322,9 +322,33 @@ impl Context {
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
+        // TODO: check the type as well
         match node.node {
-            NodeType::CtrlArgument(_) => false, // TODO: complete
-            NodeType::CallSite(_) => false,     // TODO: complete
+            NodeType::CtrlArgument(source) => match source {
+                DataSource::Argument(arg) => self
+                    .marker_to_ids
+                    .get(&marker)
+                    .map(|markers| {
+                        markers.iter().any(|(id, refinement)| {
+                            id == &node.ctrl_id
+                                && (refinement.on_self()
+                                    || refinement.on_argument().contains(*arg as u32).unwrap())
+                        })
+                    })
+                    .unwrap_or(false),
+                DataSource::FunctionCall(_) => {
+                    panic!("impossible - CtrlArgument variant cannot be DataSource::FunctionCall")
+                }
+            },
+            NodeType::CallSite(cs) => self
+                .marker_to_ids
+                .get(&marker)
+                .map(|markers| {
+                    markers.iter().any(|(id, refinement)| {
+                        id == &cs.function && (refinement.on_self() || refinement.on_return())
+                    })
+                })
+                .unwrap_or(false),
             NodeType::CallArgument(ds) => match ds {
                 DataSink::Argument { function, arg_slot } => self
                     .marker_to_ids
@@ -337,7 +361,6 @@ impl Context {
                         })
                     })
                     .unwrap_or(false),
-                // TODO: check the type as well
                 DataSink::Return => {
                     panic!("impossible - CallArgument variant cannot be DataSink::Return")
                 }
@@ -409,14 +432,14 @@ impl Context {
     /// Note that `is_checkpoint` and `is_terminal` will be called many times
     /// and should thus be efficient computations. In addition they should
     /// always return the same result for the same input.
-    pub fn always_happens_before(
+    pub fn always_happens_before<'a>(
         &self,
         ctrl: ControllerId,
-        starting_points: impl Iterator<Item = DataSource>,
-        mut is_checkpoint: impl FnMut(&DataSink) -> bool,
-        mut is_terminal: impl FnMut(&DataSink) -> bool,
+        starting_points: impl Iterator<Item = Node<'a>>,
+        mut is_checkpoint: impl FnMut(Node) -> bool,
+        mut is_terminal: impl FnMut(Node) -> bool,
     ) -> Result<AlwaysHappensBefore> {
-        let mut seen = HashSet::<&DataSink>::new();
+        let mut seen = HashSet::<Node>::new();
         let mut num_reached = 0;
         let mut num_checkpointed = 0;
 
@@ -433,14 +456,21 @@ impl Context {
             .0;
 
         while let Some(current) = queue.pop() {
-            for sink in flow.get(&current).into_iter().flatten() {
-                if is_checkpoint(sink) {
+            let Some(datasource) = current.node.as_data_source() else {
+				continue
+			};
+            for sink in flow.get(&datasource).into_iter().flatten() {
+                let sink_node = Node {
+                    ctrl_id: current.ctrl_id,
+                    node: sink.into(),
+                };
+                if is_checkpoint(sink_node) {
                     num_checkpointed += 1;
-                } else if is_terminal(sink) {
+                } else if is_terminal(sink_node) {
                     num_reached += 1;
-                } else if let DataSink::Argument { function, .. } = sink {
-                    if seen.insert(sink) {
-                        queue.push(DataSource::FunctionCall(function.clone()));
+                } else {
+                    if seen.insert(sink_node) {
+                        queue.push(sink_node);
                     }
                 }
             }
@@ -599,75 +629,18 @@ fn test_context() {
 #[test]
 fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
-    let desc = ctx.desc();
 
-    fn has_marker(desc: &ProgramDescription, sink: &DataSink, marker: Identifier) -> bool {
-        if let DataSink::Argument { function, arg_slot } = sink {
-            desc.annotations
-                .get(&function.function)
-                .map_or(false, |(anns, _)| {
-                    anns.iter().filter_map(Annotation::as_marker).any(|ann| {
-                        ann.marker == marker
-                            && (ann
-                                .refinement
-                                .on_argument()
-                                .contains(*arg_slot as u32)
-                                .unwrap()
-                                || ann.refinement.on_self())
-                    })
-                })
-        } else {
-            false
-        }
-    }
-
-    fn is_checkpoint(desc: &ProgramDescription, checkpoint: &DataSink) -> bool {
-        has_marker(desc, checkpoint, Identifier::new_intern("bless"))
-    }
-    fn is_terminal(end: &DataSink) -> bool {
-        matches!(end, DataSink::Return)
-    }
-
-    fn marked_sources(
-        desc: &ProgramDescription,
-        ctrl_name: DefId,
-        marker: Marker,
-    ) -> impl Iterator<Item = &DataSource> {
-        desc.controllers[&ctrl_name]
-            .data_flow
-            .0
-            .keys()
-            .filter(move |source| match source {
-                DataSource::Argument(arg) => desc.annotations[&ctrl_name]
-                    .0
-                    .iter()
-                    .filter_map(Annotation::as_marker)
-                    .any(|ann| {
-                        ann.marker == marker
-                            && (ann.refinement.on_self()
-                                || ann
-                                    .refinement
-                                    .on_argument()
-                                    .contains(*arg as u32)
-                                    .unwrap_or(false))
-                    }),
-                DataSource::FunctionCall(cs) => desc.annotations[&cs.function]
-                    .0
-                    .iter()
-                    .filter_map(Annotation::as_marker)
-                    .any(|ann| {
-                        ann.marker == marker
-                            && (ann.refinement.on_self() || ann.refinement.on_return())
-                    }),
-            })
+    fn is_terminal<'a>(end: Node<'a>) -> bool {
+        matches!(end.node, crate::NodeType::Return(_))
     }
 
     let ctrl_name = ctx.find_by_name("happens_before_pass")?;
 
     let pass = ctx.always_happens_before(
         ctrl_name,
-        marked_sources(desc, ctrl_name, Identifier::new_intern("start")).cloned(),
-        |checkpoint| is_checkpoint(desc, checkpoint),
+        ctx.all_nodes_for_ctrl(ctrl_name)
+            .filter(|n| ctx.has_marker(Identifier::new_intern("start"), *n)),
+        |checkpoint| ctx.has_marker(Identifier::new_intern("bless"), checkpoint),
         is_terminal,
     )?;
 
@@ -678,8 +651,9 @@ fn test_happens_before() -> Result<()> {
 
     let fail = ctx.always_happens_before(
         ctrl_name,
-        marked_sources(desc, ctrl_name, Identifier::new_intern("start")).cloned(),
-        |check| is_checkpoint(desc, check),
+        ctx.all_nodes_for_ctrl(ctrl_name)
+            .filter(|n| ctx.has_marker(Identifier::new_intern("start"), *n)),
+        |check| ctx.has_marker(Identifier::new_intern("bless"), check),
         is_terminal,
     )?;
 
