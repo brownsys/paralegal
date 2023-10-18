@@ -46,14 +46,14 @@ pub struct Node<'a> {
     /// ControllerId of the node.
     pub ctrl_id: ControllerId,
     /// The data of the node.
-    pub node: NodeType<'a>,
+    pub typ: NodeType<'a>,
 }
 
 /// Enum identifying the different types of nodes in the SPDG
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeType<'a> {
     /// Corresponds to [`DataSource::Argument`].
-    CtrlArgument(&'a DataSource),
+    ControllerArgument(&'a DataSource),
 
     /// Corresponds to a [`CallSite`] or [`DataSource::FunctionCall`].
     CallSite(&'a CallSite),
@@ -93,16 +93,16 @@ impl<'a> From<&'a DataSource> for NodeType<'a> {
     fn from(ds: &'a DataSource) -> Self {
         match ds {
             DataSource::FunctionCall(cs) => NodeType::CallSite(cs),
-            DataSource::Argument(_) => NodeType::CtrlArgument(ds),
+            DataSource::Argument(_) => NodeType::ControllerArgument(ds),
         }
     }
 }
 
 impl<'a> NodeType<'a> {
     /// Transform a NodeType into it's corresponding CallSite - only works for CallSites and CallArguments.
-    pub fn as_call_site(&self) -> Option<&'a CallSite> {
+    pub fn as_call_site(self) -> Option<&'a CallSite> {
         match self {
-            NodeType::CtrlArgument(_) => None,
+            NodeType::ControllerArgument(_) => None,
             NodeType::CallSite(cs) => Some(cs),
             NodeType::CallArgument(ds) => match ds {
                 DataSink::Argument { function, .. } => Some(function),
@@ -113,9 +113,9 @@ impl<'a> NodeType<'a> {
     }
 
     /// Transform a NodeType into it's corresponding DataSink - only works for CallArgs and Returns.
-    pub fn as_data_sink(&self) -> Option<&'a DataSink> {
+    pub fn as_data_sink(self) -> Option<&'a DataSink> {
         match self {
-            NodeType::CtrlArgument(_) => None,
+            NodeType::ControllerArgument(_) => None,
             NodeType::CallSite(_) => None,
             NodeType::CallArgument(ds) => Some(ds),
             NodeType::Return(ds) => Some(ds),
@@ -123,9 +123,9 @@ impl<'a> NodeType<'a> {
     }
 
     /// Transform a NodeType into it's corresponding owned CallSiteOrDataSink - only works for CallSites, CallArgs and Returns. Clones the underlying data.
-    pub fn as_call_site_or_data_sink(&self) -> Option<CallSiteOrDataSink> {
+    pub fn as_call_site_or_data_sink(self) -> Option<CallSiteOrDataSink> {
         match self {
-            NodeType::CtrlArgument(_) => None,
+            NodeType::ControllerArgument(_) => None,
             NodeType::CallSite(cs) => Some((*cs).clone().into()),
             NodeType::CallArgument(ds) => Some((*ds).clone().into()),
             NodeType::Return(ds) => Some((*ds).clone().into()),
@@ -133,9 +133,9 @@ impl<'a> NodeType<'a> {
     }
 
     /// Transform a NodeType into it's corresponding owned DataSource - only works for CtrlArgs, CallSites, and CallArguments. Clones underlying data.
-    pub fn as_data_source(&self) -> Option<DataSource> {
+    pub fn as_data_source(self) -> Option<DataSource> {
         match self {
-            NodeType::CtrlArgument(ds) => Some((*ds).clone()),
+            NodeType::ControllerArgument(ds) => Some((*ds).clone()),
             NodeType::CallSite(cs) => Some(DataSource::FunctionCall((*cs).clone())),
             NodeType::CallArgument(ds) => match ds {
                 DataSink::Argument { function, .. } => {
@@ -279,10 +279,10 @@ impl Context {
         }
 
         let cf_id = &src.ctrl_id;
-        let Some(src_datasource) = src.node.as_data_source() else {
+        let Some(src_datasource) = src.typ.as_data_source() else {
 			return false
 		  };
-        let Some(sink_cs_or_ds) = sink.node.as_call_site_or_data_sink() else {
+        let Some(sink_cs_or_ds) = sink.typ.as_call_site_or_data_sink() else {
 			return false
 		  };
 
@@ -296,7 +296,7 @@ impl Context {
                 .row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
                 .contains(sink_cs_or_ds),
             EdgeType::Control => {
-                let cs = match sink.node.as_call_site() {
+                let cs = match sink.typ.as_call_site() {
                     Some(cs) => cs,
                     None => return false,
                 };
@@ -323,19 +323,23 @@ impl Context {
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
         // TODO: check the type as well
-        match node.node {
-            NodeType::CtrlArgument(source) => match source {
-                DataSource::Argument(arg) => self
-                    .marker_to_ids
-                    .get(&marker)
-                    .map(|markers| {
-                        markers.iter().any(|(id, refinement)| {
-                            id == &node.ctrl_id
-                                && (refinement.on_self()
-                                    || refinement.on_argument().contains(*arg as u32).unwrap())
-                        })
+
+        /// Return whether marker is on something with the given name's self or the argument at arg
+        fn marker_on_argument(ctx: &Context, marker: Marker, name: DefId, arg: usize) -> bool {
+            ctx.marker_to_ids
+                .get(&marker)
+                .map(|markers| {
+                    markers.iter().any(|(id, refinement)| {
+                        id == &name
+                            && (refinement.on_self()
+                                || refinement.on_argument().contains(arg as u32).unwrap())
                     })
-                    .unwrap_or(false),
+                })
+                .unwrap_or(false)
+        }
+        match node.typ {
+            NodeType::ControllerArgument(source) => match source {
+                DataSource::Argument(arg) => marker_on_argument(self, marker, node.ctrl_id, *arg),
                 DataSource::FunctionCall(_) => {
                     panic!("impossible - CtrlArgument variant cannot be DataSource::FunctionCall")
                 }
@@ -350,17 +354,9 @@ impl Context {
                 })
                 .unwrap_or(false),
             NodeType::CallArgument(ds) => match ds {
-                DataSink::Argument { function, arg_slot } => self
-                    .marker_to_ids
-                    .get(&marker)
-                    .map(|markers| {
-                        markers.iter().any(|(id, refinement)| {
-                            id == &function.function
-                                && (refinement.on_self()
-                                    || refinement.on_argument().contains(*arg_slot as u32).unwrap())
-                        })
-                    })
-                    .unwrap_or(false),
+                DataSink::Argument { function, arg_slot } => {
+                    marker_on_argument(self, marker, function.function, *arg_slot)
+                }
                 DataSink::Return => {
                     panic!("impossible - CallArgument variant cannot be DataSink::Return")
                 }
@@ -375,15 +371,15 @@ impl Context {
         ctrl.all_sources()
             .map(move |src| Node {
                 ctrl_id,
-                node: src.into(),
+                typ: src.into(),
             })
             .chain(ctrl.data_sinks().map(move |snk| Node {
                 ctrl_id,
-                node: snk.into(),
+                typ: snk.into(),
             }))
             .chain(ctrl.call_sites().map(move |cs| Node {
                 ctrl_id,
-                node: cs.into(),
+                typ: cs.into(),
             }))
     }
 
@@ -396,7 +392,7 @@ impl Context {
             .filter_map(move |(src, ids)| {
                 ids.contains(&t).then_some(Node {
                     ctrl_id,
-                    node: src.into(),
+                    typ: src.into(),
                 })
             })
     }
@@ -456,19 +452,22 @@ impl Context {
             .0;
 
         while let Some(current) = queue.pop() {
-            let Some(datasource) = current.node.as_data_source() else {
+            if is_checkpoint(current) {
+                num_checkpointed += 1;
+                continue;
+            } else if is_terminal(current) {
+                num_reached += 1;
+                continue;
+            }
+            let Some(datasource) = current.typ.as_data_source() else {
 				continue
 			};
             for sink in flow.get(&datasource).into_iter().flatten() {
                 let sink_node = Node {
                     ctrl_id: current.ctrl_id,
-                    node: sink.into(),
+                    typ: sink.into(),
                 };
-                if is_checkpoint(sink_node) {
-                    num_checkpointed += 1;
-                } else if is_terminal(sink_node) {
-                    num_reached += 1;
-                } else if seen.insert(sink_node) {
+                if seen.insert(sink_node) {
                     queue.push(sink_node);
                 }
             }
@@ -629,7 +628,7 @@ fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
     fn is_terminal<'a>(end: Node<'a>) -> bool {
-        matches!(end.node, crate::NodeType::Return(_))
+        matches!(end.typ, crate::NodeType::Return(_))
     }
 
     let ctrl_name = ctx.find_by_name("happens_before_pass")?;

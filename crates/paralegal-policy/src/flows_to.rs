@@ -159,7 +159,7 @@ fn test_data_flows_to() {
     let controller = ctx.find_by_name("controller").unwrap();
     let src = crate::Node {
         ctrl_id: controller,
-        node: (&DataSource::Argument(0)).into(),
+        typ: (&DataSource::Argument(0)).into(),
     };
     let get_sink_node = |name| {
         let name = Identifier::new_intern(name);
@@ -174,7 +174,7 @@ fn test_data_flows_to() {
             .unwrap();
         crate::Node {
             ctrl_id: controller,
-            node: node.into(),
+            typ: node.into(),
         }
     };
     let sink1 = get_sink_node("sink1");
@@ -190,15 +190,15 @@ fn test_ctrl_flows_to() {
     let controller = ctx.find_by_name("controller_ctrl").unwrap();
     let src_a = crate::Node {
         ctrl_id: controller,
-        node: (&DataSource::Argument(0)).into(),
+        typ: (&DataSource::Argument(0)).into(),
     };
     let src_b = crate::Node {
         ctrl_id: controller,
-        node: (&DataSource::Argument(1)).into(),
+        typ: (&DataSource::Argument(1)).into(),
     };
     let src_c = crate::Node {
         ctrl_id: controller,
-        node: (&DataSource::Argument(2)).into(),
+        typ: (&DataSource::Argument(2)).into(),
     };
     let get_callsite_node = |name| {
         let name = Identifier::new_intern(name);
@@ -208,7 +208,7 @@ fn test_ctrl_flows_to() {
             .unwrap();
         crate::Node {
             ctrl_id: controller,
-            node: node.into(),
+            typ: node.into(),
         }
     };
     let cs1 = get_callsite_node("sink1");
@@ -227,11 +227,11 @@ fn test_flows_to() {
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
     let src_a = crate::Node {
         ctrl_id: controller,
-        node: (&DataSource::Argument(0)).into(),
+        typ: (&DataSource::Argument(0)).into(),
     };
     let src_b = crate::Node {
         ctrl_id: controller,
-        node: (&DataSource::Argument(1)).into(),
+        typ: (&DataSource::Argument(1)).into(),
     };
     let get_sink_node = |name| {
         let name = Identifier::new_intern(name);
@@ -246,7 +246,7 @@ fn test_flows_to() {
             .unwrap();
         crate::Node {
             ctrl_id: controller,
-            node: node.into(),
+            typ: node.into(),
         }
     };
     let get_callsite_node = |name| {
@@ -257,7 +257,7 @@ fn test_flows_to() {
             .unwrap();
         crate::Node {
             ctrl_id: controller,
-            node: node.into(),
+            typ: node.into(),
         }
     };
     let sink = get_sink_node("sink1");
