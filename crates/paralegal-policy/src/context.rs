@@ -583,14 +583,14 @@ fn test_context() {
     let controller = ctx.find_by_name("controller").unwrap();
 
     assert_eq!(
-        ctx.all_nodes_for_ctrl(&controller)
-            .filter(|n| ctx.has_marker(input, n))
+        ctx.all_nodes_for_ctrl(controller)
+            .filter(|n| ctx.has_marker(input, *n))
             .count(),
         0
     );
     assert_eq!(
-        ctx.all_nodes_for_ctrl(&controller)
-            .filter(|n| ctx.has_marker(sink, n))
+        ctx.all_nodes_for_ctrl(controller)
+            .filter(|n| ctx.has_marker(sink, *n))
             .count(),
         2
     );

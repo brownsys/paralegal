@@ -158,7 +158,7 @@ fn test_data_flows_to() {
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller").unwrap();
     let src = crate::Node {
-        ctrl_id: &controller,
+        ctrl_id: controller,
         node: (&DataSource::Argument(0)).into(),
     };
     let get_sink_node = |name| {
@@ -173,14 +173,14 @@ fn test_data_flows_to() {
             })
             .unwrap();
         crate::Node {
-            ctrl_id: &controller,
+            ctrl_id: controller,
             node: node.into(),
         }
     };
     let sink1 = get_sink_node("sink1");
     let sink2 = get_sink_node("sink2");
-    assert!(ctx.flows_to(&src, &sink1, crate::EdgeType::Data));
-    assert!(!ctx.flows_to(&src, &sink2, crate::EdgeType::Data));
+    assert!(ctx.flows_to(src, sink1, crate::EdgeType::Data));
+    assert!(!ctx.flows_to(src, sink2, crate::EdgeType::Data));
 }
 
 #[test]
@@ -189,15 +189,15 @@ fn test_ctrl_flows_to() {
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_ctrl").unwrap();
     let src_a = crate::Node {
-        ctrl_id: &controller,
+        ctrl_id: controller,
         node: (&DataSource::Argument(0)).into(),
     };
     let src_b = crate::Node {
-        ctrl_id: &controller,
+        ctrl_id: controller,
         node: (&DataSource::Argument(1)).into(),
     };
     let src_c = crate::Node {
-        ctrl_id: &controller,
+        ctrl_id: controller,
         node: (&DataSource::Argument(2)).into(),
     };
     let get_callsite_node = |name| {
@@ -207,17 +207,17 @@ fn test_ctrl_flows_to() {
             .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
             .unwrap();
         crate::Node {
-            ctrl_id: &controller,
+            ctrl_id: controller,
             node: node.into(),
         }
     };
     let cs1 = get_callsite_node("sink1");
     let cs2 = get_callsite_node("sink2");
-    assert!(ctx.flows_to(&src_a, &cs1, crate::EdgeType::Control));
-    assert!(ctx.flows_to(&src_c, &cs2, crate::EdgeType::Control));
-    assert!(ctx.flows_to(&src_a, &cs2, crate::EdgeType::Control));
-    assert!(!ctx.flows_to(&src_b, &cs1, crate::EdgeType::Control));
-    assert!(!ctx.flows_to(&src_b, &cs2, crate::EdgeType::Control));
+    assert!(ctx.flows_to(src_a, cs1, crate::EdgeType::Control));
+    assert!(ctx.flows_to(src_c, cs2, crate::EdgeType::Control));
+    assert!(ctx.flows_to(src_a, cs2, crate::EdgeType::Control));
+    assert!(!ctx.flows_to(src_b, cs1, crate::EdgeType::Control));
+    assert!(!ctx.flows_to(src_b, cs2, crate::EdgeType::Control));
 }
 
 #[test]
@@ -226,11 +226,11 @@ fn test_flows_to() {
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
     let src_a = crate::Node {
-        ctrl_id: &controller,
+        ctrl_id: controller,
         node: (&DataSource::Argument(0)).into(),
     };
     let src_b = crate::Node {
-        ctrl_id: &controller,
+        ctrl_id: controller,
         node: (&DataSource::Argument(1)).into(),
     };
     let get_sink_node = |name| {
@@ -245,7 +245,7 @@ fn test_flows_to() {
             })
             .unwrap();
         crate::Node {
-            ctrl_id: &controller,
+            ctrl_id: controller,
             node: node.into(),
         }
     };
@@ -256,16 +256,16 @@ fn test_flows_to() {
             .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
             .unwrap();
         crate::Node {
-            ctrl_id: &controller,
+            ctrl_id: controller,
             node: node.into(),
         }
     };
     let sink = get_sink_node("sink1");
     let cs = get_callsite_node("sink1");
     // a flows to the sink1 callsite (by ctrl flow)
-    assert!(ctx.flows_to(&src_a, &cs, crate::EdgeType::DataAndControl));
-    assert!(!ctx.flows_to(&src_a, &cs, crate::EdgeType::Data));
+    assert!(ctx.flows_to(src_a, cs, crate::EdgeType::DataAndControl));
+    assert!(!ctx.flows_to(src_a, cs, crate::EdgeType::Data));
     // b flows to the sink1 datasink (by data flow)
-    assert!(ctx.flows_to(&src_b, &sink, crate::EdgeType::DataAndControl));
-    assert!(ctx.flows_to(&src_b, &sink, crate::EdgeType::Data));
+    assert!(ctx.flows_to(src_b, sink, crate::EdgeType::DataAndControl));
+    assert!(ctx.flows_to(src_b, sink, crate::EdgeType::Data));
 }
