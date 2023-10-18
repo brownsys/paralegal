@@ -468,10 +468,8 @@ impl Context {
                     num_checkpointed += 1;
                 } else if is_terminal(sink_node) {
                     num_reached += 1;
-                } else {
-                    if seen.insert(sink_node) {
-                        queue.push(sink_node);
-                    }
+                } else if seen.insert(sink_node) {
+                    queue.push(sink_node);
                 }
             }
         }
