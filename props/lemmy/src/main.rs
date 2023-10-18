@@ -1,10 +1,9 @@
 extern crate anyhow;
 
 use anyhow::{anyhow, Result};
-use std::collections::HashSet;
 use std::sync::Arc;
 
-use paralegal_policy::{assert_error, paralegal_spdg::Identifier, CtrlNode, Marker, PolicyContext};
+use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Marker, Node, PolicyContext};
 
 pub struct CommunityProp {
     cx: Arc<PolicyContext>,
@@ -15,16 +14,15 @@ impl CommunityProp {
         CommunityProp { cx }
     }
 
-    fn flow_to_auth(&self, sink: CtrlNode, marker: Marker) -> bool {
-        let auth_nodes = self
+    fn flow_to_auth(&self, sink: Node, marker: Marker) -> bool {
+        let mut auth_nodes = self
             .cx
             .all_nodes_for_ctrl(sink.ctrl_id)
-            .filter(|n| self.cx.has_marker(marker, n))
-            .collect::<HashSet<_>>();
+            .filter(|n| self.cx.has_marker(marker, *n));
 
-        auth_nodes.iter().any(|src| {
+        auth_nodes.any(|src| {
             self.cx
-                .flows_to(src, &sink, paralegal_policy::EdgeType::Control)
+                .flows_to(src, sink, paralegal_policy::EdgeType::Control)
         })
     }
 
@@ -36,8 +34,8 @@ impl CommunityProp {
         for c_id in self.cx.desc().controllers.keys() {
             for write_sink in self
                 .cx
-                .all_nodes_for_ctrl(c_id)
-                .filter(|n| self.cx.has_marker(db_community_write, n))
+                .all_nodes_for_ctrl(*c_id)
+                .filter(|n| self.cx.has_marker(db_community_write, *n))
             {
                 let ok = self.flow_to_auth(write_sink, community_delete_check)
                     && self.flow_to_auth(write_sink, community_ban_check);

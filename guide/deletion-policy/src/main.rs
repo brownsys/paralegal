@@ -27,17 +27,13 @@ fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
 
     let found = ctx.all_controllers().any(|(deleter_id, _)| {
         let delete_sinks = ctx
-            .all_nodes_for_ctrl(&deleter_id)
-            .filter(|n| ctx.has_marker(Marker::new_intern("deletes"), n))
+            .all_nodes_for_ctrl(deleter_id)
+            .filter(|n| ctx.has_marker(Marker::new_intern("deletes"), *n))
             .collect::<Vec<_>>();
         user_data_types.iter().all(|&t| {
-            let sources = ctx.srcs_with_type(&deleter_id, t).collect::<Vec<_>>();
-            ctx.any_flows(
-                &sources.iter().collect::<Vec<_>>(),
-                &delete_sinks.iter().collect::<Vec<_>>(),
-                paralegal_policy::EdgeType::Data,
-            )
-            .is_some()
+            let sources = ctx.srcs_with_type(deleter_id, t).collect::<Vec<_>>();
+            ctx.any_flows(&sources, &delete_sinks, paralegal_policy::EdgeType::Data)
+                .is_some()
         })
     });
     assert_error!(ctx, found, "Could not find a controller deleting all types");

@@ -42,16 +42,16 @@ pub enum EdgeType {
 
 /// Data type representing nodes in the SPDG for a particular controller.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CtrlNode<'a> {
+pub struct Node<'a> {
     /// ControllerId of the node.
-    pub ctrl_id: &'a ControllerId,
+    pub ctrl_id: ControllerId,
     /// The data of the node.
-    pub node: Node<'a>,
+    pub node: NodeType<'a>,
 }
 
 /// Enum identifying the different types of nodes in the SPDG
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Node<'a> {
+pub enum NodeType<'a> {
     /// Corresponds to [`DataSource::Argument`].
     CtrlArgument(&'a DataSource),
 
@@ -65,22 +65,22 @@ pub enum Node<'a> {
     Return(&'a DataSink),
 }
 
-impl<'a> From<&'a CallSite> for Node<'a> {
+impl<'a> From<&'a CallSite> for NodeType<'a> {
     fn from(cs: &'a CallSite) -> Self {
-        Node::CallSite(cs)
+        NodeType::CallSite(cs)
     }
 }
 
-impl<'a> From<&'a DataSink> for Node<'a> {
+impl<'a> From<&'a DataSink> for NodeType<'a> {
     fn from(ds: &'a DataSink) -> Self {
         match ds {
-            DataSink::Argument { .. } => Node::CallArgument(ds),
-            DataSink::Return => Node::Return(ds),
+            DataSink::Argument { .. } => NodeType::CallArgument(ds),
+            DataSink::Return => NodeType::Return(ds),
         }
     }
 }
 
-impl<'a> From<&'a CallSiteOrDataSink> for Node<'a> {
+impl<'a> From<&'a CallSiteOrDataSink> for NodeType<'a> {
     fn from(x: &'a CallSiteOrDataSink) -> Self {
         match x {
             CallSiteOrDataSink::CallSite(cs) => cs.into(),
@@ -89,61 +89,61 @@ impl<'a> From<&'a CallSiteOrDataSink> for Node<'a> {
     }
 }
 
-impl<'a> From<&'a DataSource> for Node<'a> {
+impl<'a> From<&'a DataSource> for NodeType<'a> {
     fn from(ds: &'a DataSource) -> Self {
         match ds {
-            DataSource::FunctionCall(cs) => Node::CallSite(cs),
-            DataSource::Argument(_) => Node::CtrlArgument(ds),
+            DataSource::FunctionCall(cs) => NodeType::CallSite(cs),
+            DataSource::Argument(_) => NodeType::CtrlArgument(ds),
         }
     }
 }
 
-impl<'a> Node<'a> {
-    /// Transform a Node into it's corresponding CallSite - only works for CallSites and CallArguments.
-    pub fn as_call_site(&self) -> Option<&CallSite> {
+impl<'a> NodeType<'a> {
+    /// Transform a NodeType into it's corresponding CallSite - only works for CallSites and CallArguments.
+    pub fn as_call_site(&self) -> Option<&'a CallSite> {
         match self {
-            Node::CtrlArgument(_) => None,
-            Node::CallSite(cs) => Some(cs),
-            Node::CallArgument(ds) => match ds {
+            NodeType::CtrlArgument(_) => None,
+            NodeType::CallSite(cs) => Some(cs),
+            NodeType::CallArgument(ds) => match ds {
                 DataSink::Argument { function, .. } => Some(function),
                 DataSink::Return => None,
             },
-            Node::Return(_) => None,
+            NodeType::Return(_) => None,
         }
     }
 
-    /// Transform a Node into it's corresponding DataSink - only works for CallArgs and Returns.
-    pub fn as_data_sink(&self) -> Option<&DataSink> {
+    /// Transform a NodeType into it's corresponding DataSink - only works for CallArgs and Returns.
+    pub fn as_data_sink(&self) -> Option<&'a DataSink> {
         match self {
-            Node::CtrlArgument(_) => None,
-            Node::CallSite(_) => None,
-            Node::CallArgument(ds) => Some(ds),
-            Node::Return(ds) => Some(ds),
+            NodeType::CtrlArgument(_) => None,
+            NodeType::CallSite(_) => None,
+            NodeType::CallArgument(ds) => Some(ds),
+            NodeType::Return(ds) => Some(ds),
         }
     }
 
-    /// Transform a Node into it's corresponding owned CallSiteOrDataSink - only works for CallSites, CallArgs and Returns. Clones the underlying data.
+    /// Transform a NodeType into it's corresponding owned CallSiteOrDataSink - only works for CallSites, CallArgs and Returns. Clones the underlying data.
     pub fn as_call_site_or_data_sink(&self) -> Option<CallSiteOrDataSink> {
         match self {
-            Node::CtrlArgument(_) => None,
-            Node::CallSite(cs) => Some((*cs).clone().into()),
-            Node::CallArgument(ds) => Some((*ds).clone().into()),
-            Node::Return(ds) => Some((*ds).clone().into()),
+            NodeType::CtrlArgument(_) => None,
+            NodeType::CallSite(cs) => Some((*cs).clone().into()),
+            NodeType::CallArgument(ds) => Some((*ds).clone().into()),
+            NodeType::Return(ds) => Some((*ds).clone().into()),
         }
     }
 
-    /// Transform a Node into it's corresponding owned DataSource - only works for CtrlArgs, CallSites, and CallArguments. Clones underlying data.
+    /// Transform a NodeType into it's corresponding owned DataSource - only works for CtrlArgs, CallSites, and CallArguments. Clones underlying data.
     pub fn as_data_source(&self) -> Option<DataSource> {
         match self {
-            Node::CtrlArgument(ds) => Some((*ds).clone()),
-            Node::CallSite(cs) => Some(DataSource::FunctionCall((*cs).clone())),
-            Node::CallArgument(ds) => match ds {
+            NodeType::CtrlArgument(ds) => Some((*ds).clone()),
+            NodeType::CallSite(cs) => Some(DataSource::FunctionCall((*cs).clone())),
+            NodeType::CallArgument(ds) => match ds {
                 DataSink::Argument { function, .. } => {
                     Some(DataSource::FunctionCall(function.clone()))
                 }
                 DataSink::Return => None,
             },
-            Node::Return(_) => None,
+            NodeType::Return(_) => None,
         }
     }
 }
@@ -272,21 +272,19 @@ impl Context {
             .collect()
     }
 
-    /// Returns whether a node or set of nodes that match some condition flows to a node or set of nodes that match another condition through the configured edge type.
-    pub fn flows_to(&self, src: &CtrlNode, sink: &CtrlNode, edge_type: EdgeType) -> bool {
+    /// Returns whether a node flows to a node through the configured edge type.
+    pub fn flows_to(&self, src: Node, sink: Node, edge_type: EdgeType) -> bool {
         if src.ctrl_id != sink.ctrl_id {
             return false;
         }
 
         let cf_id = &src.ctrl_id;
-        let src_datasource = match src.node.as_data_source() {
-            Some(ds) => ds,
-            None => return false,
-        };
-        let sink_cs_or_ds = match sink.node.as_call_site_or_data_sink() {
-            Some(s) => s,
-            None => return false,
-        };
+        let Some(src_datasource) = src.node.as_data_source() else {
+			return false
+		  };
+        let Some(sink_cs_or_ds) = sink.node.as_call_site_or_data_sink() else {
+			return false
+		  };
 
         match edge_type {
             EdgeType::Data => self.flows_to[cf_id]
@@ -322,12 +320,12 @@ impl Context {
             .flat_map(|v| v.iter())
     }
 
-    /// Returns whether the given CtrlNode has the marker applied to it directly or via its type.
-    pub fn has_marker(&self, marker: Marker, node: &CtrlNode) -> bool {
+    /// Returns whether the given Node has the marker applied to it directly or via its type.
+    pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
         match node.node {
-            Node::CtrlArgument(_) => false, // TODO: complete
-            Node::CallSite(_) => false,     // TODO: complete
-            Node::CallArgument(ds) => match ds {
+            NodeType::CtrlArgument(_) => false, // TODO: complete
+            NodeType::CallSite(_) => false,     // TODO: complete
+            NodeType::CallArgument(ds) => match ds {
                 DataSink::Argument { function, arg_slot } => self
                     .marker_to_ids
                     .get(&marker)
@@ -344,43 +342,36 @@ impl Context {
                     panic!("impossible - CallArgument variant cannot be DataSink::Return")
                 }
             },
-            Node::Return(_) => false, // TODO: complete
+            NodeType::Return(_) => false, // TODO: complete
         }
     }
 
-    /// Returns all DataSources, DataSinks, and CallSites for a Controller as CtrlNodes.
-    pub fn all_nodes_for_ctrl<'a>(
-        &'a self,
-        ctrl_id: &'a ControllerId,
-    ) -> impl Iterator<Item = CtrlNode<'a>> {
-        let ctrl = &self.desc.controllers[ctrl_id];
+    /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
+    pub fn all_nodes_for_ctrl(&self, ctrl_id: ControllerId) -> impl Iterator<Item = Node<'_>> {
+        let ctrl = &self.desc.controllers[&ctrl_id];
         ctrl.all_sources()
-            .map(|src| CtrlNode {
+            .map(move |src| Node {
                 ctrl_id,
                 node: src.into(),
             })
-            .chain(ctrl.data_sinks().map(|snk| CtrlNode {
+            .chain(ctrl.data_sinks().map(move |snk| Node {
                 ctrl_id,
                 node: snk.into(),
             }))
-            .chain(ctrl.call_sites().map(|cs| CtrlNode {
+            .chain(ctrl.call_sites().map(move |cs| Node {
                 ctrl_id,
                 node: cs.into(),
             }))
     }
 
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
-    pub fn srcs_with_type<'a>(
-        &'a self,
-        ctrl_id: &'a ControllerId,
-        t: DefId,
-    ) -> impl Iterator<Item = CtrlNode> + 'a {
-        self.desc.controllers[ctrl_id]
+    pub fn srcs_with_type(&self, ctrl_id: ControllerId, t: DefId) -> impl Iterator<Item = Node> {
+        self.desc.controllers[&ctrl_id]
             .types
             .0
             .iter()
             .filter_map(move |(src, ids)| {
-                ids.contains(&t).then_some(CtrlNode {
+                ids.contains(&t).then_some(Node {
                     ctrl_id,
                     node: src.into(),
                 })
@@ -478,13 +469,15 @@ impl Context {
     /// in `to` if any exist.
     pub fn any_flows<'a>(
         &'a self,
-        from: &[&'a CtrlNode],
-        to: &[&'a CtrlNode],
+        from: &[Node<'a>],
+        to: &[Node<'a>],
         edge_type: EdgeType,
-    ) -> Option<(&'a CtrlNode, &'a CtrlNode)> {
-        from.iter().find_map(|&src| {
-            to.iter()
-                .find_map(|&sink| self.flows_to(src, sink, edge_type).then_some((src, sink)))
+    ) -> Option<(Node, Node)> {
+        from.iter().find_map(|src| {
+            to.iter().find_map(|sink| {
+                self.flows_to(*src, *sink, edge_type)
+                    .then_some((*src, *sink))
+            })
         })
     }
 

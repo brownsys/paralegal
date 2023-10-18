@@ -18,18 +18,18 @@ impl DeletionProp {
         let stores = Marker::new_intern("stores");
 
         for c_id in self.cx.desc().controllers.keys() {
-            let t_srcs = self.cx.srcs_with_type(c_id, t);
+            let t_srcs = self.cx.srcs_with_type(*c_id, t);
             let store_cs = self
                 .cx
-                .all_nodes_for_ctrl(c_id)
-                .filter(|n| self.cx.has_marker(stores, n))
+                .all_nodes_for_ctrl(*c_id)
+                .filter(|n| self.cx.has_marker(stores, *n))
                 .collect::<Vec<_>>();
 
             for t_src in t_srcs {
-                for &store in &store_cs {
+                for store in &store_cs {
                     if self
                         .cx
-                        .flows_to(&t_src, &store, paralegal_policy::EdgeType::Data)
+                        .flows_to(t_src, *store, paralegal_policy::EdgeType::Data)
                     {
                         return true;
                     }
@@ -48,18 +48,18 @@ impl DeletionProp {
 
         for c_id in self.cx.desc().controllers.keys() {
             for ot in &ots {
-                let t_srcs = self.cx.srcs_with_type(c_id, *ot).collect::<Vec<_>>();
+                let t_srcs = self.cx.srcs_with_type(*c_id, *ot);
                 let delete_cs = self
                     .cx
-                    .all_nodes_for_ctrl(c_id)
-                    .filter(|n| self.cx.has_marker(deletes, n))
+                    .all_nodes_for_ctrl(*c_id)
+                    .filter(|n| self.cx.has_marker(deletes, *n))
                     .collect::<Vec<_>>();
 
-                for t_src in &t_srcs {
-                    for &delete in &delete_cs {
+                for t_src in t_srcs {
+                    for delete in &delete_cs {
                         if self
                             .cx
-                            .flows_to(t_src, &delete, paralegal_policy::EdgeType::Data)
+                            .flows_to(t_src, *delete, paralegal_policy::EdgeType::Data)
                         {
                             return true;
                         }
