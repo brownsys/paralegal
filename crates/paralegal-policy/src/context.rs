@@ -190,6 +190,14 @@ impl Context {
             .contains(sink)
     }
 
+    /// Return a set of all sinks this source can reach
+    pub fn reaching(&self, ctrl_id: ControllerId, src: &DataSource) -> &indexical::IndexSet<CallSiteOrDataSink, bitvec::vec::BitVec, indexical::ArcFamily> {
+        let ctrl_flows = &self.flows_to[&ctrl_id];
+        ctrl_flows
+            .flows_to
+            .row_set(&src.to_index(&ctrl_flows.sources))
+    }
+
     /// Iterate all sinks that are reachable from this source in the given controller.
     pub fn reachable(
         &self,
@@ -382,6 +390,8 @@ impl Context {
         self.desc().controllers.iter().map(|(k, v)| (*k, v))
     }
 
+    /// A debugging tool that performs a DFS to return some sequence of nodes
+    /// that connect `from` to `to`.
     pub fn a_path_between(
         &self,
         ctrl_id: ControllerId,
@@ -428,6 +438,34 @@ impl Context {
             }
         }
         None
+    }
+
+    /// Returns a struct with a `std::fmt::Display` implementation that
+    /// pretty-prints the information this context has stored about this
+    /// definition.
+    pub fn describe_def(&self, def_id: DefId) -> DisplayDef {
+        DisplayDef { ctx: self, def_id }
+    }
+}
+
+/// See [`Context::describe_def`]
+pub struct DisplayDef<'a> {
+    def_id: DefId,
+    ctx: &'a Context,
+}
+
+impl<'a> std::fmt::Display for DisplayDef<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use std::fmt::Write;
+        let info = &self.ctx.desc().def_info[&self.def_id];
+        f.write_str(info.kind.as_ref())?;
+        f.write_str(" `")?;
+        for segment in &info.path {
+            f.write_str(segment.as_str())?;
+            f.write_str("::")?;
+        }
+        f.write_str(info.name.as_str())?;
+        f.write_char('`')
     }
 }
 

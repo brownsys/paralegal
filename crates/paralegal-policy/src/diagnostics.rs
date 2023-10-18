@@ -92,7 +92,12 @@ macro_rules! assert_error {
         if !$cond {
             use $crate::diagnostics::Diagnostics;
             Diagnostics::error(&$ctx, $msg);
-            $ctx.error($msg);
+        }
+    };
+    ($ctx:expr, $cond: expr, $msg:expr, $($frag:expr),+ $(,)?) => {
+        if !$cond {
+            use $crate::diagnostics::Diagnostics;
+            Diagnostics::error(&$ctx, format!($msg, $($frag),+));
         }
     };
 }
@@ -107,6 +112,12 @@ macro_rules! assert_warning {
         if !$cond {
             use $crate::diagnostics::Diagnostics;
             Diagnostics::warning(&$ctx, $msg);
+        }
+    };
+    ($ctx:expr, $cond: expr, $msg:expr, $($frag:expr),+ $(,)?) => {
+        if !$cond {
+            use $crate::diagnostics::Diagnostics;
+            Diagnostics::warning(&$ctx, format!($msg, $($frag),+));
         }
     };
 }
