@@ -13,6 +13,8 @@ macro_rules! marker {
     };
 }
 
+/// Asserts that there exists one controller which calls a deletion
+/// function on every value (or an equivalent type) that is ever stored.
 pub struct DeletionProp {
     cx: Arc<PolicyContext>,
 }
@@ -79,8 +81,6 @@ impl DeletionProp {
         false
     }
 
-    // Asserts that there exists one controller which calls a deletion
-    // function on every value (or an equivalent type) that is ever stored.
     pub fn check(self) {
         let sensitive = Marker::new_intern("sensitive");
         for (t, _) in self.cx.marked(sensitive) {
@@ -93,6 +93,8 @@ impl DeletionProp {
     }
 }
 
+/// Storing data in the database must be associated to a user. This is
+/// necessary for e.g. the deletion to work.
 pub struct ScopedStorageProp {
     cx: Arc<PolicyContext>,
 }
@@ -102,7 +104,6 @@ impl ScopedStorageProp {
         ScopedStorageProp { cx }
     }
 
-    // Storing data in the database must be associated to a user. This is necessary for e.g. the deletion to work.
     pub fn check(self) {
         for c_id in self.cx.desc().controllers.keys() {
             let scopes = self
