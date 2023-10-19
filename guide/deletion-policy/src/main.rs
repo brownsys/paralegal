@@ -30,7 +30,6 @@ fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
             .all_nodes_for_ctrl(deleter_id)
             .filter(|n| ctx.has_marker(Marker::new_intern("deletes"), *n))
             .collect::<Vec<_>>();
-        let delete_sinks_borrowed = delete_sinks.iter().collect::<Vec<_>>();
         user_data_types.iter().all(|&t| {
             let sources = ctx.srcs_with_type(deleter_id, t).collect::<Vec<_>>();
             ctx.any_flows(&sources, &delete_sinks, paralegal_policy::EdgeType::Data)

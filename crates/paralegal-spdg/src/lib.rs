@@ -665,16 +665,6 @@ impl Ctrl {
         self.ctrl_flow.0.values().flatten().unique()
     }
 
-    /// Gather all [`DataSource`]s that are mentioned in this controller including data and control flow.
-    pub fn data_sources(&self) -> impl Iterator<Item = &DataSource> + '_ {
-        self.data_flow
-            .0
-            .keys()
-            .chain(self.types.0.keys())
-            .chain(self.ctrl_flow.0.keys())
-            .dedup()
-    }
-
     /*** Below are constructor methods intended for use within paralegal-flow. ***/
 
     /// Extend the `types` map with the input iterator.
@@ -726,6 +716,7 @@ impl Ctrl {
             .dedup()
     }
 
+    /// Gather all [`DataSink`]s or [`CallSite`]s that are mentioned in this controller including data and control flow.
     pub fn all_call_sites_or_sinks(&self) -> impl Iterator<Item = CallSiteOrDataSink> + '_ {
         self.data_flow
             .0

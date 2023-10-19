@@ -184,6 +184,6 @@ fn main() -> Result<()> {
     };
 
     paralegal_policy::SPDGGenCommand::global()
-        .run(ws_dir.clone())?
+        .run(ws_dir)?
         .with_context(prop)
 }
