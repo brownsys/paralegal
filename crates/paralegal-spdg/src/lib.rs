@@ -459,15 +459,31 @@ define_index_type! {
     pub struct CallSiteOrDataSinkIndex for CallSiteOrDataSink = u32;
 }
 
-impl From<&CallSite> for CallSiteOrDataSink {
-    fn from(cs: &CallSite) -> Self {
-        CallSiteOrDataSink::CallSite(cs.clone())
+impl From<CallSite> for CallSiteOrDataSink {
+    fn from(cs: CallSite) -> Self {
+        CallSiteOrDataSink::CallSite(cs)
     }
 }
 
-impl From<&DataSink> for CallSiteOrDataSink {
-    fn from(ds: &DataSink) -> Self {
-        CallSiteOrDataSink::DataSink(ds.clone())
+impl From<DataSink> for CallSiteOrDataSink {
+    fn from(ds: DataSink) -> Self {
+        CallSiteOrDataSink::DataSink(ds)
+    }
+}
+
+impl CallSiteOrDataSink {
+    pub fn as_call_site(&self) -> Option<&CallSite> {
+        match self {
+            Self::CallSite(cs) => Some(cs),
+            _ => None,
+        }
+    }
+
+    pub fn as_data_sink(&self) -> Option<&DataSink> {
+        match self {
+            Self::DataSink(ds) => Some(ds),
+            _ => None,
+        }
     }
 }
 
@@ -700,7 +716,16 @@ impl Ctrl {
         }
     }
 
-    /// Gather all [`DataSink`]s or [`CallSite`]s that are mentioned in this controller including data and control flow.
+    /// Gather all [`DataSource`]s that are mentioned in this controller including data and control flow.
+    pub fn all_sources(&self) -> impl Iterator<Item = &DataSource> + '_ {
+        self.data_flow
+            .0
+            .keys()
+            .chain(self.types.0.keys())
+            .chain(self.ctrl_flow.0.keys())
+            .dedup()
+    }
+
     pub fn all_call_sites_or_sinks(&self) -> impl Iterator<Item = CallSiteOrDataSink> + '_ {
         self.data_flow
             .0
@@ -708,11 +733,17 @@ impl Ctrl {
             .flatten()
             .flat_map(|s| match s {
                 DataSink::Argument { function, .. } => {
-                    vec![function.into(), s.into()]
+                    vec![function.clone().into(), s.clone().into()]
                 }
-                _ => vec![s.into()],
+                _ => vec![s.clone().into()],
             })
-            .chain(self.ctrl_flow.0.values().flatten().map(|cs| cs.into()))
+            .chain(
+                self.ctrl_flow
+                    .0
+                    .values()
+                    .flatten()
+                    .map(|cs| cs.clone().into()),
+            )
             .dedup()
     }
 }
