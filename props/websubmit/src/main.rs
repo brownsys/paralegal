@@ -4,8 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 
 use paralegal_policy::{
-    assert_error, paralegal_spdg::DataSink, paralegal_spdg::Identifier, DefId, Marker,
-    PolicyContext,
+    assert_error, paralegal_spdg::Identifier, Context, DefId, Marker, Node, PolicyContext,
 };
 
 macro_rules! marker {
@@ -105,48 +104,43 @@ impl ScopedStorageProp {
 
     // Storing data in the database must be associated to a user. This is necessary for e.g. the deletion to work.
     pub fn check(self) {
-        for (c_id, c) in &self.cx.desc().controllers {
-            // TODO: scoped objects, then transform that into sources
-            let scopes_srcs = self
+        for c_id in self.cx.desc().controllers.keys() {
+            let scopes = self
                 .cx
-                .marked_sources(c, c.data_sources(), marker!(scopes))
+                .all_nodes_for_ctrl(*c_id)
+                .filter(|node| self.cx.has_marker(marker!(scopes), *node))
                 .collect::<Vec<_>>();
-            let stores_sinks = self
+            let stores = self
                 .cx
-                .marked_sinks(c.data_sinks(), marker!(stores))
+                .all_nodes_for_ctrl(*c_id)
+                .filter(|node| self.cx.has_marker(marker!(stores), *node))
                 .collect::<Vec<_>>();
-            let sens_srcs = self
+            let mut sensitives = self
                 .cx
-                .marked_sources(c, c.data_sources(), marker!(sensitive))
-                .collect::<Vec<_>>();
+                .all_nodes_for_ctrl(*c_id)
+                .filter(|node| self.cx.has_marker(marker!(sensitive), *node));
 
-            let controller_valid = sens_srcs.iter().all(|sens| {
-                stores_sinks.iter().all(|&store| {
-                    !(self.cx.flows_to(
-                        Some(*c_id),
-                        sens,
-                        &store.into(),
-                        paralegal_policy::EdgeType::Data,
-                    )) || (match store {
-                        DataSink::Argument { function: cs, .. } => {
-                            scopes_srcs.iter().any(|scope| {
+            let controller_valid = sensitives.all(|sens| {
+                stores.iter().all(|&store| {
+                    // sensitive flows to store implies some scope flows to store callsite
+                    !(self
+                        .cx
+                        .flows_to(sens, store, paralegal_policy::EdgeType::Data))
+                        || store.typ.as_call_site().is_some_and(|cs| {
+                            scopes.iter().any(|scope| {
                                 self.cx.flows_to(
-                                    Some(*c_id),
-                                    scope,
-                                    &cs.into(),
+                                    *scope,
+                                    Node {
+                                        ctrl_id: store.ctrl_id,
+                                        typ: cs.into(),
+                                    },
                                     paralegal_policy::EdgeType::Data,
                                 )
                             })
-                        }
-                        DataSink::Return => false, // TODO: maybe can scope the return?
-                    })
+                        })
                 })
             });
 
-            // print!(
-            //     "valid {:?}, controller {:?}, scopes_srcs {:?}, sens_srcs {:?}\n",
-            //     controller_valid, c_id, scopes_srcs, sens_srcs
-            // );
             assert!(controller_valid);
         }
     }
@@ -155,22 +149,41 @@ impl ScopedStorageProp {
 fn main() -> Result<()> {
     let ws_dir = std::env::args()
         .nth(1)
-        .ok_or_else(|| anyhow!("expected an argument"))?;
-    paralegal_policy::SPDGGenCommand::global()
-        .run(ws_dir)?
-        .with_context(|ctx| {
+        .ok_or_else(|| anyhow!("expected format: cargo run <path> [policy]"))?;
+    let prop_name = match std::env::args().nth(2) {
+        Some(n) => n,
+        None => "".to_owned(),
+    };
+
+    let prop: fn(Arc<Context>) -> Result<_> = match prop_name.as_str() {
+        "sc" => |ctx| {
             ctx.named_policy(Identifier::new_intern("Scoped Storage Policy"), |ctx| {
                 ScopedStorageProp::new(ctx).check();
                 Ok(())
             })
-        })
-    //     .ok_or_else(|| anyhow!("expected an argument"))?;
-    // paralegal_policy::SPDGGenCommand::global()
-    //     .run(ws_dir)?
-    //     .with_context(|ctx| {
-    //         ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
-    //             DeletionProp::new(ctx).check();
-    //             Ok(())
-    //         })
-    //     })
+        },
+        "del" => |ctx| {
+            ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
+                DeletionProp::new(ctx).check();
+                Ok(())
+            })
+        },
+        _ => |ctx| {
+            ctx.clone()
+                .named_policy(Identifier::new_intern("Scoped Storage Policy"), |ctx| {
+                    ScopedStorageProp::new(ctx).check();
+                    Ok(())
+                })
+                .and(
+                    ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
+                        DeletionProp::new(ctx).check();
+                        Ok(())
+                    }),
+                )
+        },
+    };
+
+    paralegal_policy::SPDGGenCommand::global()
+        .run(ws_dir.clone())?
+        .with_context(prop)
 }
