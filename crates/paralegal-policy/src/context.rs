@@ -1,4 +1,4 @@
-use std::{io::Write, process::exit, sync::Arc};
+use std::{io::Write, iter, process::exit, sync::Arc};
 
 use paralegal_spdg::{
     Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap,
@@ -8,7 +8,7 @@ use paralegal_spdg::{
 pub use paralegal_spdg::rustc_portable::DefId;
 
 use anyhow::{anyhow, bail, ensure, Result};
-use indexical::ToIndex;
+use indexical::{index_vec::Idx, ToIndex};
 use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
@@ -304,6 +304,94 @@ impl Context {
                 match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
                     Some(callsites) => callsites.iter().contains(cs),
                     None => false,
+                }
+            }
+        }
+    }
+
+    pub fn influencers(&self, sink: Node, edge_type: EdgeType) -> impl Iterator<Item = Node<'_>> {
+        let cf_id = &sink.ctrl_id;
+        let Some(sink_cs_or_ds) = sink.typ.as_call_site_or_data_sink() else {
+			return iter::empty::<Node>();
+		};
+
+        match edge_type {
+            EdgeType::Data => todo!(),
+            // self.flows_to[cf_id]
+            //     .data_flows_to
+            //     .rows()
+            //     .filter_map(|(src, row_set)| {
+            //         if row_set.contains(sink_cs_or_ds) {
+            //             Some(src)
+            //         } else {
+            //             None
+            //         }
+            //     })
+            //     .map(|idx| Node {
+            //         ctrl_id: *cf_id,
+            //         typ: self.flows_to[cf_id].sources.value(*idx).into::<NodeType>(),
+            //     }),
+
+            //     .row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
+            //     .iter()
+            //     .map(|cs| Node {
+            //         ctrl_id: src.ctrl_id,
+            //         typ: cs.into(),
+            //     }),
+            EdgeType::DataAndControl => todo!(),
+            // self.flows_to[cf_id]
+            //     .flows_to
+            //     .row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
+            //     .iter()
+            //     .map(|cs| Node {
+            //         ctrl_id: src.ctrl_id,
+            //         typ: cs.into(),
+            //     }),
+            EdgeType::Control => {
+                todo!();
+                // match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
+                //     Some(callsites) => callsites.iter().map(|cs| Node {
+                //         ctrl_id: src.ctrl_id,
+                //         typ: cs.into(),
+                //     }),
+                //     None => iter::empty::<Node>(),
+                // }
+            }
+        }
+    }
+
+    pub fn influencees(&self, src: Node, edge_type: EdgeType) -> impl Iterator<Item = &Node<'_>> {
+        let cf_id = &src.ctrl_id;
+        let Some(src_datasource) = src.typ.as_data_source() else {
+			return Vec::<Node>::new().iter();
+			// todo!()
+		};
+
+        match edge_type {
+            EdgeType::Data => self.flows_to[cf_id]
+                .data_flows_to
+                .row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
+                .iter()
+                .map(|cs| Node {
+                    ctrl_id: src.ctrl_id,
+                    typ: cs.into(),
+                }),
+            EdgeType::DataAndControl => self.flows_to[cf_id]
+                .flows_to
+                .row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
+                .iter()
+                .map(|cs| Node {
+                    ctrl_id: src.ctrl_id,
+                    typ: cs.into(),
+                }),
+            EdgeType::Control => {
+                match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
+                    Some(callsites) => callsites.iter().map(|cs| Node {
+                        ctrl_id: src.ctrl_id,
+                        typ: cs.into(),
+                    }),
+                    None => todo!(),
+                    // Vec::<Node>::new().iter(),
                 }
             }
         }
