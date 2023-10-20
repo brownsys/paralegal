@@ -41,7 +41,7 @@ pub enum EdgeType {
 }
 
 /// Data type representing nodes in the SPDG for a particular controller.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Node<'a> {
     /// ControllerId of the node.
     pub ctrl_id: ControllerId,
@@ -50,7 +50,7 @@ pub struct Node<'a> {
 }
 
 /// Enum identifying the different types of nodes in the SPDG
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum NodeType<'a> {
     /// Corresponds to [`DataSource::Argument`].
     ControllerArgument(&'a DataSource),
@@ -322,7 +322,18 @@ impl Context {
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
-        // TODO: check the type as well
+        if let Some(src) = node.typ.as_data_source() {
+            if let Some(typ) = &self.desc.controllers[&node.ctrl_id].types.get(&src) {
+                if typ.iter().any(|t| {
+                    self.marker_to_ids
+                        .get(&marker)
+                        .map(|markers| markers.iter().any(|(id, _)| id == t))
+                        .unwrap_or(false)
+                }) {
+                    return true;
+                }
+            }
+        }
 
         /// Return whether marker is on something with the given name's self or the argument at arg
         fn marker_on_argument(ctx: &Context, marker: Marker, name: DefId, arg: usize) -> bool {
@@ -337,6 +348,18 @@ impl Context {
                 })
                 .unwrap_or(false)
         }
+        /// Return whether marker is on something with the given name's self or the return
+        fn marker_on_return(ctx: &Context, marker: Marker, name: DefId) -> bool {
+            ctx.marker_to_ids
+                .get(&marker)
+                .map(|markers| {
+                    markers.iter().any(|(id, refinement)| {
+                        id == &name && (refinement.on_self() || refinement.on_return())
+                    })
+                })
+                .unwrap_or(false)
+        }
+
         match node.typ {
             NodeType::ControllerArgument(source) => match source {
                 DataSource::Argument(arg) => marker_on_argument(self, marker, node.ctrl_id, *arg),
@@ -344,15 +367,7 @@ impl Context {
                     panic!("impossible - CtrlArgument variant cannot be DataSource::FunctionCall")
                 }
             },
-            NodeType::CallSite(cs) => self
-                .marker_to_ids
-                .get(&marker)
-                .map(|markers| {
-                    markers.iter().any(|(id, refinement)| {
-                        id == &cs.function && (refinement.on_self() || refinement.on_return())
-                    })
-                })
-                .unwrap_or(false),
+            NodeType::CallSite(cs) => marker_on_return(self, marker, cs.function),
             NodeType::CallArgument(ds) => match ds {
                 DataSink::Argument { function, arg_slot } => {
                     marker_on_argument(self, marker, function.function, *arg_slot)
@@ -361,7 +376,7 @@ impl Context {
                     panic!("impossible - CallArgument variant cannot be DataSink::Return")
                 }
             },
-            NodeType::Return(_) => false, // TODO: complete
+            NodeType::Return(_) => marker_on_return(self, marker, node.ctrl_id),
         }
     }
 
@@ -381,6 +396,7 @@ impl Context {
                 ctrl_id,
                 typ: cs.into(),
             }))
+            .unique()
     }
 
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
@@ -599,9 +615,7 @@ impl AlwaysHappensBefore {
 #[test]
 fn test_context() {
     let ctx = crate::test_utils::test_ctx();
-    let input = Marker::new_intern("input");
-    let sink = Marker::new_intern("sink");
-    assert!(ctx.marked(input).any(|(id, _)| ctx
+    assert!(ctx.marked(Marker::new_intern("input")).any(|(id, _)| ctx
         .desc
         .def_info
         .get(id)
@@ -609,17 +623,33 @@ fn test_context() {
 
     let controller = ctx.find_by_name("controller").unwrap();
 
+    // The two Foo inputs are marked as input via the type, input and output of identity also marked via the type
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
-            .filter(|n| ctx.has_marker(input, *n))
+            .filter(|n| ctx.has_marker(Marker::new_intern("input"), *n))
             .count(),
-        0
+        4
     );
+    // Return of identity marked as src
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
-            .filter(|n| ctx.has_marker(sink, *n))
+            .filter(|n| ctx.has_marker(Marker::new_intern("src"), *n))
+            .count(),
+        1
+    );
+    // The sinks are marked via arguments
+    assert_eq!(
+        ctx.all_nodes_for_ctrl(controller)
+            .filter(|n| ctx.has_marker(Marker::new_intern("sink"), *n))
             .count(),
         2
+    );
+    // TODO: Below fails. Why?
+    assert_eq!(
+        ctx.all_nodes_for_ctrl(controller)
+            .filter(|n| ctx.has_marker(Marker::new_intern("ctrl"), *n))
+            .count(),
+        1
     );
 }
 
