@@ -22,9 +22,11 @@ fn cond(_f: Foo) -> bool {
 
 #[paralegal_flow::analyze]
 #[paralegal_flow::marker{ ctrl, return }]
-fn controller(a: Foo, b: Foo) {
+#[paralegal_flow::marker{ ctrl, arguments = [2] }]
+fn controller(a: Foo, b: Foo, c: bool) -> bool {
     sink1(a);
     sink2(identity(b));
+    c
 }
 
 #[paralegal_flow::analyze]
