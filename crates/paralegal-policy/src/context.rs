@@ -645,7 +645,6 @@ fn test_context() {
         2
     );
     // The 3rd argument and the return of the controller.
-    // TODO: Below fails. Why?
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
             .filter(|n| ctx.has_marker(Marker::new_intern("ctrl"), *n))
