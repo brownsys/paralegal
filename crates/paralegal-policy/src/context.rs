@@ -417,7 +417,7 @@ impl Context {
             .collect()
     }
 
-    /// Enforce that on every path from the `starting_points` to `is_terminal` a
+    /// Enforce that on every data flow path from the `starting_points` to `is_terminal` a
     /// node satisfying `is_checkpoint` is passed.
     ///
     /// Fails if `ctrl` is not found.
@@ -430,7 +430,6 @@ impl Context {
     /// always return the same result for the same input.
     pub fn always_happens_before<'a>(
         &self,
-        ctrl: ControllerId,
         starting_points: impl Iterator<Item = Node<'a>>,
         mut is_checkpoint: impl FnMut(Node) -> bool,
         mut is_terminal: impl FnMut(Node) -> bool,
@@ -443,14 +442,6 @@ impl Context {
 
         let started_with = queue.len();
 
-        let flow = &self
-            .desc()
-            .controllers
-            .get(&ctrl)
-            .ok_or_else(|| anyhow!("Controller not found"))?
-            .data_flow
-            .0;
-
         while let Some(current) = queue.pop() {
             if is_checkpoint(current) {
                 num_checkpointed += 1;
@@ -462,6 +453,15 @@ impl Context {
             let Some(datasource) = current.typ.as_data_source() else {
 				continue
 			};
+
+            let flow = &self
+                .desc()
+                .controllers
+                .get(&current.ctrl_id)
+                .ok_or_else(|| anyhow!("Controller not found"))?
+                .data_flow
+                .0;
+
             for sink in flow.get(&datasource).into_iter().flatten() {
                 let sink_node = Node {
                     ctrl_id: current.ctrl_id,
@@ -634,7 +634,6 @@ fn test_happens_before() -> Result<()> {
     let ctrl_name = ctx.find_by_name("happens_before_pass")?;
 
     let pass = ctx.always_happens_before(
-        ctrl_name,
         ctx.all_nodes_for_ctrl(ctrl_name)
             .filter(|n| ctx.has_marker(Identifier::new_intern("start"), *n)),
         |checkpoint| ctx.has_marker(Identifier::new_intern("bless"), checkpoint),
@@ -647,7 +646,6 @@ fn test_happens_before() -> Result<()> {
     let ctrl_name = ctx.find_by_name("happens_before_fail")?;
 
     let fail = ctx.always_happens_before(
-        ctrl_name,
         ctx.all_nodes_for_ctrl(ctrl_name)
             .filter(|n| ctx.has_marker(Identifier::new_intern("start"), *n)),
         |check| ctx.has_marker(Identifier::new_intern("bless"), check),
