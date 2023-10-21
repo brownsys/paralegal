@@ -420,7 +420,7 @@ impl Context {
     /// Enforce that on every data flow path from the `starting_points` to `is_terminal` a
     /// node satisfying `is_checkpoint` is passed.
     ///
-    /// Fails if `ctrl` is not found.
+    /// Fails if `ctrl_id` on a provided starting point is not found.
     ///
     /// The return value contains some statistics information about the
     /// traversal. The property holds if [`AlwaysHappensBefore::holds`] is true.
