@@ -32,14 +32,13 @@ type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 #[derive(Clone)]
 pub struct MarkerCtx<'tcx>(Rc<MarkerDatabase<'tcx>>);
 
-impl<'tcx> MarkerCtx<'tcx> {
-    /// Constructs a new marker database.
-    ///
-    /// This also loads any external annotations, as specified in the `args`.
-    pub fn new(tcx: TyCtxt<'tcx>, args: &'static Args) -> Self {
-        Self(Rc::new(MarkerDatabase::init(tcx, args)))
+impl<'tcx> From<MarkerDatabase<'tcx>> for MarkerCtx<'tcx> {
+    fn from(value: MarkerDatabase<'tcx>) -> Self {
+        Self(Rc::new(value))
     }
+}
 
+impl<'tcx> MarkerCtx<'tcx> {
     #[inline]
     fn tcx(&self) -> TyCtxt<'tcx> {
         self.0.tcx
@@ -57,8 +56,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn local_annotations(&self, def_id: LocalDefId) -> &[Annotation] {
         self.db()
             .local_annotations
-            .get(def_id, |_| self.retrieve_local_annotations_for(def_id))
-            .as_ref()
+            .get(&def_id)
             .map_or(&[], |o| o.as_slice())
     }
 
@@ -113,9 +111,8 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn local_annotations_found(&self) -> Vec<(LocalDefId, &[Annotation])> {
         self.db()
             .local_annotations
-            .items()
-            .into_iter()
-            .filter_map(|(k, v)| Some((k, (v.as_ref()?.as_slice()))))
+            .iter()
+            .filter_map(|(k, v)| Some((*k, (v.as_slice()))))
             .collect()
     }
 
@@ -188,35 +185,6 @@ impl<'tcx> MarkerCtx<'tcx> {
         false
     }
 
-    /// Retrieve and parse the local annotations for this item.
-    fn retrieve_local_annotations_for(&self, def_id: LocalDefId) -> LocalAnnotations {
-        let tcx = self.tcx();
-        let hir = tcx.hir();
-        let id = def_id.force_into_hir_id(tcx);
-        let mut sink_matches = vec![];
-        for a in hir.attrs(id) {
-            if let Some(i) = a.match_get_ref(&consts::MARKER_MARKER) {
-                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)));
-            } else if let Some(i) = a.match_get_ref(&consts::LABEL_MARKER) {
-                warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
-                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)))
-            } else if let Some(i) = a.match_get_ref(&consts::OTYPE_MARKER) {
-                sink_matches.extend(
-                    crate::ann_parse::otype_ann_match(i, tcx)
-                        .into_iter()
-                        .map(Annotation::OType),
-                );
-            } else if let Some(i) = a.match_get_ref(&consts::EXCEPTION_MARKER) {
-                sink_matches.push(Annotation::Exception(crate::ann_parse::match_exception(i)));
-            }
-        }
-        if sink_matches.is_empty() {
-            return None;
-        }
-
-        Some(Box::new(sink_matches))
-    }
-
     /// All the markers applied to this type and its subtypes.
     ///
     /// Returns `(ann, (ty, did))` tuples which are the marker annotation `ann`,
@@ -272,18 +240,12 @@ impl<'tcx> MarkerCtx<'tcx> {
         )
     }
 }
-
-/// We expect most local items won't have annotations. This structure is much
-/// smaller (8 bytes) than without the `Box` (24 Bytes).
-#[allow(clippy::box_collection)]
-type LocalAnnotations = Option<Box<Vec<Annotation>>>;
-
 /// The structure inside of [`MarkerCtx`].
-struct MarkerDatabase<'tcx> {
+pub struct MarkerDatabase<'tcx> {
     tcx: TyCtxt<'tcx>,
     /// Cache for parsed local annotations. They are created with
     /// [`MarkerCtx::retrieve_local_annotations_for`].
-    local_annotations: Cache<LocalDefId, LocalAnnotations>,
+    local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
     marker_reachable_cache: CopyCache<DefId, bool>,
@@ -293,13 +255,43 @@ struct MarkerDatabase<'tcx> {
 
 impl<'tcx> MarkerDatabase<'tcx> {
     /// Construct a new database, loading external markers.
-    fn init(tcx: TyCtxt<'tcx>, args: &'static Args) -> Self {
+    pub fn init(tcx: TyCtxt<'tcx>, args: &'static Args) -> Self {
         Self {
             tcx,
-            local_annotations: Cache::default(),
+            local_annotations: HashMap::default(),
             external_annotations: resolve_external_markers(args, tcx),
             marker_reachable_cache: Default::default(),
             config: args.marker_control(),
+        }
+    }
+
+    /// Retrieve and parse the local annotations for this item.
+    pub fn retrieve_local_annotations_for(&mut self, def_id: LocalDefId) {
+        let tcx = self.tcx;
+        let hir = tcx.hir();
+        let id = def_id.force_into_hir_id(tcx);
+        let mut sink_matches = vec![];
+        for a in hir.attrs(id) {
+            if let Some(i) = a.match_get_ref(&consts::MARKER_MARKER) {
+                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)));
+            } else if let Some(i) = a.match_get_ref(&consts::LABEL_MARKER) {
+                warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
+                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)))
+            } else if let Some(i) = a.match_get_ref(&consts::OTYPE_MARKER) {
+                sink_matches.extend(
+                    crate::ann_parse::otype_ann_match(i, tcx)
+                        .into_iter()
+                        .map(Annotation::OType),
+                );
+            } else if let Some(i) = a.match_get_ref(&consts::EXCEPTION_MARKER) {
+                sink_matches.push(Annotation::Exception(crate::ann_parse::match_exception(i)));
+            }
+        }
+        if !sink_matches.is_empty() {
+            assert!(self
+                .local_annotations
+                .insert(def_id, sink_matches)
+                .is_none());
         }
     }
 }

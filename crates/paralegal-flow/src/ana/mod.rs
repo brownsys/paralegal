@@ -5,7 +5,8 @@
 use std::borrow::Cow;
 
 use crate::{
-    dbg, desc::*, ir::*, rust::*, utils::*, Either, HashMap, HashSet, LogLevelConfig, Symbol,
+    dbg, desc::*, ir::*, rust::*, utils::*, Either, HashMap, HashSet, LogLevelConfig, MarkerCtx,
+    Symbol,
 };
 
 use hir::def_id::DefId;
@@ -23,15 +24,19 @@ pub mod non_transitive_aliases;
 pub type SerializableInlinedGraph<L> =
     petgraph::graphmap::GraphMap<regal::SimpleLocation<L>, inline::Edge, petgraph::Directed>;
 
-impl<'tcx> CollectingVisitor<'tcx> {
-    /// Driver function. Performs the data collection via visit, then calls
-    /// [`Self::analyze`] to construct the Forge friendly description of all
-    /// endpoints.
-    pub fn run(mut self) -> Result<ProgramDescription> {
-        let tcx = self.tcx;
-        tcx.hir().visit_all_item_likes_in_crate(&mut self);
-        //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
-        self.analyze()
+pub struct SPDGGenerator<'tcx> {
+    pub marker_ctx: MarkerCtx<'tcx>,
+    pub opts: &'static crate::Args,
+    pub tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> SPDGGenerator<'tcx> {
+    pub fn new(marker_ctx: MarkerCtx<'tcx>, opts: &'static crate::Args, tcx: TyCtxt<'tcx>) -> Self {
+        Self {
+            marker_ctx,
+            opts,
+            tcx,
+        }
     }
 
     /// Perform the analysis for one `#[paralegal_flow::analyze]` annotated function and
@@ -40,7 +45,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         &self,
         //_hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
-        target: FnToAnalyze,
+        target: &FnToAnalyze,
         inliner: &inline::Inliner<'tcx>,
     ) -> anyhow::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
@@ -241,9 +246,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
-    fn analyze(mut self) -> Result<ProgramDescription> {
-        let mut targets = std::mem::take(&mut self.functions_to_analyze);
-
+    pub fn analyze(&self, targets: &[FnToAnalyze]) -> Result<ProgramDescription> {
         if let LogLevelConfig::Targeted(s) = self.opts.debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
@@ -266,7 +269,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         let result = //crate::sah::HashVerifications::with(|hash_verifications| {
             targets
-                .drain(..)
+                .iter()
                 .map(|desc| {
                     let target_name = desc.name();
                     with_reset_level_if_target(self.opts, target_name, || {

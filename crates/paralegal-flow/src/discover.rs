@@ -2,7 +2,10 @@
 //!
 //! Items of interest is anything annotated with one of the `paralegal_flow::`
 //! annotations.
-use crate::{consts, desc::*, rust::*, utils::*, HashMap, MarkerCtx};
+use crate::{
+    ana::SPDGGenerator, consts, desc::*, marker_db::MarkerDatabase, rust::*, utils::*, HashMap,
+    MarkerCtx,
+};
 
 use hir::{
     def_id::DefId,
@@ -11,6 +14,8 @@ use hir::{
 };
 use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{symbol::Ident, Span, Symbol};
+
+use anyhow::Result;
 
 /// Values of this type can be matched against Rust attributes
 pub type AttrMatchT = Vec<Symbol>;
@@ -36,7 +41,7 @@ pub struct CollectingVisitor<'tcx> {
     /// later perform the analysis
     pub functions_to_analyze: Vec<FnToAnalyze>,
 
-    pub marker_ctx: MarkerCtx<'tcx>,
+    pub marker_ctx: MarkerDatabase<'tcx>,
 }
 
 /// A function we will be targeting to analyze with
@@ -54,17 +59,28 @@ impl FnToAnalyze {
 }
 
 impl<'tcx> CollectingVisitor<'tcx> {
-    pub(crate) fn new(
-        tcx: TyCtxt<'tcx>,
-        opts: &'static crate::Args,
-        marker_ctx: MarkerCtx<'tcx>,
-    ) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         Self {
             tcx,
             opts,
             functions_to_analyze: vec![],
-            marker_ctx,
+            marker_ctx: MarkerDatabase::init(tcx, opts),
         }
+    }
+
+    fn into_generator(self) -> SPDGGenerator<'tcx> {
+        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx)
+    }
+
+    /// Driver function. Performs the data collection via visit, then calls
+    /// [`Self::analyze`] to construct the Forge friendly description of all
+    /// endpoints.
+    pub fn run(mut self) -> Result<ProgramDescription> {
+        let tcx = self.tcx;
+        tcx.hir().visit_all_item_likes_in_crate(&mut self);
+        //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
+        let mut targets = std::mem::take(&mut self.functions_to_analyze);
+        self.into_generator().analyze(&targets)
     }
 
     /// Does the function named by this id have the `paralegal_flow::analyze` annotation
@@ -85,9 +101,9 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
     }
 
     fn visit_id(&mut self, hir_id: rustc_hir::HirId) {
-        if !self.opts.marker_control().lazy_local_markers()
-            && let Some(owner_id) = hir_id.as_owner() {
-            self.marker_ctx.is_locally_marked(owner_id.def_id);
+        if let Some(owner_id) = hir_id.as_owner() {
+            self.marker_ctx
+                .retrieve_local_annotations_for(owner_id.def_id);
         }
     }
 
