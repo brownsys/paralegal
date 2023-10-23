@@ -1,7 +1,7 @@
-//! MIR visitor ([`CollectingVisitor`]) that discovers and stores all items of interest.
+//! MIR visitor ([`CollectingVisitor`]) that populates the [`MarkerDatabase`]
+//! and discovers functions marked for analysis.
 //!
-//! Items of interest is anything annotated with one of the `paralegal_flow::`
-//! annotations.
+//! Essentially this discovers all local `paralegal_flow::*` annotations.
 use crate::{
     ana::SPDGGenerator, consts, desc::*, marker_db::MarkerDatabase, rust::*, utils::*, HashMap,
 };
@@ -25,7 +25,6 @@ pub type AttrMatchT = Vec<Symbol>;
 /// the function `DefId`
 pub type CallSiteAnnotations = HashMap<DefId, Vec<Annotation>>;
 
-#[allow(clippy::type_complexity)]
 /// This visitor traverses the items in the analyzed crate to discover
 /// annotations and analysis targets and store them in this struct. After the
 /// discovery phase [`Self::analyze`] is used to drive the
@@ -67,6 +66,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
         }
     }
 
+    /// After running the discovery with `visit_all_item_likes_in_crate`, create
+    /// the read-only [`SPDGGenerator`] upon which the analysis will run.
     fn into_generator(self) -> SPDGGenerator<'tcx> {
         SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx)
     }
@@ -77,7 +78,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
     pub fn run(mut self) -> Result<ProgramDescription> {
         let tcx = self.tcx;
         tcx.hir().visit_all_item_likes_in_crate(&mut self);
-        //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
         let targets = std::mem::take(&mut self.functions_to_analyze);
         self.into_generator().analyze(&targets)
     }
@@ -99,6 +99,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
         self.tcx.hir()
     }
 
+    /// Check if this id has annotations and if so register them in the marker database.
     fn visit_id(&mut self, hir_id: rustc_hir::HirId) {
         if let Some(owner_id) = hir_id.as_owner() {
             self.marker_ctx

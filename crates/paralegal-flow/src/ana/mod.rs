@@ -1,6 +1,8 @@
 //! Data-and control flow analyzer and inliner.
 //!
-//!
+//! Analysis starts with the construction of [`SPDGGenerator`] from a
+//! [`CollectingVisitor`](crate::discover::CollectingVisitor) and then calling
+//! [`analyze`](SPDGGenerator::analyze).
 
 use std::borrow::Cow;
 
@@ -24,6 +26,9 @@ pub mod non_transitive_aliases;
 pub type SerializableInlinedGraph<L> =
     petgraph::graphmap::GraphMap<regal::SimpleLocation<L>, inline::Edge, petgraph::Directed>;
 
+/// Read-only database of information the analysis needs.
+///
+/// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
 pub struct SPDGGenerator<'tcx> {
     pub marker_ctx: MarkerCtx<'tcx>,
     pub opts: &'static crate::Args,

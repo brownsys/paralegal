@@ -1,5 +1,13 @@
 //! Central repository for information about markers (and annotations).
 //!
+//! The database ([`MarkerDatabase`]) is initialized with
+//! ([`init`](`MarkerDatabase::init`)) and populated with local markers by
+//! [`CollectingVisitor`](crate::discover::CollectingVisitor) by calls to
+//! ([`retrieve_local_annotations_for`](MarkerDatabase::retrieve_local_annotations_for)).
+//! Then it's transformed into a read-only [`MarkerCtx`] via [`From::from`]. The
+//! [`MarkerCtx`] is a cheap pointer to the database and responsible for
+//! answering queries about markers as the main analysis runs.
+//!
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
