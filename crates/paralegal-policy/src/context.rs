@@ -8,7 +8,7 @@ use paralegal_spdg::{
 pub use paralegal_spdg::rustc_portable::DefId;
 
 use anyhow::{anyhow, bail, ensure, Result};
-use indexical::{impls::BitvecArcIndexMatrix, IndexMatrix, ToIndex};
+use indexical::{impls::BitvecArcIndexMatrix, ToIndex};
 use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
