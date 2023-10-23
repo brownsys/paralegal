@@ -10,10 +10,8 @@ fn dummy_policy(ctx: Arc<Context>) -> Result<()> {
 fn main() -> Result<()> {
     let dir = "../file-db-example/";
     let mut cmd = paralegal_policy::SPDGGenCommand::global();
-    cmd.get_command().args([
-        "--external-annotations",
-        "external-annotations.toml",
-    ]);
+    cmd.get_command()
+        .args(["--external-annotations", "external-annotations.toml"]);
     cmd.run(dir)?.with_context(dummy_policy)?;
     println!("Policy successful");
     Ok(())
