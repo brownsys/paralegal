@@ -93,6 +93,13 @@ impl DeletionProp {
     }
 }
 
+fn del_policy(ctx: Arc<Context>) -> Result<()> {
+    ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
+        DeletionProp::new(ctx).check();
+        Ok(())
+    })
+}
+
 /// Storing data in the database must be associated to a user. This is
 /// necessary for e.g. the deletion to work.
 pub struct ScopedStorageProp {
@@ -128,7 +135,8 @@ impl ScopedStorageProp {
                         .cx
                         .flows_to(sens, store, paralegal_policy::EdgeType::Data))
                         || store.typ.as_call_site().is_some_and(|cs| {
-                            scopes.iter().any(|scope| {
+                            // The sink that scope flows to may be another CallArgument attached to the store's CallSite, it doesn't need to be store itself.
+                            let found_scope = scopes.iter().any(|scope| {
                                 self.cx.flows_to(
                                     *scope,
                                     Node {
@@ -137,51 +145,53 @@ impl ScopedStorageProp {
                                     },
                                     paralegal_policy::EdgeType::Data,
                                 )
-                            })
+                            });
+                            assert_error!(
+                                self.cx,
+                                found_scope,
+                                format!(
+                                    "Stored sensitive isn't scoped. sensitive {} stored here: {}",
+                                    self.cx.describe_node(sens),
+                                    self.cx.describe_node(store)
+                                )
+                            );
+                            found_scope
                         })
                 })
             });
 
-            assert!(controller_valid);
+            assert_error!(
+                self.cx,
+                controller_valid,
+                format!(
+                    "Violation detected for controller: {}",
+                    self.cx.describe_def(*c_id)
+                ),
+            );
         }
     }
+}
+
+fn sc_policy(ctx: Arc<Context>) -> Result<()> {
+    ctx.named_policy(Identifier::new_intern("Scoped Storage Policy"), |ctx| {
+        ScopedStorageProp::new(ctx).check();
+        Ok(())
+    })
 }
 
 fn main() -> Result<()> {
     let ws_dir = std::env::args()
         .nth(1)
         .ok_or_else(|| anyhow!("expected format: cargo run <path> [policy]"))?;
-    let prop_name = match std::env::args().nth(2) {
-        Some(n) => n,
-        None => "".to_owned(),
-    };
+    let prop_name = std::env::args().nth(2);
 
-    let prop: fn(Arc<Context>) -> Result<_> = match prop_name.as_str() {
-        "sc" => |ctx| {
-            ctx.named_policy(Identifier::new_intern("Scoped Storage Policy"), |ctx| {
-                ScopedStorageProp::new(ctx).check();
-                Ok(())
-            })
+    let prop = match prop_name {
+        Some(s) => match s.as_str() {
+            "sc" => sc_policy,
+            "del" => del_policy,
+            _ => |_| Err(anyhow!("don't recognize inputted property name")),
         },
-        "del" => |ctx| {
-            ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
-                DeletionProp::new(ctx).check();
-                Ok(())
-            })
-        },
-        _ => |ctx| {
-            ctx.clone()
-                .named_policy(Identifier::new_intern("Scoped Storage Policy"), |ctx| {
-                    ScopedStorageProp::new(ctx).check();
-                    Ok(())
-                })
-                .and(
-                    ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
-                        DeletionProp::new(ctx).check();
-                        Ok(())
-                    }),
-                )
-        },
+        None => |ctx: Arc<Context>| sc_policy(ctx.clone()).and(del_policy(ctx)),
     };
 
     paralegal_policy::SPDGGenCommand::global()
