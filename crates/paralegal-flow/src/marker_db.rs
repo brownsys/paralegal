@@ -13,7 +13,7 @@ use crate::{
     },
     DefId, HashMap, LocalDefId, TyCtxt,
 };
-use rustc_utils::cache::{Cache, CopyCache};
+use rustc_utils::cache::CopyCache;
 
 use std::rc::Rc;
 
@@ -112,7 +112,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.db()
             .local_annotations
             .iter()
-            .filter_map(|(k, v)| Some((*k, (v.as_slice()))))
+            .map(|(k, v)| (*k, (v.as_slice())))
             .collect()
     }
 

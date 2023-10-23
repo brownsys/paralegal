@@ -4,7 +4,6 @@
 //! annotations.
 use crate::{
     ana::SPDGGenerator, consts, desc::*, marker_db::MarkerDatabase, rust::*, utils::*, HashMap,
-    MarkerCtx,
 };
 
 use hir::{
@@ -79,7 +78,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         let tcx = self.tcx;
         tcx.hir().visit_all_item_likes_in_crate(&mut self);
         //println!("{:?}\n{:?}\n{:?}", self.marked_sinks, self.marked_sources, self.functions_to_analyze);
-        let mut targets = std::mem::take(&mut self.functions_to_analyze);
+        let targets = std::mem::take(&mut self.functions_to_analyze);
         self.into_generator().analyze(&targets)
     }
 

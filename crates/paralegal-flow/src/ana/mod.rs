@@ -14,7 +14,7 @@ use mir::Location;
 
 use anyhow::Result;
 
-use super::discover::{CallSiteAnnotations, CollectingVisitor, FnToAnalyze};
+use super::discover::{CallSiteAnnotations, FnToAnalyze};
 
 pub mod algebra;
 pub mod df;

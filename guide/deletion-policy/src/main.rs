@@ -13,7 +13,6 @@ fn main() -> Result<()> {
     cmd.get_command().args([
         "--external-annotations",
         "external-annotations.toml",
-        "--eager-local-markers",
     ]);
     cmd.run(dir)?.with_context(dummy_policy)?;
     println!("Policy successful");
