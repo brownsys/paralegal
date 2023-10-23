@@ -438,37 +438,43 @@ impl Context {
         let mut num_reached = 0;
         let mut num_checkpointed = 0;
 
-        let mut queue = starting_points.collect::<Vec<_>>();
+        // Package nodes with a reference to their controller's dataflow for efficiency.
+        struct NodeWithFlow<'a> {
+            node: Node<'a>,
+            flow: &'a HashMap<DataSource, HashSet<DataSink>>,
+        }
+
+        let mut queue = starting_points
+            .map(|n| NodeWithFlow {
+                node: n,
+                flow: &self.desc().controllers.get(&n.ctrl_id).unwrap().data_flow.0,
+            })
+            .collect::<Vec<_>>();
 
         let started_with = queue.len();
 
         while let Some(current) = queue.pop() {
-            if is_checkpoint(current) {
+            if is_checkpoint(current.node) {
                 num_checkpointed += 1;
                 continue;
-            } else if is_terminal(current) {
+            } else if is_terminal(current.node) {
                 num_reached += 1;
                 continue;
             }
-            let Some(datasource) = current.typ.as_data_source() else {
+            let Some(datasource) = current.node.typ.as_data_source() else {
 				continue
 			};
 
-            let flow = &self
-                .desc()
-                .controllers
-                .get(&current.ctrl_id)
-                .ok_or_else(|| anyhow!("Controller not found"))?
-                .data_flow
-                .0;
-
-            for sink in flow.get(&datasource).into_iter().flatten() {
+            for sink in current.flow.get(&datasource).into_iter().flatten() {
                 let sink_node = Node {
-                    ctrl_id: current.ctrl_id,
+                    ctrl_id: current.node.ctrl_id,
                     typ: sink.into(),
                 };
                 if seen.insert(sink_node) {
-                    queue.push(sink_node);
+                    queue.push(NodeWithFlow {
+                        node: sink_node,
+                        flow: current.flow,
+                    });
                 }
             }
         }
