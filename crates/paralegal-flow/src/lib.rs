@@ -169,8 +169,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
-                let marker_ctx = MarkerCtx::new(tcx, self.opts);
-                let desc = discover::CollectingVisitor::new(tcx, self.opts, marker_ctx).run()?;
+                let desc = discover::CollectingVisitor::new(tcx, self.opts).run()?;
                 if self.opts.dbg().dump_serialized_flow_graph() {
                     serde_json::to_writer(
                         &mut std::fs::OpenOptions::new()
