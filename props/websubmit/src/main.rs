@@ -1,10 +1,10 @@
 extern crate anyhow;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 
 use paralegal_policy::{
-    assert_error, paralegal_spdg::Identifier, Context, DefId, Marker, Node, PolicyContext,
+    assert_error, paralegal_spdg::Identifier, Context, DefId, Marker, PolicyContext,
 };
 
 macro_rules! marker {
