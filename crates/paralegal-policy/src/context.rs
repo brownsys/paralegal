@@ -49,6 +49,19 @@ pub struct Node<'a> {
     pub typ: NodeType<'a>,
 }
 
+impl<'a> Node<'a> {
+    /// Transform a Node into the associated Node with typ [`NodeType::CallSite`]
+    pub fn associated_call_site(self) -> Option<Node<'a>> {
+        match self.typ.as_call_site() {
+            Some(cs) => Some(Node {
+                ctrl_id: self.ctrl_id,
+                typ: NodeType::CallSite(cs),
+            }),
+            None => None,
+        }
+    }
+}
+
 /// Enum identifying the different types of nodes in the SPDG
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeType<'a> {

@@ -134,15 +134,13 @@ impl ScopedStorageProp {
                     !(self
                         .cx
                         .flows_to(sens, store, paralegal_policy::EdgeType::Data))
-                        || store.typ.as_call_site().is_some_and(|cs| {
-                            // The sink that scope flows to may be another CallArgument attached to the store's CallSite, it doesn't need to be store itself.
+                        || 
+						// The sink that scope flows to may be another CallArgument attached to the store's CallSite, it doesn't need to be store itself.
+						store.associated_call_site().is_some_and(|store_callsite| {
                             let found_scope = scopes.iter().any(|scope| {
                                 self.cx.flows_to(
                                     *scope,
-                                    Node {
-                                        ctrl_id: store.ctrl_id,
-                                        typ: cs.into(),
-                                    },
+                                    store_callsite,
                                     paralegal_policy::EdgeType::Data,
                                 )
                             });
