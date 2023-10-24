@@ -466,7 +466,7 @@ impl Context {
         mut is_checkpoint: impl FnMut(Node) -> bool,
         mut is_terminal: impl FnMut(Node) -> bool,
     ) -> Result<AlwaysHappensBefore> {
-        let mut seen = HashSet::<Node>::new();
+        let mut seen = HashSet::<&DataSink>::new();
         let mut num_reached = 0;
         let mut num_checkpointed = 0;
 
@@ -474,11 +474,12 @@ impl Context {
             .filter_map(|n| match n.typ.as_data_source() {
                 Some(ds) => Some((
                     ds,
+                    n.ctrl_id,
                     &self.desc().controllers.get(&n.ctrl_id).unwrap().data_flow.0,
                 )),
                 None => {
                     assert_warning!(
-                        self,
+                        *self,
                         false,
                         format!(
                             "found starting point {:?} that cannot be converted to a datasource",
@@ -492,28 +493,36 @@ impl Context {
 
         let started_with = queue.len();
 
-        while let Some(current) = queue.pop() {
-            if is_checkpoint(current.node) {
+        // Return whether node is checkpoint or terminal and increment those respective counters
+        let mut check_node = |node: Node| -> bool {
+            if is_checkpoint(node) {
                 num_checkpointed += 1;
-                continue;
-            } else if is_terminal(current.node) {
+                return true;
+            } else if is_terminal(node) {
                 num_reached += 1;
+                return true;
+            }
+            false
+        };
+
+        while let Some(current) = queue.pop() {
+            if check_node(Node {
+                ctrl_id: current.1,
+                typ: (&current.0).into(),
+            }) {
                 continue;
             }
-            let Some(datasource) = current.node.typ.as_data_source() else {
-				continue
-			};
 
-            for sink in current.flow.get(&datasource).into_iter().flatten() {
-                let sink_node = Node {
-                    ctrl_id: current.node.ctrl_id,
+            for sink in current.2.get(&current.0).into_iter().flatten() {
+                if check_node(Node {
+                    ctrl_id: current.1,
                     typ: sink.into(),
-                };
-                if seen.insert(sink_node) {
-                    queue.push(NodeWithFlow {
-                        node: sink_node,
-                        flow: current.flow,
-                    });
+                }) {
+                    continue;
+                } else if let DataSink::Argument { function, .. } = sink {
+                    if seen.insert(sink) {
+                        queue.push((function.clone().into(), current.1, current.2));
+                    }
                 }
             }
         }
