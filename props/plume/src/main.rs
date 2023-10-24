@@ -1,48 +1,12 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use paralegal_policy::{
-    paralegal_spdg::{rustc_portable::DefId, DefKind},
-    Context, Diagnostics, Marker,
-};
+use paralegal_policy::{Context, Diagnostics, Marker};
 
 macro_rules! marker {
     ($id:ident) => {
         Marker::new_intern(stringify!($id))
     };
-}
-
-struct DisplayDef<'a> {
-    def_id: DefId,
-    ctx: &'a Context,
-}
-
-impl<'a> std::fmt::Display for DisplayDef<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use std::fmt::Write;
-        let info = &self.ctx.desc().def_info[&self.def_id];
-        f.write_str(match info.kind {
-            DefKind::Type => "type",
-            DefKind::Function => "function",
-        })?;
-        f.write_str(" `")?;
-        for segment in &info.path {
-            f.write_str(segment.as_str())?;
-            f.write_str("::")?;
-        }
-        f.write_str(info.name.as_str())?;
-        f.write_char('`')
-    }
-}
-
-trait ContextExt {
-    fn describe_def(&self, def_id: DefId) -> DisplayDef;
-}
-
-impl ContextExt for Context {
-    fn describe_def(&self, def_id: DefId) -> DisplayDef {
-        DisplayDef { ctx: self, def_id }
-    }
 }
 
 fn check(ctx: Arc<Context>) -> Result<()> {
@@ -95,7 +59,6 @@ fn main() -> Result<()> {
         "--inline-elision",
         "--target",
         "plume_models",
-        "--eager-local-markers",
         "--",
         "--no-default-features",
         "--features",

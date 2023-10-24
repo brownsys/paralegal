@@ -41,7 +41,7 @@ pub enum EdgeType {
 }
 
 /// Data type representing nodes in the SPDG for a particular controller.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Node<'a> {
     /// ControllerId of the node.
     pub ctrl_id: ControllerId,
@@ -49,8 +49,18 @@ pub struct Node<'a> {
     pub typ: NodeType<'a>,
 }
 
+impl<'a> Node<'a> {
+    /// Transform a Node into the associated Node with typ [`NodeType::CallSite`]
+    pub fn associated_call_site(self) -> Option<Node<'a>> {
+        self.typ.as_call_site().map(|cs| Node {
+            ctrl_id: self.ctrl_id,
+            typ: NodeType::CallSite(cs),
+        })
+    }
+}
+
 /// Enum identifying the different types of nodes in the SPDG
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum NodeType<'a> {
     /// Corresponds to [`DataSource::Argument`].
     ControllerArgument(&'a DataSource),
@@ -458,9 +468,26 @@ impl Context {
             .flat_map(|v| v.iter())
     }
 
+    /// Get the type(s) of a Node.
+    pub fn get_node_types(&self, node: &Node) -> Option<&HashSet<DefId>> {
+        match node.typ.as_data_source() {
+            None => None,
+            Some(src) => self.desc.controllers[&node.ctrl_id].types.get(&src),
+        }
+    }
+
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
-        // TODO: check the type as well
+        if let Some(types) = self.get_node_types(&node) {
+            if types.iter().any(|t| {
+                self.marker_to_ids
+                    .get(&marker)
+                    .map(|markers| markers.iter().any(|(id, _)| id == t))
+                    .unwrap_or(false)
+            }) {
+                return true;
+            }
+        }
 
         /// Return whether marker is on something with the given name's self or the argument at arg
         fn marker_on_argument(ctx: &Context, marker: Marker, name: DefId, arg: usize) -> bool {
@@ -475,6 +502,18 @@ impl Context {
                 })
                 .unwrap_or(false)
         }
+        /// Return whether marker is on something with the given name's self or the return
+        fn marker_on_return(ctx: &Context, marker: Marker, name: DefId) -> bool {
+            ctx.marker_to_ids
+                .get(&marker)
+                .map(|markers| {
+                    markers.iter().any(|(id, refinement)| {
+                        id == &name && (refinement.on_self() || refinement.on_return())
+                    })
+                })
+                .unwrap_or(false)
+        }
+
         match node.typ {
             NodeType::ControllerArgument(source) => match source {
                 DataSource::Argument(arg) => marker_on_argument(self, marker, node.ctrl_id, *arg),
@@ -482,15 +521,7 @@ impl Context {
                     panic!("impossible - CtrlArgument variant cannot be DataSource::FunctionCall")
                 }
             },
-            NodeType::CallSite(cs) => self
-                .marker_to_ids
-                .get(&marker)
-                .map(|markers| {
-                    markers.iter().any(|(id, refinement)| {
-                        id == &cs.function && (refinement.on_self() || refinement.on_return())
-                    })
-                })
-                .unwrap_or(false),
+            NodeType::CallSite(cs) => marker_on_return(self, marker, cs.function),
             NodeType::CallArgument(ds) => match ds {
                 DataSink::Argument { function, arg_slot } => {
                     marker_on_argument(self, marker, function.function, *arg_slot)
@@ -499,7 +530,7 @@ impl Context {
                     panic!("impossible - CallArgument variant cannot be DataSink::Return")
                 }
             },
-            NodeType::Return(_) => false, // TODO: complete
+            NodeType::Return(_) => marker_on_return(self, marker, node.ctrl_id),
         }
     }
 
@@ -519,6 +550,7 @@ impl Context {
                 ctrl_id,
                 typ: cs.into(),
             }))
+            .unique()
     }
 
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
@@ -650,6 +682,80 @@ impl Context {
     pub fn all_controllers(&self) -> impl Iterator<Item = (ControllerId, &Ctrl)> {
         self.desc().controllers.iter().map(|(k, v)| (*k, v))
     }
+
+    /// Returns a DisplayDef for the given def_id
+    pub fn describe_def(&self, def_id: DefId) -> DisplayDef {
+        DisplayDef { ctx: self, def_id }
+    }
+
+    /// Returns a DisplayNode for the given Node
+    pub fn describe_node<'a>(&'a self, node: Node<'a>) -> DisplayNode<'a> {
+        DisplayNode { ctx: self, node }
+    }
+}
+
+/// Provide display trait for DefId in a Context.
+pub struct DisplayDef<'a> {
+    /// DefId to display.
+    pub def_id: DefId,
+    /// Context for the DefId.
+    pub ctx: &'a Context,
+}
+
+impl<'a> std::fmt::Display for DisplayDef<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use std::fmt::Write;
+        let info = &self.ctx.desc().def_info[&self.def_id];
+        f.write_str(match info.kind {
+            DefKind::Type => "type",
+            DefKind::Function => "function",
+        })?;
+        f.write_str(" `")?;
+        for segment in &info.path {
+            f.write_str(segment.as_str())?;
+            f.write_str("::")?;
+        }
+        f.write_str(info.name.as_str())?;
+        f.write_char('`')
+    }
+}
+
+/// Provide display trait for Node in a Context.
+pub struct DisplayNode<'a> {
+    /// Node to display.
+    pub node: Node<'a>,
+    /// Context for the Node.
+    pub ctx: &'a Context,
+}
+
+impl<'a> std::fmt::Display for DisplayNode<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Controller:")?;
+        self.ctx.describe_def(self.node.ctrl_id).fmt(f)?;
+        f.write_str("\n")?;
+
+        match self.node.typ {
+            NodeType::ControllerArgument(ds) => match ds {
+                DataSource::FunctionCall(_) => panic!("impossible"),
+                DataSource::Argument(pos) => {
+                    f.write_fmt(format_args!("ControllerArgument:{:}", pos))
+                }
+            },
+            NodeType::CallSite(cs) => {
+                f.write_str("CallSite:")?;
+                self.ctx.describe_def(cs.function).fmt(f)
+            }
+            NodeType::CallArgument(ds) => match ds {
+                DataSink::Argument { function, arg_slot } => {
+                    f.write_str("CallArgument:")?;
+                    self.ctx.describe_def(function.function).fmt(f)?;
+                    f.write_fmt(format_args!(":{:}", arg_slot))
+                }
+                DataSink::Return => panic!("impossible"),
+            },
+            NodeType::Return(_) => f.write_str("Return"),
+        }
+    }
 }
 
 /// Statistics about the result of running [`Context::always_happens_before`]
@@ -737,9 +843,7 @@ impl AlwaysHappensBefore {
 #[test]
 fn test_context() {
     let ctx = crate::test_utils::test_ctx();
-    let input = Marker::new_intern("input");
-    let sink = Marker::new_intern("sink");
-    assert!(ctx.marked(input).any(|(id, _)| ctx
+    assert!(ctx.marked(Marker::new_intern("input")).any(|(id, _)| ctx
         .desc
         .def_info
         .get(id)
@@ -747,15 +851,31 @@ fn test_context() {
 
     let controller = ctx.find_by_name("controller").unwrap();
 
+    // The two Foo inputs are marked as input via the type, input and output of identity also marked via the type
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
-            .filter(|n| ctx.has_marker(input, *n))
+            .filter(|n| ctx.has_marker(Marker::new_intern("input"), *n))
             .count(),
-        0
+        4
     );
+    // Return of identity marked as src
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
-            .filter(|n| ctx.has_marker(sink, *n))
+            .filter(|n| ctx.has_marker(Marker::new_intern("src"), *n))
+            .count(),
+        1
+    );
+    // The sinks are marked via arguments
+    assert_eq!(
+        ctx.all_nodes_for_ctrl(controller)
+            .filter(|n| ctx.has_marker(Marker::new_intern("sink"), *n))
+            .count(),
+        2
+    );
+    // The 3rd argument and the return of the controller.
+    assert_eq!(
+        ctx.all_nodes_for_ctrl(controller)
+            .filter(|n| ctx.has_marker(Marker::new_intern("ctrl"), *n))
             .count(),
         2
     );
