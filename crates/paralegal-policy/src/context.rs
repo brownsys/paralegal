@@ -52,13 +52,10 @@ pub struct Node<'a> {
 impl<'a> Node<'a> {
     /// Transform a Node into the associated Node with typ [`NodeType::CallSite`]
     pub fn associated_call_site(self) -> Option<Node<'a>> {
-        match self.typ.as_call_site() {
-            Some(cs) => Some(Node {
+        self.typ.as_call_site().map(|cs| Node {
                 ctrl_id: self.ctrl_id,
                 typ: NodeType::CallSite(cs),
-            }),
-            None => None,
-        }
+            })
     }
 }
 

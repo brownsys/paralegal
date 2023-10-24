@@ -93,8 +93,8 @@ impl DeletionProp {
     }
 }
 
-fn del_policy(ctx: Arc<Context>) -> Result<()> {
-    ctx.named_policy(Identifier::new_intern("Deletion Policy"), |ctx| {
+fn run_del_policy(ctx: Arc<Context>) -> Result<()> {
+    ctx.named_policy(Identifier::new_intern("Deletion"), |ctx| {
         DeletionProp::new(ctx).check();
         Ok(())
     })
@@ -134,7 +134,7 @@ impl ScopedStorageProp {
                     !(self
                         .cx
                         .flows_to(sens, store, paralegal_policy::EdgeType::Data))
-                        || 
+                        ||
 						// The sink that scope flows to may be another CallArgument attached to the store's CallSite, it doesn't need to be store itself.
 						store.associated_call_site().is_some_and(|store_callsite| {
                             let found_scope = scopes.iter().any(|scope| {
@@ -170,8 +170,8 @@ impl ScopedStorageProp {
     }
 }
 
-fn sc_policy(ctx: Arc<Context>) -> Result<()> {
-    ctx.named_policy(Identifier::new_intern("Scoped Storage Policy"), |ctx| {
+fn run_sc_policy(ctx: Arc<Context>) -> Result<()> {
+    ctx.named_policy(Identifier::new_intern("Scoped Storage"), |ctx| {
         ScopedStorageProp::new(ctx).check();
         Ok(())
     })
@@ -185,11 +185,11 @@ fn main() -> Result<()> {
 
     let prop = match prop_name {
         Some(s) => match s.as_str() {
-            "sc" => sc_policy,
-            "del" => del_policy,
-            _ => |_| Err(anyhow!("don't recognize inputted property name")),
+            "sc" => run_sc_policy,
+            "del" => run_del_policy,
+            other => bail!("don't recognize the property name '{other}'"),
         },
-        None => |ctx: Arc<Context>| sc_policy(ctx.clone()).and(del_policy(ctx)),
+        None => |ctx: Arc<Context>| run_sc_policy(ctx.clone()).and(run_del_policy(ctx)),
     };
 
     paralegal_policy::SPDGGenCommand::global()
