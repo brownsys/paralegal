@@ -371,11 +371,6 @@ impl ModelCtrl {
 /// Arguments which control marker assignment and discovery
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 pub struct MarkerControl {
-    /// Eagerly load markers for local items. This guarantees that all markers
-    /// on local items are emitted in the model, even if those items are never
-    /// used in the flow.
-    #[clap(long, env = "PARALEGAL_EAGER_LOCAL_MARKERS")]
-    eager_local_markers: bool,
     /// Don't mark the outputs of local functions if they are of a marked type.
     ///
     /// Be aware that disabling this can cause unsoundness as inline
@@ -386,10 +381,6 @@ pub struct MarkerControl {
 }
 
 impl MarkerControl {
-    pub fn lazy_local_markers(&self) -> bool {
-        !self.eager_local_markers
-    }
-
     pub fn local_function_type_marking(&self) -> bool {
         !self.no_local_function_type_marking
     }
