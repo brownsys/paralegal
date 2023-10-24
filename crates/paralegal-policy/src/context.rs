@@ -320,18 +320,24 @@ impl Context {
             .flat_map(|v| v.iter())
     }
 
+    /// Get the type(s) of a Node.
+    pub fn get_node_types(&self, node: &Node) -> Option<&HashSet<DefId>> {
+        match node.typ.as_data_source() {
+            None => None,
+            Some(src) => self.desc.controllers[&node.ctrl_id].types.get(&src),
+        }
+    }
+
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
-        if let Some(src) = node.typ.as_data_source() {
-            if let Some(typ) = &self.desc.controllers[&node.ctrl_id].types.get(&src) {
-                if typ.iter().any(|t| {
-                    self.marker_to_ids
-                        .get(&marker)
-                        .map(|markers| markers.iter().any(|(id, _)| id == t))
-                        .unwrap_or(false)
-                }) {
-                    return true;
-                }
+        if let Some(types) = self.get_node_types(&node) {
+            if types.iter().any(|t| {
+                self.marker_to_ids
+                    .get(&marker)
+                    .map(|markers| markers.iter().any(|(id, _)| id == t))
+                    .unwrap_or(false)
+            }) {
+                return true;
             }
         }
 
