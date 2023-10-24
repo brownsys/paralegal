@@ -7,6 +7,11 @@ pub struct Foo;
 #[paralegal_flow::marker{ sink, arguments = [0] }]
 fn sink1(_f: Foo) {}
 
+#[paralegal_flow::marker{ src, return }]
+fn identity(f: Foo) -> Foo {
+    f
+}
+
 #[paralegal_flow::marker{ sink, arguments = [0] }]
 fn sink2(_f: Foo) {}
 
@@ -16,9 +21,12 @@ fn cond(_f: Foo) -> bool {
 }
 
 #[paralegal_flow::analyze]
-fn controller(a: Foo, b: Foo) {
+#[paralegal_flow::marker{ ctrl, return }]
+#[paralegal_flow::marker{ ctrl, arguments = [2] }]
+fn controller(a: Foo, b: Foo, c: bool) -> bool {
     sink1(a);
-    sink2(b);
+    sink2(identity(b));
+    c
 }
 
 #[paralegal_flow::analyze]
