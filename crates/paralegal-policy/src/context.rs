@@ -506,6 +506,7 @@ impl Context {
         };
 
         while let Some(current) = queue.pop() {
+            // Check the datasource.
             if check_node(Node {
                 ctrl_id: current.1,
                 typ: (&current.0).into(),
@@ -513,6 +514,7 @@ impl Context {
                 continue;
             }
 
+            // Check all sinks the source flows to.
             for sink in current.2.get(&current.0).into_iter().flatten() {
                 if check_node(Node {
                     ctrl_id: current.1,
@@ -520,6 +522,7 @@ impl Context {
                 }) {
                     continue;
                 } else if let DataSink::Argument { function, .. } = sink {
+                    // If the sink is an argument, it can be converted to a datasource and added to the queue.
                     if seen.insert(sink) {
                         queue.push((function.clone().into(), current.1, current.2));
                     }
