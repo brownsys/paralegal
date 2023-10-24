@@ -95,7 +95,6 @@ fn main() -> Result<()> {
         "--inline-elision",
         "--target",
         "plume_models",
-        "--eager-local-markers",
         "--",
         "--no-default-features",
         "--features",
