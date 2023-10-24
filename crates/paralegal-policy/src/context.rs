@@ -438,16 +438,23 @@ impl Context {
         let mut num_reached = 0;
         let mut num_checkpointed = 0;
 
-        // Package nodes with a reference to their controller's dataflow for efficiency.
-        struct NodeWithFlow<'a> {
-            node: Node<'a>,
-            flow: &'a HashMap<DataSource, HashSet<DataSink>>,
-        }
-
         let mut queue = starting_points
-            .map(|n| NodeWithFlow {
-                node: n,
-                flow: &self.desc().controllers.get(&n.ctrl_id).unwrap().data_flow.0,
+            .filter_map(|n| match n.typ.as_data_source() {
+                Some(ds) => Some((
+                    ds,
+                    &self.desc().controllers.get(&n.ctrl_id).unwrap().data_flow.0,
+                )),
+                None => {
+                    assert_warning!(
+                        self,
+                        false,
+                        format!(
+                            "found starting point {:?} that cannot be converted to a datasource",
+                            n
+                        )
+                    );
+                    None
+                }
             })
             .collect::<Vec<_>>();
 
