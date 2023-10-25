@@ -187,7 +187,6 @@ fn test_data_flows_to() {
 
 #[test]
 fn test_ctrl_flows_to() {
-    use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_ctrl").unwrap();
     let src_a = crate::Node {
@@ -202,19 +201,8 @@ fn test_ctrl_flows_to() {
         ctrl_id: controller,
         typ: (&DataSource::Argument(2)).into(),
     };
-    let get_callsite_node = |name| {
-        let name = Identifier::new_intern(name);
-        let node = ctx.desc().controllers[&controller]
-            .call_sites()
-            .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
-            .unwrap();
-        crate::Node {
-            ctrl_id: controller,
-            typ: node.into(),
-        }
-    };
-    let cs1 = get_callsite_node("sink1");
-    let cs2 = get_callsite_node("sink2");
+    let cs1 = crate::test_utils::get_callsite_node(ctx, controller, "sink1");
+    let cs2 = crate::test_utils::get_callsite_node(ctx, controller, "sink2");
     assert!(ctx.flows_to(src_a, cs1, crate::EdgeType::Control));
     assert!(ctx.flows_to(src_c, cs2, crate::EdgeType::Control));
     assert!(ctx.flows_to(src_a, cs2, crate::EdgeType::Control));
@@ -224,7 +212,6 @@ fn test_ctrl_flows_to() {
 
 #[test]
 fn test_flows_to() {
-    use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
     let src_a = crate::Node {
@@ -235,35 +222,8 @@ fn test_flows_to() {
         ctrl_id: controller,
         typ: (&DataSource::Argument(1)).into(),
     };
-    let get_sink_node = |name| {
-        let name = Identifier::new_intern(name);
-        let node = ctx.desc().controllers[&controller]
-            .data_sinks()
-            .find(|sink| match sink {
-                DataSink::Argument { function, .. } => {
-                    ctx.desc().def_info[&function.function].name == name
-                }
-                _ => false,
-            })
-            .unwrap();
-        crate::Node {
-            ctrl_id: controller,
-            typ: node.into(),
-        }
-    };
-    let get_callsite_node = |name| {
-        let name = Identifier::new_intern(name);
-        let node = ctx.desc().controllers[&controller]
-            .call_sites()
-            .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
-            .unwrap();
-        crate::Node {
-            ctrl_id: controller,
-            typ: node.into(),
-        }
-    };
-    let sink = get_sink_node("sink1");
-    let cs = get_callsite_node("sink1");
+    let sink = crate::test_utils::get_sink_node(ctx, controller, "sink1");
+    let cs = crate::test_utils::get_callsite_node(ctx, controller, "sink1");
     // a flows to the sink1 callsite (by ctrl flow)
     assert!(ctx.flows_to(src_a, cs, crate::EdgeType::DataAndControl));
     assert!(!ctx.flows_to(src_a, cs, crate::EdgeType::Data));

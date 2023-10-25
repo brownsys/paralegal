@@ -380,8 +380,8 @@ impl Context {
                 };
                 match edge_type {
                     EdgeType::Data => get_influencers(&self.flows_to[cf_id].data_flows_to),
-                    EdgeType::Control => get_influencers(&self.flows_to[cf_id].flows_to),
-                    EdgeType::DataAndControl => panic!("impossible"),
+                    EdgeType::Control => panic!("impossible"),
+                    EdgeType::DataAndControl => get_influencers(&self.flows_to[cf_id].flows_to),
                 }
             }
             EdgeType::Control => {
@@ -425,15 +425,15 @@ impl Context {
                                         typ: cs_ds.into(),
                                     }];
                                     // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
-                                    match cs_ds {
-                                        CallSiteOrDataSink::DataSink(DataSink::Argument {
-                                            function: f,
-                                            ..
-                                        }) => nodes.push(Node {
+                                    if let CallSiteOrDataSink::DataSink(DataSink::Argument {
+                                        function: f,
+                                        ..
+                                    }) = cs_ds
+                                    {
+                                        nodes.push(Node {
                                             ctrl_id: src.ctrl_id,
                                             typ: f.into(),
-                                        }),
-                                        _ => (),
+                                        })
                                     }
                                     nodes
                                 }),
@@ -441,8 +441,8 @@ impl Context {
                     };
                 match edge_type {
                     EdgeType::Data => get_influencees(&self.flows_to[cf_id].data_flows_to),
-                    EdgeType::Control => get_influencees(&self.flows_to[cf_id].flows_to),
-                    EdgeType::DataAndControl => panic!("impossible"),
+                    EdgeType::Control => panic!("impossible"),
+                    EdgeType::DataAndControl => get_influencees(&self.flows_to[cf_id].flows_to),
                 }
             }
             EdgeType::Control => {
@@ -885,7 +885,7 @@ fn test_context() {
 fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
-    fn is_terminal<'a>(end: Node<'a>) -> bool {
+    fn is_terminal(end: Node<'_>) -> bool {
         matches!(end.typ, crate::NodeType::Return(_))
     }
 
@@ -921,6 +921,36 @@ fn test_happens_before() -> Result<()> {
 #[test]
 fn test_influencees() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
+    let ctrl_name = ctx.find_by_name("influence")?;
+    let src_a = crate::Node {
+        ctrl_id: ctrl_name,
+        typ: (&DataSource::Argument(0)).into(),
+    };
+    let cond_sink = crate::test_utils::get_sink_node(ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(ctx, ctrl_name, "sink1");
+
+    let influencees_data_control = ctx
+        .influencees(src_a, EdgeType::DataAndControl)
+        .collect::<Vec<_>>();
+    let influencees_data = ctx.influencees(src_a, EdgeType::Data).collect::<Vec<_>>();
+
+    assert!(
+        influencees_data_control.contains(&cond_sink),
+        "input argument a influences cond via data"
+    );
+    assert!(
+        influencees_data_control.contains(&sink_callsite),
+        "input argument a influences sink via control"
+    );
+
+    assert!(
+        influencees_data.contains(&cond_sink),
+        "input argument a influences cond via data"
+    );
+    assert!(
+        !influencees_data.contains(&sink_callsite),
+        "input argument a doesnt influence sink via data"
+    );
 
     Ok(())
 }
@@ -928,5 +958,50 @@ fn test_influencees() -> Result<()> {
 #[test]
 fn test_influencers() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
+    let ctrl_name = ctx.find_by_name("influence")?;
+    let src_a = crate::Node {
+        ctrl_id: ctrl_name,
+        typ: (&DataSource::Argument(0)).into(),
+    };
+    let src_b = crate::Node {
+        ctrl_id: ctrl_name,
+        typ: (&DataSource::Argument(1)).into(),
+    };
+    let cond_sink = crate::test_utils::get_sink_node(ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(ctx, ctrl_name, "sink1");
+
+    let influencers_data_control = ctx
+        .influencers(sink_callsite, EdgeType::DataAndControl)
+        .collect::<Vec<_>>();
+    let influencers_data = ctx
+        .influencers(sink_callsite, EdgeType::Data)
+        .collect::<Vec<_>>();
+
+    assert!(
+        influencers_data_control.contains(&src_a),
+        "input argument a influences sink via data"
+    );
+    assert!(
+        influencers_data_control.contains(&src_b),
+        "input argument b influences sink via control"
+    );
+    assert!(
+        influencers_data_control.contains(&cond_sink),
+        "cond_sink influences sink via control"
+    );
+
+    assert!(
+        !influencers_data.contains(&src_a),
+        "input argument a doesnt influences sink via data"
+    );
+    assert!(
+        influencers_data.contains(&src_b),
+        "input argument b influences sink via data"
+    );
+    assert!(
+        !influencers_data.contains(&cond_sink),
+        "cond_sink doesnt influence sink via data"
+    );
+
     Ok(())
 }
