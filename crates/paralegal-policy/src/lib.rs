@@ -142,7 +142,7 @@ impl GraphLocation {
         let ctx = Arc::new(self.build_context()?);
         assert_warning!(
             ctx,
-            ctx.desc().controllers.len() > 0,
+            !ctx.desc().controllers.is_empty(),
             "No controllers found. Your policy is likely to be vacuous."
         );
         let result = prop(ctx.clone())?;

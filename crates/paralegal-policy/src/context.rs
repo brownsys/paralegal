@@ -755,7 +755,7 @@ fn test_context() {
 fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
-    fn is_terminal<'a>(end: Node<'a>) -> bool {
+    fn is_terminal(end: Node<'_>) -> bool {
         matches!(end.typ, crate::NodeType::Return(_))
     }
 
