@@ -49,6 +49,16 @@ pub struct Node<'a> {
     pub typ: NodeType<'a>,
 }
 
+impl<'a> Node<'a> {
+    /// Transform a Node into the associated Node with typ [`NodeType::CallSite`]
+    pub fn associated_call_site(self) -> Option<Node<'a>> {
+        self.typ.as_call_site().map(|cs| Node {
+            ctrl_id: self.ctrl_id,
+            typ: NodeType::CallSite(cs),
+        })
+    }
+}
+
 /// Enum identifying the different types of nodes in the SPDG
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum NodeType<'a> {
@@ -533,6 +543,80 @@ impl Context {
     /// Iterate over all defined controllers
     pub fn all_controllers(&self) -> impl Iterator<Item = (ControllerId, &Ctrl)> {
         self.desc().controllers.iter().map(|(k, v)| (*k, v))
+    }
+
+    /// Returns a DisplayDef for the given def_id
+    pub fn describe_def(&self, def_id: DefId) -> DisplayDef {
+        DisplayDef { ctx: self, def_id }
+    }
+
+    /// Returns a DisplayNode for the given Node
+    pub fn describe_node<'a>(&'a self, node: Node<'a>) -> DisplayNode<'a> {
+        DisplayNode { ctx: self, node }
+    }
+}
+
+/// Provide display trait for DefId in a Context.
+pub struct DisplayDef<'a> {
+    /// DefId to display.
+    pub def_id: DefId,
+    /// Context for the DefId.
+    pub ctx: &'a Context,
+}
+
+impl<'a> std::fmt::Display for DisplayDef<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use std::fmt::Write;
+        let info = &self.ctx.desc().def_info[&self.def_id];
+        f.write_str(match info.kind {
+            DefKind::Type => "type",
+            DefKind::Function => "function",
+        })?;
+        f.write_str(" `")?;
+        for segment in &info.path {
+            f.write_str(segment.as_str())?;
+            f.write_str("::")?;
+        }
+        f.write_str(info.name.as_str())?;
+        f.write_char('`')
+    }
+}
+
+/// Provide display trait for Node in a Context.
+pub struct DisplayNode<'a> {
+    /// Node to display.
+    pub node: Node<'a>,
+    /// Context for the Node.
+    pub ctx: &'a Context,
+}
+
+impl<'a> std::fmt::Display for DisplayNode<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Controller:")?;
+        self.ctx.describe_def(self.node.ctrl_id).fmt(f)?;
+        f.write_str("\n")?;
+
+        match self.node.typ {
+            NodeType::ControllerArgument(ds) => match ds {
+                DataSource::FunctionCall(_) => panic!("impossible"),
+                DataSource::Argument(pos) => {
+                    f.write_fmt(format_args!("ControllerArgument:{:}", pos))
+                }
+            },
+            NodeType::CallSite(cs) => {
+                f.write_str("CallSite:")?;
+                self.ctx.describe_def(cs.function).fmt(f)
+            }
+            NodeType::CallArgument(ds) => match ds {
+                DataSink::Argument { function, arg_slot } => {
+                    f.write_str("CallArgument:")?;
+                    self.ctx.describe_def(function.function).fmt(f)?;
+                    f.write_fmt(format_args!(":{:}", arg_slot))
+                }
+                DataSink::Return => panic!("impossible"),
+            },
+            NodeType::Return(_) => f.write_str("Return"),
+        }
     }
 }
 
