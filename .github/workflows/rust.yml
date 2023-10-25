@@ -37,7 +37,9 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Build
-      run: cargo install --locked --path crates/paralegal-flow --verbose
+      run: |
+        cargo install --locked --path crates/paralegal-flow --verbose
+        cargo build --verbose
     - name: Run tests
       run: |
         cargo test -p paralegal-flow --test non_transitive_graph_tests
