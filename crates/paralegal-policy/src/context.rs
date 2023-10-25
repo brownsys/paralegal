@@ -368,7 +368,7 @@ impl Context {
                                 if let DataSource::FunctionCall(cs) =
                                     my_flows_to.sources.value(*idx)
                                 {
-                                    nodes.extend(callargs_for_callsite(&cs, my_flows_to))
+                                    nodes.extend(callargs_for_callsite(cs, my_flows_to))
                                 }
 
                                 nodes
@@ -401,7 +401,7 @@ impl Context {
                             // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
                             if let Some(cs) = n.typ.as_call_site() {
                                 nodes.extend(callargs_for_callsite(
-                                    &cs,
+                                    cs,
                                     &self.flows_to[&sink.ctrl_id],
                                 ))
                             }
