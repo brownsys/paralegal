@@ -86,7 +86,6 @@ pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
     let mut cmd = std::process::Command::new(cargo_paralegal_flow_path);
     cmd.arg("paralegal-flow")
         .env("PATH", new_path)
-        .env("RUST_BACKTRACE", "1")
         .current_dir(dir);
     eprintln!("Command is {cmd:?}");
     cmd
