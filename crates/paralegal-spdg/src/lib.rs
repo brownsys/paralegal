@@ -244,7 +244,9 @@ pub struct DefInfo {
 }
 
 /// Similar to `DefKind` in rustc but *not the same*!
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, strum::EnumIs, strum::AsRefStr)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, strum::EnumIs, strum::AsRefStr,
+)]
 pub enum DefKind {
     Fn,
     Generator,

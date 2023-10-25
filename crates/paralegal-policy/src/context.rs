@@ -191,7 +191,11 @@ impl Context {
     }
 
     /// Return a set of all sinks this source can reach
-    pub fn reaching(&self, ctrl_id: ControllerId, src: &DataSource) -> &indexical::IndexSet<CallSiteOrDataSink, bitvec::vec::BitVec, indexical::ArcFamily> {
+    pub fn reaching(
+        &self,
+        ctrl_id: ControllerId,
+        src: &DataSource,
+    ) -> &indexical::IndexSet<CallSiteOrDataSink, bitvec::vec::BitVec, indexical::ArcFamily> {
         let ctrl_flows = &self.flows_to[&ctrl_id];
         ctrl_flows
             .flows_to
@@ -560,9 +564,9 @@ impl<C> AlwaysHappensBefore<C> {
         let Some((from, to)) = self.reached.first() else {
             return Ok(());
         };
-        let path =
-            ctx.as_ctx()
-                .a_path_between(self.ctrl, from, to, &mut self.is_checkpoint);
+        let path = ctx
+            .as_ctx()
+            .a_path_between(self.ctrl, from, to, &mut self.is_checkpoint);
         writeln!(
             file,
             "{}",
