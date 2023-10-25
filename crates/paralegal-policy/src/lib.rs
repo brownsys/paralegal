@@ -140,6 +140,11 @@ impl GraphLocation {
     /// if they were severe enough.
     pub fn with_context<A>(&self, prop: impl FnOnce(Arc<Context>) -> Result<A>) -> Result<A> {
         let ctx = Arc::new(self.build_context()?);
+        assert_warning!(
+            ctx,
+            ctx.desc().controllers.len() > 0,
+            "No controllers found. Your policy is likely to be vacuous."
+        );
         let result = prop(ctx.clone())?;
         ctx.emit_diagnostics(std::io::stdout())?;
         Ok(result)

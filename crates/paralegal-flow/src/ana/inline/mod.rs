@@ -417,18 +417,29 @@ impl<'tcx> Inliner<'tcx> {
     }
 
     fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'tcx>, def_id: DefId) -> bool {
+        let tcx = self.tcx;
+        if !tcx.asyncness(def_id).is_async() {
+            return false;
+        }
         let body_with_facts = self.tcx.body_for_def_id(def_id).unwrap();
         let body = body_with_facts.simplified_body();
         let num_args = body.args_iter().count();
         // XXX This might become invalid if functions other than `async` can create generators
-        let closure_fn =
-            if let Some(bb) = (*body.basic_blocks).iter().last()
-                && let Some(stmt) = bb.statements.last()
-                && let mir::StatementKind::Assign(assign) = &stmt.kind
-                && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, ..), _) = &assign.1 {
-
-            *gid
-        } else {
+        let Some(closure_fn) =
+            (*body.basic_blocks).iter().find_map(|bb| {
+                let stmt = bb.statements.last()?;
+                if let mir::StatementKind::Assign(assign) = &stmt.kind
+                    && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, ..), _) = &assign.1 {
+                    Some(*gid)
+                } else {
+                    None
+                }
+            })
+        else {
+            tcx.sess.span_err(
+                tcx.def_span(def_id),
+                "ICE: Found this function to be async but could not extract the generator."
+            );
             return false;
         };
         let standard_edge: Edge = std::iter::once(EdgeType::Data(0)).collect();
@@ -635,6 +646,7 @@ impl<'tcx> Inliner<'tcx> {
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
         let mut queue_for_pruning = HashSet::new();
         if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, def_id) {
+            debug!("Detected self to be async fn, closure was inlined.");
             return queue_for_pruning;
         };
         let targets = i_graph
