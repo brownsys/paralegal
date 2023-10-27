@@ -15,7 +15,7 @@
 use std::fmt::Write;
 
 use crate::{
-    ana::algebra::{self, Term},
+    ana::algebra::{self, Operator, Term},
     ir::{
         flows::CallOnlyFlow,
         regal::{self, SimpleLocation},
@@ -197,17 +197,22 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
     tcx: TyCtxt<'tcx>,
     node: Node<(L, FnResolution<'tcx>)>,
     graph: &GraphImpl<'tcx, L>,
-) -> Option<Option<algebra::Operator<DisplayViaDebug<FieldIdx>>>> {
+) -> Option<&'static [algebra::Operator<DisplayViaDebug<FieldIdx>>]> {
+    const POLL_FN_WRAP: &[Operator<DisplayViaDebug<FieldIdx>>] = &[
+        Operator::Downcast(0),
+        Operator::MemberOf(DisplayViaDebug(FieldIdx::from_usize(0))),
+    ];
+
     let lang_items = tcx.lang_items();
     // We use `?` here because if any of these functions aren't defined we can
     // just abort.
-    let mut seen = [
-        (lang_items.get_context_fn()?, None, false),
+    let mut seen: [(_, &'static [_], bool); 3] = [
+        (lang_items.get_context_fn()?, &[] as &[_], false),
         (
             lang_items
                 .into_future_fn()
                 .and_then(|f| tcx.trait_of_item(f))?,
-            None,
+            &[],
             false,
         ),
         // I used to add a
@@ -219,12 +224,11 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
         // `poll` but I'm lazy
         (
             lang_items.new_unchecked_fn()?,
-            Some(algebra::Operator::RefOf),
+            &[algebra::Operator::RefOf],
             false,
         ),
     ];
     let mut poll_fn_seen = false;
-    let poll_fn_wrap = Some(algebra::Operator::Downcast(0));
     let mut queue = vec![node];
     let mut iterations = 0;
     let mut wrap_needed = None;
@@ -257,13 +261,16 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
         iterations += 1;
         if let SimpleLocation::Call((_, inst)) = node
             && let maybe_resolved_trait = tcx.impl_of_method(inst.def_id()).and_then(|impl_| tcx.trait_id_of_impl(impl_))
-            && let Some((wrap, was_seen)) = seen.iter_mut().find(|(k, _, _)| *k == inst.def_id() || Some(*k) == maybe_resolved_trait).map(|(_, w, t)| (&*w, t))
+            && let Some((wrap, was_seen)) = seen
+                .iter_mut()
+                .find(|(k, _, _)| *k == inst.def_id() || Some(*k) == maybe_resolved_trait)
+                .map(|(_, w, t)| (*w, t))
                 .or_else(|| {
-                    tcx.is_closure(inst.def_id()).then_some((&poll_fn_wrap, &mut poll_fn_seen))
+                    tcx.is_closure(inst.def_id()).then_some((&POLL_FN_WRAP, &mut poll_fn_seen))
                 })
             && !*was_seen
         {
-            wrap_needed.get_or_insert(*wrap);
+            wrap_needed.get_or_insert(wrap);
             *was_seen = true;
             queue.extend(graph.neighbors_directed(node, petgraph::Direction::Incoming));
             queue.extend(graph.neighbors_directed(node, petgraph::Direction::Outgoing))
@@ -284,10 +291,7 @@ enum InlineAction {
     Drop(DropAction),
 }
 
-enum DropAction {
-    None,
-    WrapReturn(Vec<algebra::Operator<DisplayViaDebug<mir::Field>>>),
-}
+type DropAction = Vec<algebra::Operator<DisplayViaDebug<mir::Field>>>;
 
 impl<'tcx> Inliner<'tcx> {
     pub fn new(
@@ -403,14 +407,10 @@ impl<'tcx> Inliner<'tcx> {
         g: &GraphImpl<'tcx, GlobalLocation>,
     ) -> Option<DropAction> {
         if self.ana_ctrl.drop_poll()
-            && let Some(maybe_wrap) = is_part_of_async_desugar(self.tcx, id, g) {
-                Some(if let Some(wrap) = maybe_wrap {
-                    DropAction::WrapReturn(vec![wrap])
-                } else {
-                    DropAction::None
-                })
+            && let Some(wrap) = is_part_of_async_desugar(self.tcx, id, g) {
+                Some(wrap.to_owned())
         } else if self.ana_ctrl.drop_clone() && self.is_clone_fn(function) {
-            Some(DropAction::WrapReturn(vec![algebra::Operator::RefOf]))
+            Some(vec![algebra::Operator::RefOf])
         } else {
             None
         }
@@ -737,7 +737,7 @@ impl<'tcx> Inliner<'tcx> {
                         root_location,
                     );
                 }
-                InlineAction::Drop(drop_action) => {
+                InlineAction::Drop(wraps) => {
                     let incoming_closure = i_graph
                         .graph
                         .edges_directed(idx, pg::Direction::Incoming)
@@ -765,9 +765,7 @@ impl<'tcx> Inliner<'tcx> {
                     if let Some(return_local) = call.return_to {
                         let mut target =
                             algebra::Term::new_base(GlobalLocal::at_root(return_local));
-                        if let DropAction::WrapReturn(wrappings) = drop_action {
-                            target = target.extend(wrappings);
-                        }
+                        target = target.extend(wraps);
                         i_graph.equations.push(algebra::Equality::new(
                             target,
                             algebra::Term::new_base(GlobalLocal::at_root(
