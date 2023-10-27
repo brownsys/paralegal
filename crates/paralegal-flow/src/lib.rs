@@ -220,17 +220,16 @@ impl rustc_driver::Callbacks for Callbacks {
 
 pub const CARGO_ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
 
-fn add_to_rustflags(new: impl IntoIterator<Item=String>) -> Result<(), std::env::VarError> {
+fn add_to_rustflags(new: impl IntoIterator<Item = String>) -> Result<(), std::env::VarError> {
     use std::env::{var, VarError};
     let mut prior = var(CARGO_ENCODED_RUSTFLAGS)
         .map(|flags| flags.split('\x1f').map(str::to_string).collect())
         .or_else(|err| {
-        if matches!(err, VarError::NotPresent) {
-            var("RUSTFLAGS")
-            .map(|flags| flags.split_whitespace().map(str::to_string).collect())
-        } else {
-            Err(err)
-        }
+            if matches!(err, VarError::NotPresent) {
+                var("RUSTFLAGS").map(|flags| flags.split_whitespace().map(str::to_string).collect())
+            } else {
+                Err(err)
+            }
         })
         .or_else(|err| {
             matches!(err, VarError::NotPresent)
