@@ -324,6 +324,14 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             });
         }
         let opts = Box::leak(Box::new(plugin_args));
+
+        compiler_args.extend([
+            "--cfg".into(),
+            "paralegal".into(),
+            "-Zcrate-attr=feature(register_tool)".into(),
+            "-Zcrate-attr=register_tool(paralegal_flow)".into(),
+        ]);
+
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }
 }
