@@ -1,4 +1,5 @@
-use cfg_if::cfg_if;
+extern crate quote;
+
 use proc_macro::TokenStream;
 use quote::quote;
 
@@ -12,18 +13,11 @@ macro_rules! export {
 }
 
 export!(marker);
-export!(otype);
+export!(output_types);
 export!(analyze);
 
-cfg_if! {
-    if #[cfg(paralegal)] {
-        use paralegal as impl_;
-    } else {
-        use run as impl_;
-    }
-}
-
-mod run {
+#[cfg(not(paralegal))]
+mod impl_ {
     use super::{quote, TokenStream};
 
     macro_rules! pass {
@@ -38,7 +32,7 @@ mod run {
                     let mut out: TokenStream = quote!(
                         compile_error!("The `paralegal::{}` attribute does not take arguments", stringify!($name));
                     ).into();
-                    // Reemit item so any compile error son that are also reported
+                    // Reemit item so any compile errors on it are also reported
                     out.extend(it);
                     out
                 }
@@ -47,12 +41,12 @@ mod run {
     }
 
     pass!(marker);
-    pass!(otype);
+    pass!(output_types);
     pass!(analyze, false);
 }
 
-//#[cfg(paralegal)]
-mod paralegal {
+#[cfg(paralegal)]
+mod impl_ {
     use super::{quote, TokenStream};
     use proc_macro2::TokenStream as TokenStream2;
     use proc_macro2::{Ident, Span};
@@ -65,7 +59,7 @@ mod paralegal {
             #[allow(dead_code)]
             pub fn $name(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let attr = TokenStream2::from(attr);
-                let name = Ident::new(stringify!(name), Span::mixed_site());
+                let name = Ident::new(stringify!($name), Span::mixed_site());
                 let mut out: TokenStream = if $takes_args {
                     quote!(
                         #[paralegal_flow::#name(#attr)]
@@ -89,5 +83,5 @@ mod paralegal {
 
     tool_attr!(marker);
     tool_attr!(analyze, false);
-    tool_attr!(otype);
+    tool_attr!(output_types);
 }

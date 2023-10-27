@@ -218,6 +218,30 @@ impl rustc_driver::Callbacks for Callbacks {
     }
 }
 
+pub const CARGO_ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
+
+fn add_to_rustflags(new: impl IntoIterator<Item=String>) -> Result<(), std::env::VarError> {
+    use std::env::{var, VarError};
+    let mut prior = var(CARGO_ENCODED_RUSTFLAGS)
+        .map(|flags| flags.split('\x1f').map(str::to_string).collect())
+        .or_else(|err| {
+        if matches!(err, VarError::NotPresent) {
+            var("RUSTFLAGS")
+            .map(|flags| flags.split_whitespace().map(str::to_string).collect())
+        } else {
+            Err(err)
+        }
+        })
+        .or_else(|err| {
+            matches!(err, VarError::NotPresent)
+                .then(Vec::new)
+                .ok_or(err)
+        })?;
+    prior.extend(new);
+    std::env::set_var(CARGO_ENCODED_RUSTFLAGS, prior.join("\x1f"));
+    Ok(())
+}
+
 impl rustc_plugin::RustcPlugin for DfppPlugin {
     type Args = Args;
 
@@ -245,6 +269,8 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // require.
         std::env::set_var("SYSROOT", env!("SYSROOT_PATH"));
 
+        add_to_rustflags(["--cfg".into(), "paralegal".into()]).unwrap();
+
         rustc_plugin::RustcPluginArgs {
             args: args.args.try_into().unwrap(),
             filter: CrateFilter::AllCrates,
@@ -269,11 +295,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `with_level` level lower and then increase it with
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
-
-        compiler_args.extend([
-            "--cfg".into(),
-            "paralegal".into(),
-        ]);
 
         let crate_name = compiler_args
             .iter()
