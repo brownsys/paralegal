@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 
-use paralegal_policy::{
-    assert_error, paralegal_spdg::Identifier, Context, DefId, Marker, PolicyContext,
-};
+use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Context, Marker, PolicyContext};
 
 macro_rules! marker {
     ($id:ident) => {
@@ -24,72 +22,50 @@ impl DeletionProp {
         DeletionProp { cx }
     }
 
-    fn flows_to_store(&self, t: DefId) -> bool {
-        let stores = Marker::new_intern("stores");
-
-        for c_id in self.cx.desc().controllers.keys() {
-            let t_srcs = self.cx.srcs_with_type(*c_id, t);
-            let store_cs = self
-                .cx
-                .all_nodes_for_ctrl(*c_id)
-                .filter(|n| self.cx.has_marker(stores, *n))
-                .collect::<Vec<_>>();
-
-            for t_src in t_srcs {
-                for store in &store_cs {
-                    if self
-                        .cx
-                        .flows_to(t_src, *store, paralegal_policy::EdgeType::Data)
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    fn flows_to_deletion(&self, t: DefId) -> bool {
-        let deletes = Marker::new_intern("deletes");
-
-        let mut ots = self.cx.otypes(t);
-        ots.push(t);
-
-        for c_id in self.cx.desc().controllers.keys() {
-            for ot in &ots {
-                let t_srcs = self.cx.srcs_with_type(*c_id, *ot);
-                let delete_cs = self
-                    .cx
-                    .all_nodes_for_ctrl(*c_id)
-                    .filter(|n| self.cx.has_marker(deletes, *n))
-                    .collect::<Vec<_>>();
-
-                for t_src in t_srcs {
-                    for delete in &delete_cs {
-                        if self
-                            .cx
-                            .flows_to(t_src, *delete, paralegal_policy::EdgeType::Data)
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
     pub fn check(self) {
-        let sensitive = Marker::new_intern("sensitive");
-        for (t, _) in self.cx.marked(sensitive) {
-            assert_error!(
-                self.cx,
-                self.flows_to_store(*t) && !self.flows_to_deletion(*t),
-                format!("Found an error for type: {t:?}")
-            )
-        }
+        // All types marked "sensitive"
+        let types_to_check = self
+            .cx
+            .marked_type(marker!(sensitive))
+            .filter(|t| {
+                {
+                    // If there is any controller
+                    self.cx.desc().controllers.keys().any(|ctrl_id| {
+                        // Where a source of that type
+                        self.cx.srcs_with_type(*ctrl_id, *t).any(|sens_src| {
+                            // Has data influence on
+                            self.cx
+                                .influencees(sens_src, paralegal_policy::EdgeType::Data)
+                                .any(|influencee| {
+                                    // A node with marker "influences"
+                                    self.cx.has_marker(marker!(stores), influencee)
+                                })
+                        })
+                    })
+                }
+            })
+            // Mapped to their otype
+            .flat_map(|t| self.cx.otypes(t))
+            .collect::<Vec<_>>();
+        let found_deleter = self.cx.desc().controllers.keys().any(|ctrl_id| {
+            // For all types to check
+            types_to_check.iter().all(|ty| {
+                // If there is any src of that type
+                self.cx.srcs_with_type(*ctrl_id, *ty).any(|node| {
+                    // That has data flow influence on
+                    self.cx
+                        .influencees(node, paralegal_policy::EdgeType::Data)
+                        // A node with marker "deletes"
+                        .any(|influencee| self.cx.has_marker(marker!(deletes), influencee))
+                })
+            })
+        });
+
+        assert_error!(
+            self.cx,
+            found_deleter,
+            format!("No valid deleter found for all types: {:?}", types_to_check),
+        );
     }
 }
 
