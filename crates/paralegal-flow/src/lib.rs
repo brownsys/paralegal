@@ -270,6 +270,11 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
 
+        compiler_args.extend([
+            "--cfg".into(),
+            "paralegal".into(),
+        ]);
+
         let crate_name = compiler_args
             .iter()
             .enumerate()
