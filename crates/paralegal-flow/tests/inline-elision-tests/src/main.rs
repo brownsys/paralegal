@@ -1,6 +1,3 @@
-#![feature(register_tool)]
-#![register_tool(paralegal_flow)]
-
 fn inner() -> u32 {
     0
 }
@@ -13,13 +10,13 @@ fn elide_me2(i: &mut u32) {
     *i = std::convert::identity(*i);
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn basic_elision() {
     let inp = input();
     receive_touched(elide_me(inp))
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn basic_elision_mut() {
     let mut inp = input();
     elide_me2(&mut inp);
@@ -30,21 +27,21 @@ fn not_elided() -> u32 {
     other_input()
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn unelision() {
     receive_touched(not_elided());
 }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn other_input() -> u32 {
     9
 }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn receive_touched<T>(t: T) {
 }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn receive_untouched<T>(t: T) {
 }
 
@@ -59,12 +56,12 @@ fn elided2<T, B>(t: (T, B)) -> (T, B) {
 fn elided3<T>(t: &mut T) {
 }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn input() -> u32 {
     8
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn connection_precision() {
     let touched = input();
     let untouched = other_input();
@@ -73,7 +70,7 @@ fn connection_precision() {
     receive_untouched(untouched);
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn connection_precision_2() {
     let touched = input();
     let untouched = other_input();
@@ -83,7 +80,7 @@ fn connection_precision_2() {
 }
 
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn connection_precision_3() {
     let touched = input();
     let untouched = other_input();
@@ -94,7 +91,7 @@ fn connection_precision_3() {
 }
 
 struct S {
-    touched: u32, 
+    touched: u32,
     untouched: u32,
 }
 
@@ -104,7 +101,7 @@ impl S {
     }
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn connection_precision_self() {
     let touched = input();
     let untouched = other_input();
@@ -118,7 +115,7 @@ fn connection_precision_self() {
 
 
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn no_elision_without_input() {
     let v = inner();
     receive_touched(v);
@@ -127,7 +124,7 @@ fn no_elision_without_input() {
 
 fn do_io<T>(v: T) {}
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn no_elision_without_output() {
     let v = input();
     do_io(v);
@@ -138,7 +135,7 @@ fn elided5(touched: u32, untouched: u32, arg1: &mut u32) -> u32 {
     untouched
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn connection_precision_args() {
     let touched = input();
     let untouched = other_input();
