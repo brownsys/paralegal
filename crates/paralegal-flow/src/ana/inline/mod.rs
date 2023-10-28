@@ -217,7 +217,7 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
         ),
         // I used to add a
         // algebra::Operator::MemberOf(mir::Field::from_usize(0).into())
-        // here as well, but while that is technically correct in erms
+        // here as well, but while that is technically correct in terms
         // of what this function does, the new encoding for `poll`
         // strips that away before calling the closure, so now I just
         // don't. Probably cleaner would be to change the wrapping for
@@ -234,7 +234,7 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
     let mut wrap_needed = None;
 
     // This complex abomination does a few things at once. Starting from the
-    // given node it explores the neigbors in turn to see if, fanning out, we
+    // given node it explores the neighbors in turn to see if, fanning out, we
     // find the entire pattern (all functions from `seen` *and* a `poll` style
     // function).
     //
@@ -247,13 +247,13 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
     //
     // Dangers: A `poll` style function here is just matched as some closure. In
     // theory it should be a special closure with a particular type. However
-    // since we match on the entire pattern only a function that is surrpounded
+    // since we match on the entire pattern only a function that is surrounded
     // by all other async-desugaring operators would ever be considered
     // appropriate here so it is very unlikely to trigger for any non-async
-    // desugared closure. Perhaps important to mentionhere too is that in the
+    // desugared closure. Perhaps important to mention here too is that in the
     // pattern we look for the closure is in the middle of the other nodes. So
     // if by chance a closure in the periphery of such a pattern started to
-    // match, the search over the pattern sould be abandoned and `None` returned
+    // match, the search over the pattern should be abandoned and `None` returned
     // as soon as the "actual" `poll` style closure is encountered (because the
     // `poll` style function would already be marked as seen).
 
