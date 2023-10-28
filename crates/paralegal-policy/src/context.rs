@@ -958,8 +958,8 @@ fn test_influencees() -> Result<()> {
         ctrl_id: ctrl_name,
         typ: (&DataSource::Argument(0)).into(),
     };
-    let cond_sink = crate::test_utils::get_sink_node(ctx, ctrl_name, "cond");
-    let sink_callsite = crate::test_utils::get_callsite_node(ctx, ctrl_name, "sink1");
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
 
     let influencees_data_control = ctx
         .influencees(src_a, EdgeType::DataAndControl)
@@ -1008,8 +1008,8 @@ fn test_influencers() -> Result<()> {
         ctrl_id: ctrl_name,
         typ: (&DataSource::Argument(1)).into(),
     };
-    let cond_sink = crate::test_utils::get_sink_node(ctx, ctrl_name, "cond");
-    let sink_callsite = crate::test_utils::get_callsite_node(ctx, ctrl_name, "sink1");
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
 
     let influencers_data_control = ctx
         .influencers(sink_callsite, EdgeType::DataAndControl)
