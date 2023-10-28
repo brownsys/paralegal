@@ -70,13 +70,14 @@ pub mod rust {
 }
 
 use args::{ClapArgs, LogLevelConfig};
-use desc::utils::serde_map_via_vec;
+use desc::utils::{serde_map_via_vec, write_sep};
 use pretty::DocBuilder;
 use rust::*;
 
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
@@ -107,7 +108,7 @@ pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
 use crate::{
     frg::{call_site_to_string, ForgeConverter},
-    utils::outfile_pls,
+    utils::{outfile_pls, Print},
 };
 
 pub use crate::marker_db::MarkerCtx;
@@ -156,10 +157,10 @@ impl rustc_driver::Callbacks for Callbacks {
     }
 
     // This used to run `after_parsing` but that now makes `tcx.crates()` empty
-    // (which interferes with external anotation resolution). So now it runs
+    // (which interferes with external annotation resolution). So now it runs
     // `after_expansion` and so far that doesn't seem to break anything, but I'm
     // explaining this here in case that flowistry has some sort of issue with
-    // that (when retrieveing the MIR bodies for instance)
+    // that (when retrieving the MIR bodies for instance)
     fn after_expansion<'tcx>(
         &mut self,
         compiler: &rustc_interface::interface::Compiler,
@@ -169,6 +170,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
+                tcx.sess.abort_if_errors();
                 let desc = discover::CollectingVisitor::new(tcx, self.opts).run()?;
                 if self.opts.dbg().dump_serialized_flow_graph() {
                     serde_json::to_writer(
@@ -289,16 +291,18 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             );
         }
 
+        let is_primary_package = std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+
         let is_target = crate_name
             .as_ref()
             .and_then(|s| plugin_args.target().map(|t| s == t))
-            .unwrap_or(false);
+            .unwrap_or(is_primary_package);
 
         let is_build_script = crate_name
             .as_ref()
             .map_or(false, |n| n == "build_script_build");
 
-        if !is_target && (std::env::var("CARGO_PRIMARY_PACKAGE").is_err() || is_build_script) {
+        if !is_target || is_build_script {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
@@ -313,6 +317,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
             .with_module_level("flowistry", log::LevelFilter::Error)
+            .with_module_level("rustc_utils", log::LevelFilter::Error)
             .without_timestamps()
             .init()
             .unwrap();
@@ -324,6 +329,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             });
         }
         let opts = Box::leak(Box::new(plugin_args));
+        debug!(
+            "Arguments: {}",
+            Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
+        );
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
     }
 }

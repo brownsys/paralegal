@@ -75,6 +75,7 @@
 //! Note that some methods, like [`Context::always_happens_before`] add a named
 //! combinator context by themselves when you use their
 //! [`report`][crate::AlwaysHappensBefore::report] functions.
+use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
 use paralegal_spdg::{rustc_portable::DefId, Identifier};
@@ -91,7 +92,12 @@ macro_rules! assert_error {
         if !$cond {
             use $crate::diagnostics::Diagnostics;
             Diagnostics::error(&$ctx, $msg);
-            $ctx.error($msg);
+        }
+    };
+    ($ctx:expr, $cond: expr, $msg:expr, $($frag:expr),+ $(,)?) => {
+        if !$cond {
+            use $crate::diagnostics::Diagnostics;
+            Diagnostics::error(&$ctx, format!($msg, $($frag),+));
         }
     };
 }
@@ -106,6 +112,12 @@ macro_rules! assert_warning {
         if !$cond {
             use $crate::diagnostics::Diagnostics;
             Diagnostics::warning(&$ctx, $msg);
+        }
+    };
+    ($ctx:expr, $cond: expr, $msg:expr, $($frag:expr),+ $(,)?) => {
+        if !$cond {
+            use $crate::diagnostics::Diagnostics;
+            Diagnostics::warning(&$ctx, format!($msg, $($frag),+));
         }
     };
 }
@@ -160,6 +172,26 @@ impl<T: HasDiagnosticsBase> HasDiagnosticsBase for Arc<T> {
 
     fn as_ctx(&self) -> &Context {
         self.as_ref().as_ctx()
+    }
+}
+
+impl<T: HasDiagnosticsBase> HasDiagnosticsBase for &'_ T {
+    fn as_ctx(&self) -> &Context {
+        (*self).as_ctx()
+    }
+
+    fn record(&self, msg: String, severity: Severity, context: DiagnosticContextStack) {
+        (*self).record(msg, severity, context)
+    }
+}
+
+impl<T: HasDiagnosticsBase> HasDiagnosticsBase for Rc<T> {
+    fn as_ctx(&self) -> &Context {
+        (**self).as_ctx()
+    }
+
+    fn record(&self, msg: String, severity: Severity, context: DiagnosticContextStack) {
+        (**self).record(msg, severity, context)
     }
 }
 

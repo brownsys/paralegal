@@ -181,7 +181,7 @@ pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
-    pub(crate) diagnostics: Arc<DiagnosticsRecorder>,
+    pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
 }
 
@@ -259,6 +259,15 @@ impl Context {
             exit(1)
         }
         Ok(())
+    }
+
+    /// Emit a warning if this marker was not found in the source code.
+    pub fn report_marker_if_absent(&self, marker: Marker) {
+        assert_warning!(
+            *self,
+            self.marker_to_ids.contains_key(&marker),
+            format!("Marker {marker} is mentioned in the policy but not defined in source")
+        )
     }
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
@@ -463,6 +472,7 @@ impl Context {
         &self,
         marker: Marker,
     ) -> impl Iterator<Item = &'_ (DefId, MarkerRefinement)> + '_ {
+        self.report_marker_if_absent(marker);
         self.marker_to_ids
             .get(&marker)
             .into_iter()
@@ -680,6 +690,7 @@ impl Context {
     #[allow(clippy::needless_lifetimes)]
     /// Return all types that are marked with `marker`
     pub fn marked_type<'a>(&'a self, marker: Marker) -> impl Iterator<Item = DefId> + 'a {
+        self.report_marker_if_absent(marker);
         self.marked(marker)
             .filter(|(did, _)| self.desc().def_info[did].kind == DefKind::Type)
             .map(|(did, refinement)| {
@@ -732,10 +743,7 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use std::fmt::Write;
         let info = &self.ctx.desc().def_info[&self.def_id];
-        f.write_str(match info.kind {
-            DefKind::Type => "type",
-            DefKind::Function => "function",
-        })?;
+        f.write_str(info.kind.as_ref())?;
         f.write_str(" `")?;
         for segment in &info.path {
             f.write_str(segment.as_str())?;
@@ -911,7 +919,7 @@ fn test_context() {
 fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
-    fn is_terminal<'a>(end: Node<'a>) -> bool {
+    fn is_terminal(end: Node<'_>) -> bool {
         matches!(end.typ, crate::NodeType::Return(_))
     }
 
