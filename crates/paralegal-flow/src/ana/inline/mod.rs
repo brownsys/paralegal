@@ -266,7 +266,7 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
                 .find(|(k, _, _)| *k == inst.def_id() || Some(*k) == maybe_resolved_trait)
                 .map(|(_, w, t)| (*w, t))
                 .or_else(|| {
-                    tcx.is_closure(inst.def_id()).then_some((&POLL_FN_WRAP, &mut poll_fn_seen))
+                    tcx.is_closure(inst.def_id()).then_some((POLL_FN_WRAP, &mut poll_fn_seen))
                 })
             && !*was_seen
         {
@@ -279,7 +279,15 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
         }
     }
     if poll_fn_seen || seen.iter().any(|v| v.2) {
-        debug!("Saw some async desugar pattern around node {node} in {iterations} iterations: \n   poll: {poll_fn_seen} {}", Print(|f| write_sep(f, "", seen, |elem, f| write!(f, "\n   {:?}: {}", elem.0, elem.2))))
+        debug!(
+            "Saw some async desugar pattern around node {node} in {iterations} \
+               iterations: \n   poll: {poll_fn_seen} {}",
+            Print(|f| write_sep(f, "", seen, |elem, f| write!(
+                f,
+                "\n   {:?}: {}",
+                elem.0, elem.2
+            )))
+        )
     }
     (poll_fn_seen && seen.iter().all(|v| v.2))
         .then_some(wrap_needed)
