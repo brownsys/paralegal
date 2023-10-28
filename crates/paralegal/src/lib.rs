@@ -2,14 +2,21 @@
 //!
 //! For the comprehensive documentation see
 //! <https://justus-adam.notion.site/Markers-and-Annotations-b3b078ea2f7f41739de1efe7f9d33484?pvs=4>
+//!
+//! Note that these proc macros expand differently depending on whether this
+//! library is compiled as part of paralegal analysis. As such you may encounter
+//! some compile errors at the use-site only when running `cargo
+//! paralegal-flow`.
 #![deny(missing_docs)]
-
 
 extern crate quote;
 
 use proc_macro::TokenStream;
-use quote::quote;
 
+/// Re-export the named item from the `impl_` mod as a proc-macro.
+///
+/// Allows documentation to be added to the name (from
+/// <https://amanjeev.com/blog/rust-document-macro-invocations/>)
 macro_rules! export {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
@@ -68,31 +75,20 @@ export!(
 
 #[cfg(not(paralegal))]
 mod impl_ {
-    use super::{quote, TokenStream};
+    use super::TokenStream;
 
+    /// A no-op implementation for a proc-macro.
     macro_rules! pass {
-        ($name:ident $(,)?) => {
-            pass!($name, true);
-        };
-        ($name:ident, $takes_args:expr $(,)?) => {
-            pub fn $name(attr: TokenStream, it: TokenStream) -> TokenStream {
-                if $takes_args || attr.is_empty() {
-                    it
-                } else {
-                    let mut out: TokenStream = quote!(
-                        compile_error!("The `paralegal::{}` attribute does not take arguments", stringify!($name));
-                    ).into();
-                    // Reemit item so any compile errors on it are also reported
-                    out.extend(it);
-                    out
-                }
+        ($name:ident) => {
+            pub fn $name(_: TokenStream, it: TokenStream) -> TokenStream {
+                it
             }
         };
     }
 
     pass!(marker);
     pass!(output_types);
-    pass!(analyze, false);
+    pass!(analyze);
 }
 
 #[cfg(paralegal)]
@@ -100,13 +96,15 @@ mod impl_ {
     use super::{quote, TokenStream};
     use proc_macro2::TokenStream as TokenStream2;
     use proc_macro2::{Ident, Span};
+    use quote::quote;
 
+    /// Generate a proc-macro function `name` that emits a `paralegal_flow`
+    /// version of `name`.
     macro_rules! tool_attr {
         ($name:ident $(,)?) => {
             tool_attr!($name, true);
         };
         ($name:ident, $takes_args:expr $(,)?) => {
-            #[allow(dead_code)]
             pub fn $name(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let attr = TokenStream2::from(attr);
                 let name = Ident::new(stringify!($name), Span::mixed_site());
