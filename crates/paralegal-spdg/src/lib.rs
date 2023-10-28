@@ -580,6 +580,12 @@ impl DataSource {
     }
 }
 
+impl From<CallSite> for DataSource {
+    fn from(cs: CallSite) -> Self {
+        DataSource::FunctionCall(cs)
+    }
+}
+
 /// A representation of something that can receive data from the flow.
 ///
 /// [`Self::as_argument`] is provided for convenience of matching.
