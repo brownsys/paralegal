@@ -98,8 +98,27 @@ impl SPDGGenCommand {
     }
 
     /// Mutably borrow the command to perform further customization.
+    ///
+    /// This gives you raw access to the underlying command. Be aware that if
+    /// you pass `--` with [`Command::arg`] or [`Command:args`] then methods
+    /// such as [`Self::external_annotations`] and
+    /// [`Self::abort_after_analysis`] not longer work properly after this call.
     pub fn get_command(&mut self) -> &mut Command {
         &mut self.0
+    }
+
+    /// Pass the provided file as `--external-annotations` to the command.
+    pub fn external_annotations(&mut self, file: impl AsRef<Path>) -> &mut Self {
+        self.0
+            .args(["--external-annotations".as_ref(), file.as_ref().as_os_str()]);
+        self
+    }
+
+    /// Abort compilation once the analysis artifacts have been created. Also
+    /// sets the expectation for the compilation to succeed to `false`.
+    pub fn abort_after_analysis(&mut self) -> &mut Self {
+        self.0.arg("--abort-after-analysis");
+        self
     }
 
     /// Consume the created command and execute it in the specified directory.
