@@ -15,7 +15,7 @@
 use std::fmt::Write;
 
 use crate::{
-    ana::algebra::{self, Term},
+    ana::algebra::{self, Operator, Term},
     ir::{
         flows::CallOnlyFlow,
         regal::{self, SimpleLocation},
@@ -197,40 +197,44 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
     tcx: TyCtxt<'tcx>,
     node: Node<(L, FnResolution<'tcx>)>,
     graph: &GraphImpl<'tcx, L>,
-) -> Option<Option<algebra::Operator<DisplayViaDebug<FieldIdx>>>> {
+) -> Option<&'static [algebra::Operator<DisplayViaDebug<FieldIdx>>]> {
+    const POLL_FN_WRAP: &[Operator<DisplayViaDebug<FieldIdx>>] = &[
+        Operator::Downcast(0),
+        Operator::MemberOf(DisplayViaDebug(FieldIdx::from_usize(0))),
+    ];
+
     let lang_items = tcx.lang_items();
     // We use `?` here because if any of these functions aren't defined we can
     // just abort.
-    let mut seen = [
-        (lang_items.get_context_fn()?, None, false),
+    let mut seen: [(_, &'static [_], bool); 3] = [
+        (lang_items.get_context_fn()?, &[] as &[_], false),
         (
             lang_items
                 .into_future_fn()
                 .and_then(|f| tcx.trait_of_item(f))?,
-            None,
+            &[],
             false,
         ),
         // I used to add a
         // algebra::Operator::MemberOf(mir::Field::from_usize(0).into())
-        // here as well, but while that is technically correct in erms
+        // here as well, but while that is technically correct in terms
         // of what this function does, the new encoding for `poll`
         // strips that away before calling the closure, so now I just
         // don't. Probably cleaner would be to change the wrapping for
         // `poll` but I'm lazy
         (
             lang_items.new_unchecked_fn()?,
-            Some(algebra::Operator::RefOf),
+            &[algebra::Operator::RefOf],
             false,
         ),
     ];
     let mut poll_fn_seen = false;
-    let poll_fn_wrap = Some(algebra::Operator::Downcast(0));
     let mut queue = vec![node];
     let mut iterations = 0;
     let mut wrap_needed = None;
 
     // This complex abomination does a few things at once. Starting from the
-    // given node it explores the neigbors in turn to see if, fanning out, we
+    // given node it explores the neighbors in turn to see if, fanning out, we
     // find the entire pattern (all functions from `seen` *and* a `poll` style
     // function).
     //
@@ -243,13 +247,13 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
     //
     // Dangers: A `poll` style function here is just matched as some closure. In
     // theory it should be a special closure with a particular type. However
-    // since we match on the entire pattern only a function that is surrpounded
+    // since we match on the entire pattern only a function that is surrounded
     // by all other async-desugaring operators would ever be considered
     // appropriate here so it is very unlikely to trigger for any non-async
-    // desugared closure. Perhaps important to mentionhere too is that in the
+    // desugared closure. Perhaps important to mention here too is that in the
     // pattern we look for the closure is in the middle of the other nodes. So
     // if by chance a closure in the periphery of such a pattern started to
-    // match, the search over the pattern sould be abandoned and `None` returned
+    // match, the search over the pattern should be abandoned and `None` returned
     // as soon as the "actual" `poll` style closure is encountered (because the
     // `poll` style function would already be marked as seen).
 
@@ -257,13 +261,16 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
         iterations += 1;
         if let SimpleLocation::Call((_, inst)) = node
             && let maybe_resolved_trait = tcx.impl_of_method(inst.def_id()).and_then(|impl_| tcx.trait_id_of_impl(impl_))
-            && let Some((wrap, was_seen)) = seen.iter_mut().find(|(k, _, _)| *k == inst.def_id() || Some(*k) == maybe_resolved_trait).map(|(_, w, t)| (&*w, t))
+            && let Some((wrap, was_seen)) = seen
+                .iter_mut()
+                .find(|(k, _, _)| *k == inst.def_id() || Some(*k) == maybe_resolved_trait)
+                .map(|(_, w, t)| (*w, t))
                 .or_else(|| {
-                    tcx.is_closure(inst.def_id()).then_some((&poll_fn_wrap, &mut poll_fn_seen))
+                    tcx.is_closure(inst.def_id()).then_some((POLL_FN_WRAP, &mut poll_fn_seen))
                 })
             && !*was_seen
         {
-            wrap_needed.get_or_insert(*wrap);
+            wrap_needed.get_or_insert(wrap);
             *was_seen = true;
             queue.extend(graph.neighbors_directed(node, petgraph::Direction::Incoming));
             queue.extend(graph.neighbors_directed(node, petgraph::Direction::Outgoing))
@@ -272,7 +279,15 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
         }
     }
     if poll_fn_seen || seen.iter().any(|v| v.2) {
-        debug!("Saw some async desugar pattern around node {node} in {iterations} iterations: \n   poll: {poll_fn_seen} {}", Print(|f| write_sep(f, "", seen, |elem, f| write!(f, "\n   {:?}: {}", elem.0, elem.2))))
+        debug!(
+            "Saw some async desugar pattern around node {node} in {iterations} \
+               iterations: \n   poll: {poll_fn_seen} {}",
+            Print(|f| write_sep(f, "", seen, |elem, f| write!(
+                f,
+                "\n   {:?}: {}",
+                elem.0, elem.2
+            )))
+        )
     }
     (poll_fn_seen && seen.iter().all(|v| v.2))
         .then_some(wrap_needed)
@@ -284,10 +299,7 @@ enum InlineAction {
     Drop(DropAction),
 }
 
-enum DropAction {
-    None,
-    WrapReturn(Vec<algebra::Operator<DisplayViaDebug<mir::Field>>>),
-}
+type DropAction = Vec<algebra::Operator<DisplayViaDebug<mir::Field>>>;
 
 impl<'tcx> Inliner<'tcx> {
     pub fn new(
@@ -403,32 +415,39 @@ impl<'tcx> Inliner<'tcx> {
         g: &GraphImpl<'tcx, GlobalLocation>,
     ) -> Option<DropAction> {
         if self.ana_ctrl.drop_poll()
-            && let Some(maybe_wrap) = is_part_of_async_desugar(self.tcx, id, g) {
-                Some(if let Some(wrap) = maybe_wrap {
-                    DropAction::WrapReturn(vec![wrap])
-                } else {
-                    DropAction::None
-                })
+            && let Some(wrap) = is_part_of_async_desugar(self.tcx, id, g) {
+                Some(wrap.to_owned())
         } else if self.ana_ctrl.drop_clone() && self.is_clone_fn(function) {
-            Some(DropAction::WrapReturn(vec![algebra::Operator::RefOf]))
+            Some(vec![algebra::Operator::RefOf])
         } else {
             None
         }
     }
 
     fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'tcx>, def_id: DefId) -> bool {
+        let tcx = self.tcx;
+        if !tcx.asyncness(def_id).is_async() {
+            return false;
+        }
         let body_with_facts = self.tcx.body_for_def_id(def_id).unwrap();
         let body = body_with_facts.simplified_body();
         let num_args = body.args_iter().count();
         // XXX This might become invalid if functions other than `async` can create generators
-        let closure_fn =
-            if let Some(bb) = (*body.basic_blocks).iter().last()
-                && let Some(stmt) = bb.statements.last()
-                && let mir::StatementKind::Assign(assign) = &stmt.kind
-                && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, ..), _) = &assign.1 {
-
-            *gid
-        } else {
+        let Some(closure_fn) =
+            (*body.basic_blocks).iter().find_map(|bb| {
+                let stmt = bb.statements.last()?;
+                if let mir::StatementKind::Assign(assign) = &stmt.kind
+                    && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, ..), _) = &assign.1 {
+                    Some(*gid)
+                } else {
+                    None
+                }
+            })
+        else {
+            tcx.sess.span_err(
+                tcx.def_span(def_id),
+                "ICE: Found this function to be async but could not extract the generator."
+            );
             return false;
         };
         let standard_edge: Edge = std::iter::once(EdgeType::Data(0)).collect();
@@ -635,6 +654,7 @@ impl<'tcx> Inliner<'tcx> {
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
         let mut queue_for_pruning = HashSet::new();
         if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, def_id) {
+            debug!("Detected self to be async fn, closure was inlined.");
             return queue_for_pruning;
         };
         let targets = i_graph
@@ -725,7 +745,7 @@ impl<'tcx> Inliner<'tcx> {
                         root_location,
                     );
                 }
-                InlineAction::Drop(drop_action) => {
+                InlineAction::Drop(wraps) => {
                     let incoming_closure = i_graph
                         .graph
                         .edges_directed(idx, pg::Direction::Incoming)
@@ -753,9 +773,7 @@ impl<'tcx> Inliner<'tcx> {
                     if let Some(return_local) = call.return_to {
                         let mut target =
                             algebra::Term::new_base(GlobalLocal::at_root(return_local));
-                        if let DropAction::WrapReturn(wrappings) = drop_action {
-                            target = target.extend(wrappings);
-                        }
+                        target = target.extend(wraps);
                         i_graph.equations.push(algebra::Equality::new(
                             target,
                             algebra::Term::new_base(GlobalLocal::at_root(

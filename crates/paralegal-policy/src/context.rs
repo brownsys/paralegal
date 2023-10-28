@@ -181,7 +181,7 @@ pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: FlowsTo,
-    pub(crate) diagnostics: Arc<DiagnosticsRecorder>,
+    pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
 }
 
@@ -259,6 +259,15 @@ impl Context {
             exit(1)
         }
         Ok(())
+    }
+
+    /// Emit a warning if this marker was not found in the source code.
+    pub fn report_marker_if_absent(&self, marker: Marker) {
+        assert_warning!(
+            *self,
+            self.marker_to_ids.contains_key(&marker),
+            format!("Marker {marker} is mentioned in the policy but not defined in source")
+        )
     }
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
@@ -340,47 +349,35 @@ impl Context {
                 })
         };
 
+        let get_influencers =
+            |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
+                Box::new(
+                    flow.rows()
+                        .filter_map(move |(src, row_set)| {
+                            row_set.contains(&sink_cs_or_ds).then_some(src)
+                        })
+                        .flat_map(move |idx| {
+                            // We definitely are influenced by the node itself.
+                            let mut nodes = vec![Node {
+                                ctrl_id: sink.ctrl_id,
+                                typ: self.flows_to[&sink.ctrl_id].sources.value(*idx).into(),
+                            }];
+
+                            let my_flows_to = &self.flows_to[&sink.ctrl_id];
+
+                            // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
+                            if let DataSource::FunctionCall(cs) = my_flows_to.sources.value(*idx) {
+                                nodes.extend(callargs_for_callsite(cs, my_flows_to))
+                            }
+
+                            nodes
+                        }),
+                )
+            };
+
         match edge_type {
-            EdgeType::Data | EdgeType::DataAndControl => {
-                let get_influencers = |flow: &'a BitvecArcIndexMatrix<
-                    DataSourceIndex,
-                    CallSiteOrDataSink,
-                >| {
-                    Box::new(
-                        flow.rows()
-                            .filter_map(move |(src, row_set)| {
-                                if row_set.contains(&sink_cs_or_ds) {
-                                    Some(src)
-                                } else {
-                                    None
-                                }
-                            })
-                            .flat_map(move |idx| {
-                                // We definitely are influenced by the node itself.
-                                let mut nodes = vec![Node {
-                                    ctrl_id: sink.ctrl_id,
-                                    typ: self.flows_to[&sink.ctrl_id].sources.value(*idx).into(),
-                                }];
-
-                                let my_flows_to = &self.flows_to[&sink.ctrl_id];
-
-                                // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
-                                if let DataSource::FunctionCall(cs) =
-                                    my_flows_to.sources.value(*idx)
-                                {
-                                    nodes.extend(callargs_for_callsite(cs, my_flows_to))
-                                }
-
-                                nodes
-                            }),
-                    )
-                };
-                match edge_type {
-                    EdgeType::Data => get_influencers(&self.flows_to[cf_id].data_flows_to),
-                    EdgeType::Control => panic!("impossible"),
-                    EdgeType::DataAndControl => get_influencers(&self.flows_to[cf_id].flows_to),
-                }
-            }
+            EdgeType::Data => get_influencers(&self.flows_to[cf_id].data_flows_to),
+            EdgeType::DataAndControl => get_influencers(&self.flows_to[cf_id].flows_to),
             EdgeType::Control => {
                 let Some(cs) = sink.typ.as_call_site() else {
 					return Box::new(empty());
@@ -424,40 +421,40 @@ impl Context {
 			return Box::new(empty());
 		};
 
+        let get_influencees =
+            |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
+                Box::new(
+                    flow.row_set(
+                        &src_datasource
+                            .clone()
+                            .to_index(&self.flows_to[cf_id].sources),
+                    )
+                    .iter()
+                    .flat_map(move |cs_ds| {
+                        // We definitely influence to the node itself.
+                        let mut nodes = vec![Node {
+                            ctrl_id: src.ctrl_id,
+                            typ: cs_ds.into(),
+                        }];
+                        // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
+                        if let CallSiteOrDataSink::DataSink(DataSink::Argument {
+                            function: f,
+                            ..
+                        }) = cs_ds
+                        {
+                            nodes.push(Node {
+                                ctrl_id: src.ctrl_id,
+                                typ: f.into(),
+                            })
+                        }
+                        nodes
+                    }),
+                )
+            };
+
         match edge_type {
-            EdgeType::Data | EdgeType::DataAndControl => {
-                let get_influencees =
-                    |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
-                        Box::new(
-                            flow.row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
-                                .iter()
-                                .flat_map(move |cs_ds| {
-                                    // We definitely influence to the node itself.
-                                    let mut nodes = vec![Node {
-                                        ctrl_id: src.ctrl_id,
-                                        typ: cs_ds.into(),
-                                    }];
-                                    // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
-                                    if let CallSiteOrDataSink::DataSink(DataSink::Argument {
-                                        function: f,
-                                        ..
-                                    }) = cs_ds
-                                    {
-                                        nodes.push(Node {
-                                            ctrl_id: src.ctrl_id,
-                                            typ: f.into(),
-                                        })
-                                    }
-                                    nodes
-                                }),
-                        )
-                    };
-                match edge_type {
-                    EdgeType::Data => get_influencees(&self.flows_to[cf_id].data_flows_to),
-                    EdgeType::Control => panic!("impossible"),
-                    EdgeType::DataAndControl => get_influencees(&self.flows_to[cf_id].flows_to),
-                }
-            }
+            EdgeType::Data => get_influencees(&self.flows_to[cf_id].data_flows_to),
+            EdgeType::DataAndControl => get_influencees(&self.flows_to[cf_id].flows_to),
             EdgeType::Control => {
                 match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
                     Some(callsites) => Box::new(callsites.iter().map(move |cs| Node {
@@ -475,6 +472,7 @@ impl Context {
         &self,
         marker: Marker,
     ) -> impl Iterator<Item = &'_ (DefId, MarkerRefinement)> + '_ {
+        self.report_marker_if_absent(marker);
         self.marker_to_ids
             .get(&marker)
             .into_iter()
@@ -600,10 +598,10 @@ impl Context {
             .collect()
     }
 
-    /// Enforce that on every path from the `starting_points` to `is_terminal` a
+    /// Enforce that on every data flow path from the `starting_points` to `is_terminal` a
     /// node satisfying `is_checkpoint` is passed.
     ///
-    /// Fails if `ctrl` is not found.
+    /// Fails if `ctrl_id` on a provided starting point is not found.
     ///
     /// The return value contains some statistics information about the
     /// traversal. The property holds if [`AlwaysHappensBefore::holds`] is true.
@@ -613,45 +611,70 @@ impl Context {
     /// always return the same result for the same input.
     pub fn always_happens_before<'a>(
         &self,
-        ctrl: ControllerId,
         starting_points: impl Iterator<Item = Node<'a>>,
         mut is_checkpoint: impl FnMut(Node) -> bool,
         mut is_terminal: impl FnMut(Node) -> bool,
     ) -> Result<AlwaysHappensBefore> {
-        let mut seen = HashSet::<Node>::new();
+        let mut seen = HashSet::<&DataSink>::new();
         let mut num_reached = 0;
         let mut num_checkpointed = 0;
 
-        let mut queue = starting_points.collect::<Vec<_>>();
+        let mut queue = starting_points
+            .filter_map(|n| match n.typ.as_data_source() {
+                Some(ds) => Some((
+                    ds,
+                    n.ctrl_id,
+                    &self.desc().controllers.get(&n.ctrl_id).unwrap().data_flow.0,
+                )),
+                None => {
+                    assert_warning!(
+                        *self,
+                        false,
+                        format!(
+                            "found starting point {:?} that cannot be converted to a datasource",
+                            n
+                        )
+                    );
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
 
         let started_with = queue.len();
 
-        let flow = &self
-            .desc()
-            .controllers
-            .get(&ctrl)
-            .ok_or_else(|| anyhow!("Controller not found"))?
-            .data_flow
-            .0;
+        // Return whether node is checkpoint or terminal and increment those respective counters
+        let mut check_node = |node: Node| -> bool {
+            if is_checkpoint(node) {
+                num_checkpointed += 1;
+                return true;
+            } else if is_terminal(node) {
+                num_reached += 1;
+                return true;
+            }
+            false
+        };
 
         while let Some(current) = queue.pop() {
-            if is_checkpoint(current) {
-                num_checkpointed += 1;
-                continue;
-            } else if is_terminal(current) {
-                num_reached += 1;
+            // Check the datasource.
+            if check_node(Node {
+                ctrl_id: current.1,
+                typ: (&current.0).into(),
+            }) {
                 continue;
             }
-            let Some(datasource) = current.typ.as_data_source() else {
-				continue
-			};
-            for sink in flow.get(&datasource).into_iter().flatten() {
-                let sink_node = Node {
-                    ctrl_id: current.ctrl_id,
+
+            // Check all sinks the source flows to.
+            for sink in current.2.get(&current.0).into_iter().flatten() {
+                if check_node(Node {
+                    ctrl_id: current.1,
                     typ: sink.into(),
-                };
-                if seen.insert(sink_node) {
-                    queue.push(sink_node);
+                }) {
+                    continue;
+                } else if let DataSink::Argument { function, .. } = sink {
+                    // If the sink is an argument, it can be converted to a datasource and added to the queue.
+                    if seen.insert(sink) {
+                        queue.push((function.clone().into(), current.1, current.2));
+                    }
                 }
             }
         }
@@ -667,6 +690,7 @@ impl Context {
     #[allow(clippy::needless_lifetimes)]
     /// Return all types that are marked with `marker`
     pub fn marked_type<'a>(&'a self, marker: Marker) -> impl Iterator<Item = DefId> + 'a {
+        self.report_marker_if_absent(marker);
         self.marked(marker)
             .filter(|(did, _)| self.desc().def_info[did].kind == DefKind::Type)
             .map(|(did, refinement)| {
@@ -719,10 +743,7 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use std::fmt::Write;
         let info = &self.ctx.desc().def_info[&self.def_id];
-        f.write_str(match info.kind {
-            DefKind::Type => "type",
-            DefKind::Function => "function",
-        })?;
+        f.write_str(info.kind.as_ref())?;
         f.write_str(" `")?;
         for segment in &info.path {
             f.write_str(segment.as_str())?;
@@ -905,7 +926,6 @@ fn test_happens_before() -> Result<()> {
     let ctrl_name = ctx.find_by_name("happens_before_pass")?;
 
     let pass = ctx.always_happens_before(
-        ctrl_name,
         ctx.all_nodes_for_ctrl(ctrl_name)
             .filter(|n| ctx.has_marker(Identifier::new_intern("start"), *n)),
         |checkpoint| ctx.has_marker(Identifier::new_intern("bless"), checkpoint),
@@ -918,7 +938,6 @@ fn test_happens_before() -> Result<()> {
     let ctrl_name = ctx.find_by_name("happens_before_fail")?;
 
     let fail = ctx.always_happens_before(
-        ctrl_name,
         ctx.all_nodes_for_ctrl(ctrl_name)
             .filter(|n| ctx.has_marker(Identifier::new_intern("start"), *n)),
         |check| ctx.has_marker(Identifier::new_intern("bless"), check),
@@ -939,8 +958,8 @@ fn test_influencees() -> Result<()> {
         ctrl_id: ctrl_name,
         typ: (&DataSource::Argument(0)).into(),
     };
-    let cond_sink = crate::test_utils::get_sink_node(ctx, ctrl_name, "cond");
-    let sink_callsite = crate::test_utils::get_callsite_node(ctx, ctrl_name, "sink1");
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
 
     let influencees_data_control = ctx
         .influencees(src_a, EdgeType::DataAndControl)
@@ -989,8 +1008,8 @@ fn test_influencers() -> Result<()> {
         ctrl_id: ctrl_name,
         typ: (&DataSource::Argument(1)).into(),
     };
-    let cond_sink = crate::test_utils::get_sink_node(ctx, ctrl_name, "cond");
-    let sink_callsite = crate::test_utils::get_callsite_node(ctx, ctrl_name, "sink1");
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
 
     let influencers_data_control = ctx
         .influencers(sink_callsite, EdgeType::DataAndControl)
