@@ -64,8 +64,15 @@ impl DeletionProp {
         assert_error!(
             self.cx,
             found_deleter,
-            format!("No valid deleter found for all types: {:?}", types_to_check),
+            "Did not find valid deleter for all types."
         );
+        for ty in types_to_check {
+            assert_error!(
+                self.cx,
+                found_deleter,
+                format!("Type: {}", self.cx.describe_def(ty))
+            )
+        }
     }
 }
 
