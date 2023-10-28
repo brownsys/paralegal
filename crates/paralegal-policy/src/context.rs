@@ -340,47 +340,35 @@ impl Context {
                 })
         };
 
+        let get_influencers =
+            |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
+                Box::new(
+                    flow.rows()
+                        .filter_map(move |(src, row_set)| {
+                            row_set.contains(&sink_cs_or_ds).then_some(src)
+                        })
+                        .flat_map(move |idx| {
+                            // We definitely are influenced by the node itself.
+                            let mut nodes = vec![Node {
+                                ctrl_id: sink.ctrl_id,
+                                typ: self.flows_to[&sink.ctrl_id].sources.value(*idx).into(),
+                            }];
+
+                            let my_flows_to = &self.flows_to[&sink.ctrl_id];
+
+                            // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
+                            if let DataSource::FunctionCall(cs) = my_flows_to.sources.value(*idx) {
+                                nodes.extend(callargs_for_callsite(cs, my_flows_to))
+                            }
+
+                            nodes
+                        }),
+                )
+            };
+
         match edge_type {
-            EdgeType::Data | EdgeType::DataAndControl => {
-                let get_influencers = |flow: &'a BitvecArcIndexMatrix<
-                    DataSourceIndex,
-                    CallSiteOrDataSink,
-                >| {
-                    Box::new(
-                        flow.rows()
-                            .filter_map(move |(src, row_set)| {
-                                if row_set.contains(&sink_cs_or_ds) {
-                                    Some(src)
-                                } else {
-                                    None
-                                }
-                            })
-                            .flat_map(move |idx| {
-                                // We definitely are influenced by the node itself.
-                                let mut nodes = vec![Node {
-                                    ctrl_id: sink.ctrl_id,
-                                    typ: self.flows_to[&sink.ctrl_id].sources.value(*idx).into(),
-                                }];
-
-                                let my_flows_to = &self.flows_to[&sink.ctrl_id];
-
-                                // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
-                                if let DataSource::FunctionCall(cs) =
-                                    my_flows_to.sources.value(*idx)
-                                {
-                                    nodes.extend(callargs_for_callsite(cs, my_flows_to))
-                                }
-
-                                nodes
-                            }),
-                    )
-                };
-                match edge_type {
-                    EdgeType::Data => get_influencers(&self.flows_to[cf_id].data_flows_to),
-                    EdgeType::Control => panic!("impossible"),
-                    EdgeType::DataAndControl => get_influencers(&self.flows_to[cf_id].flows_to),
-                }
-            }
+            EdgeType::Data => get_influencers(&self.flows_to[cf_id].data_flows_to),
+            EdgeType::DataAndControl => get_influencers(&self.flows_to[cf_id].flows_to),
             EdgeType::Control => {
                 let Some(cs) = sink.typ.as_call_site() else {
 					return Box::new(empty());
@@ -424,40 +412,40 @@ impl Context {
 			return Box::new(empty());
 		};
 
+        let get_influencees =
+            |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
+                Box::new(
+                    flow.row_set(
+                        &src_datasource
+                            .clone()
+                            .to_index(&self.flows_to[cf_id].sources),
+                    )
+                    .iter()
+                    .flat_map(move |cs_ds| {
+                        // We definitely influence to the node itself.
+                        let mut nodes = vec![Node {
+                            ctrl_id: src.ctrl_id,
+                            typ: cs_ds.into(),
+                        }];
+                        // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
+                        if let CallSiteOrDataSink::DataSink(DataSink::Argument {
+                            function: f,
+                            ..
+                        }) = cs_ds
+                        {
+                            nodes.push(Node {
+                                ctrl_id: src.ctrl_id,
+                                typ: f.into(),
+                            })
+                        }
+                        nodes
+                    }),
+                )
+            };
+
         match edge_type {
-            EdgeType::Data | EdgeType::DataAndControl => {
-                let get_influencees =
-                    |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
-                        Box::new(
-                            flow.row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
-                                .iter()
-                                .flat_map(move |cs_ds| {
-                                    // We definitely influence to the node itself.
-                                    let mut nodes = vec![Node {
-                                        ctrl_id: src.ctrl_id,
-                                        typ: cs_ds.into(),
-                                    }];
-                                    // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
-                                    if let CallSiteOrDataSink::DataSink(DataSink::Argument {
-                                        function: f,
-                                        ..
-                                    }) = cs_ds
-                                    {
-                                        nodes.push(Node {
-                                            ctrl_id: src.ctrl_id,
-                                            typ: f.into(),
-                                        })
-                                    }
-                                    nodes
-                                }),
-                        )
-                    };
-                match edge_type {
-                    EdgeType::Data => get_influencees(&self.flows_to[cf_id].data_flows_to),
-                    EdgeType::Control => panic!("impossible"),
-                    EdgeType::DataAndControl => get_influencees(&self.flows_to[cf_id].flows_to),
-                }
-            }
+            EdgeType::Data => get_influencees(&self.flows_to[cf_id].data_flows_to),
+            EdgeType::DataAndControl => get_influencees(&self.flows_to[cf_id].flows_to),
             EdgeType::Control => {
                 match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
                     Some(callsites) => Box::new(callsites.iter().map(move |cs| Node {
@@ -923,7 +911,7 @@ fn test_context() {
 fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
-    fn is_terminal(end: Node<'_>) -> bool {
+    fn is_terminal<'a>(end: Node<'a>) -> bool {
         matches!(end.typ, crate::NodeType::Return(_))
     }
 
