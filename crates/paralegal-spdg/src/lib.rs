@@ -231,16 +231,27 @@ mod ser_defid_map {
     }
 }
 
+/// Exported information from rustc about what sort of object a [`DefId`] points
+/// to.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct DefInfo {
+    /// Name of the object. Usually the one that a user assigned, but can be
+    /// generated in the case of closures and generators
     pub name: Identifier,
+    /// Def path to the object
     pub path: Vec<Identifier>,
+    /// Kind of object
     pub kind: DefKind,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+/// Similar to `DefKind` in rustc but *not the same*!
+#[derive(
+    Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, strum::EnumIs, strum::AsRefStr,
+)]
 pub enum DefKind {
-    Function,
+    Fn,
+    Generator,
+    Closure,
     Type,
 }
 

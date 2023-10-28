@@ -326,19 +326,23 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
             .filter_map(|(path, marker)| {
                 let segment_vec = path.split("::").collect::<Vec<_>>();
                 let res = def_path_res(tcx, &segment_vec)
-                    .unwrap_or_else(|err| panic!("Could not resolve {path}: {err:?}"));
+                    .map_err(|err| tcx.sess.err(format!("Could not resolve {path}: {err:?}")))
+                    .ok()?;
                 let did = match res {
                     Res::Def(_, did) => Some(did),
-                    other if opts.relaxed() => {
-                        warn!("{path} did not resolve to an item ({other:?})");
+                    other => {
+                        let msg = format!("{path} did not resolve to an item ({other:?})");
+                        if opts.relaxed() {
+                            tcx.sess.warn(msg);
+                        } else {
+                            tcx.sess.err(msg);
+                        }
                         None
                     }
-                    other => panic!("{path} did not resolve to an item ({other:?})"),
                 }?;
                 Some((did, marker.clone()))
             })
             .collect();
-        assert_eq!(new_map.len(), from_toml.len());
         new_map
     } else {
         HashMap::new()
