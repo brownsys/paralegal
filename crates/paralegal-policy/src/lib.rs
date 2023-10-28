@@ -100,7 +100,7 @@ impl SPDGGenCommand {
     /// Mutably borrow the command to perform further customization.
     ///
     /// This gives you raw access to the underlying command. Be aware that if
-    /// you pass `--` with [`Command::arg`] or [`Command:args`] then methods
+    /// you pass `--` with [`Command::arg`] or [`Command::args`] then methods
     /// such as [`Self::external_annotations`] and
     /// [`Self::abort_after_analysis`] not longer work properly after this call.
     pub fn get_command(&mut self) -> &mut Command {
