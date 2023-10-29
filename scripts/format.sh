@@ -12,10 +12,15 @@ case $1 in
         ARGS="-D warnings"
         PREFIX=Checking
         ;;
-    clipp-yfix)
-        CMD="clippy --fix --all"
+    clippy-fix)
+        CMD="clippy --fix --allow-staged --all"
         ARGS="-D warnings"
         PREFIX=Fixing
+        echo "
+Note: You are using the clippy-fix command. Because this can introduce breaking changes this script only passes \`--allow-staged\` to the fix command. What this means for you is that you need to stage (or commit) your changes in git for the fix command to work. This is a precaution that allows you to inspect, test and potentially reject clippy's changes before accepting them.
+
+Because we invoke the fix command multiple separate time it may fail again because of unstaged changes after applying the first fix. Inspect the changes, stage them and rerun the script until no more errors occur.
+" | fmt -w 80
         ;;
     fmt-check)
         CMD="fmt --check"
@@ -64,4 +69,6 @@ then
             run -C "$TEST_DIR/$dir"
         fi
     done
+
+    run -C "crates/paralegal-policy/tests/test-crate"
 fi
