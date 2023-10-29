@@ -85,17 +85,8 @@ jobs:
       with:
         path: ~/.rustup
         key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Check main repo
-      run: cargo fmt --check
-    - name: Check properties
-      run: cargo fmt --check
-      working-directory: props
-    - name: Check Guide Project
-      run: cargo fmt --check
-      working-directory: guide/file-db-example
-    - name: Check Guide Policy
-      run: cargo fmt --check
-      working-directory: guide/deletion-policy
+    - name: Run checks
+      run: scripts/format.sh fmt-check
 
   linting:
     name: Clippy
@@ -118,10 +109,7 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Here come the complaints
-      run: scripts/clippy.sh
-    - name: Complaints about properties
-      run: cargo clippy --all -- -D warnings
-      working-directory: props
+      run: scripts/format.sh clippy-check
 
   documentation:
     name: Documentation Test
