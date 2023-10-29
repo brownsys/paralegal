@@ -177,6 +177,99 @@ fn run_sc_policy(ctx: Arc<Context>) -> Result<()> {
     })
 }
 
+/// If sensitive data is released, the release must be scoped, and all inputs to the scope must be safe.
+pub struct AuthDisclosureProp {
+    cx: Arc<PolicyContext>,
+}
+
+impl AuthDisclosureProp {
+    pub fn new(cx: Arc<PolicyContext>) -> Self {
+        AuthDisclosureProp { cx }
+    }
+
+    pub fn check(self) {
+        for c_id in self.cx.desc().controllers.keys() {
+            // All srcs that have no influencers
+            let roots = self
+                .cx
+                .all_nodes_for_ctrl(*c_id)
+                .filter(|n| {
+                    self.cx
+                        .influencers(*n, paralegal_policy::EdgeType::DataAndControl)
+                        .next()
+                        == None
+                })
+                .collect::<Vec<_>>();
+            let safe_scopes = self
+                .cx
+                // All nodes marked "safe"
+                .all_nodes_for_ctrl(*c_id)
+                .filter(|n| self.cx.has_marker(marker!(safe), *n))
+                // And all nodes marked "safe_with_bless"
+                .chain(self.cx.all_nodes_for_ctrl(*c_id).filter(|node| {
+                    self.cx.has_marker(marker!(safe_with_bless), *node)
+                        && self
+                            .cx
+                            // That are influenced by a node marked "bless"
+                            .influencers(*node, paralegal_policy::EdgeType::DataAndControl)
+                            .any(|b| self.cx.has_marker(marker!(bless), b))
+                }))
+                .collect::<Vec<_>>();
+            let sinks = self
+                .cx
+                .all_nodes_for_ctrl(*c_id)
+                .filter(|n| self.cx.has_marker(marker!(sink), *n))
+                .collect::<Vec<_>>();
+            let mut sensitives = self
+                .cx
+                .all_nodes_for_ctrl(*c_id)
+                .filter(|node| self.cx.has_marker(marker!(sensitive), *node));
+
+            let controller_valid = sensitives.all(|sens| {
+                sinks.iter().all(|sink| {
+                    // sensitive flows to store implies
+                    !(self
+                        .cx
+                        .flows_to(sens, *sink, paralegal_policy::EdgeType::Data))
+                        || sink.associated_call_site().is_some_and(|sink_callsite| {
+                            // scopes for the store
+                            let store_scopes = self
+                                .cx
+                                .influencers(sink_callsite, paralegal_policy::EdgeType::Data)
+                                .filter(|n| self.cx.has_marker(marker!(scopes), *n))
+                                .collect::<Vec<_>>();
+
+                            // all flows are safe before scope
+                            let safe_before_scope = self.cx.always_happens_before(
+                                roots.iter().cloned(),
+                                |n| safe_scopes.contains(&n),
+                                |n| store_scopes.contains(&n),
+                            );
+
+                            !store_scopes.is_empty() && safe_before_scope.is_ok()
+                        })
+                })
+            });
+
+            assert_error!(
+                self.cx,
+                controller_valid,
+                format!(
+                    "Violation detected for controller: {}",
+                    self.cx.describe_def(*c_id)
+                ),
+            );
+        }
+    }
+}
+
+fn run_dis_policy(ctx: Arc<Context>) -> Result<()> {
+    ctx.named_policy(Identifier::new_intern("Authorized Disclosure"), |ctx| {
+        AuthDisclosureProp::new(ctx).check();
+        Ok(())
+    })
+}
+
 fn main() -> Result<()> {
     let ws_dir = std::env::args()
         .nth(1)
@@ -187,9 +280,12 @@ fn main() -> Result<()> {
         Some(s) => match s.as_str() {
             "sc" => run_sc_policy,
             "del" => run_del_policy,
+            "dis" => run_dis_policy,
             other => bail!("don't recognize the property name '{other}'"),
         },
-        None => |ctx: Arc<Context>| run_sc_policy(ctx.clone()).and(run_del_policy(ctx)),
+        None => |ctx: Arc<Context>| {
+            run_dis_policy(ctx.clone()).and(run_sc_policy(ctx.clone()).and(run_del_policy(ctx)))
+        },
     };
 
     paralegal_policy::SPDGGenCommand::global()
