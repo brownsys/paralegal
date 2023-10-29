@@ -6,6 +6,8 @@ use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToInd
 
 use std::{fmt, sync::Arc};
 
+use crate::NodeType;
+
 /// The transitive closure of the [`Ctrl::data_flow`] relation.
 ///
 /// Implemented efficiently using an [`IndexedDomain`] over the
@@ -37,8 +39,19 @@ impl CtrlFlowsTo {
     /// Constructs the transitive closure from a [`Ctrl`].
     pub fn build(ctrl: &Ctrl) -> Self {
         // Collect all sources and sinks into indexed domains.
-        let sources = Arc::new(IndexedDomain::from_iter(ctrl.all_sources().cloned()));
-        let sinks = Arc::new(IndexedDomain::from_iter(ctrl.all_call_sites_or_sinks()));
+        let sources = Arc::new(IndexedDomain::from_iter(ctrl.all_sources().cloned().chain(
+            ctrl.all_call_sites_or_sinks().filter_map(|cs_or_ds| {
+                let nt: NodeType = (&cs_or_ds).into();
+                nt.as_data_source()
+            }),
+        )));
+        let sinks = Arc::new(IndexedDomain::from_iter(
+            ctrl.all_call_sites_or_sinks()
+                .chain(ctrl.all_sources().filter_map(|src| {
+                    let nt: NodeType = src.into();
+                    nt.as_call_site_or_data_sink()
+                })),
+        ));
 
         // Connect each function-argument sink to its corresponding function sources.
         // This lets us compute the transitive closure by following through the `sink_to_source` map.
@@ -230,4 +243,16 @@ fn test_flows_to() {
     // b flows to the sink1 datasink (by data flow)
     assert!(ctx.flows_to(src_b, sink, crate::EdgeType::DataAndControl));
     assert!(ctx.flows_to(src_b, sink, crate::EdgeType::Data));
+}
+
+#[test]
+fn test_args_flow_to_cs() {
+    let ctx = crate::test_utils::test_ctx();
+    let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
+    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
+    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
+
+    assert!(ctx.flows_to(sink, cs, crate::EdgeType::Data));
+    assert!(ctx.flows_to(sink, cs, crate::EdgeType::DataAndControl));
+    assert!(!ctx.flows_to(sink, cs, crate::EdgeType::Control));
 }
