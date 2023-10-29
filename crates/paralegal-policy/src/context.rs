@@ -392,7 +392,7 @@ impl Context {
 
                     // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
                     if let DataSource::FunctionCall(cs) = controller_flow.sources.value(*idx) {
-                        nodes.extend(callargs_for_callsite(&cs))
+                        nodes.extend(callargs_for_callsite(cs))
                     }
 
                     nodes
@@ -400,7 +400,7 @@ impl Context {
 
             // Special case if sink is a callsite, the callargs are also influencers
             let cs_args = if let NodeType::CallSite(cs) = sink.typ {
-                Some(callargs_for_callsite(&cs))
+                Some(callargs_for_callsite(cs))
             } else {
                 None
             };
