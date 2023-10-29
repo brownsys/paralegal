@@ -2,7 +2,7 @@ use anyhow::Result;
 use paralegal_policy::{assert_error, Context, Marker};
 use std::sync::Arc;
 
-fn dummy_policy(ctx: Arc<Context>) -> Result<()> {
+fn dummy_policy(_ctx: Arc<Context>) -> Result<()> {
     println!("Graph loaded.");
     Ok(())
 }
@@ -17,6 +17,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
     let user_data_types = ctx
         .marked_type(Marker::new_intern("user_data"))
