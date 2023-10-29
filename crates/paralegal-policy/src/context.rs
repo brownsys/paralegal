@@ -292,6 +292,8 @@ impl Context {
     }
 
     /// Returns whether a node flows to a node through the configured edge type.
+    ///
+    /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
     pub fn flows_to(&self, src: Node, sink: Node, edge_type: EdgeType) -> bool {
         if src.ctrl_id != sink.ctrl_id {
             return false;
@@ -345,6 +347,8 @@ impl Context {
     }
 
     /// Returns iterator over all Nodes that influence the given sink Node.
+    ///
+    /// Does not return the input node. A CallSite sink will return all of the associated CallArgument nodes.
     pub fn influencers<'a>(
         &'a self,
         sink: Node<'a>,
@@ -436,6 +440,8 @@ impl Context {
     }
 
     /// Returns iterator over all Nodes that are influenced by the given src Node.
+    ///
+    /// Does not return the input node. A CallArgument src will return the associated CallSite.
     pub fn influencees<'a>(
         &'a self,
         src: Node<'a>,
