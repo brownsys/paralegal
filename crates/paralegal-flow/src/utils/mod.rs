@@ -924,6 +924,7 @@ pub enum BodyResolutionError {
     /// The provided id refers to an external entity and we have no access to
     /// its body
     External,
+    /// The function refers to a trait item (not an `impl` item or raw `fn`)
     #[error("is associated function of trait {0:?}")]
     IsTraitAssocFn(DefId),
 }
@@ -949,8 +950,9 @@ pub trait TyCtxtExt<'tcx> {
     /// Essentially the same as [`Self::body_for_def_id`] but handles errors
     /// according to our default policy which is as follows:
     ///
-    /// - [`BodyResolutionError::NotAFunction`]: Hard error (panic), as we
-    ///       consider this an ICE
+    /// - [`BodyResolutionError::NotAFunction`]: Hard error (panic). We consider
+    ///       this an ICE because calling this method on a non-function `DefId`
+    ///       could indicate errors elsewhere in the compiler.
     /// - [`BodyResolutionError::External`]: Silent because otherwise we would
     ///       spam warnings.
     /// - [`BodyResolutionError::IsTraitAssocFn`]: Warning emitted, because this
