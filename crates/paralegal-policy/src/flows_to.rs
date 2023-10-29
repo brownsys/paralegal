@@ -17,6 +17,9 @@ pub struct CtrlFlowsTo {
     /// The indexes of [`CallSiteOrDataSink`]s in the controller.
     pub sinks: Arc<IndexedDomain<CallSiteOrDataSink>>,
 
+    /// Mapping from [`CallSiteOrDataSink::CallSite`]s to the [`CallSiteOrDataSink::DataSink(CallArgument)`]s that they are related to.
+    pub callsites_to_callargs: IndexMatrix<CallSiteOrDataSinkIndex, CallSiteOrDataSink>,
+
     /// The transitive closure of the [`Ctrl::data_flow`] relation.
     /// If a source flows to a [`DataSink::Argument`], it also flows into its CallSite.
     ///
@@ -41,24 +44,19 @@ impl CtrlFlowsTo {
         // This lets us compute the transitive closure by following through the `sink_to_source` map.
         let mut sink_to_source = IndexMatrix::new(&sources);
         for (sink_idx, sink) in sinks.as_vec().iter_enumerated() {
-            for (src_idx, src) in sources.as_vec().iter_enumerated() {
-                match (src, sink) {
-                    (
-                        DataSource::FunctionCall(f1),
-                        CallSiteOrDataSink::DataSink(DataSink::Argument { function: f2, .. }),
-                    ) => {
-                        if f1 == f2 {
-                            sink_to_source.insert(sink_idx, src_idx);
-                        }
-                    }
-                    (DataSource::FunctionCall(f1), CallSiteOrDataSink::CallSite(f2)) => {
-                        if f1 == f2 {
-                            sink_to_source.insert(sink_idx, src_idx);
-                        }
-                    }
-                    _ => (),
+            let src = match sink {
+                CallSiteOrDataSink::DataSink(DataSink::Argument { function: f, .. }) => {
+                    DataSource::FunctionCall(f.clone())
                 }
-            }
+                CallSiteOrDataSink::CallSite(f) => DataSource::FunctionCall(f.clone()),
+                _ => continue,
+            };
+            let src_idx = if sources.contains(&src) {
+                sources.index(&src)
+            } else {
+                continue;
+            };
+            sink_to_source.insert(sink_idx, src_idx);
         }
 
         /// Compute the `flows_to` transitive closure to a fixpoint.
@@ -105,7 +103,7 @@ impl CtrlFlowsTo {
         let mut flows_to = data_flows_to.clone();
 
         // Connect each callsite to its function-argument sinks
-        let mut cs_to_sink = IndexMatrix::new(&sinks);
+        let mut callsites_to_callargs = IndexMatrix::new(&sinks);
         for (callsite_idx, callsite) in sinks.as_vec().iter_enumerated() {
             for (sink_idx, sink) in sinks.as_vec().iter_enumerated() {
                 if let (
@@ -114,7 +112,7 @@ impl CtrlFlowsTo {
                 ) = (sink, callsite)
                 {
                     if f1 == f2 {
-                        cs_to_sink.insert(callsite_idx, sink_idx);
+                        callsites_to_callargs.insert(callsite_idx, sink_idx);
                     }
                 }
             }
@@ -126,7 +124,10 @@ impl CtrlFlowsTo {
                 let new_call_site: CallSiteOrDataSink = cs.clone().into();
                 flows_to.insert(src, &new_call_site);
                 // initialize with flows from the DataSource to all of the CallSite's DataSinks
-                for sink in cs_to_sink.row_set(&sinks.index(&new_call_site)).iter() {
+                for sink in callsites_to_callargs
+                    .row_set(&sinks.index(&new_call_site))
+                    .iter()
+                {
                     flows_to.insert(src, sink);
                 }
             }
@@ -137,6 +138,7 @@ impl CtrlFlowsTo {
         CtrlFlowsTo {
             sources,
             sinks,
+            callsites_to_callargs,
             data_flows_to,
             flows_to,
         }
@@ -185,7 +187,6 @@ fn test_data_flows_to() {
 
 #[test]
 fn test_ctrl_flows_to() {
-    use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_ctrl").unwrap();
     let src_a = crate::Node {
@@ -200,19 +201,8 @@ fn test_ctrl_flows_to() {
         ctrl_id: controller,
         typ: (&DataSource::Argument(2)).into(),
     };
-    let get_callsite_node = |name| {
-        let name = Identifier::new_intern(name);
-        let node = ctx.desc().controllers[&controller]
-            .call_sites()
-            .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
-            .unwrap();
-        crate::Node {
-            ctrl_id: controller,
-            typ: node.into(),
-        }
-    };
-    let cs1 = get_callsite_node("sink1");
-    let cs2 = get_callsite_node("sink2");
+    let cs1 = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
+    let cs2 = crate::test_utils::get_callsite_node(&ctx, controller, "sink2");
     assert!(ctx.flows_to(src_a, cs1, crate::EdgeType::Control));
     assert!(ctx.flows_to(src_c, cs2, crate::EdgeType::Control));
     assert!(ctx.flows_to(src_a, cs2, crate::EdgeType::Control));
@@ -222,7 +212,6 @@ fn test_ctrl_flows_to() {
 
 #[test]
 fn test_flows_to() {
-    use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
     let src_a = crate::Node {
@@ -233,35 +222,8 @@ fn test_flows_to() {
         ctrl_id: controller,
         typ: (&DataSource::Argument(1)).into(),
     };
-    let get_sink_node = |name| {
-        let name = Identifier::new_intern(name);
-        let node = ctx.desc().controllers[&controller]
-            .data_sinks()
-            .find(|sink| match sink {
-                DataSink::Argument { function, .. } => {
-                    ctx.desc().def_info[&function.function].name == name
-                }
-                _ => false,
-            })
-            .unwrap();
-        crate::Node {
-            ctrl_id: controller,
-            typ: node.into(),
-        }
-    };
-    let get_callsite_node = |name| {
-        let name = Identifier::new_intern(name);
-        let node = ctx.desc().controllers[&controller]
-            .call_sites()
-            .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
-            .unwrap();
-        crate::Node {
-            ctrl_id: controller,
-            typ: node.into(),
-        }
-    };
-    let sink = get_sink_node("sink1");
-    let cs = get_callsite_node("sink1");
+    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
+    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
     // a flows to the sink1 callsite (by ctrl flow)
     assert!(ctx.flows_to(src_a, cs, crate::EdgeType::DataAndControl));
     assert!(!ctx.flows_to(src_a, cs, crate::EdgeType::Data));
