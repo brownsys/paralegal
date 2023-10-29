@@ -1,11 +1,7 @@
 {
-	"rust-analyzer.diagnostics.disabled": [
-		"unresolved-proc-macro"
-	],
-	"rust-analyzer.rustc.source": "discover",
-	"rust-analyzer.workspace.symbol.search.scope": "workspace_and_dependencies",
-	"rust-analyzer.linkedProjects": [
-		"./crates/paralegal-policy/tests/test-crate/Cargo.toml",
-		"./props/websubmit/Cargo.toml"
-	]
+    "rust-analyzer.diagnostics.disabled": [
+        "unresolved-proc-macro"
+    ],
+    "rust-analyzer.rustc.source": "discover",
+    "rust-analyzer.workspace.symbol.search.scope": "workspace_and_dependencies"
 }
