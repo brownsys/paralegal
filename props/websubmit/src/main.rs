@@ -196,22 +196,24 @@ impl AuthDisclosureProp {
                 .filter(|n| {
                     self.cx
                         .influencers(*n, paralegal_policy::EdgeType::DataAndControl)
-                        .next().is_none()
+                        .next()
+                        .is_none()
                 })
                 .collect::<Vec<_>>();
+
             let safe_scopes = self
                 .cx
                 // All nodes marked "safe"
                 .all_nodes_for_ctrl(*c_id)
-                .filter(|n| self.cx.has_marker(marker!(safe), *n))
+                .filter(|n| self.cx.has_marker(marker!(safe_source), *n))
                 // And all nodes marked "safe_with_bless"
                 .chain(self.cx.all_nodes_for_ctrl(*c_id).filter(|node| {
-                    self.cx.has_marker(marker!(safe_with_bless), *node)
+                    self.cx.has_marker(marker!(safe_source_with_bless), *node)
                         && self
                             .cx
                             // That are influenced by a node marked "bless"
                             .influencers(*node, paralegal_policy::EdgeType::DataAndControl)
-                            .any(|b| self.cx.has_marker(marker!(bless), b))
+                            .any(|b| self.cx.has_marker(marker!(bless_safe_source), b))
                 }))
                 .collect::<Vec<_>>();
             let sinks = self
@@ -242,10 +244,22 @@ impl AuthDisclosureProp {
                             let safe_before_scope = self.cx.always_happens_before(
                                 roots.iter().cloned(),
                                 |n| safe_scopes.contains(&n),
-                                |n| store_scopes.contains(&n),
-                            );
+                                |n| store_scopes.contains(&n)).unwrap();
 
-                            !store_scopes.is_empty() && safe_before_scope.is_ok()
+                            let safe = !store_scopes.is_empty()
+                                && safe_before_scope.holds();
+
+                            assert_error!(
+                                self.cx,
+                                safe,
+                                format!(
+                                    "Sensitive {} flowed to sink {} which did not have safe scopes {}",
+                                    self.cx.describe_node(sens),
+                                    self.cx.describe_node(*sink),
+									safe_before_scope
+                                )
+                            );
+                            safe
                         })
                 })
             });
