@@ -1,14 +1,11 @@
-#![feature(register_tool)]
-#![register_tool(paralegal_flow)]
-
 use std::collections::HashMap;
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn some_bool() -> bool {
     false
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 pub async fn survive_on_broken(
     metrics: Metrics,
 )  {
@@ -57,7 +54,7 @@ pub struct Metrics {
 struct Client;
 
 impl Client {
-    #[paralegal_flow::label(noinline)]
+    #[paralegal::marker(noinline)]
     fn incr_with_tags(&self, label: &str) -> Builder {
         Builder
     }
@@ -65,13 +62,13 @@ impl Client {
 
 struct Builder;
 
-impl Builder { 
-    #[paralegal_flow::label(noinline)]
+impl Builder {
+    #[paralegal::marker(noinline)]
     fn with_tag(&mut self, key: &str, value: &str) -> Builder {
         Builder
     }
 
-    #[paralegal_flow::label(noinline)]
+    #[paralegal::marker(noinline)]
     fn try_send(&self) -> Result<String, String> {
         unimplemented!()
     }
@@ -120,7 +117,7 @@ struct Err {
     kind: usize,
 }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn get_result() -> Result<(), Err> {
     unimplemented!()
 }
@@ -182,7 +179,7 @@ impl Tags {
 
 }
 
-#[paralegal_flow::label(sensitive, arguments = [0])]
+#[paralegal::marker(sensitive, arguments = [0])]
 fn mark_sensitive<T>(_: &mut T) {}
 
 fn main() {}
