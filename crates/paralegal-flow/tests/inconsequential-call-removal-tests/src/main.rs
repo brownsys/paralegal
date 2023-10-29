@@ -1,24 +1,21 @@
-#![feature(register_tool)]
-#![register_tool(paralegal_flow)]
-
-#[paralegal_flow::label(create)]
+#[paralegal::marker(create)]
 fn create() -> Vec<i32> {
     vec![]
 }
 
-#[paralegal_flow::label(read)]
+#[paralegal::marker(read)]
 fn read(_: &[i32]) {
 
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn single_removal() {
     let mut c = create();
     c.push(9);
     read(&c)
 }
 
-#[paralegal_flow::analyze] 
+#[paralegal::analyze]
 fn double_removal() {
     let mut c = create();
     c.push(9);
@@ -26,29 +23,29 @@ fn double_removal() {
     read(&c)
 }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn other_push<T>(v: &mut T) {}
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn labeled_function_not_removed() {
     let mut c = create();
     other_push(&mut c);
     read(&c)
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn source_function_not_removed() {
     let mut c = Vec::new();
     c.push(9);
     read(&c)
 }
 
-#[paralegal_flow::label(create)]
+#[paralegal::marker(create)]
 fn create_string() -> String {
     "".to_string()
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn sink_function_not_removed() {
     use std::io::Write;
     let s = create_string();
@@ -56,7 +53,7 @@ fn sink_function_not_removed() {
 
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn no_removal_because_ctrl_out() {
     let s = create();
     if s.is_empty() {
@@ -64,7 +61,7 @@ fn no_removal_because_ctrl_out() {
     }
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn removal_despite_ctrl_in() {
     let mut s = create();
     if s.is_empty() {
@@ -73,15 +70,15 @@ fn removal_despite_ctrl_in() {
     read(&s);
 }
 
-#[paralegal_flow::label(create)]
+#[paralegal::marker(create)]
 fn create2() -> Vec<i32> {
     vec![]
 }
 
-#[paralegal_flow::label(read)]
+#[paralegal::marker(read)]
 fn read2<T>(_: &T) {}
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn cross_connection_after_removal() {
     let mut s1 = create();
     let mut s2 = create2();

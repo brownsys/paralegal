@@ -13,7 +13,7 @@
 //!     let x = 1;
 //! }
 //!
-//! #[paralegal_flow::analyze]
+//! #[paralegal::analyze]
 //! fn foo {
 //!     bar();
 //!     bar();

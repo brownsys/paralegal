@@ -1,41 +1,38 @@
-#![feature(register_tool)]
-#![register_tool(paralegal_flow)]
-
-#[paralegal_flow::label(sensitive)]
+#[paralegal::marker(sensitive)]
 struct UserData {
     pub data: Vec<i64>,
 }
 
-#[paralegal_flow::label(source)]
+#[paralegal::marker(source)]
 fn get_user_data() -> UserData {
     return UserData {
         data: vec![1, 2, 3],
     };
 }
-#[paralegal_flow::label(source)]
+#[paralegal::marker(source)]
 fn get2_user_data() -> UserData {
     return UserData {
         data: vec![1, 2, 3],
     };
 }
 
-#[paralegal_flow::label(yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
+#[paralegal::marker(yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
 fn dp1_user_data(user_data: &mut UserData) {
     for i in &mut user_data.data {
         *i = 2;
     }
 }
 
-#[paralegal_flow::label{ sink, arguments = [0] }]
+#[paralegal::marker{ sink, arguments = [0] }]
 fn send_user_data(user_data: &UserData) {}
 
-#[paralegal_flow::label{ sink, arguments = [0] }]
+#[paralegal::marker{ sink, arguments = [0] }]
 fn send2_user_data(user_data: &UserData) {}
 
-#[paralegal_flow::label(noinline, return)]
+#[paralegal::marker(noinline, return)]
 fn modify_it(x: &mut u32) {}
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn track_mutable_modify() {
     let mut x = new_s();
     modify_it(&mut x.field);
@@ -47,15 +44,15 @@ struct S {
     field2: u32,
 }
 
-#[paralegal_flow::label(noinline, return)]
+#[paralegal::marker(noinline, return)]
 fn new_s() -> S { S {field: 0, field2: 1} }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn deref_t(s: &S) -> &String {
     unimplemented!();
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn eliminate_return_connection() {
     let s = new_s();
     // 'a : 'b
@@ -63,10 +60,10 @@ fn eliminate_return_connection() {
     read(t);
 }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn read<T>(t: &T) {}
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn eliminate_mut_input_connection() {
     let mut s : S = new_s();
     let mut v = Vec::new();
@@ -79,7 +76,7 @@ fn insert_ref_2<'v, 't: 'v, T>(v : &mut Vec<&'v T>, t: &'t T) {
     v.push(t)
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn input_elimination_isnt_a_problem_empty() {
     let x = new_s();
     let mut v = Vec::new();
@@ -87,7 +84,7 @@ fn input_elimination_isnt_a_problem_empty() {
     read(&v);
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn input_elimination_isnt_a_problem_vec_push() {
     let x = new_s();
     let mut v = Vec::new();
@@ -100,23 +97,23 @@ struct T<'a> {
     field: &'a S
 }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn new_t<'a>() -> T<'a> {
     unimplemented!()
 }
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn another_s() -> S {
     unimplemented!()
 }
 
 
-#[paralegal_flow::label(noinline)]
+#[paralegal::marker(noinline)]
 fn assoc<'a, 'b : 'a>(x: &mut T<'a>, s: &'b S) {
 
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn input_elimination_isnt_a_problem_statement() {
     let ref r = new_s();
     let ref r2 = another_s();
@@ -134,7 +131,7 @@ fn arity2_inlineable_async_dp_user_data(ud: &mut (&mut UserData, &mut UserData))
     dp1_user_data(ud.1)
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn no_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get2_user_data();
