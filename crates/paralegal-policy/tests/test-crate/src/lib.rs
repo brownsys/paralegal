@@ -2,6 +2,7 @@
 pub struct Foo;
 
 #[paralegal::marker{ sink, arguments = [0] }]
+#[paralegal::marker{ sink, return }]
 fn sink1(_f: Foo) {}
 
 #[paralegal::marker{ src, return }]
@@ -40,6 +41,13 @@ fn controller_ctrl(a: bool, b: Foo, c: bool, d: Foo) {
         if c {
             sink2(d);
         }
+    }
+}
+
+#[paralegal::analyze]
+fn influence(a: Foo, b: Foo) {
+    if cond(a) {
+        sink1(b);
     }
 }
 

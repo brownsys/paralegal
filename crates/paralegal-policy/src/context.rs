@@ -1,14 +1,14 @@
-use std::{io::Write, process::exit, sync::Arc};
+use std::{io::Write, iter::empty, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap,
-    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DataSourceIndex, DefKind,
+    HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
 
 use anyhow::{anyhow, bail, ensure, Result};
-use indexical::ToIndex;
+use indexical::{impls::BitvecArcIndexMatrix, ToIndex};
 use itertools::Itertools;
 
 use super::flows_to::CtrlFlowsTo;
@@ -323,6 +323,145 @@ impl Context {
                 match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
                     Some(callsites) => callsites.iter().contains(cs),
                     None => false,
+                }
+            }
+        }
+    }
+
+    /// Returns iterator over all Nodes that influence the given sink Node.
+    pub fn influencers<'a>(
+        &'a self,
+        sink: Node<'a>,
+        edge_type: EdgeType,
+    ) -> Box<dyn Iterator<Item = Node> + 'a> {
+        let cf_id = &sink.ctrl_id;
+        let Some(sink_cs_or_ds) = sink.typ.as_call_site_or_data_sink() else {
+			return Box::new(empty());
+		};
+
+        let callargs_for_callsite = move |cs: &'a CallSite, flow: &'a CtrlFlowsTo| {
+            flow.callsites_to_callargs
+                .row_set(&flow.sinks.index(&CallSiteOrDataSink::CallSite(cs.clone())))
+                .iter()
+                .map(move |ca| Node {
+                    ctrl_id: sink.ctrl_id,
+                    typ: ca.into(),
+                })
+        };
+
+        let get_influencers =
+            |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
+                Box::new(
+                    flow.rows()
+                        .filter_map(move |(src, row_set)| {
+                            row_set.contains(&sink_cs_or_ds).then_some(src)
+                        })
+                        .flat_map(move |idx| {
+                            // We definitely are influenced by the node itself.
+                            let mut nodes = vec![Node {
+                                ctrl_id: sink.ctrl_id,
+                                typ: self.flows_to[&sink.ctrl_id].sources.value(*idx).into(),
+                            }];
+
+                            let my_flows_to = &self.flows_to[&sink.ctrl_id];
+
+                            // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
+                            if let DataSource::FunctionCall(cs) = my_flows_to.sources.value(*idx) {
+                                nodes.extend(callargs_for_callsite(cs, my_flows_to))
+                            }
+
+                            nodes
+                        }),
+                )
+            };
+
+        match edge_type {
+            EdgeType::Data => get_influencers(&self.flows_to[cf_id].data_flows_to),
+            EdgeType::DataAndControl => get_influencers(&self.flows_to[cf_id].flows_to),
+            EdgeType::Control => {
+                let Some(cs) = sink.typ.as_call_site() else {
+					return Box::new(empty());
+				};
+                Box::new(
+                    self.desc.controllers[cf_id]
+                        .ctrl_flow
+                        .iter()
+                        .filter_map(move |(src, sinks)| {
+                            sinks.contains(cs).then_some(Node {
+                                ctrl_id: sink.ctrl_id,
+                                typ: src.into(),
+                            })
+                        })
+                        .flat_map(move |n| {
+                            let mut nodes = vec![n];
+
+                            // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
+                            if let Some(cs) = n.typ.as_call_site() {
+                                nodes.extend(callargs_for_callsite(
+                                    cs,
+                                    &self.flows_to[&sink.ctrl_id],
+                                ))
+                            }
+
+                            nodes
+                        }),
+                )
+            }
+        }
+    }
+
+    /// Returns iterator over all Nodes that are influenced by the given src Node.
+    pub fn influencees<'a>(
+        &'a self,
+        src: Node<'a>,
+        edge_type: EdgeType,
+    ) -> Box<dyn Iterator<Item = Node> + 'a> {
+        let cf_id = &src.ctrl_id;
+        let Some(src_datasource) = src.typ.as_data_source() else {
+			return Box::new(empty());
+		};
+
+        let get_influencees =
+            |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
+                Box::new(
+                    flow.row_set(
+                        &src_datasource
+                            .clone()
+                            .to_index(&self.flows_to[cf_id].sources),
+                    )
+                    .iter()
+                    .flat_map(move |cs_ds| {
+                        // We definitely influence to the node itself.
+                        let mut nodes = vec![Node {
+                            ctrl_id: src.ctrl_id,
+                            typ: cs_ds.into(),
+                        }];
+                        // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
+                        if let CallSiteOrDataSink::DataSink(DataSink::Argument {
+                            function: f,
+                            ..
+                        }) = cs_ds
+                        {
+                            nodes.push(Node {
+                                ctrl_id: src.ctrl_id,
+                                typ: f.into(),
+                            })
+                        }
+                        nodes
+                    }),
+                )
+            };
+
+        match edge_type {
+            EdgeType::Data => get_influencees(&self.flows_to[cf_id].data_flows_to),
+            EdgeType::DataAndControl => get_influencees(&self.flows_to[cf_id].flows_to),
+            EdgeType::Control => {
+                match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
+                    Some(callsites) => Box::new(callsites.iter().map(move |cs| Node {
+                        ctrl_id: src.ctrl_id,
+                        typ: cs.into(),
+                    })),
+                    None => Box::new(empty()),
                 }
             }
         }
@@ -807,6 +946,109 @@ fn test_happens_before() -> Result<()> {
 
     ensure!(!fail.holds());
     ensure!(!fail.is_vacuous());
+
+    Ok(())
+}
+
+#[test]
+fn test_influencees() -> Result<()> {
+    let ctx = crate::test_utils::test_ctx();
+    let ctrl_name = ctx.find_by_name("influence")?;
+    let src_a = crate::Node {
+        ctrl_id: ctrl_name,
+        typ: (&DataSource::Argument(0)).into(),
+    };
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
+
+    let influencees_data_control = ctx
+        .influencees(src_a, EdgeType::DataAndControl)
+        .unique()
+        .collect::<Vec<_>>();
+    let influencees_data = ctx
+        .influencees(src_a, EdgeType::Data)
+        .unique()
+        .collect::<Vec<_>>();
+
+    assert!(
+        influencees_data_control.contains(&cond_sink),
+        "input argument a influences cond via data"
+    );
+    assert!(
+        influencees_data_control.contains(&sink_callsite),
+        "input argument a influences sink via control"
+    );
+    print!("influencees_data_control {:?}", influencees_data_control);
+    // a influences cond arg + cs, sink1 arg + cs
+    assert_eq!(influencees_data_control.len(), 4);
+
+    assert!(
+        influencees_data.contains(&cond_sink),
+        "input argument a influences cond via data"
+    );
+    assert!(
+        !influencees_data.contains(&sink_callsite),
+        "input argument a doesnt influence sink via data"
+    );
+    // a influences cond arg + cs
+    assert_eq!(influencees_data.len(), 2);
+
+    Ok(())
+}
+
+#[test]
+fn test_influencers() -> Result<()> {
+    let ctx = crate::test_utils::test_ctx();
+    let ctrl_name = ctx.find_by_name("influence")?;
+    let src_a = crate::Node {
+        ctrl_id: ctrl_name,
+        typ: (&DataSource::Argument(0)).into(),
+    };
+    let src_b = crate::Node {
+        ctrl_id: ctrl_name,
+        typ: (&DataSource::Argument(1)).into(),
+    };
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
+
+    let influencers_data_control = ctx
+        .influencers(sink_callsite, EdgeType::DataAndControl)
+        .unique()
+        .collect::<Vec<_>>();
+    let influencers_data = ctx
+        .influencers(sink_callsite, EdgeType::Data)
+        .unique()
+        .collect::<Vec<_>>();
+
+    assert!(
+        influencers_data_control.contains(&src_a),
+        "input argument a influences sink via data"
+    );
+    assert!(
+        influencers_data_control.contains(&src_b),
+        "input argument b influences sink via control"
+    );
+    assert!(
+        influencers_data_control.contains(&cond_sink),
+        "cond_sink influences sink via control"
+    );
+    // sink is influenced by a, b, cond arg + cs
+    assert_eq!(influencers_data_control.len(), 4);
+
+    assert!(
+        !influencers_data.contains(&src_a),
+        "input argument a doesnt influences sink via data"
+    );
+    assert!(
+        influencers_data.contains(&src_b),
+        "input argument b influences sink via data"
+    );
+    assert!(
+        !influencers_data.contains(&cond_sink),
+        "cond_sink doesnt influence sink via data"
+    );
+    // sink is only influenced by b
+    assert_eq!(influencers_data.len(), 1);
 
     Ok(())
 }
