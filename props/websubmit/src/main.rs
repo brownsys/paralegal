@@ -196,8 +196,7 @@ impl AuthDisclosureProp {
                 .filter(|n| {
                     self.cx
                         .influencers(*n, paralegal_policy::EdgeType::DataAndControl)
-                        .next()
-                        == None
+                        .next().is_none()
                 })
                 .collect::<Vec<_>>();
             let safe_scopes = self
