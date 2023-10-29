@@ -6,14 +6,11 @@
 //!  |-- doc/
 //!       |-- username.docname.txt
 
-#![feature(register_tool)]
-#![register_tool(paralegal_flow)]
-
 struct User {
     name: String,
 }
 
-#[paralegal_flow::marker(user_data)]
+#[paralegal::marker(user_data)]
 struct Image {
     user: User,
     name: String,
@@ -34,7 +31,7 @@ impl Image {
     }
 }
 
-#[paralegal_flow::marker(user_data)]
+#[paralegal::marker(user_data)]
 struct Document {
     user: User,
     name: String,
@@ -55,7 +52,7 @@ impl Document {
     }
 }
 
-#[paralegal_flow::analyze]
+#[paralegal::analyze]
 fn delete(user: User) {
     for doc in Document::for_user(&user) {
         doc.delete()
