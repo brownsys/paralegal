@@ -588,10 +588,10 @@ pub fn compute_from_def_id<'tcx>(
     def_id: DefId,
     tcx: TyCtxt<'tcx>,
     carries_marker: &InlineJudge<'tcx>,
-) -> Body<'tcx, DisplayViaDebug<Location>> {
+) -> Option<Body<'tcx, DisplayViaDebug<Location>>> {
     let local_def_id = def_id.expect_local();
     info!("Analyzing function {}", body_name_pls(tcx, local_def_id));
-    let body_with_facts = tcx.body_for_def_id(def_id).unwrap();
+    let body_with_facts = tcx.body_for_def_id_default_policy(def_id)?;
     let body = body_with_facts.simplified_body();
     warn_if_marked_type_constructed(
         tcx,
@@ -630,5 +630,5 @@ pub fn compute_from_def_id<'tcx>(
         use std::io::Write;
         write!(&mut out, "{}", r).unwrap();
     }
-    r
+    Some(r)
 }
