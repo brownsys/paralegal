@@ -583,6 +583,8 @@ fn warn_if_marked_type_constructed<'tcx>(
     mir::visit::Visitor::visit_body(&mut vis, body)
 }
 
+/// Returns `None` if we were unable to retrieve a body for the function
+/// referenced by `def_id` (usually caused by the use of trait objects).
 pub fn compute_from_def_id<'tcx>(
     dbg_opts: &DumpArgs,
     def_id: DefId,

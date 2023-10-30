@@ -332,6 +332,9 @@ impl<'tcx> Inliner<'tcx> {
     /// Compute a procedure graph for this `body_id` (memoized). Actual
     /// computation performed by [`regal::compute_from_body_id`] and
     /// [`ProcedureGraph::from`]
+    ///
+    /// Returns `None` if we failed to get a function body for `def_id` (usually
+    /// caused by trait objects).
     fn get_procedure_graph<'a>(
         &'a self,
         def_id: DefId,
@@ -344,6 +347,10 @@ impl<'tcx> Inliner<'tcx> {
     }
 
     /// Compute an inlined graph for this `body_id` (memoized)
+    ///
+    /// Returns `None` if wither we failed to get a function body for `def_id`
+    /// (usually caused by trait objects) *or* this is a recursive request for
+    /// the inlined graph of `def_id`.
     pub fn get_inlined_graph(&self, def_id: DefId) -> Option<&InlinedGraph<'tcx>> {
         self.inline_memo
             .get(def_id, |bid| self.inline_graph(bid))?
@@ -374,7 +381,14 @@ impl<'tcx> Inliner<'tcx> {
         })
     }
 
-    /// Get the `regal` call description for the call site at a specific location.
+    /// Get the `regal` call description for the call site at a specific
+    /// location.
+    ///
+    /// # Panics
+    ///
+    /// When we cannot get a function body for `loc.innermost_function()`. This
+    /// is considered ICE as no `GlobalLocation` should (by construction) ever
+    /// reference locations in functions where we don't have access to the body.
     fn get_call(
         &self,
         loc: GlobalLocation,
@@ -804,6 +818,9 @@ impl<'tcx> Inliner<'tcx> {
     /// In spite of the name of this function it not only inlines the graph but
     /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
     /// it ([`to_global_graph`]).
+    ///
+    /// Returns `None` if we failed to retrieve a function body for this
+    /// `def_id` (usually caused by trait objects)
     fn inline_graph(&self, def_id: DefId) -> Option<InlinedGraph<'tcx>> {
         let local_def_id = def_id.expect_local();
         let proc_g = self.get_procedure_graph(def_id)?;
