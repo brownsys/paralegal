@@ -55,19 +55,19 @@ struct S {
 #[paralegal::marker(noinline, return)]
 fn read_usize(u: usize) {}
 
-#[paralegal::marker(noinline ,return)]
+#[paralegal::marker(noinline, return)]
 fn read_string(s: String) {}
 
 fn modify_a_field(s: &mut S) {
     s.usize_field = produce_usize();
 }
 
-#[paralegal::marker(noinline ,return)]
+#[paralegal::marker(noinline, return)]
 fn produce_usize() -> usize {
     0
 }
 
-#[paralegal::marker(noinline ,return)]
+#[paralegal::marker(noinline, return)]
 fn produce_string() -> String {
     "".to_string()
 }

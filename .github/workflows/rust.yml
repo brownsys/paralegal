@@ -39,22 +39,7 @@ jobs:
     - name: Build
       run: cargo install --locked --path crates/paralegal-flow --verbose
     - name: Run tests
-      run: |
-        cargo test -p paralegal-flow --test non_transitive_graph_tests
-        cargo test -p paralegal-flow --test call_chain_analysis_tests
-        cargo test -p paralegal-flow --test control_flow_tests
-        cargo test -p paralegal-flow --test new_alias_analysis_tests
-        cargo test -p paralegal-flow --test async_tests
-        cargo test -p paralegal-flow --test inline_elision_tests
-        cargo test -p paralegal-policy --lib
-    - name: Build Test Policies
-      run: |
-        cd props
-        cargo build --verbose
-    - name: Test Guide Project
-      run: |
-        cargo run
-      working-directory: guide/deletion-policy
+      run: scripts/compiler-tests.sh
 
   intergration-tests:
     name: Integration Tests
@@ -86,7 +71,7 @@ jobs:
         cd forge
         raco pkg install --auto || raco setup forge
     - name: Run Tests
-      run: cargo test -p paralegal-flow --test external_annotation_tests
+      run: scripts/integration-tests.sh
 
   format-check:
     name: Format Control
@@ -100,17 +85,8 @@ jobs:
       with:
         path: ~/.rustup
         key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Check main repo
-      run: cargo fmt --check
-    - name: Check properties
-      run: cargo fmt --check
-      working-directory: props
-    - name: Check Guide Project
-      run: cargo fmt --check
-      working-directory: guide/file-db-example
-    - name: Check Guide Policy
-      run: cargo fmt --check
-      working-directory: guide/deletion-policy
+    - name: Run checks
+      run: scripts/format.sh fmt-check
 
   linting:
     name: Clippy
@@ -133,10 +109,7 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Here come the complaints
-      run: cargo clippy --all -- -D warnings
-    - name: Complaints about properties
-      run: cargo clippy --all -- -D warnings
-      working-directory: props
+      run: scripts/format.sh clippy-check
 
   documentation:
     name: Documentation Test
@@ -159,6 +132,4 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Here come the complaints
-      run: |
-        cargo rustdoc -p paralegal-spdg -- -Drustdoc::all
-        cargo rustdoc -p paralegal-policy -- -Drustdoc::all
+      run: scripts/doc-check.sh
