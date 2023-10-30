@@ -4,7 +4,7 @@ fn input() -> i32 {
 }
 
 #[paralegal::marker(noinline)]
-fn output(i : i32) -> i32 {
+fn output(i: i32) -> i32 {
     i
 }
 
@@ -104,10 +104,13 @@ fn get_user_data_with(data: Vec<i64>) -> UserData {
 
 #[paralegal::marker(noinline)]
 fn get_other_data() -> Vec<i64> {
-    return vec![1, 2, 3]
+    return vec![1, 2, 3];
 }
 
-#[paralegal::marker(yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
+#[paralegal::marker(
+    yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function,
+    return
+)]
 fn dp_user_data(user_data: &mut UserData) {
     for i in &mut user_data.data {
         *i = 2;
@@ -115,8 +118,7 @@ fn dp_user_data(user_data: &mut UserData) {
 }
 
 #[paralegal::marker(noinline, return)]
-fn modify_vec(v: &mut [i64]) {
-}
+fn modify_vec(v: &mut [i64]) {}
 
 #[paralegal::analyze]
 fn modify_pointer() {
@@ -143,7 +145,9 @@ fn source() -> i32 {
 struct S {}
 
 #[paralegal::marker(noinline, return)]
-fn new_s() -> S { S {} }
+fn new_s() -> S {
+    S {}
+}
 
 impl std::ops::Deref for S {
     type Target = T;
@@ -156,16 +160,14 @@ impl std::ops::Deref for S {
 struct T {}
 
 #[paralegal::marker(noinline, return)]
-fn read_t(t: &T) {
-}
+fn read_t(t: &T) {}
 
 #[paralegal::analyze]
 fn spurious_connections_in_deref() {
     let s = new_s();
-    let t : &T = &*s;
+    let t: &T = &*s;
     read_t(t);
 }
-
 
 #[paralegal::marker(there, arguments = [0])]
 fn receiver(x: i32) {}
@@ -176,8 +178,7 @@ fn dp_user_data_with(user_data: &mut UserData, other_data: &Vec<i64>) {
     }
 }
 
-fn modify_other_data(other_data: &mut Vec<i64>) {
-}
+fn modify_other_data(other_data: &mut Vec<i64>) {}
 
 #[paralegal::marker{ sink, arguments = [0] }]
 fn send_user_data(user_data: &UserData) {}
@@ -206,8 +207,6 @@ fn control_flow_tracking_for_compound_cond_with_fun() {
     }
 }
 
-
-
 #[paralegal::analyze]
 fn control_flow_tracking_overtaint() {
     let early_val = input();
@@ -224,7 +223,7 @@ fn control_flow_tracking_overtaint() {
 fn and_desugaring_similar_pattern() {
     let a_val = new_s();
     let first_dep = input();
-    let mut second_dep : i32;
+    let mut second_dep: i32;
     if first_dep == 8 {
         second_dep = source();
     } else {

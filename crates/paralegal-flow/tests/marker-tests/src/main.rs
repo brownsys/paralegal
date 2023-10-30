@@ -1,4 +1,3 @@
-
 #[derive(Clone)]
 #[repr(transparent)]
 #[paralegal::marker(wrapper)]
