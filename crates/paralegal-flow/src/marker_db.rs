@@ -151,18 +151,10 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
     fn compute_marker_reachable(&self, def_id: DefId) -> bool {
-        let body = match self.tcx().body_for_def_id(def_id) {
-            Ok(body) => body,
-            Err(e) => {
-                warn!(
-                    "Marker reachability for {} was asked but is unknown ({})",
-                    self.tcx().def_path_debug_str(def_id),
-                    e
-                );
-                return false;
-            }
-        }
-        .simplified_body();
+        let Some(body) = self.tcx().body_for_def_id_default_policy(def_id) else {
+            return false;
+        };
+        let body = body.simplified_body();
         body.basic_blocks
             .iter()
             .any(|bbdat| self.terminator_carries_marker(&body.local_decls, bbdat.terminator()))
