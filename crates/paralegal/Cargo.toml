@@ -1,9 +1,14 @@
 [package]
-name = "non-transitive-graph-tests"
+name = "paralegal"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+proc-macro = true
+
 [dependencies]
-paralegal = { path = "../../../paralegal" }
+quote = "1"
+proc-macro2 = "1"
+cfg-if = "1"
