@@ -38,12 +38,10 @@ fn other_input() -> u32 {
 }
 
 #[paralegal::marker(noinline)]
-fn receive_touched<T>(t: T) {
-}
+fn receive_touched<T>(t: T) {}
 
 #[paralegal::marker(noinline)]
-fn receive_untouched<T>(t: T) {
-}
+fn receive_untouched<T>(t: T) {}
 
 fn elided<T, B>(t: T, b: B) -> (T, B) {
     (t, b)
@@ -53,8 +51,7 @@ fn elided2<T, B>(t: (T, B)) -> (T, B) {
     t
 }
 
-fn elided3<T>(t: &mut T) {
-}
+fn elided3<T>(t: &mut T) {}
 
 #[paralegal::marker(noinline)]
 fn input() -> u32 {
@@ -78,7 +75,6 @@ fn connection_precision_2() {
     receive_touched(touched);
     receive_untouched(untouched);
 }
-
 
 #[paralegal::analyze]
 fn connection_precision_3() {
@@ -105,22 +101,17 @@ impl S {
 fn connection_precision_self() {
     let touched = input();
     let untouched = other_input();
-    let mut s = S {
-        touched, untouched
-    };
+    let mut s = S { touched, untouched };
     s.elided4();
     receive_touched(s.touched);
     receive_untouched(s.untouched);
 }
-
-
 
 #[paralegal::analyze]
 fn no_elision_without_input() {
     let v = inner();
     receive_touched(v);
 }
-
 
 fn do_io<T>(v: T) {}
 
@@ -144,6 +135,5 @@ fn connection_precision_args() {
     receive_touched(arg1);
     receive_untouched(arg2);
 }
-
 
 fn main() {}
