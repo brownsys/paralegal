@@ -1,6 +1,7 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
+use hir::def::DefKind;
 use thiserror::Error;
 
 use paralegal_spdg::{CallSite, DataSource};
@@ -923,6 +924,9 @@ pub enum BodyResolutionError {
     /// The provided id refers to an external entity and we have no access to
     /// its body
     External,
+    /// The function refers to a trait item (not an `impl` item or raw `fn`)
+    #[error("is associated function of trait {0:?}")]
+    IsTraitAssocFn(DefId),
 }
 
 /// Extension trait for [`TyCtxt`]
@@ -942,6 +946,22 @@ pub trait TyCtxtExt<'tcx> {
         &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
         BodyResolutionError,
     >;
+
+    /// Essentially the same as [`Self::body_for_def_id`] but handles errors
+    /// according to our default policy which is as follows:
+    ///
+    /// - [`BodyResolutionError::NotAFunction`]: Hard error (panic). We consider
+    ///       this an ICE because calling this method on a non-function `DefId`
+    ///       could indicate errors elsewhere in the compiler.
+    /// - [`BodyResolutionError::External`]: Silent because otherwise we would
+    ///       spam warnings.
+    /// - [`BodyResolutionError::IsTraitAssocFn`]: Warning emitted, because this
+    ///       is probably caused by `dyn`, which we can't resolve even if it's
+    ///       crate-local and that might be surprising.
+    fn body_for_def_id_default_policy(
+        self,
+        def_id: DefId,
+    ) -> Option<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>>;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
@@ -952,11 +972,47 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
         &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
         BodyResolutionError,
     > {
-        let def_id = def_id.as_local().ok_or(BodyResolutionError::External)?;
-        if !self.def_kind(def_id).is_fn_like() {
+        let local_def_id = def_id.as_local().ok_or(BodyResolutionError::External)?;
+        let def_kind = self.def_kind(local_def_id);
+        if !def_kind.is_fn_like() {
             return Err(BodyResolutionError::NotAFunction);
+        } else if def_kind == DefKind::AssocFn && let Some(trt) = self.trait_of_item(def_id) {
+            return Err(BodyResolutionError::IsTraitAssocFn(trt));
         }
-        Ok(rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(self, def_id))
+        Ok(
+            rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
+                self,
+                local_def_id,
+            ),
+        )
+    }
+
+    fn body_for_def_id_default_policy(
+        self,
+        def_id: DefId,
+    ) -> Option<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>> {
+        match self.body_for_def_id(def_id) {
+            Ok(b) => Some(b),
+            Err(e) => {
+                let sess = self.sess;
+                match e {
+                    BodyResolutionError::External => (),
+                    BodyResolutionError::IsTraitAssocFn(r#trait) => {
+                        sess.struct_span_warn(
+                            self.def_span(def_id),
+                            "cannot analyze this function as it is a trait method with \
+                            no body (probably caused by the use of `dyn`)",
+                        )
+                        .span_note(self.def_span(r#trait), "associated trait")
+                        .emit();
+                    }
+                    BodyResolutionError::NotAFunction => {
+                        sess.span_fatal(self.def_span(def_id), "this item is not a function");
+                    }
+                };
+                None
+            }
+        }
     }
 }
 
