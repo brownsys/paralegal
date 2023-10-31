@@ -30,15 +30,15 @@ use crate::NodeType;
 /// - [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and
 /// [`crate::Context::influencees()`] work for any kind of node as their srcs or sinks.
 ///
-/// 	- [`NodeType::ControllerArgument`] cannot act as a sink
+///     - [`NodeType::ControllerArgument`] cannot act as a sink
 /// ([`crate::Context::flows_to()`] will always return false with it as the sink argument
 /// and [`crate::Context::influencers()`] will be empty).
 ///
-/// 	- [`NodeType::Return`] cannot act as a src ([`crate::Context::flows_to()`]
+///     - [`NodeType::Return`] cannot act as a src ([`crate::Context::flows_to()`]
 ///  will always return false with it as the src argument and
 /// [`crate::Context::influencees()`] will be empty).
 ///
-/// 	- For all other node type combinations, the src node will be
+///     - For all other node type combinations, the src node will be
 /// translated to its respective [`DataSource`] (i.e. for a
 /// [`NodeType::CallArgument`], the [`DataSource::FunctionCall`] will be used) and
 /// the sink node will be translated to its respective [`CallSiteOrDataSink`] and
@@ -47,7 +47,7 @@ use crate::NodeType;
 /// capture the data-flow between them, which would otherwise be lost through the
 /// aforementioned procedure.
 ///
-/// 	- For [`crate::Context::influencers()`] and
+///     - For [`crate::Context::influencers()`] and
 /// [`crate::Context::influencees()`], querying the indexes does not exhaustively
 /// return all type of [`crate::Node`]s since they only provide either [`DataSource`]
 /// influencers or [`CallSiteOrDataSink`] influencees.
