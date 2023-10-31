@@ -1,8 +1,13 @@
 # Before editing this script ensure you have read and understood the
-# relationship of the scripts with one another and with the CI as alid out in
+# relationship of the scripts with one another and with the CI as laid out in
 # the README.md in this directory.
 
 set -e
+
+SCRIPT_DIR="$( cd "$( dirname "$0" )" &> /dev/null && pwd )"
+
+# cd into root directory of the repo
+cd $SCRIPT_DIR/..
 
 ARGS=
 
@@ -22,12 +27,12 @@ Note: You are using the clippy-fix command. Because this can introduce breaking 
 Because we invoke the fix command multiple separate time it may fail again because of unstaged changes after applying the first fix. Inspect the changes, stage them and rerun the script until no more errors occur.
 " | fmt -w 80
         ;;
-    fmt-check)
+    fmt-check | format-check)
         CMD="fmt --check"
         INCLUDE_TESTS=
         PREFIX=Checking
         ;;
-    fmt-fix)
+    fmt-fix | format-fix)
         CMD=fmt
         INCLUDE_TESTS=
         PREFIX=Fixing
