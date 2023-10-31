@@ -177,7 +177,9 @@ impl<'tcx> Inliner<'tcx> {
     }
 }
 
-type BodyCache<'tcx> = Cache<DefId, regal::Body<'tcx, DisplayViaDebug<Location>>>;
+/// `None` values indicate that the requested `DefId` could not be analyzed,
+/// usually because it is a trait method resulting from a use of `dyn`.
+type BodyCache<'tcx> = Cache<DefId, Option<regal::Body<'tcx, DisplayViaDebug<Location>>>>;
 
 /// Essentially just a bunch of caches of analyses.
 pub struct Inliner<'tcx> {
@@ -186,7 +188,7 @@ pub struct Inliner<'tcx> {
     /// Memoized graphs that have all their callees inlined. Unlike `base_memo`
     /// this has to be recursion breaking, since a function may call itself
     /// (possibly transitively).
-    inline_memo: RecursionBreakingCache<DefId, InlinedGraph<'tcx>>,
+    inline_memo: RecursionBreakingCache<DefId, Option<InlinedGraph<'tcx>>>,
     tcx: TyCtxt<'tcx>,
     ana_ctrl: &'static AnalysisCtrl,
     dbg_ctrl: &'static DumpArgs,
@@ -330,18 +332,29 @@ impl<'tcx> Inliner<'tcx> {
     /// Compute a procedure graph for this `body_id` (memoized). Actual
     /// computation performed by [`regal::compute_from_body_id`] and
     /// [`ProcedureGraph::from`]
+    ///
+    /// Returns `None` if we failed to get a function body for `def_id` (usually
+    /// caused by trait objects).
     fn get_procedure_graph<'a>(
         &'a self,
         def_id: DefId,
-    ) -> &regal::Body<'tcx, DisplayViaDebug<Location>> {
-        self.base_memo.get(def_id, |_| {
-            regal::compute_from_def_id(self.dbg_ctrl, def_id, self.tcx, &self.marker_carrying)
-        })
+    ) -> Option<&regal::Body<'tcx, DisplayViaDebug<Location>>> {
+        self.base_memo
+            .get(def_id, |_| {
+                regal::compute_from_def_id(self.dbg_ctrl, def_id, self.tcx, &self.marker_carrying)
+            })
+            .as_ref()
     }
 
     /// Compute an inlined graph for this `body_id` (memoized)
+    ///
+    /// Returns `None` if wither we failed to get a function body for `def_id`
+    /// (usually caused by trait objects) *or* this is a recursive request for
+    /// the inlined graph of `def_id`.
     pub fn get_inlined_graph(&self, def_id: DefId) -> Option<&InlinedGraph<'tcx>> {
-        self.inline_memo.get(def_id, |bid| self.inline_graph(bid))
+        self.inline_memo
+            .get(def_id, |bid| self.inline_graph(bid))?
+            .as_ref()
     }
 
     /// Convenience wrapper around [`Self::get_inlined_graph`]
@@ -368,12 +381,23 @@ impl<'tcx> Inliner<'tcx> {
         })
     }
 
-    /// Get the `regal` call description for the call site at a specific location.
+    /// Get the `regal` call description for the call site at a specific
+    /// location.
+    ///
+    /// # Panics
+    ///
+    /// When we cannot get a function body for `loc.innermost_function()`. This
+    /// is considered ICE as no `GlobalLocation` should (by construction) ever
+    /// reference locations in functions where we don't have access to the body.
     fn get_call(
         &self,
         loc: GlobalLocation,
     ) -> &regal::Call<'tcx, regal::Dependencies<DisplayViaDebug<mir::Location>>> {
-        let body = self.get_procedure_graph(loc.innermost_function());
+        let body = self
+            .get_procedure_graph(loc.innermost_function())
+            .unwrap_or_else(|| {
+                panic!("Invariant broken: location {loc} points into unavailable body")
+            });
         &body.calls[&DisplayViaDebug(loc.innermost_location())]
     }
 
@@ -794,9 +818,12 @@ impl<'tcx> Inliner<'tcx> {
     /// In spite of the name of this function it not only inlines the graph but
     /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
     /// it ([`to_global_graph`]).
-    fn inline_graph(&self, def_id: DefId) -> InlinedGraph<'tcx> {
+    ///
+    /// Returns `None` if we failed to retrieve a function body for this
+    /// `def_id` (usually caused by trait objects)
+    fn inline_graph(&self, def_id: DefId) -> Option<InlinedGraph<'tcx>> {
         let local_def_id = def_id.expect_local();
-        let proc_g = self.get_procedure_graph(def_id);
+        let proc_g = self.get_procedure_graph(def_id)?;
         let mut gwr = InlinedGraph::from_body(def_id, proc_g, self.tcx);
 
         let name = body_name_pls(self.tcx, local_def_id).name;
@@ -860,7 +887,7 @@ impl<'tcx> Inliner<'tcx> {
                 .unwrap();
             }
         }
-        gwr
+        Some(gwr)
     }
 }
 

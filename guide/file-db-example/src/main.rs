@@ -6,6 +6,8 @@
 //!  |-- doc/
 //!       |-- username.docname.txt
 
+#![allow(dead_code, unused_variables)]
+
 struct User {
     name: String,
 }
