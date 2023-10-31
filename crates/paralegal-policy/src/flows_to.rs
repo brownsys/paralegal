@@ -11,7 +11,48 @@ use crate::NodeType;
 /// The transitive closure of the [`Ctrl::data_flow`] relation.
 ///
 /// Implemented efficiently using an [`IndexedDomain`] over the
-/// [`DataSource`] and [`DataSink`] types.
+/// [`DataSource`] and [`CallSiteOrDataSink`] types.
+///
+/// Relationship of [`CtrlFlowsTo::data_flows_to`], [`CtrlFlowsTo::flows_to`],
+/// [`Context::flows_to`], [`Context::influencers`] and [`Context::influencees`]:
+///
+/// - Indexes in [`CtrlFlowsTo`] vs functions in [`Context`]: the indexes are
+/// used for efficiency when computing the functions in [`Context`]. However, they
+/// are from [`DataSource`] to [`CallSiteOrDataSink`], so do not provide all of the
+///  information that is needed answer questions about any kind of [`Node`] and any
+/// kind of [`EdgeType`] in an intuitive way.
+///
+/// - [`CtrlFlowsTo::data_flows_to`] vs [`CtrlFlowsTo::flows_to`] indexes: Both
+///  are indexes that are the transitive closure of relations in the controller:
+/// both use the [`Ctrl::data_flow`] relation, and [`CtrlFlowsTo::flows_to`]
+/// additionally includes relations from [`Ctrl::ctrl_flow`].
+///
+/// - [`Context::flows_to`], [`Context::influencers`] and
+/// [`Context::influencees`] work for any kind of node as their `src`s or `sink`s.
+///
+/// 	- [`NodeType::ControllerArgument`] cannot act as a `sink`
+/// ([`Context::flows_to`] will always return false with it as the `sink` argument
+/// and [`Context::influencers`] will be empty).
+///
+/// 	- [`NodeType::Return`] cannot act as a `src` ([`Context::flows_to`] will
+/// always return false with it as the `src` argument and [`Context::influencees`]
+/// will be empty).
+///
+/// 	- For all other node type combinations, the `src` node will be
+/// translated to its respective [`DataSource`] (i.e. for a
+/// [`NodeType::CallArgument`], the [`DataSource::FunctionCall`] will be used) and
+/// the `sink` node will be translated to its respective [`CallSiteOrDataSink`] and
+///  the correct index will be queried. Additionally, we also special-case
+/// relationships between [`NodeType::CallArgument`] and [`NodeType::CallSite`] to
+/// capture the data-flow between them, which would otherwise be lost through the
+/// aforementioned procedure.
+///
+/// 	- For [`Context::influencers`] and [`Context::influencees`], querying
+/// the indexes does not exhaustively return all type of [`Node`]s since they only
+/// provide either [`DataSource`] influencers or [`CallSiteOrDataSink`] influencees.
+/// So, these functions add the [`NodeType::CallArgument`]s related to each
+/// [`NodeType::CallSite`] and the [`NodeType::CallSite`] related to each
+/// [`NodeType::CallArgument`] respectively.
 pub struct CtrlFlowsTo {
     /// The indexes of [`DataSource`]s in the controller.
     pub sources: Arc<IndexedDomain<DataSource>>,
