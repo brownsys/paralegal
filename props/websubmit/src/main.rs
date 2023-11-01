@@ -116,7 +116,7 @@ impl ScopedStorageProp {
             let scopes = self
                 .cx
                 .all_nodes_for_ctrl(*c_id)
-                .filter(|node| self.cx.has_marker(marker!(scopes), *node))
+                .filter(|node| self.cx.has_marker(marker!(scopes_store), *node))
                 .collect::<Vec<_>>();
             let stores = self
                 .cx
