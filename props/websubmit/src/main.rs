@@ -223,54 +223,57 @@ impl AuthDisclosureProp {
             for sens in sensitives {
                 for sink in sinks.iter() {
                     // sensitive flows to store implies
-                    if self
+                    if !self
                         .cx
                         .flows_to(sens, *sink, paralegal_policy::EdgeType::Data)
                     {
-                        if let Some(sink_callsite) = sink.associated_call_site() {
-                            // scopes for the store
-                            let store_scopes = self
-                                .cx
-                                .influencers(sink_callsite, paralegal_policy::EdgeType::Data)
-                                .filter(|n| self.cx.has_marker(marker!(scopes), *n))
-                                .collect::<Vec<_>>();
-                            assert_error!(
-                                self.cx,
-                                !store_scopes.is_empty(),
-                                format!(
-                                    "Did not find any scopes for sink {}",
-                                    self.cx.describe_node(*sink)
-                                )
-                            );
-
-                            // all flows are safe before scope
-                            let safe_before_scope = self.cx.always_happens_before(
-                                roots.iter().cloned(),
-                                |n| safe_scopes.contains(&n),
-                                |n| store_scopes.contains(&n),
-                            )?;
-
-                            assert_error!(
-                                self.cx,
-                                safe_before_scope.holds(),
-                                format!(
-                                    "Sensitive {} flowed to sink {} which did not have safe scopes",
-                                    self.cx.describe_node(sens),
-                                    self.cx.describe_node(*sink),
-                                )
-                            );
-                            safe_before_scope.report(self.cx.clone());
-                        } else {
-                            assert_error!(
-                                self.cx,
-                                false,
-                                format!(
-                                    "sink {} does not have associated callsite",
-                                    self.cx.describe_node(*sink)
-                                )
-                            );
-                        }
+                        continue;
                     }
+
+                    let Some(sink_callsite) = sink.associated_call_site() else {
+                        assert_error!(
+                            self.cx,
+                            false,
+                            format!(
+                                "sink {} does not have associated callsite",
+                                self.cx.describe_node(*sink)
+                            )
+                        );
+                        continue;
+                    };
+
+                    // scopes for the store
+                    let store_scopes = self
+                        .cx
+                        .influencers(sink_callsite, paralegal_policy::EdgeType::Data)
+                        .filter(|n| self.cx.has_marker(marker!(scopes), *n))
+                        .collect::<Vec<_>>();
+                    assert_error!(
+                        self.cx,
+                        !store_scopes.is_empty(),
+                        format!(
+                            "Did not find any scopes for sink {}",
+                            self.cx.describe_node(*sink)
+                        )
+                    );
+
+                    // all flows are safe before scope
+                    let safe_before_scope = self.cx.always_happens_before(
+                        roots.iter().cloned(),
+                        |n| safe_scopes.contains(&n),
+                        |n| store_scopes.contains(&n),
+                    )?;
+
+                    assert_error!(
+                        self.cx,
+                        safe_before_scope.holds(),
+                        format!(
+                            "Sensitive {} flowed to sink {} which did not have safe scopes",
+                            self.cx.describe_node(sens),
+                            self.cx.describe_node(*sink),
+                        )
+                    );
+                    safe_before_scope.report(self.cx.clone());
                 }
             }
         }
