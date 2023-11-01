@@ -620,6 +620,12 @@ impl Context {
             })
     }
 
+    /// Returns an iterator over all nodes that do not have any influencers of the given edge_type.
+    pub fn roots(&self, ctrl_id: ControllerId, edge_type: EdgeType) -> impl Iterator<Item = Node> {
+        self.all_nodes_for_ctrl(ctrl_id)
+            .filter(move |n| self.influencers(*n, edge_type).next().is_none())
+    }
+
     /// Returns the input [`ProgramDescription`].
     pub fn desc(&self) -> &ProgramDescription {
         &self.desc

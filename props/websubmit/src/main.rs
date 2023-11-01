@@ -187,18 +187,12 @@ impl AuthDisclosureProp {
         AuthDisclosureProp { cx }
     }
 
-    pub fn check(self) {
+    pub fn check(self) -> Result<()> {
         for c_id in self.cx.desc().controllers.keys() {
             // All srcs that have no influencers
             let roots = self
                 .cx
-                .all_nodes_for_ctrl(*c_id)
-                .filter(|n| {
-                    self.cx
-                        .influencers(*n, paralegal_policy::EdgeType::DataAndControl)
-                        .next()
-                        .is_none()
-                })
+                .roots(*c_id, paralegal_policy::EdgeType::DataAndControl)
                 .collect::<Vec<_>>();
 
             let safe_scopes = self
@@ -221,65 +215,72 @@ impl AuthDisclosureProp {
                 .all_nodes_for_ctrl(*c_id)
                 .filter(|n| self.cx.has_marker(marker!(sink), *n))
                 .collect::<Vec<_>>();
-            let mut sensitives = self
+            let sensitives = self
                 .cx
                 .all_nodes_for_ctrl(*c_id)
                 .filter(|node| self.cx.has_marker(marker!(sensitive), *node));
 
-            let controller_valid = sensitives.all(|sens| {
-                sinks.iter().all(|sink| {
+            for sens in sensitives {
+                for sink in sinks.iter() {
                     // sensitive flows to store implies
-                    !(self
+                    if self
                         .cx
-                        .flows_to(sens, *sink, paralegal_policy::EdgeType::Data))
-                        || sink.associated_call_site().is_some_and(|sink_callsite| {
+                        .flows_to(sens, *sink, paralegal_policy::EdgeType::Data)
+                    {
+                        if let Some(sink_callsite) = sink.associated_call_site() {
                             // scopes for the store
                             let store_scopes = self
                                 .cx
                                 .influencers(sink_callsite, paralegal_policy::EdgeType::Data)
                                 .filter(|n| self.cx.has_marker(marker!(scopes), *n))
                                 .collect::<Vec<_>>();
+                            assert_error!(
+                                self.cx,
+                                !store_scopes.is_empty(),
+                                format!(
+                                    "Did not find any scopes for sink {}",
+                                    self.cx.describe_node(*sink)
+                                )
+                            );
 
                             // all flows are safe before scope
                             let safe_before_scope = self.cx.always_happens_before(
                                 roots.iter().cloned(),
                                 |n| safe_scopes.contains(&n),
-                                |n| store_scopes.contains(&n)).unwrap();
-
-                            let safe = !store_scopes.is_empty()
-                                && safe_before_scope.holds();
+                                |n| store_scopes.contains(&n),
+                            )?;
 
                             assert_error!(
                                 self.cx,
-                                safe,
+                                safe_before_scope.holds(),
                                 format!(
-                                    "Sensitive {} flowed to sink {} which did not have safe scopes {}",
+                                    "Sensitive {} flowed to sink {} which did not have safe scopes",
                                     self.cx.describe_node(sens),
                                     self.cx.describe_node(*sink),
-									safe_before_scope
                                 )
                             );
-                            safe
-                        })
-                })
-            });
-
-            assert_error!(
-                self.cx,
-                controller_valid,
-                format!(
-                    "Violation detected for controller: {}",
-                    self.cx.describe_def(*c_id)
-                ),
-            );
+                            safe_before_scope.report(self.cx.clone());
+                        } else {
+                            assert_error!(
+                                self.cx,
+                                false,
+                                format!(
+                                    "sink {} does not have associated callsite",
+                                    self.cx.describe_node(*sink)
+                                )
+                            );
+                        }
+                    }
+                }
+            }
         }
+        Ok(())
     }
 }
 
 fn run_dis_policy(ctx: Arc<Context>) -> Result<()> {
     ctx.named_policy(Identifier::new_intern("Authorized Disclosure"), |ctx| {
-        AuthDisclosureProp::new(ctx).check();
-        Ok(())
+        AuthDisclosureProp::new(ctx).check()
     })
 }
 
