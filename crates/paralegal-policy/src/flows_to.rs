@@ -6,10 +6,53 @@ use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToInd
 
 use std::{fmt, sync::Arc};
 
+use crate::NodeType;
+
 /// The transitive closure of the [`Ctrl::data_flow`] relation.
 ///
 /// Implemented efficiently using an [`IndexedDomain`] over the
-/// [`DataSource`] and [`DataSink`] types.
+/// [`DataSource`] and [`CallSiteOrDataSink`] types.
+///
+/// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`CtrlFlowsTo::flows_to`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
+///
+/// - Indexes in [`CtrlFlowsTo`] vs functions in [`crate::Context`]: the indexes are
+/// used for efficiency when computing the functions in [`crate::Context`]. However, they
+/// are from [`DataSource`] to [`CallSiteOrDataSink`], so do not provide all of the
+///  information that is needed answer questions about any kind of [`crate::Node`] and any
+/// kind of [`crate::EdgeType`] in an intuitive way.
+///
+/// - [`CtrlFlowsTo::data_flows_to`] vs [`CtrlFlowsTo::flows_to`] indexes: Both
+///  are indexes that are the transitive closure of relations in the controller:
+/// both use the [`Ctrl::data_flow`] relation, and [`CtrlFlowsTo::flows_to`]
+/// additionally includes relations from [`Ctrl::ctrl_flow`].
+///
+/// - [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and
+/// [`crate::Context::influencees()`] work for any kind of node as their srcs or sinks.
+///
+///     - [`NodeType::ControllerArgument`] cannot act as a sink
+/// ([`crate::Context::flows_to()`] will always return false with it as the sink argument
+/// and [`crate::Context::influencers()`] will be empty).
+///
+///     - [`NodeType::Return`] cannot act as a src ([`crate::Context::flows_to()`]
+///  will always return false with it as the src argument and
+/// [`crate::Context::influencees()`] will be empty).
+///
+///     - For all other node type combinations, the src node will be
+/// translated to its respective [`DataSource`] (i.e. for a
+/// [`NodeType::CallArgument`], the [`DataSource::FunctionCall`] will be used) and
+/// the sink node will be translated to its respective [`CallSiteOrDataSink`] and
+///  the correct index will be queried. Additionally, we also special-case
+/// relationships between [`NodeType::CallArgument`] and [`NodeType::CallSite`] to
+/// capture the data-flow between them, which would otherwise be lost through the
+/// aforementioned procedure.
+///
+///     - For [`crate::Context::influencers()`] and
+/// [`crate::Context::influencees()`], querying the indexes does not exhaustively
+/// return all type of [`crate::Node`]s since they only provide either [`DataSource`]
+/// influencers or [`CallSiteOrDataSink`] influencees.
+/// So, these functions add the [`NodeType::CallArgument`]s related to each
+/// [`NodeType::CallSite`] and the [`NodeType::CallSite`] related to each
+/// [`NodeType::CallArgument`] respectively.
 pub struct CtrlFlowsTo {
     /// The indexes of [`DataSource`]s in the controller.
     pub sources: Arc<IndexedDomain<DataSource>>,
@@ -37,8 +80,19 @@ impl CtrlFlowsTo {
     /// Constructs the transitive closure from a [`Ctrl`].
     pub fn build(ctrl: &Ctrl) -> Self {
         // Collect all sources and sinks into indexed domains.
-        let sources = Arc::new(IndexedDomain::from_iter(ctrl.all_sources().cloned()));
-        let sinks = Arc::new(IndexedDomain::from_iter(ctrl.all_call_sites_or_sinks()));
+        let sources = Arc::new(IndexedDomain::from_iter(ctrl.all_sources().cloned().chain(
+            ctrl.all_call_sites_or_sinks().filter_map(|cs_or_ds| {
+                let nt: NodeType = (&cs_or_ds).into();
+                nt.as_data_source()
+            }),
+        )));
+        let sinks = Arc::new(IndexedDomain::from_iter(
+            ctrl.all_call_sites_or_sinks()
+                .chain(ctrl.all_sources().filter_map(|src| {
+                    let nt: NodeType = src.into();
+                    nt.as_call_site_or_data_sink()
+                })),
+        ));
 
         // Connect each function-argument sink to its corresponding function sources.
         // This lets us compute the transitive closure by following through the `sink_to_source` map.
@@ -230,4 +284,16 @@ fn test_flows_to() {
     // b flows to the sink1 datasink (by data flow)
     assert!(ctx.flows_to(src_b, sink, crate::EdgeType::DataAndControl));
     assert!(ctx.flows_to(src_b, sink, crate::EdgeType::Data));
+}
+
+#[test]
+fn test_args_flow_to_cs() {
+    let ctx = crate::test_utils::test_ctx();
+    let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
+    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
+    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
+
+    assert!(ctx.flows_to(sink, cs, crate::EdgeType::Data));
+    assert!(ctx.flows_to(sink, cs, crate::EdgeType::DataAndControl));
+    assert!(!ctx.flows_to(sink, cs, crate::EdgeType::Control));
 }
