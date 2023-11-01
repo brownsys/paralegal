@@ -301,10 +301,10 @@ impl Context {
 
         // Special case if src is a CallArgument and sink is a CallSite, flows_to is true if they are on the same CallSite.
         if matches!(
-			(edge_type, src.typ, sink.typ),
-			(EdgeType::Data | EdgeType::DataAndControl,
-				NodeType::CallArgument(DataSink::Argument { function, .. }),
-				NodeType::CallSite(cs)) if *function == *cs)
+            (edge_type, src.typ, sink.typ),
+            (EdgeType::Data | EdgeType::DataAndControl,
+                NodeType::CallArgument(DataSink::Argument { function, .. }),
+                NodeType::CallSite(cs)) if *function == *cs)
         {
             return true;
         }

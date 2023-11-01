@@ -13,8 +13,7 @@ use crate::NodeType;
 /// Implemented efficiently using an [`IndexedDomain`] over the
 /// [`DataSource`] and [`CallSiteOrDataSink`] types.
 ///
-/// Relationship of [`CtrlFlowsTo::data_flows_to`], [`CtrlFlowsTo::flows_to`],
-/// [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]:
+/// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`CtrlFlowsTo::flows_to`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
 ///
 /// - Indexes in [`CtrlFlowsTo`] vs functions in [`crate::Context`]: the indexes are
 /// used for efficiency when computing the functions in [`crate::Context`]. However, they
