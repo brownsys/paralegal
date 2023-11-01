@@ -300,19 +300,13 @@ impl Context {
         }
 
         // Special case if src is a CallArgument and sink is a CallSite, flows_to is true if they are on the same CallSite.
-        match edge_type {
-            EdgeType::Data | EdgeType::DataAndControl => {
-                if let (
-                    NodeType::CallArgument(DataSink::Argument { function, .. }),
-                    NodeType::CallSite(cs),
-                ) = (src.typ, sink.typ)
-                {
-                    if *function == *cs {
-                        return true;
-                    }
-                }
-            }
-            _ => (),
+        if matches!(
+            (edge_type, src.typ, sink.typ),
+            (EdgeType::Data | EdgeType::DataAndControl,
+                NodeType::CallArgument(DataSink::Argument { function, .. }),
+                NodeType::CallSite(cs)) if *function == *cs)
+        {
+            return true;
         }
 
         let cf_id = &src.ctrl_id;

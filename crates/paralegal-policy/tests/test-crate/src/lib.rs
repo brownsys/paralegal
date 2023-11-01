@@ -1,4 +1,3 @@
-
 #[paralegal::marker(input)]
 pub struct Foo;
 

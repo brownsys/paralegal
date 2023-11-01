@@ -4,9 +4,7 @@ fn create() -> Vec<i32> {
 }
 
 #[paralegal::marker(read)]
-fn read(_: &[i32]) {
-
-}
+fn read(_: &[i32]) {}
 
 #[paralegal::analyze]
 fn single_removal() {
@@ -50,7 +48,6 @@ fn sink_function_not_removed() {
     use std::io::Write;
     let s = create_string();
     std::io::stdout().write(s.as_bytes());
-
 }
 
 #[paralegal::analyze]

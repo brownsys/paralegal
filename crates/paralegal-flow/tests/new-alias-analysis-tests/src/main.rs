@@ -16,7 +16,10 @@ fn get2_user_data() -> UserData {
     };
 }
 
-#[paralegal::marker(yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
+#[paralegal::marker(
+    yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function,
+    return
+)]
 fn dp1_user_data(user_data: &mut UserData) {
     for i in &mut user_data.data {
         *i = 2;
@@ -45,7 +48,12 @@ struct S {
 }
 
 #[paralegal::marker(noinline, return)]
-fn new_s() -> S { S {field: 0, field2: 1} }
+fn new_s() -> S {
+    S {
+        field: 0,
+        field2: 1,
+    }
+}
 
 #[paralegal::marker(noinline)]
 fn deref_t(s: &S) -> &String {
@@ -56,7 +64,7 @@ fn deref_t(s: &S) -> &String {
 fn eliminate_return_connection() {
     let s = new_s();
     // 'a : 'b
-    let t  = deref_t(&s);
+    let t = deref_t(&s);
     read(t);
 }
 
@@ -65,14 +73,14 @@ fn read<T>(t: &T) {}
 
 #[paralegal::analyze]
 fn eliminate_mut_input_connection() {
-    let mut s : S = new_s();
+    let mut s: S = new_s();
     let mut v = Vec::new();
     v.push(&s);
     read(&v);
 }
 
-fn insert_ref<'v, 't: 'v, T>(v : &mut Vec<&'v T>, t: &'t T) {}
-fn insert_ref_2<'v, 't: 'v, T>(v : &mut Vec<&'v T>, t: &'t T) {
+fn insert_ref<'v, 't: 'v, T>(v: &mut Vec<&'v T>, t: &'t T) {}
+fn insert_ref_2<'v, 't: 'v, T>(v: &mut Vec<&'v T>, t: &'t T) {
     v.push(t)
 }
 
@@ -80,7 +88,7 @@ fn insert_ref_2<'v, 't: 'v, T>(v : &mut Vec<&'v T>, t: &'t T) {
 fn input_elimination_isnt_a_problem_empty() {
     let x = new_s();
     let mut v = Vec::new();
-    insert_ref(& mut v, &x);
+    insert_ref(&mut v, &x);
     read(&v);
 }
 
@@ -89,12 +97,12 @@ fn input_elimination_isnt_a_problem_vec_push() {
     let x = new_s();
     let mut v = Vec::new();
     v.insert(0, &x);
-    insert_ref_2( & mut v, &x);
+    insert_ref_2(&mut v, &x);
     read(&v);
 }
 
 struct T<'a> {
-    field: &'a S
+    field: &'a S,
 }
 
 #[paralegal::marker(noinline)]
@@ -107,11 +115,8 @@ fn another_s() -> S {
     unimplemented!()
 }
 
-
 #[paralegal::marker(noinline)]
-fn assoc<'a, 'b : 'a>(x: &mut T<'a>, s: &'b S) {
-
-}
+fn assoc<'a, 'b: 'a>(x: &mut T<'a>, s: &'b S) {}
 
 #[paralegal::analyze]
 fn input_elimination_isnt_a_problem_statement() {
