@@ -16,6 +16,7 @@ use std::fmt::Write;
 
 use crate::{
     ana::algebra::{self, Operator, Term},
+    hir::def_id::{DefId, LocalDefId},
     ir::{
         flows::CallOnlyFlow,
         regal::{self, SimpleLocation},
@@ -23,7 +24,7 @@ use crate::{
     },
     mir,
     mir::Location,
-    rust::hir::def_id::{DefId, LocalDefId},
+    rustc_span::ErrorGuaranteed,
     rustc_target::abi::FieldIdx,
     ty,
     utils::{
@@ -681,6 +682,12 @@ impl<'tcx> Inliner<'tcx> {
             debug!("Detected self to be async fn, closure was inlined.");
             return queue_for_pruning;
         };
+        let caller_body = self
+            .tcx
+            .body_for_def_id_default_policy(def_id)
+            .unwrap()
+            .simplified_body();
+        let local_decls = &caller_body.local_decls;
         let targets = i_graph
             .graph
             .node_references()
@@ -797,15 +804,27 @@ impl<'tcx> Inliner<'tcx> {
                     if let Some(return_local) = call.return_to {
                         let mut target =
                             algebra::Term::new_base(GlobalLocal::at_root(return_local));
+                        let argument = call.arguments[regal::ArgumentIndex::from_usize(0)]
+                            .as_ref()
+                            .unwrap()
+                            .0;
+                        if let Err(e) = wrapping_sanity_check(
+                            self.tcx,
+                            mir::Place::from(return_local).ty(local_decls, self.tcx),
+                            mir::Place::from(argument).ty(local_decls, self.tcx),
+                            wraps.iter().copied(),
+                        ) {
+                            self.tcx.sess.span_fatal(
+                                caller_body
+                                    .stmt_at(root_location.innermost_location())
+                                    .either(|s| s.source_info.span, |t| t.source_info.span),
+                                e,
+                            );
+                        }
                         target = target.extend(wraps);
                         i_graph.equations.push(algebra::Equality::new(
                             target,
-                            algebra::Term::new_base(GlobalLocal::at_root(
-                                call.arguments[regal::ArgumentIndex::from_usize(0)]
-                                    .as_ref()
-                                    .unwrap()
-                                    .0,
-                            )),
+                            algebra::Term::new_base(GlobalLocal::at_root(argument)),
                         ));
                     }
                 }
@@ -962,5 +981,46 @@ impl<'tcx> Inliner<'tcx> {
             location_dependencies,
             return_dependencies,
         }
+    }
+}
+
+fn wrapping_sanity_check<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    mut left: mir::tcx::PlaceTy<'tcx>,
+    mut right: mir::tcx::PlaceTy<'tcx>,
+    wrap: impl IntoIterator<Item = Operator<DisplayViaDebug<mir::Field>>>,
+) -> Result<(), String> {
+    use mir::tcx::PlaceTy;
+    use mir::ProjectionElem::*;
+    use Operator::*;
+    let apply_deref = |target: &mut PlaceTy<'tcx>| *target = target.projection_ty(tcx, Deref);
+    let apply_field = |target: &mut PlaceTy<'tcx>, idx: mir::Field| {
+        *target = PlaceTy {
+            ty: target.field_ty(tcx, idx),
+            variant_index: None,
+        }
+    };
+    let apply_index =
+        |target: &mut PlaceTy<'tcx>| *target = target.projection_ty(tcx, Index(0_usize.into()));
+    let apply_downcast = |target: &mut PlaceTy<'tcx>, v| {
+        *target = target.projection_ty(tcx, mir::PlaceElem::Downcast(None, v))
+    };
+    for op in wrap {
+        match op {
+            DerefOf => apply_deref(&mut right),
+            RefOf => apply_deref(&mut left),
+            MemberOf(f) => apply_field(&mut right, f.0),
+            ContainsAt(f) => apply_field(&mut left, f.0),
+            IndexOf => apply_index(&mut right),
+            ArrayWith => apply_index(&mut left),
+            Operator::Downcast(v) => apply_downcast(&mut right, v.into()),
+            Operator::Upcast(v) => apply_downcast(&mut left, v.into()),
+            Unknown => return Err("Unexpected 'unknown' in sanity check".into()),
+        }
+    }
+    if left.ty == right.ty && left.variant_index == right.variant_index {
+        Ok(())
+    } else {
+        Err(format!("Sanity check failed: {left:?} != {right:?}"))
     }
 }
