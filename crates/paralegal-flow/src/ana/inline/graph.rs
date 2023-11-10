@@ -7,7 +7,6 @@ use crate::{
 
 use super::algebra;
 
-use paralegal_spdg::rustc_portable::DefId;
 use petgraph::prelude as pg;
 
 pub type ArgNum = u32;

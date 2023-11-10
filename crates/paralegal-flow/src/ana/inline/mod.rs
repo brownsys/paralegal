@@ -16,7 +16,7 @@ use std::fmt::Write;
 
 use crate::{
     ana::algebra::{self, Operator, Term},
-    hir::def_id::{DefId, LocalDefId},
+    hir::def_id::DefId,
     ir::{
         flows::CallOnlyFlow,
         regal::{self, SimpleLocation},
@@ -24,7 +24,6 @@ use crate::{
     },
     mir,
     mir::Location,
-    rustc_span::ErrorGuaranteed,
     rustc_target::abi::FieldIdx,
     ty,
     utils::{
@@ -1205,7 +1204,7 @@ impl<'tcx, T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for ty:
             && self
                 .as_ref()
                 .skip_binder()
-                .equiv(&other.as_ref().skip_binder())
+                .equiv(other.as_ref().skip_binder())
     }
 }
 
@@ -1285,7 +1284,7 @@ impl<'tcx> APoorPersonsEquivalenceCheck for ty::Ty<'tcx> {
             (GeneratorWitness(a_g), GeneratorWitness(b_g)) => {
                 // for some reason `a_g.equiv(b_g)` doesn't resolve properly and
                 // gives me a type error so I inlined its body instead.
-                a_g.bound_vars() == b_g.bound_vars() && a_g.skip_binder().equiv(&b_g.skip_binder())
+                a_g.bound_vars() == b_g.bound_vars() && a_g.skip_binder().equiv(b_g.skip_binder())
             }
             (GeneratorWitnessMIR(a_d, a_s), GeneratorWitnessMIR(b_d, b_s)) => {
                 a_d == b_d && a_s.equiv(b_s)
