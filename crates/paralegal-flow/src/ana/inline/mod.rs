@@ -88,11 +88,12 @@ impl<'tcx> Inliner<'tcx> {
         graph: &mut InlinedGraph<'tcx>,
         name: Symbol,
         edges_to_prune: &EdgeSet<'tcx>,
-        id: LocalDefId,
+        instance: FnResolution<'tcx>,
     ) {
         if edges_to_prune.is_empty() {
             return;
         }
+        let tcx: TyCtxt<'tcx> = self.tcx;
         time(&format!("Edge Pruning for {name}"), || {
             let InlinedGraph {
                 graph, equations, ..
@@ -117,32 +118,37 @@ impl<'tcx> Inliner<'tcx> {
             );
 
             let locals_graph =
-                algebra::graph::Graph::new(equations, DisplayViaDebug(id.to_def_id()));
+                algebra::graph::Graph::new(equations, DisplayViaDebug(instance.def_id()));
             if self.dbg_ctrl.dump_locals_graph() {
-                let f = dump_file_pls(self.tcx, id, "locals-graph.gv").unwrap();
+                let f = dump_file_pls(
+                    self.tcx,
+                    instance.def_id().expect_local(),
+                    "locals-graph.gv",
+                )
+                .unwrap();
                 locals_graph.dump(f, |_| false, |_| false);
             }
 
             for &(from, to) in edges_to_prune {
                 if let Some(weight) = graph.edge_weight_mut(from, to) {
                     for idx in weight.into_iter_data() {
-                        let to_target = self.node_to_local(&to, idx);
+                        let to_target = self.node_to_local(&to, idx, instance);
                         // This can be optimized (directly create function)
                         let targets = match from {
                             Node::Argument(a) => Either::Right(std::iter::once(
-                                GlobalLocal::at_root((a.as_usize() + 1).into()),
+                                GlobalLocal::at_root(self.tcx, (a.as_usize() + 1).into(), instance),
                             )),
                             Node::Return => unreachable!(),
-                            Node::Call((location, _did)) => Either::Left({
+                            Node::Call((location, did)) => Either::Left({
                                 let call = self.get_call(location);
                                 let parent = location.parent();
                                 call.argument_locals()
                                     .chain(call.return_to.into_iter())
                                     .map(move |local| {
                                         if let Some(parent) = parent {
-                                            GlobalLocal::relative(local, parent)
+                                            GlobalLocal::relative(tcx, local, parent, did)
                                         } else {
-                                            GlobalLocal::at_root(local)
+                                            GlobalLocal::at_root(tcx, local, did)
                                         }
                                     })
                             }),
@@ -189,7 +195,7 @@ pub struct Inliner<'tcx> {
     /// Memoized graphs that have all their callees inlined. Unlike `base_memo`
     /// this has to be recursion breaking, since a function may call itself
     /// (possibly transitively).
-    inline_memo: RecursionBreakingCache<DefId, Option<InlinedGraph<'tcx>>>,
+    inline_memo: RecursionBreakingCache<FnResolution<'tcx>, Option<InlinedGraph<'tcx>>>,
     tcx: TyCtxt<'tcx>,
     ana_ctrl: &'static AnalysisCtrl,
     dbg_ctrl: &'static DumpArgs,
@@ -297,8 +303,8 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
         .flatten()
 }
 
-enum InlineAction {
-    SimpleInline(LocalDefId),
+enum InlineAction<'tcx> {
+    SimpleInline(FnResolution<'tcx>),
     Drop(DropAction),
 }
 
@@ -352,31 +358,30 @@ impl<'tcx> Inliner<'tcx> {
     /// Returns `None` if wither we failed to get a function body for `def_id`
     /// (usually caused by trait objects) *or* this is a recursive request for
     /// the inlined graph of `def_id`.
-    pub fn get_inlined_graph(&self, def_id: DefId) -> Option<&InlinedGraph<'tcx>> {
+    fn get_inlined_graph(&self, instance: FnResolution<'tcx>) -> Option<&InlinedGraph<'tcx>> {
         self.inline_memo
-            .get(def_id, |bid| self.inline_graph(bid))?
+            .get(instance, |_| self.inline_graph(instance))?
             .as_ref()
     }
 
-    /// Convenience wrapper around [`Self::get_inlined_graph`]
-    fn get_inlined_graph_by_def_id(&self, def_id: LocalDefId) -> Option<&InlinedGraph<'tcx>> {
-        let _hir = self.tcx.hir();
-        self.get_inlined_graph(def_id.to_def_id())
-    }
-
     /// Make the set of equations relative to the call site described by `gli`
-    fn relativize_eqs(
-        equations: &Equations<GlobalLocal>,
+    fn relativize_eqs<'a>(
+        &'a self,
+        equations: &'a Equations<GlobalLocal<'tcx>>,
+        instance: FnResolution<'tcx>,
         here: GlobalLocationS,
-    ) -> impl Iterator<Item = Equation<GlobalLocal>> + '_ {
+    ) -> impl Iterator<Item = Equation<GlobalLocal<'tcx>>> + 'a {
+        let tcx: TyCtxt<'tcx> = self.tcx;
         equations.iter().map(move |eq| {
-            eq.map_bases(|base| {
+            eq.map_bases(move |base| {
                 GlobalLocal::relative(
+                    tcx,
                     base.local(),
                     base.location().map_or_else(
                         || GlobalLocation::single(here.location, here.function),
                         |prior| here.relativize(prior),
                     ),
+                    instance,
                 )
             })
         })
@@ -405,20 +410,26 @@ impl<'tcx> Inliner<'tcx> {
     /// Calculate the global local that corresponds to input index `idx` at this `node`.
     ///
     /// If the node is not a [`SimpleLocation::Call`], then the index is ignored.
-    fn node_to_local(&self, node: &StdNode<'tcx>, idx: ArgNum) -> GlobalLocal {
+    fn node_to_local(
+        &self,
+        node: &StdNode<'tcx>,
+        idx: ArgNum,
+        context: FnResolution<'tcx>,
+    ) -> GlobalLocal<'tcx> {
         match node {
-            SimpleLocation::Return => GlobalLocal::at_root(mir::RETURN_PLACE),
-            SimpleLocation::Argument(idx) => GlobalLocal::at_root((*idx).into()),
-            SimpleLocation::Call((loc, _)) => {
+            SimpleLocation::Return => GlobalLocal::at_root(self.tcx, mir::RETURN_PLACE, context),
+            SimpleLocation::Argument(idx) => GlobalLocal::at_root(self.tcx, (*idx).into(), context),
+            SimpleLocation::Call((loc, did)) => {
                 let call = self.get_call(*loc);
                 let pure_local = call.arguments[(idx as usize).into()]
                     .as_ref()
                     .map(|i| i.0)
                     .unwrap();
+                assert_eq!(context.def_id(), loc.innermost_function());
                 if let Some(parent) = loc.parent() {
-                    GlobalLocal::relative(pure_local, parent)
+                    GlobalLocal::relative(self.tcx, pure_local, parent, *did)
                 } else {
-                    GlobalLocal::at_root(pure_local)
+                    GlobalLocal::at_root(self.tcx, pure_local, context)
                 }
             }
         }
@@ -435,26 +446,62 @@ impl<'tcx> Inliner<'tcx> {
 
     fn classify_special_function_handling(
         &self,
-        function: DefId,
+        function: FnResolution<'tcx>,
         id: StdNode<'tcx>,
         g: &GraphImpl<'tcx, GlobalLocation>,
     ) -> Option<DropAction> {
         if self.ana_ctrl.drop_poll()
             && let Some(wrap) = is_part_of_async_desugar(self.tcx, id, g) {
                 Some(wrap.to_owned())
-        } else if self.ana_ctrl.drop_clone() && self.is_clone_fn(function) {
+        } else if self.ana_ctrl.drop_clone() && self.is_clone_fn(function.def_id()) {
             Some(vec![algebra::Operator::RefOf])
         } else {
             None
         }
     }
 
-    fn try_inline_as_async_fn(&self, i_graph: &mut InlinedGraph<'tcx>, def_id: DefId) -> bool {
+    pub fn get_controller_graph(
+        &self,
+        instance: FnResolution<'tcx>,
+    ) -> Option<&InlinedGraph<'tcx>> {
         let tcx = self.tcx;
-        if !tcx.asyncness(def_id).is_async() {
+        if !tcx.asyncness(instance.def_id()).is_async() {
+            return self.get_inlined_graph(instance);
+        }
+        let body_with_facts = self.tcx.body_for_def_id(instance.def_id()).unwrap();
+        let body = body_with_facts.simplified_body();
+        // XXX This might become invalid if functions other than `async` can create generators
+        let Some(closure_fn) =
+            (*body.basic_blocks).iter().find_map(|bb| {
+                let stmt = bb.statements.last()?;
+                if let mir::StatementKind::Assign(assign) = &stmt.kind
+                    && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, substs, _), _) = &assign.1 {
+                    Some(FnResolution::Final(ty::Instance::expect_resolve(tcx, ty::ParamEnv::reveal_all(), *gid, substs)))
+                } else {
+                    None
+                }
+            })
+        else {
+            tcx.sess.span_err(
+                tcx.def_span(instance.def_id()),
+                "ICE: Found this function to be async but could not extract the generator."
+            );
+            return None;
+        };
+        self.get_inlined_graph(closure_fn)
+    }
+
+    #[allow(dead_code)]
+    fn try_inline_as_async_fn(
+        &self,
+        i_graph: &mut InlinedGraph<'tcx>,
+        instance: FnResolution<'tcx>,
+    ) -> bool {
+        let tcx = self.tcx;
+        if !tcx.asyncness(instance.def_id()).is_async() {
             return false;
         }
-        let body_with_facts = self.tcx.body_for_def_id(def_id).unwrap();
+        let body_with_facts = self.tcx.body_for_def_id(instance.def_id()).unwrap();
         let body = body_with_facts.simplified_body();
         let num_args = body.args_iter().count();
         // XXX This might become invalid if functions other than `async` can create generators
@@ -462,15 +509,15 @@ impl<'tcx> Inliner<'tcx> {
             (*body.basic_blocks).iter().find_map(|bb| {
                 let stmt = bb.statements.last()?;
                 if let mir::StatementKind::Assign(assign) = &stmt.kind
-                    && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, ..), _) = &assign.1 {
-                    Some(*gid)
+                    && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, substs, _), _) = &assign.1 {
+                    Some(FnResolution::Final(ty::Instance::expect_resolve(tcx, ty::ParamEnv::reveal_all(), *gid, substs)))
                 } else {
                     None
                 }
             })
         else {
             tcx.sess.span_err(
-                tcx.def_span(def_id),
+                tcx.def_span(instance.def_id()),
                 "ICE: Found this function to be async but could not extract the generator."
             );
             return false;
@@ -493,9 +540,9 @@ impl<'tcx> Inliner<'tcx> {
             _ => unreachable!(),
         };
 
-        let root_location = GlobalLocation::single(return_location, def_id);
+        let root_location = GlobalLocation::single(return_location, instance.def_id());
 
-        // Following we must sumilate two code rewrites to the body of this
+        // Following we must simulate two code rewrites to the body of this
         // function to simulate calling the closure. We make the closure
         // argument a fresh variable and we break existing connections of
         // arguments and return. The latter will be restored by the inlining
@@ -506,13 +553,9 @@ impl<'tcx> Inliner<'tcx> {
         // return of calling the closure. However that would connect the inputs
         // and outputs in the algebra *if* we did not invent this new temporary
         // for the closure.
-        let new_closure_local = regal::get_highest_local(body) + 1;
+        let new_closure_local = regal::get_highest_local(body) + 5000;
 
-        for term in i_graph
-            .equations
-            .iter_mut()
-            .flat_map(|eq| [&mut eq.rhs, &mut eq.lhs])
-        {
+        for term in i_graph.equations.iter_mut().flat_map(|eq| eq.unsafe_refs()) {
             assert!(term.base.location().is_none());
             if term.base.local() == mir::RETURN_PLACE {
                 term.base.local = new_closure_local;
@@ -521,19 +564,19 @@ impl<'tcx> Inliner<'tcx> {
 
         // Break the return connections
         //
-        // Actuall clears the graph, but that is fine, because whenever we
-        // insert endges (as the inlining routine will do later) we
+        // Actually clears the graph, but that is fine, because whenever we
+        // insert edges (as the inlining routine will do later) we
         // automatically create the source and target nodes if they don't exist.
         i_graph.graph.clear();
 
         debug!(
             "Recognized {} as an async function",
-            self.tcx.def_path_debug_str(def_id)
+            self.tcx.def_path_debug_str(instance.def_id())
         );
         self.inline_one_function(
             i_graph,
-            def_id,
-            closure_fn.expect_local(),
+            instance,
+            closure_fn,
             &incoming,
             &outgoing,
             &[Some(new_closure_local), None],
@@ -554,8 +597,8 @@ impl<'tcx> Inliner<'tcx> {
             num_inlined,
             max_call_stack_depth,
         }: &mut InlinedGraph<'tcx>,
-        caller_function: DefId,
-        inlining_target: LocalDefId,
+        caller_function: FnResolution<'tcx>,
+        inlining_target: FnResolution<'tcx>,
         incoming: &[(StdNode<'tcx>, Edge)],
         outgoing: &[(StdNode<'tcx>, Edge)],
         arguments: &[Option<mir::Local>],
@@ -563,20 +606,13 @@ impl<'tcx> Inliner<'tcx> {
         queue_for_pruning: &mut EdgeSet<'tcx>,
         root_location: GlobalLocation,
     ) {
-        let grw_to_inline =
-            if let Some(callee_graph) = self.get_inlined_graph_by_def_id(inlining_target) {
-                callee_graph
-            } else {
-                // Breaking recursion. This can only happen if we are trying to
-                // inline ourself, so we simply skip.
-                return;
-            };
-        debug!(
-            "Inlining {} with {} arguments and {} targets",
-            self.tcx.def_path_debug_str(inlining_target.to_def_id()),
-            incoming.len(),
-            outgoing.len()
-        );
+        let grw_to_inline = if let Some(callee_graph) = self.get_inlined_graph(inlining_target) {
+            callee_graph
+        } else {
+            // Breaking recursion. This can only happen if we are trying to
+            // inline ourself, so we simply skip.
+            return;
+        };
         *num_inlined += 1 + grw_to_inline.inlined_functions_count();
         *max_call_stack_depth =
             (*max_call_stack_depth).max(grw_to_inline.max_call_stack_depth() + 1);
@@ -594,23 +630,34 @@ impl<'tcx> Inliner<'tcx> {
         }
 
         let here = GlobalLocationS {
-            function: caller_function,
+            function: caller_function.def_id(),
             location: root_location.outermost_location(),
         };
         eqs.extend(
-            Self::relativize_eqs(&grw_to_inline.equations, here).chain(
-                arguments
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(a, actual_param)| Some(((*actual_param)?, (a + 1).into())))
-                    .chain(return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
-                    .map(|(actual_param, formal_param)| {
-                        algebra::Equality::new(
-                            Term::new_base(GlobalLocal::at_root(actual_param)),
-                            Term::new_base(GlobalLocal::relative(formal_param, root_location)),
-                        )
-                    }),
-            ),
+            self.relativize_eqs(&grw_to_inline.equations, caller_function, here)
+                .chain(
+                    arguments
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(a, actual_param)| Some(((*actual_param)?, (a + 1).into())))
+                        .chain(return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
+                        .map(|(actual_param, formal_param)| {
+                            algebra::Equality::new(
+                                self.tcx,
+                                Term::new_base(GlobalLocal::at_root(
+                                    self.tcx,
+                                    actual_param,
+                                    caller_function,
+                                )),
+                                Term::new_base(GlobalLocal::relative(
+                                    self.tcx,
+                                    formal_param,
+                                    root_location,
+                                    inlining_target,
+                                )),
+                            )
+                        }),
+                ),
         );
         let to_inline = &grw_to_inline.graph;
 
@@ -673,15 +720,16 @@ impl<'tcx> Inliner<'tcx> {
         &self,
         proc_g: &regal::Body<DisplayViaDebug<Location>>,
         i_graph: &mut InlinedGraph<'tcx>,
-        def_id: DefId,
+        instance: FnResolution<'tcx>,
     ) -> EdgeSet<'tcx> {
+        let def_id = instance.def_id();
         let caller_local_def_id = def_id.expect_local();
         let recursive_analysis_enabled = self.ana_ctrl.use_recursive_analysis();
         let mut queue_for_pruning = HashSet::new();
-        if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, def_id) {
-            debug!("Detected self to be async fn, closure was inlined.");
-            return queue_for_pruning;
-        };
+        // if recursive_analysis_enabled && self.try_inline_as_async_fn(i_graph, instance) {
+        //     debug!("Detected self to be async fn, closure was inlined.");
+        //     return queue_for_pruning;
+        // };
         let caller_body = self
             .tcx
             .body_for_def_id_default_policy(def_id)
@@ -691,27 +739,26 @@ impl<'tcx> Inliner<'tcx> {
         let targets = i_graph
             .graph
             .node_references()
-            .filter_map(|(id, n)| match n {
+            .filter_map(|(id, _)| match id {
                 Node::Call((loc, fun)) => Some((id, loc, fun)),
                 _ => None,
             })
             .filter_map(|(id, location, function)| {
                 if recursive_analysis_enabled {
                     let def_id = function.def_id();
-                    debug!("Recursive analysis enabled");
                     if let Some(ac) = self.classify_special_function_handling(
-                        function.def_id(),
+                        function,
                         id,
                         &i_graph.graph,
                     ) {
-                        return Some((id, *location, InlineAction::Drop(ac)));
+                        return Some((id, location, InlineAction::Drop(ac)));
                     }
-                    if let Some(local_id) = def_id.as_local()
-                        && self.marker_carrying.should_inline(*function)
+                    if def_id.is_local()
+                        && self.marker_carrying.should_inline(function)
                     {
                         debug!("Inlining {function:?}");
-                        return Some((id, *location, InlineAction::SimpleInline(local_id)));
-                    } else if self.marker_carrying.marker_ctx().has_transitive_reachable_markers(*function) {
+                        return Some((id, location, InlineAction::SimpleInline(function)));
+                    } else if self.marker_carrying.marker_ctx().has_transitive_reachable_markers(function) {
                         self.tcx.sess.struct_span_warn(
                             self.tcx.def_span(def_id),
                             "This function is not being inlined, but a marker is reachable from its inside.",
@@ -721,8 +768,8 @@ impl<'tcx> Inliner<'tcx> {
                         ).emit()
                     }
                 }
-                let local_as_global = GlobalLocal::at_root;
-                let call = self.get_call(*location);
+                let local_as_global = |l| GlobalLocal::at_root(self.tcx, l, instance);
+                let call = self.get_call(location);
                 debug!("Abstracting {function:?}");
                 let fn_sig = function.sig(self.tcx).unwrap();
                 let writeables = Self::writeable_arguments(&fn_sig)
@@ -738,7 +785,7 @@ impl<'tcx> Inliner<'tcx> {
                             .map(local_as_global)
                             .filter(move |read| *read != write)
                             .map(move |read| {
-                                algebra::Equality::new(mk_term(write).add_unknown(), mk_term(read))
+                                algebra::Equality::new(self.tcx, mk_term(write).add_unknown(), mk_term(read))
                             })
                     }));
                 None
@@ -764,9 +811,20 @@ impl<'tcx> Inliner<'tcx> {
                         .iter()
                         .map(|a| a.as_ref().map(|a| a.0))
                         .collect::<Vec<_>>();
+
+                    let terminator = caller_body
+                        .stmt_at(root_location.innermost_location())
+                        .either(|_| unreachable!(), std::convert::identity);
+                    debug!(
+                        "Inlining {:?} at {:?}\n  resolved to: {did}\n  incoming edges: {}\n  outgoing edges: {}",
+                        terminator.kind,
+                        terminator.source_info.span,
+                        incoming.len(),
+                        outgoing.len()
+                    );
                     self.inline_one_function(
                         i_graph,
-                        def_id,
+                        instance,
                         did,
                         &incoming,
                         &outgoing,
@@ -802,8 +860,11 @@ impl<'tcx> Inliner<'tcx> {
                     }
                     let call = self.get_call(root_location);
                     if let Some(return_local) = call.return_to {
-                        let mut target =
-                            algebra::Term::new_base(GlobalLocal::at_root(return_local));
+                        let mut target = algebra::Term::new_base(GlobalLocal::at_root(
+                            self.tcx,
+                            return_local,
+                            instance,
+                        ));
                         let argument = call.arguments[regal::ArgumentIndex::from_usize(0)]
                             .as_ref()
                             .unwrap()
@@ -823,8 +884,11 @@ impl<'tcx> Inliner<'tcx> {
                         }
                         target = target.extend(wraps);
                         i_graph.equations.push(algebra::Equality::new(
+                            self.tcx,
                             target,
-                            algebra::Term::new_base(GlobalLocal::at_root(argument)),
+                            algebra::Term::new_base(GlobalLocal::at_root(
+                                self.tcx, argument, instance,
+                            )),
                         ));
                     }
                 }
@@ -840,10 +904,11 @@ impl<'tcx> Inliner<'tcx> {
     ///
     /// Returns `None` if we failed to retrieve a function body for this
     /// `def_id` (usually caused by trait objects)
-    fn inline_graph(&self, def_id: DefId) -> Option<InlinedGraph<'tcx>> {
+    fn inline_graph(&self, instance: FnResolution<'tcx>) -> Option<InlinedGraph<'tcx>> {
+        let def_id = instance.def_id();
         let local_def_id = def_id.expect_local();
         let proc_g = self.get_procedure_graph(def_id)?;
-        let mut gwr = InlinedGraph::from_body(def_id, proc_g, self.tcx);
+        let mut gwr = InlinedGraph::from_body(instance, proc_g, self.tcx);
 
         let name = body_name_pls(self.tcx, local_def_id).name;
         if self.dbg_ctrl.dump_pre_inline_graph() {
@@ -862,7 +927,7 @@ impl<'tcx> Inliner<'tcx> {
         }
 
         let mut queue_for_pruning = time(&format!("Inlining subgraphs into '{name}'"), || {
-            self.perform_subfunction_inlining(proc_g, &mut gwr, def_id)
+            self.perform_subfunction_inlining(proc_g, &mut gwr, instance)
         });
 
         if self.ana_ctrl.remove_inconsequential_calls().is_enabled() {
@@ -897,13 +962,23 @@ impl<'tcx> Inliner<'tcx> {
                 }
                 queue_for_pruning
             };
-            self.prune_impossible_edges(&mut gwr, name, &edges_to_prune, local_def_id);
+            self.prune_impossible_edges(&mut gwr, name, &edges_to_prune, instance);
             if self.dbg_ctrl.dump_inlined_pruned_graph() {
                 dump_dot_graph(
                     dump_file_pls(self.tcx, local_def_id, "inlined-pruned.gv").unwrap(),
                     &gwr,
                 )
                 .unwrap();
+            }
+        }
+
+        for eq in &gwr.equations {
+            debug!("Checking {eq}");
+            if let Err(e) = equation_sanity_check(self.tcx, eq) {
+                self.tcx.sess.span_fatal(
+                    self.tcx.def_span(def_id),
+                    format!("Equation inconsistency during construction of PDG for: {e}"),
+                );
             }
         }
         Some(gwr)
@@ -984,20 +1059,85 @@ impl<'tcx> Inliner<'tcx> {
     }
 }
 
-fn wrapping_sanity_check<'tcx>(
+pub fn equation_sanity_check<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    eq: &Equation<GlobalLocal<'tcx>>,
+) -> Result<(), String> {
+    let mut eq = eq.clone();
+    eq.rearrange_left_to_right();
+    assert!(eq.lhs().terms.is_empty());
+
+    let (lhs, rhs) = eq.decompose();
+
+    let wrap = rhs.terms;
+
+    wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap)
+}
+
+pub fn wrapping_sanity_check<'tcx>(
     tcx: TyCtxt<'tcx>,
     mut left: mir::tcx::PlaceTy<'tcx>,
     mut right: mir::tcx::PlaceTy<'tcx>,
     wrap: impl IntoIterator<Item = Operator<DisplayViaDebug<mir::Field>>>,
 ) -> Result<(), String> {
+    let wrap = wrap.into_iter().collect::<Vec<_>>();
     use mir::tcx::PlaceTy;
     use mir::ProjectionElem::*;
     use Operator::*;
     let apply_deref = |target: &mut PlaceTy<'tcx>| *target = target.projection_ty(tcx, Deref);
     let apply_field = |target: &mut PlaceTy<'tcx>, idx: mir::Field| {
-        *target = PlaceTy {
-            ty: target.field_ty(tcx, idx),
-            variant_index: None,
+        *target = match target.ty.kind() {
+            ty::TyKind::Closure(_did, sub) => {
+                assert!(target.variant_index.is_none(), "{target:?}");
+                PlaceTy {
+                    ty: sub
+                        .as_closure()
+                        .upvar_tys()
+                        .nth(idx.as_usize())
+                        .unwrap_or_else(|| {
+                            panic!("{target:?} does not have enough upvars for {idx:?}")
+                        }),
+                    variant_index: None,
+                }
+            }
+            ty::TyKind::Generator(did, substs, _) => {
+                // I'm guessing here as to how generators actually work. My
+                // working theory is that there are a number of "prefix" fields
+                // that are accessible without using a variant index, followed
+                // by a number of "state types" which are only accessible after
+                // downcasting to a specific variant. My assumption also is that
+                // both those indices are 0-based.
+                //
+                // Unfortunately I can't think if a good way to be defensive
+                // wrt. those assumptions.
+                let generator = substs.as_generator();
+                debug!(
+                    "Prefix tys: {:?}, State tys: {:?}",
+                    Vec::from_iter(generator.prefix_tys()),
+                    generator
+                        .state_tys(*did, tcx)
+                        .map(Vec::from_iter)
+                        .collect::<Vec<_>>()
+                );
+                let ty = if let Some(v) = target.variant_index {
+                    generator
+                        .state_tys(*did, tcx)
+                        .nth(v.as_usize())
+                        .expect("Not enough variants")
+                        .nth(idx.as_usize())
+                        .expect("Not enough types")
+                } else {
+                    generator.prefix_tys().nth(idx.as_usize()).unwrap()
+                };
+                PlaceTy {
+                    ty,
+                    variant_index: None,
+                }
+            }
+            _ => PlaceTy {
+                ty: target.field_ty(tcx, idx),
+                variant_index: None,
+            },
         }
     };
     let apply_index =
@@ -1015,12 +1155,150 @@ fn wrapping_sanity_check<'tcx>(
             ArrayWith => apply_index(&mut left),
             Operator::Downcast(v) => apply_downcast(&mut right, v.into()),
             Operator::Upcast(v) => apply_downcast(&mut left, v.into()),
-            Unknown => return Err("Unexpected 'unknown' in sanity check".into()),
+            Unknown => return Ok(()),
         }
     }
-    if left.ty == right.ty && left.variant_index == right.variant_index {
+    if left.ty.equiv(&right.ty) && left.variant_index == right.variant_index {
         Ok(())
     } else {
-        Err(format!("Sanity check failed: {left:?} != {right:?}"))
+        Err(format!(
+            "Sanity check failed:\n     {left:?}\n  != {right:?}"
+        ))
+    }
+}
+
+trait APoorPersonsEquivalenceCheck {
+    fn equiv(&self, other: &Self) -> bool;
+}
+
+impl<T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for ty::List<T> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.len() == other.len()
+            && self
+                .iter()
+                .zip(other.iter())
+                .all(|(left, right)| left.equiv(right))
+    }
+}
+
+impl<'tcx> APoorPersonsEquivalenceCheck for ty::GenericArg<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        use ty::GenericArgKind::*;
+        match (self.unpack(), other.unpack()) {
+            (Lifetime(_), Lifetime(_)) => true,
+            (Type(t_a), Type(t_b)) => t_a.equiv(&t_b),
+            (Const(c_1), Const(c_2)) => c_1.equiv(&c_2),
+            _ => false,
+        }
+    }
+}
+
+impl<'tcx> APoorPersonsEquivalenceCheck for ty::Const<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.kind() == other.kind() && self.ty().equiv(&other.ty())
+    }
+}
+
+impl<'tcx, T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for ty::Binder<'tcx, T> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.bound_vars() == other.bound_vars()
+            && self
+                .as_ref()
+                .skip_binder()
+                .equiv(&other.as_ref().skip_binder())
+    }
+}
+
+impl<'tcx> APoorPersonsEquivalenceCheck for ty::FnSig<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.inputs_and_output.equiv(other.inputs_and_output)
+            && self.c_variadic == other.c_variadic
+            && self.unsafety == other.unsafety
+            && self.abi == other.abi
+    }
+}
+
+impl<'tcx> APoorPersonsEquivalenceCheck for ty::ExistentialPredicate<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        use ty::ExistentialPredicate::*;
+        use ty::TermKind::*;
+        match (self, other) {
+            (Trait(t_1), Trait(t_2)) => t_1.def_id == t_2.def_id && t_1.substs.equiv(t_2.substs),
+            (Projection(p_1), Projection(p_2)) => {
+                p_1.def_id == p_2.def_id
+                    && p_1.substs.equiv(p_2.substs)
+                    && match (p_1.term.unpack(), p_2.term.unpack()) {
+                        (Ty(t_1), Ty(t_2)) => t_1.equiv(&t_2),
+                        (Const(c_1), Const(c_2)) => c_1.equiv(&c_2),
+                        _ => false,
+                    }
+            }
+            (AutoTrait(t_1), AutoTrait(t_2)) => t_1 == t_2,
+            _ => false,
+        }
+    }
+}
+
+impl<'tcx> APoorPersonsEquivalenceCheck for ty::AliasTy<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.def_id == other.def_id && self.substs.equiv(other.substs)
+    }
+}
+
+impl<'a, T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for &'a T {
+    fn equiv(&self, other: &Self) -> bool {
+        (*self).equiv(*other)
+    }
+}
+
+impl<'tcx> APoorPersonsEquivalenceCheck for ty::Ty<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        use crate::rust::rustc_type_ir::sty::TyKind::*;
+
+        match (self.kind(), other.kind()) {
+            (Int(a_i), Int(b_i)) => a_i == b_i,
+            (Uint(a_u), Uint(b_u)) => a_u == b_u,
+            (Float(a_f), Float(b_f)) => a_f == b_f,
+            (Adt(a_d, a_s), Adt(b_d, b_s)) => a_d == b_d && a_s.equiv(b_s),
+            (Foreign(a_d), Foreign(b_d)) => a_d == b_d,
+            // This is where it gets hacky, we will basically consider all arrays
+            // and slices the same so long as the element type is the same,
+            // regardless of length.
+            //
+            // In future this could be refined to properly consider subtyping
+            // relations, but we don't know the "directionality" of the comparison
+            // anyway so no point in trying right now.
+            (Array(a_t, _) | Slice(a_t), Array(b_t, _) | Slice(b_t)) => a_t.equiv(b_t),
+            (RawPtr(a_t), RawPtr(b_t)) => a_t.mutbl == b_t.mutbl && a_t.ty.equiv(&b_t.ty),
+            // We will also ignore regions for now
+            (Ref(_, a_t, a_m), Ref(_, b_t, b_m)) => a_t.equiv(b_t) && a_m == b_m,
+            (FnDef(a_d, a_s), FnDef(b_d, b_s)) => a_d == b_d && a_s.equiv(b_s),
+            (FnPtr(a_s), FnPtr(b_s)) => a_s.equiv(b_s),
+            // Ignoring regions again
+            (Dynamic(a_p, _, a_repr), Dynamic(b_p, _, b_repr)) => {
+                a_p.equiv(b_p) && a_repr == b_repr
+            }
+            (Closure(a_d, a_s), Closure(b_d, b_s)) => a_d == b_d && a_s.equiv(b_s),
+            (Generator(a_d, a_s, a_m), Generator(b_d, b_s, b_m)) => {
+                a_d == b_d && a_s.equiv(b_s) && a_m == b_m
+            }
+            (GeneratorWitness(a_g), GeneratorWitness(b_g)) => {
+                // for some reason `a_g.equiv(b_g)` doesn't resolve properly and
+                // gives me a type error so I inlined its body instead.
+                a_g.bound_vars() == b_g.bound_vars() && a_g.skip_binder().equiv(&b_g.skip_binder())
+            }
+            (GeneratorWitnessMIR(a_d, a_s), GeneratorWitnessMIR(b_d, b_s)) => {
+                a_d == b_d && a_s.equiv(b_s)
+            }
+            (Tuple(a_t), Tuple(b_t)) => a_t.equiv(b_t),
+            (Alias(a_i, a_p), Alias(b_i, b_p)) => a_i == b_i && a_p.equiv(b_p),
+            (Param(a_p), Param(b_p)) => a_p == b_p,
+            (Bound(a_d, a_b), Bound(b_d, b_b)) => a_d == b_d && a_b == b_b,
+            (Placeholder(a_p), Placeholder(b_p)) => a_p == b_p,
+            (Infer(a_t), Infer(b_t)) => a_t == b_t,
+            (Error(a_e), Error(b_e)) => a_e == b_e,
+            (Bool, Bool) | (Char, Char) | (Str, Str) | (Never, Never) => true,
+            _ => false,
+        }
     }
 }

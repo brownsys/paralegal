@@ -63,10 +63,7 @@ pub enum Target<L> {
 impl From<LocationOrArg> for Target<DisplayViaDebug<Location>> {
     fn from(value: LocationOrArg) -> Self {
         match value {
-            LocationOrArg::Arg(a) => {
-                debug!("Saw argument {:?}, now {:?}", a, ArgumentIndex::from(a));
-                Target::Argument(a.into())
-            }
+            LocationOrArg::Arg(a) => Target::Argument(a.into()),
             LocationOrArg::Location(loc) => Target::Call(loc.into()),
         }
     }
@@ -334,7 +331,9 @@ impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
                                     } else {
                                         use crate::rust::rustc_index::vec::Idx;
                                         next_new_local.increment_by(1);
-                                        call_argument_equations.insert(Equality::new(
+                                        call_argument_equations.insert(Equality::new_mir(
+                                            tcx,
+                                            def_id.to_def_id(),
                                             Term::new_base(DisplayViaDebug(next_new_local)),
                                             Term::from(a),
                                         ));
@@ -365,11 +364,19 @@ impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
                     let place = mir::Place::from(a);
                     let local_decls = body.local_decls();
                     let ty = place.ty(local_decls, tcx).ty;
+                    // Arguments are only visible to the outside if they are
+                    // pointers. But we wouldn't see any changes to the pointer
+                    // itself, only the value it points to, hence the additional
+                    // `Deref`. We don't handle `Rc` or `Arc` at the moment.
+                    //
+                    // It may actually be necessary to `walk` the type here to
+                    // discover references on its inside.
                     if ty.is_mutable_ptr() {
                         Either::Left(
                             Some(place.project_deeper(&[mir::PlaceElem::Deref], tcx)).into_iter(),
                         )
                     } else if ty.is_generator() {
+                        // Should this also apply to closures?
                         Either::Right(
                             non_transitive_aliases
                                 .children(place)

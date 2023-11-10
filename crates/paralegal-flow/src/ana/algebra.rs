@@ -15,8 +15,8 @@ use crate::{
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
     ty,
-    utils::{outfile_pls, write_sep, DisplayViaDebug, Print},
-    HashMap, HashSet, Symbol, TyCtxt,
+    utils::{outfile_pls, write_sep, DisplayViaDebug, Print, TyCtxtExt},
+    DefId, HashMap, HashSet, Symbol, TyCtxt,
 };
 
 use std::{
@@ -250,8 +250,8 @@ impl<F: Copy> Operator<F> {
 /// An equation in the algebra
 #[derive(Clone, Debug)]
 pub struct Equality<B, F: Copy> {
-    pub lhs: Term<B, F>,
-    pub rhs: Term<B, F>,
+    lhs: Term<B, F>,
+    rhs: Term<B, F>,
 }
 
 impl<B: Display, F: Display + Copy> Display for Equality<B, F> {
@@ -286,10 +286,62 @@ impl<B: Hash, F: Hash + Copy> Hash for Equality<B, F> {
     }
 }
 
+impl<'tcx> Equality<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>> {
+    pub fn new(
+        tcx: TyCtxt<'tcx>,
+        lhs: Term<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>>,
+        rhs: Term<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>>,
+    ) -> Self {
+        let slf = Self { lhs, rhs };
+
+        if let Err(e) = equation_sanity_check(tcx, &slf) {
+            panic!("Sanity check failed for {slf} because: {e}")
+        }
+        slf
+    }
+}
+
+impl MirEquation {
+    pub fn new_mir(tcx: TyCtxt<'_>, def_id: DefId, lhs: MirTerm, rhs: MirTerm) -> Self {
+        let slf = Self { lhs, rhs };
+        let mut slf_copy = slf.clone();
+        slf_copy.rearrange_left_to_right();
+        let local_decls = &tcx
+            .body_for_def_id_default_policy(def_id)
+            .unwrap()
+            .simplified_body()
+            .local_decls;
+        let get_type = |term: &Term<DisplayViaDebug<Local>, _>| {
+            mir::Place::from(term.base.0).ty(local_decls, tcx)
+        };
+        assert!(slf_copy.lhs.terms.is_empty());
+        if let Err(e) = wrapping_sanity_check(
+            tcx,
+            get_type(&slf_copy.lhs),
+            get_type(&slf_copy.rhs),
+            slf_copy.rhs.terms,
+        ) {
+            panic!("Sanity check for equation {slf} failed because: {e}");
+        }
+        slf
+    }
+}
+
 impl<B, F: Copy> Equality<B, F> {
-    /// Create a new equation
-    pub fn new(lhs: Term<B, F>, rhs: Term<B, F>) -> Self {
-        Self { lhs, rhs }
+    pub fn lhs(&self) -> &Term<B, F> {
+        &self.lhs
+    }
+
+    pub fn rhs(&self) -> &Term<B, F> {
+        &self.rhs
+    }
+
+    pub fn decompose(self) -> (Term<B, F>, Term<B, F>) {
+        (self.lhs, self.rhs)
+    }
+
+    pub fn unsafe_refs(&mut self) -> [&mut Term<B, F>; 2] {
+        [&mut self.lhs, &mut self.rhs]
     }
 
     /// Rearrange the equation, moving all operators from the left hand side to
@@ -619,6 +671,8 @@ pub fn solve_reachable<
 }
 
 use std::sync::atomic;
+
+use super::inline::{equation_sanity_check, wrapping_sanity_check, GlobalLocal};
 
 lazy_static! {
     static ref IOUTCTR: atomic::AtomicI32 = atomic::AtomicI32::new(0);

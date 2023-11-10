@@ -445,7 +445,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
             // Union dependencies into all conflicting places of the mutated place
             let mut mutable_conflicts = Cow::Borrowed(all_aliases.conflicts(mutated));
 
-            debug!("Mutable conflicts {mutable_conflicts:?}");
+            //debug!("Mutable conflicts {mutable_conflicts:?}");
 
             // Remove any conflicts that aren't actually mutable, e.g. if x : &T ends up
             // as an alias of y: &mut T. See test function_lifetime_alias_mut for an example.
@@ -467,8 +467,8 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
                 mutable_conflicts = Cow::Owned(cfl)
             };
 
-            debug!("  Mutated conflicting places: {mutable_conflicts:?}");
-            debug!("    with deps {input_location_deps:?}");
+            // debug!("  Mutated conflicting places: {mutable_conflicts:?}");
+            // debug!("    with deps {input_location_deps:?}");
 
             for place in mutable_conflicts.iter().cloned() {
                 let normalized = all_aliases.normalize(place);
@@ -477,10 +477,10 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
                 // propagates
                 let relation_to_mutated = PlaceRelation::configurable_of(place, mutated, false);
                 if relation_to_mutated == PlaceRelation::Disjoint {
-                    debug!("Mutable conflicts {place:?} and {mutated:?} are disjoint");
+                    //debug!("Mutable conflicts {place:?} and {mutated:?} are disjoint");
                 };
                 if !transitive && relation_to_mutated == PlaceRelation::Super {
-                    debug!("  {place:?} was found to be super place of {mutated:?}");
+                    //debug!("  {place:?} was found to be super place of {mutated:?}");
                     let old = state.matrix().row(&normalized).clone();
                     state.union_after(normalized, Cow::Owned(old));
                 }
@@ -505,12 +505,12 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
             } => (func, args, destination),
             _ => unreachable!(),
         };
-        debug!("Checking whether can recurse into {func:?}");
+        //debug!("Checking whether can recurse into {func:?}");
 
         let func = match func.constant() {
             Some(func) => func,
             None => {
-                debug!("  Func is not constant");
+                //debug!("  Func is not constant");
                 return false;
             }
         };
@@ -518,7 +518,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
         let def_id = match func.literal.ty().kind() {
             ty::TyKind::FnDef(def_id, _) => def_id,
             _ => {
-                debug!("  Func is not a FnDef");
+                //debug!("  Func is not a FnDef");
                 return false;
             }
         };
@@ -527,14 +527,14 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
         // so we can't analyze effects on exit
         let fn_sig = tcx.fn_sig(*def_id).skip_binder();
         if fn_sig.skip_binder().output().is_never() {
-            debug!("  Func returns never");
+            //debug!("  Func returns never");
             return false;
         }
 
         let node = match tcx.hir().get_if_local(*def_id) {
             Some(node) => node,
             None => {
-                debug!("  Func is not in local crate");
+                //debug!("  Func is not in local crate");
                 return false;
             }
         };
@@ -549,7 +549,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
 
         let unsafety = tcx.unsafety_check_result(def_id.expect_local());
         if !unsafety.used_unsafe_blocks.is_empty() {
-            debug!("  Func contains unsafe blocks");
+            //debug!("  Func contains unsafe blocks");
             return false;
         }
 
@@ -568,7 +568,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
             })
         });
         if any_closure_inputs {
-            debug!("  Func has closure inputs");
+            //debug!("  Func has closure inputs");
             return false;
         }
 
@@ -576,7 +576,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
             crate::borrowck_facts::get_body_with_borrowck_facts(tcx, def_id.expect_local());
         let body = &body_with_facts.body;
         let Some(return_state) = self.recurse_cache.get(body_id, |_| {
-            info!("Recursing into {}", tcx.def_path_debug_str(*def_id));
+            //info!("Recursing into {}", tcx.def_path_debug_str(*def_id));
             let flow = flowistry::infoflow::compute_flow(tcx, body_id, body_with_facts);
 
             let mut return_state =
@@ -626,7 +626,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
                 let mut projection = parent_toplevel_arg.projection.to_vec();
                 let mut ty = parent_toplevel_arg.ty(self.body.local_decls(), tcx);
                 let parent_param_env = tcx.param_env(self.def_id);
-                log::debug!("Adding child {child:?} to parent {parent_toplevel_arg:?}");
+                //log::debug!("Adding child {child:?} to parent {parent_toplevel_arg:?}");
                 for elem in child.projection.iter() {
                     ty = ty.projection_ty_core(
                         tcx,
@@ -662,8 +662,8 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
                     .filter_map(|(row, _)| Some((translate_child_to_parent(row, false)?, None)))
                     .collect::<Vec<_>>();
 
-                debug!("child {child:?} \n  / child_deps {child_deps:?}\n-->\nparent {parent:?}\n   / parent_deps {parent_deps:?}"
-                );
+                //debug!("child {child:?} \n  / child_deps {child_deps:?}\n-->\nparent {parent:?}\n   / parent_deps {parent_deps:?}"
+                //);
                 self.elision_info
                     .borrow_mut()
                     .entry(location)
@@ -673,7 +673,12 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
                         if let Some(elem) = proj {
                             dep = dep.wrap_in_elem(*elem);
                         }
-                        algebra::MirEquation::new(parent.into(), dep.add_unknown())
+                        algebra::MirEquation::new_mir(
+                            tcx,
+                            self.def_id,
+                            parent.into(),
+                            dep.add_unknown(),
+                        )
                     }));
                 self.transfer_function(state, parent, &parent_deps, location, true);
             }
@@ -695,10 +700,10 @@ impl<'a, 'tcx, 'inliner> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'inline
     fn initialize_start_block(&self, _body: &Body<'tcx>, state: &mut Self::Domain) {
         for (arg, loc) in self.aliases.all_args() {
             for place in self.aliases.conflicts(arg) {
-                debug!(
-                    "arg={arg:?} / place={place:?} / loc={:?}",
-                    self.location_domain().value(loc)
-                );
+                // debug!(
+                //     "arg={arg:?} / place={place:?} / loc={:?}",
+                //     self.location_domain().value(loc)
+                // );
                 state
                     .matrix_mut()
                     .set(self.aliases.normalize(*place), (loc, *place));
@@ -793,7 +798,7 @@ pub fn compute_flow_internal<'a, 'tcx, 's>(
 
     let body = body_with_facts.simplified_body();
     let control_dependencies = body.control_dependencies();
-    debug!("Control dependencies: {control_dependencies:?}");
+    //debug!("Control dependencies: {control_dependencies:?}");
 
     let results = {
         //block_timer!("Flow");

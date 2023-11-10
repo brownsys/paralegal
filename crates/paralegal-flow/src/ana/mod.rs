@@ -82,7 +82,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let flow = {
             let w = 6;
-            let i = inliner.get_inlined_graph(target.def_id).unwrap();
+            let i = inliner
+                .get_controller_graph(FnResolution::Partial(target.def_id))
+                .unwrap();
             info!("Graph statistics for {}\n  {:<w$} graph nodes\n  {:<w$} graph edges\n  {:<w$} inlined functions\n  {:<w$} max call stack depth", target.name(), i.vertex_count(), i.edge_count(), i.inlined_functions_count(), i.max_call_stack_depth());
             inliner.to_call_only_flow(i, |a| {
                 GlobalLocation::single(

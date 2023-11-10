@@ -1,7 +1,7 @@
 use crate::{
     ir::{regal, GlobalLocation},
-    mir, serde,
-    utils::{time, write_sep, DisplayViaDebug, FnResolution, TinyBitSet},
+    mir, serde, ty,
+    utils::{time, write_sep, DisplayViaDebug, FnResolution, TinyBitSet, TyCtxtExt},
     Either, HashMap, HashSet, Location, TyCtxt,
 };
 
@@ -179,26 +179,89 @@ impl std::fmt::Display for Edge {
 
 /// A [`mir::Local`] but also tracks the precise call chain it is reachable
 /// from.
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
-pub struct GlobalLocal {
+#[derive(Clone, Copy, Debug)]
+pub struct GlobalLocal<'tcx> {
     pub(super) local: mir::Local,
     location: Option<GlobalLocation>,
+    pub ty: mir::tcx::PlaceTy<'tcx>,
 }
 
-impl GlobalLocal {
+impl<'tcx> std::cmp::PartialEq for GlobalLocal<'tcx> {
+    fn eq(&self, other: &Self) -> bool {
+        self.location == other.location && self.local == other.local
+    }
+}
+
+impl<'tcx> std::cmp::PartialOrd for GlobalLocal<'tcx> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(
+            self.location
+                .partial_cmp(&other.location())?
+                .then(self.local.partial_cmp(&other.local)?),
+        )
+    }
+}
+
+impl<'tcx> std::cmp::Eq for GlobalLocal<'tcx> {}
+
+impl<'tcx> std::cmp::Ord for GlobalLocal<'tcx> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.location
+            .cmp(&other.location)
+            .then(self.local.cmp(&other.local))
+    }
+}
+
+impl<'tcx> std::hash::Hash for GlobalLocal<'tcx> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.local.hash(state);
+        self.location.hash(state);
+    }
+}
+
+impl<'tcx> GlobalLocal<'tcx> {
+    fn resolve_ty(
+        tcx: TyCtxt<'tcx>,
+        local: mir::Local,
+        context: FnResolution<'tcx>,
+    ) -> mir::tcx::PlaceTy<'tcx> {
+        let body = tcx
+            .body_for_def_id_default_policy(context.def_id())
+            .unwrap()
+            .simplified_body();
+        let raw_ty = mir::Place::from(local).ty(body, tcx);
+        match context {
+            FnResolution::Final(instance) => instance.subst_mir_and_normalize_erasing_regions(
+                tcx,
+                ty::ParamEnv::reveal_all(),
+                raw_ty,
+            ),
+            FnResolution::Partial(_) => {
+                tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), raw_ty)
+            }
+        }
+    }
+
     /// Construct a new global local in a root function (no call chain)
-    pub fn at_root(local: mir::Local) -> Self {
+    pub fn at_root(tcx: TyCtxt<'tcx>, local: mir::Local, context: FnResolution<'tcx>) -> Self {
         Self {
             local,
             location: None,
+            ty: Self::resolve_ty(tcx, local, context),
         }
     }
 
     /// Construct a new global local relative to this call chain.
-    pub fn relative(local: mir::Local, location: GlobalLocation) -> Self {
+    pub fn relative(
+        tcx: TyCtxt<'tcx>,
+        local: mir::Local,
+        location: GlobalLocation,
+        context: FnResolution<'tcx>,
+    ) -> Self {
         Self {
             local,
             location: Some(location),
+            ty: Self::resolve_ty(tcx, local, context),
         }
     }
 
@@ -215,14 +278,15 @@ impl GlobalLocal {
     }
 }
 
-impl std::fmt::Display for GlobalLocal {
+impl<'tcx> std::fmt::Display for GlobalLocal<'tcx> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} @ ", self.local)?;
         if let Some(loc) = self.location {
             write!(f, "{}", loc)
         } else {
             f.write_str("root")
-        }
+        }?;
+        write!(f, ": {:?}", self.ty)
     }
 }
 
@@ -238,7 +302,7 @@ pub struct InlinedGraph<'tcx> {
     /// The global graph
     pub(super) graph: GraphImpl<'tcx, GlobalLocation>,
     /// The global equations
-    pub equations: Equations<GlobalLocal>,
+    pub equations: Equations<GlobalLocal<'tcx>>,
     /// For statistics, how many functions did we inline
     pub(super) num_inlined: usize,
     /// For statistics: how deep a calll stack did we inline.
@@ -276,12 +340,13 @@ impl<'tcx> InlinedGraph<'tcx> {
 
     /// Construct the initial graph from a [`regal::Body`]
     pub fn from_body(
-        def_id: DefId,
+        context: FnResolution<'tcx>,
         body: &regal::Body<'tcx, DisplayViaDebug<Location>>,
         tcx: TyCtxt<'tcx>,
     ) -> Self {
+        let def_id = context.def_id();
         time("Graph Construction From Regal Body", || {
-            let equations = to_global_equations(&body.equations);
+            let equations = to_global_equations(tcx, &body.equations, context);
             let mut gwr = InlinedGraph {
                 equations,
                 graph: Default::default(),
@@ -342,9 +407,13 @@ impl<'tcx> InlinedGraph<'tcx> {
 }
 
 /// Globalize all locations mentioned in these equations.
-fn to_global_equations(eqs: &Equations<DisplayViaDebug<mir::Local>>) -> Equations<GlobalLocal> {
+fn to_global_equations<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    eqs: &Equations<DisplayViaDebug<mir::Local>>,
+    context: FnResolution<'tcx>,
+) -> Equations<GlobalLocal<'tcx>> {
     eqs.iter()
-        .map(|eq| eq.map_bases(|target| GlobalLocal::at_root(**target)))
+        .map(|eq| eq.map_bases(|target| GlobalLocal::at_root(tcx, **target, context)))
         .collect()
 }
 
