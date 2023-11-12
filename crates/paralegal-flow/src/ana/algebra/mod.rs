@@ -132,21 +132,21 @@ pub mod graph {
                 eq.rearrange_left_to_right();
                 let from = *eq.rhs().base();
                 let to = *eq.lhs().base();
-                // debug!(
-                //     "Adding {} -> {} {} ({})",
-                //     to,
-                //     from,
-                //     Print(|fmt| {
-                //         fmt.write_char('[')?;
-                //         write_sep(fmt, ", ", eq.rhs().terms_inside_out(), Display::fmt)?;
-                //         fmt.write_char(']')
-                //     }),
-                //     Print(|fmt| {
-                //         fmt.write_char('[')?;
-                //         write_sep(fmt, ", ", eq.lhs().terms_inside_out(), Display::fmt)?;
-                //         fmt.write_char(']')
-                //     }),
-                // );
+                debug!(
+                    "Adding {} -> {} {} ({})",
+                    to,
+                    from,
+                    Print(|fmt| {
+                        fmt.write_char('[')?;
+                        write_sep(fmt, ", ", eq.rhs().terms_inside_out(), Display::fmt)?;
+                        fmt.write_char(']')
+                    }),
+                    Print(|fmt| {
+                        fmt.write_char('[')?;
+                        write_sep(fmt, ", ", eq.lhs().terms_inside_out(), Display::fmt)?;
+                        fmt.write_char(']')
+                    }),
+                );
                 if let Some(w) = graph.edge_weight_mut(from, to) {
                     w.0.push(eq.rhs().terms_inside_out().to_vec())
                 } else {
@@ -192,19 +192,19 @@ pub mod graph {
                         continue;
                     }
                     for weight in next.weight().0.iter() {
-                        // debug!(
-                        //     "{node} {} {to} {}, {is_flipped}",
-                        //     Print(|fmt| {
-                        //         fmt.write_char('[')?;
-                        //         write_sep(fmt, ", ", projections.terms_inside_out(), Display::fmt)?;
-                        //         fmt.write_char(']')
-                        //     }),
-                        //     Print(|fmt| {
-                        //         fmt.write_char('[')?;
-                        //         write_sep(fmt, ", ", weight.iter(), Display::fmt)?;
-                        //         fmt.write_char(']')
-                        //     }),
-                        // );
+                        debug!(
+                            "{node} {} {to} {}, {is_flipped}",
+                            Print(|fmt| {
+                                fmt.write_char('[')?;
+                                write_sep(fmt, ", ", projections.terms_inside_out(), Display::fmt)?;
+                                fmt.write_char(']')
+                            }),
+                            Print(|fmt| {
+                                fmt.write_char('[')?;
+                                write_sep(fmt, ", ", weight.iter(), Display::fmt)?;
+                                fmt.write_char(']')
+                            }),
+                        );
                         let mut projections = projections.clone();
                         if next.weight().0.is_empty()
                             || {
@@ -214,19 +214,19 @@ pub mod graph {
                                 } else {
                                     projections = projections.extend(weight.iter().copied());
                                 }
-                                // debug!(
-                                //     "{}",
-                                //     Print(|fmt| {
-                                //         fmt.write_char('[')?;
-                                //         write_sep(
-                                //             fmt,
-                                //             ", ",
-                                //             projections.terms_inside_out(),
-                                //             Display::fmt,
-                                //         )?;
-                                //         fmt.write_char(']')
-                                //     }),
-                                // );
+                                debug!(
+                                    "{}",
+                                    Print(|fmt| {
+                                        fmt.write_char('[')?;
+                                        write_sep(
+                                            fmt,
+                                            ", ",
+                                            projections.terms_inside_out(),
+                                            Display::fmt,
+                                        )?;
+                                        fmt.write_char(']')
+                                    }),
+                                );
                                 match projections.simplify() {
                                     Simplified::Yes => true,
                                     Simplified::NonOverlapping => false,
@@ -466,12 +466,6 @@ pub fn solve_with<
             continue;
         }
         let all_matching = find_matching(&intermediate_target);
-        // if all_matching.is_empty() {
-        //     debug!(
-        //         "No matching equation for intermediate target {} from {}",
-        //         intermediate_target, from
-        //     );
-        // }
         for mut matching in all_matching.into_iter().cloned() {
             if matching.lhs().base() != &intermediate_target {
                 matching.swap()
