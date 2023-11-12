@@ -296,7 +296,7 @@ impl<'tcx> InlinedGraph<'tcx> {
 /// Globalize all locations mentioned in these equations.
 fn to_global_equations<'tcx>(
     tcx: TyCtxt<'tcx>,
-    eqs: &Vec<MirEquation<'tcx>>,
+    eqs: &[MirEquation<'tcx>],
     context: FnResolution<'tcx>,
 ) -> Equations<GlobalLocal<'tcx>> {
     eqs.iter()
