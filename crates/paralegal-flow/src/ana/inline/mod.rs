@@ -17,6 +17,7 @@ use std::fmt::Write;
 use crate::{
     ana::algebra::{self, Operator, Term},
     hir::def_id::DefId,
+    hir::LanguageItems,
     ir::{
         flows::CallOnlyFlow,
         regal::{self, SimpleLocation},
@@ -24,6 +25,7 @@ use crate::{
     },
     mir,
     mir::Location,
+    rustc_ast::Mutability,
     rustc_target::abi::FieldIdx,
     ty,
     utils::{
@@ -131,38 +133,9 @@ impl<'tcx> Inliner<'tcx> {
             for &(from, to) in edges_to_prune {
                 if let Some(weight) = graph.edge_weight_mut(from, to) {
                     for idx in weight.into_iter_data() {
-                        let to_target = self.node_to_local(&to, idx, instance);
-                        // This can be optimized (directly create function)
-                        let targets = match from {
-                            Node::Argument(a) => Either::Right(std::iter::once(
-                                GlobalLocal::at_root(self.tcx, (a.as_usize() + 1).into(), instance),
-                            )),
-                            Node::Return => unreachable!(),
-                            Node::Call((location, did)) => Either::Left({
-                                let call = self.get_call(location);
-                                let parent = location.parent();
-                                call.argument_locals()
-                                    .chain(call.return_to.into_iter())
-                                    .map(move |local| {
-                                        if let Some(parent) = parent {
-                                            GlobalLocal::relative(tcx, local, parent, did)
-                                        } else {
-                                            GlobalLocal::at_root(tcx, local, did)
-                                        }
-                                    })
-                            }),
-                        }
-                        .collect::<HashSet<_>>();
-                        debug!(
-                            "Solving for {to_target} to {}",
-                            Print(|f| {
-                                f.write_char('{')?;
-                                write_sep(f, ", ", &targets, std::fmt::Display::fmt)?;
-                                f.write_char('}')
-                            })
-                        );
-                        let is_reachable =
-                            locals_graph.reachable(to_target, |to| targets.contains(&to));
+                        let is_start = self.node_to_match_global_local(to);
+                        let is_target = self.node_to_match_global_local(from);
+                        let is_reachable = locals_graph.reachable(is_start, is_target);
 
                         if let Some((_visited, t)) = is_reachable {
                             debug!(
@@ -180,6 +153,31 @@ impl<'tcx> Inliner<'tcx> {
                 }
             }
         })
+    }
+
+    fn node_to_match_global_local<'a, T>(
+        &'a self,
+        node: SimpleLocation<(GlobalLocation, T)>,
+    ) -> impl Fn(GlobalLocal) -> bool + 'a {
+        match node {
+            Node::Argument(a) => Box::new(move |candidate: GlobalLocal| {
+                candidate.location().is_none() && candidate.local.as_usize() == a.as_usize() + 1
+            }) as Box<dyn Fn(GlobalLocal) -> bool>,
+            Node::Return => Box::new(|candidate: GlobalLocal| {
+                candidate.location().is_none() && candidate.local == mir::RETURN_PLACE
+            }),
+            Node::Call((location, _)) => {
+                let call = self.get_call(location);
+                let parent = location.parent();
+                Box::new(move |candidate: GlobalLocal| {
+                    candidate.location() == parent
+                        && call
+                            .argument_locals()
+                            .chain(call.return_to.into_iter())
+                            .any(|l| l == candidate.local)
+                })
+            }
+        }
     }
 }
 
@@ -367,23 +365,11 @@ impl<'tcx> Inliner<'tcx> {
     fn relativize_eqs<'a>(
         &'a self,
         equations: &'a Equations<GlobalLocal<'tcx>>,
-        instance: FnResolution<'tcx>,
         here: GlobalLocationS,
     ) -> impl Iterator<Item = Equation<GlobalLocal<'tcx>>> + 'a {
-        let tcx: TyCtxt<'tcx> = self.tcx;
-        equations.iter().map(move |eq| {
-            eq.map_bases(move |base| {
-                GlobalLocal::relative(
-                    tcx,
-                    base.local(),
-                    base.location().map_or_else(
-                        || GlobalLocation::single(here.location, here.function),
-                        |prior| here.relativize(prior),
-                    ),
-                    instance,
-                )
-            })
-        })
+        equations
+            .iter()
+            .map(move |eq| eq.map_bases(move |base| base.add_location_frame(here)))
     }
 
     /// Get the `regal` call description for the call site at a specific
@@ -424,10 +410,11 @@ impl<'tcx> Inliner<'tcx> {
                     .as_ref()
                     .map(|i| i.0)
                     .unwrap();
-                assert_eq!(context.def_id(), loc.innermost_function());
+                assert_eq!(context.def_id(), loc.outermost_function());
                 if let Some(parent) = loc.parent() {
                     GlobalLocal::relative(self.tcx, pure_local, parent, *did)
                 } else {
+                    assert_eq!(context.def_id(), loc.innermost_function());
                     GlobalLocal::at_root(self.tcx, pure_local, context)
                 }
             }
@@ -632,32 +619,77 @@ impl<'tcx> Inliner<'tcx> {
             function: caller_function.def_id(),
             location: root_location.outermost_location(),
         };
+
+        eqs.extend(self.relativize_eqs(&grw_to_inline.equations, here));
+
+        let local_base_term =
+            |local| Term::new_base(GlobalLocal::at_root(self.tcx, local, caller_function));
+        let remote_base_term = |local| {
+            Term::new_base(GlobalLocal::relative(
+                self.tcx,
+                local,
+                root_location,
+                inlining_target,
+            ))
+        };
+
+        let regularly_handled_arguments: Vec<Option<mir::Local>> =
+            if self.tcx.def_kind(inlining_target.def_id())
+                == crate::rustc_hir::def::DefKind::Generator
+            {
+                let (fst, rest) = arguments.split_first().expect("No first argument");
+                let fst = fst.expect("Not local argument");
+                // In the special case of an async closure we may have to adjust the
+                // first argument and the return value because for some reason when
+                // we resolve the generic `poll` for an `async` function it just
+                // directly returns the closure. `poll` has the signature
+                // `fn(Pin<&mut [async body ...]>, Context<'_>) -> Poll<R>` whereas
+                // the closure has the signature `fn([async body ...], ResumeTy) ->
+                // R`. I don't know why this is but it means that algebra wise we
+                // need to unwrap the actual first param with `.0` and `*` and wrap
+                // the return with a `Poll::Ready` and `.0`.
+                eqs.extend(
+                    std::iter::once(algebra::Equality::new(
+                        self.tcx,
+                        local_base_term(fst)
+                            .add_member_of(FieldIdx::from(0_usize).into())
+                            .add_deref_of(),
+                        remote_base_term(1_usize.into()),
+                    ))
+                    .chain(return_to.into_iter().map(|local| {
+                        algebra::Equality::new(
+                            self.tcx,
+                            local_base_term(local)
+                                .add_downcast(None, 0)
+                                .add_member_of(mir::Field::from(0_usize).into()),
+                            remote_base_term(mir::RETURN_PLACE),
+                        )
+                    })),
+                );
+                [None, None]
+                    .into_iter()
+                    .chain(rest.iter().copied())
+                    .collect()
+            } else {
+                std::iter::once(return_to)
+                    .chain(arguments.iter().copied())
+                    .collect()
+            };
+
         eqs.extend(
-            self.relativize_eqs(&grw_to_inline.equations, caller_function, here)
-                .chain(
-                    arguments
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(a, actual_param)| Some(((*actual_param)?, (a + 1).into())))
-                        .chain(return_to.into_iter().map(|r| (r, mir::RETURN_PLACE)))
-                        .map(|(actual_param, formal_param)| {
-                            algebra::Equality::new(
-                                self.tcx,
-                                Term::new_base(GlobalLocal::at_root(
-                                    self.tcx,
-                                    actual_param,
-                                    caller_function,
-                                )),
-                                Term::new_base(GlobalLocal::relative(
-                                    self.tcx,
-                                    formal_param,
-                                    root_location,
-                                    inlining_target,
-                                )),
-                            )
-                        }),
-                ),
+            regularly_handled_arguments
+                .into_iter()
+                .enumerate()
+                .filter_map(|(a, actual_param)| Some(((actual_param)?, a.into())))
+                .map(|(actual_param, formal_param)| {
+                    algebra::Equality::new(
+                        self.tcx,
+                        local_base_term(actual_param),
+                        remote_base_term(formal_param),
+                    )
+                }),
         );
+
         let to_inline = &grw_to_inline.graph;
 
         let mut connect_to = |g: &mut GraphImpl<'tcx, _>,
@@ -974,13 +1006,32 @@ impl<'tcx> Inliner<'tcx> {
         for eq in &gwr.equations {
             debug!("Checking {eq}");
             if let Err(e) = equation_sanity_check(self.tcx, eq) {
+                let mut span: crate::rustc_error_messages::MultiSpan = self
+                    .tcx
+                    .def_ident_span(def_id)
+                    .unwrap_or_else(|| self.tcx.def_span(def_id))
+                    .into();
+                span.push_span_label(eq.lhs().base().span(self.tcx, def_id), "left hand local");
+                span.push_span_label(eq.rhs().base().span(self.tcx, def_id), "right hand local");
                 self.tcx.sess.span_fatal(
-                    self.tcx.def_span(def_id),
+                    span,
                     format!("Equation inconsistency during construction of PDG for: {e}"),
                 );
             }
         }
         Some(gwr)
+    }
+}
+
+impl<'tcx> GlobalLocal<'tcx> {
+    fn span(self, tcx: TyCtxt<'tcx>, context: DefId) -> crate::rustc_span::Span {
+        let body = tcx
+            .body_for_def_id_default_policy(
+                self.location().map_or(context, |l| l.innermost_function()),
+            )
+            .unwrap()
+            .simplified_body();
+        body.local_decls[self.local].source_info.span
     }
 }
 
@@ -1064,11 +1115,11 @@ pub fn equation_sanity_check<'tcx>(
 ) -> Result<(), String> {
     let mut eq = eq.clone();
     eq.rearrange_left_to_right();
-    assert!(eq.lhs().terms.is_empty());
+    assert!(eq.lhs().terms_inside_out().is_empty());
 
     let (lhs, rhs) = eq.decompose();
 
-    let wrap = rhs.terms;
+    let wrap = rhs.terms_inside_out().iter().copied();
 
     wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap)
 }
@@ -1079,10 +1130,13 @@ pub fn wrapping_sanity_check<'tcx>(
     mut right: mir::tcx::PlaceTy<'tcx>,
     wrap: impl IntoIterator<Item = Operator<DisplayViaDebug<mir::Field>>>,
 ) -> Result<(), String> {
-    let wrap = wrap.into_iter().collect::<Vec<_>>();
     use mir::tcx::PlaceTy;
-    use mir::ProjectionElem::*;
+    use mir::ProjectionElem::{self, *};
     use Operator::*;
+    let wrap = wrap.into_iter().collect::<Vec<_>>();
+    if wrap.iter().copied().any(Operator::is_unknown) {
+        return Ok(());
+    }
     let apply_deref = |target: &mut PlaceTy<'tcx>| *target = target.projection_ty(tcx, Deref);
     let apply_field = |target: &mut PlaceTy<'tcx>, idx: mir::Field| {
         *target = match target.ty.kind() {
@@ -1144,20 +1198,57 @@ pub fn wrapping_sanity_check<'tcx>(
     let apply_downcast = |target: &mut PlaceTy<'tcx>, v| {
         *target = target.projection_ty(tcx, mir::PlaceElem::Downcast(None, v))
     };
-    for op in wrap {
-        match op {
-            DerefOf => apply_deref(&mut right),
-            RefOf => apply_deref(&mut left),
-            MemberOf(f) => apply_field(&mut right, f.0),
-            ContainsAt(f) => apply_field(&mut left, f.0),
-            IndexOf => apply_index(&mut right),
-            ArrayWith => apply_index(&mut left),
-            Operator::Downcast(v) => apply_downcast(&mut right, v.into()),
-            Operator::Upcast(v) => apply_downcast(&mut left, v.into()),
-            Unknown => return Ok(()),
-        }
-    }
-    if left.ty.equiv(&right.ty) && left.variant_index == right.variant_index {
+
+    // This is kind of complicated because the wrappings need to be applied in
+    // opposite order to both of the two types. I think there's also an
+    // invariant by which you only have "in" wrappings first followed by "out"
+    // wrappings (meaning whether they need to apply to left or right).
+    //
+    // As such it is split into one closure that applies the wraps that need to
+    // apply to the right type, then the one's that need to apply to the left
+    // one.
+    wrap.into_iter()
+        .filter_map(|op| match op {
+            DerefOf => {
+                apply_deref(&mut right);
+                None
+            }
+            RefOf => Some(Deref),
+            MemberOf(f) => {
+                apply_field(&mut right, f.0);
+                None
+            }
+            ContainsAt(f) => Some(Field(*f, ())),
+            IndexOf => {
+                apply_index(&mut right);
+                None
+            }
+            ArrayWith => Some(Index(())),
+            Operator::Downcast(v) => {
+                apply_downcast(&mut right, v.into());
+                None
+            }
+            Operator::Upcast(v) => Some(ProjectionElem::Downcast(None, v.into())),
+            Unknown => unreachable!(),
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .for_each(|for_left| match for_left {
+            Deref => apply_deref(&mut left),
+            Field(f, _) => apply_field(&mut left, f),
+            Index(_) => apply_index(&mut left),
+            ProjectionElem::Downcast(_, v) => apply_downcast(&mut left, v),
+            _ => unreachable!(),
+        });
+    if tcx.normalize_erasing_regions(
+        ty::ParamEnv::reveal_all(),
+        left.ty.is_similar_enough(
+            &tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), right.ty),
+            tcx.lang_items(),
+        ),
+    ) && left.variant_index == right.variant_index
+    {
         Ok(())
     } else {
         Err(format!(
@@ -1167,50 +1258,51 @@ pub fn wrapping_sanity_check<'tcx>(
 }
 
 trait APoorPersonsEquivalenceCheck {
-    fn equiv(&self, other: &Self) -> bool;
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool;
 }
 
 impl<T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for ty::List<T> {
-    fn equiv(&self, other: &Self) -> bool {
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
         self.len() == other.len()
             && self
                 .iter()
                 .zip(other.iter())
-                .all(|(left, right)| left.equiv(right))
+                .all(|(left, right)| left.is_similar_enough(right, language_items))
     }
 }
 
 impl<'tcx> APoorPersonsEquivalenceCheck for ty::GenericArg<'tcx> {
-    fn equiv(&self, other: &Self) -> bool {
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
         use ty::GenericArgKind::*;
         match (self.unpack(), other.unpack()) {
             (Lifetime(_), Lifetime(_)) => true,
-            (Type(t_a), Type(t_b)) => t_a.equiv(&t_b),
-            (Const(c_1), Const(c_2)) => c_1.equiv(&c_2),
+            (Type(t_a), Type(t_b)) => t_a.is_similar_enough(&t_b, language_items),
+            (Const(c_1), Const(c_2)) => c_1.is_similar_enough(&c_2, language_items),
             _ => false,
         }
     }
 }
 
 impl<'tcx> APoorPersonsEquivalenceCheck for ty::Const<'tcx> {
-    fn equiv(&self, other: &Self) -> bool {
-        self.kind() == other.kind() && self.ty().equiv(&other.ty())
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
+        self.kind() == other.kind() && self.ty().is_similar_enough(&other.ty(), language_items)
     }
 }
 
 impl<'tcx, T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for ty::Binder<'tcx, T> {
-    fn equiv(&self, other: &Self) -> bool {
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
         self.bound_vars() == other.bound_vars()
             && self
                 .as_ref()
                 .skip_binder()
-                .equiv(other.as_ref().skip_binder())
+                .is_similar_enough(other.as_ref().skip_binder(), language_items)
     }
 }
 
 impl<'tcx> APoorPersonsEquivalenceCheck for ty::FnSig<'tcx> {
-    fn equiv(&self, other: &Self) -> bool {
-        self.inputs_and_output.equiv(other.inputs_and_output)
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
+        self.inputs_and_output
+            .is_similar_enough(other.inputs_and_output, language_items)
             && self.c_variadic == other.c_variadic
             && self.unsafety == other.unsafety
             && self.abi == other.abi
@@ -1218,17 +1310,19 @@ impl<'tcx> APoorPersonsEquivalenceCheck for ty::FnSig<'tcx> {
 }
 
 impl<'tcx> APoorPersonsEquivalenceCheck for ty::ExistentialPredicate<'tcx> {
-    fn equiv(&self, other: &Self) -> bool {
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
         use ty::ExistentialPredicate::*;
         use ty::TermKind::*;
         match (self, other) {
-            (Trait(t_1), Trait(t_2)) => t_1.def_id == t_2.def_id && t_1.substs.equiv(t_2.substs),
+            (Trait(t_1), Trait(t_2)) => {
+                t_1.def_id == t_2.def_id && t_1.substs.is_similar_enough(t_2.substs, language_items)
+            }
             (Projection(p_1), Projection(p_2)) => {
                 p_1.def_id == p_2.def_id
-                    && p_1.substs.equiv(p_2.substs)
+                    && p_1.substs.is_similar_enough(p_2.substs, language_items)
                     && match (p_1.term.unpack(), p_2.term.unpack()) {
-                        (Ty(t_1), Ty(t_2)) => t_1.equiv(&t_2),
-                        (Const(c_1), Const(c_2)) => c_1.equiv(&c_2),
+                        (Ty(t_1), Ty(t_2)) => t_1.is_similar_enough(&t_2, language_items),
+                        (Const(c_1), Const(c_2)) => c_1.is_similar_enough(&c_2, language_items),
                         _ => false,
                     }
             }
@@ -1239,26 +1333,28 @@ impl<'tcx> APoorPersonsEquivalenceCheck for ty::ExistentialPredicate<'tcx> {
 }
 
 impl<'tcx> APoorPersonsEquivalenceCheck for ty::AliasTy<'tcx> {
-    fn equiv(&self, other: &Self) -> bool {
-        self.def_id == other.def_id && self.substs.equiv(other.substs)
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
+        self.def_id == other.def_id && self.substs.is_similar_enough(other.substs, language_items)
     }
 }
 
 impl<'a, T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for &'a T {
-    fn equiv(&self, other: &Self) -> bool {
-        (*self).equiv(*other)
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
+        (*self).is_similar_enough(*other, language_items)
     }
 }
 
 impl<'tcx> APoorPersonsEquivalenceCheck for ty::Ty<'tcx> {
-    fn equiv(&self, other: &Self) -> bool {
+    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
         use crate::rust::rustc_type_ir::sty::TyKind::*;
 
         match (self.kind(), other.kind()) {
             (Int(a_i), Int(b_i)) => a_i == b_i,
             (Uint(a_u), Uint(b_u)) => a_u == b_u,
             (Float(a_f), Float(b_f)) => a_f == b_f,
-            (Adt(a_d, a_s), Adt(b_d, b_s)) => a_d == b_d && a_s.equiv(b_s),
+            (Adt(a_d, a_s), Adt(b_d, b_s)) => {
+                a_d == b_d && a_s.is_similar_enough(b_s, language_items)
+            }
             (Foreign(a_d), Foreign(b_d)) => a_d == b_d,
             // This is where it gets hacky, we will basically consider all arrays
             // and slices the same so long as the element type is the same,
@@ -1267,36 +1363,90 @@ impl<'tcx> APoorPersonsEquivalenceCheck for ty::Ty<'tcx> {
             // In future this could be refined to properly consider subtyping
             // relations, but we don't know the "directionality" of the comparison
             // anyway so no point in trying right now.
-            (Array(a_t, _) | Slice(a_t), Array(b_t, _) | Slice(b_t)) => a_t.equiv(b_t),
-            (RawPtr(a_t), RawPtr(b_t)) => a_t.mutbl == b_t.mutbl && a_t.ty.equiv(&b_t.ty),
+            (Array(a_t, _) | Slice(a_t), Array(b_t, _) | Slice(b_t)) => {
+                a_t.is_similar_enough(b_t, language_items)
+            }
+            (RawPtr(a_t), RawPtr(b_t)) => {
+                a_t.mutbl == b_t.mutbl && a_t.ty.is_similar_enough(&b_t.ty, language_items)
+            }
             // We will also ignore regions for now
-            (Ref(_, a_t, a_m), Ref(_, b_t, b_m)) => a_t.equiv(b_t) && a_m == b_m,
-            (FnDef(a_d, a_s), FnDef(b_d, b_s)) => a_d == b_d && a_s.equiv(b_s),
-            (FnPtr(a_s), FnPtr(b_s)) => a_s.equiv(b_s),
+            (Ref(_, a_t, a_m), Ref(_, b_t, b_m)) => {
+                a_t.is_similar_enough(b_t, language_items) && a_m == b_m
+            }
+            (FnDef(a_d, a_s), FnDef(b_d, b_s)) => {
+                a_d == b_d && a_s.is_similar_enough(b_s, language_items)
+            }
+            (FnPtr(a_s), FnPtr(b_s)) => a_s.is_similar_enough(b_s, language_items),
             // Ignoring regions again
             (Dynamic(a_p, _, a_repr), Dynamic(b_p, _, b_repr)) => {
-                a_p.equiv(b_p) && a_repr == b_repr
+                a_p.is_similar_enough(b_p, language_items) && a_repr == b_repr
             }
-            (Closure(a_d, a_s), Closure(b_d, b_s)) => a_d == b_d && a_s.equiv(b_s),
+            (Closure(a_d, a_s), Closure(b_d, b_s)) => {
+                a_d == b_d && a_s.is_similar_enough(b_s, language_items)
+            }
             (Generator(a_d, a_s, a_m), Generator(b_d, b_s, b_m)) => {
-                a_d == b_d && a_s.equiv(b_s) && a_m == b_m
+                if a_d == b_d && a_s.is_similar_enough(b_s, language_items) && a_m == b_m {
+                    true
+                } else {
+                    debug!("{a_d:?} {a_s:?} {a_m:?} != {b_d:?} {b_s:?} {b_m:?}");
+                    false
+                }
             }
             (GeneratorWitness(a_g), GeneratorWitness(b_g)) => {
                 // for some reason `a_g.equiv(b_g)` doesn't resolve properly and
                 // gives me a type error so I inlined its body instead.
-                a_g.bound_vars() == b_g.bound_vars() && a_g.skip_binder().equiv(b_g.skip_binder())
+                a_g.bound_vars() == b_g.bound_vars()
+                    && a_g
+                        .skip_binder()
+                        .is_similar_enough(b_g.skip_binder(), language_items)
             }
             (GeneratorWitnessMIR(a_d, a_s), GeneratorWitnessMIR(b_d, b_s)) => {
-                a_d == b_d && a_s.equiv(b_s)
+                a_d == b_d && a_s.is_similar_enough(b_s, language_items)
             }
-            (Tuple(a_t), Tuple(b_t)) => a_t.equiv(b_t),
-            (Alias(a_i, a_p), Alias(b_i, b_p)) => a_i == b_i && a_p.equiv(b_p),
-            (Param(a_p), Param(b_p)) => a_p == b_p,
+            (Tuple(a_t), Tuple(b_t)) => a_t.is_similar_enough(b_t, language_items),
+            (Alias(a_i, a_p), Alias(b_i, b_p)) => {
+                a_i == b_i && a_p.is_similar_enough(b_p, language_items)
+            }
+            //(Param(a_p), Param(b_p)) => a_p == b_p,
+
+            // We try to substitute parameters but sometimes they stick around
+            // and Justus is not sure why. So we just skip comparison if one is
+            // a parameter
+            (Param(_), _) | (_, Param(_)) => true,
             (Bound(a_d, a_b), Bound(b_d, b_b)) => a_d == b_d && a_b == b_b,
             (Placeholder(a_p), Placeholder(b_p)) => a_p == b_p,
             (Infer(a_t), Infer(b_t)) => a_t == b_t,
             (Error(a_e), Error(b_e)) => a_e == b_e,
             (Bool, Bool) | (Char, Char) | (Str, Str) | (Never, Never) => true,
+            (Adt(a, _), Ref(_, b, Mutability::Mut)) | (Ref(_, b, Mutability::Mut), Adt(a, _))
+                if Some(a.did()) == language_items.resume_ty() =>
+            {
+                matches!(b.kind(), Adt(c, _) if Some(c.did()) == language_items.context())
+            }
+            // This is created when certain async functions are called. We could
+            // additionally check that the input and output types match but I'm
+            // lazy atm.
+            (Dynamic(bound_predicate, _, _), Generator(_, _, _))
+            | (Generator(_, _, _), Dynamic(bound_predicate, _, _)) => {
+                debug!("Testing {self:?} and {other:?}\n  {bound_predicate:?}");
+                matches!(
+                    bound_predicate.first(),
+                    Some(predicate)
+                    if matches!(
+                        predicate.skip_binder(),
+                        ty::ExistentialPredicate::Trait(trait_predicate)
+                        if Some(trait_predicate.def_id) == language_items.future_trait()
+                    )
+                )
+            }
+            // This is created by the `vec` macro when it uses `ShallowInitBox`
+            (RawPtr(t_and_mut), _) | (_, RawPtr(t_and_mut))
+                if t_and_mut.mutbl.is_mut()
+                    && t_and_mut.ty.kind() == &ty::TyKind::Uint(ty::UintTy::U8) =>
+            {
+                self.is_box() && self.boxed_ty().is_array()
+                    || other.is_box() && other.boxed_ty().is_array()
+            }
             _ => false,
         }
     }

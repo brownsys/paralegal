@@ -7,6 +7,7 @@ use crate::{
 
 use super::algebra;
 
+use paralegal_spdg::global_location::GlobalLocationS;
 use petgraph::prelude as pg;
 
 pub type ArgNum = u32;
@@ -261,6 +262,24 @@ impl<'tcx> GlobalLocal<'tcx> {
             local,
             location: Some(location),
             ty: Self::resolve_ty(tcx, local, context),
+        }
+    }
+
+    /// Guarantees that `result.location().is_some()`
+    pub fn add_location_frame(self, frame: GlobalLocationS) -> Self {
+        let Self {
+            local,
+            location,
+            ty,
+        } = self;
+        let location = location.map_or_else(
+            || GlobalLocation::single(frame.location, frame.function),
+            |prior| frame.relativize(prior),
+        );
+        Self {
+            ty,
+            local,
+            location: Some(location),
         }
     }
 

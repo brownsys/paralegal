@@ -41,6 +41,7 @@ pub mod rust {
     pub extern crate rustc_borrowck;
     pub extern crate rustc_data_structures;
     pub extern crate rustc_driver;
+    pub extern crate rustc_error_messages;
     pub extern crate rustc_hir;
     pub extern crate rustc_interface;
     pub extern crate rustc_middle;
