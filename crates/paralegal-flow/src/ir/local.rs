@@ -1,5 +1,7 @@
 //! Structs related to MIR [`Local`](mir::Local)s
 
+use std::marker::PhantomData;
+
 use super::{GlobalLocation, GlobalLocationS};
 use crate::{
     mir, ty,
@@ -12,7 +14,9 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub struct TypedLocal<'tcx> {
     pub local: mir::Local,
+    #[cfg(debug_assertions)]
     ty: ty::Ty<'tcx>,
+    _ty_phantom: PhantomData<&'tcx ()>,
 }
 
 impl std::fmt::Display for TypedLocal<'_> {
@@ -51,14 +55,22 @@ impl<'tcx> TypedLocal<'tcx> {
     pub fn new(local: mir::Local, local_decls: &(impl mir::HasLocalDecls<'tcx> + ?Sized)) -> Self {
         Self {
             local,
+            #[cfg(debug_assertions)]
             ty: local_decls.local_decls()[local].ty,
+            _ty_phantom: PhantomData,
         }
     }
 
     pub fn new_with_type(local: mir::Local, ty: ty::Ty<'tcx>) -> Self {
-        Self { local, ty }
+        Self {
+            local,
+            #[cfg(debug_assertions)]
+            ty,
+            _ty_phantom: PhantomData,
+        }
     }
 
+    #[cfg(debug_assertions)]
     pub fn ty(self) -> ty::Ty<'tcx> {
         self.ty
     }
@@ -70,7 +82,9 @@ impl<'tcx> TypedLocal<'tcx> {
 pub struct GlobalLocal<'tcx> {
     local: mir::Local,
     location: Option<GlobalLocation>,
+    #[cfg(debug_assertions)]
     pub ty: ty::Ty<'tcx>,
+    _ty_phantom: PhantomData<&'tcx ()>,
 }
 
 impl<'tcx> std::cmp::PartialEq for GlobalLocal<'tcx> {
@@ -112,7 +126,9 @@ impl<'tcx> GlobalLocal<'tcx> {
         Self {
             local,
             location: None,
+            #[cfg(debug_assertions)]
             ty: context.local_ty(local.into(), tcx),
+            _ty_phantom: PhantomData,
         }
     }
 
@@ -126,7 +142,9 @@ impl<'tcx> GlobalLocal<'tcx> {
         Self {
             local,
             location: Some(location),
+            #[cfg(debug_assertions)]
             ty: context.local_ty(local.into(), tcx),
+            _ty_phantom: PhantomData,
         }
     }
 
@@ -138,25 +156,27 @@ impl<'tcx> GlobalLocal<'tcx> {
         Self {
             local: local.local,
             location: None,
+            #[cfg(debug_assertions)]
             ty: context.best_effort_normalize(tcx, local.ty()),
+            _ty_phantom: PhantomData,
         }
     }
 
     /// Guarantees that `result.location().is_some()`
     pub fn add_location_frame(self, frame: GlobalLocationS) -> Self {
         let Self {
-            local,
-            location,
-            ty,
+            local, location, ..
         } = self;
         let location = location.map_or_else(
             || GlobalLocation::single(frame.location, frame.function),
             |prior| frame.relativize(prior),
         );
         Self {
-            ty,
+            #[cfg(debug_assertions)]
+            ty: self.ty,
             local,
             location: Some(location),
+            _ty_phantom: PhantomData,
         }
     }
 
@@ -191,6 +211,8 @@ impl<'tcx> std::fmt::Display for GlobalLocal<'tcx> {
         } else {
             f.write_str("root")
         }?;
-        write!(f, ": {:?}", self.ty)
+        #[cfg(debug_assertions)]
+        write!(f, ": {:?}", self.ty)?;
+        Ok(())
     }
 }

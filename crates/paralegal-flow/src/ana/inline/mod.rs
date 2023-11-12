@@ -47,8 +47,6 @@ use petgraph::{
 
 pub use judge::InlineJudge;
 
-use super::algebra::wrapping_sanity_check;
-
 type StdNode<'tcx> = Node<(GlobalLocation, FnResolution<'tcx>)>;
 
 type EdgeSet<'tcx> = HashSet<(StdNode<'tcx>, StdNode<'tcx>)>;
@@ -920,7 +918,8 @@ impl<'tcx> Inliner<'tcx> {
                             .as_ref()
                             .unwrap()
                             .0;
-                        if let Err(e) = wrapping_sanity_check(
+                        #[cfg(debug_assertions)]
+                        if let Err(e) = algebra::wrapping_sanity_check(
                             self.tcx,
                             local_decls[return_local.local].ty,
                             local_decls[argument.local].ty,

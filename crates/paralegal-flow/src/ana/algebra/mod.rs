@@ -15,7 +15,7 @@ use crate::{
     ir::{regal::TargetPlace, GlobalLocal, TypedLocal},
     mir::{self, Field, Place},
     ty,
-    utils::{outfile_pls, write_sep, APoorPersonsEquivalenceCheck, DisplayViaDebug, Print},
+    utils::{outfile_pls, write_sep, DisplayViaDebug, Print},
     HashMap, HashSet, TyCtxt,
 };
 
@@ -63,6 +63,7 @@ impl<'tcx> MirEquation<'tcx> {
         let mut slf_copy = slf.clone();
         slf_copy.rearrange_left_to_right();
         assert!(slf_copy.lhs().terms_inside_out().is_empty());
+        #[cfg(debug_assertions)]
         if let Err(e) = wrapping_sanity_check(
             tcx,
             slf_copy.lhs().base().ty(),
@@ -705,17 +706,24 @@ pub fn equation_sanity_check<'tcx>(
     tcx: TyCtxt<'tcx>,
     eq: &Equality<GlobalLocal<'tcx>, DisplayViaDebug<Field>>,
 ) -> Result<(), String> {
-    let mut eq = eq.clone();
-    eq.rearrange_left_to_right();
-    assert!(eq.lhs().terms_inside_out().is_empty());
+    #[cfg(debug_assertions)]
+    {
+        let mut eq = eq.clone();
+        eq.rearrange_left_to_right();
+        assert!(eq.lhs().terms_inside_out().is_empty());
 
-    let is_cast = eq.is_cast();
-    let (lhs, rhs) = eq.decompose();
-    let wrap = rhs.terms_inside_out().iter().copied();
+        let is_cast = eq.is_cast();
+        let (lhs, rhs) = eq.decompose();
+        let wrap = rhs.terms_inside_out().iter().copied();
 
-    wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap, is_cast)
+        return wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap, is_cast);
+    }
+
+    #[cfg(not(debug_assertions))]
+    return Ok(());
 }
 
+#[cfg(debug_assertions)]
 pub fn wrapping_sanity_check<'tcx>(
     tcx: TyCtxt<'tcx>,
     left: ty::Ty<'tcx>,
@@ -723,6 +731,7 @@ pub fn wrapping_sanity_check<'tcx>(
     wrap: impl IntoIterator<Item = Operator<DisplayViaDebug<mir::Field>>>,
     is_cast: bool,
 ) -> Result<(), String> {
+    use crate::utils::APoorPersonsEquivalenceCheck;
     use mir::tcx::PlaceTy;
     use mir::ProjectionElem::{self, *};
     use Operator::*;
