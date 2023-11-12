@@ -432,7 +432,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
                 FnResolution::Partial(*defid)
             }
             Ok(_) => ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
-            .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
+                .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
                 .map_or(FnResolution::Partial(*defid), FnResolution::Final),
         };
         Ok((
