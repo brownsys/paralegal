@@ -420,7 +420,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
         let (ty::FnDef(defid, gargs) | ty::Closure(defid, gargs)) = ty.kind() else {
             return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
         };
-        let instance = match test_instance_resolve(tcx, gargs) {
+        let instance = match test_generics_normalization(tcx, gargs) {
             Err(e) => {
                 tcx.sess.span_warn(
                     self.source_info.span,
@@ -443,7 +443,15 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
     }
 }
 
-fn test_instance_resolve<'tcx>(
+/// Try and normalize the provided generics.
+///
+/// The purpose of this function is to test whether resolving these generics
+/// will return an error. We need this because [`ty::Instance::resolve`] fails
+/// with a hard error when this normalization fails (even though it returns
+/// [`Result`]). However legitimate situations can arise in the code where this
+/// normalization fails for which we want to report warnings but carry on with
+/// the analysis which a hard error doesn't allow us to do.
+fn test_generics_normalization<'tcx>(
     tcx: TyCtxt<'tcx>,
     args: &'tcx ty::List<ty::GenericArg<'tcx>>,
 ) -> Result<(), ty::normalize_erasing_regions::NormalizationError<'tcx>> {
