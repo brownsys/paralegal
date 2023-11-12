@@ -401,6 +401,22 @@ pub trait AsFnAndArgs<'tcx> {
     >;
 }
 
+impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
+    fn as_instance_and_args(
+        &self,
+        tcx: TyCtxt<'tcx>,
+    ) -> Result<
+        (
+            FnResolution<'tcx>,
+            SimplifiedArguments<'tcx>,
+            mir::Place<'tcx>,
+        ),
+        AsFnAndArgsErr<'tcx>,
+    > {
+        self.kind.as_instance_and_args(tcx)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AsFnAndArgsErr<'tcx> {
     #[error("not a constant")]
@@ -415,7 +431,7 @@ pub enum AsFnAndArgsErr<'tcx> {
     InstanceResolutionErr,
 }
 
-impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
+impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
     fn as_instance_and_args(
         &self,
         tcx: TyCtxt<'tcx>,
@@ -432,7 +448,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
             args,
             destination,
             ..
-        } = &self.kind
+        } = self
         else {
             return Err(AsFnAndArgsErr::NotAFunctionCall);
         };
@@ -444,29 +460,15 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
         let (ty::FnDef(defid, gargs) | ty::Closure(defid, gargs)) = ty.kind() else {
             return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
         };
-        let instance = match test_instance_resolve(tcx, gargs) {
-            Err(e) => {
-                tcx.sess.span_warn(self.source_info.span, format!("Could ont resolve instance for this call due to {e:?}, using partial resolution."));
-                FnResolution::Partial(*defid)
-            }
-            Ok(_) => ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
+        let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
                 .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
-                .map_or(FnResolution::Partial(*defid), FnResolution::Final),
-        };
+                .map_or(FnResolution::Partial(*defid), FnResolution::Final);
         Ok((
             instance,
             args.iter().map(|a| a.place()).collect(),
             *destination,
         ))
     }
-}
-
-fn test_instance_resolve<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    args: &'tcx ty::List<ty::GenericArg<'tcx>>,
-) -> Result<(), ty::normalize_erasing_regions::NormalizationError<'tcx>> {
-    tcx.try_normalize_erasing_regions(ty::ParamEnv::reveal_all(), args)
-        .map(|_| ())
 }
 
 /// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
