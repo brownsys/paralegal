@@ -675,7 +675,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
                         }
                         algebra::MirEquation::new_mir(
                             tcx,
-                            self.def_id,
+                            crate::utils::FnResolution::Partial(self.def_id),
                             parent.into(),
                             dep.add_unknown(),
                         )

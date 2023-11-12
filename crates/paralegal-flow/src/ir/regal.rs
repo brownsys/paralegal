@@ -93,6 +93,7 @@ pub struct Call<'tcx, D> {
     pub arguments: IndexVec<ArgumentIndex, Option<(mir::Local, D)>>,
     pub return_to: Option<mir::Local>,
     pub ctrl_deps: D,
+    pub span: crate::Span,
 }
 
 impl<'tcx, D> Call<'tcx, D> {
@@ -313,13 +314,27 @@ impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
                         .contains_key(&body.terminator_loc(*bb))
                 })
                 .filter_map(|(bb, bbdat)| {
-                    let (function, simple_args, ret) =
+                    let (function, mut simple_args, ret) =
                         match bbdat.terminator().as_instance_and_args(tcx) {
                             Ok(p) => p,
                             Err(AsFnAndArgsErr::NotAFunctionCall) => return None,
                             Err(e) => panic!("{e:?}"),
                         };
                     let bbloc = DisplayViaDebug(body.terminator_loc(bb));
+                    if let Ok(fn_sig) = function.sig(tcx)
+                        && fn_sig.abi == crate::rustc_target::spec::abi::Abi::RustCall {
+                        // If we are dealing with a "rust-call" style call then
+                        // the second argument is a tuple where each field of
+                        // the tuple must be passed separately.
+                        let base = simple_args.pop().unwrap().unwrap();
+                        assert_eq!(simple_args.len(), 1);
+                        assert!(!fn_sig.inputs().is_empty());
+                        simple_args.extend(
+                            fn_sig.inputs().iter().enumerate().map(|(i, _)|
+                                Some(base.project_deeper(&[mir::ProjectionElem::Field(i.into(), base.ty(body, tcx).field_ty(tcx, i.into()))], tcx))
+                            )
+                        )
+                    }
 
                     let arguments = IndexVec::from_raw(
                         simple_args
@@ -333,7 +348,7 @@ impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
                                         next_new_local.increment_by(1);
                                         call_argument_equations.insert(Equality::new_mir(
                                             tcx,
-                                            def_id.to_def_id(),
+                                            FnResolution::Partial(def_id.to_def_id()),
                                             Term::new_base(DisplayViaDebug(next_new_local)),
                                             Term::from(a),
                                         ));
@@ -354,6 +369,7 @@ impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
                             arguments,
                             ctrl_deps,
                             return_to,
+                            span: bbdat.terminator().source_info.span,
                         },
                     ))
                 })

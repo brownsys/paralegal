@@ -32,7 +32,7 @@ use crate::{
         body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, FnResolution, Print,
         RecursionBreakingCache, Spanned, TyCtxtExt,
     },
-    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
+    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Span, Symbol, TyCtxt,
 };
 
 use rustc_utils::cache::Cache;
@@ -392,34 +392,34 @@ impl<'tcx> Inliner<'tcx> {
         &body.calls[&DisplayViaDebug(loc.innermost_location())]
     }
 
-    /// Calculate the global local that corresponds to input index `idx` at this `node`.
-    ///
-    /// If the node is not a [`SimpleLocation::Call`], then the index is ignored.
-    fn node_to_local(
-        &self,
-        node: &StdNode<'tcx>,
-        idx: ArgNum,
-        context: FnResolution<'tcx>,
-    ) -> GlobalLocal<'tcx> {
-        match node {
-            SimpleLocation::Return => GlobalLocal::at_root(self.tcx, mir::RETURN_PLACE, context),
-            SimpleLocation::Argument(idx) => GlobalLocal::at_root(self.tcx, (*idx).into(), context),
-            SimpleLocation::Call((loc, did)) => {
-                let call = self.get_call(*loc);
-                let pure_local = call.arguments[(idx as usize).into()]
-                    .as_ref()
-                    .map(|i| i.0)
-                    .unwrap();
-                assert_eq!(context.def_id(), loc.outermost_function());
-                if let Some(parent) = loc.parent() {
-                    GlobalLocal::relative(self.tcx, pure_local, parent, *did)
-                } else {
-                    assert_eq!(context.def_id(), loc.innermost_function());
-                    GlobalLocal::at_root(self.tcx, pure_local, context)
-                }
-            }
-        }
-    }
+    // /// Calculate the global local that corresponds to input index `idx` at this `node`.
+    // ///
+    // /// If the node is not a [`SimpleLocation::Call`], then the index is ignored.
+    // fn node_to_local(
+    //     &self,
+    //     node: &StdNode<'tcx>,
+    //     idx: ArgNum,
+    //     context: FnResolution<'tcx>,
+    // ) -> GlobalLocal<'tcx> {
+    //     match node {
+    //         SimpleLocation::Return => GlobalLocal::at_root(self.tcx, mir::RETURN_PLACE, context),
+    //         SimpleLocation::Argument(idx) => GlobalLocal::at_root(self.tcx, (*idx).into(), context),
+    //         SimpleLocation::Call((loc, did)) => {
+    //             let call = self.get_call(*loc);
+    //             let pure_local = call.arguments[(idx as usize).into()]
+    //                 .as_ref()
+    //                 .map(|i| i.0)
+    //                 .unwrap();
+    //             assert_eq!(context.def_id(), loc.outermost_function());
+    //             if let Some(parent) = loc.parent() {
+    //                 GlobalLocal::relative(self.tcx, pure_local, parent, *did)
+    //             } else {
+    //                 assert_eq!(context.def_id(), loc.innermost_function());
+    //                 GlobalLocal::at_root(self.tcx, pure_local, context)
+    //             }
+    //         }
+    //     }
+    // }
 
     fn writeable_arguments<'tc>(
         fn_sig: &ty::FnSig<'tc>,
@@ -477,101 +477,101 @@ impl<'tcx> Inliner<'tcx> {
         self.get_inlined_graph(closure_fn)
     }
 
-    #[allow(dead_code)]
-    fn try_inline_as_async_fn(
-        &self,
-        i_graph: &mut InlinedGraph<'tcx>,
-        instance: FnResolution<'tcx>,
-    ) -> bool {
-        let tcx = self.tcx;
-        if !tcx.asyncness(instance.def_id()).is_async() {
-            return false;
-        }
-        let body_with_facts = self.tcx.body_for_def_id(instance.def_id()).unwrap();
-        let body = body_with_facts.simplified_body();
-        let num_args = body.args_iter().count();
-        // XXX This might become invalid if functions other than `async` can create generators
-        let Some(closure_fn) =
-            (*body.basic_blocks).iter().find_map(|bb| {
-                let stmt = bb.statements.last()?;
-                if let mir::StatementKind::Assign(assign) = &stmt.kind
-                    && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, substs, _), _) = &assign.1 {
-                    Some(FnResolution::Final(ty::Instance::expect_resolve(tcx, ty::ParamEnv::reveal_all(), *gid, substs)))
-                } else {
-                    None
-                }
-            })
-        else {
-            tcx.sess.span_err(
-                tcx.def_span(instance.def_id()),
-                "ICE: Found this function to be async but could not extract the generator."
-            );
-            return false;
-        };
-        let standard_edge: Edge = std::iter::once(EdgeType::Data(0)).collect();
-        let incoming = (0..num_args)
-            .map(|a| (SimpleLocation::Argument(a.into()), standard_edge))
-            .collect::<Vec<_>>();
-        let outgoing = [(SimpleLocation::Return, standard_edge)];
-        let return_location = match body
-            .basic_blocks
-            .iter_enumerated()
-            .filter_map(|(bb, bbdat)| {
-                matches!(bbdat.terminator().kind, mir::TerminatorKind::Return).then_some(bb)
-            })
-            .collect::<Vec<_>>()
-            .as_slice()
-        {
-            [bb] => body.terminator_loc(*bb),
-            _ => unreachable!(),
-        };
+    // #[allow(dead_code)]
+    // fn try_inline_as_async_fn(
+    //     &self,
+    //     i_graph: &mut InlinedGraph<'tcx>,
+    //     instance: FnResolution<'tcx>,
+    // ) -> bool {
+    //     let tcx = self.tcx;
+    //     if !tcx.asyncness(instance.def_id()).is_async() {
+    //         return false;
+    //     }
+    //     let body_with_facts = self.tcx.body_for_def_id(instance.def_id()).unwrap();
+    //     let body = body_with_facts.simplified_body();
+    //     let num_args = body.args_iter().count();
+    //     // XXX This might become invalid if functions other than `async` can create generators
+    //     let Some(closure_fn) =
+    //         (*body.basic_blocks).iter().find_map(|bb| {
+    //             let stmt = bb.statements.last()?;
+    //             if let mir::StatementKind::Assign(assign) = &stmt.kind
+    //                 && let mir::Rvalue::Aggregate(box mir::AggregateKind::Generator(gid, substs, _), _) = &assign.1 {
+    //                 Some(FnResolution::Final(ty::Instance::expect_resolve(tcx, ty::ParamEnv::reveal_all(), *gid, substs)))
+    //             } else {
+    //                 None
+    //             }
+    //         })
+    //     else {
+    //         tcx.sess.span_err(
+    //             tcx.def_span(instance.def_id()),
+    //             "ICE: Found this function to be async but could not extract the generator."
+    //         );
+    //         return false;
+    //     };
+    //     let standard_edge: Edge = std::iter::once(EdgeType::Data(0)).collect();
+    //     let incoming = (0..num_args)
+    //         .map(|a| (SimpleLocation::Argument(a.into()), standard_edge))
+    //         .collect::<Vec<_>>();
+    //     let outgoing = [(SimpleLocation::Return, standard_edge)];
+    //     let return_location = match body
+    //         .basic_blocks
+    //         .iter_enumerated()
+    //         .filter_map(|(bb, bbdat)| {
+    //             matches!(bbdat.terminator().kind, mir::TerminatorKind::Return).then_some(bb)
+    //         })
+    //         .collect::<Vec<_>>()
+    //         .as_slice()
+    //     {
+    //         [bb] => body.terminator_loc(*bb),
+    //         _ => unreachable!(),
+    //     };
 
-        let root_location = GlobalLocation::single(return_location, instance.def_id());
+    //     let root_location = GlobalLocation::single(return_location, instance.def_id());
 
-        // Following we must simulate two code rewrites to the body of this
-        // function to simulate calling the closure. We make the closure
-        // argument a fresh variable and we break existing connections of
-        // arguments and return. The latter will be restored by the inlining
-        // routine.
+    //     // Following we must simulate two code rewrites to the body of this
+    //     // function to simulate calling the closure. We make the closure
+    //     // argument a fresh variable and we break existing connections of
+    //     // arguments and return. The latter will be restored by the inlining
+    //     // routine.
 
-        // We invent a new variable here that stores the closure. Rustc uses _0
-        // (the return place) to store it but we will overwrite that with the
-        // return of calling the closure. However that would connect the inputs
-        // and outputs in the algebra *if* we did not invent this new temporary
-        // for the closure.
-        let new_closure_local = regal::get_highest_local(body) + 5000;
+    //     // We invent a new variable here that stores the closure. Rustc uses _0
+    //     // (the return place) to store it but we will overwrite that with the
+    //     // return of calling the closure. However that would connect the inputs
+    //     // and outputs in the algebra *if* we did not invent this new temporary
+    //     // for the closure.
+    //     let new_closure_local = regal::get_highest_local(body) + 5000;
 
-        for term in i_graph.equations.iter_mut().flat_map(|eq| eq.unsafe_refs()) {
-            assert!(term.base.location().is_none());
-            if term.base.local() == mir::RETURN_PLACE {
-                term.base.local = new_closure_local;
-            }
-        }
+    //     for term in i_graph.equations.iter_mut().flat_map(|eq| eq.unsafe_refs()) {
+    //         assert!(term.base.location().is_none());
+    //         if term.base.local() == mir::RETURN_PLACE {
+    //             term.base.local = new_closure_local;
+    //         }
+    //     }
 
-        // Break the return connections
-        //
-        // Actually clears the graph, but that is fine, because whenever we
-        // insert edges (as the inlining routine will do later) we
-        // automatically create the source and target nodes if they don't exist.
-        i_graph.graph.clear();
+    //     // Break the return connections
+    //     //
+    //     // Actually clears the graph, but that is fine, because whenever we
+    //     // insert edges (as the inlining routine will do later) we
+    //     // automatically create the source and target nodes if they don't exist.
+    //     i_graph.graph.clear();
 
-        debug!(
-            "Recognized {} as an async function",
-            self.tcx.def_path_debug_str(instance.def_id())
-        );
-        self.inline_one_function(
-            i_graph,
-            instance,
-            closure_fn,
-            &incoming,
-            &outgoing,
-            &[Some(new_closure_local), None],
-            Some(mir::RETURN_PLACE),
-            &mut HashSet::default(),
-            root_location,
-        );
-        true
-    }
+    //     debug!(
+    //         "Recognized {} as an async function",
+    //         self.tcx.def_path_debug_str(instance.def_id())
+    //     );
+    //     self.inline_one_function(
+    //         i_graph,
+    //         instance,
+    //         closure_fn,
+    //         &incoming,
+    //         &outgoing,
+    //         &[Some(new_closure_local), None],
+    //         Some(mir::RETURN_PLACE),
+    //         &mut HashSet::default(),
+    //         root_location,
+    //     );
+    //     true
+    // }
 
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
@@ -591,10 +591,9 @@ impl<'tcx> Inliner<'tcx> {
         return_to: Option<mir::Local>,
         queue_for_pruning: &mut EdgeSet<'tcx>,
         root_location: GlobalLocation,
+        span: Span,
     ) {
-        let grw_to_inline = if let Some(callee_graph) = self.get_inlined_graph(inlining_target) {
-            callee_graph
-        } else {
+        let Some(grw_to_inline) = self.get_inlined_graph(inlining_target) else {
             // Breaking recursion. This can only happen if we are trying to
             // inline ourself, so we simply skip.
             return;
@@ -664,7 +663,15 @@ impl<'tcx> Inliner<'tcx> {
                                 .add_member_of(mir::Field::from(0_usize).into()),
                             remote_base_term(mir::RETURN_PLACE),
                         )
-                    })),
+                    }))
+                    .map(|r| {
+                        r.unwrap_or_else(|err| {
+                            self.tcx.sess.span_fatal(
+                                span,
+                                format!("Failed to create special async equations: {err}"),
+                            )
+                        })
+                    }),
                 );
                 [None, None]
                     .into_iter()
@@ -687,6 +694,12 @@ impl<'tcx> Inliner<'tcx> {
                         local_base_term(actual_param),
                         remote_base_term(formal_param),
                     )
+                    .unwrap_or_else(|err| {
+                        self.tcx.sess.span_fatal(
+                            span,
+                            format!("Failed to create regular argument equations: {err}"),
+                        )
+                    })
                 }),
         );
 
@@ -712,7 +725,7 @@ impl<'tcx> Inliner<'tcx> {
                 Node::Argument(a) => {
                     for nidx in argument_map
                         .get(&EdgeType::Data(a.as_usize() as u32))
-                        .unwrap_or_else(|| panic!("Could not find {a} in arguments"))
+                        .unwrap_or_else(|| self.tcx.sess.span_fatal(span, format!("Could not find {a} in arguments\n  call: {inlining_target}\n  arguments: {arguments:?}")))
                         .iter()
                     {
                         add_edge(*nidx, true)
@@ -817,6 +830,9 @@ impl<'tcx> Inliner<'tcx> {
                             .filter(move |read| *read != write)
                             .map(move |read| {
                                 algebra::Equality::new(self.tcx, mk_term(write).add_unknown(), mk_term(read))
+                                    .unwrap_or_else(|err|
+                                        unreachable!("{err}")
+                                    )
                             })
                     }));
                 None
@@ -863,6 +879,7 @@ impl<'tcx> Inliner<'tcx> {
                         call.return_to,
                         &mut queue_for_pruning,
                         root_location,
+                        terminator.source_info.span,
                     );
                 }
                 InlineAction::Drop(wraps) => {
@@ -920,6 +937,11 @@ impl<'tcx> Inliner<'tcx> {
                             algebra::Term::new_base(GlobalLocal::at_root(
                                 self.tcx, argument, instance,
                             )),
+                        ).unwrap_or_else(|err|
+                            self.tcx.sess.span_fatal(
+                                call.span,
+                                format!("Failed creating equation for wrapped return of dropped function: {err}"),
+                            )
                         ));
                     }
                 }

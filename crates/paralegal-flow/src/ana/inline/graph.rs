@@ -220,34 +220,12 @@ impl<'tcx> std::hash::Hash for GlobalLocal<'tcx> {
 }
 
 impl<'tcx> GlobalLocal<'tcx> {
-    fn resolve_ty(
-        tcx: TyCtxt<'tcx>,
-        local: mir::Local,
-        context: FnResolution<'tcx>,
-    ) -> mir::tcx::PlaceTy<'tcx> {
-        let body = tcx
-            .body_for_def_id_default_policy(context.def_id())
-            .unwrap()
-            .simplified_body();
-        let raw_ty = mir::Place::from(local).ty(body, tcx);
-        match context {
-            FnResolution::Final(instance) => instance.subst_mir_and_normalize_erasing_regions(
-                tcx,
-                ty::ParamEnv::reveal_all(),
-                raw_ty,
-            ),
-            FnResolution::Partial(_) => {
-                tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), raw_ty)
-            }
-        }
-    }
-
     /// Construct a new global local in a root function (no call chain)
     pub fn at_root(tcx: TyCtxt<'tcx>, local: mir::Local, context: FnResolution<'tcx>) -> Self {
         Self {
             local,
             location: None,
-            ty: Self::resolve_ty(tcx, local, context),
+            ty: context.place_ty(local.into(), tcx),
         }
     }
 
@@ -261,7 +239,7 @@ impl<'tcx> GlobalLocal<'tcx> {
         Self {
             local,
             location: Some(location),
-            ty: Self::resolve_ty(tcx, local, context),
+            ty: context.place_ty(local.into(), tcx),
         }
     }
 

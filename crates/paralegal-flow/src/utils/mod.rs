@@ -223,6 +223,24 @@ impl<'tcx> FnResolution<'tcx> {
         }
     }
 
+    pub fn place_ty(self, place: mir::Place<'tcx>, tcx: TyCtxt<'tcx>) -> mir::tcx::PlaceTy<'tcx> {
+        let body = tcx
+            .body_for_def_id_default_policy(self.def_id())
+            .unwrap()
+            .simplified_body();
+        let raw_ty = place.ty(body, tcx);
+        match self {
+            FnResolution::Final(instance) => instance.subst_mir_and_normalize_erasing_regions(
+                tcx,
+                ty::ParamEnv::reveal_all(),
+                raw_ty,
+            ),
+            FnResolution::Partial(_) => {
+                tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), raw_ty)
+            }
+        }
+    }
+
     /// Get the most precise type signature we can for this function, erase any
     /// regions and discharge binders.
     ///

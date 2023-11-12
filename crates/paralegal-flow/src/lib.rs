@@ -68,6 +68,7 @@ pub mod rust {
     pub use hir::def_id::{DefId, LocalDefId};
     pub use hir::BodyId;
     pub use mir::Location;
+    pub use rustc_span::Span;
 }
 
 use args::{ClapArgs, LogLevelConfig};

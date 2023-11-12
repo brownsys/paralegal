@@ -15,7 +15,7 @@ use crate::{
     ir::regal::TargetPlace,
     mir::{self, Field, Local, Place},
     ty,
-    utils::{outfile_pls, write_sep, DisplayViaDebug, Print, TyCtxtExt},
+    utils::{outfile_pls, write_sep, DisplayViaDebug, FnResolution, Print, TyCtxtExt},
     DefId, HashMap, HashSet, Symbol, TyCtxt,
 };
 
@@ -41,34 +41,32 @@ impl<'tcx> Equality<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>> {
         tcx: TyCtxt<'tcx>,
         lhs: Term<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>>,
         rhs: Term<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let slf = Self::unchecked_new(lhs, rhs);
 
         if let Err(e) = equation_sanity_check(tcx, &slf) {
-            panic!("Sanity check failed for {slf} because: {e}")
+            Err(format!("Sanity check failed for {slf} because: {e}"))
+        } else {
+            Ok(slf)
         }
-        slf
     }
 }
 
 impl MirEquation {
-    pub fn new_mir(tcx: TyCtxt<'_>, def_id: DefId, lhs: MirTerm, rhs: MirTerm) -> Self {
+    pub fn new_mir<'tcx>(
+        tcx: TyCtxt<'tcx>,
+        instance: FnResolution<'tcx>,
+        lhs: MirTerm,
+        rhs: MirTerm,
+    ) -> Self {
         let slf = Self::unchecked_new(lhs, rhs);
         let mut slf_copy = slf.clone();
         slf_copy.rearrange_left_to_right();
-        let local_decls = &tcx
-            .body_for_def_id_default_policy(def_id)
-            .unwrap()
-            .simplified_body()
-            .local_decls;
-        let get_type = |term: &Term<DisplayViaDebug<Local>, _>| {
-            mir::Place::from(term.base.0).ty(local_decls, tcx)
-        };
         assert!(slf_copy.lhs().terms_inside_out().is_empty());
         if let Err(e) = wrapping_sanity_check(
             tcx,
-            get_type(slf_copy.lhs()),
-            get_type(slf_copy.rhs()),
+            instance.place_ty(slf_copy.lhs().base().0.into(), tcx),
+            instance.place_ty(slf_copy.rhs().base().0.into(), tcx),
             slf_copy.rhs().terms_inside_out().to_vec(),
         ) {
             panic!("Sanity check for equation {slf} failed because: {e}");
