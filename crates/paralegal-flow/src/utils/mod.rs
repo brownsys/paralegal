@@ -223,20 +223,25 @@ impl<'tcx> FnResolution<'tcx> {
         }
     }
 
-    pub fn place_ty(self, place: mir::Place<'tcx>, tcx: TyCtxt<'tcx>) -> mir::tcx::PlaceTy<'tcx> {
+    pub fn local_ty(self, local: mir::Local, tcx: TyCtxt<'tcx>) -> ty::Ty<'tcx> {
         let body = tcx
             .body_for_def_id_default_policy(self.def_id())
             .unwrap()
             .simplified_body();
-        let raw_ty = place.ty(body, tcx);
+        self.best_effort_normalize(tcx, body.local_decls[local].ty)
+    }
+
+    pub fn best_effort_normalize<T: crate::rustc_type_ir::fold::TypeFoldable<TyCtxt<'tcx>>>(
+        self,
+        tcx: TyCtxt<'tcx>,
+        t: T,
+    ) -> T {
         match self {
-            FnResolution::Final(instance) => instance.subst_mir_and_normalize_erasing_regions(
-                tcx,
-                ty::ParamEnv::reveal_all(),
-                raw_ty,
-            ),
+            FnResolution::Final(instance) => {
+                instance.subst_mir_and_normalize_erasing_regions(tcx, ty::ParamEnv::reveal_all(), t)
+            }
             FnResolution::Partial(_) => {
-                tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), raw_ty)
+                tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), t)
             }
         }
     }

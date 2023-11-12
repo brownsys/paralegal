@@ -8,7 +8,7 @@ use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt};
 
 use crate::{
     ana::{
-        algebra::{self, Equality, Term},
+        algebra::{self, Equality, MirEquation, Term},
         df,
         inline::InlineJudge,
     },
@@ -205,7 +205,7 @@ pub struct Body<'tcx, L> {
     pub calls: HashMap<L, Call<'tcx, Dependencies<L>>>,
     pub return_deps: Dependencies<L>,
     pub return_arg_deps: Vec<Dependencies<L>>,
-    pub equations: Vec<algebra::Equality<DisplayViaDebug<mir::Local>, DisplayViaDebug<Field>>>,
+    pub equations: Vec<MirEquation<'tcx>>,
 }
 
 impl<'tcx, L: Display + Ord> Display for Body<'tcx, L> {
@@ -260,7 +260,7 @@ pub fn get_highest_local(body: &mir::Body) -> mir::Local {
 }
 
 impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
-    pub fn construct<I: IntoIterator<Item = algebra::MirEquation>>(
+    pub fn construct<I: IntoIterator<Item = algebra::MirEquation<'tcx>>>(
         flow_analysis: df::FlowResults<'_, 'tcx, '_>,
         equations: I,
         tcx: TyCtxt<'tcx>,
@@ -346,11 +346,12 @@ impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
                                     } else {
                                         use crate::rust::rustc_index::vec::Idx;
                                         next_new_local.increment_by(1);
+                                        let old_ty = a.ty(body, tcx);
+                                        assert!(old_ty.variant_index.is_none());
                                         call_argument_equations.insert(Equality::new_mir(
                                             tcx,
-                                            FnResolution::Partial(def_id.to_def_id()),
-                                            Term::new_base(DisplayViaDebug(next_new_local)),
-                                            Term::from(a),
+                                            Term::new_base(algebra::TypedLocal::new_with_type(next_new_local, old_ty.ty)),
+                                            Term::from_place(a, body),
                                         ));
                                         next_new_local
                                     };

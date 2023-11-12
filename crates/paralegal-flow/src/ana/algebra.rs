@@ -52,21 +52,16 @@ impl<'tcx> Equality<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>> {
     }
 }
 
-impl MirEquation {
-    pub fn new_mir<'tcx>(
-        tcx: TyCtxt<'tcx>,
-        instance: FnResolution<'tcx>,
-        lhs: MirTerm,
-        rhs: MirTerm,
-    ) -> Self {
+impl<'tcx> MirEquation<'tcx> {
+    pub fn new_mir(tcx: TyCtxt<'tcx>, lhs: MirTerm<'tcx>, rhs: MirTerm<'tcx>) -> Self {
         let slf = Self::unchecked_new(lhs, rhs);
         let mut slf_copy = slf.clone();
         slf_copy.rearrange_left_to_right();
         assert!(slf_copy.lhs().terms_inside_out().is_empty());
         if let Err(e) = wrapping_sanity_check(
             tcx,
-            instance.place_ty(slf_copy.lhs().base().0.into(), tcx),
-            instance.place_ty(slf_copy.rhs().base().0.into(), tcx),
+            slf_copy.lhs().base().ty,
+            slf_copy.rhs().base().ty,
             slf_copy.rhs().terms_inside_out().to_vec(),
         ) {
             panic!("Sanity check for equation {slf} failed because: {e}");
@@ -546,38 +541,92 @@ impl<B> Term<B, DisplayViaDebug<Field>> {
     }
 }
 
-pub type MirEquation = Equality<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
+pub type MirEquation<'tcx> = Equality<TypedLocal<'tcx>, DisplayViaDebug<Field>>;
 
 struct Extractor<'tcx> {
     tcx: TyCtxt<'tcx>,
-    equations: HashSet<MirEquation>,
+    equations: HashSet<MirEquation<'tcx>>,
+    local_decls: &'tcx mir::LocalDecls<'tcx>,
 }
 
 impl<'tcx> Extractor<'tcx> {
-    fn new(tcx: TyCtxt<'tcx>) -> Self {
+    fn new(tcx: TyCtxt<'tcx>, local_decls: &'tcx mir::LocalDecls<'tcx>) -> Self {
         Self {
             tcx,
             equations: Default::default(),
+            local_decls,
         }
     }
 }
 
-pub type MirTerm = Term<DisplayViaDebug<Local>, DisplayViaDebug<Field>>;
+pub type MirTerm<'tcx> = Term<TypedLocal<'tcx>, DisplayViaDebug<Field>>;
 
-impl From<Place<'_>> for MirTerm {
-    fn from(p: Place<'_>) -> Self {
-        let mut term = Term::new_base(DisplayViaDebug(p.local));
+#[derive(Debug, Clone, Copy)]
+pub struct TypedLocal<'tcx> {
+    pub local: mir::Local,
+    ty: ty::Ty<'tcx>,
+}
+
+impl std::fmt::Display for TypedLocal<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.local)
+    }
+}
+
+impl PartialEq for TypedLocal<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.local == other.local
+    }
+}
+
+impl Ord for TypedLocal<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.local.cmp(&other.local)
+    }
+}
+
+impl PartialOrd for TypedLocal<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::hash::Hash for TypedLocal<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.local.hash(state)
+    }
+}
+
+impl Eq for TypedLocal<'_> {}
+
+impl<'tcx> TypedLocal<'tcx> {
+    pub fn new(local: mir::Local, local_decls: &(impl mir::HasLocalDecls<'tcx> + ?Sized)) -> Self {
+        Self {
+            local,
+            ty: local_decls.local_decls()[local].ty,
+        }
+    }
+
+    pub fn new_with_type(local: mir::Local, ty: ty::Ty<'tcx>) -> Self {
+        Self { local, ty }
+    }
+
+    pub fn ty(self) -> ty::Ty<'tcx> {
+        self.ty
+    }
+}
+
+impl<'tcx> MirTerm<'tcx> {
+    pub fn from_place(
+        p: Place<'tcx>,
+        local_decls: &(impl mir::HasLocalDecls<'tcx> + ?Sized),
+    ) -> Self {
+        let mut term = Term::new_base(TypedLocal::new(p.local, local_decls));
         for (_, proj) in p.iter_projections() {
             term = term.wrap_in_elem(proj);
         }
         debug!("{p:?} -> {term}");
         term
-    }
-}
-
-impl From<&'_ Place<'_>> for MirTerm {
-    fn from(p: &'_ Place<'_>) -> Self {
-        MirTerm::from(*p)
     }
 }
 
@@ -588,30 +637,31 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
         rvalue: &mir::Rvalue<'tcx>,
         _location: mir::Location,
     ) {
-        let lhs = MirTerm::from(place);
+        let lhs = MirTerm::from_place(*place, self.local_decls);
+        let local_decls = self.local_decls;
         use mir::{AggregateKind, Rvalue::*};
         let rhs_s = match rvalue {
             Use(op) | UnaryOp(_, op) | Cast(_, op, _)
             | ShallowInitBox(op, _) // XXX Not sure this is correct
-            => Box::new(op.place().into_iter().map(|p| p.into()))
+            => Box::new(op.place().into_iter().map(|p| MirTerm::from_place(p, local_decls)))
                 as Box<dyn Iterator<Item = MirTerm>>,
-            CopyForDeref(place) => Box::new(std::iter::once(place.into())) as Box<_>,
+            CopyForDeref(place) => Box::new(std::iter::once(MirTerm::from_place(*place, local_decls))) as Box<_>,
             Repeat(..) // safe because it can only ever be populated by constants
             | ThreadLocalRef(..) // This accesses a global variable and thus cannot be tracked
             | NullaryOp(_, _) // Computes a type level constant from thin air
             => Box::new(std::iter::empty()) as Box<_>,
             AddressOf(_, p) // XXX Not sure this is correct but I just want to be safe. The result is a pointer so I don't know how we deal with that
             | Discriminant(p) | Len(p) // This is a weaker (implicit flows) sort of relationship but it is a relationship non the less so I'm adding them here
-            => Box::new(std::iter::once(MirTerm::from(p).add_unknown())),
+            => Box::new(std::iter::once(MirTerm::from_place(*p, self.local_decls).add_unknown())),
             Ref(_, _, p) => {
-                let term = MirTerm::from(p).add_ref_of();
+                let term = MirTerm::from_place(*p, local_decls).add_ref_of();
                 Box::new(std::iter::once(term)) as Box<_>
             }
             BinaryOp(_, box (op1, op2)) | CheckedBinaryOp(_, box (op1, op2)) => Box::new(
                 [op1, op2]
                     .into_iter()
                     .flat_map(|op| op.place().into_iter())
-                    .map(|op| MirTerm::from(op).add_contains_at(crate::rustc_abi::FieldIdx::from(0_usize).into())),
+                    .map(|op| MirTerm::from_place(op, local_decls).add_contains_at(crate::rustc_abi::FieldIdx::from(0_usize).into())),
             )
                 as Box<_>,
             Aggregate(box kind, ops) => match kind {
@@ -631,7 +681,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                             //     field.ty(self.tcx, substs),
                             // );
                             let mut term =
-                                MirTerm::from(place)
+                                MirTerm::from_place(place, local_decls)
                                     .add_contains_at(DisplayViaDebug(Field::from_usize(i)));
                             if is_enum {
                                 term = term.add_upcast(None, idx.as_usize());
@@ -647,7 +697,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                     let it = ops.iter().enumerate().filter_map(|(i, op)| {
                         let place = op.place()?;
                         Some(
-                            MirTerm::from(place)
+                            MirTerm::from_place(place, local_decls)
                                 .add_contains_at(DisplayViaDebug(i.into()))
                         )
                     });
@@ -655,7 +705,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                 }
                 AggregateKind::Tuple => Box::new(ops.iter().enumerate().filter_map(|(i, op)| {
                     op.place()
-                        .map(|p| MirTerm::from(p).add_contains_at(DisplayViaDebug(i.into())))
+                        .map(|p| MirTerm::from_place(p, local_decls).add_contains_at(DisplayViaDebug(i.into())))
                 })) as Box<_>,
                 AggregateKind::Generator(_gen_id, _, _) => {
                     // I think this is the proper way to do this but the fields
@@ -671,7 +721,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                     // });
                     let it = ops.iter().enumerate().filter_map(|(i, op)| {
                         Some(
-                            MirTerm::from(op.place()?)
+                            MirTerm::from_place(op.place()?, local_decls)
                                 .add_contains_at(DisplayViaDebug(Field::from_usize(i))),
                         )
                     });
@@ -680,7 +730,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                 AggregateKind::Array(_) => {
                     let it = ops.iter().filter_map(|op| {
                         Some(
-                            MirTerm::from(op.place()?).add_array_with()
+                            MirTerm::from_place(op.place()?, local_decls).add_array_with()
                         )
                     });
                     Box::new(it) as Box<_>
@@ -693,9 +743,12 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
 }
 
 /// Extract a fact base from the statements in an MIR body.
-pub fn extract_equations<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> HashSet<MirEquation> {
+pub fn extract_equations<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &'tcx mir::Body<'tcx>,
+) -> HashSet<MirEquation<'tcx>> {
     use mir::visit::Visitor;
-    let mut extractor = Extractor::new(tcx);
+    let mut extractor = Extractor::new(tcx, &body.local_decls);
     extractor.visit_body(body);
     extractor.equations
 }

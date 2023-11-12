@@ -1,4 +1,5 @@
 use crate::{
+    ana::algebra::{MirEquation, TypedLocal},
     ir::{regal, GlobalLocation},
     mir, serde, ty,
     utils::{time, write_sep, DisplayViaDebug, FnResolution, TinyBitSet, TyCtxtExt},
@@ -183,7 +184,7 @@ impl std::fmt::Display for Edge {
 pub struct GlobalLocal<'tcx> {
     pub(super) local: mir::Local,
     location: Option<GlobalLocation>,
-    pub ty: mir::tcx::PlaceTy<'tcx>,
+    pub ty: ty::Ty<'tcx>,
 }
 
 impl<'tcx> std::cmp::PartialEq for GlobalLocal<'tcx> {
@@ -225,7 +226,7 @@ impl<'tcx> GlobalLocal<'tcx> {
         Self {
             local,
             location: None,
-            ty: context.place_ty(local.into(), tcx),
+            ty: context.local_ty(local.into(), tcx),
         }
     }
 
@@ -239,7 +240,19 @@ impl<'tcx> GlobalLocal<'tcx> {
         Self {
             local,
             location: Some(location),
-            ty: context.place_ty(local.into(), tcx),
+            ty: context.local_ty(local.into(), tcx),
+        }
+    }
+
+    pub fn from_typed_local(
+        tcx: TyCtxt<'tcx>,
+        local: TypedLocal<'tcx>,
+        context: FnResolution<'tcx>,
+    ) -> Self {
+        Self {
+            local: local.local,
+            location: None,
+            ty: context.best_effort_normalize(tcx, local.ty()),
         }
     }
 
@@ -405,11 +418,11 @@ impl<'tcx> InlinedGraph<'tcx> {
 /// Globalize all locations mentioned in these equations.
 fn to_global_equations<'tcx>(
     tcx: TyCtxt<'tcx>,
-    eqs: &Equations<DisplayViaDebug<mir::Local>>,
+    eqs: &Vec<MirEquation<'tcx>>,
     context: FnResolution<'tcx>,
 ) -> Equations<GlobalLocal<'tcx>> {
     eqs.iter()
-        .map(|eq| eq.map_bases(|target| GlobalLocal::at_root(tcx, **target, context)))
+        .map(|eq| eq.map_bases(|target| GlobalLocal::from_typed_local(tcx, *target, context)))
         .collect()
 }
 

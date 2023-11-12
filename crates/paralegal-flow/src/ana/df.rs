@@ -10,7 +10,7 @@ use crate::{
     HashMap, TyCtxt,
 };
 
-use super::inline::InlineJudge;
+use super::{algebra::MirTerm, inline::InlineJudge};
 
 use flowistry::{
     extensions::{is_extension_active, MutabilityMode},
@@ -309,13 +309,14 @@ pub struct FlowAnalysis<'a, 'tcx, 's> {
     pub aliases: Aliases<'a, 'tcx>,
     carries_marker: &'s InlineJudge<'tcx>,
     recurse_cache: RecursionBreakingCache<BodyId, flowistry::infoflow::FlowDomain<'tcx>>,
-    elision_info: RefCell<HashMap<Location, HashSet<algebra::MirEquation>>>,
+    elision_info: RefCell<HashMap<Location, HashSet<algebra::MirEquation<'tcx>>>>,
 }
 
 impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
     pub fn elision_info(
         &self,
-    ) -> impl std::ops::Deref<Target = HashMap<Location, HashSet<algebra::MirEquation>>> + '_ {
+    ) -> impl std::ops::Deref<Target = HashMap<Location, HashSet<algebra::MirEquation<'tcx>>>> + '_
+    {
         self.elision_info.borrow()
     }
 
@@ -572,21 +573,21 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
             return false;
         }
 
-        let body_with_facts =
+        let callee_body_with_facts =
             crate::borrowck_facts::get_body_with_borrowck_facts(tcx, def_id.expect_local());
-        let body = &body_with_facts.body;
+        let callee_body = &callee_body_with_facts.body;
         let Some(return_state) = self.recurse_cache.get(body_id, |_| {
             //info!("Recursing into {}", tcx.def_path_debug_str(*def_id));
-            let flow = flowistry::infoflow::compute_flow(tcx, body_id, body_with_facts);
+            let flow = flowistry::infoflow::compute_flow(tcx, body_id, callee_body_with_facts);
 
             let mut return_state =
                 flowistry::infoflow::FlowDomain::new(flow.analysis.location_domain());
             {
                 let return_locs =
-                    body.basic_blocks
+                    callee_body.basic_blocks
                         .iter_enumerated()
                         .filter_map(|(bb, data)| match data.terminator().kind {
-                            TerminatorKind::Return => Some(body.terminator_loc(bb)),
+                            TerminatorKind::Return => Some(callee_body.terminator_loc(bb)),
                             _ => None,
                         });
 
@@ -601,14 +602,14 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
         let translate_child_to_parent =
             |child: Place<'tcx>, mutated: bool| -> Option<Place<'tcx>> {
                 if child.local == RETURN_PLACE && child.projection.len() == 0 {
-                    if child.ty(body.local_decls(), tcx).ty.is_unit() {
+                    if child.ty(callee_body.local_decls(), tcx).ty.is_unit() {
                         return None;
                     }
 
                     return Some(*destination);
                 }
 
-                if !child.is_arg(body) || (mutated && !child.is_indirect()) {
+                if !child.is_arg(callee_body) || (mutated && !child.is_indirect()) {
                     return None;
                 }
 
@@ -669,14 +670,13 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
                     .entry(location)
                     .or_insert_with(HashSet::default)
                     .extend(parent_deps.iter().map(|(p, proj)| {
-                        let mut dep: algebra::MirTerm = p.into();
+                        let mut dep: algebra::MirTerm = MirTerm::from_place(*p, self.body);
                         if let Some(elem) = proj {
                             dep = dep.wrap_in_elem(*elem);
                         }
                         algebra::MirEquation::new_mir(
                             tcx,
-                            crate::utils::FnResolution::Partial(self.def_id),
-                            parent.into(),
+                            MirTerm::from_place(parent, self.body),
                             dep.add_unknown(),
                         )
                     }));

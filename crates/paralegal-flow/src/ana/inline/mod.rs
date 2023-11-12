@@ -919,8 +919,8 @@ impl<'tcx> Inliner<'tcx> {
                             .0;
                         if let Err(e) = wrapping_sanity_check(
                             self.tcx,
-                            mir::Place::from(return_local).ty(local_decls, self.tcx),
-                            mir::Place::from(argument).ty(local_decls, self.tcx),
+                            local_decls[return_local].ty,
+                            local_decls[argument].ty,
                             wraps.iter().copied(),
                         ) {
                             self.tcx.sess.span_fatal(
@@ -1148,13 +1148,23 @@ pub fn equation_sanity_check<'tcx>(
 
 pub fn wrapping_sanity_check<'tcx>(
     tcx: TyCtxt<'tcx>,
-    mut left: mir::tcx::PlaceTy<'tcx>,
-    mut right: mir::tcx::PlaceTy<'tcx>,
+    left: ty::Ty<'tcx>,
+    right: ty::Ty<'tcx>,
     wrap: impl IntoIterator<Item = Operator<DisplayViaDebug<mir::Field>>>,
 ) -> Result<(), String> {
     use mir::tcx::PlaceTy;
     use mir::ProjectionElem::{self, *};
     use Operator::*;
+
+    let mut left = PlaceTy {
+        ty: left,
+        variant_index: None,
+    };
+    let mut right = PlaceTy {
+        ty: right,
+        variant_index: None,
+    };
+
     let wrap = wrap.into_iter().collect::<Vec<_>>();
     if wrap.iter().copied().any(Operator::is_unknown) {
         return Ok(());
