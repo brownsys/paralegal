@@ -461,8 +461,8 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::TerminatorKind<'tcx> {
             return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
         };
         let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
-                .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
-                .map_or(FnResolution::Partial(*defid), FnResolution::Final);
+            .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
+            .map_or(FnResolution::Partial(*defid), FnResolution::Final);
         Ok((
             instance,
             args.iter().map(|a| a.place()).collect(),

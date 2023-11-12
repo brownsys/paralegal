@@ -127,7 +127,7 @@ impl<'tcx> GlobalLocal<'tcx> {
             local,
             location: None,
             #[cfg(debug_assertions)]
-            ty: context.local_ty(local.into(), tcx),
+            ty: context.local_ty(local, tcx),
             _ty_phantom: PhantomData,
         }
     }
@@ -143,7 +143,7 @@ impl<'tcx> GlobalLocal<'tcx> {
             local,
             location: Some(location),
             #[cfg(debug_assertions)]
-            ty: context.local_ty(local.into(), tcx),
+            ty: context.local_ty(local, tcx),
             _ty_phantom: PhantomData,
         }
     }

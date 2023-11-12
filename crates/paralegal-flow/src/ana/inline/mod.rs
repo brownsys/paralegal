@@ -150,10 +150,10 @@ impl<'tcx> Inliner<'tcx> {
         })
     }
 
-    fn node_to_match_global_local<'a, T>(
-        &'a self,
+    fn node_to_match_global_local<T>(
+        &self,
         node: SimpleLocation<(GlobalLocation, T)>,
-    ) -> impl Fn(GlobalLocal) -> bool + 'a {
+    ) -> impl Fn(GlobalLocal) -> bool + '_ {
         match node {
             Node::Argument(a) => Box::new(move |candidate: GlobalLocal| {
                 candidate.location().is_none() && candidate.local().as_usize() == a.as_usize() + 1

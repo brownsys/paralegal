@@ -710,7 +710,7 @@ pub fn equation_sanity_check<'tcx>(
         let (lhs, rhs) = eq.decompose();
         let wrap = rhs.terms_inside_out().iter().copied();
 
-        return wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap, is_cast);
+        wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap, is_cast)
     }
 
     #[cfg(not(debug_assertions))]
