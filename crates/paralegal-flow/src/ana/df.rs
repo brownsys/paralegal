@@ -678,6 +678,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
                             tcx,
                             MirTerm::from_place(parent, self.body),
                             dep.add_unknown(),
+                            false,
                         )
                     }));
                 self.transfer_function(state, parent, &parent_deps, location, true);

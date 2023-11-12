@@ -42,7 +42,7 @@ impl<'tcx> Equality<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>> {
         lhs: Term<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>>,
         rhs: Term<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>>,
     ) -> Result<Self, String> {
-        let slf = Self::unchecked_new(lhs, rhs);
+        let slf = Self::unchecked_new(lhs, rhs, false);
 
         if let Err(e) = equation_sanity_check(tcx, &slf) {
             Err(format!("Sanity check failed for {slf} because: {e}"))
@@ -53,8 +53,13 @@ impl<'tcx> Equality<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>> {
 }
 
 impl<'tcx> MirEquation<'tcx> {
-    pub fn new_mir(tcx: TyCtxt<'tcx>, lhs: MirTerm<'tcx>, rhs: MirTerm<'tcx>) -> Self {
-        let slf = Self::unchecked_new(lhs, rhs);
+    pub fn new_mir(
+        tcx: TyCtxt<'tcx>,
+        lhs: MirTerm<'tcx>,
+        rhs: MirTerm<'tcx>,
+        is_cast: bool,
+    ) -> Self {
+        let slf = Self::unchecked_new(lhs, rhs, is_cast);
         let mut slf_copy = slf.clone();
         slf_copy.rearrange_left_to_right();
         assert!(slf_copy.lhs().terms_inside_out().is_empty());
@@ -63,6 +68,7 @@ impl<'tcx> MirEquation<'tcx> {
             slf_copy.lhs().base().ty,
             slf_copy.rhs().base().ty,
             slf_copy.rhs().terms_inside_out().to_vec(),
+            is_cast,
         ) {
             panic!("Sanity check for equation {slf} failed because: {e}");
         }
@@ -125,21 +131,21 @@ pub mod graph {
                 eq.rearrange_left_to_right();
                 let from = *eq.rhs().base();
                 let to = *eq.lhs().base();
-                debug!(
-                    "Adding {} -> {} {} ({})",
-                    to,
-                    from,
-                    Print(|fmt| {
-                        fmt.write_char('[')?;
-                        write_sep(fmt, ", ", eq.rhs().terms_inside_out(), Display::fmt)?;
-                        fmt.write_char(']')
-                    }),
-                    Print(|fmt| {
-                        fmt.write_char('[')?;
-                        write_sep(fmt, ", ", eq.lhs().terms_inside_out(), Display::fmt)?;
-                        fmt.write_char(']')
-                    }),
-                );
+                // debug!(
+                //     "Adding {} -> {} {} ({})",
+                //     to,
+                //     from,
+                //     Print(|fmt| {
+                //         fmt.write_char('[')?;
+                //         write_sep(fmt, ", ", eq.rhs().terms_inside_out(), Display::fmt)?;
+                //         fmt.write_char(']')
+                //     }),
+                //     Print(|fmt| {
+                //         fmt.write_char('[')?;
+                //         write_sep(fmt, ", ", eq.lhs().terms_inside_out(), Display::fmt)?;
+                //         fmt.write_char(']')
+                //     }),
+                // );
                 if let Some(w) = graph.edge_weight_mut(from, to) {
                     w.0.push(eq.rhs().terms_inside_out().to_vec())
                 } else {
@@ -185,19 +191,19 @@ pub mod graph {
                         continue;
                     }
                     for weight in next.weight().0.iter() {
-                        debug!(
-                            "{node} {} {to} {}, {is_flipped}",
-                            Print(|fmt| {
-                                fmt.write_char('[')?;
-                                write_sep(fmt, ", ", projections.terms_inside_out(), Display::fmt)?;
-                                fmt.write_char(']')
-                            }),
-                            Print(|fmt| {
-                                fmt.write_char('[')?;
-                                write_sep(fmt, ", ", weight.iter(), Display::fmt)?;
-                                fmt.write_char(']')
-                            }),
-                        );
+                        // debug!(
+                        //     "{node} {} {to} {}, {is_flipped}",
+                        //     Print(|fmt| {
+                        //         fmt.write_char('[')?;
+                        //         write_sep(fmt, ", ", projections.terms_inside_out(), Display::fmt)?;
+                        //         fmt.write_char(']')
+                        //     }),
+                        //     Print(|fmt| {
+                        //         fmt.write_char('[')?;
+                        //         write_sep(fmt, ", ", weight.iter(), Display::fmt)?;
+                        //         fmt.write_char(']')
+                        //     }),
+                        // );
                         let mut projections = projections.clone();
                         if next.weight().0.is_empty()
                             || {
@@ -207,19 +213,19 @@ pub mod graph {
                                 } else {
                                     projections = projections.extend(weight.iter().copied());
                                 }
-                                debug!(
-                                    "{}",
-                                    Print(|fmt| {
-                                        fmt.write_char('[')?;
-                                        write_sep(
-                                            fmt,
-                                            ", ",
-                                            projections.terms_inside_out(),
-                                            Display::fmt,
-                                        )?;
-                                        fmt.write_char(']')
-                                    }),
-                                );
+                                // debug!(
+                                //     "{}",
+                                //     Print(|fmt| {
+                                //         fmt.write_char('[')?;
+                                //         write_sep(
+                                //             fmt,
+                                //             ", ",
+                                //             projections.terms_inside_out(),
+                                //             Display::fmt,
+                                //         )?;
+                                //         fmt.write_char(']')
+                                //     }),
+                                // );
                                 match projections.simplify() {
                                     Simplified::Yes => true,
                                     Simplified::NonOverlapping => false,
@@ -430,7 +436,6 @@ pub fn solve_with<
     is_target: IsTarget,
     mut register_final: RegisterFinal,
 ) {
-    let is_debug_target = format!("{from}") == "_32 @ root";
     if is_target(from) {
         register_final(vec![]);
         return;
@@ -483,16 +488,12 @@ pub fn solve_with<
         }
     }
     if !saw_target {
-        if is_debug_target {
-            debug!("Never saw final target, abandoning solving early");
-        }
         return;
     }
     let matching_intermediate = intermediates.get(from);
     if matching_intermediate.is_none() {
         // debug!("No intermediate found for {from}");
     }
-    let mut died = HashSet::new();
     let mut targets = matching_intermediate
         .into_iter()
         .flat_map(|v| v.iter().cloned())
@@ -511,20 +512,12 @@ pub fn solve_with<
                     let mut to_sub = intermediate_target.clone();
                     to_sub.sub(term);
                     let simplifies = to_sub.simplify();
-                    if simplifies != Simplified::Yes && is_debug_target {
-                        debug!("{to_sub} does not simplify");
-                        died.insert(to_sub.base.clone());
-                    }
                     (simplifies == Simplified::Yes).then_some(to_sub)
                 }))
             } else {
                 // debug!("No follow up equation found for {var} on the way from {from}");
             }
         }
-    }
-
-    if is_debug_target {
-        dump_intermediates(&intermediates, &is_target, |b| died.contains(b));
     }
 }
 
@@ -625,7 +618,7 @@ impl<'tcx> MirTerm<'tcx> {
         for (_, proj) in p.iter_projections() {
             term = term.wrap_in_elem(proj);
         }
-        debug!("{p:?} -> {term}");
+        // debug!("{p:?} -> {term}");
         term
     }
 }
@@ -640,11 +633,18 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
         let lhs = MirTerm::from_place(*place, self.local_decls);
         let local_decls = self.local_decls;
         use mir::{AggregateKind, Rvalue::*};
+        let mut is_cast = false;
         let rhs_s = match rvalue {
-            Use(op) | UnaryOp(_, op) | Cast(_, op, _)
-            | ShallowInitBox(op, _) // XXX Not sure this is correct
+            Use(op) | UnaryOp(_, op)
             => Box::new(op.place().into_iter().map(|p| MirTerm::from_place(p, local_decls)))
                 as Box<dyn Iterator<Item = MirTerm>>,
+            Cast(_, op, _)
+            | ShallowInitBox(op, _) // XXX Not sure this is correct
+            => {
+                is_cast = true;
+                Box::new(op.place().into_iter().map(|p| MirTerm::from_place(p, local_decls)))
+                as Box<dyn Iterator<Item = MirTerm>>
+            },
             CopyForDeref(place) => Box::new(std::iter::once(MirTerm::from_place(*place, local_decls))) as Box<_>,
             Repeat(..) // safe because it can only ever be populated by constants
             | ThreadLocalRef(..) // This accesses a global variable and thus cannot be tracked
@@ -658,10 +658,12 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                 Box::new(std::iter::once(term)) as Box<_>
             }
             BinaryOp(_, box (op1, op2)) | CheckedBinaryOp(_, box (op1, op2)) => Box::new(
+                // I'm annoyed about having to add an unknown here but since
+                // this changes types it's the only way to go.
                 [op1, op2]
                     .into_iter()
                     .flat_map(|op| op.place().into_iter())
-                    .map(|op| MirTerm::from_place(op, local_decls).add_contains_at(crate::rustc_abi::FieldIdx::from(0_usize).into())),
+                    .map(|op| MirTerm::from_place(op, local_decls).add_unknown())
             )
                 as Box<_>,
             Aggregate(box kind, ops) => match kind {
@@ -737,8 +739,10 @@ impl<'tcx> mir::visit::Visitor<'tcx> for Extractor<'tcx> {
                 }
             },
         };
+        // For some reason two async closures don't compare equal at the moment
+        // here so I construct this unchecked.
         self.equations
-            .extend(rhs_s.map(|rhs| Equality::unchecked_new(lhs.clone(), rhs)))
+            .extend(rhs_s.map(|rhs| Equality::unchecked_new(lhs.clone(), rhs, is_cast)))
     }
 }
 

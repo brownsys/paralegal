@@ -410,11 +410,27 @@ impl<B: Display, F: Display + Copy> Display for Term<B, F> {
 pub struct Equality<B, F: Copy> {
     lhs: Term<B, F>,
     rhs: Term<B, F>,
+    /// Controls how sanity checks are performed. If it is a cast we only check
+    /// that the wrappings can be applied to the types, but we don't check that
+    /// the types are equal after applying the wrappings.
+    is_cast: bool,
 }
 
 impl<B, F: Copy> Equality<B, F> {
-    pub fn unchecked_new(lhs: Term<B, F>, rhs: Term<B, F>) -> Self {
-        Self { rhs, lhs }
+    pub fn unchecked_new(lhs: Term<B, F>, rhs: Term<B, F>, is_cast: bool) -> Self {
+        Self { rhs, lhs, is_cast }
+    }
+
+    pub fn new_cast(lhs: Term<B, F>, rhs: Term<B, F>) -> Self {
+        Self {
+            lhs,
+            rhs,
+            is_cast: true,
+        }
+    }
+
+    pub fn is_cast(&self) -> bool {
+        self.is_cast
     }
 
     pub fn lhs(&self) -> &Term<B, F> {
@@ -461,6 +477,7 @@ impl<B, F: Copy> Equality<B, F> {
         Equality {
             lhs: self.lhs.replace_base(f(self.lhs.base())),
             rhs: self.rhs.replace_base(f(self.rhs.base())),
+            is_cast: self.is_cast,
         }
     }
 }
@@ -476,7 +493,11 @@ impl<B: Display, F: Display + Copy> Display for Equality<B, F> {
 impl<B: std::cmp::PartialEq, F: std::cmp::PartialEq + Copy> std::cmp::PartialEq for Equality<B, F> {
     fn eq(&self, other: &Self) -> bool {
         // Using an unpack here so compiler warns in case a new field is ever added
-        let Equality { lhs, rhs } = other;
+        let Equality {
+            lhs,
+            rhs,
+            is_cast: _,
+        } = other;
         (lhs == &self.lhs && rhs == &self.rhs) || (rhs == &self.lhs && lhs == &self.rhs)
     }
 }

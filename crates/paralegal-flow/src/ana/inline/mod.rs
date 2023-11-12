@@ -52,6 +52,8 @@ use petgraph::{
 
 pub use judge::InlineJudge;
 
+use super::algebra::TypedLocal;
+
 type StdNode<'tcx> = Node<(GlobalLocation, FnResolution<'tcx>)>;
 
 type EdgeSet<'tcx> = HashSet<(StdNode<'tcx>, StdNode<'tcx>)>;
@@ -174,7 +176,7 @@ impl<'tcx> Inliner<'tcx> {
                         && call
                             .argument_locals()
                             .chain(call.return_to.into_iter())
-                            .any(|l| l == candidate.local)
+                            .any(|l| l.local == candidate.local)
                 })
             }
         }
@@ -587,8 +589,8 @@ impl<'tcx> Inliner<'tcx> {
         inlining_target: FnResolution<'tcx>,
         incoming: &[(StdNode<'tcx>, Edge)],
         outgoing: &[(StdNode<'tcx>, Edge)],
-        arguments: &[Option<mir::Local>],
-        return_to: Option<mir::Local>,
+        arguments: &[Option<algebra::TypedLocal<'tcx>>],
+        return_to: Option<algebra::TypedLocal<'tcx>>,
         queue_for_pruning: &mut EdgeSet<'tcx>,
         root_location: GlobalLocation,
         span: Span,
@@ -621,8 +623,13 @@ impl<'tcx> Inliner<'tcx> {
 
         eqs.extend(self.relativize_eqs(&grw_to_inline.equations, here));
 
-        let local_base_term =
-            |local| Term::new_base(GlobalLocal::at_root(self.tcx, local, caller_function));
+        let local_base_term = |local| {
+            Term::new_base(GlobalLocal::from_typed_local(
+                self.tcx,
+                local,
+                caller_function,
+            ))
+        };
         let remote_base_term = |local| {
             Term::new_base(GlobalLocal::relative(
                 self.tcx,
@@ -632,7 +639,7 @@ impl<'tcx> Inliner<'tcx> {
             ))
         };
 
-        let regularly_handled_arguments: Vec<Option<mir::Local>> =
+        let regularly_handled_arguments: Vec<Option<algebra::TypedLocal>> =
             if self.tcx.def_kind(inlining_target.def_id())
                 == crate::rustc_hir::def::DefKind::Generator
             {
@@ -762,7 +769,7 @@ impl<'tcx> Inliner<'tcx> {
     /// Note that the edges in the set are not guaranteed to exist in the graph.
     fn perform_subfunction_inlining(
         &self,
-        proc_g: &regal::Body<DisplayViaDebug<Location>>,
+        proc_g: &regal::Body<'tcx, DisplayViaDebug<Location>>,
         i_graph: &mut InlinedGraph<'tcx>,
         instance: FnResolution<'tcx>,
     ) -> EdgeSet<'tcx> {
@@ -812,7 +819,7 @@ impl<'tcx> Inliner<'tcx> {
                         ).emit()
                     }
                 }
-                let local_as_global = |l| GlobalLocal::at_root(self.tcx, l, instance);
+                let local_as_global = |l| GlobalLocal::from_typed_local(self.tcx, l, instance);
                 let call = self.get_call(location);
                 debug!("Abstracting {function:?}");
                 let fn_sig = function.sig(self.tcx).unwrap();
@@ -908,7 +915,7 @@ impl<'tcx> Inliner<'tcx> {
                     }
                     let call = self.get_call(root_location);
                     if let Some(return_local) = call.return_to {
-                        let mut target = algebra::Term::new_base(GlobalLocal::at_root(
+                        let mut target = algebra::Term::new_base(GlobalLocal::from_typed_local(
                             self.tcx,
                             return_local,
                             instance,
@@ -919,9 +926,10 @@ impl<'tcx> Inliner<'tcx> {
                             .0;
                         if let Err(e) = wrapping_sanity_check(
                             self.tcx,
-                            local_decls[return_local].ty,
-                            local_decls[argument].ty,
+                            local_decls[return_local.local].ty,
+                            local_decls[argument.local].ty,
                             wraps.iter().copied(),
+                            false,
                         ) {
                             self.tcx.sess.span_fatal(
                                 caller_body
@@ -934,7 +942,7 @@ impl<'tcx> Inliner<'tcx> {
                         i_graph.equations.push(algebra::Equality::new(
                             self.tcx,
                             target,
-                            algebra::Term::new_base(GlobalLocal::at_root(
+                            algebra::Term::new_base(GlobalLocal::from_typed_local(
                                 self.tcx, argument, instance,
                             )),
                         ).unwrap_or_else(|err|
@@ -1025,6 +1033,7 @@ impl<'tcx> Inliner<'tcx> {
             }
         }
 
+        debug!("Checking equations after creating graph for {instance}");
         for eq in &gwr.equations {
             debug!("Checking {eq}");
             if let Err(e) = equation_sanity_check(self.tcx, eq) {
@@ -1139,11 +1148,11 @@ pub fn equation_sanity_check<'tcx>(
     eq.rearrange_left_to_right();
     assert!(eq.lhs().terms_inside_out().is_empty());
 
+    let is_cast = eq.is_cast();
     let (lhs, rhs) = eq.decompose();
-
     let wrap = rhs.terms_inside_out().iter().copied();
 
-    wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap)
+    wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap, is_cast)
 }
 
 pub fn wrapping_sanity_check<'tcx>(
@@ -1151,6 +1160,7 @@ pub fn wrapping_sanity_check<'tcx>(
     left: ty::Ty<'tcx>,
     right: ty::Ty<'tcx>,
     wrap: impl IntoIterator<Item = Operator<DisplayViaDebug<mir::Field>>>,
+    is_cast: bool,
 ) -> Result<(), String> {
     use mir::tcx::PlaceTy;
     use mir::ProjectionElem::{self, *};
@@ -1273,13 +1283,12 @@ pub fn wrapping_sanity_check<'tcx>(
             ProjectionElem::Downcast(_, v) => apply_downcast(&mut left, v),
             _ => unreachable!(),
         });
-    if tcx.normalize_erasing_regions(
-        ty::ParamEnv::reveal_all(),
-        left.ty.is_similar_enough(
-            &tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), right.ty),
-            tcx.lang_items(),
-        ),
-    ) && left.variant_index == right.variant_index
+    if is_cast {
+        return Ok(());
+    }
+    let l_ty = tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), left.ty);
+    let r_ty = tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), right.ty);
+    if left.variant_index == right.variant_index && l_ty.is_similar_enough(&r_ty, tcx.lang_items())
     {
         Ok(())
     } else {

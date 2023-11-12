@@ -8,7 +8,7 @@ use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt};
 
 use crate::{
     ana::{
-        algebra::{self, Equality, MirEquation, Term},
+        algebra::{self, Equality, MirEquation, Term, TypedLocal},
         df,
         inline::InlineJudge,
     },
@@ -90,14 +90,14 @@ impl<L: Display> Display for Target<L> {
 #[derive(Debug)]
 pub struct Call<'tcx, D> {
     pub function: FnResolution<'tcx>,
-    pub arguments: IndexVec<ArgumentIndex, Option<(mir::Local, D)>>,
-    pub return_to: Option<mir::Local>,
+    pub arguments: IndexVec<ArgumentIndex, Option<(TypedLocal<'tcx>, D)>>,
+    pub return_to: Option<TypedLocal<'tcx>>,
     pub ctrl_deps: D,
     pub span: crate::Span,
 }
 
 impl<'tcx, D> Call<'tcx, D> {
-    pub fn argument_locals(&self) -> impl Iterator<Item = mir::Local> + '_ {
+    pub fn argument_locals(&self) -> impl Iterator<Item = TypedLocal<'tcx>> + '_ {
         self.arguments
             .iter()
             .filter_map(|a| a.as_ref().map(|i| i.0))
@@ -341,19 +341,21 @@ impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
                             .into_iter()
                             .map(|arg| {
                                 arg.map(|a| {
+                                    let ty = a.ty(body, tcx);
                                     let local = if a.projection.is_empty() {
-                                        a.local
+                                        TypedLocal::new_with_type(a.local, ty.ty)
                                     } else {
                                         use crate::rust::rustc_index::vec::Idx;
                                         next_new_local.increment_by(1);
-                                        let old_ty = a.ty(body, tcx);
-                                        assert!(old_ty.variant_index.is_none());
+                                        assert!(ty.variant_index.is_none());
+                                        let typed_local = TypedLocal::new_with_type(next_new_local, ty.ty);
                                         call_argument_equations.insert(Equality::new_mir(
                                             tcx,
-                                            Term::new_base(algebra::TypedLocal::new_with_type(next_new_local, old_ty.ty)),
+                                            Term::new_base(typed_local),
                                             Term::from_place(a, body),
+                                            false,
                                         ));
-                                        next_new_local
+                                        typed_local
                                     };
                                     (local, dependencies_for(bbloc, a))
                                 })
@@ -362,7 +364,7 @@ impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
                     );
                     let ctrl_deps = recursive_ctrl_deps(ctrl_ana, bb, body, dependencies_for);
                     assert!(ret.projection.is_empty());
-                    let return_to = Some(ret.local);
+                    let return_to = Some(TypedLocal::new(ret.local, body));
                     Some((
                         bbloc,
                         Call {
