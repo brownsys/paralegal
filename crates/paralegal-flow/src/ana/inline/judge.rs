@@ -40,7 +40,7 @@ impl<'tcx> InlineJudge<'tcx> {
     ) -> bool {
         self.analysis_control.avoid_inlining()
             && !self.function_has_markers(function)
-            && !self.marker_is_reachable(function)
+            && !self.marker_is_reachable(function.def_id())
             && !self.probably_performs_side_effects(function, args, place_has_dependencies)
     }
 
@@ -79,7 +79,7 @@ impl<'tcx> InlineJudge<'tcx> {
     }
 
     /// Is a marker reachable from this item?
-    fn marker_is_reachable(&self, res: FnResolution<'tcx>) -> bool {
-        self.marker_ctx.marker_is_reachable(res)
+    fn marker_is_reachable(&self, def_id: DefId) -> bool {
+        self.marker_ctx.marker_is_reachable(def_id)
     }
 }
