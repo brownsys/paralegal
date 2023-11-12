@@ -1,4 +1,4 @@
-use crate::{mir::Place, utils::FnResolution, AnalysisCtrl, DefId, MarkerCtx, TyCtxt};
+use crate::{mir::Place, utils::FnResolution, AnalysisCtrl, MarkerCtx, TyCtxt};
 
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.
