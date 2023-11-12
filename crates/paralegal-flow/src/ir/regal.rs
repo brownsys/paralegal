@@ -8,12 +8,13 @@ use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt};
 
 use crate::{
     ana::{
-        algebra::{self, Equality, MirEquation, Term, TypedLocal},
+        algebra::{self, Equality, MirEquation, Term},
         df,
         inline::InlineJudge,
     },
     hir::def_id::LocalDefId,
-    mir::{self, BasicBlock, Field, HasLocalDecls, Location},
+    ir::TypedLocal,
+    mir::{self, BasicBlock, HasLocalDecls, Location},
     rust::{rustc_ast, rustc_index::bit_set::HybridBitSet, rustc_index::vec::IndexVec},
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, AsFnAndArgs, AsFnAndArgsErr,

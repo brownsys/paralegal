@@ -33,7 +33,8 @@ use crate::{
 use std::{borrow::Cow, cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
 pub mod resolve;
-
+mod ty_equiv;
+pub use ty_equiv::*;
 mod print;
 pub use print::*;
 

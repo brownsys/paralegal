@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{ana::inline::GlobalLocal, mir, utils::DisplayViaDebug, Symbol};
+use crate::Symbol;
 use std::hash::Hash;
 
 pub type VariantIdx = usize;

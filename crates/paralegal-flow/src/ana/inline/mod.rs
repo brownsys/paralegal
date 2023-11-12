@@ -12,27 +12,23 @@
 //!    ([`InlinedGraph::prune_impossible_edges`]) using the accumulated set of
 //!    equations
 
-use std::fmt::Write;
-
 use crate::{
-    ana::algebra::{self, Operator, Term},
+    ana::algebra::{self, equation_sanity_check, Operator, Term},
     hir::def_id::DefId,
-    hir::LanguageItems,
     ir::{
         flows::CallOnlyFlow,
         regal::{self, SimpleLocation},
-        GlobalLocation, GlobalLocationS,
+        GlobalLocal, GlobalLocation, GlobalLocationS, TypedLocal,
     },
     mir,
     mir::Location,
-    rustc_ast::Mutability,
     rustc_target::abi::FieldIdx,
     ty,
     utils::{
         body_name_pls, dump_file_pls, time, write_sep, DisplayViaDebug, FnResolution, Print,
-        RecursionBreakingCache, Spanned, TyCtxtExt,
+        RecursionBreakingCache, TyCtxtExt,
     },
-    AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Span, Symbol, TyCtxt,
+    AnalysisCtrl, DumpArgs, HashMap, HashSet, MarkerCtx, Span, Symbol, TyCtxt,
 };
 
 use rustc_utils::cache::Cache;
@@ -41,8 +37,7 @@ mod graph;
 mod judge;
 
 pub use graph::{
-    add_weighted_edge, ArgNum, Edge, EdgeType, Equation, Equations, GlobalLocal, GraphImpl,
-    InlinedGraph, Node,
+    add_weighted_edge, ArgNum, Edge, EdgeType, Equation, Equations, GraphImpl, InlinedGraph, Node,
 };
 
 use petgraph::{
@@ -52,7 +47,7 @@ use petgraph::{
 
 pub use judge::InlineJudge;
 
-use super::algebra::TypedLocal;
+use super::algebra::wrapping_sanity_check;
 
 type StdNode<'tcx> = Node<(GlobalLocation, FnResolution<'tcx>)>;
 
@@ -96,7 +91,7 @@ impl<'tcx> Inliner<'tcx> {
         if edges_to_prune.is_empty() {
             return;
         }
-        let tcx: TyCtxt<'tcx> = self.tcx;
+        let _tcx: TyCtxt<'tcx> = self.tcx;
         time(&format!("Edge Pruning for {name}"), || {
             let InlinedGraph {
                 graph, equations, ..
@@ -163,10 +158,10 @@ impl<'tcx> Inliner<'tcx> {
     ) -> impl Fn(GlobalLocal) -> bool + 'a {
         match node {
             Node::Argument(a) => Box::new(move |candidate: GlobalLocal| {
-                candidate.location().is_none() && candidate.local.as_usize() == a.as_usize() + 1
+                candidate.location().is_none() && candidate.local().as_usize() == a.as_usize() + 1
             }) as Box<dyn Fn(GlobalLocal) -> bool>,
             Node::Return => Box::new(|candidate: GlobalLocal| {
-                candidate.location().is_none() && candidate.local == mir::RETURN_PLACE
+                candidate.location().is_none() && candidate.local() == mir::RETURN_PLACE
             }),
             Node::Call((location, _)) => {
                 let call = self.get_call(location);
@@ -176,7 +171,7 @@ impl<'tcx> Inliner<'tcx> {
                         && call
                             .argument_locals()
                             .chain(call.return_to.into_iter())
-                            .any(|l| l.local == candidate.local)
+                            .any(|l| l.local == candidate.local())
                 })
             }
         }
@@ -589,8 +584,8 @@ impl<'tcx> Inliner<'tcx> {
         inlining_target: FnResolution<'tcx>,
         incoming: &[(StdNode<'tcx>, Edge)],
         outgoing: &[(StdNode<'tcx>, Edge)],
-        arguments: &[Option<algebra::TypedLocal<'tcx>>],
-        return_to: Option<algebra::TypedLocal<'tcx>>,
+        arguments: &[Option<TypedLocal<'tcx>>],
+        return_to: Option<TypedLocal<'tcx>>,
         queue_for_pruning: &mut EdgeSet<'tcx>,
         root_location: GlobalLocation,
         span: Span,
@@ -639,7 +634,7 @@ impl<'tcx> Inliner<'tcx> {
             ))
         };
 
-        let regularly_handled_arguments: Vec<Option<algebra::TypedLocal>> =
+        let regularly_handled_arguments: Vec<Option<TypedLocal>> =
             if self.tcx.def_kind(inlining_target.def_id())
                 == crate::rustc_hir::def::DefKind::Generator
             {
@@ -796,6 +791,7 @@ impl<'tcx> Inliner<'tcx> {
             })
             .filter_map(|(id, location, function)| {
                 if recursive_analysis_enabled {
+                    use crate::utils::Spanned;
                     let def_id = function.def_id();
                     if let Some(ac) = self.classify_special_function_handling(
                         function,
@@ -1054,18 +1050,6 @@ impl<'tcx> Inliner<'tcx> {
     }
 }
 
-impl<'tcx> GlobalLocal<'tcx> {
-    fn span(self, tcx: TyCtxt<'tcx>, context: DefId) -> crate::rustc_span::Span {
-        let body = tcx
-            .body_for_def_id_default_policy(
-                self.location().map_or(context, |l| l.innermost_function()),
-            )
-            .unwrap()
-            .simplified_body();
-        body.local_decls[self.local].source_info.span
-    }
-}
-
 fn dump_dot_graph<W: std::io::Write>(mut w: W, g: &InlinedGraph) -> std::io::Result<()> {
     use petgraph::dot::*;
     write!(
@@ -1136,359 +1120,6 @@ impl<'tcx> Inliner<'tcx> {
         CallOnlyFlow {
             location_dependencies,
             return_dependencies,
-        }
-    }
-}
-
-pub fn equation_sanity_check<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    eq: &Equation<GlobalLocal<'tcx>>,
-) -> Result<(), String> {
-    let mut eq = eq.clone();
-    eq.rearrange_left_to_right();
-    assert!(eq.lhs().terms_inside_out().is_empty());
-
-    let is_cast = eq.is_cast();
-    let (lhs, rhs) = eq.decompose();
-    let wrap = rhs.terms_inside_out().iter().copied();
-
-    wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap, is_cast)
-}
-
-pub fn wrapping_sanity_check<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    left: ty::Ty<'tcx>,
-    right: ty::Ty<'tcx>,
-    wrap: impl IntoIterator<Item = Operator<DisplayViaDebug<mir::Field>>>,
-    is_cast: bool,
-) -> Result<(), String> {
-    use mir::tcx::PlaceTy;
-    use mir::ProjectionElem::{self, *};
-    use Operator::*;
-
-    let mut left = PlaceTy {
-        ty: left,
-        variant_index: None,
-    };
-    let mut right = PlaceTy {
-        ty: right,
-        variant_index: None,
-    };
-
-    let wrap = wrap.into_iter().collect::<Vec<_>>();
-    if wrap.iter().copied().any(Operator::is_unknown) {
-        return Ok(());
-    }
-    let apply_deref = |target: &mut PlaceTy<'tcx>| *target = target.projection_ty(tcx, Deref);
-    let apply_field = |target: &mut PlaceTy<'tcx>, idx: mir::Field| {
-        *target = match target.ty.kind() {
-            ty::TyKind::Closure(_did, sub) => {
-                assert!(target.variant_index.is_none(), "{target:?}");
-                PlaceTy {
-                    ty: sub
-                        .as_closure()
-                        .upvar_tys()
-                        .nth(idx.as_usize())
-                        .unwrap_or_else(|| {
-                            panic!("{target:?} does not have enough upvars for {idx:?}")
-                        }),
-                    variant_index: None,
-                }
-            }
-            ty::TyKind::Generator(did, substs, _) => {
-                // I'm guessing here as to how generators actually work. My
-                // working theory is that there are a number of "prefix" fields
-                // that are accessible without using a variant index, followed
-                // by a number of "state types" which are only accessible after
-                // downcasting to a specific variant. My assumption also is that
-                // both those indices are 0-based.
-                //
-                // Unfortunately I can't think if a good way to be defensive
-                // wrt. those assumptions.
-                let generator = substs.as_generator();
-                debug!(
-                    "Prefix tys: {:?}, State tys: {:?}",
-                    Vec::from_iter(generator.prefix_tys()),
-                    generator
-                        .state_tys(*did, tcx)
-                        .map(Vec::from_iter)
-                        .collect::<Vec<_>>()
-                );
-                let ty = if let Some(v) = target.variant_index {
-                    generator
-                        .state_tys(*did, tcx)
-                        .nth(v.as_usize())
-                        .expect("Not enough variants")
-                        .nth(idx.as_usize())
-                        .expect("Not enough types")
-                } else {
-                    generator.prefix_tys().nth(idx.as_usize()).unwrap()
-                };
-                PlaceTy {
-                    ty,
-                    variant_index: None,
-                }
-            }
-            _ => PlaceTy {
-                ty: target.field_ty(tcx, idx),
-                variant_index: None,
-            },
-        }
-    };
-    let apply_index =
-        |target: &mut PlaceTy<'tcx>| *target = target.projection_ty(tcx, Index(0_usize.into()));
-    let apply_downcast = |target: &mut PlaceTy<'tcx>, v| {
-        *target = target.projection_ty(tcx, mir::PlaceElem::Downcast(None, v))
-    };
-
-    // This is kind of complicated because the wrappings need to be applied in
-    // opposite order to both of the two types. I think there's also an
-    // invariant by which you only have "in" wrappings first followed by "out"
-    // wrappings (meaning whether they need to apply to left or right).
-    //
-    // As such it is split into one closure that applies the wraps that need to
-    // apply to the right type, then the one's that need to apply to the left
-    // one.
-    wrap.into_iter()
-        .filter_map(|op| match op {
-            DerefOf => {
-                apply_deref(&mut right);
-                None
-            }
-            RefOf => Some(Deref),
-            MemberOf(f) => {
-                apply_field(&mut right, f.0);
-                None
-            }
-            ContainsAt(f) => Some(Field(*f, ())),
-            IndexOf => {
-                apply_index(&mut right);
-                None
-            }
-            ArrayWith => Some(Index(())),
-            Operator::Downcast(v) => {
-                apply_downcast(&mut right, v.into());
-                None
-            }
-            Operator::Upcast(v) => Some(ProjectionElem::Downcast(None, v.into())),
-            Unknown => unreachable!(),
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .for_each(|for_left| match for_left {
-            Deref => apply_deref(&mut left),
-            Field(f, _) => apply_field(&mut left, f),
-            Index(_) => apply_index(&mut left),
-            ProjectionElem::Downcast(_, v) => apply_downcast(&mut left, v),
-            _ => unreachable!(),
-        });
-    if is_cast {
-        return Ok(());
-    }
-    let l_ty = tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), left.ty);
-    let r_ty = tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), right.ty);
-    if left.variant_index == right.variant_index && l_ty.is_similar_enough(&r_ty, tcx.lang_items())
-    {
-        Ok(())
-    } else {
-        Err(format!(
-            "Sanity check failed:\n     {left:?}\n  != {right:?}"
-        ))
-    }
-}
-
-trait APoorPersonsEquivalenceCheck {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool;
-}
-
-impl<T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for ty::List<T> {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
-        self.len() == other.len()
-            && self
-                .iter()
-                .zip(other.iter())
-                .all(|(left, right)| left.is_similar_enough(right, language_items))
-    }
-}
-
-impl<'tcx> APoorPersonsEquivalenceCheck for ty::GenericArg<'tcx> {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
-        use ty::GenericArgKind::*;
-        match (self.unpack(), other.unpack()) {
-            (Lifetime(_), Lifetime(_)) => true,
-            (Type(t_a), Type(t_b)) => t_a.is_similar_enough(&t_b, language_items),
-            (Const(c_1), Const(c_2)) => c_1.is_similar_enough(&c_2, language_items),
-            _ => false,
-        }
-    }
-}
-
-impl<'tcx> APoorPersonsEquivalenceCheck for ty::Const<'tcx> {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
-        self.kind() == other.kind() && self.ty().is_similar_enough(&other.ty(), language_items)
-    }
-}
-
-impl<'tcx, T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for ty::Binder<'tcx, T> {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
-        self.bound_vars() == other.bound_vars()
-            && self
-                .as_ref()
-                .skip_binder()
-                .is_similar_enough(other.as_ref().skip_binder(), language_items)
-    }
-}
-
-impl<'tcx> APoorPersonsEquivalenceCheck for ty::FnSig<'tcx> {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
-        self.inputs_and_output
-            .is_similar_enough(other.inputs_and_output, language_items)
-            && self.c_variadic == other.c_variadic
-            && self.unsafety == other.unsafety
-            && self.abi == other.abi
-    }
-}
-
-impl<'tcx> APoorPersonsEquivalenceCheck for ty::ExistentialPredicate<'tcx> {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
-        use ty::ExistentialPredicate::*;
-        use ty::TermKind::*;
-        match (self, other) {
-            (Trait(t_1), Trait(t_2)) => {
-                t_1.def_id == t_2.def_id && t_1.substs.is_similar_enough(t_2.substs, language_items)
-            }
-            (Projection(p_1), Projection(p_2)) => {
-                p_1.def_id == p_2.def_id
-                    && p_1.substs.is_similar_enough(p_2.substs, language_items)
-                    && match (p_1.term.unpack(), p_2.term.unpack()) {
-                        (Ty(t_1), Ty(t_2)) => t_1.is_similar_enough(&t_2, language_items),
-                        (Const(c_1), Const(c_2)) => c_1.is_similar_enough(&c_2, language_items),
-                        _ => false,
-                    }
-            }
-            (AutoTrait(t_1), AutoTrait(t_2)) => t_1 == t_2,
-            _ => false,
-        }
-    }
-}
-
-impl<'tcx> APoorPersonsEquivalenceCheck for ty::AliasTy<'tcx> {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
-        self.def_id == other.def_id && self.substs.is_similar_enough(other.substs, language_items)
-    }
-}
-
-impl<'a, T: APoorPersonsEquivalenceCheck> APoorPersonsEquivalenceCheck for &'a T {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
-        (*self).is_similar_enough(*other, language_items)
-    }
-}
-
-impl<'tcx> APoorPersonsEquivalenceCheck for ty::Ty<'tcx> {
-    fn is_similar_enough(&self, other: &Self, language_items: &LanguageItems) -> bool {
-        use crate::rust::rustc_type_ir::sty::TyKind::*;
-
-        match (self.kind(), other.kind()) {
-            (Int(a_i), Int(b_i)) => a_i == b_i,
-            (Uint(a_u), Uint(b_u)) => a_u == b_u,
-            (Float(a_f), Float(b_f)) => a_f == b_f,
-            (Adt(a_d, a_s), Adt(b_d, b_s)) => {
-                a_d == b_d && a_s.is_similar_enough(b_s, language_items)
-            }
-            (Foreign(a_d), Foreign(b_d)) => a_d == b_d,
-            // This is where it gets hacky, we will basically consider all arrays
-            // and slices the same so long as the element type is the same,
-            // regardless of length.
-            //
-            // In future this could be refined to properly consider subtyping
-            // relations, but we don't know the "directionality" of the comparison
-            // anyway so no point in trying right now.
-            (Array(a_t, _) | Slice(a_t), Array(b_t, _) | Slice(b_t)) => {
-                a_t.is_similar_enough(b_t, language_items)
-            }
-            (RawPtr(a_t), RawPtr(b_t)) => {
-                a_t.mutbl == b_t.mutbl && a_t.ty.is_similar_enough(&b_t.ty, language_items)
-            }
-            // We will also ignore regions for now
-            (Ref(_, a_t, a_m), Ref(_, b_t, b_m)) => {
-                a_t.is_similar_enough(b_t, language_items) && a_m == b_m
-            }
-            (FnDef(a_d, a_s), FnDef(b_d, b_s)) => {
-                a_d == b_d && a_s.is_similar_enough(b_s, language_items)
-            }
-            (FnPtr(a_s), FnPtr(b_s)) => a_s.is_similar_enough(b_s, language_items),
-            // Ignoring regions again
-            (Dynamic(a_p, _, a_repr), Dynamic(b_p, _, b_repr)) => {
-                a_p.is_similar_enough(b_p, language_items) && a_repr == b_repr
-            }
-            (Closure(a_d, a_s), Closure(b_d, b_s)) => {
-                a_d == b_d && a_s.is_similar_enough(b_s, language_items)
-            }
-            (Generator(a_d, a_s, a_m), Generator(b_d, b_s, b_m)) => {
-                if a_d == b_d && a_s.is_similar_enough(b_s, language_items) && a_m == b_m {
-                    true
-                } else {
-                    debug!("{a_d:?} {a_s:?} {a_m:?} != {b_d:?} {b_s:?} {b_m:?}");
-                    false
-                }
-            }
-            (GeneratorWitness(a_g), GeneratorWitness(b_g)) => {
-                // for some reason `a_g.equiv(b_g)` doesn't resolve properly and
-                // gives me a type error so I inlined its body instead.
-                a_g.bound_vars() == b_g.bound_vars()
-                    && a_g
-                        .skip_binder()
-                        .is_similar_enough(b_g.skip_binder(), language_items)
-            }
-            (GeneratorWitnessMIR(a_d, a_s), GeneratorWitnessMIR(b_d, b_s)) => {
-                a_d == b_d && a_s.is_similar_enough(b_s, language_items)
-            }
-            (Tuple(a_t), Tuple(b_t)) => a_t.is_similar_enough(b_t, language_items),
-            (Alias(a_i, a_p), Alias(b_i, b_p)) => {
-                a_i == b_i && a_p.is_similar_enough(b_p, language_items)
-            }
-            //(Param(a_p), Param(b_p)) => a_p == b_p,
-
-            // We try to substitute parameters but sometimes they stick around
-            // and Justus is not sure why. So we just skip comparison if one is
-            // a parameter
-            (Param(_), _) | (_, Param(_)) => true,
-            (Bound(a_d, a_b), Bound(b_d, b_b)) => a_d == b_d && a_b == b_b,
-            (Placeholder(a_p), Placeholder(b_p)) => a_p == b_p,
-            (Infer(a_t), Infer(b_t)) => a_t == b_t,
-            (Error(a_e), Error(b_e)) => a_e == b_e,
-            (Bool, Bool) | (Char, Char) | (Str, Str) | (Never, Never) => true,
-            (Adt(a, _), Ref(_, b, Mutability::Mut)) | (Ref(_, b, Mutability::Mut), Adt(a, _))
-                if Some(a.did()) == language_items.resume_ty() =>
-            {
-                matches!(b.kind(), Adt(c, _) if Some(c.did()) == language_items.context())
-            }
-            // This is created when certain async functions are called. We could
-            // additionally check that the input and output types match but I'm
-            // lazy atm.
-            (Dynamic(bound_predicate, _, _), Generator(_, _, _))
-            | (Generator(_, _, _), Dynamic(bound_predicate, _, _)) => {
-                debug!("Testing {self:?} and {other:?}\n  {bound_predicate:?}");
-                matches!(
-                    bound_predicate.first(),
-                    Some(predicate)
-                    if matches!(
-                        predicate.skip_binder(),
-                        ty::ExistentialPredicate::Trait(trait_predicate)
-                        if Some(trait_predicate.def_id) == language_items.future_trait()
-                    )
-                )
-            }
-            // This is created by the `vec` macro when it uses `ShallowInitBox`
-            (RawPtr(t_and_mut), _) | (_, RawPtr(t_and_mut))
-                if t_and_mut.mutbl.is_mut()
-                    && t_and_mut.ty.kind() == &ty::TyKind::Uint(ty::UintTy::U8) =>
-            {
-                self.is_box() && self.boxed_ty().is_array()
-                    || other.is_box() && other.boxed_ty().is_array()
-            }
-            _ => false,
         }
     }
 }

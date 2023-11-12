@@ -12,16 +12,16 @@
 //! [`extract_equations`].
 
 use crate::{
-    ir::regal::TargetPlace,
-    mir::{self, Field, Local, Place},
+    ir::{regal::TargetPlace, GlobalLocal, TypedLocal},
+    mir::{self, Field, Place},
     ty,
-    utils::{outfile_pls, write_sep, DisplayViaDebug, FnResolution, Print, TyCtxtExt},
-    DefId, HashMap, HashSet, Symbol, TyCtxt,
+    utils::{outfile_pls, write_sep, APoorPersonsEquivalenceCheck, DisplayViaDebug, Print},
+    HashMap, HashSet, TyCtxt,
 };
 
 use std::{
-    fmt::{Debug, Display, Write},
-    hash::{Hash, Hasher},
+    fmt::{Display, Write},
+    hash::Hash,
 };
 
 mod terms;
@@ -65,8 +65,8 @@ impl<'tcx> MirEquation<'tcx> {
         assert!(slf_copy.lhs().terms_inside_out().is_empty());
         if let Err(e) = wrapping_sanity_check(
             tcx,
-            slf_copy.lhs().base().ty,
-            slf_copy.rhs().base().ty,
+            slf_copy.lhs().base().ty(),
+            slf_copy.rhs().base().ty(),
             slf_copy.rhs().terms_inside_out().to_vec(),
             is_cast,
         ) {
@@ -378,12 +378,11 @@ pub fn solve_reachable<
 
 use std::sync::atomic;
 
-use super::inline::{equation_sanity_check, wrapping_sanity_check, GlobalLocal};
-
 lazy_static! {
     static ref IOUTCTR: atomic::AtomicI32 = atomic::AtomicI32::new(0);
 }
 
+#[allow(dead_code)]
 fn dump_intermediates<
     B: Clone + Hash + Display + Eq + Ord,
     F: Eq + Hash + Copy + Display,
@@ -554,61 +553,6 @@ impl<'tcx> Extractor<'tcx> {
 
 pub type MirTerm<'tcx> = Term<TypedLocal<'tcx>, DisplayViaDebug<Field>>;
 
-#[derive(Debug, Clone, Copy)]
-pub struct TypedLocal<'tcx> {
-    pub local: mir::Local,
-    ty: ty::Ty<'tcx>,
-}
-
-impl std::fmt::Display for TypedLocal<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.local)
-    }
-}
-
-impl PartialEq for TypedLocal<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        self.local == other.local
-    }
-}
-
-impl Ord for TypedLocal<'_> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.local.cmp(&other.local)
-    }
-}
-
-impl PartialOrd for TypedLocal<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl std::hash::Hash for TypedLocal<'_> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.local.hash(state)
-    }
-}
-
-impl Eq for TypedLocal<'_> {}
-
-impl<'tcx> TypedLocal<'tcx> {
-    pub fn new(local: mir::Local, local_decls: &(impl mir::HasLocalDecls<'tcx> + ?Sized)) -> Self {
-        Self {
-            local,
-            ty: local_decls.local_decls()[local].ty,
-        }
-    }
-
-    pub fn new_with_type(local: mir::Local, ty: ty::Ty<'tcx>) -> Self {
-        Self { local, ty }
-    }
-
-    pub fn ty(self) -> ty::Ty<'tcx> {
-        self.ty
-    }
-}
-
 impl<'tcx> MirTerm<'tcx> {
     pub fn from_place(
         p: Place<'tcx>,
@@ -755,4 +699,162 @@ pub fn extract_equations<'tcx>(
     let mut extractor = Extractor::new(tcx, &body.local_decls);
     extractor.visit_body(body);
     extractor.equations
+}
+
+pub fn equation_sanity_check<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    eq: &Equality<GlobalLocal<'tcx>, DisplayViaDebug<Field>>,
+) -> Result<(), String> {
+    let mut eq = eq.clone();
+    eq.rearrange_left_to_right();
+    assert!(eq.lhs().terms_inside_out().is_empty());
+
+    let is_cast = eq.is_cast();
+    let (lhs, rhs) = eq.decompose();
+    let wrap = rhs.terms_inside_out().iter().copied();
+
+    wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap, is_cast)
+}
+
+pub fn wrapping_sanity_check<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    left: ty::Ty<'tcx>,
+    right: ty::Ty<'tcx>,
+    wrap: impl IntoIterator<Item = Operator<DisplayViaDebug<mir::Field>>>,
+    is_cast: bool,
+) -> Result<(), String> {
+    use mir::tcx::PlaceTy;
+    use mir::ProjectionElem::{self, *};
+    use Operator::*;
+
+    let mut left = PlaceTy {
+        ty: left,
+        variant_index: None,
+    };
+    let mut right = PlaceTy {
+        ty: right,
+        variant_index: None,
+    };
+
+    let wrap = wrap.into_iter().collect::<Vec<_>>();
+    if wrap.iter().copied().any(Operator::is_unknown) {
+        return Ok(());
+    }
+    let apply_deref = |target: &mut PlaceTy<'tcx>| *target = target.projection_ty(tcx, Deref);
+    let apply_field = |target: &mut PlaceTy<'tcx>, idx: mir::Field| {
+        *target = match target.ty.kind() {
+            ty::TyKind::Closure(_did, sub) => {
+                assert!(target.variant_index.is_none(), "{target:?}");
+                PlaceTy {
+                    ty: sub
+                        .as_closure()
+                        .upvar_tys()
+                        .nth(idx.as_usize())
+                        .unwrap_or_else(|| {
+                            panic!("{target:?} does not have enough upvars for {idx:?}")
+                        }),
+                    variant_index: None,
+                }
+            }
+            ty::TyKind::Generator(did, substs, _) => {
+                // I'm guessing here as to how generators actually work. My
+                // working theory is that there are a number of "prefix" fields
+                // that are accessible without using a variant index, followed
+                // by a number of "state types" which are only accessible after
+                // downcasting to a specific variant. My assumption also is that
+                // both those indices are 0-based.
+                //
+                // Unfortunately I can't think if a good way to be defensive
+                // wrt. those assumptions.
+                let generator = substs.as_generator();
+                debug!(
+                    "Prefix tys: {:?}, State tys: {:?}",
+                    Vec::from_iter(generator.prefix_tys()),
+                    generator
+                        .state_tys(*did, tcx)
+                        .map(Vec::from_iter)
+                        .collect::<Vec<_>>()
+                );
+                let ty = if let Some(v) = target.variant_index {
+                    generator
+                        .state_tys(*did, tcx)
+                        .nth(v.as_usize())
+                        .expect("Not enough variants")
+                        .nth(idx.as_usize())
+                        .expect("Not enough types")
+                } else {
+                    generator.prefix_tys().nth(idx.as_usize()).unwrap()
+                };
+                PlaceTy {
+                    ty,
+                    variant_index: None,
+                }
+            }
+            _ => PlaceTy {
+                ty: target.field_ty(tcx, idx),
+                variant_index: None,
+            },
+        }
+    };
+    let apply_index =
+        |target: &mut PlaceTy<'tcx>| *target = target.projection_ty(tcx, Index(0_usize.into()));
+    let apply_downcast = |target: &mut PlaceTy<'tcx>, v| {
+        *target = target.projection_ty(tcx, mir::PlaceElem::Downcast(None, v))
+    };
+
+    // This is kind of complicated because the wrappings need to be applied in
+    // opposite order to both of the two types. I think there's also an
+    // invariant by which you only have "in" wrappings first followed by "out"
+    // wrappings (meaning whether they need to apply to left or right).
+    //
+    // As such it is split into one closure that applies the wraps that need to
+    // apply to the right type, then the one's that need to apply to the left
+    // one.
+    wrap.into_iter()
+        .filter_map(|op| match op {
+            DerefOf => {
+                apply_deref(&mut right);
+                None
+            }
+            RefOf => Some(Deref),
+            MemberOf(f) => {
+                apply_field(&mut right, f.0);
+                None
+            }
+            ContainsAt(f) => Some(Field(*f, ())),
+            IndexOf => {
+                apply_index(&mut right);
+                None
+            }
+            ArrayWith => Some(Index(())),
+            Operator::Downcast(v) => {
+                apply_downcast(&mut right, v.into());
+                None
+            }
+            Operator::Upcast(v) => Some(ProjectionElem::Downcast(None, v.into())),
+            Unknown => unreachable!(),
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .for_each(|for_left| match for_left {
+            Deref => apply_deref(&mut left),
+            Field(f, _) => apply_field(&mut left, f),
+            Index(_) => apply_index(&mut left),
+            ProjectionElem::Downcast(_, v) => apply_downcast(&mut left, v),
+            _ => unreachable!(),
+        });
+    if is_cast {
+        return Ok(());
+    }
+    let l_ty = tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), left.ty);
+    let r_ty = tcx.normalize_erasing_regions(ty::ParamEnv::reveal_all(), right.ty);
+    if left.variant_index == right.variant_index && l_ty.is_similar_enough(&r_ty, tcx.lang_items())
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "Sanity check failed:\n     {left:?}\n  != {right:?}"
+        ))
+    }
 }
