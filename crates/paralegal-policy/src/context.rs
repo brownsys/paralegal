@@ -254,11 +254,16 @@ impl Context {
 
     /// Dispatch and drain all queued diagnostics, aborts the program if any of
     /// them demand failure.
-    pub fn emit_diagnostics(&self, w: impl Write) -> Result<()> {
+    pub fn emit_diagnostics_may_exit(&self, w: impl Write) -> Result<()> {
         if !self.diagnostics.emit(w)? {
             exit(1)
         }
         Ok(())
+    }
+
+    /// Dispatch and drain all queued diagnostics without aborting the program.
+    pub fn emit_diagnostics(&self, w: impl Write) -> std::io::Result<bool> {
+        return self.diagnostics.emit(w);
     }
 
     /// Emit a warning if this marker was not found in the source code.
