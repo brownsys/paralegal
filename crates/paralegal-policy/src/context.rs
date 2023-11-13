@@ -263,7 +263,7 @@ impl Context {
 
     /// Dispatch and drain all queued diagnostics without aborting the program.
     pub fn emit_diagnostics(&self, w: impl Write) -> std::io::Result<bool> {
-        return self.diagnostics.emit(w);
+        self.diagnostics.emit(w)
     }
 
     /// Emit a warning if this marker was not found in the source code.
