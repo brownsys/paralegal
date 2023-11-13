@@ -74,7 +74,7 @@ impl DeletionProp {
             )
         }
 
-        return Ok(found_deleter);
+        Ok(found_deleter)
     }
 }
 
@@ -126,9 +126,9 @@ impl ScopedStorageProp {
                                     *scope,
                                     store_callsite,
                                     paralegal_policy::EdgeType::Data,
-                                ) && 
+                                ) &&
 								self.cx.influencers(
-									*scope, 
+									*scope,
 									paralegal_policy::EdgeType::Data
 								).any(|i| self.cx.has_marker(marker!(auth_witness), i))
                             });
@@ -159,7 +159,7 @@ impl ScopedStorageProp {
                 return Ok(controller_valid);
             }
         }
-        return Ok(true);
+        Ok(true)
     }
 }
 
@@ -303,25 +303,22 @@ fn main() -> Result<()> {
     };
 
     let mut command = paralegal_policy::SPDGGenCommand::global();
-	command.get_command().args([
-		"--model-version",
-		"v2",
-		"--inline-elision",
-		"--skip-sigs",
-		"--abort-after-analysis",
-		"--external-annotations",
-		format!("{}baseline-external-annotations.toml", ws_dir).as_str(),
-	]);
+    command.get_command().args([
+        "--model-version",
+        "v2",
+        "--inline-elision",
+        "--skip-sigs",
+        "--abort-after-analysis",
+        "--external-annotations",
+        format!("{}baseline-external-annotations.toml", ws_dir).as_str(),
+    ]);
 
-    match edit_name {
-        Some(edit) => {
-			if edit.as_str() != "none" {
-				command.get_command().args(["--", "--features", &edit]);
-			}
+    if let Some(edit) = edit_name {
+        if edit.as_str() != "none" {
+            command.get_command().args(["--", "--features", &edit]);
         }
-        None => (),
     }
     command.run(ws_dir)?.with_context(prop)?;
 
-    return Ok(());
+    Ok(())
 }
