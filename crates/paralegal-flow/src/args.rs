@@ -75,7 +75,7 @@ pub struct Args {
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
     /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
-    pub graph_loc_path: std::path::PathBuf,
+    pub(crate) graph_loc_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     relaxed: bool,
 
