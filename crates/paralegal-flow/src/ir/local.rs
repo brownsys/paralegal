@@ -204,6 +204,7 @@ impl<'tcx> GlobalLocal<'tcx> {
         self.location
     }
 
+    #[cfg(debug_assertions)]
     pub fn ty(self) -> ty::Ty<'tcx> {
         self.ty
     }

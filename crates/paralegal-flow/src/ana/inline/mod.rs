@@ -13,7 +13,7 @@
 //!    equations
 
 use crate::{
-    ana::algebra::{self, equation_sanity_check, Operator, Term},
+    ana::algebra::{self, Operator, Term},
     hir::def_id::DefId,
     ir::{
         flows::CallOnlyFlow,
@@ -911,7 +911,7 @@ impl<'tcx> Inliner<'tcx> {
         #[cfg(debug_assertions)]
         for eq in &gwr.equations {
             debug!("Checking {eq}");
-            if let Err(e) = equation_sanity_check(self.tcx, eq) {
+            if let Err(e) = algebra::equation_sanity_check(self.tcx, eq) {
                 let mut span: crate::rustc_error_messages::MultiSpan = self
                     .tcx
                     .def_ident_span(def_id)
