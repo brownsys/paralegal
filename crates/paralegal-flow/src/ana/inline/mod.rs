@@ -704,7 +704,7 @@ impl<'tcx> Inliner<'tcx> {
                     {
                         debug!("Inlining {function:?}");
                         return Some((id, *location, InlineAction::SimpleInline(local_id)));
-                    } else if self.marker_carrying.marker_ctx().has_transitive_reachable_markers(def_id) {
+                    } else if self.marker_carrying.marker_ctx().has_transitive_reachable_markers(*function) {
                         self.tcx.sess.struct_span_warn(
                             self.tcx.def_span(def_id),
                             "This function is not being inlined, but a marker is reachable from its inside.",
