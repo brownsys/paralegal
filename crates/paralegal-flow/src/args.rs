@@ -24,6 +24,7 @@ impl TryFrom<ClapArgs> for Args {
             debug,
             debug_target,
             result_path,
+            graph_loc_path,
             relaxed,
             target,
             abort_after_analysis,
@@ -53,6 +54,7 @@ impl TryFrom<ClapArgs> for Args {
             verbose,
             log_level_config,
             result_path,
+            graph_loc_path,
             relaxed,
             target,
             abort_after_analysis,
@@ -72,6 +74,8 @@ pub struct Args {
     log_level_config: LogLevelConfig,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
+    /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
+    pub(crate) graph_loc_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     relaxed: bool,
 
@@ -112,6 +116,9 @@ pub struct ClapArgs {
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     #[clap(long, default_value = "analysis_result.frg")]
     result_path: std::path::PathBuf,
+    /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
+    #[clap(long, default_value = "flow-graph.json")]
+    graph_loc_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     #[clap(long, env = "PARALEGAL_RELAXED")]
     relaxed: bool,

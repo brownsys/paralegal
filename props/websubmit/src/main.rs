@@ -1,8 +1,8 @@
 extern crate anyhow;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
-
+use anyhow::{bail, Result};
+use clap::Parser;
 use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Context, Marker, PolicyContext};
 
 macro_rules! marker {
@@ -22,7 +22,7 @@ impl DeletionProp {
         DeletionProp { cx }
     }
 
-    pub fn check(self) {
+    pub fn check(self) -> Result<bool> {
         // All types marked "sensitive"
         let types_to_check = self
             .cx
@@ -73,13 +73,14 @@ impl DeletionProp {
                 format!("Type: {}", self.cx.describe_def(ty))
             )
         }
+
+        Ok(found_deleter)
     }
 }
 
-fn run_del_policy(ctx: Arc<Context>) -> Result<()> {
+pub fn run_del_policy(ctx: Arc<Context>) -> Result<bool> {
     ctx.named_policy(Identifier::new_intern("Deletion"), |ctx| {
-        DeletionProp::new(ctx).check();
-        Ok(())
+        DeletionProp::new(ctx).check()
     })
 }
 
@@ -94,7 +95,7 @@ impl ScopedStorageProp {
         ScopedStorageProp { cx }
     }
 
-    pub fn check(self) {
+    pub fn check(self) -> Result<bool> {
         for c_id in self.cx.desc().controllers.keys() {
             let scopes = self
                 .cx
@@ -125,7 +126,11 @@ impl ScopedStorageProp {
                                     *scope,
                                     store_callsite,
                                     paralegal_policy::EdgeType::Data,
-                                )
+                                ) &&
+                                self.cx.influencers(
+                                    *scope,
+                                    paralegal_policy::EdgeType::Data
+                                ).any(|i| self.cx.has_marker(marker!(auth_witness), i))
                             });
                             assert_error!(
                                 self.cx,
@@ -149,14 +154,18 @@ impl ScopedStorageProp {
                     self.cx.describe_def(*c_id)
                 ),
             );
+
+            if !controller_valid {
+                return Ok(controller_valid);
+            }
         }
+        Ok(true)
     }
 }
 
-fn run_sc_policy(ctx: Arc<Context>) -> Result<()> {
+pub fn run_sc_policy(ctx: Arc<Context>) -> Result<bool> {
     ctx.named_policy(Identifier::new_intern("Scoped Storage"), |ctx| {
-        ScopedStorageProp::new(ctx).check();
-        Ok(())
+        ScopedStorageProp::new(ctx).check()
     })
 }
 
@@ -170,12 +179,12 @@ impl AuthDisclosureProp {
         AuthDisclosureProp { cx }
     }
 
-    pub fn check(self) -> Result<()> {
+    pub fn check(self) -> Result<bool> {
         for c_id in self.cx.desc().controllers.keys() {
             // All srcs that have no influencers
             let roots = self
                 .cx
-                .roots(*c_id, paralegal_policy::EdgeType::DataAndControl)
+                .roots(*c_id, paralegal_policy::EdgeType::Data)
                 .collect::<Vec<_>>();
 
             let safe_scopes = self
@@ -257,26 +266,42 @@ impl AuthDisclosureProp {
                         )
                     );
                     safe_before_scope.report(self.cx.clone());
+
+                    if !safe_before_scope.holds() {
+                        return Ok(false);
+                    }
                 }
             }
         }
-        Ok(())
+        Ok(true)
     }
 }
 
-fn run_dis_policy(ctx: Arc<Context>) -> Result<()> {
+pub fn run_dis_policy(ctx: Arc<Context>) -> Result<bool> {
     ctx.named_policy(Identifier::new_intern("Authorized Disclosure"), |ctx| {
         AuthDisclosureProp::new(ctx).check()
     })
 }
 
-fn main() -> Result<()> {
-    let ws_dir = std::env::args()
-        .nth(1)
-        .ok_or_else(|| anyhow!("expected format: cargo run <path> [policy]"))?;
-    let prop_name = std::env::args().nth(2);
+#[derive(Parser)]
+struct Args {
+    /// path to WebSubmit directory.
+    #[clap(long)]
+    ws_dir: std::path::PathBuf,
 
-    let prop = match prop_name {
+    /// edit-<property>-<articulation point>-<short edit type>
+    #[clap(long, default_value = "none")]
+    edit_type: String,
+
+    /// sc, del, or dis.
+    #[clap(long)]
+    policy: Option<String>,
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+
+    let prop = match args.policy {
         Some(s) => match s.as_str() {
             "sc" => run_sc_policy,
             "del" => run_del_policy,
@@ -288,7 +313,27 @@ fn main() -> Result<()> {
         },
     };
 
-    paralegal_policy::SPDGGenCommand::global()
-        .run(ws_dir)?
-        .with_context(prop)
+    let mut command = paralegal_policy::SPDGGenCommand::global();
+    command.get_command().args([
+        "--model-version",
+        "v2",
+        "--inline-elision",
+        "--skip-sigs",
+        "--abort-after-analysis",
+        "--external-annotations",
+        format!(
+            "{}baseline-external-annotations.toml",
+            args.ws_dir.to_string_lossy()
+        )
+        .as_str(),
+    ]);
+
+    if args.edit_type.as_str() != "none" {
+        command
+            .get_command()
+            .args(["--", "--features", &args.edit_type]);
+    }
+    command.run(args.ws_dir)?.with_context(prop)?;
+
+    Ok(())
 }

@@ -180,7 +180,7 @@ impl rustc_driver::Callbacks for Callbacks {
                             .truncate(true)
                             .create(true)
                             .write(true)
-                            .open(consts::FLOW_GRAPH_OUT_NAME)
+                            .open(self.opts.graph_loc_path.clone())
                             .unwrap(),
                         &desc,
                     )
