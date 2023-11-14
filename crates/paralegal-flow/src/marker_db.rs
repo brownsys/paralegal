@@ -23,7 +23,7 @@ use crate::{
 };
 use rustc_utils::cache::CopyCache;
 
-use std::rc::Rc;
+use std::{borrow::Cow, rc::Rc};
 
 type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 
@@ -136,28 +136,38 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// functions called in its body are marked.
     ///
     /// XXX Does not take into account reachable type markers
-    pub fn marker_is_reachable(&self, def_id: DefId) -> bool {
-        self.is_marked(def_id) || self.has_transitive_reachable_markers(def_id)
+    pub fn marker_is_reachable(&self, res: FnResolution<'tcx>) -> bool {
+        self.is_marked(res.def_id()) || self.has_transitive_reachable_markers(res)
     }
 
     /// Queries the transitive marker cache.
-    pub fn has_transitive_reachable_markers(&self, def_id: DefId) -> bool {
+    pub fn has_transitive_reachable_markers(&self, res: FnResolution<'tcx>) -> bool {
         self.db()
             .marker_reachable_cache
-            .get_maybe_recursive(def_id, |_| self.compute_marker_reachable(def_id))
+            .get_maybe_recursive(res, |_| self.compute_marker_reachable(res))
             .unwrap_or(false)
     }
 
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
-    fn compute_marker_reachable(&self, def_id: DefId) -> bool {
-        let Some(body) = self.tcx().body_for_def_id_default_policy(def_id) else {
+    fn compute_marker_reachable(&self, res: FnResolution<'tcx>) -> bool {
+        let Some(body) = self.tcx().body_for_def_id_default_policy(res.def_id()) else {
             return false;
         };
         let body = body.simplified_body();
-        body.basic_blocks
-            .iter()
-            .any(|bbdat| self.terminator_carries_marker(&body.local_decls, bbdat.terminator()))
+        body.basic_blocks.iter().any(|bbdat| {
+            let term = match res {
+                FnResolution::Final(inst) => {
+                    Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
+                        self.tcx(),
+                        ty::ParamEnv::reveal_all(),
+                        bbdat.terminator().clone(),
+                    ))
+                }
+                FnResolution::Partial(_) => Cow::Borrowed(bbdat.terminator()),
+            };
+            self.terminator_carries_marker(&body.local_decls, term.as_ref())
+        })
     }
 
     /// Does this terminator carry a marker?
@@ -166,19 +176,19 @@ impl<'tcx> MarkerCtx<'tcx> {
         local_decls: &mir::LocalDecls,
         terminator: &mir::Terminator<'tcx>,
     ) -> bool {
-        if let Ok((defid, _args, _)) = terminator.as_fn_and_args(self.tcx()) {
+        if let Ok((res, _args, _)) = terminator.as_instance_and_args(self.tcx()) {
             debug!(
                 "Checking function {} for markers",
-                self.tcx().def_path_debug_str(defid)
+                self.tcx().def_path_debug_str(res.def_id())
             );
-            if self.marker_is_reachable(defid) {
+            if self.marker_is_reachable(res) {
                 return true;
             }
             if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
                     local_decls[mir::RETURN_PLACE].ty.kind()
-                && let ty::TyKind::Generator(closure_fn, _, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
+                && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
                 return self.marker_is_reachable(
-                    *closure_fn
+                    FnResolution::Final(ty::Instance::expect_resolve(self.tcx(), ty::ParamEnv::reveal_all(), *closure_fn, substs))
                 );
             }
         }
@@ -248,7 +258,7 @@ pub struct MarkerDatabase<'tcx> {
     local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
-    marker_reachable_cache: CopyCache<DefId, bool>,
+    marker_reachable_cache: CopyCache<FnResolution<'tcx>, bool>,
     /// Configuration options
     config: &'static MarkerControl,
 }
