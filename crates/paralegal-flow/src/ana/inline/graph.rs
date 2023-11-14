@@ -300,7 +300,9 @@ fn to_global_equations<'tcx>(
     context: FnResolution<'tcx>,
 ) -> Equations<GlobalLocal<'tcx>> {
     eqs.iter()
-        .map(|eq| eq.map_bases(|target| GlobalLocal::from_typed_local(tcx, *target, context)))
+        .map(|eq| {
+            eq.unsafe_map_bases(|target| GlobalLocal::from_typed_local(tcx, *target, context))
+        })
         .collect()
 }
 

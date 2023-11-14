@@ -224,6 +224,7 @@ impl<'tcx> FnResolution<'tcx> {
         }
     }
 
+    /// Get the type of the specified local.
     pub fn local_ty(self, local: mir::Local, tcx: TyCtxt<'tcx>) -> ty::Ty<'tcx> {
         let body = tcx
             .body_for_def_id_default_policy(self.def_id())
@@ -232,6 +233,7 @@ impl<'tcx> FnResolution<'tcx> {
         self.best_effort_normalize(tcx, body.local_decls[local].ty)
     }
 
+    /// Normalize and instantiate the provided value as much as possible.
     pub fn best_effort_normalize<T: crate::rustc_type_ir::fold::TypeFoldable<TyCtxt<'tcx>>>(
         self,
         tcx: TyCtxt<'tcx>,

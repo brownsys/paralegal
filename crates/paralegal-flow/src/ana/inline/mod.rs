@@ -150,6 +150,8 @@ impl<'tcx> Inliner<'tcx> {
         })
     }
 
+    /// Create a closure that returns `true` if a [`GlobalLocal`] belongs to the
+    /// call at this `node`.
     fn node_to_match_global_local<T>(
         &self,
         node: SimpleLocation<(GlobalLocation, T)>,
@@ -295,11 +297,16 @@ fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Di
         .flatten()
 }
 
+/// How should we inline this function?
 enum InlineAction<'tcx> {
+    /// Inline the SPDG for the function described by this key.
     SimpleInline(FnResolution<'tcx>),
+    /// Remove the call and approximate its behavior using these projections.
     Drop(DropAction),
 }
 
+/// A sequence of projections that approximates the effects of a simple function
+/// call.
 type DropAction = Vec<algebra::Operator<DisplayViaDebug<mir::Field>>>;
 
 impl<'tcx> Inliner<'tcx> {
@@ -364,7 +371,7 @@ impl<'tcx> Inliner<'tcx> {
     ) -> impl Iterator<Item = Equation<GlobalLocal<'tcx>>> + 'a {
         equations
             .iter()
-            .map(move |eq| eq.map_bases(move |base| base.add_location_frame(here)))
+            .map(move |eq| eq.unsafe_map_bases(move |base| base.add_location_frame(here)))
     }
 
     /// Get the `regal` call description for the call site at a specific

@@ -37,6 +37,7 @@ impl Display for TargetPlace {
 }
 
 impl<'tcx> Equality<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>> {
+    /// Construct a new global equation. Performs a type check in `debug` mode.
     pub fn new(
         tcx: TyCtxt<'tcx>,
         lhs: Term<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>>,
@@ -53,6 +54,8 @@ impl<'tcx> Equality<GlobalLocal<'tcx>, DisplayViaDebug<mir::Field>> {
 }
 
 impl<'tcx> MirEquation<'tcx> {
+    /// Construct a new, local MIR equation. Performs a type check in `debug`
+    /// mode.
     pub fn new_mir(
         tcx: TyCtxt<'tcx>,
         lhs: MirTerm<'tcx>,
@@ -546,9 +549,11 @@ impl<'tcx> Extractor<'tcx> {
     }
 }
 
+/// A term used in a local MIR equation
 pub type MirTerm<'tcx> = Term<TypedLocal<'tcx>, DisplayViaDebug<Field>>;
 
 impl<'tcx> MirTerm<'tcx> {
+    /// Construct a new MIR terms, also capturing its type `debug` mode.
     pub fn from_place(
         p: Place<'tcx>,
         local_decls: &(impl mir::HasLocalDecls<'tcx> + ?Sized),
@@ -696,6 +701,8 @@ pub fn extract_equations<'tcx>(
     extractor.equations
 }
 
+/// Check that the types of the right and left hand side are "similar enough".
+/// For more information see [`wrapping_sanity_check`].
 pub fn equation_sanity_check<'tcx>(
     tcx: TyCtxt<'tcx>,
     eq: &Equality<GlobalLocal<'tcx>, DisplayViaDebug<Field>>,
@@ -710,13 +717,16 @@ pub fn equation_sanity_check<'tcx>(
         let (lhs, rhs) = eq.decompose();
         let wrap = rhs.terms_inside_out().iter().copied();
 
-        wrapping_sanity_check(tcx, lhs.base.ty, rhs.base.ty, wrap, is_cast)
+        wrapping_sanity_check(tcx, lhs.base.ty(), rhs.base.ty(), wrap, is_cast)
     }
 
     #[cfg(not(debug_assertions))]
     return Ok(());
 }
 
+/// Apply the provided wrappings to the two provided types respectively and
+/// check that afterwards they are equal according to
+/// [`APoorPersonsEquivalenceCheck`](crate::utils::APoorPersonsEquivalenceCheck).
 #[cfg(debug_assertions)]
 pub fn wrapping_sanity_check<'tcx>(
     tcx: TyCtxt<'tcx>,

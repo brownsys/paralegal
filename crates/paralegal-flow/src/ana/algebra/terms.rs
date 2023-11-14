@@ -1,3 +1,8 @@
+//! Type definitions for the place algebra.
+//!
+//! Encapsulated into its own module so we can ensure that whenever terms of
+//! equations are created the types are appropriately checked.
+
 use std::fmt::Display;
 
 use crate::Symbol;
@@ -48,10 +53,16 @@ impl<F: Copy + std::fmt::Display> std::fmt::Display for Cancel<F> {
     }
 }
 
+/// The result of running the simplification [`Term::simplify`].
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub enum Simplified<F: Copy> {
+    /// It simplified without error
     Yes,
+    /// It simplified without error, however it describes a path that does not
+    /// hold information. An example would be `{ .1 = <base> }.0`.
     NonOverlapping,
+    /// We encountered a sequence of two operators that is erroneous, such as
+    /// `*{ .1 = <base> }`.
     Invalid(Operator<F>, Operator<F>),
 }
 
@@ -183,10 +194,14 @@ pub struct Term<B, F: Copy> {
 }
 
 impl<B, F: Copy> Term<B, F> {
+    /// Returns the operators of this term in inside-out order, e.g. the order
+    /// they would be evaluated in. As an example for `*x.0` it would be `[.0,
+    /// *]`.
     pub fn terms_inside_out(&self) -> &[Operator<F>] {
         &self.terms
     }
 
+    /// Same as [`Self::terms_inside_out`] but moves the vec.
     pub fn into_terms_inside_out(self) -> Vec<Operator<F>> {
         self.terms
     }
@@ -288,6 +303,8 @@ impl<B, F: Copy> Term<B, F> {
         Self { base, terms }
     }
 
+    /// Eliminate consecutive operators if they [`Operator::cancel`] or
+    /// everything sandwiched between two [`Operator::Unknown`]s.
     pub fn simplify(&mut self) -> Simplified<F>
     where
         F: Eq + Display,
@@ -350,6 +367,7 @@ impl<B, F: Copy> Term<B, F> {
     }
 }
 
+/// Efficient, in-place removal of all elements in the described range.
 fn vec_drop_range<T>(v: &mut Vec<T>, r: std::ops::Range<usize>) {
     let ptr = v.as_mut_ptr();
     for i in r.clone() {
@@ -361,6 +379,8 @@ fn vec_drop_range<T>(v: &mut Vec<T>, r: std::ops::Range<usize>) {
     }
 }
 
+/// Basically a way to invoke the [`Display`] implementation of [`Term`] without
+/// having to construct one.
 pub fn display_term_pieces<F: Display + Copy, B: Display>(
     f: &mut std::fmt::Formatter<'_>,
     terms: &[Operator<F>],
@@ -417,10 +437,13 @@ pub struct Equality<B, F: Copy> {
 }
 
 impl<B, F: Copy> Equality<B, F> {
+    /// Create an [`Equality`] without checking that the types of the terms are
+    /// the same (at construction).
     pub fn unchecked_new(lhs: Term<B, F>, rhs: Term<B, F>, is_cast: bool) -> Self {
         Self { rhs, lhs, is_cast }
     }
 
+    /// Create an [`Equality`] where the two terms need not have the same type.
     pub fn new_cast(lhs: Term<B, F>, rhs: Term<B, F>) -> Self {
         Self {
             lhs,
@@ -433,18 +456,24 @@ impl<B, F: Copy> Equality<B, F> {
         self.is_cast
     }
 
+    /// Left-hand side of the equation
     pub fn lhs(&self) -> &Term<B, F> {
         &self.lhs
     }
 
+    /// Right-hand side of the equation
     pub fn rhs(&self) -> &Term<B, F> {
         &self.rhs
     }
 
+    /// Break the equation into its left- and right- hand side
     pub fn decompose(self) -> (Term<B, F>, Term<B, F>) {
         (self.lhs, self.rhs)
     }
 
+    /// Get access to mutable references to the left- and right-hand side of the
+    /// equation. Be aware that alterations to the terms is not checked for type
+    /// preservation.
     pub fn unsafe_refs(&mut self) -> [&mut Term<B, F>; 2] {
         [&mut self.lhs, &mut self.rhs]
     }
@@ -473,7 +502,10 @@ impl<B, F: Copy> Equality<B, F> {
 
     /// Apply a function to each base, creating a new equation with a
     /// potentially different base type.
-    pub fn map_bases<B0, G: FnMut(&B) -> B0>(&self, mut f: G) -> Equality<B0, F> {
+    ///
+    /// Be aware this circumvents checking equivalence for the types of the two
+    /// terms.
+    pub fn unsafe_map_bases<B0, G: FnMut(&B) -> B0>(&self, mut f: G) -> Equality<B0, F> {
         Equality {
             lhs: self.lhs.replace_base(f(self.lhs.base())),
             rhs: self.rhs.replace_base(f(self.rhs.base())),

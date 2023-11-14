@@ -10,7 +10,10 @@ use crate::{
 };
 
 /// We wrap [`mir::Local`] to pair it with a type for debug assertions and also
-/// we can have it implement [`Display`](std::fmt::Display)
+/// we can have it implement [`Display`](std::fmt::Display).
+///
+/// All trait impls ignore the type field, with the exception of
+/// [`Display`](std::fmt::Display), which prints the type in `debug` mode.
 #[derive(Debug, Clone, Copy)]
 pub struct TypedLocal<'tcx> {
     pub local: mir::Local,
@@ -21,7 +24,10 @@ pub struct TypedLocal<'tcx> {
 
 impl std::fmt::Display for TypedLocal<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.local)
+        write!(f, "{:?}", self.local)?;
+        #[cfg(debug_assertions)]
+        write!(f, ": {:?}", self.ty)?;
+        Ok(())
     }
 }
 
@@ -52,6 +58,8 @@ impl std::hash::Hash for TypedLocal<'_> {
 impl Eq for TypedLocal<'_> {}
 
 impl<'tcx> TypedLocal<'tcx> {
+    /// Create a new typed local, fetching the type from the provided local
+    /// declarations.
     pub fn new(local: mir::Local, local_decls: &(impl mir::HasLocalDecls<'tcx> + ?Sized)) -> Self {
         Self {
             local,
@@ -61,6 +69,7 @@ impl<'tcx> TypedLocal<'tcx> {
         }
     }
 
+    /// Create a new typed local with the type provided.
     pub fn new_with_type(local: mir::Local, ty: ty::Ty<'tcx>) -> Self {
         Self {
             local,
@@ -78,12 +87,14 @@ impl<'tcx> TypedLocal<'tcx> {
 
 /// A [`mir::Local`] but also tracks the precise call chain it is reachable
 /// from.
+///
+/// All trait implementations ignore the type field.
 #[derive(Clone, Copy, Debug)]
 pub struct GlobalLocal<'tcx> {
     local: mir::Local,
     location: Option<GlobalLocation>,
     #[cfg(debug_assertions)]
-    pub ty: ty::Ty<'tcx>,
+    ty: ty::Ty<'tcx>,
     _ty_phantom: PhantomData<&'tcx ()>,
 }
 
@@ -148,6 +159,7 @@ impl<'tcx> GlobalLocal<'tcx> {
         }
     }
 
+    /// Convert a typed local to a global local. Propagates the type forward.
     pub fn from_typed_local(
         tcx: TyCtxt<'tcx>,
         local: TypedLocal<'tcx>,
@@ -192,6 +204,11 @@ impl<'tcx> GlobalLocal<'tcx> {
         self.location
     }
 
+    pub fn ty(self) -> ty::Ty<'tcx> {
+        self.ty
+    }
+
+    /// Retrieve a reasonable span for this location.
     pub fn span(self, tcx: TyCtxt<'tcx>, context: DefId) -> crate::rustc_span::Span {
         let body = tcx
             .body_for_def_id_default_policy(
