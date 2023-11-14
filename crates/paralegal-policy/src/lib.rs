@@ -165,7 +165,7 @@ impl GraphLocation {
             "No controllers found. Your policy is likely to be vacuous."
         );
         let result = prop(ctx.clone())?;
-        ctx.emit_diagnostics(std::io::stdout())?;
+        ctx.emit_diagnostics_may_exit(std::io::stdout())?;
         Ok(result)
     }
 
