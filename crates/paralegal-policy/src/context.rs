@@ -666,29 +666,6 @@ impl Context {
         let mut num_reached = 0;
         let mut num_checkpointed = 0;
 
-        let mut queue = starting_points
-            .filter_map(|n| match n.typ.as_data_source() {
-                Some(ds) => Some((
-                    ds,
-                    n.ctrl_id,
-                    &self.desc().controllers.get(&n.ctrl_id).unwrap().data_flow.0,
-                )),
-                None => {
-                    assert_warning!(
-                        *self,
-                        false,
-                        format!(
-                            "found starting point {:?} that cannot be converted to a datasource",
-                            n
-                        )
-                    );
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let started_with = queue.len();
-
         // Return whether node is checkpoint or terminal and increment those respective counters
         let mut check_node = |node: Node| -> bool {
             if is_checkpoint(node) {
@@ -700,6 +677,36 @@ impl Context {
             }
             false
         };
+
+        let starts = starting_points.collect::<Vec<_>>();
+        let started_with = starts.len();
+
+        let mut queue = starts
+            .iter()
+            .filter_map(|n| {
+                if check_node(*n) {
+                    return None;
+                }
+                match n.typ.as_data_source() {
+                    Some(ds) => Some((
+                        ds,
+                        n.ctrl_id,
+                        &self.desc().controllers.get(&n.ctrl_id).unwrap().data_flow.0,
+                    )),
+                    None => {
+                        assert_warning!(
+                            *self,
+                            false,
+                            format!(
+                            "found starting point {:?} that cannot be converted to a datasource",
+                            n
+                        )
+                        );
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
 
         while let Some(current) = queue.pop() {
             // Check the datasource.
