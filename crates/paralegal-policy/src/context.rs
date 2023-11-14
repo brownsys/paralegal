@@ -693,9 +693,9 @@ impl Context {
                             *self,
                             false,
                             format!(
-							"found starting point {:?} that cannot be converted to a datasource",
-							n
-						)
+                            "found starting point {:?} that cannot be converted to a datasource",
+                            n
+                        )
                         );
                         None
                     }

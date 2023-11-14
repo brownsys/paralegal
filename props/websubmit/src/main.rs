@@ -1,8 +1,8 @@
 extern crate anyhow;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
-
+use anyhow::{bail, Result};
+use clap::Parser;
 use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Context, Marker, PolicyContext};
 
 macro_rules! marker {
@@ -127,10 +127,10 @@ impl ScopedStorageProp {
                                     store_callsite,
                                     paralegal_policy::EdgeType::Data,
                                 ) &&
-								self.cx.influencers(
-									*scope,
-									paralegal_policy::EdgeType::Data
-								).any(|i| self.cx.has_marker(marker!(auth_witness), i))
+                                self.cx.influencers(
+                                    *scope,
+                                    paralegal_policy::EdgeType::Data
+                                ).any(|i| self.cx.has_marker(marker!(auth_witness), i))
                             });
                             assert_error!(
                                 self.cx,
@@ -283,14 +283,25 @@ pub fn run_dis_policy(ctx: Arc<Context>) -> Result<bool> {
     })
 }
 
-fn main() -> Result<()> {
-    let ws_dir = std::env::args()
-        .nth(1)
-        .ok_or_else(|| anyhow!("expected format: cargo run <path> [edit-<property>-<articulation point>-<short edit type> | none] [policy]"))?;
-    let edit_name = std::env::args().nth(2);
-    let prop_name = std::env::args().nth(3);
+#[derive(Parser)]
+struct Args {
+    /// path to WebSubmit directory.
+    #[clap(long)]
+    ws_dir: std::path::PathBuf,
 
-    let prop = match prop_name {
+    /// edit-<property>-<articulation point>-<short edit type>
+    #[clap(long, default_value = "none")]
+    edit_type: String,
+
+    /// sc, del, or dis.
+    #[clap(long)]
+    policy: Option<String>,
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+
+    let prop = match args.policy {
         Some(s) => match s.as_str() {
             "sc" => run_sc_policy,
             "del" => run_del_policy,
@@ -310,15 +321,19 @@ fn main() -> Result<()> {
         "--skip-sigs",
         "--abort-after-analysis",
         "--external-annotations",
-        format!("{}baseline-external-annotations.toml", ws_dir).as_str(),
+        format!(
+            "{}baseline-external-annotations.toml",
+            args.ws_dir.to_string_lossy()
+        )
+        .as_str(),
     ]);
 
-    if let Some(edit) = edit_name {
-        if edit.as_str() != "none" {
-            command.get_command().args(["--", "--features", &edit]);
-        }
+    if args.edit_type.as_str() != "none" {
+        command
+            .get_command()
+            .args(["--", "--features", &args.edit_type]);
     }
-    command.run(ws_dir)?.with_context(prop)?;
+    command.run(args.ws_dir)?.with_context(prop)?;
 
     Ok(())
 }
