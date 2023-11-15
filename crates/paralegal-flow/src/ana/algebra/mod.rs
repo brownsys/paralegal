@@ -125,6 +125,7 @@ pub mod graph {
     }
 
     impl<D, B: Copy + Eq + Ord + Hash + Display, F: Copy + Display + Eq + Hash> Graph<D, B, F> {
+        #[cfg_attr(feature = "profiling", flamer::flame("algebra"))]
         pub fn new<GetEq: std::borrow::Borrow<Equality<B, F>>, I: IntoIterator<Item = GetEq>>(
             equations: I,
             descriptor: D,
@@ -163,6 +164,7 @@ pub mod graph {
             Graph { graph, descriptor }
         }
 
+        #[cfg_attr(feature = "profiling", flamer::flame)]
         #[allow(clippy::blocks_in_if_conditions)]
         pub fn reachable<T: Fn(B) -> bool>(
             &self,

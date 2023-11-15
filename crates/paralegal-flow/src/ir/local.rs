@@ -22,6 +22,12 @@ pub struct TypedLocal<'tcx> {
     _ty_phantom: PhantomData<&'tcx ()>,
 }
 
+impl<'tcx> allocative::Allocative for TypedLocal<'tcx> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit()
+    }
+}
+
 impl std::fmt::Display for TypedLocal<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self.local)?;
@@ -96,6 +102,12 @@ pub struct GlobalLocal<'tcx> {
     #[cfg(debug_assertions)]
     ty: ty::Ty<'tcx>,
     _ty_phantom: PhantomData<&'tcx ()>,
+}
+
+impl<'tcx> allocative::Allocative for GlobalLocal<'tcx> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit()
+    }
 }
 
 impl<'tcx> std::cmp::PartialEq for GlobalLocal<'tcx> {

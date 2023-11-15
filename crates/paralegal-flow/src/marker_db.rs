@@ -103,6 +103,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             .any(Annotation::is_marker)
     }
 
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     /// Are there any markers (local or external) on this item?
     ///
     /// This is in contrast to [`Self::marker_is_reachable`] which also reports
@@ -130,6 +131,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         &self.db().external_annotations
     }
 
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     /// Are there markers reachable from this (function)?
     ///
     /// Returns true if the item itself carries a marker *or* if one of the

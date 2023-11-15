@@ -2,6 +2,7 @@
 #[derive(
     Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Copy, serde::Serialize, serde::Deserialize,
 )]
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 pub struct TinyBitSet(u16);
 
 impl Default for TinyBitSet {

@@ -10,6 +10,7 @@ use std::hash::Hash;
 
 pub type VariantIdx = usize;
 
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 /// An operator in the projection algebra.
 #[derive(Clone, Eq, Hash, Debug, Copy, PartialEq)]
 pub enum Operator<F: Copy> {
@@ -184,6 +185,7 @@ impl<F: Copy + std::fmt::Display> std::fmt::Display for Operator<F> {
     }
 }
 
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 /// Terms in the projection algebra
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Term<B, F: Copy> {
@@ -425,6 +427,7 @@ impl<B: Display, F: Display + Copy> Display for Term<B, F> {
     }
 }
 
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 /// An equation in the algebra
 #[derive(Clone, Debug)]
 pub struct Equality<B, F: Copy> {

@@ -295,6 +295,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             "Total number of analyzed functions {}",
             inliner.cache_size()
         );
+        crate::flame_dump::dump(&inliner);
         result
     }
 

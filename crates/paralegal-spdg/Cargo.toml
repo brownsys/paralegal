@@ -9,6 +9,7 @@ rustc_private = true
 
 [features]
 rustc = []
+profiling = ["allocative"]
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
@@ -18,3 +19,4 @@ indexical = { workspace = true }
 itertools = "0.11.0"
 strum = { version = "0.25", features = ["derive"] }
 cfg-if = "1"
+allocative = { version = "0.3", optional = true }

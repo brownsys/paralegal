@@ -64,6 +64,7 @@ impl<'tcx> InlineJudge<'tcx> {
         }
     }
 
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     /// Should we perform inlining on this function?
     pub fn should_inline(&self, function: FnResolution<'tcx>) -> bool {
         self.analysis_control.use_recursive_analysis() && !self.function_has_markers(function)
@@ -78,6 +79,7 @@ impl<'tcx> InlineJudge<'tcx> {
         &self.marker_ctx
     }
 
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     /// Is a marker reachable from this item?
     fn marker_is_reachable(&self, res: FnResolution<'tcx>) -> bool {
         self.marker_ctx.marker_is_reachable(res)

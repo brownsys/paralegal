@@ -1,6 +1,9 @@
 use crate::{
     ana::algebra::MirEquation,
-    ir::{regal, GlobalLocal, GlobalLocation},
+    ir::{
+        regal::{self, SimpleLocation},
+        GlobalLocal, GlobalLocation,
+    },
     mir, serde,
     utils::{time, write_sep, DisplayViaDebug, FnResolution, TinyBitSet},
     Either, HashMap, HashSet, Location, TyCtxt,
@@ -8,7 +11,7 @@ use crate::{
 
 use super::algebra;
 
-use petgraph::prelude as pg;
+use petgraph::{prelude as pg, visit::IntoEdgeReferences};
 
 pub type ArgNum = u32;
 
@@ -40,6 +43,7 @@ impl<C> Node<C> {
 ///
 /// Be aware that data edges are only supported in the range `0..15` and setting
 /// or querying data edges outside of the range will cause panics.
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 #[derive(Clone, Eq, PartialEq, Hash, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Edge {
     data: TinyBitSet,
@@ -194,6 +198,42 @@ pub struct InlinedGraph<'tcx> {
     pub(super) num_inlined: usize,
     /// For statistics: how deep a calll stack did we inline.
     pub(super) max_call_stack_depth: usize,
+}
+
+impl<'tcx> allocative::Allocative for InlinedGraph<'tcx> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        const equations: allocative::Key = allocative::Key::new("equations");
+        const graph: allocative::Key = allocative::Key::new("graph");
+        const nodes: allocative::Key = allocative::Key::new("nodes");
+        const edges: allocative::Key = allocative::Key::new("edges");
+        let mut vis = visitor.enter_self(self);
+        vis.visit_field(equations, &self.equations);
+        vis.visit_field(
+            graph,
+            &crate::utils::VisitViaClosure(|vis: &'_ mut allocative::Visitor<'_>| {
+                let mut vis = vis.enter_self_sized::<GraphImpl<'tcx, GlobalLocation>>();
+                for (from, to, e) in self.graph.all_edges() {
+                    from.visit(&mut vis);
+                    to.visit(&mut vis);
+                    e.visit(&mut vis);
+                }
+                vis.exit()
+            }),
+        );
+        vis.exit()
+    }
+}
+
+impl<'tcx> allocative::Allocative for Node<(GlobalLocation, FnResolution<'tcx>)> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit()
+    }
+}
+
+impl allocative::Allocative for DisplayViaDebug<mir::Field> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit()
+    }
 }
 
 impl<'tcx> InlinedGraph<'tcx> {

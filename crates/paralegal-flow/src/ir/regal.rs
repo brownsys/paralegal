@@ -4,6 +4,7 @@ use flowistry::indexed::{
 };
 use mir::{AggregateKind, Rvalue};
 use paralegal_spdg::rustc_portable::DefId;
+use rustc_ast::ptr::P;
 use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt};
 
 use crate::{
@@ -61,6 +62,17 @@ pub enum Target<L> {
     Argument(ArgumentIndex),
 }
 
+impl<L: allocative::Allocative> allocative::Allocative for Target<L> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        const call: allocative::Key = allocative::Key::new("call");
+        let mut vis = visitor.enter_self_sized::<Self>();
+        if let Target::Call(c) = self {
+            vis.visit_field(call, c)
+        }
+        vis.exit()
+    }
+}
+
 impl From<LocationOrArg> for Target<DisplayViaDebug<Location>> {
     fn from(value: LocationOrArg) -> Self {
         match value {
@@ -95,6 +107,27 @@ pub struct Call<'tcx, D> {
     pub return_to: Option<TypedLocal<'tcx>>,
     pub ctrl_deps: D,
     pub span: crate::Span,
+}
+
+impl<'tcx, D: allocative::Allocative> allocative::Allocative for Call<'tcx, D> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        const function: allocative::Key = allocative::Key::new("function");
+        const arguments: allocative::Key = allocative::Key::new("arguments");
+        const return_to: allocative::Key = allocative::Key::new("return_to");
+        const ctrl_deps: allocative::Key = allocative::Key::new("ctrl_deps");
+        let mut vis = visitor.enter_self(self);
+        vis.visit_field(function, &self.function);
+        vis.visit_field(
+            arguments,
+            &crate::utils::VisitViaClosure(|v: &'_ mut allocative::Visitor<'_>| {
+                self.arguments.raw.visit(v)
+            }),
+        );
+        vis.visit_field(return_to, &self.return_to);
+        vis.visit_field(ctrl_deps, &self.ctrl_deps);
+        vis.visit_simple_sized::<crate::Span>();
+        vis.exit()
+    }
 }
 
 impl<'tcx, D> Call<'tcx, D> {
@@ -201,6 +234,8 @@ impl<D: std::fmt::Display> std::fmt::Display for SimpleLocation<RelativePlace<D>
         }
     }
 }
+
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 #[derive(Debug)]
 pub struct Body<'tcx, L> {
     pub calls: HashMap<L, Call<'tcx, Dependencies<L>>>,
@@ -261,6 +296,7 @@ pub fn get_highest_local(body: &mir::Body) -> mir::Local {
 }
 
 impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     pub fn construct<I: IntoIterator<Item = algebra::MirEquation<'tcx>>>(
         flow_analysis: df::FlowResults<'_, 'tcx, '_>,
         equations: I,

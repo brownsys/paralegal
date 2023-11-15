@@ -490,6 +490,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
         }
     }
 
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     fn recurse_into_call(
         &self,
         state: &mut FlowDomain<'tcx>,
@@ -779,6 +780,7 @@ impl<'a, 'tcx, 'inliner> Analysis<'tcx> for FlowAnalysis<'a, 'tcx, 'inliner> {
     }
 }
 
+#[cfg_attr(feature = "profiling", flamer::flame)]
 pub fn compute_flow_internal<'a, 'tcx, 's>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,

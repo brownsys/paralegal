@@ -40,6 +40,16 @@ pub use print::*;
 
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
+pub struct VisitViaClosure<F>(pub F);
+
+impl<F: for<'a, 'b> Fn(&'a mut allocative::Visitor<'b>)> allocative::Allocative
+    for VisitViaClosure<F>
+{
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        (self.0)(visitor)
+    }
+}
+
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
 /// [`matches_path`](#method.matches_path) is interesting if you want to check
@@ -193,6 +203,12 @@ impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
 pub enum FnResolution<'tcx> {
     Final(ty::Instance<'tcx>),
     Partial(DefId),
+}
+
+impl<'tcx> allocative::Allocative for FnResolution<'tcx> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit()
+    }
 }
 
 impl<'tcx> PartialOrd for FnResolution<'tcx> {
@@ -1209,6 +1225,10 @@ where
         // only be invalidated if Cache is dropped. The returned reference has a lifetime
         // equal to Cache, so Cache cannot be dropped before this reference goes out of scope.
         Some(unsafe { std::mem::transmute::<&'_ Out, &'a Out>(&**entry) })
+    }
+
+    pub fn borrow_inner(&self) -> &RefCell<HashMap<In, Option<Pin<Box<Out>>>>> {
+        &self.0
     }
 }
 

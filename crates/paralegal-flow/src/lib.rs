@@ -10,6 +10,7 @@
     box_patterns,
     let_chains
 )]
+
 #[macro_use]
 extern crate clap;
 extern crate ordermap;
@@ -23,11 +24,9 @@ extern crate simple_logger;
 #[macro_use]
 extern crate log;
 extern crate humantime;
-
-extern crate petgraph;
-
 extern crate num_derive;
 extern crate num_traits;
+extern crate petgraph;
 
 #[macro_use]
 pub extern crate rustc_index;
@@ -153,11 +152,57 @@ pub struct AdditionalInfo {
     pub call_sites: HashMap<String, desc::CallSite>,
 }
 
+#[cfg(feature = "profiling")]
+mod flame_dump {
+    use crate::InlinerSize;
+
+    pub fn dump(memory_root: &dyn allocative::Allocative) {
+        println!("Dumping timing flamegraph");
+        match std::fs::File::create("time-flamegraph.html") {
+            Err(e) => println!("Couldn't create timing flamegraph file: {e}"),
+            Ok(f) => {
+                if let Err(e) = flame::dump_html(f) {
+                    println!("Couldn't dump timing flamegraph: {e}")
+                }
+            }
+        }
+
+        match std::fs::File::create("memory-flamegraph") {
+            Err(e) => println!("Couldn't create memory flamegraph file: {e}"),
+            Ok(mut f) => {
+                use std::io::Write;
+                let mut vis = allocative::FlameGraphBuilder::default();
+                vis.visit_root(memory_root);
+                vis.visit_root(&InlinerSize::<
+                    paralegal_spdg::global_location::RawGlobalLocation,
+                >(std::marker::PhantomData));
+                write!(f, "{}", vis.finish_and_write_flame_graph()).unwrap();
+            }
+        }
+    }
+}
+
+struct InlinerSize<T>(std::marker::PhantomData<T>);
+
+impl<T: Eq + std::hash::Hash + Send + Sync + 'static> allocative::Allocative for InlinerSize<T> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let key: allocative::Key =
+            allocative::Key::new(std::any::type_name::<internment::Intern<T>>());
+        visitor
+            .enter(
+                key,
+                internment::Intern::<T>::num_objects_interned() * std::mem::size_of::<T>(),
+            )
+            .exit()
+    }
+}
+
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
         config.override_queries = Some(borrowck_facts::override_queries);
     }
 
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     // This used to run `after_parsing` but that now makes `tcx.crates()` empty
     // (which interferes with external annotation resolution). So now it runs
     // `after_expansion` and so far that doesn't seem to break anything, but I'm

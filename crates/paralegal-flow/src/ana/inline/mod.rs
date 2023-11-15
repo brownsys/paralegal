@@ -72,6 +72,7 @@ impl<'tcx> Inliner<'tcx> {
             .collect()
     }
 
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     /// For each edge in this graph query the set of equations to determine if
     /// it is memory-plausible e.g. if there exists an argument `a` to the
     /// target and a return `r` from the source such that either `a` can be
@@ -194,6 +195,63 @@ pub struct Inliner<'tcx> {
     ana_ctrl: &'static AnalysisCtrl,
     dbg_ctrl: &'static DumpArgs,
     marker_carrying: InlineJudge<'tcx>,
+}
+
+impl<'tcx> allocative::Allocative for Inliner<'tcx> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        const base_memo: allocative::Key = allocative::Key::new("base_memo");
+        const inline_memo: allocative::Key = allocative::Key::new("inline_memo");
+        const key: allocative::Key = allocative::Key::new("key");
+        const value: allocative::Key = allocative::Key::new("value");
+        const value_graph: allocative::Key = allocative::Key::new("graph");
+        const map: allocative::Key = allocative::Key::new("cache");
+        let mut vis = visitor.enter_self_sized::<Self>();
+        vis.visit_field(
+            base_memo,
+            &crate::utils::VisitViaClosure(|vis: &'_ mut allocative::Visitor<'_>| {
+                let mut vis = vis.enter_unique(
+                    map,
+                    std::mem::size_of::<
+                        HashMap<DefId, Option<regal::Body<'tcx, DisplayViaDebug<Location>>>>,
+                    >(),
+                );
+                let borrow = self.base_memo.items();
+                for (_, v) in borrow.into_iter() {
+                    vis.visit_simple_sized::<DefId>();
+                    vis.visit_field(value, v);
+                }
+                vis.exit()
+            }),
+        );
+        vis.visit_field(
+            inline_memo,
+            &crate::utils::VisitViaClosure(|vis: &'_ mut allocative::Visitor<'_>| {
+                let mut vis =
+                    vis.enter_unique(
+                        map,
+                        std::mem::size_of::<
+                            HashMap<FnResolution<'tcx>, Box<Option<InlinedGraph<'tcx>>>>,
+                        >(),
+                    );
+                let borrow = self.inline_memo.borrow_inner().borrow();
+                for (k, v) in borrow.iter() {
+                    vis.visit_field(key, k);
+                    vis.visit_simple(value, std::mem::size_of_val(v));
+                    if let Some(v) = v.as_ref() {
+                        vis.visit_field(value_graph, &**v);
+                    }
+                }
+                vis.exit()
+            }),
+        );
+        vis.exit()
+    }
+}
+
+impl allocative::Allocative for DisplayViaDebug<mir::Location> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit()
+    }
 }
 
 fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Display>(
@@ -403,6 +461,7 @@ impl<'tcx> Inliner<'tcx> {
         })
     }
 
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     fn classify_special_function_handling(
         &self,
         function: FnResolution<'tcx>,
@@ -832,6 +891,7 @@ impl<'tcx> Inliner<'tcx> {
         queue_for_pruning
     }
 
+    #[cfg_attr(feature = "profiling", flamer::flame)]
     /// In spite of the name of this function it not only inlines the graph but
     /// also first creates it (with [`Self::get_procedure_graph`]) and globalize
     /// it ([`to_global_graph`]).
