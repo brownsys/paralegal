@@ -299,6 +299,8 @@ impl Context {
     /// Returns whether a node flows to a node through the configured edge type.
     ///
     /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
+    ///
+    /// If you use flows_to with [`EdgeType::Control`], you might want to consider using [`Context::has_ctrl_influence`].
     pub fn flows_to(&self, src: Node, sink: Node, edge_type: EdgeType) -> bool {
         if src.ctrl_id != sink.ctrl_id {
             return false;
@@ -343,6 +345,19 @@ impl Context {
                 }
             }
         }
+    }
+
+    /// Returns whether there is direct control flow influence from influencer to sink, or is there is some data flow from influencer to something that has ctrl flow to sink.
+    #[allow(dead_code)]
+    fn has_ctrl_influence(&self, influencer: Node, target: Node) -> bool {
+        let Some(tcs) = target.associated_call_site() else {
+				return false;
+			};
+
+        self.flows_to(influencer, tcs, EdgeType::Control)
+            || self
+                .influencees(influencer, EdgeType::Data)
+                .any(|inf| self.flows_to(inf, tcs, EdgeType::Control))
     }
 
     /// Returns iterator over all Nodes that influence the given sink Node.
@@ -1012,8 +1027,8 @@ fn test_influencees() -> Result<()> {
         ctrl_id: ctrl_name,
         typ: (&DataSource::Argument(0)).into(),
     };
-    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
-    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
 
     let influencees_data_control = ctx
         .influencees(src_a, EdgeType::DataAndControl)
@@ -1053,8 +1068,8 @@ fn test_influencees() -> Result<()> {
 fn test_callsite_is_arg_influencee() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
     let ctrl_name = ctx.find_by_name("influence")?;
-    let sink_arg = crate::test_utils::get_sink_node(&ctx, ctrl_name, "sink1");
-    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
+    let sink_arg = crate::test_utils::get_sink_node(&ctx, ctrl_name, "sink1").unwrap();
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
 
     let influencees = ctx
         .influencees(sink_arg, EdgeType::Data)
@@ -1080,8 +1095,8 @@ fn test_influencers() -> Result<()> {
         ctrl_id: ctrl_name,
         typ: (&DataSource::Argument(1)).into(),
     };
-    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
-    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
 
     let influencers_data_control = ctx
         .influencers(sink_callsite, EdgeType::DataAndControl)
@@ -1129,8 +1144,8 @@ fn test_influencers() -> Result<()> {
 fn test_arg_is_callsite_influencer() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
     let ctrl_name = ctx.find_by_name("influence")?;
-    let sink_arg = crate::test_utils::get_sink_node(&ctx, ctrl_name, "sink1");
-    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
+    let sink_arg = crate::test_utils::get_sink_node(&ctx, ctrl_name, "sink1").unwrap();
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
 
     let influencers = ctx
         .influencers(sink_callsite, EdgeType::Data)
@@ -1139,6 +1154,51 @@ fn test_arg_is_callsite_influencer() -> Result<()> {
     assert!(
         influencers.contains(&sink_arg),
         "arg influences callsite through data"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_has_ctrl_influence() -> Result<()> {
+    let ctx = crate::test_utils::test_ctx();
+    let ctrl_name = ctx.find_by_name("ctrl_influence")?;
+    let src_a = crate::Node {
+        ctrl_id: ctrl_name,
+        typ: (&DataSource::Argument(0)).into(),
+    };
+    let src_b = crate::Node {
+        ctrl_id: ctrl_name,
+        typ: (&DataSource::Argument(1)).into(),
+    };
+    let a_identity =
+        crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "identity").unwrap();
+    let b_identity =
+        crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "id").unwrap();
+    let validate =
+        crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "validate_foo").unwrap();
+    let sink_cs =
+        crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "sink1").unwrap();
+
+    assert!(
+        ctx.has_ctrl_influence(src_a, sink_cs),
+        "src_a influences sink"
+    );
+    assert!(
+        ctx.has_ctrl_influence(a_identity, sink_cs),
+        "a_prime influences sink"
+    );
+    assert!(
+        ctx.has_ctrl_influence(validate, sink_cs),
+        "validate_foo influences sink"
+    );
+    assert!(
+        !ctx.has_ctrl_influence(src_b, sink_cs),
+        "src_b doesnt influence sink"
+    );
+    assert!(
+        !ctx.has_ctrl_influence(b_identity, sink_cs),
+        "b_prime doesnt influence sink"
     );
 
     Ok(())

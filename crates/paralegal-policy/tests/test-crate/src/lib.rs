@@ -71,3 +71,17 @@ fn happens_before_fail() -> u32 {
     let val = create();
     id(val) + val
 }
+
+#[paralegal::marker(check, return)]
+fn validate_foo(a: Foo) -> bool {
+    return true;
+}
+
+#[paralegal::analyze]
+fn ctrl_influence(a: Foo, b: Foo) {
+    let a_prime = identity(a);
+    let b_prime = id(b);
+    if validate_foo(a_prime) {
+        sink1(b_prime);
+    }
+}
