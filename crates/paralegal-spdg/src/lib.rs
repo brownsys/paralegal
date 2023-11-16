@@ -63,6 +63,20 @@ pub enum Annotation {
     Exception(ExceptionAnnotation),
 }
 
+impl allocative::Allocative for Annotation {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut vis = visitor.enter_self(self);
+        match self {
+            Self::Marker(m) =>
+                vis.visit_field({
+                const F: allocative::Key = allocative::Key::new("Marker");
+                F
+            }, m),
+            _ => vis.visit_simple_sized::<Self>(),
+        }
+    }
+}
+
 impl Annotation {
     /// If this is an [`Annotation::Marker`], returns the underlying [`MarkerAnnotation`].
     pub fn as_marker(&self) -> Option<&MarkerAnnotation> {
@@ -98,6 +112,7 @@ pub struct ExceptionAnnotation {
     pub verification_hash: Option<VerificationHash>,
 }
 
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 /// A marker annotation and its refinements.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
 pub struct MarkerAnnotation {
@@ -111,6 +126,7 @@ fn const_false() -> bool {
     false
 }
 
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 /// Refinements in the marker targeting. The default (no refinement provided) is
 /// `on_argument == vec![]` and `on_return == false`, which is also what is
 /// returned from [`Self::empty`].
@@ -369,6 +385,12 @@ impl ProgramDescription {
 /// Implemented as an interned string, so identifiers are cheap to reuse.
 #[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Serialize, Deserialize, Copy)]
 pub struct Identifier(Intern<String>);
+
+impl allocative::Allocative for Identifier {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit()
+    }
+}
 
 impl Identifier {
     /// Returns the underlying string from an identifier.

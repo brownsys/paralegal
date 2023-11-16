@@ -1,7 +1,7 @@
 use crate::{
     ana::algebra::MirEquation,
     ir::{
-        regal::{self, SimpleLocation},
+        regal::{self},
         GlobalLocal, GlobalLocation,
     },
     mir, serde,
@@ -11,7 +11,7 @@ use crate::{
 
 use super::algebra;
 
-use petgraph::{prelude as pg, visit::IntoEdgeReferences};
+use petgraph::prelude as pg;
 
 pub type ArgNum = u32;
 
@@ -188,6 +188,7 @@ pub type Equations<L> = Vec<Equation<L>>;
 /// Common, parameterized graph type used in this module
 pub type GraphImpl<'tcx, L> = pg::GraphMap<Node<(L, FnResolution<'tcx>)>, Edge, pg::Directed>;
 
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 /// A graph that has its subgraphs inlined (or is in the process of it).
 pub struct InlinedGraph<'tcx> {
     /// The global graph
@@ -198,30 +199,6 @@ pub struct InlinedGraph<'tcx> {
     pub(super) num_inlined: usize,
     /// For statistics: how deep a calll stack did we inline.
     pub(super) max_call_stack_depth: usize,
-}
-
-impl<'tcx> allocative::Allocative for InlinedGraph<'tcx> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        const equations: allocative::Key = allocative::Key::new("equations");
-        const graph: allocative::Key = allocative::Key::new("graph");
-        const nodes: allocative::Key = allocative::Key::new("nodes");
-        const edges: allocative::Key = allocative::Key::new("edges");
-        let mut vis = visitor.enter_self(self);
-        vis.visit_field(equations, &self.equations);
-        vis.visit_field(
-            graph,
-            &crate::utils::VisitViaClosure(|vis: &'_ mut allocative::Visitor<'_>| {
-                let mut vis = vis.enter_self_sized::<GraphImpl<'tcx, GlobalLocation>>();
-                for (from, to, e) in self.graph.all_edges() {
-                    from.visit(&mut vis);
-                    to.visit(&mut vis);
-                    e.visit(&mut vis);
-                }
-                vis.exit()
-            }),
-        );
-        vis.exit()
-    }
 }
 
 impl<'tcx> allocative::Allocative for Node<(GlobalLocation, FnResolution<'tcx>)> {

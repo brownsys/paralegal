@@ -167,15 +167,44 @@ mod flame_dump {
             }
         }
 
-        match std::fs::File::create("memory-flamegraph") {
+        dump_memory(
+            [
+                memory_root,
+                &InlinerSize::<paralegal_spdg::global_location::RawGlobalLocation>(
+                    std::marker::PhantomData,
+                ),
+            ],
+            None,
+        );
+    }
+
+    pub fn dump_memory<'a>(
+        roots: impl IntoIterator<Item = &'a dyn allocative::Allocative>,
+        prefix: Option<&str>,
+    ) {
+        let mut name = String::new();
+        if let Some(prefix) = prefix {
+            use std::fmt::Write;
+            write!(name, "{}-", prefix).unwrap();
+        }
+        name.push_str("memory-flamegraph.folded");
+        match std::fs::File::create(name) {
             Err(e) => println!("Couldn't create memory flamegraph file: {e}"),
             Ok(mut f) => {
                 use std::io::Write;
                 let mut vis = allocative::FlameGraphBuilder::default();
-                vis.visit_root(memory_root);
-                vis.visit_root(&InlinerSize::<
-                    paralegal_spdg::global_location::RawGlobalLocation,
-                >(std::marker::PhantomData));
+                let total_size: usize = roots
+                    .into_iter()
+                    .map(|root| {
+                        vis.visit_root(root);
+                        allocative::size_of_unique_allocated_data(root)
+                    })
+                    .sum();
+                print!("Total size of ");
+                if let Some(prefix) = prefix {
+                    print!("{prefix} ");
+                }
+                println!("memory dump: {total_size} bytes");
                 write!(f, "{}", vis.finish_and_write_flame_graph()).unwrap();
             }
         }

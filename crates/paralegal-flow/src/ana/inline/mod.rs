@@ -183,70 +183,111 @@ impl<'tcx> Inliner<'tcx> {
 /// usually because it is a trait method resulting from a use of `dyn`.
 type BodyCache<'tcx> = Cache<DefId, Option<regal::Body<'tcx, DisplayViaDebug<Location>>>>;
 
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 /// Essentially just a bunch of caches of analyses.
 pub struct Inliner<'tcx> {
+    #[allocative(visit = visit_body_cache)]
     /// Memoized graphs created from single-procedure analyses
     base_memo: BodyCache<'tcx>,
     /// Memoized graphs that have all their callees inlined. Unlike `base_memo`
     /// this has to be recursion breaking, since a function may call itself
     /// (possibly transitively).
     inline_memo: RecursionBreakingCache<FnResolution<'tcx>, Option<InlinedGraph<'tcx>>>,
+    #[allocative(skip)]
     tcx: TyCtxt<'tcx>,
+    #[allocative(skip)]
     ana_ctrl: &'static AnalysisCtrl,
+    #[allocative(skip)]
     dbg_ctrl: &'static DumpArgs,
     marker_carrying: InlineJudge<'tcx>,
 }
 
-impl<'tcx> allocative::Allocative for Inliner<'tcx> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        const base_memo: allocative::Key = allocative::Key::new("base_memo");
-        const inline_memo: allocative::Key = allocative::Key::new("inline_memo");
-        const key: allocative::Key = allocative::Key::new("key");
-        const value: allocative::Key = allocative::Key::new("value");
-        const value_graph: allocative::Key = allocative::Key::new("graph");
-        const map: allocative::Key = allocative::Key::new("cache");
-        let mut vis = visitor.enter_self_sized::<Self>();
-        vis.visit_field(
-            base_memo,
-            &crate::utils::VisitViaClosure(|vis: &'_ mut allocative::Visitor<'_>| {
-                let mut vis = vis.enter_unique(
-                    map,
-                    std::mem::size_of::<
-                        HashMap<DefId, Option<regal::Body<'tcx, DisplayViaDebug<Location>>>>,
-                    >(),
-                );
-                let borrow = self.base_memo.items();
-                for (_, v) in borrow.into_iter() {
-                    vis.visit_simple_sized::<DefId>();
-                    vis.visit_field(value, v);
-                }
-                vis.exit()
-            }),
+fn visit_body_cache<'a, 'b, 'tcx>(
+    cache: &BodyCache<'tcx>,
+    visitor: &'a mut allocative::Visitor<'b>,
+) {
+    let mut vis = visitor.enter_self(cache);
+    let borrow = cache.unsafe_inner();
+    for (k, v) in borrow.borrow().iter() {
+        vis.visit_simple(
+            {
+                const F: allocative::Key = allocative::Key::new("key");
+                F
+            },
+            std::mem::size_of_val(k),
         );
         vis.visit_field(
-            inline_memo,
+            {
+                const F: allocative::Key = allocative::Key::new("value");
+                F
+            },
             &crate::utils::VisitViaClosure(|vis: &'_ mut allocative::Visitor<'_>| {
-                let mut vis =
-                    vis.enter_unique(
-                        map,
-                        std::mem::size_of::<
-                            HashMap<FnResolution<'tcx>, Box<Option<InlinedGraph<'tcx>>>>,
-                        >(),
+                let mut vis = vis.enter_self_sized::<Option<std::pin::Pin<Box<usize>>>>();
+                if let Some(v) = v.as_ref() {
+                    let v: &Option<regal::Body<_>> = &**v;
+                    vis.visit_field(
+                        {
+                            const F: allocative::Key = allocative::Key::new("Some");
+                            F
+                        },
+                        v,
                     );
-                let borrow = self.inline_memo.borrow_inner().borrow();
-                for (k, v) in borrow.iter() {
-                    vis.visit_field(key, k);
-                    vis.visit_simple(value, std::mem::size_of_val(v));
-                    if let Some(v) = v.as_ref() {
-                        vis.visit_field(value_graph, &**v);
-                    }
                 }
-                vis.exit()
             }),
-        );
-        vis.exit()
+        )
     }
 }
+
+// impl<'tcx> allocative::Allocative for Inliner<'tcx> {
+//     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+//         const base_memo: allocative::Key = allocative::Key::new("base_memo");
+//         const inline_memo: allocative::Key = allocative::Key::new("inline_memo");
+//         const key: allocative::Key = allocative::Key::new("key");
+//         const value: allocative::Key = allocative::Key::new("value");
+//         const value_graph: allocative::Key = allocative::Key::new("graph");
+//         const map: allocative::Key = allocative::Key::new("cache");
+//         let mut vis = visitor.enter_self_sized::<Self>();
+//         vis.visit_field(
+//             base_memo,
+//             &crate::utils::VisitViaClosure(|vis: &'_ mut allocative::Visitor<'_>| {
+//                 let mut vis = vis.enter_unique(
+//                     map,
+//                     std::mem::size_of::<
+//                         HashMap<DefId, Option<regal::Body<'tcx, DisplayViaDebug<Location>>>>,
+//                     >(),
+//                 );
+//                 let borrow = self.base_memo.items();
+//                 for (_, v) in borrow.into_iter() {
+//                     vis.visit_simple_sized::<DefId>();
+//                     vis.visit_field(value, v);
+//                 }
+//                 vis.exit()
+//             }),
+//         );
+//         vis.visit_field(
+//             inline_memo,
+//             &crate::utils::VisitViaClosure(|vis: &'_ mut allocative::Visitor<'_>| {
+//                 let mut vis =
+//                     vis.enter_unique(
+//                         map,
+//                         std::mem::size_of::<
+//                             HashMap<FnResolution<'tcx>, Box<Option<InlinedGraph<'tcx>>>>,
+//                         >(),
+//                     );
+//                 let borrow = self.inline_memo.borrow_inner().borrow();
+//                 for (k, v) in borrow.iter() {
+//                     vis.visit_field(key, k);
+//                     vis.visit_simple(value, std::mem::size_of_val(v));
+//                     if let Some(v) = v.as_ref() {
+//                         vis.visit_field(value_graph, &**v);
+//                     }
+//                 }
+//                 vis.exit()
+//             }),
+//         );
+//         vis.exit()
+//     }
+// }
 
 impl allocative::Allocative for DisplayViaDebug<mir::Location> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {

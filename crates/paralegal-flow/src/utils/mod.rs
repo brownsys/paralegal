@@ -1232,6 +1232,44 @@ where
     }
 }
 
+#[cfg(feature = "profiling")]
+impl<In: allocative::Allocative, Out: allocative::Allocative> allocative::Allocative
+    for RecursionBreakingCache<In, Out>
+{
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut vis = visitor.enter_self(self);
+        let borrow = self.0.borrow();
+        for (k, v) in borrow.iter() {
+            vis.visit_field(
+                {
+                    const F: allocative::Key = allocative::Key::new("key");
+                    F
+                },
+                k,
+            );
+            vis.visit_field(
+                {
+                    const F: allocative::Key = allocative::Key::new("value");
+                    F
+                },
+                &VisitViaClosure(|vis: &'_ mut allocative::Visitor<'_>| {
+                    let mut vis = vis.enter_self_sized::<Option<Pin<Box<Out>>>>();
+                    if let Some(v) = v.as_ref() {
+                        let v: &Out = &**v;
+                        vis.visit_field(
+                            {
+                                const F: allocative::Key = allocative::Key::new("Some");
+                                F
+                            },
+                            v,
+                        );
+                    }
+                }),
+            )
+        }
+    }
+}
+
 impl<In, Out> Default for RecursionBreakingCache<In, Out> {
     fn default() -> Self {
         Self(RefCell::new(HashMap::default()))

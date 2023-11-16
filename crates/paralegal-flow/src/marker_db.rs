@@ -17,7 +17,7 @@ use crate::{
     mir, ty,
     utils::{
         AsFnAndArgs, FnResolution, GenericArgExt, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt,
-        TyExt,
+        TyExt, VisitViaClosure,
     },
     DefId, HashMap, LocalDefId, TyCtxt,
 };
@@ -27,6 +27,7 @@ use std::{borrow::Cow, rc::Rc};
 
 type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 /// The marker context is a database which can be queried as to whether
 /// functions or types carry markers, whether markers are reachable in bodies,
 /// etc.
@@ -252,6 +253,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         )
     }
 }
+
 /// The structure inside of [`MarkerCtx`].
 pub struct MarkerDatabase<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -263,6 +265,52 @@ pub struct MarkerDatabase<'tcx> {
     marker_reachable_cache: CopyCache<FnResolution<'tcx>, bool>,
     /// Configuration options
     config: &'static MarkerControl,
+}
+
+impl<'tcx> allocative::Allocative for MarkerDatabase<'tcx> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut vis = visitor.enter_self(self);
+        vis.visit_simple_sized::<TyCtxt<'tcx>>();
+        vis.visit_field(
+            {
+                const F: allocative::Key = allocative::Key::new("local_annotations");
+                F
+            },
+            &VisitViaClosure(|v: &'_ mut allocative::Visitor<'_>| {
+                let mut vis = v.enter_self(&self.local_annotations);
+                for (k, v) in self.local_annotations.iter() {
+                    vis.visit_simple_sized::<LocalDefId>();
+                    vis.visit_field(
+                        {
+                            const F: allocative::Key = allocative::Key::new("value");
+                            F
+                        },
+                        v,
+                    );
+                }
+            }),
+        );
+
+        vis.visit_field(
+            {
+                const F: allocative::Key = allocative::Key::new("external_annotations");
+                F
+            },
+            &VisitViaClosure(|v: &'_ mut allocative::Visitor<'_>| {
+                let mut vis = v.enter_self(&self.external_annotations);
+                for (k, v) in self.external_annotations.iter() {
+                    vis.visit_simple_sized::<DefId>();
+                    vis.visit_field(
+                        {
+                            const F: allocative::Key = allocative::Key::new("value");
+                            F
+                        },
+                        v,
+                    );
+                }
+            }),
+        );
+    }
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {

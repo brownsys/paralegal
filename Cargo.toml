@@ -10,5 +10,10 @@ serde = "1.0.188"
 debug = true
 
 [replace]
-"rustc_utils:0.6.0-nightly-2023-04-12" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "80d92411810c709522119407be24745555adc87a" }
+#"rustc_utils:0.6.0-nightly-2023-04-12" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "80d92411810c709522119407be24745555adc87a" }
+"rustc_utils:0.6.0-nightly-2023-04-12" = { path = "../rustc_plugin/crates/rustc_utils" }
 "rustc_plugin:0.6.0-nightly-2023-04-12" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "80d92411810c709522119407be24745555adc87a" }
+"petgraph:0.6.4" = { git = "https://github.com/JustusAdam/petgraph", rev = "62298aab6a75e9aea0d7c21d228305f63b68d484" }
+"indexmap:2.0.2" = { git = "https://github.com/JustusAdam/indexmap", rev = "db8b21c22a207eb7a1c42950fa655010595bfda4" }
+"allocative:0.3.1" = { git = "https://github.com/JustusAdam/allocative", rev = "f93888c2dc9d9898481242297c14f70792f0eef2" }
+"allocative_derive:0.3.1" = { git = "https://github.com/JustusAdam/allocative", rev = "f93888c2dc9d9898481242297c14f70792f0eef2" }

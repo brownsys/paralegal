@@ -4,7 +4,7 @@ use flowistry::indexed::{
 };
 use mir::{AggregateKind, Rvalue};
 use paralegal_spdg::rustc_portable::DefId;
-use rustc_ast::ptr::P;
+
 use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt};
 
 use crate::{

@@ -11,7 +11,7 @@ rustc_private = true
 [features]
 test = []
 default = ["profiling"]
-profiling = ["flame", "flamer", "allocative", "paralegal-spdg/profiling"]
+profiling = ["dep:flame", "dep:flamer", "dep:allocative", "paralegal-spdg/profiling", "petgraph/profiling", "rustc_utils/profiling"]
 
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }

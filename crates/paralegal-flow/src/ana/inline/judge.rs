@@ -1,5 +1,6 @@
 use crate::{mir::Place, utils::FnResolution, AnalysisCtrl, MarkerCtx, TyCtxt};
 
+#[cfg_attr(feature = "profiling", derive(allocative::Allocative))]
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.
 ///
@@ -8,7 +9,9 @@ use crate::{mir::Place, utils::FnResolution, AnalysisCtrl, MarkerCtx, TyCtxt};
 /// options have been set.
 pub struct InlineJudge<'tcx> {
     marker_ctx: MarkerCtx<'tcx>,
+    #[allocative(skip)]
     tcx: TyCtxt<'tcx>,
+    #[allocative(skip)]
     analysis_control: &'static AnalysisCtrl,
 }
 
