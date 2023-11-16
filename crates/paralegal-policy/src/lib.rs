@@ -175,7 +175,7 @@ impl GraphLocation {
     /// Prefer using [`Self::with_context`] which takes care of emitting any
     /// diagnostic messages after the property is done.
     pub fn build_context(&self) -> Result<Context> {
-        simple_logger::init_with_env().unwrap();
+        let _ = simple_logger::init_with_env();
 
         let desc = {
             let mut f = File::open(&self.0)?;
