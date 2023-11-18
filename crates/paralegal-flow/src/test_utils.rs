@@ -545,10 +545,7 @@ pub trait HasGraph<'g>: Sized + Copy {
             graph.name_map[&name]
                 .as_slice()
                 .iter()
-                .map(move |&id| FnRef {
-                    graph: graph,
-                    ident: id,
-                }),
+                .map(move |&id| FnRef { graph, ident: id }),
         )
     }
 
