@@ -538,6 +538,17 @@ impl G {
 pub trait HasGraph<'g>: Sized + Copy {
     fn graph(self) -> &'g PreFrg;
 
+    fn functions(self, name: impl AsRef<str>) -> Box<dyn Iterator<Item = FnRef<'g>> + 'g> {
+        let name = Identifier::new_intern(name.as_ref());
+        let graph = self.graph();
+        Box::new(
+            graph.name_map[&name]
+                .as_slice()
+                .iter()
+                .map(move |&id| FnRef { graph, ident: id }),
+        )
+    }
+
     fn function(self, name: impl AsRef<str>) -> FnRef<'g> {
         let name = Identifier::new_intern(name.as_ref());
         let id = match self.graph().name_map[&name].as_slice() {
@@ -716,7 +727,7 @@ impl<'g> HasGraph<'g> for &FnRef<'g> {
 
 pub struct FnRef<'g> {
     graph: &'g PreFrg,
-    ident: DefId,
+    pub ident: DefId,
 }
 
 impl<'g> FnRef<'g> {
