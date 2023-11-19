@@ -19,23 +19,34 @@ pub fn test_ctx() -> Arc<Context> {
         .clone()
 }
 
+pub fn get_callsite_or_datasink_node<'a>(
+    ctx: &'a Context,
+    controller: ControllerId,
+    name: &'a str,
+) -> Option<Node<'a>> {
+    Some(get_callsite_node(ctx, controller, name).unwrap_or(get_sink_node(ctx, controller, name)?))
+}
+
 pub fn get_callsite_node<'a>(
     ctx: &'a Context,
     controller: ControllerId,
     name: &'a str,
-) -> Node<'a> {
+) -> Option<Node<'a>> {
     let name = Identifier::new_intern(name);
     let node = ctx.desc().controllers[&controller]
         .call_sites()
-        .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)
-        .unwrap();
-    crate::Node {
+        .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)?;
+    Some(crate::Node {
         ctrl_id: controller,
         typ: node.into(),
-    }
+    })
 }
 
-pub fn get_sink_node<'a>(ctx: &'a Context, controller: ControllerId, name: &'a str) -> Node<'a> {
+pub fn get_sink_node<'a>(
+    ctx: &'a Context,
+    controller: ControllerId,
+    name: &'a str,
+) -> Option<Node<'a>> {
     let name = Identifier::new_intern(name);
     let node = ctx.desc().controllers[&controller]
         .data_sinks()
@@ -44,10 +55,9 @@ pub fn get_sink_node<'a>(ctx: &'a Context, controller: ControllerId, name: &'a s
                 ctx.desc().def_info[&function.function].name == name
             }
             _ => false,
-        })
-        .unwrap();
-    crate::Node {
+        })?;
+    Some(crate::Node {
         ctrl_id: controller,
         typ: node.into(),
-    }
+    })
 }

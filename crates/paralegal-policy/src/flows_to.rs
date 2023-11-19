@@ -210,31 +210,14 @@ impl fmt::Debug for CtrlFlowsTo {
 
 #[test]
 fn test_data_flows_to() {
-    use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller").unwrap();
     let src = crate::Node {
         ctrl_id: controller,
         typ: (&DataSource::Argument(0)).into(),
     };
-    let get_sink_node = |name| {
-        let name = Identifier::new_intern(name);
-        let node = ctx.desc().controllers[&controller]
-            .data_sinks()
-            .find(|sink| match sink {
-                DataSink::Argument { function, .. } => {
-                    ctx.desc().def_info[&function.function].name == name
-                }
-                _ => false,
-            })
-            .unwrap();
-        crate::Node {
-            ctrl_id: controller,
-            typ: node.into(),
-        }
-    };
-    let sink1 = get_sink_node("sink1");
-    let sink2 = get_sink_node("sink2");
+    let sink1 = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
+    let sink2 = crate::test_utils::get_sink_node(&ctx, controller, "sink2").unwrap();
     assert!(ctx.flows_to(src, sink1, crate::EdgeType::Data));
     assert!(!ctx.flows_to(src, sink2, crate::EdgeType::Data));
 }
@@ -255,8 +238,8 @@ fn test_ctrl_flows_to() {
         ctrl_id: controller,
         typ: (&DataSource::Argument(2)).into(),
     };
-    let cs1 = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
-    let cs2 = crate::test_utils::get_callsite_node(&ctx, controller, "sink2");
+    let cs1 = crate::test_utils::get_callsite_node(&ctx, controller, "sink1").unwrap();
+    let cs2 = crate::test_utils::get_callsite_node(&ctx, controller, "sink2").unwrap();
     assert!(ctx.flows_to(src_a, cs1, crate::EdgeType::Control));
     assert!(ctx.flows_to(src_c, cs2, crate::EdgeType::Control));
     assert!(ctx.flows_to(src_a, cs2, crate::EdgeType::Control));
@@ -276,8 +259,8 @@ fn test_flows_to() {
         ctrl_id: controller,
         typ: (&DataSource::Argument(1)).into(),
     };
-    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
-    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
+    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
+    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1").unwrap();
     // a flows to the sink1 callsite (by ctrl flow)
     assert!(ctx.flows_to(src_a, cs, crate::EdgeType::DataAndControl));
     assert!(!ctx.flows_to(src_a, cs, crate::EdgeType::Data));
@@ -290,8 +273,8 @@ fn test_flows_to() {
 fn test_args_flow_to_cs() {
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
-    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
-    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
+    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
+    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1").unwrap();
 
     assert!(ctx.flows_to(sink, cs, crate::EdgeType::Data));
     assert!(ctx.flows_to(sink, cs, crate::EdgeType::DataAndControl));
