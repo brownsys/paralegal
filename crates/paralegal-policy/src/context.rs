@@ -300,7 +300,7 @@ impl Context {
     ///
     /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
     ///
-    /// If you use flows_to with [`EdgeType::Control`], you might want to consider using has_ctrl_influence.
+    /// If you use flows_to with [`EdgeType::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
     pub fn flows_to(&self, src: Node, sink: Node, edge_type: EdgeType) -> bool {
         if src.ctrl_id != sink.ctrl_id {
             return false;
@@ -347,7 +347,9 @@ impl Context {
         }
     }
 
-    /// Returns whether there is direct control flow influence from influencer to sink, or is there is some data flow from influencer to something that has ctrl flow to sink.
+    /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:
+    ///
+    /// `some n where self.flows_to(influencer, n, EdgeType::Data) && self.flows_to(n, target, Edgetype::Control)`.
     pub fn has_ctrl_influence(&self, influencer: Node, target: Node) -> bool {
         let Some(tcs) = target.associated_call_site() else {
 				return false;
