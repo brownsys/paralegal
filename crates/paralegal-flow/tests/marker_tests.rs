@@ -4,6 +4,7 @@
 extern crate lazy_static;
 
 use paralegal_flow::{define_flow_test_template, test_utils::*};
+use paralegal_spdg::Identifier;
 
 const TEST_CRATE_NAME: &str = "tests/marker-tests";
 
@@ -26,4 +27,15 @@ define_test!(use_wrapper: ctrl -> {
     assert!(ctrl.types_for(&paralegal_flow::desc::DataSource::FunctionCall(cs.call_site().clone()))
         .expect("Type not found on method")
         .iter().any(|t| ctrl.graph().desc.def_info[t].name.as_str() == "Wrapper"))
+});
+
+define_test!(trait_method_marker: ctrl -> {
+    let marker = Identifier::new_intern("find_me");
+    for method in ctrl.functions("method") {
+        let anns = &ctrl.annotations().get(&method.ident).map_or(&[] as &[_], |t| &t.0);
+
+        assert!(anns.iter()
+            .filter_map(|a| a.as_marker())
+            .any(|m| m.marker == marker))
+    }
 });

@@ -15,3 +15,17 @@ fn consume_any<T>(w: T) {
 fn use_wrapper() {
     consume_any(make_wrapper())
 }
+
+trait Test {
+    #[paralegal::marker(find_me)]
+    fn method(self);
+}
+
+impl Test for () {
+    fn method(self) {}
+}
+
+#[paralegal::analyze]
+fn trait_method_marker() {
+    ().method()
+}

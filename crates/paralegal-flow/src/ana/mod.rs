@@ -298,7 +298,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
     fn make_program_description(&self, controllers: HashMap<DefId, Ctrl>) -> ProgramDescription {
         let tcx = self.tcx;
-        let annotations: HashMap<DefId, (Vec<Annotation>, ObjectType)> = self
+        let get_fn_ag_num = |did| tcx.fn_sig(did).skip_binder().skip_binder().inputs().len();
+        let mut annotations: HashMap<DefId, (Vec<Annotation>, ObjectType)> = self
             .marker_ctx
             .local_annotations_found()
             .into_iter()
@@ -314,7 +315,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|(did, anns)| {
                 let def_kind = tcx.def_kind(did);
                 let obj_type = if def_kind.is_fn_like() {
-                    ObjectType::Function(tcx.fn_sig(did).skip_binder().skip_binder().inputs().len())
+                    ObjectType::Function(get_fn_ag_num(did))
                 } else {
                     // XXX add an actual match here
                     ObjectType::Type
@@ -323,6 +324,17 @@ impl<'tcx> SPDGGenerator<'tcx> {
             })
             .collect();
         let mut known_def_ids = def_ids_from_controllers(&controllers, tcx);
+
+        // And now, for every mentioned method in an impl, add the markers on
+        // the corresponding trait method also to the impl method.
+        for &did in &known_def_ids {
+            let Some((parent_anns, _)) = get_parent_annotations(tcx, did, &annotations) else { continue };
+            let parent_anns = parent_anns.clone();
+            let ptr = annotations
+                .entry(did)
+                .or_insert_with(|| (vec![], ObjectType::Function(get_fn_ag_num(did))));
+            ptr.0.extend(parent_anns)
+        }
         known_def_ids.extend(annotations.keys().copied());
         let def_info = known_def_ids
             .into_iter()
@@ -334,6 +346,25 @@ impl<'tcx> SPDGGenerator<'tcx> {
             def_info,
         }
     }
+}
+
+fn get_parent_annotations<'a, T>(
+    tcx: TyCtxt,
+    did: DefId,
+    annotations: &'a HashMap<DefId, T>,
+) -> Option<&'a T> {
+    let ident = tcx.opt_item_ident(did)?;
+    let kind = match tcx.def_kind(did) {
+        kind if kind.is_fn_like() => ty::AssocKind::Fn,
+        // todo allow constants and types also
+        _ => return None,
+    };
+    let r#impl = tcx.impl_of_method(did)?;
+    let r#trait = tcx.trait_id_of_impl(r#impl)?;
+    let parent_method = tcx
+        .associated_items(r#trait)
+        .find_by_name_and_kind(tcx, ident, kind, r#trait)?;
+    annotations.get(&parent_method.def_id)
 }
 
 fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
