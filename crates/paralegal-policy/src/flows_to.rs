@@ -70,10 +70,7 @@ pub struct CtrlFlowsTo {
     /// query this representation of the relation.
     pub data_flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
 
-    /// The transitive closure of the [`Ctrl::data_flow`] and [`Ctrl::ctrl_flow`] relations representing mixed flows of data and control.
-    /// If a source data-flows to a [`DataSink::Argument`], it flows into its CallSite.
-    /// If a source control-flows into a CallSite, it also flows into all of the [`DataSink::Argument`]s related to it.
-    pub flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
+    ctrl_flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
 }
 
 impl CtrlFlowsTo {
@@ -153,9 +150,6 @@ impl CtrlFlowsTo {
 
         iterate(&sources, &mut data_flows_to, &sink_to_source);
 
-        // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
-        let mut flows_to = data_flows_to.clone();
-
         // Connect each callsite to its function-argument sinks
         let mut callsites_to_callargs = IndexMatrix::new(&sinks);
         for (callsite_idx, callsite) in sinks.as_vec().iter_enumerated() {
@@ -171,38 +165,80 @@ impl CtrlFlowsTo {
                 }
             }
         }
-        // Initialize the `flows_to` relation with the data provided by `Ctrl::ctrl_flow`.
+
+        let mut ctrl_flows_to = IndexMatrix::new(&sinks);
+
+        // Populate `ctrl_flows_to` relation with the data provided by `Ctrl::ctrl_flow`.
         for (src, callsites) in &ctrl.ctrl_flow.0 {
             let src = src.to_index(&sources);
             for cs in callsites {
                 let new_call_site: CallSiteOrDataSink = cs.clone().into();
-                flows_to.insert(src, &new_call_site);
+                ctrl_flows_to.insert(src, &new_call_site);
                 // initialize with flows from the DataSource to all of the CallSite's DataSinks
                 for sink in callsites_to_callargs
                     .row_set(&sinks.index(&new_call_site))
                     .iter()
                 {
-                    flows_to.insert(src, sink);
+                    ctrl_flows_to.insert(src, sink);
                 }
             }
         }
-
-        iterate(&sources, &mut flows_to, &sink_to_source);
 
         CtrlFlowsTo {
             sources,
             sinks,
             callsites_to_callargs,
             data_flows_to,
-            flows_to,
+            ctrl_flows_to,
         }
+    }
+
+    /// Returns whether src->sink is in the transitive closure of data and control flow.
+    pub fn data_and_control_flows_to(&self, src: DataSource, sink: CallSiteOrDataSink) -> bool {
+        let mut queue = vec![src];
+        let mut seen = std::collections::HashSet::<&CallSiteOrDataSink>::new();
+
+        while let Some(cur_src) = queue.pop() {
+            if let Some(cs) = cur_src.as_function_call() {
+                if CallSiteOrDataSink::CallSite(cs.clone()) == sink {
+                    return true;
+                }
+                if let Some(DataSink::Argument { function, .. }) = sink.as_data_sink() {
+                    if function == cs {
+                        return true;
+                    }
+                }
+            }
+
+            let src_index = &cur_src.to_index(&self.sources);
+            for cur_sink in self
+                .data_flows_to
+                .row_set(src_index)
+                .iter()
+                .chain(self.ctrl_flows_to.row_set(src_index).iter())
+            {
+                if &sink == cur_sink {
+                    return true;
+                }
+
+                let callsite = match &sink {
+                    CallSiteOrDataSink::CallSite(cs) => cs,
+                    CallSiteOrDataSink::DataSink(DataSink::Argument { function, .. }) => function,
+                    _ => continue,
+                };
+                if seen.insert(&sink) {
+                    queue.push(callsite.clone().into())
+                }
+            }
+        }
+
+        false
     }
 }
 
 impl fmt::Debug for CtrlFlowsTo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CtrlFlowsTo")
-            .field("flows_to", &self.flows_to)
             .field("data_flows_to", &self.data_flows_to)
             .finish()
     }
