@@ -1061,9 +1061,6 @@ fn test_influencees() -> Result<()> {
         influencees_data_control.contains(&sink_callsite),
         "input argument a influences sink via control"
     );
-    for a in influencees_data_control.iter() {
-        println!("hihihi{}", ctx.describe_node(*a));
-    }
     // a influences cond arg + cs, sink1 arg + cs
     assert_eq!(influencees_data_control.len(), 4);
 

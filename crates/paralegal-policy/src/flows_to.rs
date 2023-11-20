@@ -170,16 +170,16 @@ impl CtrlFlowsTo {
 
         // Populate `ctrl_flows_to` relation with the data provided by `Ctrl::ctrl_flow`.
         for (src, callsites) in &ctrl.ctrl_flow.0 {
-            let src = src.to_index(&sources);
+            let src_idx = src.to_index(&sources);
             for cs in callsites {
                 let new_call_site: CallSiteOrDataSink = cs.clone().into();
-                ctrl_flows_to.insert(src, &new_call_site);
+                ctrl_flows_to.insert(src_idx, &new_call_site);
                 // initialize with flows from the DataSource to all of the CallSite's DataSinks
                 for sink in callsites_to_callargs
                     .row_set(&sinks.index(&new_call_site))
                     .iter()
                 {
-                    ctrl_flows_to.insert(src, sink);
+                    ctrl_flows_to.insert(src_idx, sink);
                 }
             }
         }
@@ -199,35 +199,30 @@ impl CtrlFlowsTo {
         let mut seen = std::collections::HashSet::<&CallSiteOrDataSink>::new();
 
         while let Some(cur_src) = queue.pop() {
-            if let Some(cs) = cur_src.as_function_call() {
-                if CallSiteOrDataSink::CallSite(cs.clone()) == sink {
+            if let DataSource::FunctionCall(callsite) = &cur_src {
+                if CallSiteOrDataSink::CallSite(callsite.clone()) == sink {
                     return true;
-                }
-                if let Some(DataSink::Argument { function, .. }) = sink.as_data_sink() {
-                    if function == cs {
-                        return true;
-                    }
                 }
             }
 
-            let src_index = &cur_src.to_index(&self.sources);
+            let src_index = cur_src.clone().to_index(&self.sources);
             for cur_sink in self
                 .data_flows_to
-                .row_set(src_index)
+                .row_set(&src_index)
                 .iter()
-                .chain(self.ctrl_flows_to.row_set(src_index).iter())
+                .chain(self.ctrl_flows_to.row_set(&src_index).iter())
             {
                 if &sink == cur_sink {
                     return true;
                 }
 
-                let callsite = match &sink {
+                let callsite = match &cur_sink {
                     CallSiteOrDataSink::CallSite(cs) => cs,
                     CallSiteOrDataSink::DataSink(DataSink::Argument { function, .. }) => function,
                     _ => continue,
                 };
                 if seen.insert(&sink) {
-                    queue.push(callsite.clone().into())
+                    queue.push(callsite.clone().into());
                 }
             }
         }
