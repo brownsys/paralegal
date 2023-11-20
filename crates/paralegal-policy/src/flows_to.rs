@@ -13,7 +13,7 @@ use crate::NodeType;
 /// Implemented efficiently using an [`IndexedDomain`] over the
 /// [`DataSource`] and [`CallSiteOrDataSink`] types.
 ///
-/// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`CtrlFlowsTo::flows_to`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
+/// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`CtrlFlowsTo::data_and_control_flows_to()`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
 ///
 /// - Indexes in [`CtrlFlowsTo`] vs functions in [`crate::Context`]: the indexes are
 /// used for efficiency when computing the functions in [`crate::Context`]. However, they
@@ -21,9 +21,9 @@ use crate::NodeType;
 ///  information that is needed answer questions about any kind of [`crate::Node`] and any
 /// kind of [`crate::EdgeType`] in an intuitive way.
 ///
-/// - [`CtrlFlowsTo::data_flows_to`] vs [`CtrlFlowsTo::flows_to`] indexes: Both
-///  are indexes that are the transitive closure of relations in the controller:
-/// both use the [`Ctrl::data_flow`] relation, and [`CtrlFlowsTo::flows_to`]
+/// - [`CtrlFlowsTo::data_flows_to`] vs [`CtrlFlowsTo::data_and_control_flows_to()`]: Both
+///  return the transitive closure of relations in the controller:
+/// both use the [`Ctrl::data_flow`] relation, and [`CtrlFlowsTo::data_and_control_flows_to()`]
 /// additionally includes relations from [`Ctrl::ctrl_flow`].
 ///
 /// - [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and
