@@ -205,24 +205,24 @@ impl CtrlFlowsTo {
                 }
             }
 
-            let src_index = cur_src.clone().to_index(&self.sources);
+            let cur_src_index = cur_src.clone().to_index(&self.sources);
             for cur_sink in self
                 .data_flows_to
-                .row_set(&src_index)
+                .row_set(&cur_src_index)
                 .iter()
-                .chain(self.ctrl_flows_to.row_set(&src_index).iter())
+                .chain(self.ctrl_flows_to.row_set(&cur_src_index).iter())
             {
                 if &sink == cur_sink {
                     return true;
                 }
 
-                let callsite = match &cur_sink {
+                let cur_sink_callsite = match &cur_sink {
                     CallSiteOrDataSink::CallSite(cs) => cs,
                     CallSiteOrDataSink::DataSink(DataSink::Argument { function, .. }) => function,
                     _ => continue,
                 };
-                if seen.insert(&sink) {
-                    queue.push(callsite.clone().into());
+                if seen.insert(&cur_sink) {
+                    queue.push(cur_sink_callsite.clone().into());
                 }
             }
         }
