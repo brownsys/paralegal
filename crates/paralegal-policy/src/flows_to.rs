@@ -221,7 +221,7 @@ impl CtrlFlowsTo {
                     CallSiteOrDataSink::DataSink(DataSink::Argument { function, .. }) => function,
                     _ => continue,
                 };
-                if seen.insert(&cur_sink) {
+                if seen.insert(cur_sink) {
                     queue.push(cur_sink_callsite.clone().into());
                 }
             }
