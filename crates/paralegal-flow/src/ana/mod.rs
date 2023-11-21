@@ -23,8 +23,8 @@ pub mod df;
 pub mod inline;
 pub mod non_transitive_aliases;
 
-pub type SerializableInlinedGraph<L> =
-    petgraph::graphmap::GraphMap<regal::SimpleLocation<L>, inline::Edge, petgraph::Directed>;
+// pub type SerializableInlinedGraph<L> =
+//     petgraph::graphmap::GraphMap<regal::SimpleLocation<L>, inline::Edge, petgraph::Directed>;
 
 /// Read-only database of information the analysis needs.
 ///

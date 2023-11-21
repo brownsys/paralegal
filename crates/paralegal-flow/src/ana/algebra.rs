@@ -76,10 +76,10 @@ impl<B: Display, F: Display + Copy> Display for Term<B, F> {
     }
 }
 
-impl Display for TargetPlace {
+impl<'tcx> Display for TargetPlace<'tcx> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TargetPlace::Argument(i) => write!(f, "a{}", i.as_usize()),
+            TargetPlace::Argument(i) => todo!(), //write!(f, "a{}", i.as_usize()),
             TargetPlace::Return => f.write_char('r'),
         }
     }

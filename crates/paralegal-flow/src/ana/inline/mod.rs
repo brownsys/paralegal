@@ -33,7 +33,7 @@ use crate::{
     AnalysisCtrl, DumpArgs, Either, HashMap, HashSet, MarkerCtx, Symbol, TyCtxt,
 };
 
-use rustc_utils::cache::Cache;
+use rustc_utils::{cache::Cache, PlaceExt};
 
 mod graph;
 mod judge;
@@ -50,7 +50,7 @@ use petgraph::{
 
 pub use judge::InlineJudge;
 
-type StdNode<'tcx> = Node<(GlobalLocation, FnResolution<'tcx>)>;
+type StdNode<'tcx> = Node<'tcx, (GlobalLocation, FnResolution<'tcx>)>;
 
 type EdgeSet<'tcx> = HashSet<(StdNode<'tcx>, StdNode<'tcx>)>;
 
@@ -129,7 +129,7 @@ impl<'tcx> Inliner<'tcx> {
                         // This can be optimized (directly create function)
                         let targets = match from {
                             Node::Argument(a) => Either::Right(std::iter::once(
-                                GlobalLocal::at_root((a.as_usize() + 1).into()),
+                                GlobalLocal::at_root((a.local.as_usize() + 1).into()),
                             )),
                             Node::Return => unreachable!(),
                             Node::Call((location, _did)) => Either::Left({
@@ -197,7 +197,7 @@ pub struct Inliner<'tcx> {
 
 fn is_part_of_async_desugar<'tcx, L: Copy + Ord + std::hash::Hash + std::fmt::Display>(
     tcx: TyCtxt<'tcx>,
-    node: Node<(L, FnResolution<'tcx>)>,
+    node: Node<'tcx, (L, FnResolution<'tcx>)>,
     graph: &GraphImpl<'tcx, L>,
 ) -> Option<&'static [algebra::Operator<DisplayViaDebug<FieldIdx>>]> {
     const POLL_FN_WRAP: &[Operator<DisplayViaDebug<FieldIdx>>] = &[
@@ -392,7 +392,7 @@ impl<'tcx> Inliner<'tcx> {
     fn get_call(
         &self,
         loc: GlobalLocation,
-    ) -> &regal::Call<'tcx, regal::Dependencies<DisplayViaDebug<mir::Location>>> {
+    ) -> &regal::Call<'tcx, regal::Dependencies<'tcx, DisplayViaDebug<mir::Location>>> {
         let body = self
             .get_procedure_graph(loc.innermost_function())
             .unwrap_or_else(|| {
@@ -407,7 +407,7 @@ impl<'tcx> Inliner<'tcx> {
     fn node_to_local(&self, node: &StdNode<'tcx>, idx: ArgNum) -> GlobalLocal {
         match node {
             SimpleLocation::Return => GlobalLocal::at_root(mir::RETURN_PLACE),
-            SimpleLocation::Argument(idx) => GlobalLocal::at_root((*idx).into()),
+            SimpleLocation::Argument(place) => GlobalLocal::at_root(place.local.into()),
             SimpleLocation::Call((loc, _)) => {
                 let call = self.get_call(*loc);
                 let pure_local = call.arguments[(idx as usize).into()]
@@ -476,7 +476,15 @@ impl<'tcx> Inliner<'tcx> {
         };
         let standard_edge: Edge = std::iter::once(EdgeType::Data(0)).collect();
         let incoming = (0..num_args)
-            .map(|a| (SimpleLocation::Argument(a.into()), standard_edge))
+            .map(|a| {
+                (
+                    SimpleLocation::Argument(mir::Place::from_local(
+                        mir::Local::from_usize(a + 1),
+                        tcx,
+                    )),
+                    standard_edge,
+                )
+            })
             .collect::<Vec<_>>();
         let outgoing = [(SimpleLocation::Return, standard_edge)];
         let return_location = match body
@@ -632,8 +640,8 @@ impl<'tcx> Inliner<'tcx> {
                 Node::Return => unreachable!(),
                 Node::Argument(a) => {
                     for nidx in argument_map
-                        .get(&EdgeType::Data(a.as_usize() as u32))
-                        .unwrap_or_else(|| panic!("Could not find {a} in arguments"))
+                        .get(&EdgeType::Data((a.local.as_usize() - 1) as u32))
+                        .unwrap_or_else(|| panic!("Could not find {a:?} in arguments"))
                         .iter()
                     {
                         add_edge(*nidx, true)
@@ -864,7 +872,7 @@ impl<'tcx> Inliner<'tcx> {
             )
             .unwrap();
         }
-        if self.ana_ctrl.use_pruning() {
+        if self.ana_ctrl.use_pruning() && false {
             let strategy = self.ana_ctrl.pruning_strategy();
             use crate::args::PruningStrategy;
             let edges_to_prune = if matches!(strategy, PruningStrategy::NotPreviouslyPrunedEdges) {
@@ -930,7 +938,7 @@ impl<'tcx> Inliner<'tcx> {
                     target.insert(match e.source() {
                         Node::Call(c) => c.0,
                         Node::Return => unreachable!(),
-                        Node::Argument(a) => mk_arg(a.as_usize() as u32),
+                        Node::Argument(a) => mk_arg(a.local.as_usize() as u32),
                     });
                 }
             }

@@ -340,7 +340,7 @@ impl<'a, 'tcx, 's> FlowAnalysis<'a, 'tcx, 's> {
         }
     }
 
-    pub fn location_domain(&self) -> &Rc<LocationDomain> {
+    pub fn location_domain(&self) -> &Rc<LocationDomain<'tcx>> {
         self.aliases.location_domain()
     }
 
@@ -693,15 +693,11 @@ impl<'a, 'tcx, 'inliner> AnalysisDomain<'tcx> for FlowAnalysis<'a, 'tcx, 'inline
     }
 
     fn initialize_start_block(&self, _body: &Body<'tcx>, state: &mut Self::Domain) {
-        for (arg, loc) in self.aliases.all_args() {
-            for place in self.aliases.conflicts(arg) {
-                debug!(
-                    "arg={arg:?} / place={place:?} / loc={:?}",
-                    self.location_domain().value(loc)
-                );
+        for (loc_index, loc) in self.aliases.location_domain().as_vec().iter_enumerated() {
+            if let LocationOrArg::Arg(place) = loc {
                 state
                     .matrix_mut()
-                    .set(self.aliases.normalize(*place), (loc, *place));
+                    .set(self.aliases.normalize(*place), (loc_index, *place));
             }
         }
     }

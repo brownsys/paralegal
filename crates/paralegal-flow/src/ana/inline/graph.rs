@@ -9,13 +9,14 @@ use super::algebra;
 
 use paralegal_spdg::rustc_portable::DefId;
 use petgraph::prelude as pg;
+use rustc_utils::PlaceExt;
 
 pub type ArgNum = u32;
 
-pub type Node<C> = regal::SimpleLocation<C>;
+pub type Node<'tcx, C> = regal::SimpleLocation<'tcx, C>;
 
-impl<C> Node<C> {
-    pub fn map_call<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Node<C0> {
+impl<'tcx, C> Node<'tcx, C> {
+    pub fn map_call<C0, F: FnOnce(&C) -> C0>(&self, f: F) -> Node<'tcx, C0> {
         match self {
             Node::Return => Node::Return,
             Node::Argument(a) => Node::Argument(*a),
@@ -231,7 +232,7 @@ pub type Equation<L> = algebra::Equality<L, DisplayViaDebug<mir::Field>>;
 /// Common structure of a collection of equations used for inlining.
 pub type Equations<L> = Vec<Equation<L>>;
 /// Common, parameterized graph type used in this module
-pub type GraphImpl<'tcx, L> = pg::GraphMap<Node<(L, FnResolution<'tcx>)>, Edge, pg::Directed>;
+pub type GraphImpl<'tcx, L> = pg::GraphMap<Node<'tcx, (L, FnResolution<'tcx>)>, Edge, pg::Directed>;
 
 /// A graph that has its subgraphs inlined (or is in the process of it).
 pub struct InlinedGraph<'tcx> {
@@ -297,7 +298,7 @@ impl<'tcx> InlinedGraph<'tcx> {
             let return_node = g.add_node(Node::Return);
 
             let mut add_dep_edges =
-                |to, idx, deps: &HashSet<regal::Target<DisplayViaDebug<Location>>>| {
+                |to, idx, deps: &HashSet<regal::Target<'tcx, DisplayViaDebug<Location>>>| {
                     for d in deps {
                         use regal::Target;
                         let from = match d {
@@ -333,7 +334,11 @@ impl<'tcx> InlinedGraph<'tcx> {
             }
             add_dep_edges(return_node, EdgeType::Data(0_u32), &body.return_deps);
             for (idx, deps) in body.return_arg_deps.iter().enumerate() {
-                add_dep_edges(Node::Argument(idx.into()), EdgeType::Data(0_u32), deps);
+                add_dep_edges(
+                    Node::Argument(mir::Place::from_local(mir::Local::from_usize(idx + 1), tcx)),
+                    EdgeType::Data(0_u32),
+                    deps,
+                );
             }
 
             gwr

@@ -22,7 +22,10 @@ use crate::{
     DumpArgs, Either, HashMap, HashSet, MarkerCtx, TyCtxt,
 };
 
-use std::fmt::{Display, Write};
+use std::{
+    cmp::Ordering,
+    fmt::{Display, Write},
+};
 
 newtype_index!(
     #[debug_format = "arg{}"]
@@ -48,32 +51,32 @@ impl Display for ArgumentIndex {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, Hash, Copy, Ord, PartialOrd)]
-pub enum TargetPlace {
+#[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
+pub enum TargetPlace<'tcx> {
     Return,
-    Argument(ArgumentIndex),
+    Argument(mir::Place<'tcx>),
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Copy, Clone)]
-pub enum Target<L> {
+pub enum Target<'tcx, L> {
     Call(L),
-    Argument(ArgumentIndex),
+    Argument(mir::Place<'tcx>),
 }
 
-impl From<LocationOrArg> for Target<DisplayViaDebug<Location>> {
-    fn from(value: LocationOrArg) -> Self {
+impl<'tcx> From<LocationOrArg<'tcx>> for Target<'tcx, DisplayViaDebug<Location>> {
+    fn from(value: LocationOrArg<'tcx>) -> Self {
         match value {
             LocationOrArg::Arg(a) => {
-                debug!("Saw argument {:?}, now {:?}", a, ArgumentIndex::from(a));
-                Target::Argument(a.into())
+                // debug!("Saw argument {:?}, now {:?}", a, ArgumentIndex::from(a.local));
+                Target::Argument(a)
             }
             LocationOrArg::Location(loc) => Target::Call(loc.into()),
         }
     }
 }
 
-impl<L> Target<L> {
-    pub fn map_location<L0, F: FnMut(&L) -> L0>(&self, mut f: F) -> Target<L0> {
+impl<'tcx, L> Target<'tcx, L> {
+    pub fn map_location<L0, F: FnMut(&L) -> L0>(&self, mut f: F) -> Target<'tcx, L0> {
         match self {
             Target::Argument(a) => Target::Argument(*a),
             Target::Call(l) => Target::Call(f(l)),
@@ -81,11 +84,11 @@ impl<L> Target<L> {
     }
 }
 
-impl<L: Display> Display for Target<L> {
+impl<'tcx, L: Display> Display for Target<'tcx, L> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Target::Call(loc) => write!(f, "{loc}"),
-            Target::Argument(a) => a.fmt(f),
+            Target::Argument(a) => write!(f, "{a:?}"),
         }
     }
 }
@@ -114,22 +117,22 @@ impl<'tcx, D> Call<'tcx, D> {
 //     }
 // }
 
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
-pub struct RelativePlace<L> {
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
+pub struct RelativePlace<'tcx, L> {
     pub location: L,
-    pub place: TargetPlace,
+    pub place: TargetPlace<'tcx>,
 }
 
-impl<L: Display> Display for RelativePlace<L> {
+impl<'tcx, L: Display> Display for RelativePlace<'tcx, L> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} @ {}", self.location, self.place)
     }
 }
 
-pub type Dependencies<L> = HashSet<Target<L>>;
+pub type Dependencies<'tcx, L> = HashSet<Target<'tcx, L>>;
 
 fn fmt_deps<L: Display>(
-    deps: &Dependencies<L>,
+    deps: &Dependencies<'_, L>,
     f: &mut std::fmt::Formatter<'_>,
 ) -> std::fmt::Result {
     f.write_char('{')?;
@@ -145,7 +148,7 @@ fn fmt_deps<L: Display>(
     f.write_char('}')
 }
 
-impl<'tcx, L: Display> Display for Call<'tcx, Dependencies<L>> {
+impl<'tcx, L: Display> Display for Call<'tcx, Dependencies<'tcx, L>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char('(')?;
         write_sep(f, ", ", self.arguments.iter(), |elem, f| {
@@ -163,15 +166,36 @@ impl<'tcx, L: Display> Display for Call<'tcx, Dependencies<L>> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Copy, Ord, PartialOrd)]
-pub enum SimpleLocation<C> {
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Copy)]
+pub enum SimpleLocation<'tcx, C> {
     Return,
-    Argument(ArgumentIndex),
+    Argument(mir::Place<'tcx>),
     Call(C),
 }
 
-impl<L> SimpleLocation<L> {
-    pub fn map_location<L0, F: FnMut(&L) -> L0>(&self, mut f: F) -> SimpleLocation<L0> {
+impl<'tcx, C: PartialOrd> PartialOrd for SimpleLocation<'tcx, C> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        use {Ordering::*, SimpleLocation::*};
+        match (self, other) {
+            (Return, Return) => Some(Equal),
+            (Return, _) => Some(Greater),
+            (_, Return) => Some(Less),
+            (Argument(p1), Argument(p2)) => p1.local.partial_cmp(&p2.local),
+            (Argument(_), Call(_)) => Some(Greater),
+            (Call(_), Argument(_)) => Some(Less),
+            (Call(c1), Call(c2)) => c1.partial_cmp(c2),
+        }
+    }
+}
+
+impl<'tcx, C: Ord> Ord for SimpleLocation<'tcx, C> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl<'tcx, L> SimpleLocation<'tcx, L> {
+    pub fn map_location<L0, F: FnMut(&L) -> L0>(&self, mut f: F) -> SimpleLocation<'tcx, L0> {
         use SimpleLocation::*;
         match self {
             Argument(a) => Argument(*a),
@@ -181,7 +205,7 @@ impl<L> SimpleLocation<L> {
     }
 }
 
-impl<D: std::fmt::Display, O: std::fmt::Display> std::fmt::Display for SimpleLocation<(D, O)> {
+impl<D: std::fmt::Display, O: std::fmt::Display> std::fmt::Display for SimpleLocation<'_, (D, O)> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use SimpleLocation::*;
         match self {
@@ -192,7 +216,9 @@ impl<D: std::fmt::Display, O: std::fmt::Display> std::fmt::Display for SimpleLoc
     }
 }
 
-impl<D: std::fmt::Display> std::fmt::Display for SimpleLocation<RelativePlace<D>> {
+impl<'tcx, D: std::fmt::Display> std::fmt::Display
+    for SimpleLocation<'tcx, RelativePlace<'tcx, D>>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use SimpleLocation::*;
         match self {
@@ -204,9 +230,9 @@ impl<D: std::fmt::Display> std::fmt::Display for SimpleLocation<RelativePlace<D>
 }
 #[derive(Debug)]
 pub struct Body<'tcx, L> {
-    pub calls: HashMap<L, Call<'tcx, Dependencies<L>>>,
-    pub return_deps: Dependencies<L>,
-    pub return_arg_deps: Vec<Dependencies<L>>,
+    pub calls: HashMap<L, Call<'tcx, Dependencies<'tcx, L>>>,
+    pub return_deps: Dependencies<'tcx, L>,
+    pub return_arg_deps: Vec<Dependencies<'tcx, L>>,
     pub equations: Vec<algebra::Equality<DisplayViaDebug<mir::Local>, DisplayViaDebug<Field>>>,
 }
 
@@ -269,7 +295,8 @@ impl<'tcx> Body<'tcx, DisplayViaDebug<Location>> {
         def_id: LocalDefId,
         body_with_facts: &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
     ) -> Self {
-        let domain = build_location_arg_domain(body_with_facts.simplified_body());
+        let domain =
+            build_location_arg_domain(tcx, body_with_facts.simplified_body(), def_id.to_def_id());
         let name = body_name_pls(tcx, def_id).name;
         time(&format!("Regal Body Construction of {name}"), || {
             let body = flow_analysis.analysis.body;
@@ -443,8 +470,8 @@ fn recursive_ctrl_deps<
     bb: mir::BasicBlock,
     body: &mir::Body<'tcx>,
     mut dependencies_for: F,
-) -> Dependencies<DisplayViaDebug<Location>> {
-    let mut seen = ctrl_ana
+) -> Dependencies<'tcx, DisplayViaDebug<Location>> {
+    let mut seen: HybridBitSet<BasicBlock> = ctrl_ana
         .dependent_on(bb)
         .cloned()
         .unwrap_or_else(|| HybridBitSet::new_empty(0));

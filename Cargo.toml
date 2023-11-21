@@ -10,5 +10,5 @@ serde = "1.0.188"
 debug = true
 
 [replace]
-"rustc_utils:0.6.0-nightly-2023-04-12" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "80d92411810c709522119407be24745555adc87a" }
-"rustc_plugin:0.6.0-nightly-2023-04-12" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "80d92411810c709522119407be24745555adc87a" }
+"rustc_utils:0.6.0-nightly-2023-04-12" = { path = "./rustc_plugin/crates/rustc_utils" } #{ git = "https://github.com/JustusAdam/rustc_plugin", rev = "80d92411810c709522119407be24745555adc87a" }
+"rustc_plugin:0.6.0-nightly-2023-04-12" = {path = "./rustc_plugin/crates/rustc_plugin"} #{ git = "https://github.com/JustusAdam/rustc_plugin", rev = "80d92411810c709522119407be24745555adc87a" }
