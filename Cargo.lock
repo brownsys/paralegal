@@ -395,14 +395,18 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "flowistry"
-version = "0.5.36"
-source = "git+https://github.com/brownsys/flowistry?rev=f3b27bb1e06a13c599ea56beca7aa047f7d291e5#f3b27bb1e06a13c599ea56beca7aa047f7d291e5"
+version = "0.5.41"
+source = "git+https://github.com/willcrichton/flowistry?rev=98e6678#98e667860154313f676b5807a7ecba716c49d19b"
 dependencies = [
  "anyhow",
  "cfg-if",
  "fluid-let",
+ "indexical 0.3.1",
+ "internment",
+ "itertools 0.12.0",
  "log",
- "rustc_utils 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "petgraph",
+ "rustc_utils",
  "serde",
 ]
 
@@ -615,6 +619,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "indexical"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "467e4f95baab3c675f5e42553f822b34e176aa13c322ec8c258743825deaafb6"
+dependencies = [
+ "fxhash",
+ "index_vec",
+ "splitmut",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -682,6 +697,15 @@ name = "itertools"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25db6b064527c5d482d0423354fcd07a89a2dfe07b67892e62411946db7f07b0"
 dependencies = [
  "either",
 ]
@@ -877,7 +901,7 @@ dependencies = [
  "dot",
  "flowistry",
  "humantime",
- "itertools",
+ "itertools 0.11.0",
  "lazy_static",
  "log",
  "nom",
@@ -888,8 +912,8 @@ dependencies = [
  "paralegal-spdg",
  "petgraph",
  "pretty",
- "rustc_plugin 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustc_utils 0.6.0-nightly-2023-04-12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustc_plugin",
+ "rustc_utils",
  "serde",
  "serde_bare",
  "serde_json",
@@ -905,8 +929,8 @@ name = "paralegal-policy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "indexical",
- "itertools",
+ "indexical 0.2.5",
+ "itertools 0.11.0",
  "lazy_static",
  "log",
  "paralegal-flow",
@@ -920,9 +944,9 @@ name = "paralegal-spdg"
 version = "0.1.0"
 dependencies = [
  "cfg-if",
- "indexical",
+ "indexical 0.2.5",
  "internment",
- "itertools",
+ "itertools 0.11.0",
  "log",
  "serde",
  "strum",
@@ -1044,15 +1068,9 @@ checksum = "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76"
 
 [[package]]
 name = "rustc_plugin"
-version = "0.6.0-nightly-2023-04-12"
+version = "0.7.3-nightly-2023-08-25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79b172d929863ef84797b5592af9b58160f954a484938991f5a6b2829e3c163a"
-replace = "rustc_plugin 0.6.0-nightly-2023-04-12 (git+https://github.com/JustusAdam/rustc_plugin?rev=80d92411810c709522119407be24745555adc87a)"
-
-[[package]]
-name = "rustc_plugin"
-version = "0.6.0-nightly-2023-04-12"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=80d92411810c709522119407be24745555adc87a#80d92411810c709522119407be24745555adc87a"
+checksum = "fc388efb890c5ec9bd4f46741f2756d4122ebd45e488af3dbe3fc454db21ad80"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1070,18 +1088,13 @@ checksum = "b3c5a95edfa0c893236ae4778bb7c4752760e4c0d245e19b5eff33c5aa5eb9dc"
 
 [[package]]
 name = "rustc_utils"
-version = "0.6.0-nightly-2023-04-12"
+version = "0.7.3-nightly-2023-08-25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3935b4a82abe6904308c9273afba6160cf36f20044e720c43839a08519eadfd8"
-replace = "rustc_utils 0.6.0-nightly-2023-04-12 (git+https://github.com/JustusAdam/rustc_plugin?rev=80d92411810c709522119407be24745555adc87a)"
-
-[[package]]
-name = "rustc_utils"
-version = "0.6.0-nightly-2023-04-12"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=80d92411810c709522119407be24745555adc87a#80d92411810c709522119407be24745555adc87a"
+checksum = "08764da7493b1435dea66fefc8b26006f3ce54ee80da404b96bb6a276939d37e"
 dependencies = [
  "anyhow",
  "cfg-if",
+ "indexical 0.3.1",
  "intervaltree",
  "log",
 ]

@@ -81,23 +81,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
         debug!("Handling target {}", target.name());
 
         let flow = {
-            let w = 6;
-            let i = inliner.get_inlined_graph(target.def_id).unwrap();
-            info!("Graph statistics for {}\n  {:<w$} graph nodes\n  {:<w$} graph edges\n  {:<w$} inlined functions\n  {:<w$} max call stack depth", target.name(), i.vertex_count(), i.edge_count(), i.inlined_functions_count(), i.max_call_stack_depth());
-            inliner.to_call_only_flow(i, |a| {
-                GlobalLocation::single(
-                    Location {
-                        block: mir::BasicBlock::from_usize(
-                            controller_body_with_facts
-                                .simplified_body()
-                                .basic_blocks
-                                .len(),
-                        ),
-                        statement_index: a as usize + 1,
-                    },
-                    target.def_id,
-                )
-            })
+            let graph = flowistry::pdg::compute_pdg(self.tcx, target.def_id.expect_local());
+            CallOnlyFlow::from(&graph)
         };
 
         // Register annotations on argument types for this controller.
