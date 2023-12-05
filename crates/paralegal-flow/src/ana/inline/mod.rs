@@ -11,5 +11,4 @@
 //! 5. Use the equations from place analysis prune edges
 //!    ([`InlinedGraph::prune_impossible_edges`]) using the accumulated set of
 //!    equations
-mod graph;
 pub mod judge;

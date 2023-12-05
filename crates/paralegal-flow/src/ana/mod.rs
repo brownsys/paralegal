@@ -18,13 +18,7 @@ use anyhow::Result;
 
 use super::discover::{CallSiteAnnotations, FnToAnalyze};
 
-pub mod algebra;
-pub mod df;
 pub mod inline;
-pub mod non_transitive_aliases;
-
-pub type SerializableInlinedGraph<L> =
-    petgraph::graphmap::GraphMap<regal::SimpleLocation<L>, inline::Edge, petgraph::Directed>;
 
 /// Read-only database of information the analysis needs.
 ///
@@ -51,7 +45,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
         //_hash_verifications: &mut HashVerifications,
         call_site_annotations: &mut CallSiteAnnotations,
         target: &FnToAnalyze,
-        inliner: &inline::Inliner<'tcx>,
     ) -> anyhow::Result<(Endpoint, Ctrl)> {
         let mut flows = Ctrl::default();
         fn register_call_site(
@@ -71,7 +64,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         if self.opts.dbg().dump_ctrl_mir() {
             mir::graphviz::write_mir_fn_graphviz(
                 tcx,
-                controller_body_with_facts.simplified_body(),
+                &controller_body_with_facts.body,
                 false,
                 &mut outfile_pls(format!("{}.mir.gv", target.name())).unwrap(),
             )
@@ -86,7 +79,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         };
 
         // Register annotations on argument types for this controller.
-        let controller_body = &controller_body_with_facts.simplified_body();
+        let controller_body = &controller_body_with_facts.body;
         {
             let types = controller_body.args_iter().map(|l| {
                 let ty = controller_body.local_decls[l].ty;
@@ -249,13 +242,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             )
         }
 
-        let inliner = inline::Inliner::new(
-            self.tcx,
-            self.marker_ctx.clone(),
-            self.opts.anactrl(),
-            self.opts.dbg(),
-        );
-
         let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
         let result = //crate::sah::HashVerifications::with(|hash_verifications| {
             targets
@@ -267,17 +253,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
                             //hash_verifications,
                             &mut call_site_annotations,
                             desc,
-                            &inliner,
                         )
                     })
                 })
                 .collect::<Result<HashMap<Endpoint, Ctrl>>>()
                 .map(|controllers| self.make_program_description(controllers)
                 );
-        info!(
-            "Total number of analyzed functions {}",
-            inliner.cache_size()
-        );
         result
     }
 

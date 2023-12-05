@@ -8,7 +8,7 @@
 //! to stdout, a file or a log statement. Some take additional information (such
 //! as [TyCtxt]) to get contextual information that is used to make the output
 //! more useful.
-use flowistry::indexed::IndexedDomain;
+use indexical::IndexedDomain;
 use paralegal_spdg::{rustc_portable::DefId, Identifier};
 
 use crate::{

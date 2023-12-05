@@ -20,6 +20,7 @@ use itertools::Itertools;
 use std::borrow::Cow;
 use std::io::prelude::*;
 use std::path::Path;
+use flowistry::pdg::graph::CallString;
 
 lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -349,7 +350,7 @@ impl G {
     ) -> impl Iterator<Item = &RawGlobalLocation> {
         self.graph
             .location_dependencies
-            .get(&GlobalLocation::intern(n))
+            .get(&CallString::new(n))
             .into_iter()
             .flat_map(move |deps| {
                 con_ty

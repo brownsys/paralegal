@@ -1,7 +1,7 @@
 use flowistry::pdg;
 use pdg::graph::{DepGraph, CallString, GlobalLocation};
-use petgraph::EdgeDirection;
 use crate::{HashMap, HashSet};
+use crate::mir;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ pub struct CallOnlyFlow {
 }
 
 impl CallOnlyFlow {
-    pub fn all_locations_iter(&self) -> impl Iterator<Item = &GlobalLocation> + '_ {
+    pub fn all_locations_iter(&self) -> impl Iterator<Item = &CallString> + '_ {
         self.location_dependencies.iter().flat_map(|(from, deps)| {
             std::iter::once(from).chain(
                 std::iter::once(&deps.ctrl_deps)
@@ -25,7 +25,7 @@ impl CallOnlyFlow {
     }
 }
 
-impl From<&'_ DepGraph> for CallOnlyFlow {
+impl From<&'_ DepGraph<'_>> for CallOnlyFlow {
     fn from(value: &DepGraph) -> Self {
         use petgraph::prelude::*;
         use flowistry::pdg::graph::*;

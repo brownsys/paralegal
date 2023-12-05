@@ -9,7 +9,7 @@ use hir::{
     def_id::LOCAL_CRATE,
     ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
 };
-use ty::{fast_reject::SimplifiedType::*, FloatTy, IntTy, UintTy};
+use ty::{fast_reject::SimplifiedType, FloatTy, IntTy, UintTy};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Res {
@@ -53,6 +53,38 @@ impl Res {
             panic!("Not a def")
         }
     }
+}
+
+fn find_primitive_impls<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> impl Iterator<Item = DefId> + 'tcx {
+    let ty = match name {
+        "bool" => SimplifiedType::Bool,
+        "char" => SimplifiedType::Char,
+        "str" => SimplifiedType::Str,
+        "array" => SimplifiedType::Array,
+        "slice" => SimplifiedType::Slice,
+        // FIXME: rustdoc documents these two using just `pointer`.
+        //
+        // Maybe this is something we should do here too.
+        "const_ptr" => SimplifiedType::Ptr(Mutability::Not),
+        "mut_ptr" => SimplifiedType::Ptr(Mutability::Mut),
+        "isize" => SimplifiedType::Int(IntTy::Isize),
+        "i8" => SimplifiedType::Int(IntTy::I8),
+        "i16" => SimplifiedType::Int(IntTy::I16),
+        "i32" => SimplifiedType::Int(IntTy::I32),
+        "i64" => SimplifiedType::Int(IntTy::I64),
+        "i128" => SimplifiedType::Int(IntTy::I128),
+        "usize" => SimplifiedType::Uint(UintTy::Usize),
+        "u8" => SimplifiedType::Uint(UintTy::U8),
+        "u16" => SimplifiedType::Uint(UintTy::U16),
+        "u32" => SimplifiedType::Uint(UintTy::U32),
+        "u64" => SimplifiedType::Uint(UintTy::U64),
+        "u128" => SimplifiedType::Uint(UintTy::U128),
+        "f32" => SimplifiedType::Float(FloatTy::F32),
+        "f64" => SimplifiedType::Float(FloatTy::F64),
+        _ => return [].iter().copied(),
+    };
+
+    tcx.incoherent_impls(ty).iter().copied()
 }
 
 /// Lifted from `clippy_utils`
@@ -128,37 +160,6 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
         }
     }
 
-    fn find_primitive<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Option<&'tcx [DefId]> {
-        let single = |ty| Some(tcx.incoherent_impls(ty));
-        let empty = || None;
-        match name {
-            "bool" => single(BoolSimplifiedType),
-            "char" => single(CharSimplifiedType),
-            "str" => single(StrSimplifiedType),
-            "array" => single(ArraySimplifiedType),
-            "slice" => single(SliceSimplifiedType),
-            // FIXME: rustdoc documents these two using just `pointer`.
-            //
-            // Maybe this is something we should do here too.
-            "const_ptr" => single(PtrSimplifiedType(Mutability::Not)),
-            "mut_ptr" => single(PtrSimplifiedType(Mutability::Mut)),
-            "isize" => single(IntSimplifiedType(IntTy::Isize)),
-            "i8" => single(IntSimplifiedType(IntTy::I8)),
-            "i16" => single(IntSimplifiedType(IntTy::I16)),
-            "i32" => single(IntSimplifiedType(IntTy::I32)),
-            "i64" => single(IntSimplifiedType(IntTy::I64)),
-            "i128" => single(IntSimplifiedType(IntTy::I128)),
-            "usize" => single(UintSimplifiedType(UintTy::Usize)),
-            "u8" => single(UintSimplifiedType(UintTy::U8)),
-            "u16" => single(UintSimplifiedType(UintTy::U16)),
-            "u32" => single(UintSimplifiedType(UintTy::U32)),
-            "u64" => single(UintSimplifiedType(UintTy::U64)),
-            "u128" => single(UintSimplifiedType(UintTy::U128)),
-            "f32" => single(FloatSimplifiedType(FloatTy::F32)),
-            "f64" => single(FloatSimplifiedType(FloatTy::F64)),
-            _ => empty(),
-        }
-    }
     fn find_crate(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
         tcx.crates(())
             .iter()
@@ -184,7 +185,7 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
         None
     };
 
-    let base_mods = find_primitive(tcx, base)
+    let base_mods = find_primitive_impls(tcx, base)
         .map(Cow::Borrowed)
         .or(local_crate)
         .or(find_crate(tcx, base).map(|i| Cow::Owned(vec![i])))

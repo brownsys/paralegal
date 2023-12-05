@@ -396,7 +396,7 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 [[package]]
 name = "flowistry"
 version = "0.5.41"
-source = "git+https://github.com/willcrichton/flowistry?rev=98e6678#98e667860154313f676b5807a7ecba716c49d19b"
+source = "git+https://github.com/willcrichton/flowistry?rev=be02cdd#be02cdd311b32ef0381e96e5352df5d718dbe23b"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -901,6 +901,7 @@ dependencies = [
  "dot",
  "flowistry",
  "humantime",
+ "indexical 0.3.1",
  "itertools 0.11.0",
  "lazy_static",
  "log",

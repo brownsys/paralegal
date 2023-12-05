@@ -25,6 +25,7 @@ use crate::{
         rustc_span::{symbol::Ident, Span},
         rustc_target::spec::abi::Abi,
         ty,
+        rustc_borrowck::consumers::BodyWithBorrowckFacts,
     },
     rustc_span::ErrorGuaranteed,
     Either, HashMap, HashSet, Symbol, TyCtxt,
@@ -132,10 +133,10 @@ pub trait GenericArgExt<'tcx> {
     fn as_type(&self) -> Option<ty::Ty<'tcx>>;
 }
 
-impl<'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
+impl<'tcx> GenericArgExt<'tcx> for ty::GenericArg<'tcx> {
     fn as_type(&self) -> Option<ty::Ty<'tcx>> {
         match self.unpack() {
-            ty::subst::GenericArgKind::Type(t) => Some(t),
+            ty::GenericArgKind::Type(t) => Some(t),
             _ => None,
         }
     }
@@ -202,7 +203,7 @@ impl<'tcx> PartialOrd for FnResolution<'tcx> {
             (Partial(_), Final(_)) => Some(std::cmp::Ordering::Less),
             (Partial(slf), Partial(otr)) => slf.partial_cmp(otr),
             (Final(slf), Final(otr)) => match slf.def.partial_cmp(&otr.def) {
-                Some(std::cmp::Ordering::Equal) => slf.substs.partial_cmp(otr.substs),
+                Some(std::cmp::Ordering::Equal) => slf.args.partial_cmp(otr.args),
                 result => result,
             },
         }
@@ -955,7 +956,7 @@ pub trait TyCtxtExt<'tcx> {
         self,
         def_id: DefId,
     ) -> Result<
-        &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
+        &'tcx BodyWithBorrowckFacts<'tcx>,
         BodyResolutionError,
     >;
 
@@ -973,7 +974,7 @@ pub trait TyCtxtExt<'tcx> {
     fn body_for_def_id_default_policy(
         self,
         def_id: DefId,
-    ) -> Option<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>>;
+    ) -> Option<&'tcx BodyWithBorrowckFacts<'tcx>>;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
@@ -981,7 +982,7 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
         self,
         def_id: DefId,
     ) -> Result<
-        &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
+        &'tcx BodyWithBorrowckFacts<'tcx>,
         BodyResolutionError,
     > {
         let local_def_id = def_id.as_local().ok_or(BodyResolutionError::External)?;
@@ -992,7 +993,7 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
             return Err(BodyResolutionError::IsTraitAssocFn(trt));
         }
         Ok(
-            rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
+            rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts(
                 self,
                 local_def_id,
             ),
@@ -1002,7 +1003,7 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     fn body_for_def_id_default_policy(
         self,
         def_id: DefId,
-    ) -> Option<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>> {
+    ) -> Option<&'tcx BodyWithBorrowckFacts<'tcx>> {
         match self.body_for_def_id(def_id) {
             Ok(b) => Some(b),
             Err(e) => {
