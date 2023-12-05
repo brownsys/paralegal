@@ -66,6 +66,7 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 
 pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
+    use flowistry::pdg::graph::CallString;
     use std::collections::HashSet;
 
     use crate::{
@@ -77,7 +78,7 @@ pub mod call_only_flow_dot {
     };
 
     /// `None` encodes the return state of the function
-    pub type N = Option<GlobalLocation>;
+    pub type N = Option<CallString>;
     #[derive(Clone)]
     pub struct E {
         from: N,
@@ -189,7 +190,7 @@ pub mod call_only_flow_dot {
                 return dot::LabelText::LabelStr("return".into());
             };
             let body_with_facts = self.tcx.body_for_def_id(body_id).unwrap();
-            let body = &body_with_facts.simplified_body();
+            let body = &body_with_facts.body;
             let write_label = |s: &mut String| -> std::fmt::Result {
                 write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
                 if self.detailed {
@@ -341,7 +342,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                     (
                         Identifier::new(body_name_pls(tcx, bid.expect_local()).name),
                         BodyProxy::from_body_with_normalize(
-                            tcx.body_for_def_id(bid).unwrap().simplified_body(),
+                            &tcx.body_for_def_id(bid).unwrap().body,
                             tcx,
                         ),
                     ),

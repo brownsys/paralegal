@@ -16,11 +16,11 @@ use rustc_middle::mir;
 
 use either::Either;
 
+use flowistry::pdg::graph::CallString;
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::io::prelude::*;
 use std::path::Path;
-use flowistry::pdg::graph::CallString;
 
 lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -267,17 +267,17 @@ impl GetCallSites for GlobalLocationS {
 }
 
 pub trait MatchCallSite {
-    fn match_(&self, call_site: &RawGlobalLocation) -> bool;
+    fn match_(&self, call_site: &CallString) -> bool;
 }
 
 impl MatchCallSite for RawGlobalLocation {
-    fn match_(&self, call_site: &RawGlobalLocation) -> bool {
+    fn match_(&self, call_site: &CallString) -> bool {
         self == call_site
     }
 }
 
 impl MatchCallSite for GlobalLocationS {
-    fn match_(&self, call_site: &RawGlobalLocation) -> bool {
+    fn match_(&self, call_site: &CallString) -> bool {
         *self == call_site.innermost()
     }
 }
@@ -300,7 +300,7 @@ impl EdgeSelection {
 
 impl G {
     /// Direct predecessor nodes of `n`
-    fn predecessors(&self, n: &GlobalLocation) -> impl Iterator<Item = &RawGlobalLocation> {
+    fn predecessors(&self, n: &GlobalLocation) -> impl Iterator<Item = &CallString> {
         self.predecessors_configurable(n, EdgeSelection::Both)
     }
 
@@ -347,7 +347,7 @@ impl G {
         &self,
         n: &RawGlobalLocation,
         con_ty: EdgeSelection,
-    ) -> impl Iterator<Item = &RawGlobalLocation> {
+    ) -> impl Iterator<Item = &CallString> {
         self.graph
             .location_dependencies
             .get(&CallString::new(n))
@@ -367,7 +367,6 @@ impl G {
                     )
                     .flatten()
             })
-            .map(|dep| &**dep)
     }
     pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
         self.connects_configurable(from, to, EdgeSelection::Both)

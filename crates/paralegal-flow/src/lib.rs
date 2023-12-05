@@ -3,12 +3,7 @@
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `paralegal_flow` and
 //! `cargo-paralegal-flow` (a structure suggested by [rustc_plugin]).
-#![feature(
-    rustc_private,
-    min_specialization,
-    box_patterns,
-    let_chains
-)]
+#![feature(rustc_private, min_specialization, box_patterns, let_chains)]
 #[macro_use]
 extern crate clap;
 extern crate ordermap;
@@ -28,7 +23,6 @@ extern crate petgraph;
 extern crate num_derive;
 extern crate num_traits;
 
-#[macro_use]
 pub extern crate rustc_index;
 extern crate rustc_serialize;
 

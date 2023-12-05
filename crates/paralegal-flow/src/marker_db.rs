@@ -154,14 +154,14 @@ impl<'tcx> MarkerCtx<'tcx> {
         let Some(body) = self.tcx().body_for_def_id_default_policy(res.def_id()) else {
             return false;
         };
-        let body = body.simplified_body();
+        let body = &body.body;
         body.basic_blocks.iter().any(|bbdat| {
             let term = match res {
                 FnResolution::Final(inst) => {
                     Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
                         self.tcx(),
                         ty::ParamEnv::reveal_all(),
-                        bbdat.terminator().clone(),
+                        ty::EarlyBinder::bind(bbdat.terminator().clone()),
                     ))
                 }
                 FnResolution::Partial(_) => Cow::Borrowed(bbdat.terminator()),

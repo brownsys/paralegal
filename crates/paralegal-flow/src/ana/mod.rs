@@ -11,6 +11,8 @@ use crate::{
     Symbol,
 };
 
+use flowistry::pdg::GlobalLocation;
+
 use hir::def_id::DefId;
 use mir::Location;
 
@@ -115,7 +117,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             // It's important to look at the innermost location. It's easy to
             // use `location()` and `function()` on a global location instead
             // but that is the outermost call site, not the location for the actual call.
-            let GlobalLocationS {
+            let GlobalLocation {
                 location: inner_location,
                 function: inner_body_id,
             } = loc.innermost();
@@ -123,7 +125,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.
             let inner_body_with_facts = tcx.body_for_def_id(inner_body_id).unwrap();
-            let inner_body = &inner_body_with_facts.simplified_body();
+            let inner_body = &inner_body_with_facts.body;
             if !inner_location.is_real(inner_body) {
                 assert!(loc.is_at_root());
                 // These can only be (controller) arguments and they cannot have
@@ -294,7 +296,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
         // And now, for every mentioned method in an impl, add the markers on
         // the corresponding trait method also to the impl method.
         for &did in &known_def_ids {
-            let Some((parent_anns, _)) = get_parent_annotations(tcx, did, &annotations) else { continue };
+            let Some((parent_anns, _)) = get_parent_annotations(tcx, did, &annotations) else {
+                continue;
+            };
             let parent_anns = parent_anns.clone();
             let ptr = annotations
                 .entry(did)

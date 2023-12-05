@@ -180,19 +180,23 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
     };
 
     let local_crate = if tcx.crate_name(LOCAL_CRATE) == Symbol::intern(base) || base == "crate" {
-        Some(Cow::Owned(vec![LOCAL_CRATE.as_def_id()]))
+        Some(LOCAL_CRATE.as_def_id())
     } else {
         None
     };
 
-    let base_mods = find_primitive_impls(tcx, base)
-        .map(Cow::Borrowed)
-        .or(local_crate)
-        .or(find_crate(tcx, base).map(|i| Cow::Owned(vec![i])))
-        .ok_or(ResolutionError::CouldNotResolveCrate(base))?;
-    let starts = base_mods
-        .iter()
-        .filter_map(|id| item_child_by_name(tcx, *id, first));
+    fn find_crates(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = DefId> + '_ {
+        tcx.crates(())
+            .iter()
+            .copied()
+            .filter(move |&num| tcx.crate_name(num) == name)
+            .map(CrateNum::as_def_id)
+    }
+
+    let starts = find_primitive_impls(tcx, base)
+        .chain(find_crates(tcx, Symbol::intern(base)))
+        .chain(local_crate)
+        .map(|id| Res::Def(tcx.def_kind(id), id));
 
     let mut last = Err(ResolutionError::EmptyStarts);
     for first in starts {
@@ -200,7 +204,7 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
             .iter()
             .copied()
             // for each segment, find the child item
-            .try_fold(first?, |res, segment| {
+            .try_fold(first, |res, segment| {
                 let def_id = res.def_id();
                 if let Some(item) = item_child_by_name(tcx, def_id, segment) {
                     item

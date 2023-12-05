@@ -1,6 +1,7 @@
 [workspace]
 members = ["crates/*"]
 exclude = ["props", "crates/paralegal-flow/tests", "crates/paralegal-policy/tests"]
+resolver = "2"
 
 [workspace.dependencies]
 indexical = "0.2.2"

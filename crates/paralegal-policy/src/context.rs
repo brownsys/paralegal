@@ -318,11 +318,11 @@ impl Context {
 
         let cf_id = &src.ctrl_id;
         let Some(src_datasource) = src.typ.as_data_source() else {
-			return false
-		  };
+            return false;
+        };
         let Some(sink_cs_or_ds) = sink.typ.as_call_site_or_data_sink() else {
-			return false
-		  };
+            return false;
+        };
 
         match edge_type {
             EdgeType::Data => self.flows_to[cf_id]
@@ -352,8 +352,8 @@ impl Context {
     /// `some n where self.flows_to(influencer, n, EdgeType::Data) && self.flows_to(n, target, Edgetype::Control)`.
     pub fn has_ctrl_influence(&self, influencer: Node, target: Node) -> bool {
         let Some(tcs) = target.associated_call_site() else {
-				return false;
-			};
+            return false;
+        };
 
         self.flows_to(influencer, tcs, EdgeType::Control)
             || self
@@ -371,8 +371,8 @@ impl Context {
     ) -> Box<dyn Iterator<Item = Node> + 'a> {
         let cf_id = &sink.ctrl_id;
         let Some(sink_cs_or_ds) = sink.typ.as_call_site_or_data_sink() else {
-			return Box::new(empty());
-		};
+            return Box::new(empty());
+        };
 
         let controller_flow = &self.flows_to[&sink.ctrl_id];
 
@@ -427,8 +427,8 @@ impl Context {
             EdgeType::DataAndControl => get_influencers(&self.flows_to[cf_id].flows_to),
             EdgeType::Control => {
                 let Some(cs) = sink.typ.as_call_site() else {
-					return Box::new(empty());
-				};
+                    return Box::new(empty());
+                };
                 Box::new(
                     self.desc.controllers[cf_id]
                         .ctrl_flow
@@ -464,8 +464,8 @@ impl Context {
     ) -> Box<dyn Iterator<Item = Node> + 'a> {
         let cf_id = &src.ctrl_id;
         let Some(src_datasource) = src.typ.as_data_source() else {
-			return Box::new(empty());
-		};
+            return Box::new(empty());
+        };
 
         let get_influencees =
             |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
