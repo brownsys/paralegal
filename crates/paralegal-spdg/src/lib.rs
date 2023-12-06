@@ -20,7 +20,8 @@ pub(crate) mod rustc {
 
 extern crate strum;
 
-pub mod global_location;
+pub use flowistry_pdg::*;
+
 #[cfg(feature = "rustc")]
 mod rustc_impls;
 pub mod rustc_portable;
@@ -28,7 +29,6 @@ pub mod rustc_proxies;
 mod tiny_bitset;
 pub mod utils;
 
-use global_location::GlobalLocation;
 use indexical::define_index_type;
 use internment::Intern;
 use itertools::Itertools;
@@ -447,7 +447,7 @@ impl<X, Y> Relation<X, Y> {
 #[derive(Hash, Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub struct CallSite {
     /// The location of the call.
-    pub location: GlobalLocation,
+    pub location: CallString,
 
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
     /// The id of the function being called.

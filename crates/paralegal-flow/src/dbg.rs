@@ -8,14 +8,14 @@
 //! to stdout, a file or a log statement. Some take additional information (such
 //! as [TyCtxt]) to get contextual information that is used to make the output
 //! more useful.
-use indexical::IndexedDomain;
 use paralegal_spdg::{rustc_portable::DefId, Identifier};
 
 use crate::{
     ir::CallOnlyFlow,
     rust::{mir, TyCtxt},
-    utils::{body_name_pls, TyCtxtExt},
+    utils::{body_name_pls, TyCtxtExt, CallStringExt},
     HashMap, HashSet,
+    pdg::LocationOrStart,
 };
 extern crate dot;
 
@@ -66,14 +66,15 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
 
 pub mod call_only_flow_dot {
     //! Dot graph representation for [`CallOnlyFlow`].
-    use flowistry::pdg::graph::CallString;
     use std::collections::HashSet;
 
     use crate::{
-        ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS},
+        pdg::{CallString, GlobalLocation},
+        ir::{CallOnlyFlow},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{unique_identifier_for_item, AsFnAndArgs, DfppBodyExt, LocationExt, TyCtxtExt},
+        pdg::LocationOrStart,
+        utils::{unique_identifier_for_item, AsFnAndArgs, DfppBodyExt, TyCtxtExt, CallStringExt},
         Either,
     };
 
@@ -181,35 +182,23 @@ pub mod call_only_flow_dot {
 
         fn node_label(&'a self, n: &N) -> dot::LabelText<'a> {
             use std::fmt::Write;
-            let GlobalLocationS {
+            let GlobalLocation {
                 location: loc,
                 function: body_id,
             } = if let Some(n) = n {
-                n.innermost()
+                n.leaf()
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
-            let body_with_facts = self.tcx.body_for_def_id(body_id).unwrap();
+            let body_with_facts = self.tcx.body_for_def_id(body_id.to_def_id()).unwrap();
             let body = &body_with_facts.body;
             let write_label = |s: &mut String| -> std::fmt::Result {
-                write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
-                if self.detailed {
-                    let mut locs = n.iter().collect::<Vec<_>>();
-                    locs.pop();
-                    locs.reverse();
-                    for l in locs.into_iter() {
-                        write!(
-                            s,
-                            "@{:?}:{}",
-                            l.outermost_location().block,
-                            l.outermost_location().statement_index
-                        )?;
-                    }
-                };
-                let stmt = if !loc.is_real(body) {
-                    None
-                } else {
+                let stmt = if let Some(loc) = loc.as_location() {
+                    write!(s, "{{B{}:{}", loc.block.as_usize(), loc.statement_index)?;
                     Some(body.stmt_at_better_err(loc))
+                } else {
+                    write!(s, "{{Arg")?;
+                    None
                 };
                 let typ = if let Some(ref stmt) = stmt {
                     if stmt.is_left() {
@@ -333,7 +322,7 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                         .flat_map(|s| s.iter().cloned()),
                 )
             })
-            .map(|l| l.innermost_function())
+            .map(|l| l.leaf().function.to_def_id())
             .collect::<HashSet<DefId>>()
             .into_iter()
             .map(|bid| {

@@ -8,13 +8,12 @@ use std::borrow::Cow;
 
 use crate::{
     dbg, desc::*, ir::*, rust::*, utils::*, Either, HashMap, HashSet, LogLevelConfig, MarkerCtx,
-    Symbol,
+    Symbol, utils::CallStringExt,
 };
 
-use flowistry::pdg::GlobalLocation;
+use crate::pdg::GlobalLocation;
 
 use hir::def_id::DefId;
-use mir::Location;
 
 use anyhow::Result;
 
@@ -120,18 +119,18 @@ impl<'tcx> SPDGGenerator<'tcx> {
             let GlobalLocation {
                 location: inner_location,
                 function: inner_body_id,
-            } = loc.innermost();
+            } = loc.leaf();
             // We need to make sure to fetch the body again here, because we
             // might be looking at an inlined location, so the body we operate
             // on bight not be the `body` we fetched before.
-            let inner_body_with_facts = tcx.body_for_def_id(inner_body_id).unwrap();
+            let inner_body_with_facts = tcx.body_for_def_id(inner_body_id.to_def_id()).unwrap();
             let inner_body = &inner_body_with_facts.body;
-            if !inner_location.is_real(inner_body) {
+            let LocationOrStart::Location(inner_location) = inner_location else {
                 assert!(loc.is_at_root());
                 // These can only be (controller) arguments and they cannot have
                 // dependencies (and thus not receive any data)
                 continue;
-            }
+            };
             let (_, (instance, _, _)) = match inner_body
                 .stmt_at_better_err(inner_location)
                 .right()
@@ -195,7 +194,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 // This will be the target of any flow we register
                 let to = if loc.is_at_root()
                     && matches!(
-                        inner_body.stmt_at_better_err(loc.outermost_location()),
+                        inner_body.stmt_at_better_err(loc.root().location.unwrap_location()),
                         Either::Right(mir::Terminator {
                             kind: mir::TerminatorKind::Return,
                             ..
@@ -347,7 +346,7 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
         def::DefKind::Struct
         | def::DefKind::AssocTy
         | def::DefKind::OpaqueTy
-        | def::DefKind::TyAlias
+        | def::DefKind::TyAlias {..}
         | def::DefKind::Enum => DefKind::Type,
         _ => unreachable!("{}", tcx.def_path_debug_str(id)),
     };

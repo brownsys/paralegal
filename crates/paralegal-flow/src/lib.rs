@@ -94,6 +94,7 @@ pub mod consts;
 pub mod marker_db;
 #[cfg(feature = "test")]
 pub mod test_utils;
+mod pdg;
 
 pub use paralegal_spdg as desc;
 

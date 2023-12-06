@@ -20,7 +20,6 @@ use crate::{
         },
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_borrowck::consumers::BodyWithBorrowckFacts,
-        rustc_data_structures::fx::{FxHashMap, FxHashSet},
         rustc_data_structures::intern::Interned,
         rustc_span::{symbol::Ident, Span},
         rustc_target::spec::abi::Abi,
@@ -30,8 +29,8 @@ use crate::{
     Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
-use flowistry::pdg::graph::{CallString, GlobalLocation, LocationOrStart};
-use std::{borrow::Cow, cell::RefCell, default::Default, hash::Hash, pin::Pin};
+use crate::pdg::*;
+use std::{cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
 pub mod resolve;
 
@@ -1048,91 +1047,6 @@ macro_rules! sym_vec {
     };
 }
 
-type SparseMatrixImpl<K, V> = FxHashMap<K, FxHashSet<V>>;
-
-#[derive(Debug, Clone)]
-pub struct SparseMatrix<K, V> {
-    matrix: SparseMatrixImpl<K, V>,
-    empty_set: FxHashSet<V>,
-}
-
-impl<'a, Q: Eq + std::hash::Hash + ?Sized, K: Eq + std::hash::Hash + std::borrow::Borrow<Q>, V>
-    std::ops::Index<&'a Q> for SparseMatrix<K, V>
-{
-    type Output = <SparseMatrixImpl<K, V> as std::ops::Index<&'a Q>>::Output;
-    fn index(&self, index: &Q) -> &Self::Output {
-        &self.matrix[index]
-    }
-}
-
-impl<K, V> Default for SparseMatrix<K, V> {
-    fn default() -> Self {
-        Self {
-            matrix: Default::default(),
-            empty_set: Default::default(),
-        }
-    }
-}
-
-impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> PartialEq for SparseMatrix<K, V> {
-    fn eq(&self, other: &Self) -> bool {
-        self.matrix.eq(&other.matrix)
-    }
-}
-impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> Eq for SparseMatrix<K, V> {}
-
-impl<K, V> SparseMatrix<K, V> {
-    pub fn set(&mut self, k: K, v: V) -> bool
-    where
-        K: Eq + std::hash::Hash,
-        V: Eq + std::hash::Hash,
-    {
-        self.row_mut(k).insert(v)
-    }
-
-    pub fn rows(&self) -> impl Iterator<Item = (&K, &FxHashSet<V>)> {
-        self.matrix.iter()
-    }
-
-    pub fn row(&self, k: &K) -> &FxHashSet<V>
-    where
-        K: Eq + std::hash::Hash,
-    {
-        self.matrix.get(k).unwrap_or(&self.empty_set)
-    }
-
-    pub fn row_mut(&mut self, k: K) -> &mut FxHashSet<V>
-    where
-        K: Eq + std::hash::Hash,
-    {
-        self.matrix.entry(k).or_insert_with(HashSet::default)
-    }
-
-    pub fn has(&self, k: &K) -> bool
-    where
-        K: Eq + std::hash::Hash,
-    {
-        !self.matrix.get(k).map_or(true, HashSet::is_empty)
-    }
-
-    pub fn union_row(&mut self, k: &K, row: Cow<FxHashSet<V>>) -> bool
-    where
-        K: Eq + std::hash::Hash + Clone,
-        V: Eq + std::hash::Hash + Clone,
-    {
-        let mut changed = false;
-        if !self.has(k) {
-            changed = !row.is_empty();
-            self.matrix.insert(k.clone(), row.into_owned());
-        } else {
-            let set = self.row_mut(k.clone());
-            row.iter()
-                .for_each(|elem| changed |= set.insert(elem.clone()));
-        }
-        changed
-    }
-}
-
 pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilter, f: F) -> R {
     let reset_level = log::max_level();
     log::set_max_level(filter);
@@ -1233,14 +1147,8 @@ impl CallSiteExt for CallSite {
 
 pub trait CallStringExt: Sized {
     fn is_at_root(self) -> bool;
-    fn innermost(self) -> GlobalLocation;
-    fn outermost(self) -> GlobalLocation;
-
+    fn root(self) -> GlobalLocation;
     fn stable_id(self) -> usize;
-
-    fn outermost_location(self) -> LocationOrStart {
-        self.outermost().location
-    }
 }
 
 impl CallStringExt for CallString {
@@ -1248,16 +1156,22 @@ impl CallStringExt for CallString {
         self.iter().count() == 1
     }
 
-    fn innermost(self) -> GlobalLocation {
+    fn root(self) -> GlobalLocation {
         self.iter().next().unwrap()
-    }
-
-    fn outermost(self) -> GlobalLocation {
-        self.iter().last().unwrap()
     }
 
     fn stable_id(self) -> usize {
         todo!()
+    }
+}
+
+trait LocationOrStartExt {
+    fn is_real(self) -> bool;
+}
+
+impl LocationOrStartExt for LocationOrStart {
+    fn is_real(self) -> bool {
+        matches!(self, LocationOrStart::Location(_))
     }
 }
 
@@ -1271,25 +1185,24 @@ pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
     let GlobalLocation {
         location: dep_loc,
         function: dep_fun,
-    } = loc.innermost();
-    let is_real_location = is_real_location(dep_loc.unwrap_location());
-    if loc.is_at_root() && !is_real_location {
-        DataSource::Argument(loc.outermost_location().unwrap_location().statement_index - 1)
-    } else {
+    } = loc.leaf();
+    if let LocationOrStart::Location(dep_loc) = dep_loc {
         let terminator =
-                tcx.body_for_def_id(dep_fun.to_def_id())
-                    .unwrap()
-                    .body
-                    .maybe_stmt_at(dep_loc)
-                    .unwrap_or_else(|e|
-                        panic!("Could not convert {loc} to data source with body {}. is at root: {}, is real: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun), loc.is_at_root(), is_real_location)
-                    )
-                    .right()
-                    .expect("not a terminator");
+            tcx.body_for_def_id(dep_fun.to_def_id())
+                .unwrap()
+                .body
+                .maybe_stmt_at(dep_loc)
+                .unwrap_or_else(|e|
+                    panic!("Could not convert {loc} to data source with body {}. is at root: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun), loc.is_at_root())
+                )
+                .right()
+                .expect("not a terminator");
         DataSource::FunctionCall(CallSite::new(
             &loc,
             terminator.as_fn_and_args(tcx).unwrap().0,
         ))
+    } else {
+        DataSource::Argument(loc.root().location.unwrap_location().statement_index - 1)
     }
 }
 

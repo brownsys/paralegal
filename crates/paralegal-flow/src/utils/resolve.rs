@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 
 use crate::{ast, hir, ty, DefId, Symbol, TyCtxt};
 use ast::Mutability;

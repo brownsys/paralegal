@@ -1,8 +1,6 @@
 use crate::mir;
 use crate::{HashMap, HashSet};
-use flowistry::pdg;
-use pdg::graph::{CallString, DepGraph, GlobalLocation};
-
+use crate::pdg::*;
 use serde::{Deserialize, Serialize};
 
 /// Coarse grained, [`Place`](mir::Place) abstracted version of a
