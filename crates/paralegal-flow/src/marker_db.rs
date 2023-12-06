@@ -16,7 +16,7 @@ use crate::{
     desc::{Annotation, MarkerAnnotation},
     mir, ty,
     utils::{
-        AsFnAndArgs, FnResolution, GenericArgExt, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt,
+        AsFnAndArgs, FnResolution, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt,
         TyExt,
     },
     DefId, HashMap, LocalDefId, TyCtxt,

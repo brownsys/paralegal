@@ -5,7 +5,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 use crate::{
     desc::{AnnotationMap, DataSink, DataSource, Identifier, ProgramDescription, TypeDescriptor},
-    ir::{CallOnlyFlow, GlobalLocation, GlobalLocationS, RawGlobalLocation},
+    ir::{CallOnlyFlow},
     serializers::{Bodies, InstructionProxy},
     utils::outfile_pls,
     HashSet, Symbol,
@@ -16,7 +16,7 @@ use rustc_middle::mir;
 
 use either::Either;
 
-use flowistry::pdg::graph::CallString;
+use crate::pdg::{CallString, GlobalLocation, LocationOrStart};
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::io::prelude::*;
@@ -248,37 +248,31 @@ pub struct G {
 }
 
 pub trait GetCallSites {
-    fn get_call_sites<'a>(&'a self, g: &'a CallOnlyFlow) -> HashSet<&'a RawGlobalLocation>;
+    fn get_call_sites(self, g: &CallOnlyFlow) -> HashSet<CallString>;
 }
 
-impl GetCallSites for RawGlobalLocation {
-    fn get_call_sites<'a>(&'a self, _: &'a CallOnlyFlow) -> HashSet<&'a RawGlobalLocation> {
-        [self].into_iter().collect()
-    }
-}
-
-impl GetCallSites for GlobalLocationS {
-    fn get_call_sites<'a>(&'a self, g: &'a CallOnlyFlow) -> HashSet<&'a RawGlobalLocation> {
+impl GetCallSites for GlobalLocation {
+    fn get_call_sites(self, g: &CallOnlyFlow) -> HashSet<CallString> {
         g.all_locations_iter()
-            .filter(move |l| l.innermost() == *self)
-            .map(|loc| &**loc)
+            .filter(move |l| l.leaf() == self)
+            .copied()
             .collect()
     }
 }
 
-pub trait MatchCallSite {
-    fn match_(&self, call_site: &CallString) -> bool;
-}
-
-impl MatchCallSite for RawGlobalLocation {
-    fn match_(&self, call_site: &CallString) -> bool {
-        self == call_site
+impl GetCallSites for CallString {
+    fn get_call_sites(self, _: &CallOnlyFlow) -> HashSet<CallString> {
+        [self].into_iter().collect()
     }
 }
 
-impl MatchCallSite for GlobalLocationS {
-    fn match_(&self, call_site: &CallString) -> bool {
-        *self == call_site.innermost()
+pub trait MatchCallSite {
+    fn match_(self, call_site: CallString) -> bool;
+}
+
+impl MatchCallSite for GlobalLocation {
+    fn match_(self, call_site: CallString) -> bool {
+        self == call_site.leaf()
     }
 }
 
@@ -300,57 +294,50 @@ impl EdgeSelection {
 
 impl G {
     /// Direct predecessor nodes of `n`
-    fn predecessors(&self, n: &GlobalLocation) -> impl Iterator<Item = &CallString> {
+    fn predecessors(&self, n: CallString) -> impl Iterator<Item = CallString> + '_ {
         self.predecessors_configurable(n, EdgeSelection::Both)
     }
 
-    pub fn connects_none_configurable<From: MatchCallSite>(
+    pub fn connects_none_configurable<From: MatchCallSite + Copy>(
         &self,
-        n: &From,
+        n: From,
         dir: EdgeSelection,
     ) -> bool {
-        self.graph.location_dependencies.iter().all(|(c, deps)| {
+        self.graph.location_dependencies.iter().all(|(&c, deps)| {
+            let iter_all_dep_sets = ||
+                dir
+                    .use_data()
+                    .then_some(deps.input_deps.iter())
+                    .into_iter()
+                    .flatten()
+                    .chain(
+                        dir.use_control()
+                            .then_some([&deps.ctrl_deps].into_iter())
+                            .into_iter()
+                            .flatten(),
+                    );
             (!n.match_(c)
-                || dir
-                    .use_data()
-                    .then_some(deps.input_deps.iter())
-                    .into_iter()
-                    .flatten()
-                    .chain(
-                        dir.use_control()
-                            .then_some([&deps.ctrl_deps].into_iter())
-                            .into_iter()
-                            .flatten(),
-                    )
+                || iter_all_dep_sets()
                     .all(|d| d.is_empty()))
-                && dir
-                    .use_data()
-                    .then_some(deps.input_deps.iter())
-                    .into_iter()
+                && iter_all_dep_sets()
                     .flatten()
-                    .chain(
-                        dir.use_control()
-                            .then_some([&deps.ctrl_deps].into_iter())
-                            .into_iter()
-                            .flatten(),
-                    )
-                    .flat_map(|d| d.iter())
+                    .copied()
                     .all(|d| !n.match_(d))
         })
     }
 
-    pub fn connects_none<From: MatchCallSite>(&self, n: &From) -> bool {
+    pub fn connects_none<From: MatchCallSite + Copy>(&self, n: From) -> bool {
         self.connects_none_configurable(n, EdgeSelection::Both)
     }
 
     fn predecessors_configurable(
         &self,
-        n: &RawGlobalLocation,
+        n: CallString,
         con_ty: EdgeSelection,
-    ) -> impl Iterator<Item = &CallString> {
+    ) -> impl Iterator<Item = CallString> + '_ {
         self.graph
             .location_dependencies
-            .get(&CallString::new(n))
+            .get(&n)
             .into_iter()
             .flat_map(move |deps| {
                 con_ty
@@ -367,32 +354,33 @@ impl G {
                     )
                     .flatten()
             })
+            .copied()
     }
-    pub fn connects<From: MatchCallSite, To: GetCallSites>(&self, from: &From, to: &To) -> bool {
+    pub fn connects<From: MatchCallSite + Copy, To: GetCallSites>(&self, from: From, to: To) -> bool {
         self.connects_configurable(from, to, EdgeSelection::Both)
     }
 
-    pub fn connects_data<From: MatchCallSite, To: GetCallSites>(
+    pub fn connects_data<From: MatchCallSite + Copy, To: GetCallSites>(
         &self,
-        from: &From,
-        to: &To,
+        from: From,
+        to: To,
     ) -> bool {
         self.connects_configurable(from, to, EdgeSelection::Data)
     }
 
-    pub fn connects_ctrl<From: MatchCallSite, To: GetCallSites>(
+    pub fn connects_ctrl<From: MatchCallSite + Copy, To: GetCallSites>(
         &self,
-        from: &From,
-        to: &To,
+        from: From,
+        to: To,
     ) -> bool {
         self.connects_configurable(from, to, EdgeSelection::Control)
     }
 
     /// Is there any path (using directed edges) from `from` to `to`.
-    pub fn connects_configurable<From: MatchCallSite, To: GetCallSites>(
+    pub fn connects_configurable<From: MatchCallSite + Copy, To: GetCallSites>(
         &self,
-        from: &From,
-        to: &To,
+        from: From,
+        to: To,
         con_ty: EdgeSelection,
     ) -> bool {
         let mut queue = to
@@ -418,37 +406,37 @@ impl G {
 
     /// Is there an edge between `from` and `to`. Equivalent to testing if
     /// `from` is in `g.predecessors(to)`.
-    pub fn connects_direct_data<From: MatchCallSite, To: GetCallSites>(
+    pub fn connects_direct_data<From: MatchCallSite + Copy, To: GetCallSites>(
         &self,
-        from: &From,
-        to: &To,
+        from: From,
+        to: To,
     ) -> bool {
         self.connects_direct_configurable(from, to, EdgeSelection::Data)
     }
 
-    pub fn connects_direct<From: MatchCallSite, To: GetCallSites>(
+    pub fn connects_direct<From: MatchCallSite + Copy, To: GetCallSites>(
         &self,
-        from: &From,
-        to: &To,
+        from: From,
+        to: To,
     ) -> bool {
         self.connects_direct_configurable(from, to, EdgeSelection::Both)
     }
 
-    pub fn connects_direct_ctrl<From: MatchCallSite, To: GetCallSites>(
+    pub fn connects_direct_ctrl<From: MatchCallSite + Copy, To: GetCallSites>(
         &self,
-        from: &From,
-        to: &To,
+        from: From,
+        to: To,
     ) -> bool {
         self.connects_direct_configurable(from, to, EdgeSelection::Control)
     }
 
-    fn connects_direct_configurable<From: MatchCallSite, To: GetCallSites>(
+    fn connects_direct_configurable<From: MatchCallSite + Copy, To: GetCallSites>(
         &self,
-        from: &From,
-        to: &To,
+        from: From,
+        to: To,
         typ: EdgeSelection,
     ) -> bool {
-        for to in to.get_call_sites(&self.graph).iter() {
+        for to in to.get_call_sites(&self.graph).iter().copied() {
             if self
                 .predecessors_configurable(to, typ)
                 .any(|l| from.match_(l))
@@ -459,24 +447,25 @@ impl G {
         false
     }
 
-    pub fn returns_direct<From: MatchCallSite>(&self, from: &From) -> bool {
+    pub fn returns_direct<From: MatchCallSite + Copy>(&self, from: From) -> bool {
         self.graph
             .return_dependencies
             .iter()
+            .copied()
             .any(|d| from.match_(d))
     }
 
-    pub fn returns<From: MatchCallSite>(&self, from: &From) -> bool {
+    pub fn returns<From: MatchCallSite + Copy>(&self, from: From) -> bool {
         self.returns_direct(from)
             || self
                 .graph
                 .return_dependencies
                 .iter()
-                .any(|r| self.connects(from, &**r))
+                .any(|&r| self.connects(from, r))
     }
 
     /// Return all call sites for functions with names matching `pattern`.
-    pub fn function_calls(&self, pattern: &str) -> HashSet<GlobalLocationS> {
+    pub fn function_calls(&self, pattern: &str) -> HashSet<GlobalLocation> {
         self.body
             .0
             .iter()
@@ -485,16 +474,16 @@ impl G {
                      .0
                     .iter()
                     .filter(|s| s.contents.contains(pattern))
-                    .map(|s| GlobalLocationS {
-                        function: *bid,
-                        location: s.location,
+                    .map(|s| GlobalLocation {
+                        function: bid.expect_local(),
+                        location: LocationOrStart::Location(s.location),
                     })
             })
             .collect()
     }
 
     /// Like `function_calls` but requires that only one such call is found.
-    pub fn function_call(&self, pattern: &str) -> GlobalLocationS {
+    pub fn function_call(&self, pattern: &str) -> GlobalLocation {
         let v = self.function_calls(pattern);
         assert!(
             v.len() == 1,

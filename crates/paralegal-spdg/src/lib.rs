@@ -526,7 +526,7 @@ fn short_hash_always_six_digits() {
 }
 
 /// Calculate a hash for this object
-fn hash_pls<T: Hash>(t: T) -> u64 {
+pub fn hash_pls<T: Hash>(t: T) -> u64 {
     use std::hash::Hasher;
     let mut hasher = std::collections::hash_map::DefaultHasher::default();
     t.hash(&mut hasher);

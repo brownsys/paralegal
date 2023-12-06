@@ -21,10 +21,10 @@ define_test!(process_basic : graph -> {
     let check = graph.function_call("check_user_data");
     let send = graph.function_call("send_user_data");
 
-    assert!(graph.connects(&get, &check));
-    assert!(!graph.connects(&check, &send));
-    assert!(graph.connects(&get, &send));
-    assert!(graph.connects_direct(&get, &send));
+    assert!(graph.connects(get, check));
+    assert!(!graph.connects(check, send));
+    assert!(graph.connects(get, send));
+    assert!(graph.connects_direct(get, send));
 });
 
 define_test!(process_if : graph -> {
@@ -32,11 +32,11 @@ define_test!(process_if : graph -> {
     let check = graph.function_call("check_user_data");
     let send = graph.function_call("send_user_data");
 
-    assert!(graph.connects(&get, &check));
-    assert!(graph.connects(&check, &send));
-    assert!(graph.connects(&get, &send));
-    assert!(graph.connects_direct(&get, &send));
-    assert!(graph.connects_direct(&check, &send));
+    assert!(graph.connects(get, check));
+    assert!(graph.connects(check, send));
+    assert!(graph.connects(get, send));
+    assert!(graph.connects_direct(get, send));
+    assert!(graph.connects_direct(check, send));
 });
 
 define_test!(process_if_after : graph -> {
@@ -44,11 +44,11 @@ define_test!(process_if_after : graph -> {
     let check = graph.function_call("check_user_data");
     let send = graph.function_call("send_user_data");
 
-    assert!(graph.connects(&get, &check));
-    assert!(graph.connects(&check, &send));
-    assert!(graph.connects(&get, &send));
-    assert!(graph.connects_direct(&get, &send));
-    assert!(!graph.connects_direct(&check, &send));
+    assert!(graph.connects(get, check));
+    assert!(graph.connects(check, send));
+    assert!(graph.connects(get, send));
+    assert!(graph.connects_direct(get, send));
+    assert!(!graph.connects_direct(check, send));
 });
 
 define_test!(process_nested_if : graph -> {
@@ -57,13 +57,13 @@ define_test!(process_nested_if : graph -> {
     let check2 = graph.function_call("check2");
     let send = graph.function_call("send_user_data");
 
-    assert!(graph.connects(&get, &check));
-    assert!(graph.connects(&check, &send));
-    assert!(graph.connects(&check2, &send));
-    assert!(graph.connects(&get, &send));
-    assert!(graph.connects_direct(&get, &send));
-    assert!(graph.connects_direct(&check, &check2));
-    assert!(graph.connects_direct(&check2, &send));
+    assert!(graph.connects(get, check));
+    assert!(graph.connects(check, send));
+    assert!(graph.connects(check2, send));
+    assert!(graph.connects(get, send));
+    assert!(graph.connects_direct(get, send));
+    assert!(graph.connects_direct(check, check2));
+    assert!(graph.connects_direct(check2, send));
 });
 
 define_test!(process_if_multiple_statements : graph -> {
@@ -72,14 +72,14 @@ define_test!(process_if_multiple_statements : graph -> {
     let modify = graph.function_call("modify");
     let send = graph.function_call("send_user_data");
 
-    assert!(graph.connects(&get, &check));
-    assert!(graph.connects(&check, &modify));
-    assert!(graph.connects(&check, &send));
-    assert!(graph.connects(&get, &send));
-    assert!(!graph.connects_direct(&get, &send));
-    assert!(graph.connects_direct(&check, &modify));
-    assert!(graph.connects_direct(&check, &send));
-    assert!(graph.connects_direct(&modify, &send));
+    assert!(graph.connects(get, check));
+    assert!(graph.connects(check, modify));
+    assert!(graph.connects(check, send));
+    assert!(graph.connects(get, send));
+    assert!(!graph.connects_direct(get, send));
+    assert!(graph.connects_direct(check, modify));
+    assert!(graph.connects_direct(check, send));
+    assert!(graph.connects_direct(modify, send));
 });
 
 define_test!(process_if_not_function_call : graph -> {
@@ -88,11 +88,11 @@ define_test!(process_if_not_function_call : graph -> {
     let modify = graph.function_call("modify");
     let send = graph.function_call("send_user_data");
 
-    assert!(!graph.connects(&getx, &get));
-    assert!(graph.connects_direct(&get, &send));
-    assert!(graph.connects_direct(&getx, &modify));
-    assert!(graph.connects(&getx, &send));
-    assert!(!graph.connects_direct(&getx, &send));
+    assert!(!graph.connects(getx, get));
+    assert!(graph.connects_direct(get, send));
+    assert!(graph.connects_direct(getx, modify));
+    assert!(graph.connects(getx, send));
+    assert!(!graph.connects_direct(getx, send));
 });
 
 define_test!(process_no_args : graph -> {
@@ -100,9 +100,9 @@ define_test!(process_no_args : graph -> {
     let get = graph.function_call("get_user_data");
     let send = graph.function_call("send_user_data");
 
-    assert!(graph.connects(&getx, &get));
-    assert!(graph.connects(&get, &send));
-    assert!(graph.connects(&getx, &send));
-    assert!(graph.connects_direct(&get, &send));
-    assert!(graph.connects_direct(&getx, &get));
+    assert!(graph.connects(getx, get));
+    assert!(graph.connects(get, send));
+    assert!(graph.connects(getx, send));
+    assert!(graph.connects_direct(get, send));
+    assert!(graph.connects_direct(getx, get));
 });

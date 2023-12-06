@@ -159,15 +159,7 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
         }
     }
 
-    fn find_crate(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
-        tcx.crates(())
-            .iter()
-            .copied()
-            .find(|&num| tcx.crate_name(num).as_str() == name)
-            .map(CrateNum::as_def_id)
-    }
-
-    let (base, first, path) = match *path {
+    let (base, _first, path) = match *path {
         [base, first, ref path @ ..] => (base, first, path),
         [primitive] => {
             let sym = Symbol::intern(primitive);

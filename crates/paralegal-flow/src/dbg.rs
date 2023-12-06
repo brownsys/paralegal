@@ -13,9 +13,8 @@ use paralegal_spdg::{rustc_portable::DefId, Identifier};
 use crate::{
     ir::CallOnlyFlow,
     rust::{mir, TyCtxt},
-    utils::{body_name_pls, TyCtxtExt, CallStringExt},
+    utils::{body_name_pls, TyCtxtExt},
     HashMap, HashSet,
-    pdg::LocationOrStart,
 };
 extern crate dot;
 
@@ -73,7 +72,6 @@ pub mod call_only_flow_dot {
         ir::{CallOnlyFlow},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        pdg::LocationOrStart,
         utils::{unique_identifier_for_item, AsFnAndArgs, DfppBodyExt, TyCtxtExt, CallStringExt},
         Either,
     };

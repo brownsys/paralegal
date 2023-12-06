@@ -1148,7 +1148,8 @@ impl CallSiteExt for CallSite {
 pub trait CallStringExt: Sized {
     fn is_at_root(self) -> bool;
     fn root(self) -> GlobalLocation;
-    fn stable_id(self) -> usize;
+    /// A unique number that represents this object
+    fn stable_id(self) -> u64;
 }
 
 impl CallStringExt for CallString {
@@ -1160,8 +1161,10 @@ impl CallStringExt for CallString {
         self.iter().next().unwrap()
     }
 
-    fn stable_id(self) -> usize {
-        todo!()
+    /// XXX: Currently uses a hash, should ideally be the pointer value of the
+    /// interned object though.
+    fn stable_id(self) -> u64 {
+        paralegal_spdg::hash_pls(self)
     }
 }
 
@@ -1180,7 +1183,7 @@ impl LocationOrStartExt for LocationOrStart {
 pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
     loc: CallString,
     tcx: TyCtxt,
-    is_real_location: F,
+    _is_real_location: F,
 ) -> DataSource {
     let GlobalLocation {
         location: dep_loc,

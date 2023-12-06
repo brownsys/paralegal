@@ -17,9 +17,9 @@ macro_rules! define_test {
 }
 
 define_test!(track_mutable_modify : graph -> {
-    let source = &graph.function_call("new_s");
-    let modify = &graph.function_call("modify_it");
-    let read = &graph.function_call("read");
+    let source = graph.function_call("new_s");
+    let modify = graph.function_call("modify_it");
+    let read = graph.function_call("read");
 
     assert!(graph.connects_direct(source, modify));
     assert!(graph.connects_direct(modify, read));
@@ -27,9 +27,9 @@ define_test!(track_mutable_modify : graph -> {
 });
 
 define_test!(eliminate_return_connection : graph -> {
-    let source = &graph.function_call("new_s");
-    let pass_through = &graph.function_call("deref_t");
-    let read = &graph.function_call("read");
+    let source = graph.function_call("new_s");
+    let pass_through = graph.function_call("deref_t");
+    let read = graph.function_call("read");
 
     assert!(graph.connects_direct(source, pass_through));
     assert!(graph.connects_direct(pass_through, read));
@@ -37,9 +37,9 @@ define_test!(eliminate_return_connection : graph -> {
 });
 
 define_test!(eliminate_mut_input_connection : graph -> {
-    let source = &graph.function_call("new_s");
-    let push = &graph.function_call("push");
-    let read = &graph.function_call("read");
+    let source = graph.function_call("new_s");
+    let push = graph.function_call("push");
+    let read = graph.function_call("read");
 
     assert!(graph.connects_direct(source, push));
     assert!(graph.connects_direct(push, read));
@@ -47,17 +47,17 @@ define_test!(eliminate_mut_input_connection : graph -> {
 });
 
 define_test!(input_elimination_isnt_a_problem_empty : graph -> {
-    let source = &graph.function_call("new_s");
-    let read = &graph.function_call("read");
+    let source = graph.function_call("new_s");
+    let read = graph.function_call("read");
 
     assert!(!graph.connects(source, read));
 });
 
 define_test!(input_elimination_isnt_a_problem_vec_push : graph -> {
-    let source = &graph.function_call("new_s");
-    let push = &graph.function_call("push");
-    let insert = &graph.function_call("insert(");
-    let read = &graph.function_call("read");
+    let source = graph.function_call("new_s");
+    let push = graph.function_call("push");
+    let insert = graph.function_call("insert(");
+    let read = graph.function_call("read");
 
     assert!(graph.connects_direct(source, insert));
     assert!(graph.connects_direct(insert, push));
@@ -68,12 +68,12 @@ define_test!(input_elimination_isnt_a_problem_vec_push : graph -> {
 });
 
 define_test!(input_elimination_isnt_a_problem_statement : graph -> {
-    let src_1 = &graph.function_call("new_s");
-    let src_2 = &graph.function_call("another_s");
+    let src_1 = graph.function_call("new_s");
+    let src_2 = graph.function_call("another_s");
 
-    let assoc = &graph.function_call("assoc");
+    let assoc = graph.function_call("assoc");
 
-    let read = &graph.function_call("read");
+    let read = graph.function_call("read");
 
     assert!(graph.connects_direct(src_1, assoc));
     assert!(graph.connects_direct(assoc, read));
@@ -88,11 +88,11 @@ define_test!(no_inlining_overtaint : graph -> {
     let send2 = graph.function_call("send2_user_data");
     let dp = graph.function_call("dp1_user_data");
 
-    assert!(graph.connects(&get, &send));
-    assert!(graph.connects(&get2, &send2));
-    assert!(graph.connects_data(&get2, &dp));
-    assert!(!graph.connects_data(&get, &dp));
+    assert!(graph.connects(get, send));
+    assert!(graph.connects(get2, send2));
+    assert!(graph.connects_data(get2, dp));
+    assert!(!graph.connects_data(get, dp));
 
-    assert!(!graph.connects(&get, &send2));
-    assert!(!graph.connects(&get2, &send));
+    assert!(!graph.connects(get, send2));
+    assert!(!graph.connects(get2, send));
 });
