@@ -76,7 +76,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let flow = {
             let graph = flowistry::pdg::compute_pdg(self.tcx, target.def_id.expect_local());
-            CallOnlyFlow::from(&graph)
+            CallOnlyFlow::from_dep_graph(tcx, &graph)
         };
 
         // Register annotations on argument types for this controller.
