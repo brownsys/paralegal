@@ -3,7 +3,7 @@ use crate::{
     mir,
     pdg::*,
     utils::{AsFnAndArgs, TyCtxtExt},
-    HashMap, HashSet, TyCtxt,
+    HashMap, HashSet, TyCtxt, Either
 };
 use itertools::Itertools;
 use petgraph::data::DataMap;
@@ -37,6 +37,11 @@ fn as_terminator<'tcx>(tcx: TyCtxt<'tcx>, location: GlobalLocation) -> Option<&'
     } else {
         None
     }
+}
+
+fn is_call(tcx: TyCtxt, location: GlobalLocation) -> bool {
+    let Some(term) = as_terminator(tcx, location) else { return false };
+    matches!(term.kind, mir::TerminatorKind::Call { .. })
 }
 
 fn is_statement(tcx: TyCtxt, location: GlobalLocation) -> bool {
@@ -75,11 +80,11 @@ where
     depth_first_search(Reversed(&filtered), start, |event| match event {
         DfsEvent::Discover(node, _) => {
             let weight = g.node_weight(node).unwrap();
-            if is_statement(tcx, weight.at.leaf()) {
-                Control::<()>::Continue
-            } else {
+            if is_call(tcx, weight.at.leaf()) {
                 result.extend(Some(weight.at));
                 Control::Prune
+            } else {
+                Control::<()>::Continue
             }
         }
         _ => Control::Continue,
@@ -88,7 +93,7 @@ where
 
 fn place_contains<'tcx>(parent: mir::Place<'tcx>, child: mir::Place<'tcx>) -> bool {
     parent.local == child.local
-    && parent.projection.eq(&child.projection)
+    && parent.projection.iter().eq(child.projection.iter().take(parent.projection.len()))
 }
 
 impl CallOnlyFlow {
@@ -97,27 +102,29 @@ impl CallOnlyFlow {
         let locations = value
             .graph
             .edge_references()
-            .filter(|e| !is_statement(tcx, e.weight().at.leaf()))
-            .map(|e| (e.weight().at, e))
+            .filter_map(|e| {
+                let target_weight = value.graph.node_weight(e.target()).unwrap();
+                is_call(tcx, target_weight.at.leaf()).then_some((target_weight.at, (target_weight.place, e)))
+            })
             .into_grouping_map()
             .fold(
                 (HashMap::new(), vec![]),
-                |(mut map, mut ctrl_deps), _, v| {
-                    let target = if v.weight().kind == DepEdgeKind::Control {
+                |(mut map, mut ctrl_deps), _, (place, e)| {
+                    let target = if e.weight().kind == DepEdgeKind::Control {
                         &mut ctrl_deps
                     } else {
-                        map.entry(value.graph.node_weight(v.target()).unwrap().place)
+                        map.entry(place)
                             .or_insert_with(Vec::new)
                     };
-                    target.push(v.source());
+                    target.push(e.source());
                     (map, ctrl_deps)
                 },
             );
-        let location_dependencies = locations
+        let location_dependencies : HashMap<_,_> = locations
             .into_iter()
             .filter_map(|(location, (mut place_deps, direct_control_deps))| {
                 let term = as_terminator(tcx, location.leaf())?;
-                let (_, args, ..) = term.as_fn_and_args(tcx).unwrap();
+                let (_, args, ret) = term.as_fn_and_args(tcx).unwrap();
                 // First we find exact matches for each input place, popping them out of the map
                 let mut input_deps : Vec<_> = args
                     .iter()
@@ -137,16 +144,16 @@ impl CallOnlyFlow {
                         .zip(input_deps.iter_mut())
                         .filter_map(|(op, deps)| op.map_or(false, |op| place_contains(op, place)).then_some(deps))
                         .peekable();
-                    if matching_indices.peek().is_none() {
+                    if matching_indices.peek().is_none() && !place_contains(ret, place) {
                         warn!(
-                            "No matching argument found for place {place:?} in terminator {term:?}"
+                            "No matching argument found for place {place:?} in terminator {:?}", term.kind
                         );
                     }
                     for deps in matching_indices {
                         search_ancestors(tcx, &value.graph, dep.iter().copied(), deps)
                     }
                 }
-                // Handle the same place being passed twice?
+                // Handle the same place being passed twice
                 for (idx, op) in args.iter().enumerate() {
                     if let Some(op) = op {
                         if let Some(repeat_idx) = args[idx + 1..].iter().enumerate().find_map(|(i, elem)| (*elem == Some(*op)).then_some(i)) {
@@ -177,6 +184,20 @@ impl CallOnlyFlow {
                 .map(|t| t.0),
             &mut return_dependencies,
         );
+
+        for dep in return_dependencies.iter().chain(
+            location_dependencies.iter().flat_map(|(k, v)| v.input_deps.iter().flatten().chain(&v.ctrl_deps).chain(Some(k)))
+        ) {
+            if let LocationOrStart::Location(loc) = dep.leaf().location {
+                match tcx.body_for_def_id(dep.leaf().function.to_def_id()).unwrap().body.stmt_at(loc) {
+                    Either::Left(stmt) => panic!("Found statement at location {dep}: {stmt:?}"),
+                    Either::Right(term) if !matches!(term.kind, mir::TerminatorKind::Call {..}) =>
+                        panic!("Found non-call terminator at location {dep}: {:?}", term.kind),
+                    _ => (),
+                }
+            }
+        }
+
         CallOnlyFlow {
             location_dependencies,
             return_dependencies,
