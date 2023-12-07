@@ -1,7 +1,14 @@
+use crate::utils::CallStringExt;
+use crate::{
+    mir,
+    pdg::*,
+    utils::{AsFnAndArgs, TyCtxtExt},
+    HashMap, HashSet, TyCtxt,
+};
+use itertools::Itertools;
 use petgraph::data::DataMap;
 use petgraph::graph::NodeIndex;
-use petgraph::visit::{Data, depth_first_search, DfsEvent, EdgeFiltered, EdgeFilteredEdges, GraphBase, Reversed};
-use crate::{HashMap, HashSet, mir, pdg::*, Either, TyCtxt, utils::{TyCtxtExt, AsFnAndArgs}};
+use petgraph::visit::{depth_first_search, Data, DfsEvent, EdgeFiltered, GraphBase, IntoNodeReferences, Reversed, IntoEdgeReferences, IntoEdgesDirected};
 use serde::{Deserialize, Serialize};
 
 /// Coarse grained, [`Place`](mir::Place) abstracted version of a
@@ -24,36 +31,29 @@ impl CallOnlyFlow {
     }
 }
 
-enum DependencyResult {
-    IsReturn(HashSet<CallString>),
-    IsCall {
-        node: CallString,
-        deps: CallDeps,
-    },
-    Skip,
-}
-
-fn arg_nums_for_dep<'tcx>(tcx: TyCtxt<'tcx>, place: mir::Place<'tcx>, location: CallString) -> Vec<usize> {
-    let location = location.leaf();
-    let body = &tcx.body_for_def_id(location.function.to_def_id()).unwrap().body;
-    let stmt = body.stmt_at(location.location.unwrap_location());
-    let Either::Right(terminator) = stmt else {
-        unreachable!("{stmt:?} is not a terminator")
-    };
-    let args = terminator.as_fn_and_args(tcx).unwrap().1;
-    args.iter().enumerate().filter_map(|(num, &op)| (op? == place).then_some(num)).collect()
+fn as_terminator<'tcx>(tcx: TyCtxt<'tcx>, location: GlobalLocation) -> Option<&'tcx mir::Terminator<'tcx>> {
+    if let LocationOrStart::Location(loc) = location.location {
+        tcx.body_for_def_id(location.function.to_def_id()).unwrap().body.stmt_at(loc).right()
+    } else {
+        None
+    }
 }
 
 fn is_statement(tcx: TyCtxt, location: GlobalLocation) -> bool {
+    as_terminator(tcx, location).is_none()
 }
 
-fn search_ancestors<G, I, F>(tcx: TyCtxt, g: G, start: I, found: impl FnMut(NodeIndex))
+fn search_ancestors<'tcx, G, I>(tcx: TyCtxt<'tcx>, g: G, start: I, result: &mut impl Extend<CallString>)
 where
-    G: petgraph::visit::IntoNeighbors + petgraph::visit::Visitable,
+    G: petgraph::visit::IntoNeighbors
+        + petgraph::visit::Visitable + GraphBase<NodeId = NodeIndex>
+        + Data<NodeWeight = DepNode<'tcx>, EdgeWeight = DepEdge>
+        + DataMap
+        + IntoEdgeReferences
+        + IntoEdgesDirected,
     I: IntoIterator<Item = G::NodeId>,
-    G: GraphBase<NodeId=NodeIndex> + Data<NodeWeight=DepNode, EdgeWeight=DepEdge>
 {
-    use petgraph::visit::{depth_first_search, DfsEvent, Control};
+    use petgraph::visit::{Control, EdgeRef};
     // The dfs later uses "into_neighbors" which for a directed graph normally returns all outgoing
     // edges but we want to traverse the other direction so we reverse all edge direction. Now the
     // DFS will traverse towards the ancestors.
@@ -68,96 +68,118 @@ where
     //    "n_1 ->{data}* n_2 ->{ctrl} target", ergo only the last edge has to be control but the
     //    rest is data only. The rest is data only, because the control flow edges contain
     //    transitive edges already, allowing us to ignore them here.
-    let g = Reversed(EdgeFiltered::from_fn(g, |e| matches!(e.weight().kind, DepEdgeKind::Data)));
-    depth_first_search(
-        g,
-        start,
-        |event| match event {
-            DfsEvent::Discover(node, _) =>
-                if is_statement(tcx, g.node_weight(node).unwrap().at.leaf()) {
-                    Control::Continue
-                } else {
-                    found(node);
-                    Control::Prune
-                }
-            _ => Control::Continue,
-        }
-    );
-}
-
-fn dependencies_of_node<'tcx>(tcx: TyCtxt<'tcx>, g: &DepGraph<'tcx>, i: NodeIndex) -> DependencyResult {
-    use petgraph::prelude::*;
-    let g = &g.graph;
-    let n = g.node_weight(i).unwrap();
-
-    if n.place == mir::RETURN_PLACE.into() && n.at.iter().count() == 0
-    {
-        DependencyResult::IsReturn(
-            g.neighbors_directed(i, Incoming)
-                .map(|p| g.node_weight(p).unwrap().at)
-                .collect()
-        )
-    } else {
-        use petgraph::visit::{depth_first_search, DfsEvent, Control};
-        let mut input_deps = vec![];
-        let mut ctrl_deps = HashSet::new();
-
-        // We don't need to worry about transitive ctrl edges, because they're already included?
-
-        search_ancestors(tcx, g, |ancestor| {
-
-        });
-
-        for e_ref in g.edges_directed(i, Incoming) {
-            let dep = g.node_weight(e_ref.source()).unwrap().at;
-            let edge = e_ref.weight();
-            match edge.kind {
-                DepEdgeKind::Control => {
-                    ctrl_deps.insert(dep);
-                }
-                DepEdgeKind::Data => {
-                    let arg_nums = arg_nums_for_dep(tcx, n.place, edge.at);
-                    if let Some(&max) = arg_nums.iter().max() {
-                        if input_deps.len() <= max {
-                            input_deps.resize_with(max, HashSet::new);
-                        }
-                    }
-                    for arg_num in arg_nums {
-                        input_deps[arg_num].insert(dep);
-                    }
-                }
+    let filtered = EdgeFiltered::from_fn(g, |e| {
+        let w: &DepEdge = e.weight();
+        matches!(w.kind, DepEdgeKind::Data)
+    });
+    depth_first_search(Reversed(&filtered), start, |event| match event {
+        DfsEvent::Discover(node, _) => {
+            let weight = g.node_weight(node).unwrap();
+            if is_statement(tcx, weight.at.leaf()) {
+                Control::<()>::Continue
+            } else {
+                result.extend(Some(weight.at));
+                Control::Prune
             }
         }
-        DependencyResult::IsCall {
-            node: n.at,
-            deps: CallDeps {
-                ctrl_deps,
-                input_deps,
-            },
-        }
-    }
+        _ => Control::Continue,
+    });
+}
+
+fn place_contains<'tcx>(parent: mir::Place<'tcx>, child: mir::Place<'tcx>) -> bool {
+    parent.local == child.local
+    && parent.projection.eq(&child.projection)
 }
 
 impl CallOnlyFlow {
     pub fn from_dep_graph<'tcx>(tcx: TyCtxt<'tcx>, value: &DepGraph<'tcx>) -> Self {
-        let mut return_dependencies = None;
-        let location_dependencies = value.graph
-            .node_indices()
-            .filter_map(|i| {
-                match dependencies_of_node(tcx, value, i) {
-                    DependencyResult::IsReturn(return_deps) => {
-                        assert!(return_dependencies.replace(return_deps).is_none());
-                        None
+        use petgraph::visit::EdgeRef;
+        let locations = value
+            .graph
+            .edge_references()
+            .filter(|e| !is_statement(tcx, e.weight().at.leaf()))
+            .map(|e| (e.weight().at, e))
+            .into_grouping_map()
+            .fold(
+                (HashMap::new(), vec![]),
+                |(mut map, mut ctrl_deps), _, v| {
+                    let target = if v.weight().kind == DepEdgeKind::Control {
+                        &mut ctrl_deps
+                    } else {
+                        map.entry(value.graph.node_weight(v.target()).unwrap().place)
+                            .or_insert_with(Vec::new)
+                    };
+                    target.push(v.source());
+                    (map, ctrl_deps)
+                },
+            );
+        let location_dependencies = locations
+            .into_iter()
+            .filter_map(|(location, (mut place_deps, direct_control_deps))| {
+                let term = as_terminator(tcx, location.leaf())?;
+                let (_, args, ..) = term.as_fn_and_args(tcx).unwrap();
+                // First we find exact matches for each input place, popping them out of the map
+                let mut input_deps : Vec<_> = args
+                    .iter()
+                    .map(|op| {
+                        let mut deps = HashSet::new();
+                        if let Some(dep_nodes) = op.and_then(|place| place_deps.remove(&place)) {
+                            search_ancestors(tcx, &value.graph, dep_nodes, &mut deps);
+                        }
+                        deps
+                    })
+                    .collect();
+                // For the rest we try to find matching subplaces and add them there too
+                // XXX: I'm not sure that this composes properly with references.
+                for (place, dep) in place_deps {
+                    let mut matching_indices = args
+                        .iter()
+                        .zip(input_deps.iter_mut())
+                        .filter_map(|(op, deps)| op.map_or(false, |op| place_contains(op, place)).then_some(deps))
+                        .peekable();
+                    if matching_indices.peek().is_none() {
+                        warn!(
+                            "No matching argument found for place {place:?} in terminator {term:?}"
+                        );
                     }
-                    DependencyResult::Skip => None,
-                    DependencyResult::IsCall { node, deps } => Some((node, deps))
+                    for deps in matching_indices {
+                        search_ancestors(tcx, &value.graph, dep.iter().copied(), deps)
+                    }
                 }
+                // Handle the same place being passed twice?
+                for (idx, op) in args.iter().enumerate() {
+                    if let Some(op) = op {
+                        if let Some(repeat_idx) = args[idx + 1..].iter().enumerate().find_map(|(i, elem)| (*elem == Some(*op)).then_some(i)) {
+                            let (head, tail) = input_deps.split_at_mut(idx + 1);
+                            tail[repeat_idx] = head.last().unwrap().clone();
+                        }
+                    }
+                }
+                let mut ctrl_deps = HashSet::new();
+                search_ancestors(tcx, &value.graph, direct_control_deps, &mut ctrl_deps);
+                Some((
+                    location,
+                    CallDeps {
+                        input_deps,
+                        ctrl_deps,
+                    },
+                ))
             })
             .collect();
-
+        let mut return_dependencies = HashSet::new();
+        search_ancestors(
+            tcx,
+            &value.graph,
+            value
+                .graph
+                .node_references()
+                .filter(|(_, n)| n.place == mir::RETURN_PLACE.into() && n.at.is_at_root())
+                .map(|t| t.0),
+            &mut return_dependencies,
+        );
         CallOnlyFlow {
             location_dependencies,
-            return_dependencies: return_dependencies.unwrap(),
+            return_dependencies,
         }
     }
 }
