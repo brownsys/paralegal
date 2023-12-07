@@ -1,5 +1,6 @@
+use petgraph::data::DataMap;
 use petgraph::graph::NodeIndex;
-use petgraph::visit::depth_first_search;
+use petgraph::visit::{Data, depth_first_search, DfsEvent, EdgeFiltered, EdgeFilteredEdges, GraphBase, Reversed};
 use crate::{HashMap, HashSet, mir, pdg::*, Either, TyCtxt, utils::{TyCtxtExt, AsFnAndArgs}};
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +44,47 @@ fn arg_nums_for_dep<'tcx>(tcx: TyCtxt<'tcx>, place: mir::Place<'tcx>, location: 
     args.iter().enumerate().filter_map(|(num, &op)| (op? == place).then_some(num)).collect()
 }
 
+fn is_statement(tcx: TyCtxt, location: GlobalLocation) -> bool {
+}
+
+fn search_ancestors<G, I, F>(tcx: TyCtxt, g: G, start: I, found: impl FnMut(NodeIndex))
+where
+    G: petgraph::visit::IntoNeighbors + petgraph::visit::Visitable,
+    I: IntoIterator<Item = G::NodeId>,
+    G: GraphBase<NodeId=NodeIndex> + Data<NodeWeight=DepNode, EdgeWeight=DepEdge>
+{
+    use petgraph::visit::{depth_first_search, DfsEvent, Control};
+    // The dfs later uses "into_neighbors" which for a directed graph normally returns all outgoing
+    // edges but we want to traverse the other direction so we reverse all edge direction. Now the
+    // DFS will traverse towards the ancestors.
+    //
+    // In addition we filter out the control flow edges. This is because this function is used in
+    // two contexts, both of which are save to ignore control.
+    // XXX: Check these assumptions with test cases
+    //
+    // 1. We are discovering the data dependencies to a function call, in this case we don't care
+    //    about the control flow.
+    // 2. For the control flow reaching a call site we care about the pattern
+    //    "n_1 ->{data}* n_2 ->{ctrl} target", ergo only the last edge has to be control but the
+    //    rest is data only. The rest is data only, because the control flow edges contain
+    //    transitive edges already, allowing us to ignore them here.
+    let g = Reversed(EdgeFiltered::from_fn(g, |e| matches!(e.weight().kind, DepEdgeKind::Data)));
+    depth_first_search(
+        g,
+        start,
+        |event| match event {
+            DfsEvent::Discover(node, _) =>
+                if is_statement(tcx, g.node_weight(node).unwrap().at.leaf()) {
+                    Control::Continue
+                } else {
+                    found(node);
+                    Control::Prune
+                }
+            _ => Control::Continue,
+        }
+    );
+}
+
 fn dependencies_of_node<'tcx>(tcx: TyCtxt<'tcx>, g: &DepGraph<'tcx>, i: NodeIndex) -> DependencyResult {
     use petgraph::prelude::*;
     let g = &g.graph;
@@ -60,8 +102,13 @@ fn dependencies_of_node<'tcx>(tcx: TyCtxt<'tcx>, g: &DepGraph<'tcx>, i: NodeInde
         let mut input_deps = vec![];
         let mut ctrl_deps = HashSet::new();
 
+        // We don't need to worry about transitive ctrl edges, because they're already included?
 
-        for e_ref in g.neighbors_directed(i, Incoming) {
+        search_ancestors(tcx, g, |ancestor| {
+
+        });
+
+        for e_ref in g.edges_directed(i, Incoming) {
             let dep = g.node_weight(e_ref.source()).unwrap().at;
             let edge = e_ref.weight();
             match edge.kind {
