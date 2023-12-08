@@ -1,9 +1,8 @@
 use std::{io::Write, iter::empty, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    global_location::GlobalLocation, Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink,
-    DataSource, DefKind, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement,
-    ProgramDescription,
+    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap,
+    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -393,28 +392,21 @@ impl Context {
                 })
         };
 
-        let get_influencers = |flow: &'a BitvecArcIndexMatrix<
-            DataSourceIndex,
-            CallSiteOrDataSink,
-        >| {
-            let influencers = flow
-                .rows()
-                .filter_map(move |(src, row_set)| row_set.contains(&sink_cs_or_ds).then_some(src))
-                .flat_map(move |idx| {
-                    let ds = self.flows_to[&sink.ctrl_id].sources.value(*idx);
-                    // We definitely are influenced by the node itself.
-                    let mut nodes = vec![Node {
-                        ctrl_id: sink.ctrl_id,
-                        typ: ds.clone().into(),
-                    }];
+        let get_influencers = |influencer_srcs: Box<dyn Iterator<Item = &'a DataSource>>| {
+            let influencers = influencer_srcs.flat_map(move |src| {
+                // We definitely are influenced by the node itself.
+                let mut nodes = vec![Node {
+                    ctrl_id: sink.ctrl_id,
+                    typ: src.clone().into(),
+                }];
 
-                    // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
-                    if let DataSource::FunctionCall(cs) = controller_flow.sources.value(*idx) {
-                        nodes.extend(callargs_for_callsite(*cs))
-                    }
+                // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
+                if let DataSource::FunctionCall(cs) = src {
+                    nodes.extend(callargs_for_callsite(*cs))
+                }
 
-                    nodes
-                });
+                nodes
+            });
 
             // Special case if sink is a callsite, the callargs are also influencers
             let cs_args = if let NodeType::CallSite(cs) = sink.typ {
@@ -489,54 +481,44 @@ impl Context {
 			return Box::new(empty());
 		};
 
-        let get_influencees =
-            |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
-                let influencees = flow
-                    .row_set(
-                        &src_datasource
-                            .clone()
-                            .to_index(&self.flows_to[cf_id].sources),
-                    )
-                    .iter()
-                    .flat_map(move |cs_ds| {
-                        // We definitely influence to the node itself.
-                        let mut nodes = vec![Node {
-                            ctrl_id: src.ctrl_id,
-                            typ: cs_ds.clone().into(),
-                        }];
-                        // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
-                        if let CallSiteOrDataSink::DataSink(DataSink::Argument {
-                            function: f,
-                            ..
-                        }) = cs_ds
-                        {
-                            nodes.push(Node {
-                                ctrl_id: src.ctrl_id,
-                                typ: (*f).into(),
-                            })
-                        }
-                        nodes
-                    });
+        let get_influencees = |influencee_sinks: Box<dyn Iterator<Item = CallSiteOrDataSink>>| {
+            let influencees = influencee_sinks.flat_map(move |cs_ds| {
+                // We definitely influence to the node itself.
+                let mut nodes = vec![Node {
+                    ctrl_id: src.ctrl_id,
+                    typ: cs_ds.clone().into(),
+                }];
+                // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
+                if let CallSiteOrDataSink::DataSink(DataSink::Argument { function: f, .. }) = cs_ds
+                {
+                    nodes.push(Node {
+                        ctrl_id: src.ctrl_id,
+                        typ: f.into(),
+                    })
+                }
+                nodes
+            });
 
-                // Special case if sink is callarg, callsite is also an influencer
-                let arg_cs =
-                    if let NodeType::CallArgument(DataSink::Argument { function, .. }) = src.typ {
-                        Some(Node {
-                            ctrl_id: src.ctrl_id,
-                            typ: function.into(),
-                        })
-                    } else {
-                        None
-                    };
-                Box::new(influencees.chain(arg_cs.into_iter()))
-            };
+            // Special case if sink is callarg, callsite is also an influencer
+            let arg_cs =
+                if let NodeType::CallArgument(DataSink::Argument { function, .. }) = src.typ {
+                    Some(Node {
+                        ctrl_id: src.ctrl_id,
+                        typ: function.into(),
+                    })
+                } else {
+                    None
+                };
+            Box::new(influencees.chain(arg_cs.into_iter()))
+        };
 
         match edge_type {
             EdgeType::Data => get_influencees(Box::new(
                 self.flows_to[&cf_id]
                     .data_flows_to
                     .row_set(&src_datasource.to_index(&self.flows_to[&cf_id].sources))
-                    .iter(),
+                    .iter()
+                    .cloned(),
             )),
             EdgeType::DataAndControl => get_influencees(Box::new(DataAndControlInfluencees::new(
                 src_datasource,

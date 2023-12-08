@@ -1,7 +1,6 @@
 use itertools::Itertools;
 use paralegal_spdg::{
     CallSiteOrDataSink, CallSiteOrDataSinkIndex, Ctrl, DataSink, DataSource, DataSourceIndex,
-    ProgramDescription,
 };
 
 use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToIndex};
@@ -225,13 +224,13 @@ impl<'a> Iterator for DataAndControlInfluencees<'a> {
                     _ => continue,
                 };
                 if self.seen.insert(cur_sink.clone()) {
-                    self.queue.push(cur_sink_callsite.clone().into());
+                    self.queue.push((*cur_sink_callsite).into());
                 }
             }
 
             if let Some(callsites) = self.ctrl.ctrl_flow.get(&cur_src) {
                 for cur_cs_sink in callsites {
-                    let cs_or_ds: CallSiteOrDataSink = cur_cs_sink.clone().into();
+                    let cs_or_ds: CallSiteOrDataSink = (*cur_cs_sink).into();
                     self.to_return.push(cs_or_ds.clone());
                     for arg in self
                         .flows_to
@@ -242,7 +241,7 @@ impl<'a> Iterator for DataAndControlInfluencees<'a> {
                     }
 
                     if self.seen.insert(cs_or_ds) {
-                        self.queue.push((cur_cs_sink.clone()).into());
+                        self.queue.push((*cur_cs_sink).into());
                     }
                 }
             }
