@@ -79,14 +79,14 @@ impl CtrlFlowsTo {
         // Collect all sources and sinks into indexed domains.
         let sources = Arc::new(IndexedDomain::from_iter(ctrl.all_sources().cloned().chain(
             ctrl.all_call_sites_or_sinks().filter_map(|cs_or_ds| {
-                let nt: NodeType = (&cs_or_ds).into();
+                let nt: NodeType = cs_or_ds.into();
                 nt.as_data_source()
             }),
         )));
         let sinks = Arc::new(IndexedDomain::from_iter(
             ctrl.all_call_sites_or_sinks()
                 .chain(ctrl.all_sources().filter_map(|src| {
-                    let nt: NodeType = src.into();
+                    let nt: NodeType = src.clone().into();
                     nt.as_call_site_or_data_sink()
                 })),
         ));
@@ -97,9 +97,9 @@ impl CtrlFlowsTo {
         for (sink_idx, sink) in sinks.as_vec().iter_enumerated() {
             let src = match sink {
                 CallSiteOrDataSink::DataSink(DataSink::Argument { function: f, .. }) => {
-                    DataSource::FunctionCall(f.clone())
+                    DataSource::FunctionCall(*f)
                 }
-                CallSiteOrDataSink::CallSite(f) => DataSource::FunctionCall(f.clone()),
+                CallSiteOrDataSink::CallSite(f) => DataSource::FunctionCall(*f),
                 _ => continue,
             };
             let src_idx = if sources.contains(&src) {
@@ -140,10 +140,10 @@ impl CtrlFlowsTo {
         for (src, sinks) in &ctrl.data_flow.0 {
             let src = src.to_index(&sources);
             for sink in sinks {
-                data_flows_to.insert(src, CallSiteOrDataSink::DataSink(sink.clone()));
+                data_flows_to.insert(src, CallSiteOrDataSink::DataSink(*sink));
                 // initialize with flows from DataSource to the DataSink's CallSite
                 if let DataSink::Argument { function, .. } = sink {
-                    data_flows_to.insert(src, CallSiteOrDataSink::CallSite(function.clone()));
+                    data_flows_to.insert(src, CallSiteOrDataSink::CallSite(*function));
                 }
             }
         }
@@ -270,7 +270,7 @@ fn test_data_flows_to() {
     let controller = ctx.find_by_name("controller").unwrap();
     let src = crate::Node {
         ctrl_id: controller,
-        typ: (&DataSource::Argument(0)).into(),
+        typ: DataSource::Argument(0).into(),
     };
     let sink1 = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
     let sink2 = crate::test_utils::get_sink_node(&ctx, controller, "sink2").unwrap();
@@ -284,15 +284,15 @@ fn test_ctrl_flows_to() {
     let controller = ctx.find_by_name("controller_ctrl").unwrap();
     let src_a = crate::Node {
         ctrl_id: controller,
-        typ: (&DataSource::Argument(0)).into(),
+        typ: DataSource::Argument(0).into(),
     };
     let src_b = crate::Node {
         ctrl_id: controller,
-        typ: (&DataSource::Argument(1)).into(),
+        typ: DataSource::Argument(1).into(),
     };
     let src_c = crate::Node {
         ctrl_id: controller,
-        typ: (&DataSource::Argument(2)).into(),
+        typ: DataSource::Argument(2).into(),
     };
     let cs1 = crate::test_utils::get_callsite_node(&ctx, controller, "sink1").unwrap();
     let cs2 = crate::test_utils::get_callsite_node(&ctx, controller, "sink2").unwrap();
@@ -309,11 +309,11 @@ fn test_flows_to() {
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
     let src_a = crate::Node {
         ctrl_id: controller,
-        typ: (&DataSource::Argument(0)).into(),
+        typ: DataSource::Argument(0).into(),
     };
     let src_b = crate::Node {
         ctrl_id: controller,
-        typ: (&DataSource::Argument(1)).into(),
+        typ: DataSource::Argument(1).into(),
     };
     let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
     let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1").unwrap();

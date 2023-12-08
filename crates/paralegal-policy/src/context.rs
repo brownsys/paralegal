@@ -44,16 +44,16 @@ pub enum EdgeType {
 
 /// Data type representing nodes in the SPDG for a particular controller.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Node<'a> {
+pub struct Node {
     /// ControllerId of the node.
     pub ctrl_id: ControllerId,
     /// The data of the node.
-    pub typ: NodeType<'a>,
+    pub typ: NodeType,
 }
 
-impl<'a> Node<'a> {
+impl Node {
     /// Transform a Node into the associated Node with typ [`NodeType::CallSite`]
-    pub fn associated_call_site(self) -> Option<Node<'a>> {
+    pub fn associated_call_site(self) -> Option<Node> {
         self.typ.as_call_site().map(|cs| Node {
             ctrl_id: self.ctrl_id,
             typ: NodeType::CallSite(cs),
@@ -65,7 +65,7 @@ impl<'a> Node<'a> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum NodeType {
     /// Corresponds to [`DataSource::Argument`].
-    ControllerArgument(DataSource),
+    ControllerArgument(usize),
 
     /// Corresponds to a [`CallSite`] or [`DataSource::FunctionCall`].
     CallSite(CallSite),
@@ -74,26 +74,26 @@ pub enum NodeType {
     CallArgument(DataSink),
 
     /// Corresponds to a [`DataSink::Return`].
-    Return(DataSink),
+    Return,
 }
 
-impl<'a> From<&'a CallSite> for NodeType<'a> {
-    fn from(cs: &'a CallSite) -> Self {
+impl From<CallSite> for NodeType {
+    fn from(cs: CallSite) -> Self {
         NodeType::CallSite(cs)
     }
 }
 
-impl<'a> From<&'a DataSink> for NodeType<'a> {
-    fn from(ds: &'a DataSink) -> Self {
+impl From<DataSink> for NodeType {
+    fn from(ds: DataSink) -> Self {
         match ds {
             DataSink::Argument { .. } => NodeType::CallArgument(ds),
-            DataSink::Return => NodeType::Return(ds),
+            DataSink::Return => NodeType::Return,
         }
     }
 }
 
-impl<'a> From<&'a CallSiteOrDataSink> for NodeType<'a> {
-    fn from(x: &'a CallSiteOrDataSink) -> Self {
+impl From<CallSiteOrDataSink> for NodeType {
+    fn from(x: CallSiteOrDataSink) -> Self {
         match x {
             CallSiteOrDataSink::CallSite(cs) => cs.into(),
             CallSiteOrDataSink::DataSink(ds) => ds.into(),
@@ -101,18 +101,18 @@ impl<'a> From<&'a CallSiteOrDataSink> for NodeType<'a> {
     }
 }
 
-impl<'a> From<&'a DataSource> for NodeType<'a> {
-    fn from(ds: &'a DataSource) -> Self {
+impl From<DataSource> for NodeType {
+    fn from(ds: DataSource) -> Self {
         match ds {
             DataSource::FunctionCall(cs) => NodeType::CallSite(cs),
-            DataSource::Argument(_) => NodeType::ControllerArgument(ds),
+            DataSource::Argument(i) => NodeType::ControllerArgument(i),
         }
     }
 }
 
-impl<'a> NodeType<'a> {
+impl NodeType {
     /// Transform a NodeType into it's corresponding CallSite - only works for CallSites and CallArguments.
-    pub fn as_call_site(self) -> Option<&'a CallSite> {
+    pub fn as_call_site(self) -> Option<CallSite> {
         match self {
             NodeType::ControllerArgument(_) => None,
             NodeType::CallSite(cs) => Some(cs),
@@ -120,17 +120,17 @@ impl<'a> NodeType<'a> {
                 DataSink::Argument { function, .. } => Some(function),
                 DataSink::Return => None,
             },
-            NodeType::Return(_) => None,
+            NodeType::Return => None,
         }
     }
 
     /// Transform a NodeType into it's corresponding DataSink - only works for CallArgs and Returns.
-    pub fn as_data_sink(self) -> Option<&'a DataSink> {
+    pub fn as_data_sink(self) -> Option<DataSink> {
         match self {
             NodeType::ControllerArgument(_) => None,
             NodeType::CallSite(_) => None,
             NodeType::CallArgument(ds) => Some(ds),
-            NodeType::Return(ds) => Some(ds),
+            NodeType::Return => Some(DataSink::Return),
         }
     }
 
@@ -138,24 +138,22 @@ impl<'a> NodeType<'a> {
     pub fn as_call_site_or_data_sink(self) -> Option<CallSiteOrDataSink> {
         match self {
             NodeType::ControllerArgument(_) => None,
-            NodeType::CallSite(cs) => Some((*cs).clone().into()),
-            NodeType::CallArgument(ds) => Some((*ds).clone().into()),
-            NodeType::Return(ds) => Some((*ds).clone().into()),
+            NodeType::CallSite(cs) => Some(cs.into()),
+            NodeType::CallArgument(ds) => Some(ds.into()),
+            NodeType::Return => Some(DataSink::Return.into()),
         }
     }
 
     /// Transform a NodeType into it's corresponding owned DataSource - only works for CtrlArgs, CallSites, and CallArguments. Clones underlying data.
     pub fn as_data_source(self) -> Option<DataSource> {
         match self {
-            NodeType::ControllerArgument(ds) => Some((*ds).clone()),
-            NodeType::CallSite(cs) => Some(DataSource::FunctionCall((*cs).clone())),
+            NodeType::ControllerArgument(i) => Some(DataSource::Argument(i)),
+            NodeType::CallSite(cs) => Some(DataSource::FunctionCall(cs)),
             NodeType::CallArgument(ds) => match ds {
-                DataSink::Argument { function, .. } => {
-                    Some(DataSource::FunctionCall(function.clone()))
-                }
+                DataSink::Argument { function, .. } => Some(DataSource::FunctionCall(function)),
                 DataSink::Return => None,
             },
-            NodeType::Return(_) => None,
+            NodeType::Return => None,
         }
     }
 }
@@ -313,7 +311,7 @@ impl Context {
             (edge_type, src.typ, sink.typ),
             (EdgeType::Data | EdgeType::DataAndControl,
                 NodeType::CallArgument(DataSink::Argument { function, .. }),
-                NodeType::CallSite(cs)) if *function == *cs)
+                NodeType::CallSite(cs)) if function == cs)
         {
             return true;
         }
@@ -344,7 +342,7 @@ impl Context {
                 };
 
                 match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
-                    Some(callsites) => callsites.iter().contains(cs),
+                    Some(callsites) => callsites.iter().contains(&cs),
                     None => false,
                 }
             }
@@ -370,7 +368,7 @@ impl Context {
     /// Does not return the input node. A CallSite sink will return all of the associated CallArgument nodes.
     pub fn influencers<'a>(
         &'a self,
-        sink: Node<'a>,
+        sink: Node,
         edge_type: EdgeType,
     ) -> Box<dyn Iterator<Item = Node> + 'a> {
         let cf_id = sink.ctrl_id;
@@ -380,36 +378,43 @@ impl Context {
 
         let controller_flow = &self.flows_to[&sink.ctrl_id];
 
-        let callargs_for_callsite = move |cs: &'a CallSite| {
+        let callargs_for_callsite = move |cs: CallSite| {
             controller_flow
                 .callsites_to_callargs
                 .row_set(
                     &controller_flow
                         .sinks
-                        .index(&CallSiteOrDataSink::CallSite(cs.clone())),
+                        .index(&CallSiteOrDataSink::CallSite(cs)),
                 )
                 .iter()
                 .map(move |ca| Node {
                     ctrl_id: sink.ctrl_id,
-                    typ: ca.into(),
+                    typ: ca.clone().into(),
                 })
         };
 
-        let get_influencers = |influencer_srcs: Box<dyn Iterator<Item = &'a DataSource>>| {
-            let influencers = influencer_srcs.flat_map(move |src| {
-                // We definitely are influenced by the node itself.
-                let mut nodes = vec![Node {
-                    ctrl_id: sink.ctrl_id,
-                    typ: src.into(),
-                }];
+        let get_influencers = |flow: &'a BitvecArcIndexMatrix<
+            DataSourceIndex,
+            CallSiteOrDataSink,
+        >| {
+            let influencers = flow
+                .rows()
+                .filter_map(move |(src, row_set)| row_set.contains(&sink_cs_or_ds).then_some(src))
+                .flat_map(move |idx| {
+                    let ds = self.flows_to[&sink.ctrl_id].sources.value(*idx);
+                    // We definitely are influenced by the node itself.
+                    let mut nodes = vec![Node {
+                        ctrl_id: sink.ctrl_id,
+                        typ: ds.clone().into(),
+                    }];
 
-                // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
-                if let DataSource::FunctionCall(cs) = src {
-                    nodes.extend(callargs_for_callsite(cs))
-                }
+                    // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
+                    if let DataSource::FunctionCall(cs) = controller_flow.sources.value(*idx) {
+                        nodes.extend(callargs_for_callsite(*cs))
+                    }
 
-                nodes
-            });
+                    nodes
+                });
 
             // Special case if sink is a callsite, the callargs are also influencers
             let cs_args = if let NodeType::CallSite(cs) = sink.typ {
@@ -451,9 +456,9 @@ impl Context {
                         .ctrl_flow
                         .iter()
                         .filter_map(move |(src, sinks)| {
-                            sinks.contains(cs).then_some(Node {
-                                ctrl_id: cf_id,
-                                typ: src.into(),
+                            sinks.contains(&cs).then_some(Node {
+                                ctrl_id: sink.ctrl_id,
+                                typ: src.clone().into(),
                             })
                         })
                         .flat_map(move |n| {
@@ -476,7 +481,7 @@ impl Context {
     /// Does not return the input node. A CallArgument src will return the associated CallSite.
     pub fn influencees<'a>(
         &'a self,
-        src: Node<'a>,
+        src: Node,
         edge_type: EdgeType,
     ) -> Box<dyn Iterator<Item = Node> + 'a> {
         let cf_id = src.ctrl_id;
@@ -484,38 +489,47 @@ impl Context {
 			return Box::new(empty());
 		};
 
-        let get_influencees = |influencee_sinks: Box<
-            dyn Iterator<Item = &'a CallSiteOrDataSink>,
-        >| {
-            let influencees = influencee_sinks.flat_map(move |cs_ds| {
-                // We definitely influence to the node itself.
-                let mut nodes = vec![Node {
-                    ctrl_id: src.ctrl_id,
-                    typ: cs_ds.into(),
-                }];
-                // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
-                if let CallSiteOrDataSink::DataSink(DataSink::Argument { function: f, .. }) = cs_ds
-                {
-                    nodes.push(Node {
-                        ctrl_id: src.ctrl_id,
-                        typ: f.into(),
-                    })
-                }
-                nodes
-            });
+        let get_influencees =
+            |flow: &'a BitvecArcIndexMatrix<DataSourceIndex, CallSiteOrDataSink>| {
+                let influencees = flow
+                    .row_set(
+                        &src_datasource
+                            .clone()
+                            .to_index(&self.flows_to[cf_id].sources),
+                    )
+                    .iter()
+                    .flat_map(move |cs_ds| {
+                        // We definitely influence to the node itself.
+                        let mut nodes = vec![Node {
+                            ctrl_id: src.ctrl_id,
+                            typ: cs_ds.clone().into(),
+                        }];
+                        // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
+                        if let CallSiteOrDataSink::DataSink(DataSink::Argument {
+                            function: f,
+                            ..
+                        }) = cs_ds
+                        {
+                            nodes.push(Node {
+                                ctrl_id: src.ctrl_id,
+                                typ: (*f).into(),
+                            })
+                        }
+                        nodes
+                    });
 
-            // Special case if sink is callarg, callsite is also an influencer
-            let arg_cs =
-                if let NodeType::CallArgument(DataSink::Argument { function, .. }) = src.typ {
-                    Some(Node {
-                        ctrl_id: src.ctrl_id,
-                        typ: function.into(),
-                    })
-                } else {
-                    None
-                };
-            Box::new(influencees.chain(arg_cs.into_iter()))
-        };
+                // Special case if sink is callarg, callsite is also an influencer
+                let arg_cs =
+                    if let NodeType::CallArgument(DataSink::Argument { function, .. }) = src.typ {
+                        Some(Node {
+                            ctrl_id: src.ctrl_id,
+                            typ: function.into(),
+                        })
+                    } else {
+                        None
+                    };
+                Box::new(influencees.chain(arg_cs.into_iter()))
+            };
 
         match edge_type {
             EdgeType::Data => get_influencees(Box::new(
@@ -532,8 +546,8 @@ impl Context {
             EdgeType::Control => {
                 match self.desc.controllers[&cf_id].ctrl_flow.get(&src_datasource) {
                     Some(callsites) => Box::new(callsites.iter().map(move |cs| Node {
-                        ctrl_id: cf_id,
-                        typ: cs.into(),
+                        ctrl_id: src.ctrl_id,
+                        typ: (*cs).into(),
                     })),
                     None => Box::new(empty()),
                 }
@@ -600,46 +614,47 @@ impl Context {
         }
 
         match node.typ {
-            NodeType::ControllerArgument(source) => match source {
-                DataSource::Argument(arg) => marker_on_argument(self, marker, node.ctrl_id, *arg),
-                DataSource::FunctionCall(_) => {
-                    panic!("impossible - CtrlArgument variant cannot be DataSource::FunctionCall")
-                }
-            },
+            NodeType::ControllerArgument(arg) => {
+                marker_on_argument(self, marker, node.ctrl_id, arg)
+            }
             NodeType::CallSite(cs) => marker_on_return(self, marker, cs.function),
             NodeType::CallArgument(ds) => match ds {
                 DataSink::Argument { function, arg_slot } => {
-                    marker_on_argument(self, marker, function.function, *arg_slot)
+                    marker_on_argument(self, marker, function.function, arg_slot)
                 }
                 DataSink::Return => {
                     panic!("impossible - CallArgument variant cannot be DataSink::Return")
                 }
             },
-            NodeType::Return(_) => marker_on_return(self, marker, node.ctrl_id),
+            NodeType::Return => marker_on_return(self, marker, node.ctrl_id),
         }
     }
 
     /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
-    pub fn all_nodes_for_ctrl(&self, ctrl_id: ControllerId) -> impl Iterator<Item = Node<'_>> {
+    pub fn all_nodes_for_ctrl(&self, ctrl_id: ControllerId) -> impl Iterator<Item = Node> + '_ {
         let ctrl = &self.desc.controllers[&ctrl_id];
         ctrl.all_sources()
             .map(move |src| Node {
                 ctrl_id,
-                typ: src.into(),
+                typ: src.clone().into(),
             })
             .chain(ctrl.data_sinks().map(move |snk| Node {
                 ctrl_id,
-                typ: snk.into(),
+                typ: (*snk).into(),
             }))
             .chain(ctrl.call_sites().map(move |cs| Node {
                 ctrl_id,
-                typ: cs.into(),
+                typ: (*cs).into(),
             }))
             .unique()
     }
 
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
-    pub fn srcs_with_type(&self, ctrl_id: ControllerId, t: DefId) -> impl Iterator<Item = Node> {
+    pub fn srcs_with_type(
+        &self,
+        ctrl_id: ControllerId,
+        t: DefId,
+    ) -> impl Iterator<Item = Node> + '_ {
         self.desc.controllers[&ctrl_id]
             .types
             .0
@@ -647,13 +662,17 @@ impl Context {
             .filter_map(move |(src, ids)| {
                 ids.contains(&t).then_some(Node {
                     ctrl_id,
-                    typ: src.into(),
+                    typ: src.clone().into(),
                 })
             })
     }
 
     /// Returns an iterator over all nodes that do not have any influencers of the given edge_type.
-    pub fn roots(&self, ctrl_id: ControllerId, edge_type: EdgeType) -> impl Iterator<Item = Node> {
+    pub fn roots(
+        &self,
+        ctrl_id: ControllerId,
+        edge_type: EdgeType,
+    ) -> impl Iterator<Item = Node> + '_ {
         self.all_nodes_for_ctrl(ctrl_id)
             .filter(move |n| self.influencers(*n, edge_type).next().is_none())
     }
@@ -689,9 +708,9 @@ impl Context {
     /// Note that `is_checkpoint` and `is_terminal` will be called many times
     /// and should thus be efficient computations. In addition they should
     /// always return the same result for the same input.
-    pub fn always_happens_before<'a>(
+    pub fn always_happens_before(
         &self,
-        starting_points: impl Iterator<Item = Node<'a>>,
+        starting_points: impl Iterator<Item = Node>,
         mut is_checkpoint: impl FnMut(Node) -> bool,
         mut is_terminal: impl FnMut(Node) -> bool,
     ) -> Result<AlwaysHappensBefore> {
@@ -745,7 +764,7 @@ impl Context {
             // Check the datasource.
             if check_node(Node {
                 ctrl_id: current.1,
-                typ: (&current.0).into(),
+                typ: (current.0).clone().into(),
             }) {
                 continue;
             }
@@ -754,13 +773,13 @@ impl Context {
             for sink in current.2.get(&current.0).into_iter().flatten() {
                 if check_node(Node {
                     ctrl_id: current.1,
-                    typ: sink.into(),
+                    typ: (*sink).into(),
                 }) {
                     continue;
                 } else if let DataSink::Argument { function, .. } = sink {
                     // If the sink is an argument, it can be converted to a datasource and added to the queue.
                     if seen.insert(sink) {
-                        queue.push((function.clone().into(), current.1, current.2));
+                        queue.push(((*function).into(), current.1, current.2));
                     }
                 }
             }
@@ -788,10 +807,10 @@ impl Context {
 
     /// Return an example pair for a flow from an source from `from` to a sink
     /// in `to` if any exist.
-    pub fn any_flows<'a>(
-        &'a self,
-        from: &[Node<'a>],
-        to: &[Node<'a>],
+    pub fn any_flows(
+        &self,
+        from: &[Node],
+        to: &[Node],
         edge_type: EdgeType,
     ) -> Option<(Node, Node)> {
         from.iter().find_map(|src| {
@@ -813,7 +832,7 @@ impl Context {
     }
 
     /// Returns a DisplayNode for the given Node
-    pub fn describe_node<'a>(&'a self, node: Node<'a>) -> DisplayNode<'a> {
+    pub fn describe_node(&self, node: Node) -> DisplayNode {
         DisplayNode { ctx: self, node }
     }
 }
@@ -844,7 +863,7 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
 /// Provide display trait for Node in a Context.
 pub struct DisplayNode<'a> {
     /// Node to display.
-    pub node: Node<'a>,
+    pub node: Node,
     /// Context for the Node.
     pub ctx: &'a Context,
 }
@@ -856,12 +875,9 @@ impl<'a> std::fmt::Display for DisplayNode<'a> {
         f.write_str("\n")?;
 
         match self.node.typ {
-            NodeType::ControllerArgument(ds) => match ds {
-                DataSource::FunctionCall(_) => panic!("impossible"),
-                DataSource::Argument(pos) => {
-                    f.write_fmt(format_args!("ControllerArgument:{:}", pos))
-                }
-            },
+            NodeType::ControllerArgument(pos) => {
+                f.write_fmt(format_args!("ControllerArgument:{:}", pos))
+            }
             NodeType::CallSite(cs) => {
                 f.write_str("CallSite:")?;
                 self.ctx.describe_def(cs.function).fmt(f)
@@ -874,7 +890,7 @@ impl<'a> std::fmt::Display for DisplayNode<'a> {
                 }
                 DataSink::Return => panic!("impossible"),
             },
-            NodeType::Return(_) => f.write_str("Return"),
+            NodeType::Return => f.write_str("Return"),
         }
     }
 }
@@ -1006,8 +1022,8 @@ fn test_context() {
 fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
-    fn is_terminal(end: Node<'_>) -> bool {
-        matches!(end.typ, crate::NodeType::Return(_))
+    fn is_terminal(end: Node) -> bool {
+        matches!(end.typ, crate::NodeType::Return)
     }
 
     let ctrl_name = ctx.find_by_name("happens_before_pass")?;
@@ -1043,7 +1059,7 @@ fn test_influencees() -> Result<()> {
     let ctrl_name = ctx.find_by_name("influence")?;
     let src_a = crate::Node {
         ctrl_id: ctrl_name,
-        typ: (&DataSource::Argument(0)).into(),
+        typ: DataSource::Argument(0).into(),
     };
     let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
@@ -1107,11 +1123,11 @@ fn test_influencers() -> Result<()> {
     let ctrl_name = ctx.find_by_name("influence")?;
     let src_a = crate::Node {
         ctrl_id: ctrl_name,
-        typ: (&DataSource::Argument(0)).into(),
+        typ: DataSource::Argument(0).into(),
     };
     let src_b = crate::Node {
         ctrl_id: ctrl_name,
-        typ: (&DataSource::Argument(1)).into(),
+        typ: DataSource::Argument(1).into(),
     };
     let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
@@ -1183,11 +1199,11 @@ fn test_has_ctrl_influence() -> Result<()> {
     let ctrl_name = ctx.find_by_name("ctrl_influence")?;
     let src_a = crate::Node {
         ctrl_id: ctrl_name,
-        typ: (&DataSource::Argument(0)).into(),
+        typ: DataSource::Argument(0).into(),
     };
     let src_b = crate::Node {
         ctrl_id: ctrl_name,
-        typ: (&DataSource::Argument(1)).into(),
+        typ: DataSource::Argument(1).into(),
     };
     let a_identity =
         crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "identity").unwrap();
