@@ -1,5 +1,7 @@
+use itertools::Itertools;
 use paralegal_spdg::{
     CallSiteOrDataSink, CallSiteOrDataSinkIndex, Ctrl, DataSink, DataSource, DataSourceIndex,
+    ProgramDescription,
 };
 
 use indexical::{impls::BitvecArcIndexMatrix as IndexMatrix, IndexedDomain, ToIndex};
@@ -69,8 +71,6 @@ pub struct CtrlFlowsTo {
     /// See the [`IndexMatrix`] documentation for details on how to
     /// query this representation of the relation.
     pub data_flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
-
-    ctrl_flows_to: IndexMatrix<DataSourceIndex, CallSiteOrDataSink>,
 }
 
 impl CtrlFlowsTo {
@@ -166,69 +166,94 @@ impl CtrlFlowsTo {
             }
         }
 
-        let mut ctrl_flows_to = IndexMatrix::new(&sinks);
-
-        // Populate `ctrl_flows_to` relation with the data provided by `Ctrl::ctrl_flow`.
-        for (src, callsites) in &ctrl.ctrl_flow.0 {
-            let src_idx = src.to_index(&sources);
-            for cs in callsites {
-                let new_call_site: CallSiteOrDataSink = cs.clone().into();
-                ctrl_flows_to.insert(src_idx, &new_call_site);
-                // initialize with flows from the DataSource to all of the CallSite's DataSinks
-                for sink in callsites_to_callargs
-                    .row_set(&sinks.index(&new_call_site))
-                    .iter()
-                {
-                    ctrl_flows_to.insert(src_idx, sink);
-                }
-            }
-        }
-
         CtrlFlowsTo {
             sources,
             sinks,
             callsites_to_callargs,
             data_flows_to,
-            ctrl_flows_to,
         }
     }
 
     /// Returns whether src->sink is in the transitive closure of data and control flow.
-    pub fn data_and_control_flows_to(&self, src: DataSource, sink: CallSiteOrDataSink) -> bool {
-        let mut queue = vec![src];
-        let mut seen = std::collections::HashSet::<&CallSiteOrDataSink>::new();
+    pub fn data_and_control_flows_to(
+        &self,
+        ctrl: &Ctrl,
+        src: DataSource,
+        sink: CallSiteOrDataSink,
+    ) -> bool {
+        let mut influencees = DataAndControlInfluencees::new(src, ctrl, self);
+        influencees.contains(&sink)
+    }
+}
 
-        while let Some(cur_src) = queue.pop() {
-            if let DataSource::FunctionCall(callsite) = &cur_src {
-                if CallSiteOrDataSink::CallSite(callsite.clone()) == sink {
-                    return true;
-                }
-            }
+pub(crate) struct DataAndControlInfluencees<'a> {
+    to_return: Vec<CallSiteOrDataSink>,
+    queue: Vec<DataSource>,
+    seen: std::collections::HashSet<CallSiteOrDataSink>,
+    ctrl: &'a Ctrl,
+    flows_to: &'a CtrlFlowsTo,
+}
 
-            let cur_src_index = cur_src.clone().to_index(&self.sources);
-            for cur_sink in self
-                .data_flows_to
-                .row_set(&cur_src_index)
-                .iter()
-                .chain(self.ctrl_flows_to.row_set(&cur_src_index).iter())
-            {
-                if &sink == cur_sink {
-                    return true;
-                }
+impl<'a> DataAndControlInfluencees<'a> {
+    pub(crate) fn new(src: DataSource, ctrl: &'a Ctrl, flows_to: &'a CtrlFlowsTo) -> Self {
+        let queue = vec![src];
+        let seen = std::collections::HashSet::<CallSiteOrDataSink>::new();
+
+        DataAndControlInfluencees {
+            to_return: Vec::new(),
+            queue,
+            seen,
+            ctrl,
+            flows_to,
+        }
+    }
+}
+
+impl<'a> Iterator for DataAndControlInfluencees<'a> {
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(r) = self.to_return.pop() {
+            return Some(r);
+        }
+        if let Some(cur_src) = self.queue.pop() {
+            let cur_src_index = cur_src.clone().to_index(&self.flows_to.sources);
+            for cur_sink in self.flows_to.data_flows_to.row_set(&cur_src_index).iter() {
+                self.to_return.push(cur_sink.clone());
 
                 let cur_sink_callsite = match &cur_sink {
                     CallSiteOrDataSink::CallSite(cs) => cs,
                     CallSiteOrDataSink::DataSink(DataSink::Argument { function, .. }) => function,
                     _ => continue,
                 };
-                if seen.insert(cur_sink) {
-                    queue.push(cur_sink_callsite.clone().into());
+                if self.seen.insert(cur_sink.clone()) {
+                    self.queue.push(cur_sink_callsite.clone().into());
+                }
+            }
+
+            if let Some(callsites) = self.ctrl.ctrl_flow.get(&cur_src) {
+                for cur_cs_sink in callsites {
+                    let cs_or_ds: CallSiteOrDataSink = cur_cs_sink.clone().into();
+                    self.to_return.push(cs_or_ds.clone());
+                    for arg in self
+                        .flows_to
+                        .callsites_to_callargs
+                        .row(&cs_or_ds.clone().to_index(&self.flows_to.sinks))
+                    {
+                        self.to_return.push(arg.clone());
+                    }
+
+                    if self.seen.insert(cs_or_ds) {
+                        self.queue.push((cur_cs_sink.clone()).into());
+                    }
                 }
             }
         }
-
-        false
+        if let Some(r) = self.to_return.pop() {
+            return Some(r);
+        }
+        None
     }
+
+    type Item = CallSiteOrDataSink;
 }
 
 impl fmt::Debug for CtrlFlowsTo {

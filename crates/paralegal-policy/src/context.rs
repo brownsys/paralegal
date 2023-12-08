@@ -1,8 +1,9 @@
 use std::{io::Write, iter::empty, process::exit, sync::Arc};
 
 use paralegal_spdg::{
-    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DefKind, HashMap,
-    HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
+    global_location::GlobalLocation, Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink,
+    DataSource, DefKind, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement,
+    ProgramDescription,
 };
 
 pub use paralegal_spdg::rustc_portable::DefId;
@@ -16,6 +17,7 @@ use super::flows_to::CtrlFlowsTo;
 use crate::{
     assert_error, assert_warning,
     diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
+    flows_to::DataAndControlInfluencees,
 };
 
 /// User-defined PDG markers.
@@ -61,18 +63,18 @@ impl<'a> Node<'a> {
 
 /// Enum identifying the different types of nodes in the SPDG
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum NodeType<'a> {
+pub enum NodeType {
     /// Corresponds to [`DataSource::Argument`].
-    ControllerArgument(&'a DataSource),
+    ControllerArgument(DataSource),
 
     /// Corresponds to a [`CallSite`] or [`DataSource::FunctionCall`].
-    CallSite(&'a CallSite),
+    CallSite(CallSite),
 
     /// Corresponds to a [`DataSink::Argument`].
-    CallArgument(&'a DataSink),
+    CallArgument(DataSink),
 
     /// Corresponds to a [`DataSink::Return`].
-    Return(&'a DataSink),
+    Return(DataSink),
 }
 
 impl<'a> From<&'a CallSite> for NodeType<'a> {
@@ -329,9 +331,12 @@ impl Context {
                 .data_flows_to
                 .row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
                 .contains(sink_cs_or_ds),
-            EdgeType::DataAndControl => {
-                self.flows_to[cf_id].data_and_control_flows_to(src_datasource, sink_cs_or_ds)
-            }
+            EdgeType::DataAndControl => DataAndControlInfluencees::new(
+                src_datasource,
+                &self.desc.controllers[cf_id],
+                &self.flows_to[cf_id],
+            )
+            .contains(&sink_cs_or_ds),
             EdgeType::Control => {
                 let cs = match sink.typ.as_call_site() {
                     Some(cs) => cs,
@@ -429,8 +434,12 @@ impl Context {
                 self.desc().controllers[&cf_id]
                     .all_sources()
                     .filter(move |src| {
-                        self.flows_to[&cf_id.clone()]
-                            .data_and_control_flows_to((*src).clone(), sink_cs_or_ds.clone())
+                        DataAndControlInfluencees::new(
+                            (*src).clone(),
+                            &self.desc.controllers[&cf_id],
+                            &self.flows_to[&cf_id],
+                        )
+                        .contains(&sink_cs_or_ds)
                     }),
             )),
             EdgeType::Control => {
@@ -475,10 +484,10 @@ impl Context {
 			return Box::new(empty());
 		};
 
-        let get_influencees = |influncee_sinks: Box<
+        let get_influencees = |influencee_sinks: Box<
             dyn Iterator<Item = &'a CallSiteOrDataSink>,
         >| {
-            let influencees = influncee_sinks.flat_map(move |cs_ds| {
+            let influencees = influencee_sinks.flat_map(move |cs_ds| {
                 // We definitely influence to the node itself.
                 let mut nodes = vec![Node {
                     ctrl_id: src.ctrl_id,
@@ -515,16 +524,11 @@ impl Context {
                     .row_set(&src_datasource.to_index(&self.flows_to[&cf_id].sources))
                     .iter(),
             )),
-            EdgeType::DataAndControl => get_influencees(Box::new(
-                self.flows_to[&cf_id]
-                    .sinks
-                    .as_vec()
-                    .iter()
-                    .filter(move |sink| {
-                        self.flows_to[&cf_id.clone()]
-                            .data_and_control_flows_to(src_datasource.clone(), (*sink).clone())
-                    }),
-            )),
+            EdgeType::DataAndControl => get_influencees(Box::new(DataAndControlInfluencees::new(
+                src_datasource,
+                &self.desc.controllers[&cf_id],
+                &self.flows_to[&cf_id],
+            ))),
             EdgeType::Control => {
                 match self.desc.controllers[&cf_id].ctrl_flow.get(&src_datasource) {
                     Some(callsites) => Box::new(callsites.iter().map(move |cs| Node {
