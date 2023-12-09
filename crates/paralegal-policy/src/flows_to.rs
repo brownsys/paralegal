@@ -172,24 +172,24 @@ impl CtrlFlowsTo {
             data_flows_to,
         }
     }
-
-    /// Returns whether src->sink is in the transitive closure of data and control flow.
-    pub fn data_and_control_flows_to(
-        &self,
-        ctrl: &Ctrl,
-        src: DataSource,
-        sink: CallSiteOrDataSink,
-    ) -> bool {
-        let mut influencees = DataAndControlInfluencees::new(src, ctrl, self);
-        influencees.contains(&sink)
-    }
 }
 
+/// An [`Iterator`] over the [`CallSiteOrDataSink`]s from the given src in
+/// the transitive closure of data and control flow of the given [`Ctrl`].
 pub(crate) struct DataAndControlInfluencees<'a> {
+    /// List of [`CallSiteOrDataSink`]s still to return.
     to_return: Vec<CallSiteOrDataSink>,
+
+    /// List of [`DataSource`]s to process
     queue: Vec<DataSource>,
+
+    /// [`CallSiteOrDataSink`] seen already to prevent infinite loops.
     seen: std::collections::HashSet<CallSiteOrDataSink>,
+
+    /// The controller for which we are calculating the transitive closure.
     ctrl: &'a Ctrl,
+
+    /// The [`CtrlFlowsTo`] struct corresponding with the controller.
     flows_to: &'a CtrlFlowsTo,
 }
 
