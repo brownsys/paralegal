@@ -219,6 +219,9 @@ impl<'a> Iterator for DataAndControlInfluencees<'a> {
         }
         if let Some(cur_src) = self.queue.pop() {
             let cur_src_index = cur_src.clone().to_index(&self.flows_to.sources);
+            // TODO: We are using a lookup into the index here. We could instead 
+            // query the raw SPDG. It is not clear which is more efficient and we 
+            // should benchmark this.
             for cur_sink in self.flows_to.data_flows_to.row_set(&cur_src_index).iter() {
                 self.to_return.push(cur_sink.clone());
 
