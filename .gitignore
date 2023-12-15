@@ -9,7 +9,5 @@ flow-graph.json
 *.eqs
 *.info.json
 
-props/Cargo.lock
-
 # Delete this if we want to include a rustfmt configuration
 .rustfmt.toml
