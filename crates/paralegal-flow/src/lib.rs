@@ -194,7 +194,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 let info_path = compiler.build_output_filenames(compiler.session(), &[])
                     .with_extension("info.json");
                 let info = AdditionalInfo {
-                    call_sites: converter.desc().all_call_sites().into_iter().map(|cs| (call_site_to_string(tcx, cs), cs.clone())).collect()
+                    call_sites: converter.desc().all_call_sites().into_iter().map(|cs| (call_site_to_string(tcx, cs), *cs)).collect()
                 };
                 serde_json::to_writer(outfile_pls(info_path)?, &info)?;
 
