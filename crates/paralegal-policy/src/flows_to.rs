@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use paralegal_spdg::{
     CallSiteOrDataSink, CallSiteOrDataSinkIndex, Ctrl, DataSink, DataSource, DataSourceIndex,
 };
@@ -14,18 +13,19 @@ use crate::NodeType;
 /// Implemented efficiently using an [`IndexedDomain`] over the
 /// [`DataSource`] and [`CallSiteOrDataSink`] types.
 ///
-/// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`CtrlFlowsTo::data_and_control_flows_to()`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
+/// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`DataAndControlInfluencees`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
 ///
-/// - Indexes in [`CtrlFlowsTo`] vs functions in [`crate::Context`]: the indexes are
-/// used for efficiency when computing the functions in [`crate::Context`]. However, they
-/// are from [`DataSource`] to [`CallSiteOrDataSink`], so do not provide all of the
-///  information that is needed answer questions about any kind of [`crate::Node`] and any
-/// kind of [`crate::EdgeType`] in an intuitive way.
+/// - [`CtrlFlowsTo::data_flows_to`] Index vs [`DataAndControlInfluencees`]:
+/// The index is computed for efficiency only for [`crate::PathType::Data`] using the [`Ctrl::data_flow`].
+/// [`DataAndControlInfluencees`] additionally uses [`Ctrl::ctrl_flow`] and is used for the
+/// [`crate::PathType::DataAndControl`]. It uses a BFS rather than an index.
 ///
-/// - [`CtrlFlowsTo::data_flows_to`] vs [`CtrlFlowsTo::data_and_control_flows_to()`]: Both
-///  return the transitive closure of relations in the controller:
-/// both use the [`Ctrl::data_flow`] relation, and [`CtrlFlowsTo::data_and_control_flows_to()`]
-/// additionally includes relations from [`Ctrl::ctrl_flow`].
+/// - [`CtrlFlowsTo`] and [`DataAndControlInfluencees`] vs functions in [`crate::Context`]:
+/// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`]
+/// utilize [`DataSource`] to [`CallSiteOrDataSink`], so do not provide all of the
+/// information that is needed answer questions about any kind of [`crate::Node`] and any
+/// kind of [`crate::EdgeType`] in an intuitive way. The functions in [`crate::Context`] utilize
+/// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`].
 ///
 /// - [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and
 /// [`crate::Context::influencees()`] work for any kind of node as their srcs or sinks.
@@ -48,7 +48,8 @@ use crate::NodeType;
 /// aforementioned procedure.
 ///
 ///     - For [`crate::Context::influencers()`] and
-/// [`crate::Context::influencees()`], querying the indexes does not exhaustively
+/// [`crate::Context::influencees()`], querying [`CtrlFlowsTo::data_flows_to`] Index
+/// vs [`DataAndControlInfluencees`] does not exhaustively
 /// return all type of [`crate::Node`]s since they only provide either [`DataSource`]
 /// influencers or [`CallSiteOrDataSink`] influencees.
 /// So, these functions add the [`NodeType::CallArgument`]s related to each
@@ -176,7 +177,7 @@ impl CtrlFlowsTo {
 
 /// An [`Iterator`] over the [`CallSiteOrDataSink`]s from the given src in
 /// the transitive closure of data and control flow of the given [`Ctrl`].
-pub(crate) struct DataAndControlInfluencees<'a> {
+pub struct DataAndControlInfluencees<'a> {
     /// List of [`CallSiteOrDataSink`]s still to return.
     to_return: Vec<CallSiteOrDataSink>,
 
@@ -194,7 +195,7 @@ pub(crate) struct DataAndControlInfluencees<'a> {
 }
 
 impl<'a> DataAndControlInfluencees<'a> {
-    pub(crate) fn new(src: DataSource, ctrl: &'a Ctrl, flows_to: &'a CtrlFlowsTo) -> Self {
+    pub fn new(src: DataSource, ctrl: &'a Ctrl, flows_to: &'a CtrlFlowsTo) -> Self {
         let queue = vec![src];
         let seen = std::collections::HashSet::<CallSiteOrDataSink>::new();
 
