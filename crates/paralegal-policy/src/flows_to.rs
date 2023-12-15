@@ -219,8 +219,8 @@ impl<'a> Iterator for DataAndControlInfluencees<'a> {
         }
         if let Some(cur_src) = self.queue.pop() {
             let cur_src_index = cur_src.clone().to_index(&self.flows_to.sources);
-            // TODO: We are using a lookup into the index here. We could instead 
-            // query the raw SPDG. It is not clear which is more efficient and we 
+            // TODO: We are using a lookup into the index here. We could instead
+            // query the raw SPDG. It is not clear which is more efficient and we
             // should benchmark this.
             for cur_sink in self.flows_to.data_flows_to.row_set(&cur_src_index).iter() {
                 self.to_return.push(cur_sink.clone());
@@ -239,13 +239,12 @@ impl<'a> Iterator for DataAndControlInfluencees<'a> {
                 for cur_cs_sink in callsites {
                     let cs_or_ds: CallSiteOrDataSink = (*cur_cs_sink).into();
                     self.to_return.push(cs_or_ds.clone());
-                    for arg in self
-                        .flows_to
-                        .callsites_to_callargs
-                        .row(&cs_or_ds.clone().to_index(&self.flows_to.sinks))
-                    {
-                        self.to_return.push(arg.clone());
-                    }
+                    self.to_return.extend(
+                        self.flows_to
+                            .callsites_to_callargs
+                            .row(&cs_or_ds.clone().to_index(&self.flows_to.sinks))
+                            .cloned(),
+                    );
 
                     if self.seen.insert(cs_or_ds) {
                         self.queue.push((*cur_cs_sink).into());
@@ -253,10 +252,7 @@ impl<'a> Iterator for DataAndControlInfluencees<'a> {
                 }
             }
         }
-        if let Some(r) = self.to_return.pop() {
-            return Some(r);
-        }
-        None
+        self.to_return.pop()
     }
 
     type Item = CallSiteOrDataSink;
