@@ -16,9 +16,9 @@ use crate::NodeType;
 /// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`DataAndControlInfluencees`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
 ///
 /// - [`CtrlFlowsTo::data_flows_to`] Index vs [`DataAndControlInfluencees`]:
-/// The index is computed for efficiency only for [`crate::PathType::Data`] using the [`Ctrl::data_flow`].
+/// The index is computed for efficiency only for [`crate::EdgeType::Data`] using the [`Ctrl::data_flow`].
 /// [`DataAndControlInfluencees`] additionally uses [`Ctrl::ctrl_flow`] and is used for the
-/// [`crate::PathType::DataAndControl`]. It uses a BFS rather than an index.
+/// [`crate::EdgeType::DataAndControl`]. It uses a BFS rather than an index.
 ///
 /// - [`CtrlFlowsTo`] and [`DataAndControlInfluencees`] vs functions in [`crate::Context`]:
 /// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`]
@@ -195,6 +195,9 @@ pub struct DataAndControlInfluencees<'a> {
 }
 
 impl<'a> DataAndControlInfluencees<'a> {
+    /// Create a new DataAndControlInfluencees iterator that iterates through
+    /// [`CallSiteOrDataSink`]s that depend on the provided src in the provided
+    /// controller.
     pub fn new(src: DataSource, ctrl: &'a Ctrl, flows_to: &'a CtrlFlowsTo) -> Self {
         let queue = vec![src];
         let seen = std::collections::HashSet::<CallSiteOrDataSink>::new();

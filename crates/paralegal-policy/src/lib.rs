@@ -70,6 +70,7 @@ pub use self::{
     context::*,
     diagnostics::{CombinatorContext, Diagnostics, PolicyContext},
     flows_to::CtrlFlowsTo,
+	flows_to::DataAndControlInfluencees,
 };
 
 /// Configuration of the `cargo paralegal-flow` command.
