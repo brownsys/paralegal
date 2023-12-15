@@ -773,7 +773,7 @@ impl<'g> CallSiteRef<'g> {
                 .ctrl
                 .data_flow
                 .0
-                .get(&crate::desc::DataSource::FunctionCall(src.clone()))
+                .get(&crate::desc::DataSource::FunctionCall(src))
                 .iter()
                 .flat_map(|i| i.iter())
                 .map(Either::Left)
@@ -791,7 +791,7 @@ impl<'g> CallSiteRef<'g> {
         };
 
         let mut seen = HashSet::new();
-        let mut queue: Vec<_> = next_hop(self.call_site.clone());
+        let mut queue: Vec<_> = next_hop(*self.call_site);
         while let Some(n) = queue.pop() {
             if match n {
                 Either::Left(l) => sink == l,
@@ -805,10 +805,10 @@ impl<'g> CallSiteRef<'g> {
                 match n {
                     Either::Left(l) => {
                         if let Some((fun, _)) = l.as_argument() {
-                            queue.extend(next_hop(fun.clone()))
+                            queue.extend(next_hop(*fun))
                         }
                     }
-                    Either::Right(r) => queue.extend(next_hop(r.clone())),
+                    Either::Right(r) => queue.extend(next_hop(*r)),
                 };
             }
         }

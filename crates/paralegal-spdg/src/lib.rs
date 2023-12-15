@@ -444,7 +444,7 @@ impl<X, Y> Relation<X, Y> {
 }
 
 /// A global location in the program where a function is being called.
-#[derive(Hash, Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
+#[derive(Hash, Eq, PartialEq, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct CallSite {
     /// The location of the call.
     pub location: GlobalLocation,
@@ -589,7 +589,7 @@ impl From<CallSite> for DataSource {
 /// A representation of something that can receive data from the flow.
 ///
 /// [`Self::as_argument`] is provided for convenience of matching.
-#[derive(Hash, PartialEq, Eq, Clone, Serialize, Deserialize, Debug)]
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize, Debug)]
 pub enum DataSink {
     Argument { function: CallSite, arg_slot: usize },
     Return,
@@ -741,17 +741,11 @@ impl Ctrl {
             .flatten()
             .flat_map(|s| match s {
                 DataSink::Argument { function, .. } => {
-                    vec![function.clone().into(), s.clone().into()]
+                    vec![(*function).into(), (*s).into()]
                 }
-                _ => vec![s.clone().into()],
+                _ => vec![(*s).into()],
             })
-            .chain(
-                self.ctrl_flow
-                    .0
-                    .values()
-                    .flatten()
-                    .map(|cs| cs.clone().into()),
-            )
+            .chain(self.ctrl_flow.0.values().flatten().map(|cs| (*cs).into()))
             .dedup()
     }
 }

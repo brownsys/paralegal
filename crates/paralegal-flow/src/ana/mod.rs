@@ -195,7 +195,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 .collect();
             if !interesting_output_types.is_empty() {
                 flows.types.0.insert(
-                    DataSource::FunctionCall(call_site.clone()),
+                    DataSource::FunctionCall(call_site),
                     interesting_output_types,
                 );
             }
@@ -204,7 +204,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             for dep in deps.ctrl_deps.iter() {
                 flows.add_ctrl_flow(
                     Cow::Owned(data_source_from_global_location(*dep, tcx, check_realness)),
-                    call_site.clone(),
+                    call_site,
                 )
             }
 
@@ -224,7 +224,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     DataSink::Return
                 } else {
                     DataSink::Argument {
-                        function: call_site.clone(),
+                        function: call_site,
                         arg_slot,
                     }
                 };
@@ -232,7 +232,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     debug!("    to {dep}");
                     flows.add_data_flow(
                         Cow::Owned(data_source_from_global_location(*dep, tcx, check_realness)),
-                        to.clone(),
+                        to,
                     );
                 }
             }
