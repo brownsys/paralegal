@@ -6,6 +6,7 @@ resolver = "2"
 [workspace.dependencies]
 indexical = "0.3.1"
 serde = "1.0.188"
+petgraph = { version = "0.6", features = ["serde-1"] }
 
 [profile.release]
 debug = true

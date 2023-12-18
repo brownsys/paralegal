@@ -32,7 +32,7 @@ log = "0.4"
 simple_logger = "2"
 num-derive = "0.4"
 num-traits = "0.2"
-petgraph = "0.6"
+petgraph = { workspace = true }
 humantime = "2"
 
 

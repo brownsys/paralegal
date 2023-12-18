@@ -84,7 +84,6 @@ pub mod ann_parse;
 mod args;
 pub mod dbg;
 mod discover;
-pub mod frg;
 pub mod ir;
 //mod sah;
 pub mod serializers;
@@ -101,7 +100,6 @@ pub use paralegal_spdg as desc;
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
 use crate::{
-    frg::{call_site_to_string, ForgeConverter},
     utils::{outfile_pls, Print},
 };
 
@@ -183,13 +181,6 @@ impl rustc_driver::Callbacks for Callbacks {
                 let result_path = compiler
                     .build_output_filenames(compiler.session(), &[])
                     .with_extension("ana.frg");
-                let mut outf = outfile_pls(&result_path)?;
-                let doc_alloc = pretty::BoxAllocator;
-                let converter = ForgeConverter::new(desc, tcx);
-                let doc: DocBuilder<_, ()> = converter.serialize_forge(&doc_alloc, self.opts.modelctrl());
-                doc.render(100, &mut outf)?;
-                let mut outf_2 = outfile_pls(self.opts.result_path())?;
-                doc.render(100, &mut outf_2)?;
 
                 let info_path = compiler.build_output_filenames(compiler.session(), &[])
                     .with_extension("info.json");

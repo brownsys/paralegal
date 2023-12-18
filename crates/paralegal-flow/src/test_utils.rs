@@ -219,26 +219,6 @@ pub fn run_forge(file: &str) -> bool {
         .success()
 }
 
-pub fn write_forge(file: &str, property: &str, result: &str) -> Result<(), std::io::Error> {
-    let content = format!(
-        "#lang forge 
-
-open \"helpers.frg\"
-open \"analysis_result.frg\"
-
-test expect {{
-	property_test: {{
-		{}
-	}} for {} is {}
-}}
-	",
-        property,
-        crate::frg::name::FLOWS_PREDICATE,
-        result
-    );
-
-    outfile_pls(file).and_then(|mut f| f.write_all(content.as_bytes()))
-}
 
 /// A deserialized version of [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow)
 pub struct G {

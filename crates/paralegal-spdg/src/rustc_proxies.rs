@@ -116,6 +116,17 @@ proxy_struct! {
     }
 }
 
+const LOCAL_CRATE: CrateNum = CrateNum{ private: 0 };
+
+impl LocalDefId {
+    fn to_def_id(self) -> DefId {
+        DefId {
+            krate: LOCAL_CRATE,
+            index: self.local_def_index,
+        }
+    }
+}
+
 impl HirId {
     fn index(self) -> (usize, usize) {
         (

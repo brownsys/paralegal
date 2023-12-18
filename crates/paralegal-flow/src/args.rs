@@ -353,9 +353,6 @@ pub struct ModelCtrl {
     #[clap(long, env)]
     external_annotations: Option<std::path::PathBuf>,
 
-    #[clap(long, env, default_value_t = crate::frg::Version::V1)]
-    model_version: crate::frg::Version,
-
     #[clap(long, env)]
     skip_sigs: bool,
 }

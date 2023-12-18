@@ -1,15 +1,13 @@
 use std::{io::Write, iter::empty, process::exit, sync::Arc};
 
-use paralegal_spdg::{
-    Annotation, CallSite, CallSiteOrDataSink, Ctrl, DataSink, DataSource, DataSourceIndex, DefKind,
-    HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription,
-};
-
+use paralegal_spdg::{Annotation, DefKind, Node as SPDGNode, NodeInfo, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription, SPDG, CallString, GlobalLocation, LocationOrStart};
 pub use paralegal_spdg::rustc_portable::DefId;
 
 use anyhow::{anyhow, bail, ensure, Result};
 use indexical::{impls::BitvecArcIndexMatrix, ToIndex};
 use itertools::Itertools;
+use petgraph::visit::{IntoNodeReferences, NodeRef};
+use paralegal_spdg::rustc_portable::LocalDefId;
 
 use super::flows_to::CtrlFlowsTo;
 
@@ -22,11 +20,13 @@ use crate::{
 pub type Marker = Identifier;
 
 /// The type identifying a controller
-pub type ControllerId = DefId;
+pub type ControllerId = LocalDefId;
 /// The type identifying a function that is used in call sites.
 pub type FunctionId = DefId;
 
-type MarkerIndex = HashMap<Marker, Vec<(DefId, MarkerRefinement)>>;
+pub type MarkableId = Node;
+
+type MarkerIndex = HashMap<Marker, Vec<(MarkableId, MarkerRefinement)>>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
 /// Enum for identifying an edge type (data, control or both)
@@ -46,113 +46,13 @@ pub struct Node {
     /// ControllerId of the node.
     pub ctrl_id: ControllerId,
     /// The data of the node.
-    pub typ: NodeType,
+    pub inner: SPDGNode,
 }
 
 impl Node {
     /// Transform a Node into the associated Node with typ [`NodeType::CallSite`]
-    pub fn associated_call_site(self) -> Option<Node> {
-        self.typ.as_call_site().map(|cs| Node {
-            ctrl_id: self.ctrl_id,
-            typ: NodeType::CallSite(cs),
-        })
-    }
-}
-
-/// Enum identifying the different types of nodes in the SPDG
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum NodeType {
-    /// Corresponds to [`DataSource::Argument`].
-    ControllerArgument(usize),
-
-    /// Corresponds to a [`CallSite`] or [`DataSource::FunctionCall`].
-    CallSite(CallSite),
-
-    /// Corresponds to a [`DataSink::Argument`].
-    CallArgument(DataSink),
-
-    /// Corresponds to a [`DataSink::Return`].
-    Return,
-}
-
-impl From<CallSite> for NodeType {
-    fn from(cs: CallSite) -> Self {
-        NodeType::CallSite(cs)
-    }
-}
-
-impl From<DataSink> for NodeType {
-    fn from(ds: DataSink) -> Self {
-        match ds {
-            DataSink::Argument { .. } => NodeType::CallArgument(ds),
-            DataSink::Return => NodeType::Return,
-        }
-    }
-}
-
-impl From<CallSiteOrDataSink> for NodeType {
-    fn from(x: CallSiteOrDataSink) -> Self {
-        match x {
-            CallSiteOrDataSink::CallSite(cs) => cs.into(),
-            CallSiteOrDataSink::DataSink(ds) => ds.into(),
-        }
-    }
-}
-
-impl From<DataSource> for NodeType {
-    fn from(ds: DataSource) -> Self {
-        match ds {
-            DataSource::FunctionCall(cs) => NodeType::CallSite(cs),
-            DataSource::Argument(i) => NodeType::ControllerArgument(i),
-        }
-    }
-}
-
-impl NodeType {
-    /// Transform a NodeType into it's corresponding CallSite - only works for CallSites and CallArguments.
-    pub fn as_call_site(self) -> Option<CallSite> {
-        match self {
-            NodeType::ControllerArgument(_) => None,
-            NodeType::CallSite(cs) => Some(cs),
-            NodeType::CallArgument(ds) => match ds {
-                DataSink::Argument { function, .. } => Some(function),
-                DataSink::Return => None,
-            },
-            NodeType::Return => None,
-        }
-    }
-
-    /// Transform a NodeType into it's corresponding DataSink - only works for CallArgs and Returns.
-    pub fn as_data_sink(self) -> Option<DataSink> {
-        match self {
-            NodeType::ControllerArgument(_) => None,
-            NodeType::CallSite(_) => None,
-            NodeType::CallArgument(ds) => Some(ds),
-            NodeType::Return => Some(DataSink::Return),
-        }
-    }
-
-    /// Transform a NodeType into it's corresponding owned CallSiteOrDataSink - only works for CallSites, CallArgs and Returns. Clones the underlying data.
-    pub fn as_call_site_or_data_sink(self) -> Option<CallSiteOrDataSink> {
-        match self {
-            NodeType::ControllerArgument(_) => None,
-            NodeType::CallSite(cs) => Some(cs.into()),
-            NodeType::CallArgument(ds) => Some(ds.into()),
-            NodeType::Return => Some(DataSink::Return.into()),
-        }
-    }
-
-    /// Transform a NodeType into it's corresponding owned DataSource - only works for CtrlArgs, CallSites, and CallArguments. Clones underlying data.
-    pub fn as_data_source(self) -> Option<DataSource> {
-        match self {
-            NodeType::ControllerArgument(i) => Some(DataSource::Argument(i)),
-            NodeType::CallSite(cs) => Some(DataSource::FunctionCall(cs)),
-            NodeType::CallArgument(ds) => match ds {
-                DataSink::Argument { function, .. } => Some(DataSource::FunctionCall(function)),
-                DataSink::Return => None,
-            },
-            NodeType::Return => None,
-        }
+    pub fn associated_call_site(self, context: Context) -> CallString {
+        context.desc.controllers[&self.ctrl_id].node_info(self.inner).at
     }
 }
 
@@ -274,15 +174,13 @@ impl Context {
     }
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
-        desc.annotations
-            .iter()
-            .flat_map(|(id, (annots, _))| {
-                annots.iter().filter_map(move |annot| match annot {
-                    Annotation::Marker(MarkerAnnotation { marker, refinement }) => {
-                        Some((*marker, (*id, refinement.clone())))
-                    }
-                    _ => None,
-                })
+        desc.controllers.iter()
+            .flat_map(|(&ctrl_id, spdg)| {
+                spdg.annotations.iter().flat_map(|(&inner, anns)|
+                    anns.iter().filter_map(Annotation::as_marker).map(|a|
+                        (a.marker, (Node { inner, ctrl_id }, a.refinement.clone()))
+                    )
+                )
             })
             .into_group_map()
     }
@@ -304,23 +202,9 @@ impl Context {
             return false;
         }
 
-        // Special case if src is a CallArgument and sink is a CallSite, flows_to is true if they are on the same CallSite.
-        if matches!(
-            (edge_type, src.typ, sink.typ),
-            (EdgeType::Data | EdgeType::DataAndControl,
-                NodeType::CallArgument(DataSink::Argument { function, .. }),
-                NodeType::CallSite(cs)) if function == cs)
-        {
-            return true;
-        }
-
         let cf_id = &src.ctrl_id;
-        let Some(src_datasource) = src.typ.as_data_source() else {
-            return false;
-        };
-        let Some(sink_cs_or_ds) = sink.typ.as_call_site_or_data_sink() else {
-            return false;
-        };
+        let src_datasource = src.inner;
+        let sink_cs_or_ds = sink.inner;
 
         match edge_type {
             EdgeType::Data => self.flows_to[cf_id]
@@ -343,6 +227,15 @@ impl Context {
                 }
             }
         }
+    }
+
+    pub fn controller_argument(&self, ctrl_id: ControllerId, index: u32) -> Option<Node> {
+        let ctrl = self.desc.controllers.get(&ctrl_id)?;
+        let inner = *ctrl.arguments.get(index as usize)?;
+
+        Some(Node {
+            ctrl_id, inner
+        })
     }
 
     /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:
