@@ -12,18 +12,19 @@ use crate::NodeType;
 /// Implemented efficiently using an [`IndexedDomain`] over the
 /// [`DataSource`] and [`CallSiteOrDataSink`] types.
 ///
-/// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`CtrlFlowsTo::flows_to`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
+/// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`DataAndControlInfluencees`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
 ///
-/// - Indexes in [`CtrlFlowsTo`] vs functions in [`crate::Context`]: the indexes are
-/// used for efficiency when computing the functions in [`crate::Context`]. However, they
-/// are from [`DataSource`] to [`CallSiteOrDataSink`], so do not provide all of the
-///  information that is needed answer questions about any kind of [`crate::Node`] and any
-/// kind of [`crate::EdgeType`] in an intuitive way.
+/// - [`CtrlFlowsTo::data_flows_to`] Index vs [`DataAndControlInfluencees`]:
+/// The index is computed for efficiency only for [`crate::EdgeType::Data`] using the [`Ctrl::data_flow`].
+/// [`DataAndControlInfluencees`] additionally uses [`Ctrl::ctrl_flow`] and is used for the
+/// [`crate::EdgeType::DataAndControl`]. It uses a BFS rather than an index.
 ///
-/// - [`CtrlFlowsTo::data_flows_to`] vs [`CtrlFlowsTo::flows_to`] indexes: Both
-///  are indexes that are the transitive closure of relations in the controller:
-/// both use the [`Ctrl::data_flow`] relation, and [`CtrlFlowsTo::flows_to`]
-/// additionally includes relations from [`Ctrl::ctrl_flow`].
+/// - [`CtrlFlowsTo`] and [`DataAndControlInfluencees`] vs functions in [`crate::Context`]:
+/// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`]
+/// utilize [`DataSource`] to [`CallSiteOrDataSink`], so do not provide all of the
+/// information that is needed answer questions about any kind of [`crate::Node`] and any
+/// kind of [`crate::EdgeType`] in an intuitive way. The functions in [`crate::Context`] utilize
+/// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`].
 ///
 /// - [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and
 /// [`crate::Context::influencees()`] work for any kind of node as their srcs or sinks.
@@ -46,7 +47,8 @@ use crate::NodeType;
 /// aforementioned procedure.
 ///
 ///     - For [`crate::Context::influencers()`] and
-/// [`crate::Context::influencees()`], querying the indexes does not exhaustively
+/// [`crate::Context::influencees()`], querying [`CtrlFlowsTo::data_flows_to`] Index
+/// vs [`DataAndControlInfluencees`] does not exhaustively
 /// return all type of [`crate::Node`]s since they only provide either [`DataSource`]
 /// influencers or [`CallSiteOrDataSink`] influencees.
 /// So, these functions add the [`NodeType::CallArgument`]s related to each
@@ -109,10 +111,92 @@ impl CtrlFlowsTo {
     }
 }
 
+/// An [`Iterator`] over the [`CallSiteOrDataSink`]s from the given src in
+/// the transitive closure of data and control flow of the given [`Ctrl`].
+pub struct DataAndControlInfluencees<'a> {
+    /// List of [`CallSiteOrDataSink`]s still to return.
+    to_return: Vec<CallSiteOrDataSink>,
+
+    /// List of [`DataSource`]s to process
+    queue: Vec<DataSource>,
+
+    /// [`CallSiteOrDataSink`] seen already to prevent infinite loops.
+    seen: std::collections::HashSet<CallSiteOrDataSink>,
+
+    /// The controller for which we are calculating the transitive closure.
+    ctrl: &'a Ctrl,
+
+    /// The [`CtrlFlowsTo`] struct corresponding with the controller.
+    flows_to: &'a CtrlFlowsTo,
+}
+
+impl<'a> DataAndControlInfluencees<'a> {
+    /// Create a new DataAndControlInfluencees iterator that iterates through
+    /// [`CallSiteOrDataSink`]s that depend on the provided src in the provided
+    /// controller.
+    pub fn new(src: DataSource, ctrl: &'a Ctrl, flows_to: &'a CtrlFlowsTo) -> Self {
+        let queue = vec![src];
+        let seen = std::collections::HashSet::<CallSiteOrDataSink>::new();
+
+        DataAndControlInfluencees {
+            to_return: Vec::new(),
+            queue,
+            seen,
+            ctrl,
+            flows_to,
+        }
+    }
+}
+
+impl<'a> Iterator for DataAndControlInfluencees<'a> {
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(r) = self.to_return.pop() {
+            return Some(r);
+        }
+        if let Some(cur_src) = self.queue.pop() {
+            let cur_src_index = cur_src.clone().to_index(&self.flows_to.sources);
+            // TODO: We are using a lookup into the index here. We could instead
+            // query the raw SPDG. It is not clear which is more efficient and we
+            // should benchmark this.
+            for cur_sink in self.flows_to.data_flows_to.row_set(&cur_src_index).iter() {
+                self.to_return.push(cur_sink.clone());
+
+                let cur_sink_callsite = match &cur_sink {
+                    CallSiteOrDataSink::CallSite(cs) => cs,
+                    CallSiteOrDataSink::DataSink(DataSink::Argument { function, .. }) => function,
+                    _ => continue,
+                };
+                if self.seen.insert(cur_sink.clone()) {
+                    self.queue.push((*cur_sink_callsite).into());
+                }
+            }
+
+            if let Some(callsites) = self.ctrl.ctrl_flow.get(&cur_src) {
+                for cur_cs_sink in callsites {
+                    let cs_or_ds: CallSiteOrDataSink = (*cur_cs_sink).into();
+                    self.to_return.push(cs_or_ds.clone());
+                    self.to_return.extend(
+                        self.flows_to
+                            .callsites_to_callargs
+                            .row(&cs_or_ds.clone().to_index(&self.flows_to.sinks))
+                            .cloned(),
+                    );
+
+                    if self.seen.insert(cs_or_ds) {
+                        self.queue.push((*cur_cs_sink).into());
+                    }
+                }
+            }
+        }
+        self.to_return.pop()
+    }
+
+    type Item = CallSiteOrDataSink;
+}
+
 impl fmt::Debug for CtrlFlowsTo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CtrlFlowsTo")
-            .field("flows_to", &self.flows_to)
             .field("data_flows_to", &self.data_flows_to)
             .finish()
     }
