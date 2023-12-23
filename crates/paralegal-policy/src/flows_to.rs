@@ -1,11 +1,11 @@
-use paralegal_spdg::{Node as SPDGNode, SPDG};
+use paralegal_spdg::{Node as SPDGNode, SPDG, SPDGImpl};
 
 use bitvec::vec::BitVec;
 
 use std::{fmt, sync::Arc};
 use std::io::sink;
 
-use crate::NodeType;
+use crate::{ControllerId, Node};
 
 /// The transitive closure of the [`Ctrl::data_flow`] relation.
 ///
@@ -55,8 +55,8 @@ use crate::NodeType;
 /// [`NodeType::CallSite`] and the [`NodeType::CallSite`] related to each
 /// [`NodeType::CallArgument`] respectively.
 pub struct CtrlFlowsTo {
-    /// Mapping from [`CallSiteOrDataSink::CallSite`]s to the [`CallSiteOrDataSink::DataSink(CallArgument)`]s that they are related to.
-    pub callsites_to_callargs: std::collections::HashMap<SPDGNode, Vec<SPDGNode>>,
+    // /// Mapping from [`CallSiteOrDataSink::CallSite`]s to the [`CallSiteOrDataSink::DataSink(CallArgument)`]s that they are related to.
+    // pub callsites_to_callargs: std::collections::HashMap<SPDGNode, Vec<SPDGNode>>,
 
     /// The transitive closure of the [`Ctrl::data_flow`] relation.
     /// If a source flows to a [`DataSink::Argument`], it also flows into its CallSite.
@@ -69,6 +69,7 @@ pub struct CtrlFlowsTo {
 impl CtrlFlowsTo {
     /// Constructs the transitive closure from a [`Ctrl`].
     pub fn build(spdg: &SPDG) -> Self {
+        use petgraph::prelude::*;
         let domain_size = spdg.graph.node_count();
         // Connect each function-argument sink to its corresponding function sources.
         // This lets us compute the transitive closure by following through the `sink_to_source` map.
@@ -105,93 +106,36 @@ impl CtrlFlowsTo {
         iterate(&mut data_flows_to);
 
         CtrlFlowsTo {
-            callsites_to_callargs,
+            //callsites_to_callargs,
             data_flows_to,
         }
     }
 }
 
+use petgraph::visit::{WalkerIter, Bfs, GraphBase, Visitable, Walker};
+
 /// An [`Iterator`] over the [`CallSiteOrDataSink`]s from the given src in
 /// the transitive closure of data and control flow of the given [`Ctrl`].
 pub struct DataAndControlInfluencees<'a> {
-    /// List of [`CallSiteOrDataSink`]s still to return.
-    to_return: Vec<CallSiteOrDataSink>,
-
-    /// List of [`DataSource`]s to process
-    queue: Vec<DataSource>,
-
-    /// [`CallSiteOrDataSink`] seen already to prevent infinite loops.
-    seen: std::collections::HashSet<CallSiteOrDataSink>,
-
-    /// The controller for which we are calculating the transitive closure.
-    ctrl: &'a Ctrl,
-
-    /// The [`CtrlFlowsTo`] struct corresponding with the controller.
-    flows_to: &'a CtrlFlowsTo,
+    walker: WalkerIter<Bfs<<SPDGImpl as GraphBase>::NodeId, <SPDGImpl as Visitable>::Map>, &'a SPDGImpl>,
 }
 
 impl<'a> DataAndControlInfluencees<'a> {
     /// Create a new DataAndControlInfluencees iterator that iterates through
     /// [`CallSiteOrDataSink`]s that depend on the provided src in the provided
     /// controller.
-    pub fn new(src: DataSource, ctrl: &'a Ctrl, flows_to: &'a CtrlFlowsTo) -> Self {
-        let queue = vec![src];
-        let seen = std::collections::HashSet::<CallSiteOrDataSink>::new();
-
-        DataAndControlInfluencees {
-            to_return: Vec::new(),
-            queue,
-            seen,
-            ctrl,
-            flows_to,
-        }
+    pub fn new(src: SPDGNode, ctrl: &'a SPDG) -> Self {
+        let bfs = Bfs::new(&ctrl.graph, src);
+        let walker_iter = Walker::iter(bfs, &ctrl.graph);
+        Self { walker: walker_iter }
     }
 }
 
 impl<'a> Iterator for DataAndControlInfluencees<'a> {
+    type Item = SPDGNode;
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(r) = self.to_return.pop() {
-            return Some(r);
-        }
-        if let Some(cur_src) = self.queue.pop() {
-            let cur_src_index = cur_src.clone().to_index(&self.flows_to.sources);
-            // TODO: We are using a lookup into the index here. We could instead
-            // query the raw SPDG. It is not clear which is more efficient and we
-            // should benchmark this.
-            for cur_sink in self.flows_to.data_flows_to.row_set(&cur_src_index).iter() {
-                self.to_return.push(cur_sink.clone());
-
-                let cur_sink_callsite = match &cur_sink {
-                    CallSiteOrDataSink::CallSite(cs) => cs,
-                    CallSiteOrDataSink::DataSink(DataSink::Argument { function, .. }) => function,
-                    _ => continue,
-                };
-                if self.seen.insert(cur_sink.clone()) {
-                    self.queue.push((*cur_sink_callsite).into());
-                }
-            }
-
-            if let Some(callsites) = self.ctrl.ctrl_flow.get(&cur_src) {
-                for cur_cs_sink in callsites {
-                    let cs_or_ds: CallSiteOrDataSink = (*cur_cs_sink).into();
-                    self.to_return.push(cs_or_ds.clone());
-                    self.to_return.extend(
-                        self.flows_to
-                            .callsites_to_callargs
-                            .row(&cs_or_ds.clone().to_index(&self.flows_to.sinks))
-                            .cloned(),
-                    );
-
-                    if self.seen.insert(cs_or_ds) {
-                        self.queue.push((*cur_cs_sink).into());
-                    }
-                }
-            }
-        }
-        self.to_return.pop()
+        self.walker.next()
     }
-
-    type Item = CallSiteOrDataSink;
 }
 
 impl fmt::Debug for CtrlFlowsTo {
@@ -233,14 +177,8 @@ fn test_ctrl_flows_to() {
 fn test_flows_to() {
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
-    let src_a = crate::Node {
-        ctrl_id: controller,
-        typ: DataSource::Argument(0).into(),
-    };
-    let src_b = crate::Node {
-        ctrl_id: controller,
-        typ: DataSource::Argument(1).into(),
-    };
+    let src_a = ctx.controller_argument(controller, 0).unwrap();
+    let src_b = ctx.controller_argument(controller, 1).unwrap();
     let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
     let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1").unwrap();
     // a flows to the sink1 callsite (by ctrl flow)

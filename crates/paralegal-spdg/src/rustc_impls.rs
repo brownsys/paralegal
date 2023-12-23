@@ -58,6 +58,24 @@ pub fn crate_num_as_u32(num: &hir::def_id::CrateNum) -> u32 {
     (*num).into()
 }
 
+impl From<rustc_proxies::DefId> for hir::def_id::DefId {
+    fn from(value: rustc_proxies::DefId) -> Self {
+        Self {
+            krate: value.krate,
+            index: value.index,
+        }
+    }
+}
+
+impl From<hir::def_id::DefId> for rustc_proxies::DefId {
+    fn from(value: hir::def_id::DefId) -> Self {
+        Self {
+            krate: value.krate,
+            index: value.index,
+        }
+    }
+}
+
 impl From<CrateNum> for hir::def_id::CrateNum {
     fn from(value: CrateNum) -> Self {
         hir::def_id::CrateNum::from_u32(value.private)

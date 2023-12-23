@@ -3,6 +3,7 @@
 //! Each type has an identical set of fields to the corresponding Rustc type.
 //! Paralegal serializes the PDG into these types, which are read by downstream property checkers.
 
+use cfg_if::cfg_if;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "rustc")]
@@ -116,12 +117,23 @@ proxy_struct! {
     }
 }
 
+#[cfg(feature = "rustc")]
 const LOCAL_CRATE: CrateNum = CrateNum{ private: 0 };
+
+#[cfg(feature = "rustc")]
+static_assertions::const_assert!(LOCAL_CRATE.private == hir::def_id::LOCAL_CRATE.as_u32());
 
 impl LocalDefId {
     fn to_def_id(self) -> DefId {
+        cfg_if!(
+            if #[cfg(feature = "rustc")] {
+                let krate = hir::def_id::LOCAL_CRATE;
+            } else {
+                let krate = LOCAL_CRATE;
+            }
+        );
         DefId {
-            krate: LOCAL_CRATE,
+            krate,
             index: self.local_def_index,
         }
     }

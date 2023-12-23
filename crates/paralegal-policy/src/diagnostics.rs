@@ -78,7 +78,7 @@
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{rustc_portable::DefId, Ctrl, Identifier};
+use paralegal_spdg::{rustc_portable::DefId, Identifier, SPDG};
 
 use crate::{Context, ControllerId};
 
@@ -339,7 +339,7 @@ impl ControllerContext {
     }
 
     /// Access the current controller contents
-    pub fn current(&self) -> &Ctrl {
+    pub fn current(&self) -> &SPDG {
         &self.inner.as_ctx().desc().controllers[&self.id]
     }
 

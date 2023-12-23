@@ -1,12 +1,15 @@
 use std::{io::Write, iter::empty, process::exit, sync::Arc};
+use std::ops::ControlFlow;
 
-use paralegal_spdg::{Annotation, DefKind, Node as SPDGNode, NodeInfo, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription, SPDG, CallString, GlobalLocation, LocationOrStart};
+use paralegal_spdg::{Annotation, DefKind, Node as SPDGNode, NodeInfo, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription, SPDG, CallString, GlobalLocation, LocationOrStart, SPDGImpl, TypeId};
 pub use paralegal_spdg::rustc_portable::DefId;
 
 use anyhow::{anyhow, bail, ensure, Result};
 use indexical::ToIndex;
 use itertools::Itertools;
-use petgraph::visit::{IntoNodeReferences, NodeRef};
+use petgraph::Incoming;
+use petgraph::prelude::Bfs;
+use petgraph::visit::{DfsEvent, EdgeFiltered, EdgeRef, IntoNodeReferences, NodeRef, Reversed, Walker};
 use paralegal_spdg::rustc_portable::LocalDefId;
 
 use super::flows_to::CtrlFlowsTo;
@@ -27,8 +30,13 @@ pub type FunctionId = DefId;
 
 pub type MarkableId = Node;
 
-type MarkerIndex = HashMap<Marker, Vec<(MarkableId, MarkerRefinement)>>;
+type MarkerIndex = HashMap<Marker, MarkerTargets>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
+
+pub struct MarkerTargets {
+    types: Vec<TypeId>,
+    nodes: Vec<MarkableId>,
+}
 
 /// Enum for identifying an edge type (data, control or both)
 #[derive(Clone, Copy)]
@@ -52,9 +60,29 @@ pub struct Node {
 
 impl Node {
     /// Transform a Node into the associated Node with typ [`NodeType::CallSite`]
-    pub fn associated_call_site(self, context: Context) -> CallString {
+    pub fn associated_call_site(self, context: &Context) -> CallString {
         context.desc.controllers[&self.ctrl_id].node_info(self.inner).at
     }
+
+    /// Create a new node with no guarantee that it exists in the SPDG of the
+    /// controller.
+    fn unsafe_new(ctrl_id: ControllerId, index: usize) -> Self {
+        Node {
+            ctrl_id,
+            inner: SPDGNode::new(index),
+        }
+    }
+}
+
+use petgraph::visit::{GraphRef, Visitable, IntoNeighbors};
+
+fn bfs_iter<G: IntoNeighbors + GraphRef + Visitable<NodeId = SPDGNode, Map = <SPDGImpl as Visitable>::Map>>(g: G, start: Node) -> impl Iterator<Item=Node> {
+    let walker_iter =
+        Walker::iter(
+            Bfs::new(g, start.inner),
+            g
+        );
+    walker_iter.map(move |inner| Node { ctrl_id: start.ctrl_id, inner })
 }
 
 /// Interface for defining policies.
@@ -177,9 +205,9 @@ impl Context {
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
         desc.controllers.iter()
             .flat_map(|(&ctrl_id, spdg)| {
-                spdg.annotations.iter().flat_map(|(&inner, anns)|
-                    anns.iter().filter_map(Annotation::as_marker).map(|a|
-                        (a.marker, (Node { inner, ctrl_id }, a.refinement.clone()))
+                spdg.markers.iter().flat_map(|(&inner, anns)|
+                    anns.iter().map(|marker|
+                        (*marker, Node { inner, ctrl_id })
                     )
                 )
             })
@@ -209,25 +237,16 @@ impl Context {
 
         match edge_type {
             EdgeType::Data => self.flows_to[cf_id]
-                .data_flows_to
-                .row_set(&src_datasource.to_index(&self.flows_to[cf_id].sources))
-                .contains(sink_cs_or_ds),
+                .data_flows_to[src_datasource.index()][sink_cs_or_ds.index()],
             EdgeType::DataAndControl => DataAndControlInfluencees::new(
                 src_datasource,
                 &self.desc.controllers[cf_id],
-                &self.flows_to[cf_id],
             )
             .contains(&sink_cs_or_ds),
             EdgeType::Control => {
-                let cs = match sink.typ.as_call_site() {
-                    Some(cs) => cs,
-                    None => return false,
-                };
-
-                match self.desc.controllers[cf_id].ctrl_flow.get(&src_datasource) {
-                    Some(callsites) => callsites.iter().contains(&cs),
-                    None => false,
-                }
+                self.desc.controllers.get(cf_id).unwrap().graph.edges(src_datasource)
+                    .filter(|e| e.weight().is_control())
+                    .map(|e| e.id())
             }
         }
     }
@@ -245,14 +264,11 @@ impl Context {
     ///
     /// `some n where self.flows_to(influencer, n, EdgeType::Data) && self.flows_to(n, target, Edgetype::Control)`.
     pub fn has_ctrl_influence(&self, influencer: Node, target: Node) -> bool {
-        let Some(tcs) = target.associated_call_site() else {
-            return false;
-        };
 
-        self.flows_to(influencer, tcs, EdgeType::Control)
+        self.flows_to(influencer, target, EdgeType::Control)
             || self
                 .influencees(influencer, EdgeType::Data)
-                .any(|inf| self.flows_to(inf, tcs, EdgeType::Control))
+                .any(|inf| self.flows_to(inf, target, EdgeType::Control))
     }
 
     /// Returns iterator over all Nodes that influence the given sink Node.
@@ -263,100 +279,34 @@ impl Context {
         sink: Node,
         edge_type: EdgeType,
     ) -> Box<dyn Iterator<Item = Node> + 'a> {
-        let cf_id = sink.ctrl_id;
-        let Some(sink_cs_or_ds) = sink.typ.as_call_site_or_data_sink() else {
-            return Box::new(empty());
-        };
+        use petgraph::visit::*;
+        let cf_id = &sink.ctrl_id;
 
-        let controller_flow = &self.flows_to[&sink.ctrl_id];
-
-        let callargs_for_callsite = move |cs: CallSite| {
-            controller_flow
-                .callsites_to_callargs
-                .row_set(
-                    &controller_flow
-                        .sinks
-                        .index(&CallSiteOrDataSink::CallSite(cs)),
-                )
-                .iter()
-                .map(move |ca| Node {
-                    ctrl_id: sink.ctrl_id,
-                    typ: ca.clone().into(),
-                })
-        };
-
-        let get_influencers = |influencer_srcs: Box<dyn Iterator<Item = &'a DataSource>>| {
-            let influencers = influencer_srcs.flat_map(move |src| {
-                // We definitely are influenced by the node itself.
-                let mut nodes = vec![Node {
-                    ctrl_id: sink.ctrl_id,
-                    typ: src.clone().into(),
-                }];
-
-                // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
-                if let DataSource::FunctionCall(cs) = src {
-                    nodes.extend(callargs_for_callsite(*cs))
-                }
-
-                nodes
-            });
-
-            // Special case if sink is a callsite, the callargs are also influencers
-            let cs_args = if let NodeType::CallSite(cs) = sink.typ {
-                Some(callargs_for_callsite(cs))
-            } else {
-                None
-            };
-            Box::new(influencers.chain(cs_args.into_iter().flatten()))
-        };
+        let reversed_graph = Reversed(&self.desc.controllers[cf_id].graph);
 
         match edge_type {
-            EdgeType::Data => get_influencers(Box::new(
-                self.flows_to[&cf_id]
-                    .data_flows_to
-                    .rows()
-                    .filter_map(move |(src, row_set)| {
-                        row_set.contains(&sink_cs_or_ds).then_some(src)
-                    })
-                    .map(move |idx| self.flows_to[&cf_id].sources.value(*idx)),
-            )),
-            EdgeType::DataAndControl => get_influencers(Box::new(
-                self.desc().controllers[&cf_id]
-                    .all_sources()
-                    .filter(move |src| {
-                        DataAndControlInfluencees::new(
-                            (*src).clone(),
-                            &self.desc.controllers[&cf_id],
-                            &self.flows_to[&cf_id],
-                        )
-                        .contains(&sink_cs_or_ds)
-                    }),
-            )),
-            EdgeType::Control => {
-                let Some(cs) = sink.typ.as_call_site() else {
-                    return Box::new(empty());
-                };
+            EdgeType::Data => {
+                let edges_filtered = EdgeFiltered::from_fn(
+                    reversed_graph,
+                    |e| e.weight().is_data()
+                );
                 Box::new(
-                    self.desc.controllers[&cf_id]
-                        .ctrl_flow
-                        .iter()
-                        .filter_map(move |(src, sinks)| {
-                            sinks.contains(&cs).then_some(Node {
-                                ctrl_id: sink.ctrl_id,
-                                typ: src.clone().into(),
-                            })
-                        })
-                        .flat_map(move |n| {
-                            let mut nodes = vec![n];
-
-                            // If the node is a CallSite and has any CallArguments, we are influenced by those as well.
-                            if let Some(cs) = n.typ.as_call_site() {
-                                nodes.extend(callargs_for_callsite(cs))
-                            }
-
-                            nodes
-                        }),
-                )
+                    bfs_iter(edges_filtered, sink)
+                ) as Box<dyn Iterator<Item = Node> + 'a>
+            },
+            EdgeType::Control => {
+                let edges_filtered = EdgeFiltered::from_fn(
+                    reversed_graph,
+                    |e| e.weight().is_control()
+                );
+                Box::new(
+                    bfs_iter(edges_filtered, sink)
+                ) as Box<_>
+            }
+            EdgeType::DataAndControl => {
+                Box::new(
+                    bfs_iter(reversed_graph, sink)
+                ) as Box<_>
             }
         }
     }
@@ -369,159 +319,75 @@ impl Context {
         src: Node,
         edge_type: EdgeType,
     ) -> Box<dyn Iterator<Item = Node> + 'a> {
-        let cf_id = src.ctrl_id;
-        let Some(src_datasource) = src.typ.as_data_source() else {
-            return Box::new(empty());
-        };
+        let cf_id = &src.ctrl_id;
 
-        let get_influencees = |influencee_sinks: Box<dyn Iterator<Item = CallSiteOrDataSink>>| {
-            let influencees = influencee_sinks.flat_map(move |cs_ds| {
-                // We definitely influence to the node itself.
-                let mut nodes = vec![Node {
-                    ctrl_id: src.ctrl_id,
-                    typ: cs_ds.clone().into(),
-                }];
-                // If the node is a DataSink::Argument, we influence it's corresponding CallSite as well.
-                if let CallSiteOrDataSink::DataSink(DataSink::Argument { function: f, .. }) = cs_ds
-                {
-                    nodes.push(Node {
-                        ctrl_id: src.ctrl_id,
-                        typ: f.into(),
-                    })
-                }
-                nodes
-            });
 
-            // Special case if sink is callarg, callsite is also an influencer
-            let arg_cs =
-                if let NodeType::CallArgument(DataSink::Argument { function, .. }) = src.typ {
-                    Some(Node {
-                        ctrl_id: src.ctrl_id,
-                        typ: function.into(),
-                    })
-                } else {
-                    None
-                };
-            Box::new(influencees.chain(arg_cs.into_iter()))
-        };
+        let graph = &self.desc.controllers[cf_id].graph;
 
         match edge_type {
-            EdgeType::Data => get_influencees(Box::new(
-                self.flows_to[&cf_id]
-                    .data_flows_to
-                    .row_set(&src_datasource.to_index(&self.flows_to[&cf_id].sources))
-                    .iter()
-                    .cloned(),
-            )),
-            EdgeType::DataAndControl => get_influencees(Box::new(DataAndControlInfluencees::new(
-                src_datasource,
-                &self.desc.controllers[&cf_id],
-                &self.flows_to[&cf_id],
-            ))),
+            EdgeType::Data =>
+                Box::new(self.flows_to[&cf_id]
+                    .data_flows_to[src.inner.index()]
+                    .iter_ones()
+                    .map(|i| Node::unsafe_new(*cf_id, i))
+                ) as Box<dyn Iterator<Item = Node> + 'a>,
+            EdgeType::DataAndControl =>
+                Box::new(
+                    bfs_iter(graph, src)
+                ) as Box<_>,
             EdgeType::Control => {
-                match self.desc.controllers[&cf_id].ctrl_flow.get(&src_datasource) {
-                    Some(callsites) => Box::new(callsites.iter().map(move |cs| Node {
-                        ctrl_id: src.ctrl_id,
-                        typ: (*cs).into(),
-                    })),
-                    None => Box::new(empty()),
-                }
+                let edges_filtered = EdgeFiltered::from_fn(
+                    graph,
+                    |e| e.weight().is_control()
+                );
+                Box::new(
+                    bfs_iter(edges_filtered, src)
+                ) as Box<_>
             }
         }
     }
 
     /// Returns an iterator over all objects marked with `marker`.
-    pub fn marked(
+    pub fn marked_nodes(
         &self,
         marker: Marker,
-    ) -> impl Iterator<Item = &'_ (DefId, MarkerRefinement)> + '_ {
+    ) -> impl Iterator<Item = Node> + '_ {
         self.report_marker_if_absent(marker);
         self.marker_to_ids
             .get(&marker)
             .into_iter()
-            .flat_map(|v| v.iter())
+            .flat_map(|t| &t.nodes)
+            .copied()
     }
 
     /// Get the type(s) of a Node.
-    pub fn get_node_types(&self, node: &Node) -> Option<&HashSet<DefId>> {
-        match node.typ.as_data_source() {
-            None => None,
-            Some(src) => self.desc.controllers[&node.ctrl_id].types.get(&src),
-        }
+    pub fn get_node_types(&self, node: Node) -> &[DefId] {
+        self.desc.controllers[&node.ctrl_id]
+            .types
+            .get(&node.inner)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
-        if let Some(types) = self.get_node_types(&node) {
-            if types.iter().any(|t| {
-                self.marker_to_ids
-                    .get(&marker)
-                    .map(|markers| markers.iter().any(|(id, _)| id == t))
-                    .unwrap_or(false)
-            }) {
-                return true;
-            }
+        let types= self.get_node_types(node);
+        if types.iter().any(|t| {
+            self.marker_to_ids
+                .get(&marker)
+                .map(|markers| markers.contains(&node))
+                .unwrap_or(false)
+        }) {
+            return true;
         }
 
-        /// Return whether marker is on something with the given name's self or the argument at arg
-        fn marker_on_argument(ctx: &Context, marker: Marker, name: DefId, arg: usize) -> bool {
-            ctx.marker_to_ids
-                .get(&marker)
-                .map(|markers| {
-                    markers.iter().any(|(id, refinement)| {
-                        id == &name
-                            && (refinement.on_self()
-                                || refinement.on_argument().contains(arg as u32).unwrap())
-                    })
-                })
-                .unwrap_or(false)
-        }
-        /// Return whether marker is on something with the given name's self or the return
-        fn marker_on_return(ctx: &Context, marker: Marker, name: DefId) -> bool {
-            ctx.marker_to_ids
-                .get(&marker)
-                .map(|markers| {
-                    markers.iter().any(|(id, refinement)| {
-                        id == &name && (refinement.on_self() || refinement.on_return())
-                    })
-                })
-                .unwrap_or(false)
-        }
-
-        match node.typ {
-            NodeType::ControllerArgument(arg) => {
-                marker_on_argument(self, marker, node.ctrl_id, arg)
-            }
-            NodeType::CallSite(cs) => marker_on_return(self, marker, cs.function),
-            NodeType::CallArgument(ds) => match ds {
-                DataSink::Argument { function, arg_slot } => {
-                    marker_on_argument(self, marker, function.function, arg_slot)
-                }
-                DataSink::Return => {
-                    panic!("impossible - CallArgument variant cannot be DataSink::Return")
-                }
-            },
-            NodeType::Return => marker_on_return(self, marker, node.ctrl_id),
-        }
+        self.desc.controllers[&node.ctrl_id].markers[&node.inner].iter()
+            .any(|ann| ann == marker)
     }
 
     /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
     pub fn all_nodes_for_ctrl(&self, ctrl_id: ControllerId) -> impl Iterator<Item = Node> + '_ {
         let ctrl = &self.desc.controllers[&ctrl_id];
-        ctrl.all_sources()
-            .map(move |src| Node {
-                ctrl_id,
-                typ: src.clone().into(),
-            })
-            .chain(ctrl.data_sinks().map(move |snk| Node {
-                ctrl_id,
-                typ: (*snk).into(),
-            }))
-            .chain(ctrl.call_sites().map(move |cs| Node {
-                ctrl_id,
-                typ: (*cs).into(),
-            }))
-            .unique()
+        ctrl.graph.node_indices().map(move |inner| Node { ctrl_id, inner })
     }
 
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
@@ -532,12 +398,11 @@ impl Context {
     ) -> impl Iterator<Item = Node> + '_ {
         self.desc.controllers[&ctrl_id]
             .types
-            .0
             .iter()
             .filter_map(move |(src, ids)| {
-                ids.contains(&t).then_some(Node {
+                ids.0.contains(&t).then_some(Node {
                     ctrl_id,
-                    typ: src.clone().into(),
+                    inner: *src
                 })
             })
     }
@@ -548,8 +413,19 @@ impl Context {
         ctrl_id: ControllerId,
         edge_type: EdgeType,
     ) -> impl Iterator<Item = Node> + '_ {
-        self.all_nodes_for_ctrl(ctrl_id)
-            .filter(move |n| self.influencers(*n, edge_type).next().is_none())
+        let g = &self.desc.controllers[&ctrl_id].graph;
+        g.node_indices().filter(move |n|
+            g.edges_directed(*n, Incoming)
+                .filter(|e|
+                    match edge_type {
+                        EdgeType::Data => e.weight().is_data(),
+                        EdgeType::Control => e.weight().is_control(),
+                        EdgeType::DataAndControl => true,
+                    }
+                )
+                .next()
+                .is_none()
+        ).map(move |inner| Node { ctrl_id, inner })
     }
 
     /// Returns the input [`ProgramDescription`].
@@ -558,18 +434,11 @@ impl Context {
     }
 
     /// Returns all the [`Annotation::OType`]s for a controller `id`.
-    pub fn otypes(&self, id: DefId) -> Vec<DefId> {
+    pub fn otypes(&self, id: DefId) -> &[DefId] {
         self.desc()
-            .annotations
-            .get(&id)
-            .into_iter()
-            .flat_map(|(anns, _)| {
-                anns.iter().filter_map(|annot| match annot {
-                    Annotation::OType(id) => Some(*id),
-                    _ => None,
-                })
-            })
-            .collect()
+            .type_info
+            .get(id)
+            .map_or(&[], |info| info.otypes.as_slice())
     }
 
     /// Enforce that on every data flow path from the `starting_points` to `is_terminal` a
@@ -589,75 +458,36 @@ impl Context {
         mut is_checkpoint: impl FnMut(Node) -> bool,
         mut is_terminal: impl FnMut(Node) -> bool,
     ) -> Result<AlwaysHappensBefore> {
-        let mut seen = HashSet::<&DataSink>::new();
         let mut num_reached = 0;
         let mut num_checkpointed = 0;
 
-        // Return whether node is checkpoint or terminal and increment those respective counters
-        let mut check_node = |node: Node| -> bool {
-            if is_checkpoint(node) {
-                num_checkpointed += 1;
-                return true;
-            } else if is_terminal(node) {
-                num_reached += 1;
-                return true;
-            }
-            false
-        };
+        let start_map = starting_points
+            .map(|i| (i.ctrl_id, i.inner))
+            .into_group_map();
+        let started_with = start_map.values().map(Vec::len).sum();
 
-        let starts = starting_points.collect::<Vec<_>>();
-        let started_with = starts.len();
-
-        let mut queue = starts
-            .iter()
-            .filter_map(|n| {
-                if check_node(*n) {
-                    return None;
-                }
-                match n.typ.as_data_source() {
-                    Some(ds) => Some((
-                        ds,
-                        n.ctrl_id,
-                        &self.desc().controllers.get(&n.ctrl_id).unwrap().data_flow.0,
-                    )),
-                    None => {
-                        assert_warning!(
-                            *self,
-                            false,
-                            format!(
-                            "found starting point {:?} that cannot be converted to a datasource",
-                            n
-                        )
-                        );
-                        None
+        for (ctrl_id, starts) in started_with {
+            let g = &self.desc.controllers[&ctrl_id].graph;
+            petgraph::visit::depth_first_search(
+                g,
+                starts,
+                |event| match event {
+                    DfsEvent::Discover(inner, _) => {
+                        let as_node = Node {ctrl_id, inner};
+                        if is_checkpoint(as_node) {
+                            num_checkpointed += 1;
+                            ControlFlow::Break(())
+                        } else if is_terminal(as_node) {
+                            num_reached += 1;
+                            ControlFlow::Break(())
+                        } else {
+                            ControlFlow::Continue(())
+                        }
                     }
+                    _ => ControlFlow::Continue(()),
                 }
-            })
-            .collect::<Vec<_>>();
+            );
 
-        while let Some(current) = queue.pop() {
-            // Check the datasource.
-            if check_node(Node {
-                ctrl_id: current.1,
-                typ: (current.0).clone().into(),
-            }) {
-                continue;
-            }
-
-            // Check all sinks the source flows to.
-            for sink in current.2.get(&current.0).into_iter().flatten() {
-                if check_node(Node {
-                    ctrl_id: current.1,
-                    typ: (*sink).into(),
-                }) {
-                    continue;
-                } else if let DataSink::Argument { function, .. } = sink {
-                    // If the sink is an argument, it can be converted to a datasource and added to the queue.
-                    if seen.insert(sink) {
-                        queue.push(((*function).into(), current.1, current.2));
-                    }
-                }
-            }
         }
 
         Ok(AlwaysHappensBefore {
@@ -673,11 +503,7 @@ impl Context {
     pub fn marked_type<'a>(&'a self, marker: Marker) -> impl Iterator<Item = DefId> + 'a {
         self.report_marker_if_absent(marker);
         self.marked(marker)
-            .filter(|(did, _)| self.desc().def_info[did].kind == DefKind::Type)
-            .map(|(did, refinement)| {
-                assert!(refinement.on_self());
-                *did
-            })
+            .filter(|did| self.desc().def_info[did].kind == DefKind::Type)
     }
 
     /// Return an example pair for a flow from an source from `from` to a sink
@@ -697,7 +523,7 @@ impl Context {
     }
 
     /// Iterate over all defined controllers
-    pub fn all_controllers(&self) -> impl Iterator<Item = (ControllerId, &Ctrl)> {
+    pub fn all_controllers(&self) -> impl Iterator<Item = (ControllerId, &SPDG)> {
         self.desc().controllers.iter().map(|(k, v)| (*k, v))
     }
 
@@ -749,23 +575,15 @@ impl<'a> std::fmt::Display for DisplayNode<'a> {
         self.ctx.describe_def(self.node.ctrl_id).fmt(f)?;
         f.write_str("\n")?;
 
-        match self.node.typ {
-            NodeType::ControllerArgument(pos) => {
-                f.write_fmt(format_args!("ControllerArgument:{:}", pos))
-            }
-            NodeType::CallSite(cs) => {
-                f.write_str("CallSite:")?;
-                self.ctx.describe_def(cs.function).fmt(f)
-            }
-            NodeType::CallArgument(ds) => match ds {
-                DataSink::Argument { function, arg_slot } => {
-                    f.write_str("CallArgument:")?;
-                    self.ctx.describe_def(function.function).fmt(f)?;
-                    f.write_fmt(format_args!(":{:}", arg_slot))
-                }
-                DataSink::Return => panic!("impossible"),
-            },
-            NodeType::Return => f.write_str("Return"),
+        let spdg = &self.ctx.desc.controllers[&self.node.ctrl_id];
+        let node = self.node.inner;
+        if node == spdg.return_ {
+            f.write_str("Return")
+        } else if let Some((idx, _)) = spdg.arguments.iter().enumerate().find(|(_, n)| n == node) {
+            write!(f, "ControllerArgument:{idx}")
+        } else {
+            let info = spdg.node_info(node);
+            write!(f, "{} @ {}", info.description, info.at)
         }
     }
 }
@@ -897,12 +715,11 @@ fn test_context() {
 fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
-    fn is_terminal(end: Node) -> bool {
-        matches!(end.typ, crate::NodeType::Return)
-    }
+    let is_terminal = |end: Node| -> bool {
+        ctx.desc.controllers[&end.ctrl_id].return_ == end.inner
+    };
 
     let ctrl_name = ctx.find_by_name("happens_before_pass")?;
-
     let pass = ctx.always_happens_before(
         ctx.all_nodes_for_ctrl(ctrl_name)
             .filter(|n| ctx.has_marker(Identifier::new_intern("start"), *n)),
@@ -932,10 +749,7 @@ fn test_happens_before() -> Result<()> {
 fn test_influencees() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
     let ctrl_name = ctx.find_by_name("influence")?;
-    let src_a = crate::Node {
-        ctrl_id: ctrl_name,
-        typ: DataSource::Argument(0).into(),
-    };
+    let src_a = ctx.controller_argument(ctrl_name, 0).unwrap();
     let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
 
@@ -996,14 +810,8 @@ fn test_callsite_is_arg_influencee() -> Result<()> {
 fn test_influencers() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
     let ctrl_name = ctx.find_by_name("influence")?;
-    let src_a = crate::Node {
-        ctrl_id: ctrl_name,
-        typ: DataSource::Argument(0).into(),
-    };
-    let src_b = crate::Node {
-        ctrl_id: ctrl_name,
-        typ: DataSource::Argument(1).into(),
-    };
+    let src_a = ctx.controller_argument(ctrl_name, 0).unwrap();
+    let src_b = ctx.controller_argument(ctrl_name, 1).unwrap();
     let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
 
@@ -1072,14 +880,8 @@ fn test_arg_is_callsite_influencer() -> Result<()> {
 fn test_has_ctrl_influence() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
     let ctrl_name = ctx.find_by_name("ctrl_influence")?;
-    let src_a = crate::Node {
-        ctrl_id: ctrl_name,
-        typ: DataSource::Argument(0).into(),
-    };
-    let src_b = crate::Node {
-        ctrl_id: ctrl_name,
-        typ: DataSource::Argument(1).into(),
-    };
+    let src_a = ctx.controller_argument(ctrl_name, 0).unwrap();
+    let src_b = ctx.controller_argument(ctrl_name, 1).unwrap();
     let a_identity =
         crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "identity").unwrap();
     let b_identity =

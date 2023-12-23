@@ -4,14 +4,14 @@ extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
 use crate::{
-    desc::{AnnotationMap, DataSink, DataSource, Identifier, ProgramDescription, TypeDescriptor},
+    desc::{Identifier, ProgramDescription},
     ir::{CallOnlyFlow},
     serializers::{Bodies, InstructionProxy},
     utils::outfile_pls,
     HashSet, Symbol,
 };
 
-use paralegal_spdg::{rustc_portable::DefId, DefInfo};
+use paralegal_spdg::{rustc_portable::DefId, DefInfo, Node};
 use rustc_middle::mir;
 
 use either::Either;
@@ -21,6 +21,8 @@ use itertools::Itertools;
 use std::borrow::Cow;
 use std::io::prelude::*;
 use std::path::Path;
+use petgraph::visit::EdgeRef;
+use crate::utils::CallStringExt;
 
 lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -554,15 +556,11 @@ pub trait HasGraph<'g>: Sized + Copy {
 
     fn has_marker(self, marker: &str) -> bool {
         let marker = Identifier::new_intern(marker);
-        self.graph().desc.annotations.values().any(|v| {
-            v.0.iter()
-                .filter_map(|a| a.as_marker())
-                .any(|m| m.marker == marker)
-        })
-    }
-
-    fn annotations(self) -> &'g AnnotationMap {
-        &self.graph().desc.annotations
+        self.graph().desc.type_info.values()
+            .any(|t| t.markers.contains(&marker))
+            || self.graph().desc.controllers.values().any(|c|
+                c.markers.values().any(|m| m.contains(&marker))
+            )
     }
 }
 
@@ -599,7 +597,7 @@ impl PreFrg {
 pub struct CtrlRef<'g> {
     graph: &'g PreFrg,
     ident: Identifier,
-    ctrl: &'g crate::desc::Ctrl,
+    ctrl: &'g crate::desc::SPDG,
 }
 
 impl<'g> PartialEq for CtrlRef<'g> {
@@ -615,58 +613,19 @@ impl<'g> HasGraph<'g> for &CtrlRef<'g> {
 }
 
 impl<'g> CtrlRef<'g> {
-    pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallSiteRef<'g>> {
-        let mut all: Vec<CallSiteRef<'g>> = self
+    pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallStringRef<'g>> {
+        let mut all: Vec<CallStringRef<'g>> = self
             .ctrl
-            .data_flow
-            .0
-            .values()
-            .flat_map(|v| {
-                v.iter()
-                    .filter_map(DataSink::as_argument)
-                    .map(|sink| CallSiteRef {
-                        function: fun,
-                        call_site: sink.0,
-                        ctrl: Cow::Borrowed(self),
-                    })
+            .graph
+            .edge_references()
+            .map(|v| v.weight().at)
+            .filter(|m| m.leaf().function.to_def_id() == fun.ident )
+            .map(|call_site| {
+                CallStringRef {
+                    ctrl: self,
+                    call_site,
+                }
             })
-            .chain(
-                self.ctrl
-                    .data_flow
-                    .0
-                    .keys()
-                    .filter_map(crate::desc::DataSource::as_function_call)
-                    .map(|f| CallSiteRef {
-                        function: fun,
-                        call_site: f,
-                        ctrl: Cow::Borrowed(self),
-                    }),
-            )
-            .chain(
-                self.ctrl
-                    .ctrl_flow
-                    .0
-                    .keys()
-                    .filter_map(crate::desc::DataSource::as_function_call)
-                    .map(|f| CallSiteRef {
-                        function: fun,
-                        call_site: f,
-                        ctrl: Cow::Borrowed(self),
-                    }),
-            )
-            .chain(
-                self.ctrl
-                    .ctrl_flow
-                    .0
-                    .values()
-                    .flat_map(|cs_map| cs_map.iter())
-                    .map(|f| CallSiteRef {
-                        function: fun,
-                        call_site: f,
-                        ctrl: Cow::Borrowed(self),
-                    }),
-            )
-            .filter(|ref_| ref_.call_site.function == fun.ident)
             .collect();
         all.dedup_by_key(|r| r.call_site);
         all
@@ -683,8 +642,8 @@ impl<'g> CtrlRef<'g> {
         cs.pop().unwrap()
     }
 
-    pub fn types_for(&'g self, target: &DataSource) -> Option<&'g HashSet<TypeDescriptor>> {
-        self.ctrl.types.0.get(target)
+    pub fn types_for(&'g self, target: &Node) -> &[DefId] {
+        self.ctrl.types.get(target).map_or(&[], |t| t.0.as_slice())
     }
 }
 
@@ -705,85 +664,42 @@ impl<'g> FnRef<'g> {
     }
 }
 
-pub struct CallSiteRef<'g> {
-    function: &'g FnRef<'g>,
-    call_site: &'g crate::desc::CallSite,
-    ctrl: Cow<'g, CtrlRef<'g>>,
+pub struct CallStringRef<'g> {
+    call_site: CallString,
+    ctrl: &'g CtrlRef<'g>,
 }
 
-impl<'g> PartialEq<crate::desc::CallSite> for CallSiteRef<'g> {
-    fn eq(&self, other: &crate::desc::CallSite) -> bool {
-        self.call_site == other
+impl<'g> PartialEq<crate::desc::CallString> for CallStringRef<'g> {
+    fn eq(&self, other: &crate::desc::CallString) -> bool {
+        self.call_site == *other
     }
 }
 
-impl<'g> CallSiteRef<'g> {
-    pub fn input(&'g self) -> Vec<DataSinkRef<'g>> {
-        let mut all: Vec<_> = self
-            .ctrl
-            .ctrl
-            .data_flow
-            .0
-            .values()
-            .flat_map(|s| s.iter())
-            .filter(|s| matches!(s, DataSink::Argument {function, ..} if self == function))
-            .map(|s| DataSinkRef {
-                call_site: Either::Left(self),
-                sink: s,
+impl<'g> CallStringRef<'g> {
+    pub fn input(&'g self) -> Vec<NodeRef<'g>> {
+        let graph = &self.ctrl.ctrl.graph;
+        let mut all: Vec<_> = graph
+            .edge_references()
+            .filter(|e|
+                e.weight().at == self.call_site
+            )
+            .filter_map(|e| {
+                let src = graph.node_weight(e.source())?;
+                Some((src.argument?, e.source()))
             })
             .collect();
-        all.sort_by_key(|s| s.sink.as_argument().unwrap().1);
+        all.sort_by_key(|s| s.0);
         all
     }
 
-    pub fn flows_to(&self, sink: &DataSinkRef) -> bool {
-        let next_hop = |src: crate::desc::CallSite| {
-            self.ctrl
-                .ctrl
-                .data_flow
-                .0
-                .get(&crate::desc::DataSource::FunctionCall(src))
-                .iter()
-                .flat_map(|i| i.iter())
-                .map(Either::Left)
-                .chain(
-                    self.ctrl
-                        .ctrl
-                        .ctrl_flow
-                        .0
-                        .get(&crate::desc::DataSource::FunctionCall(src))
-                        .iter()
-                        .flat_map(|i| i.iter())
-                        .map(Either::Right),
-                )
-                .collect()
-        };
+    pub fn output(&self) -> NodeRef<'g> {
 
-        let mut seen = HashSet::new();
-        let mut queue: Vec<_> = next_hop(*self.call_site);
-        while let Some(n) = queue.pop() {
-            if match n {
-                Either::Left(l) => sink == l,
-                _ => false,
-            } {
-                return true;
-            }
-
-            if !seen.contains(&n) {
-                seen.insert(n);
-                match n {
-                    Either::Left(l) => {
-                        if let Some((fun, _)) = l.as_argument() {
-                            queue.extend(next_hop(*fun))
-                        }
-                    }
-                    Either::Right(r) => queue.extend(next_hop(*r)),
-                };
-            }
-        }
-        false
     }
-    pub fn call_site(&self) -> &crate::desc::CallSite {
+
+    pub fn flows_to(&self, sink: &NodeRef) -> bool {
+
+    }
+    pub fn call_site(&self) -> crate::desc::CallString {
         self.call_site
     }
 }
@@ -794,22 +710,14 @@ impl<'g> HasGraph<'g> for &CallSiteRef<'g> {
     }
 }
 
-pub struct DataSinkRef<'g> {
-    call_site: Either<&'g CallSiteRef<'g>, &'g PreFrg>,
-    sink: &'g crate::desc::DataSink,
+pub struct NodeRef<'g> {
+    node: Node,
+    controller: DefId,
+    graph: &'g PreFrg,
 }
 
-impl<'g> HasGraph<'g> for &DataSinkRef<'g> {
+impl<'g> HasGraph<'g> for &NodeRef<'g> {
     fn graph(self) -> &'g PreFrg {
-        match self.call_site {
-            Either::Left(l) => l.graph(),
-            Either::Right(r) => r.graph(),
-        }
-    }
-}
-
-impl PartialEq<crate::desc::DataSink> for DataSinkRef<'_> {
-    fn eq(&self, other: &crate::desc::DataSink) -> bool {
-        self.sink == other
+        self.graph
     }
 }

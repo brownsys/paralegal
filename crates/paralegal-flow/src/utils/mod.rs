@@ -4,7 +4,6 @@ extern crate smallvec;
 use hir::def::DefKind;
 use thiserror::Error;
 
-use paralegal_spdg::{CallSite, DataSource};
 use smallvec::SmallVec;
 
 use crate::{

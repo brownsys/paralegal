@@ -44,9 +44,10 @@ pub use std::collections::{HashMap, HashSet};
 use petgraph::graph::NodeIndex;
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::IntoNodeIdentifiers;
+use crate::rustc_portable::LocalDefId;
 
-pub type Endpoint = DefId;
-pub type TypeDescriptor = DefId;
+pub type Endpoint = LocalDefId;
+pub type TypeId = DefId;
 pub type Function = Identifier;
 
 /// Name of the file used for emitting the JSON serialized
@@ -62,7 +63,7 @@ pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, strum::EnumIs)]
 pub enum Annotation {
     Marker(MarkerAnnotation),
-    OType(#[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))] TypeDescriptor),
+    OType(#[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))] TypeId),
     Exception(ExceptionAnnotation),
 }
 
@@ -75,8 +76,8 @@ impl Annotation {
         }
     }
 
-    /// If this is an [`Annotation::OType`], returns the underlying [`TypeDescriptor`].
-    pub fn as_otype(&self) -> Option<TypeDescriptor> {
+    /// If this is an [`Annotation::OType`], returns the underlying [`TypeId`].
+    pub fn as_otype(&self) -> Option<TypeId> {
         match self {
             Annotation::OType(t) => Some(*t),
             _ => None,
@@ -203,6 +204,35 @@ impl ObjectType {
     }
 }
 
+mod ser_localdefid_map {
+    use serde::{Deserialize, Serialize};
+
+    use crate::rustc_proxies;
+
+    #[derive(Serialize, Deserialize)]
+    struct Helper(#[serde(with = "rustc_proxies::LocalDefId")] super::LocalDefId);
+
+    pub fn serialize<S: serde::Serializer, V: serde::Serialize>(
+        map: &super::HashMap<super::LocalDefId, V>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        map.iter()
+            .map(|(k, v)| (Helper(*k), v))
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>, V: serde::Deserialize<'de>>(
+        deserializer: D,
+    ) -> Result<super::HashMap<super::LocalDefId, V>, D::Error> {
+        Ok(Vec::deserialize(deserializer)?
+            .into_iter()
+            .map(|(Helper(k), v)| (k, v))
+            .collect())
+    }
+}
+
+
 #[cfg(feature = "rustc")]
 mod ser_defid_map {
     use serde::{Deserialize, Serialize};
@@ -269,10 +299,14 @@ pub enum InstructionInfo {
 /// The annotated program dependence graph.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
-    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    #[cfg_attr(feature = "rustc", serde(with = "ser_localdefid_map"))]
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     /// Mapping from function names to dependencies within the function.
     pub controllers: HashMap<Endpoint, SPDG>,
+
+    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    pub type_info: HashMap<TypeId, TypeDescription>,
 
     pub instruction_info: HashMap<GlobalLocation, InstructionInfo>,
 
@@ -280,6 +314,45 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TypeDescription {
+    pub rendering: String,
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))]
+    pub otypes: Vec<TypeId>,
+    pub markers: Vec<Identifier>,
+}
+
+#[cfg(feature = "rustc")]
+mod ser_defid_vec {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use crate::rustc_proxies;
+
+    #[derive(Serialize, Deserialize)]
+    #[repr(transparent)]
+    struct DefIdWrap(
+        #[serde(with = "rustc_proxies::DefId")]
+        crate::DefId,
+    );
+
+    pub fn serialize<S: Serializer>(
+        v: &Vec<crate::DefId>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        unsafe { Vec::<DefIdWrap>::serialize(std::mem::transmute(v), serializer) }
+    }
+
+    pub fn deserialize<
+        'de,
+        D: Deserializer<'de>,
+    >(
+        deserializer: D,
+    ) -> Result<Vec<crate::DefId>, D::Error> {
+        unsafe { Ok(std::mem::transmute(
+            Vec::<DefIdWrap>::deserialize(deserializer)?
+        )) }
+    }
 }
 
 impl ProgramDescription {
@@ -297,7 +370,7 @@ impl ProgramDescription {
     /// Gather all [`DataSource`]s that are mentioned in this program description.
     ///
     /// Essentially just `self.controllers.flat_map(|c| c.keys())`
-    pub fn all_sources_with_ctrl(&self) -> HashSet<(DefId, Node)> {
+    pub fn all_sources_with_ctrl(&self) -> HashSet<(Endpoint, Node)> {
         self.controllers
             .iter()
             .flat_map(|(name, c)| {
@@ -400,18 +473,13 @@ pub fn hash_pls<T: Hash>(t: T) -> u64 {
     hasher.finish()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Debug, Hash, Serialize, Deserialize)]
-pub struct Node(petgraph::graph::NodeIndex);
-
-impl From<petgraph::graph::NodeIndex> for Node {
-    fn from(value: NodeIndex) -> Self {
-        Node(value)
-    }
-}
+pub type Node = NodeIndex;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeInfo {
     pub at: CallString,
+    pub description: String,
+    pub argument: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -436,16 +504,26 @@ pub enum EdgeKind {
     Control,
 }
 
+pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SPDG {
-    pub graph: petgraph::Graph<NodeInfo, EdgeInfo>,
-    pub annotations: HashMap<Node, Vec<Annotation>>,
+    pub graph: SPDGImpl,
+    pub markers: HashMap<Node, Vec<Identifier>>,
     pub arguments: Vec<Node>,
+    pub return_: Node,
+    pub types: HashMap<Node, Types>,
 }
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Types(
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))]
+    pub Vec<DefId>
+);
 
 impl SPDG {
     pub fn node_info(&self, node: Node) -> &NodeInfo  {
-        self.graph.node_weight(node.0).unwrap()
+        self.graph.node_weight(node).unwrap()
     }
 
     /// Returns an iterator over all the data sinks in the `data_flow` relation.
