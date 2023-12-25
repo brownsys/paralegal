@@ -188,7 +188,7 @@ pub mod call_only_flow_dot {
             } else {
                 return dot::LabelText::LabelStr("return".into());
             };
-            let body_with_facts = self.tcx.body_for_def_id(body_id.to_def_id()).unwrap();
+            let body_with_facts = self.tcx.body_for_def_id(body_id).unwrap();
             let body = &body_with_facts.body;
             let write_label = |s: &mut String| -> std::fmt::Result {
                 let stmt = if let Some(loc) = loc.as_location() {
@@ -320,14 +320,14 @@ pub fn write_non_transitive_graph_and_body<W: std::io::Write>(
                         .flat_map(|s| s.iter().cloned()),
                 )
             })
-            .map(|l| l.leaf().function.to_def_id())
-            .collect::<HashSet<DefId>>()
+            .map(|l| l.leaf().function)
+            .collect::<HashSet<crate::LocalDefId>>()
             .into_iter()
             .map(|bid| {
                 (
-                    bid,
+                    bid.to_def_id(),
                     (
-                        Identifier::new(body_name_pls(tcx, bid.expect_local()).name),
+                        Identifier::new(body_name_pls(tcx, bid).name),
                         BodyProxy::from_body_with_normalize(
                             &tcx.body_for_def_id(bid).unwrap().body,
                             tcx,

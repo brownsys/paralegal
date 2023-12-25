@@ -33,7 +33,7 @@ impl CallOnlyFlow {
 
 fn as_terminator<'tcx>(tcx: TyCtxt<'tcx>, location: GlobalLocation) -> Option<&'tcx mir::Terminator<'tcx>> {
     if let LocationOrStart::Location(loc) = location.location {
-        tcx.body_for_def_id(location.function.to_def_id()).unwrap().body.stmt_at(loc).right()
+        tcx.body_for_def_id(location.function).unwrap().body.stmt_at(loc).right()
     } else {
         None
     }
@@ -189,7 +189,7 @@ impl CallOnlyFlow {
             location_dependencies.iter().flat_map(|(k, v)| v.input_deps.iter().flatten().chain(&v.ctrl_deps).chain(Some(k)))
         ) {
             if let LocationOrStart::Location(loc) = dep.leaf().location {
-                match tcx.body_for_def_id(dep.leaf().function.to_def_id()).unwrap().body.stmt_at(loc) {
+                match tcx.body_for_def_id(dep.leaf().function).unwrap().body.stmt_at(loc) {
                     Either::Left(stmt) => panic!("Found statement at location {dep}: {stmt:?}"),
                     Either::Right(term) if !matches!(term.kind, mir::TerminatorKind::Call {..}) =>
                         panic!("Found non-call terminator at location {dep}: {:?}", term.kind),

@@ -5,11 +5,11 @@ use paralegal_spdg::{Annotation, DefKind, Node as SPDGNode, NodeInfo, HashMap, H
 pub use paralegal_spdg::rustc_portable::DefId;
 
 use anyhow::{anyhow, bail, ensure, Result};
-use indexical::ToIndex;
-use itertools::Itertools;
+use indexical::{RefFamily, ToIndex};
+use itertools::{Either, Itertools};
 use petgraph::Incoming;
 use petgraph::prelude::Bfs;
-use petgraph::visit::{DfsEvent, EdgeFiltered, EdgeRef, IntoNodeReferences, NodeRef, Reversed, Walker};
+use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, IntoNodeReferences, NodeRef, Reversed, Walker};
 use paralegal_spdg::rustc_portable::LocalDefId;
 
 use super::flows_to::CtrlFlowsTo;
@@ -33,6 +33,7 @@ pub type MarkableId = Node;
 type MarkerIndex = HashMap<Marker, MarkerTargets>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
+#[derive(Clone, Debug, Default)]
 pub struct MarkerTargets {
     types: Vec<TypeId>,
     nodes: Vec<MarkableId>,
@@ -205,13 +206,29 @@ impl Context {
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
         desc.controllers.iter()
             .flat_map(|(&ctrl_id, spdg)| {
-                spdg.markers.iter().flat_map(|(&inner, anns)|
-                    anns.iter().map(|marker|
-                        (*marker, Node { inner, ctrl_id })
+                spdg.markers.iter().flat_map(move |(&inner, anns)|
+                    anns.iter().map(move |marker|
+                        (*marker, Either::Left(Node { inner, ctrl_id }))
                     )
                 )
             })
-            .into_group_map()
+            .chain(
+                desc.type_info.iter()
+                    .flat_map(|(k, v)|
+                        v.markers.iter().copied()
+                            .zip(
+                                std::iter::repeat(Either::Right(*k))
+                            )
+                    )
+            )
+            .into_grouping_map()
+            .fold(MarkerTargets::default(), |mut r,k, v| {
+                v.either(
+                    |node| r.nodes.push(node),
+                    |typ| r.types.push(typ),
+                );
+                r
+            })
     }
 
     fn build_flows_to(desc: &ProgramDescription) -> FlowsTo {
@@ -245,8 +262,7 @@ impl Context {
             .contains(&sink_cs_or_ds),
             EdgeType::Control => {
                 self.desc.controllers.get(cf_id).unwrap().graph.edges(src_datasource)
-                    .filter(|e| e.weight().is_control())
-                    .map(|e| e.id())
+                    .any(|e| e.weight().is_control() && e.target() == sink_cs_or_ds)
             }
         }
     }
@@ -291,7 +307,12 @@ impl Context {
                     |e| e.weight().is_data()
                 );
                 Box::new(
-                    bfs_iter(edges_filtered, sink)
+                    // TODO: Yikes. Can't create a lazy iterator from
+                    // `edges_filtered` because they must be taken by
+                    // reference by `Walker::iter`
+                    bfs_iter(&edges_filtered, sink)
+                        .collect::<Vec<_>>()
+                        .into_iter()
                 ) as Box<dyn Iterator<Item = Node> + 'a>
             },
             EdgeType::Control => {
@@ -300,7 +321,12 @@ impl Context {
                     |e| e.weight().is_control()
                 );
                 Box::new(
-                    bfs_iter(edges_filtered, sink)
+                    // TODO: Yikes. Can't create a lazy iterator from
+                    // `edges_filtered` because they must be taken by
+                    // reference by `Walker::iter`
+                    bfs_iter(&edges_filtered, sink)
+                        .collect::<Vec<_>>()
+                        .into_iter()
                 ) as Box<_>
             }
             EdgeType::DataAndControl => {
@@ -320,7 +346,7 @@ impl Context {
         edge_type: EdgeType,
     ) -> Box<dyn Iterator<Item = Node> + 'a> {
         let cf_id = &src.ctrl_id;
-
+        let src_ctrl_id = src.ctrl_id;
 
         let graph = &self.desc.controllers[cf_id].graph;
 
@@ -329,7 +355,7 @@ impl Context {
                 Box::new(self.flows_to[&cf_id]
                     .data_flows_to[src.inner.index()]
                     .iter_ones()
-                    .map(|i| Node::unsafe_new(*cf_id, i))
+                    .map(move |i| Node::unsafe_new(src_ctrl_id, i))
                 ) as Box<dyn Iterator<Item = Node> + 'a>,
             EdgeType::DataAndControl =>
                 Box::new(
@@ -341,7 +367,12 @@ impl Context {
                     |e| e.weight().is_control()
                 );
                 Box::new(
-                    bfs_iter(edges_filtered, src)
+                    bfs_iter(&edges_filtered, src)
+                        // TODO: Yikes. Can't create a lazy iterator from
+                        // `edges_filtered` because they must be taken by
+                        // reference by `Walker::iter`
+                        .collect::<Vec<_>>()
+                        .into_iter()
                 ) as Box<_>
             }
         }
@@ -365,7 +396,7 @@ impl Context {
         self.desc.controllers[&node.ctrl_id]
             .types
             .get(&node.inner)
-            .map_or(&[], Vec::as_slice)
+            .map_or(&[], |v| v.0.as_slice())
     }
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
@@ -374,14 +405,14 @@ impl Context {
         if types.iter().any(|t| {
             self.marker_to_ids
                 .get(&marker)
-                .map(|markers| markers.contains(&node))
+                .map(|markers| markers.nodes.contains(&node))
                 .unwrap_or(false)
         }) {
             return true;
         }
 
         self.desc.controllers[&node.ctrl_id].markers[&node.inner].iter()
-            .any(|ann| ann == marker)
+            .any(|ann| *ann == marker)
     }
 
     /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
@@ -414,18 +445,8 @@ impl Context {
         edge_type: EdgeType,
     ) -> impl Iterator<Item = Node> + '_ {
         let g = &self.desc.controllers[&ctrl_id].graph;
-        g.node_indices().filter(move |n|
-            g.edges_directed(*n, Incoming)
-                .filter(|e|
-                    match edge_type {
-                        EdgeType::Data => e.weight().is_data(),
-                        EdgeType::Control => e.weight().is_control(),
-                        EdgeType::DataAndControl => true,
-                    }
-                )
-                .next()
-                .is_none()
-        ).map(move |inner| Node { ctrl_id, inner })
+        g.externals(Incoming)
+            .map(move |inner| Node { ctrl_id, inner })
     }
 
     /// Returns the input [`ProgramDescription`].
@@ -437,7 +458,7 @@ impl Context {
     pub fn otypes(&self, id: DefId) -> &[DefId] {
         self.desc()
             .type_info
-            .get(id)
+            .get(&id)
             .map_or(&[], |info| info.otypes.as_slice())
     }
 
@@ -466,7 +487,7 @@ impl Context {
             .into_group_map();
         let started_with = start_map.values().map(Vec::len).sum();
 
-        for (ctrl_id, starts) in started_with {
+        for (ctrl_id, starts) in start_map {
             let g = &self.desc.controllers[&ctrl_id].graph;
             petgraph::visit::depth_first_search(
                 g,
@@ -476,15 +497,15 @@ impl Context {
                         let as_node = Node {ctrl_id, inner};
                         if is_checkpoint(as_node) {
                             num_checkpointed += 1;
-                            ControlFlow::Break(())
+                            Control::<()>::Prune
                         } else if is_terminal(as_node) {
                             num_reached += 1;
-                            ControlFlow::Break(())
+                            Control::Prune
                         } else {
-                            ControlFlow::Continue(())
+                            Control::Continue
                         }
                     }
-                    _ => ControlFlow::Continue(()),
+                    _ => Control::Continue,
                 }
             );
 
@@ -500,10 +521,9 @@ impl Context {
     // This lifetime is actually needed but clippy doesn't understand that
     #[allow(clippy::needless_lifetimes)]
     /// Return all types that are marked with `marker`
-    pub fn marked_type<'a>(&'a self, marker: Marker) -> impl Iterator<Item = DefId> + 'a {
+    pub fn marked_type<'a>(&'a self, marker: Marker) -> &[DefId] {
         self.report_marker_if_absent(marker);
-        self.marked(marker)
-            .filter(|did| self.desc().def_info[did].kind == DefKind::Type)
+        self.marker_to_ids.get(&marker).map_or(&[], |i| i.types.as_slice())
     }
 
     /// Return an example pair for a flow from an source from `from` to a sink
@@ -571,15 +591,14 @@ pub struct DisplayNode<'a> {
 
 impl<'a> std::fmt::Display for DisplayNode<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Controller:")?;
-        self.ctx.describe_def(self.node.ctrl_id).fmt(f)?;
+        write!(f, "Controller: {:?}", self.ctx.desc.controllers[&self.node.ctrl_id].name)?;
         f.write_str("\n")?;
 
         let spdg = &self.ctx.desc.controllers[&self.node.ctrl_id];
         let node = self.node.inner;
         if node == spdg.return_ {
             f.write_str("Return")
-        } else if let Some((idx, _)) = spdg.arguments.iter().enumerate().find(|(_, n)| n == node) {
+        } else if let Some((idx, _)) = spdg.arguments.iter().enumerate().find(|(_, n)| **n == node) {
             write!(f, "ControllerArgument:{idx}")
         } else {
             let info = spdg.node_info(node);
@@ -587,6 +606,7 @@ impl<'a> std::fmt::Display for DisplayNode<'a> {
         }
     }
 }
+
 
 /// Statistics about the result of running [`Context::always_happens_before`]
 /// that are useful to understand how the property failed.

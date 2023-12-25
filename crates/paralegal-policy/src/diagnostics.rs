@@ -256,7 +256,7 @@ impl PolicyContext {
     /// diagnostic context management.
     pub fn named_controller<A>(
         self: Arc<Self>,
-        id: DefId,
+        id: ControllerId,
         policy: impl FnOnce(Arc<ControllerContext>) -> A,
     ) -> A {
         policy(Arc::new(ControllerContext {
@@ -291,7 +291,7 @@ impl HasDiagnosticsBase for PolicyContext {
 /// See the [module level documentation][self] for more information on
 /// diagnostic context management.
 pub struct ControllerContext {
-    id: DefId,
+    id: ControllerId,
     inner: Arc<dyn HasDiagnosticsBase>,
 }
 
@@ -361,7 +361,7 @@ impl ControllerContext {
 
 impl HasDiagnosticsBase for ControllerContext {
     fn record(&self, msg: String, severity: Severity, mut context: DiagnosticContextStack) {
-        let name = self.as_ctx().desc().def_info[&self.id].name;
+        let name = self.as_ctx().desc().controllers[&self.id].name;
         context.push(format!("[controller: {}]", name));
         self.inner.record(msg, severity, context)
     }
@@ -445,7 +445,7 @@ impl Context {
     /// diagnostic context management.
     pub fn named_controller<A>(
         self: Arc<Self>,
-        id: DefId,
+        id: ControllerId,
         policy: impl FnOnce(Arc<ControllerContext>) -> A,
     ) -> A {
         policy(Arc::new(ControllerContext {

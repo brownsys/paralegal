@@ -294,6 +294,7 @@ pub enum InstructionInfo {
         DefId
     ),
     Terminator,
+    Start,
 }
 
 /// The annotated program dependence graph.
@@ -508,6 +509,7 @@ pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SPDG {
+    pub name: Identifier,
     pub graph: SPDGImpl,
     pub markers: HashMap<Node, Vec<Identifier>>,
     pub arguments: Vec<Node>,
@@ -515,10 +517,10 @@ pub struct SPDG {
     pub types: HashMap<Node, Types>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct Types(
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))]
-    pub Vec<DefId>
+    pub Vec<TypeId>
 );
 
 impl SPDG {

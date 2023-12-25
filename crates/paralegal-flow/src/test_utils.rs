@@ -542,7 +542,7 @@ pub trait HasGraph<'g>: Sized + Copy {
         CtrlRef {
             graph: self.graph(),
             ident,
-            ctrl: &self.graph().desc.controllers[&self.ctrl_hashed(name)],
+            ctrl: &self.graph().desc.controllers[&self.ctrl_hashed(name).expect_local()],
         }
     }
 
@@ -631,7 +631,7 @@ impl<'g> CtrlRef<'g> {
         all
     }
 
-    pub fn call_site(&'g self, fun: &'g FnRef<'g>) -> CallSiteRef<'g> {
+    pub fn call_site(&'g self, fun: &'g FnRef<'g>) -> CallStringRef<'g> {
         let mut cs = self.call_sites(fun);
         assert!(
             cs.len() == 1,
@@ -685,39 +685,49 @@ impl<'g> CallStringRef<'g> {
             )
             .filter_map(|e| {
                 let src = graph.node_weight(e.source())?;
-                Some((src.argument?, e.source()))
+                Some(NodeRef {
+                    node: e.source(),
+                    graph: self.ctrl,
+                })
             })
             .collect();
-        all.sort_by_key(|s| s.0);
+        all.sort_by_key(|s| s.node);
         all
     }
 
-    pub fn output(&self) -> NodeRef<'g> {
-
-    }
-
-    pub fn flows_to(&self, sink: &NodeRef) -> bool {
-
+    pub fn output(&self) -> Vec<NodeRef<'g>> {
+        todo!("Add after updating flowistry")
     }
     pub fn call_site(&self) -> crate::desc::CallString {
         self.call_site
     }
 }
 
-impl<'g> HasGraph<'g> for &CallSiteRef<'g> {
+impl<'g> HasGraph<'g> for &CallStringRef<'g> {
     fn graph(self) -> &'g PreFrg {
-        self.function.graph()
+        self.ctrl.graph
     }
 }
 
 pub struct NodeRef<'g> {
     node: Node,
-    controller: DefId,
-    graph: &'g PreFrg,
+    graph: &'g CtrlRef<'g>,
 }
 
 impl<'g> HasGraph<'g> for &NodeRef<'g> {
     fn graph(self) -> &'g PreFrg {
-        self.graph
+        self.graph.graph
+    }
+
+}
+
+impl<'g> NodeRef<'g> {
+    fn flows_to(&self, other: &NodeRef<'g>) -> bool {
+        petgraph::algo::has_path_connecting(
+            &self.graph.ctrl.graph,
+            self.node,
+            other.node,
+            None
+        )
     }
 }

@@ -312,6 +312,7 @@ impl Args {
     pub fn anactrl(&self) -> &AnalysisCtrl {
         &self.anactrl
     }
+
     pub fn modelctrl(&self) -> &ModelCtrl {
         &self.modelctrl
     }
@@ -352,23 +353,11 @@ pub struct ModelCtrl {
     /// `dump_serialized_flow_graph`.
     #[clap(long, env)]
     external_annotations: Option<std::path::PathBuf>,
-
-    #[clap(long, env)]
-    skip_sigs: bool,
 }
 
 impl ModelCtrl {
-    /// What (if any) is the path to the file containing external annotations
     pub fn external_annotations(&self) -> Option<&std::path::Path> {
-        self.external_annotations.as_deref()
-    }
-
-    pub fn model_version(&self) -> crate::frg::Version {
-        self.model_version
-    }
-
-    pub fn skip_sigs(&self) -> bool {
-        self.skip_sigs
+        self.external_annotations.as_ref().map(|p| p.as_path())
     }
 }
 

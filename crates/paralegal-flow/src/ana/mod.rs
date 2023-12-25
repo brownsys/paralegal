@@ -4,18 +4,17 @@
 //! [`CollectingVisitor`](crate::discover::CollectingVisitor) and then calling
 //! [`analyze`](SPDGGenerator::analyze).
 
-use std::borrow::Cow;
-
 use crate::{
-    dbg, desc::*, ir::*, rust::*, utils::*, Either, HashMap, HashSet, LogLevelConfig, MarkerCtx,
-    Symbol, utils::CallStringExt,
+    dbg, desc::*, ir::*, rust::*, utils::CallStringExt, utils::*, DefId, Either, HashMap, HashSet,
+    LogLevelConfig, MarkerCtx, Symbol,
 };
-
-use crate::pdg::GlobalLocation;
-
-use hir::def_id::DefId;
+use std::borrow::Cow;
+use std::io::Read;
 
 use anyhow::Result;
+use flowistry::pdg::graph::{DepEdgeKind, DepGraph};
+use paralegal_spdg::rustc_portable::LocalDefId;
+use petgraph::visit::{GraphBase, IntoEdgeReferences, IntoNodeReferences, NodeIndexable, NodeRef};
 
 use super::discover::{CallSiteAnnotations, FnToAnalyze};
 
@@ -44,185 +43,56 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn handle_target(
         &self,
         //_hash_verifications: &mut HashVerifications,
-        call_site_annotations: &mut CallSiteAnnotations,
         target: &FnToAnalyze,
-    ) -> anyhow::Result<(Endpoint, Ctrl)> {
-        let mut flows = Ctrl::default();
-        fn register_call_site(
-            map: &mut CallSiteAnnotations,
-            did: DefId,
-            ann: Option<&[Annotation]>,
-        ) {
-            map.entry(did)
-                .and_modify(|e| {
-                    e.extend(ann.iter().flat_map(|a| a.iter()).cloned());
-                })
-                .or_insert_with(|| ann.iter().flat_map(|a| a.iter()).cloned().collect());
-        }
+        known_def_ids: &mut impl Extend<DefId>,
+    ) -> anyhow::Result<(Endpoint, SPDG)> {
         let tcx = self.tcx;
-        let controller_body_with_facts = tcx.body_for_def_id(target.def_id)?;
-
-        if self.opts.dbg().dump_ctrl_mir() {
-            mir::graphviz::write_mir_fn_graphviz(
-                tcx,
-                &controller_body_with_facts.body,
-                false,
-                &mut outfile_pls(format!("{}.mir.gv", target.name())).unwrap(),
-            )
-            .unwrap()
-        }
-
         debug!("Handling target {}", target.name());
+        let local_def_id = target.def_id.expect_local();
 
-        let flow = {
-            let graph = flowistry::pdg::compute_pdg(self.tcx, target.def_id.expect_local());
-            CallOnlyFlow::from_dep_graph(tcx, &graph)
+        let flowistry_graph = flowistry::pdg::compute_pdg(self.tcx, local_def_id);
+        let (graph, types, markers) = self.convert_graph(&flowistry_graph, known_def_ids);
+        let arguments = self.determine_arguments(local_def_id, &graph);
+        let return_ = self.determine_return(local_def_id, &graph);
+        let spdg = SPDG {
+            graph,
+            name: Identifier::new(target.name()),
+            arguments,
+            markers,
+            return_,
+            types,
         };
 
-        // Register annotations on argument types for this controller.
-        let controller_body = &controller_body_with_facts.body;
-        {
-            let types = controller_body.args_iter().map(|l| {
-                let ty = controller_body.local_decls[l].ty;
-                let subtypes = self
-                    .marker_ctx
-                    .all_type_markers(ty)
-                    .map(|t| t.1 .1)
-                    .collect::<HashSet<_>>();
-                (DataSource::Argument(l.as_usize() - 1), subtypes)
-            });
-            flows.add_types(types);
-        }
+        Ok((local_def_id, spdg))
+    }
 
-        if self.opts.dbg().dump_serialized_non_transitive_graph() {
-            dbg::write_non_transitive_graph_and_body(
-                tcx,
-                &flow,
-                outfile_pls(format!("{}.ntgb.json", target.name())).unwrap(),
-            );
-        }
+    fn determine_return(&self, target: Endpoint, graph: &SPDGImpl) -> Node {
+        unimplemented!("Do after updating flowistry");
+        let mut return_candidates = graph
+            .node_references()
+            .filter(|n| {
+                let at = n.weight().at;
+                let is_candidate = at.is_at_root();
+                assert!(!is_candidate || target == at.leaf().function);
+                is_candidate
+            })
+            .map(|n| n.id());
+        let picked = return_candidates.next().unwrap();
+        assert!(return_candidates.next().is_none());
+        picked
+    }
 
-        if self.opts.dbg().dump_call_only_flow() {
-            outfile_pls(format!("{}.call-only-flow.gv", target.name()))
-                .and_then(|mut file| dbg::call_only_flow_dot::dump(tcx, &flow, &mut file))
-                .unwrap_or_else(|err| {
-                    error!("Could not write transitive graph dump, reason: {err}")
-                })
-        }
-
-        let check_realness = |l: mir::Location| l.is_real(controller_body);
-
-        for (loc, deps) in flow.location_dependencies.iter() {
-            // It's important to look at the innermost location. It's easy to
-            // use `location()` and `function()` on a global location instead
-            // but that is the outermost call site, not the location for the actual call.
-            let GlobalLocation {
-                location: inner_location,
-                function: inner_body_id,
-            } = loc.leaf();
-            // We need to make sure to fetch the body again here, because we
-            // might be looking at an inlined location, so the body we operate
-            // on bight not be the `body` we fetched before.
-            let inner_body_with_facts = tcx.body_for_def_id(inner_body_id.to_def_id()).unwrap();
-            let inner_body = &inner_body_with_facts.body;
-            let LocationOrStart::Location(inner_location) = inner_location else {
-                assert!(loc.is_at_root());
-                // These can only be (controller) arguments and they cannot have
-                // dependencies (and thus not receive any data)
-                continue;
-            };
-            let (_, (instance, _, _)) = match inner_body
-                .stmt_at_better_err(inner_location)
-                .right()
-                .ok_or("not a terminator".to_owned())
-                .and_then(|t| {
-                    Ok((
-                        t,
-                        t.as_instance_and_args(tcx).map_err(|e| format!("{e:?}"))?,
-                    ))
-                }) {
-                Ok(term) => term,
-                Err(err) => {
-                    // We expect to always encounter function calls at this
-                    // stage so this could be a hard error, but I made it a
-                    // warning because that makes it easier to debug (because
-                    // you can see other important down-the-line output that
-                    // gives moire information to this error).
-                    warn!(
-                        "Odd location in graph creation '{}' for {:?}",
-                        err,
-                        inner_body.stmt_at(inner_location)
-                    );
-                    continue;
-                }
-            };
-            let defid = instance.def_id();
-            let call_site = CallSite::new(loc, defid);
-            // Propagate annotations on the function object to the call site
-            register_call_site(
-                call_site_annotations,
-                defid,
-                defid
-                    .as_local()
-                    .map(|ldid| self.marker_ctx.local_annotations(ldid)),
-            );
-
-            let interesting_output_types: HashSet<_> = self
-                .marker_ctx
-                .all_function_markers(instance)
-                .filter_map(|(_, t)| Some(t?.1))
-                .collect();
-            if !interesting_output_types.is_empty() {
-                flows.types.0.insert(
-                    DataSource::FunctionCall(call_site),
-                    interesting_output_types,
-                );
-            }
-
-            // Add ctrl flows to callsite.
-            for dep in deps.ctrl_deps.iter() {
-                flows.add_ctrl_flow(
-                    Cow::Owned(data_source_from_global_location(*dep, tcx, check_realness)),
-                    call_site,
-                )
-            }
-
-            debug!("Adding dependencies from {loc}");
-
-            for (arg_slot, arg_deps) in deps.input_deps.iter().enumerate() {
-                debug!("  on argument {arg_slot}");
-                // This will be the target of any flow we register
-                let to = if loc.is_at_root()
-                    && matches!(
-                        inner_body.stmt_at_better_err(loc.root().location.unwrap_location()),
-                        Either::Right(mir::Terminator {
-                            kind: mir::TerminatorKind::Return,
-                            ..
-                        })
-                    ) {
-                    DataSink::Return
-                } else {
-                    DataSink::Argument {
-                        function: call_site,
-                        arg_slot,
-                    }
-                };
-                for dep in arg_deps.iter() {
-                    debug!("    to {dep}");
-                    flows.add_data_flow(
-                        Cow::Owned(data_source_from_global_location(*dep, tcx, check_realness)),
-                        to,
-                    );
-                }
-            }
-        }
-        for dep in flow.return_dependencies.iter() {
-            flows.add_data_flow(
-                Cow::Owned(data_source_from_global_location(*dep, tcx, check_realness)),
-                DataSink::Return,
-            );
-        }
-        Ok((target.def_id.into_def_id(tcx), flows))
+    fn determine_arguments(&self, target: Endpoint, graph: &SPDGImpl) -> Vec<Node> {
+        graph
+            .node_references()
+            .filter(|n| {
+                let at = n.weight().at;
+                let is_candidate = at.is_at_root() && at.leaf().location == LocationOrStart::Start;
+                assert!(!is_candidate || target == at.leaf().function);
+                is_candidate
+            })
+            .map(|n| n.id())
+            .collect()
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -243,7 +113,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             )
         }
 
-        let mut call_site_annotations: CallSiteAnnotations = HashMap::new();
+        let mut known_def_ids = HashSet::new();
         let result = //crate::sah::HashVerifications::with(|hash_verifications| {
             targets
                 .iter()
@@ -252,76 +122,283 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     with_reset_level_if_target(self.opts, target_name, || {
                         self.handle_target(
                             //hash_verifications,
-                            &mut call_site_annotations,
                             desc,
+                            &mut known_def_ids,
                         )
                     })
                 })
-                .collect::<Result<HashMap<Endpoint, Ctrl>>>()
-                .map(|controllers| self.make_program_description(controllers)
+                .collect::<Result<HashMap<Endpoint, SPDG>>>()
+                .map(|controllers| self.make_program_description(controllers, &known_def_ids)
                 );
         result
     }
 
-    fn make_program_description(&self, controllers: HashMap<DefId, Ctrl>) -> ProgramDescription {
+    fn make_program_description(
+        &self,
+        controllers: HashMap<Endpoint, SPDG>,
+        known_def_ids: &HashSet<DefId>,
+    ) -> ProgramDescription {
         let tcx = self.tcx;
-        let get_fn_ag_num = |did| tcx.fn_sig(did).skip_binder().skip_binder().inputs().len();
-        let mut annotations: HashMap<DefId, (Vec<Annotation>, ObjectType)> = self
-            .marker_ctx
-            .local_annotations_found()
-            .into_iter()
-            .map(|(k, v)| (k.to_def_id(), v.to_vec()))
-            .chain(
-                self.marker_ctx
-                    .external_annotations()
-                    .iter()
-                    .map(|(did, anns)| {
-                        (*did, anns.iter().cloned().map(Annotation::Marker).collect())
-                    }),
-            )
-            .map(|(did, anns)| {
-                let def_kind = tcx.def_kind(did);
-                let obj_type = if def_kind.is_fn_like() {
-                    ObjectType::Function(get_fn_ag_num(did))
-                } else {
-                    // XXX add an actual match here
-                    ObjectType::Type
-                };
-                (did.into_def_id(tcx), (anns, obj_type))
-            })
-            .collect();
-        let mut known_def_ids = def_ids_from_controllers(&controllers, tcx);
 
         // And now, for every mentioned method in an impl, add the markers on
         // the corresponding trait method also to the impl method.
-        for &did in &known_def_ids {
-            let Some((parent_anns, _)) = get_parent_annotations(tcx, did, &annotations) else {
-                continue;
-            };
-            let parent_anns = parent_anns.clone();
-            let ptr = annotations
-                .entry(did)
-                .or_insert_with(|| (vec![], ObjectType::Function(get_fn_ag_num(did))));
-            ptr.0.extend(parent_anns)
-        }
-        known_def_ids.extend(annotations.keys().copied());
         let def_info = known_def_ids
             .into_iter()
-            .map(|id| (id, def_info_for_item(id, tcx)))
+            .map(|id| (*id, def_info_for_item(*id, tcx)))
             .collect();
         ProgramDescription {
+            type_info: self.collect_type_info(&controllers),
+            instruction_info: self.collect_instruction_info(&controllers),
             controllers,
-            annotations,
             def_info,
+        }
+    }
+
+    fn collect_instruction_info(
+        &self,
+        controllers: &HashMap<Endpoint, SPDG>,
+    ) -> HashMap<GlobalLocation, InstructionInfo> {
+        let all_instructions = controllers
+            .values()
+            .flat_map(|v| {
+                v.graph
+                    .node_weights()
+                    .flat_map(|n| n.at.iter())
+                    .chain(v.graph.edge_weights().flat_map(|e| e.at.iter()))
+            })
+            .collect::<HashSet<_>>();
+        all_instructions
+            .into_iter()
+            .map(|i| {
+                let body = self.tcx.body_for_def_id(i.function).unwrap();
+                let info = match i.location {
+                    LocationOrStart::Start => InstructionInfo::Start,
+                    LocationOrStart::Location(loc) => match body.body.stmt_at(loc) {
+                        crate::Either::Right(term) => {
+                            if let Ok((fun, ..)) = term.as_fn_and_args(self.tcx) {
+                                InstructionInfo::FunctionCall(fun)
+                            } else {
+                                InstructionInfo::Terminator
+                            }
+                        }
+                        _ => InstructionInfo::Statement,
+                    },
+                };
+                (i, info)
+            })
+            .collect()
+    }
+
+    fn annotations_for_argument(&self, function: DefId, arg_num: u32) -> Vec<Identifier> {
+        self.marker_ctx
+            .combined_markers(function)
+            .filter(|ann| ann.refinement.on_argument().contains(arg_num).unwrap())
+            .map(|ann| ann.marker)
+            .collect::<Vec<_>>()
+    }
+
+    fn convert_graph(
+        &self,
+        dep_graph: &DepGraph<'tcx>,
+        known_def_ids: &mut impl Extend<DefId>,
+    ) -> (
+        SPDGImpl,
+        HashMap<Node, Types>,
+        HashMap<Node, Vec<Identifier>>,
+    ) {
+        use petgraph::prelude::*;
+        let tcx = self.tcx;
+        let input = &dep_graph.graph;
+        let mut g = SPDGImpl::new();
+        let mut types: HashMap<NodeIndex, Types> = HashMap::new();
+        let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
+
+        let mut index_map = vec![<SPDGImpl as GraphBase>::NodeId::end(); input.node_bound()];
+
+        for (i, weight) in input.node_references() {
+            let leaf_loc = weight.at.leaf();
+
+            let body = &tcx.body_for_def_id(leaf_loc.function).unwrap().body;
+
+            let (argument, is_external_call_source) = match leaf_loc.location {
+                LocationOrStart::Start => {
+                    if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) {
+                        let arg_num = weight.place.local.as_u32() - 1;
+                        known_def_ids.extend(Some(leaf_loc.function.to_def_id()));
+                        let parent = get_parent(self.tcx, leaf_loc.function.to_def_id());
+                        known_def_ids.extend(parent);
+                        let mut annotations =
+                            self.annotations_for_argument(leaf_loc.function.to_def_id(), arg_num);
+                        annotations.extend(
+                            parent
+                                .into_iter()
+                                .flat_map(|parent| self.annotations_for_argument(parent, arg_num)),
+                        );
+                        if !annotations.is_empty() {
+                            markers
+                                .entry(i)
+                                .or_insert_with(Default::default)
+                                .extend(annotations);
+                        }
+
+                        (Some(arg_num), false)
+                    } else {
+                        (None, false)
+                    }
+                }
+                LocationOrStart::Location(loc) => {
+                    let stmt_at_loc = body.stmt_at(loc);
+                    // TODO Does not distinguish between external and internal calls
+                    (None, stmt_at_loc.is_right())
+                }
+            };
+            index_map[i.index()] = g.add_node(NodeInfo {
+                at: weight.at,
+                description: format!("{:?}", weight.place),
+                argument,
+            });
+
+            let place_ty = self.determine_place_type(weight.place, weight.at);
+
+            let type_markers = self.type_is_marked(place_ty, is_external_call_source);
+            known_def_ids.extend(type_markers.iter().copied());
+            if !type_markers.is_empty() {
+                types
+                    .entry(i)
+                    .or_insert_with(Default::default)
+                    .0
+                    .extend(type_markers)
+            }
+        }
+
+        for e in input.edge_references() {
+            g.add_edge(
+                index_map[e.source().index()],
+                index_map[e.target().index()],
+                EdgeInfo {
+                    at: e.weight().at,
+                    kind: match e.weight().kind {
+                        DepEdgeKind::Control => EdgeKind::Control,
+                        DepEdgeKind::Data => EdgeKind::Data,
+                    },
+                },
+            );
+        }
+
+        (g, types, markers)
+    }
+
+    fn collect_type_info(
+        &self,
+        controllers: &HashMap<Endpoint, SPDG>,
+    ) -> HashMap<TypeId, TypeDescription> {
+        let types = controllers
+            .values()
+            .flat_map(|v| v.types.values())
+            .flat_map(|t| &t.0)
+            .copied()
+            .collect::<HashSet<_>>();
+        types
+            .into_iter()
+            .map(|t| {
+                (
+                    t,
+                    TypeDescription {
+                        rendering: format!("{t:?}"),
+                        otypes: if let Some(l) = t.as_local() {
+                            self.marker_ctx
+                                .local_annotations(l)
+                                .iter()
+                                .filter_map(Annotation::as_otype)
+                                .collect()
+                        } else {
+                            vec![]
+                        },
+                        markers: self
+                            .marker_ctx
+                            .combined_markers(t)
+                            .map(|t| t.marker)
+                            .collect(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn type_is_marked(&self, typ: mir::tcx::PlaceTy<'tcx>, walk: bool) -> Vec<TypeId> {
+        if walk {
+            self.marker_ctx
+                .all_type_markers(typ.ty)
+                .map(|t| t.1 .1)
+                .collect()
+        } else {
+            self.marker_ctx
+                .type_has_surface_markers(typ.ty)
+                .into_iter()
+                .collect()
+        }
+    }
+
+    fn determine_place_type(
+        &self,
+        place: mir::Place<'tcx>,
+        at: CallString,
+    ) -> mir::tcx::PlaceTy<'tcx> {
+        let mut generics = None;
+
+        let locations = at.iter().collect::<Vec<_>>();
+        let (last, rest) = locations.split_last().unwrap();
+
+        // Thread through each caller to recover generic arguments
+        for caller in rest {
+            let body = &self.tcx.body_for_def_id(caller.function).unwrap().body;
+            let LocationOrStart::Location(loc) = caller.location else {
+                unreachable!()
+            };
+            let crate::Either::Right(terminator) = body.stmt_at(loc) else {
+                unreachable!()
+            };
+            let term = match generics {
+                Some(args) => {
+                    let instance = ty::Instance::resolve(
+                        self.tcx,
+                        ty::ParamEnv::reveal_all(),
+                        caller.function.to_def_id(),
+                        args,
+                    )
+                    .unwrap()
+                    .unwrap();
+                    Cow::Owned(instance.subst_mir_and_normalize_erasing_regions(
+                        self.tcx,
+                        ty::ParamEnv::reveal_all(),
+                        ty::EarlyBinder::bind(terminator.clone()),
+                    ))
+                }
+                None => Cow::Borrowed(terminator),
+            };
+            let (instance, ..) = term.as_instance_and_args(self.tcx).unwrap();
+            generics = Some(match instance {
+                FnResolution::Final(i) => i.args,
+                FnResolution::Partial(_) => ty::List::empty(),
+            });
+        }
+        let body = self.tcx.body_for_def_id(last.function).unwrap();
+        let raw_ty = place.ty(&body.body, self.tcx);
+        match generics {
+            None => raw_ty,
+            Some(g) => {
+                ty::Instance::resolve(self.tcx, ty::ParamEnv::reveal_all(), last.function.to_def_id(), g).unwrap().unwrap()
+                    .subst_mir_and_normalize_erasing_regions(
+                        self.tcx,
+                        ty::ParamEnv::reveal_all(),
+                        ty::EarlyBinder::bind(raw_ty),
+                    )
+            }
         }
     }
 }
 
-fn get_parent_annotations<'a, T>(
-    tcx: TyCtxt,
-    did: DefId,
-    annotations: &'a HashMap<DefId, T>,
-) -> Option<&'a T> {
+fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
     let ident = tcx.opt_item_ident(did)?;
     let kind = match tcx.def_kind(did) {
         kind if kind.is_fn_like() => ty::AssocKind::Fn,
@@ -330,10 +407,11 @@ fn get_parent_annotations<'a, T>(
     };
     let r#impl = tcx.impl_of_method(did)?;
     let r#trait = tcx.trait_id_of_impl(r#impl)?;
-    let parent_method = tcx
+    let id = tcx
         .associated_items(r#trait)
-        .find_by_name_and_kind(tcx, ident, kind, r#trait)?;
-    annotations.get(&parent_method.def_id)
+        .find_by_name_and_kind(tcx, ident, kind, r#trait)?
+        .def_id;
+    Some(id)
 }
 
 fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
@@ -346,7 +424,7 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
         def::DefKind::Struct
         | def::DefKind::AssocTy
         | def::DefKind::OpaqueTy
-        | def::DefKind::TyAlias {..}
+        | def::DefKind::TyAlias { .. }
         | def::DefKind::Enum => DefKind::Type,
         _ => unreachable!("{}", tcx.def_path_debug_str(id)),
     };
@@ -363,25 +441,6 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
     DefInfo { name, path, kind }
 }
 
-fn def_ids_from_controllers(map: &HashMap<DefId, Ctrl>, tcx: TyCtxt) -> HashSet<DefId> {
-    map.iter()
-        .flat_map(|(id, ctrl)| {
-            let from_dataflow = ctrl.data_flow.iter().flat_map(|(from, to)| {
-                from.as_function_call()
-                    .into_iter()
-                    .chain(to.iter().filter_map(|sink| sink.as_argument().map(|t| t.0)))
-            });
-            let from_ctrl_flow = ctrl
-                .ctrl_flow
-                .iter()
-                .flat_map(|(from, to)| from.as_function_call().into_iter().chain(to.iter()));
-            std::iter::once(*id).chain(from_dataflow.chain(from_ctrl_flow).flat_map(|cs| {
-                std::iter::once(cs.function)
-                    .chain(cs.location.iter().map(|loc| loc.function.into_def_id(tcx)))
-            }))
-        })
-        .collect()
-}
 
 /// A higher order function that increases the logging level if the `target`
 /// matches the one selected with the `debug` flag on the command line (and

@@ -151,7 +151,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
     fn compute_marker_reachable(&self, res: FnResolution<'tcx>) -> bool {
-        let Some(body) = self.tcx().body_for_def_id_default_policy(res.def_id()) else {
+        let Some(body) = self.tcx().body_for_def_id_default_policy(res.def_id().expect_local()) else {
             return false;
         };
         let body = &body.body;
@@ -210,6 +210,15 @@ impl<'tcx> MarkerCtx<'tcx> {
                     .zip(std::iter::repeat((typ, did)))
             })
         })
+    }
+
+    pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId>
+    {
+        todo!();
+        None
+        // ty.defid().into_iter().flat_map(|did| {
+        //     self.combined_markers(did)
+        // })
     }
 
     /// All markers placed on this function, directly or through the type plus

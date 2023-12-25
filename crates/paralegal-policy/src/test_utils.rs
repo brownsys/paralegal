@@ -2,7 +2,6 @@ use crate::Context;
 use crate::ControllerId;
 use crate::Node;
 use paralegal_flow::test_utils::PreFrg;
-use paralegal_spdg::DataSink;
 use paralegal_spdg::Identifier;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -33,12 +32,12 @@ pub fn get_callsite_node<'a>(
     name: &'a str,
 ) -> Option<Node> {
     let name = Identifier::new_intern(name);
-    let node = ctx.desc().controllers[&controller]
+    let inner = ctx.desc().controllers[&controller]
         .call_sites()
         .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)?;
     Some(crate::Node {
         ctrl_id: controller,
-        typ: node.clone().into(),
+        inner,
     })
 }
 
@@ -48,7 +47,7 @@ pub fn get_sink_node<'a>(
     name: &'a str,
 ) -> Option<Node> {
     let name = Identifier::new_intern(name);
-    let node = ctx.desc().controllers[&controller]
+    let inner = ctx.desc().controllers[&controller]
         .data_sinks()
         .find(|sink| match sink {
             DataSink::Argument { function, .. } => {
@@ -58,6 +57,6 @@ pub fn get_sink_node<'a>(
         })?;
     Some(crate::Node {
         ctrl_id: controller,
-        typ: node.clone().into(),
+        inner,
     })
 }

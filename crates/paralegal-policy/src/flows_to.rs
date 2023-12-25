@@ -80,8 +80,8 @@ impl CtrlFlowsTo {
             let mut changed = true;
             // Safety: We never resize/reallocate any of the vectors, so
             // mutating and reading them simultaneously is fine.
-            let unsafe_flow_ref : &'_ _ = unsafe {
-                std::mem::transmute(flows_to)
+            let unsafe_flow_ref : &'_ [BitVec] = unsafe {
+                *std::mem::transmute::<&&mut [BitVec], &&[BitVec]>(&flows_to)
             };
             while changed {
                 changed = false;
@@ -89,7 +89,7 @@ impl CtrlFlowsTo {
                     for intermediate_idx in unsafe_flow_ref[src_idx].iter_ones() {
                         for sink_idx in unsafe_flow_ref[intermediate_idx].iter_ones() {
                             changed |= flows_to[src_idx][sink_idx];
-                            flows_to[src_idx][sink_idx] = true;
+                            flows_to[src_idx].set(sink_idx, true);
                         }
                     }
                 }
@@ -100,7 +100,7 @@ impl CtrlFlowsTo {
 
         // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
         for edge in spdg.graph.edge_references().filter(|e| e.weight().is_data()) {
-            data_flows_to[edge.source().index()][edge.target().index()] = true;
+            data_flows_to[edge.source().index()].set(edge.target().index(), true);
         }
 
         iterate(&mut data_flows_to);

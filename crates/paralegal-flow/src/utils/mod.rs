@@ -952,7 +952,7 @@ pub trait TyCtxtExt<'tcx> {
     /// unavailable.
     fn body_for_def_id(
         self,
-        def_id: DefId,
+        local_def_id: LocalDefId,
     ) -> Result<&'tcx BodyWithBorrowckFacts<'tcx>, BodyResolutionError>;
 
     /// Essentially the same as [`Self::body_for_def_id`] but handles errors
@@ -968,20 +968,19 @@ pub trait TyCtxtExt<'tcx> {
     ///       crate-local and that might be surprising.
     fn body_for_def_id_default_policy(
         self,
-        def_id: DefId,
+        local_def_id: LocalDefId,
     ) -> Option<&'tcx BodyWithBorrowckFacts<'tcx>>;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     fn body_for_def_id(
         self,
-        def_id: DefId,
+        local_def_id: LocalDefId,
     ) -> Result<&'tcx BodyWithBorrowckFacts<'tcx>, BodyResolutionError> {
-        let local_def_id = def_id.as_local().ok_or(BodyResolutionError::External)?;
         let def_kind = self.def_kind(local_def_id);
         if !def_kind.is_fn_like() {
             return Err(BodyResolutionError::NotAFunction);
-        } else if def_kind == DefKind::AssocFn && let Some(trt) = self.trait_of_item(def_id) {
+        } else if def_kind == DefKind::AssocFn && let Some(trt) = self.trait_of_item(local_def_id.to_def_id()) {
             return Err(BodyResolutionError::IsTraitAssocFn(trt));
         }
         Ok(rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts(self, local_def_id))
@@ -989,9 +988,9 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
 
     fn body_for_def_id_default_policy(
         self,
-        def_id: DefId,
+        local_def_id: LocalDefId,
     ) -> Option<&'tcx BodyWithBorrowckFacts<'tcx>> {
-        match self.body_for_def_id(def_id) {
+        match self.body_for_def_id(local_def_id) {
             Ok(b) => Some(b),
             Err(e) => {
                 let sess = self.sess;
@@ -999,7 +998,7 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
                     BodyResolutionError::External => (),
                     BodyResolutionError::IsTraitAssocFn(r#trait) => {
                         sess.struct_span_warn(
-                            self.def_span(def_id),
+                            self.def_span(local_def_id.to_def_id()),
                             "cannot analyze this function as it is a trait method with \
                             no body (probably caused by the use of `dyn`)",
                         )
@@ -1007,7 +1006,7 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
                         .emit();
                     }
                     BodyResolutionError::NotAFunction => {
-                        sess.span_fatal(self.def_span(def_id), "this item is not a function");
+                        sess.span_fatal(self.def_span(local_def_id.to_def_id()), "this item is not a function");
                     }
                 };
                 None
@@ -1131,19 +1130,6 @@ impl IntoBodyId for DefId {
     }
 }
 
-pub trait CallSiteExt {
-    fn new(loc: &CallString, function: DefId) -> Self;
-}
-
-impl CallSiteExt for CallSite {
-    fn new(location: &CallString, function: DefId) -> Self {
-        Self {
-            location: *location,
-            function,
-        }
-    }
-}
-
 pub trait CallStringExt: Sized {
     fn is_at_root(self) -> bool;
     fn root(self) -> GlobalLocation;
@@ -1174,37 +1160,6 @@ trait LocationOrStartExt {
 impl LocationOrStartExt for LocationOrStart {
     fn is_real(self) -> bool {
         matches!(self, LocationOrStart::Location(_))
-    }
-}
-
-/// Create a Forge friendly descriptor for this location as a source of data
-/// in a model flow.
-pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
-    loc: CallString,
-    tcx: TyCtxt,
-    _is_real_location: F,
-) -> DataSource {
-    let GlobalLocation {
-        location: dep_loc,
-        function: dep_fun,
-    } = loc.leaf();
-    if let LocationOrStart::Location(dep_loc) = dep_loc {
-        let terminator =
-            tcx.body_for_def_id(dep_fun.to_def_id())
-                .unwrap()
-                .body
-                .maybe_stmt_at(dep_loc)
-                .unwrap_or_else(|e|
-                    panic!("Could not convert {loc} to data source with body {}. is at root: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun), loc.is_at_root())
-                )
-                .right()
-                .expect("not a terminator");
-        DataSource::FunctionCall(CallSite::new(
-            &loc,
-            terminator.as_fn_and_args(tcx).unwrap().0,
-        ))
-    } else {
-        DataSource::Argument(loc.root().location.unwrap_location().statement_index - 1)
     }
 }
 
@@ -1240,7 +1195,7 @@ impl<'tcx> Spanned<'tcx> for DefId {
 
 impl<'tcx> Spanned<'tcx> for (LocalDefId, mir::Location) {
     fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
-        let body = tcx.body_for_def_id(self.0.to_def_id()).unwrap();
+        let body = tcx.body_for_def_id(self.0).unwrap();
         (&body.body, self.1).span(tcx)
     }
 }
