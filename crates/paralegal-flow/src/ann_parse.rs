@@ -10,9 +10,7 @@
 //! for free.
 use crate::{
     consts,
-    desc::{
-        ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind,
-    },
+    desc::{ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind},
     rust::*,
     utils,
     utils::{write_sep, Print, TinyBitSet},

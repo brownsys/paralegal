@@ -91,17 +91,15 @@ pub mod serializers;
 pub mod utils;
 pub mod consts;
 pub mod marker_db;
+mod pdg;
 #[cfg(feature = "test")]
 pub mod test_utils;
-mod pdg;
 
 pub use paralegal_spdg as desc;
 
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
-use crate::{
-    utils::{outfile_pls, Print},
-};
+use crate::utils::{outfile_pls, Print};
 
 pub use crate::marker_db::MarkerCtx;
 

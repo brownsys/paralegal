@@ -1006,7 +1006,10 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
                         .emit();
                     }
                     BodyResolutionError::NotAFunction => {
-                        sess.span_fatal(self.def_span(local_def_id.to_def_id()), "this item is not a function");
+                        sess.span_fatal(
+                            self.def_span(local_def_id.to_def_id()),
+                            "this item is not a function",
+                        );
                     }
                 };
                 None

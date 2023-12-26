@@ -1,9 +1,9 @@
-use paralegal_spdg::{Identifier, Node as SPDGNode, SPDG, SPDGImpl};
+use paralegal_spdg::{Identifier, Node as SPDGNode, SPDGImpl, SPDG};
 
 use bitvec::vec::BitVec;
 
-use std::{fmt, sync::Arc};
 use std::io::sink;
+use std::{fmt, sync::Arc};
 
 use crate::{ControllerId, Node};
 
@@ -57,7 +57,6 @@ use crate::{ControllerId, Node};
 pub struct CtrlFlowsTo {
     // /// Mapping from [`CallSiteOrDataSink::CallSite`]s to the [`CallSiteOrDataSink::DataSink(CallArgument)`]s that they are related to.
     // pub callsites_to_callargs: std::collections::HashMap<SPDGNode, Vec<SPDGNode>>,
-
     /// The transitive closure of the [`Ctrl::data_flow`] relation.
     /// If a source flows to a [`DataSink::Argument`], it also flows into its CallSite.
     ///
@@ -74,15 +73,12 @@ impl CtrlFlowsTo {
         // Connect each function-argument sink to its corresponding function sources.
         // This lets us compute the transitive closure by following through the `sink_to_source` map.
 
-        fn iterate(
-            flows_to: &mut [BitVec]
-        ) {
+        fn iterate(flows_to: &mut [BitVec]) {
             let mut changed = true;
             // Safety: We never resize/reallocate any of the vectors, so
             // mutating and reading them simultaneously is fine.
-            let unsafe_flow_ref : &'_ [BitVec] = unsafe {
-                *std::mem::transmute::<&&mut [BitVec], &&[BitVec]>(&flows_to)
-            };
+            let unsafe_flow_ref: &'_ [BitVec] =
+                unsafe { *std::mem::transmute::<&&mut [BitVec], &&[BitVec]>(&flows_to) };
             while changed {
                 changed = false;
                 for src_idx in 0..flows_to.len() {
@@ -99,7 +95,11 @@ impl CtrlFlowsTo {
         let mut data_flows_to = vec![BitVec::repeat(false, domain_size); domain_size];
 
         // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
-        for edge in spdg.graph.edge_references().filter(|e| e.weight().is_data()) {
+        for edge in spdg
+            .graph
+            .edge_references()
+            .filter(|e| e.weight().is_data())
+        {
             data_flows_to[edge.source().index()].set(edge.target().index(), true);
         }
 
@@ -112,12 +112,15 @@ impl CtrlFlowsTo {
     }
 }
 
-use petgraph::visit::{WalkerIter, Bfs, GraphBase, Visitable, Walker};
+use petgraph::visit::{Bfs, GraphBase, Visitable, Walker, WalkerIter};
 
 /// An [`Iterator`] over the [`CallSiteOrDataSink`]s from the given src in
 /// the transitive closure of data and control flow of the given [`Ctrl`].
 pub struct DataAndControlInfluencees<'a> {
-    walker: WalkerIter<Bfs<<SPDGImpl as GraphBase>::NodeId, <SPDGImpl as Visitable>::Map>, &'a SPDGImpl>,
+    walker: WalkerIter<
+        Bfs<<SPDGImpl as GraphBase>::NodeId, <SPDGImpl as Visitable>::Map>,
+        &'a SPDGImpl,
+    >,
 }
 
 impl<'a> DataAndControlInfluencees<'a> {
@@ -127,7 +130,9 @@ impl<'a> DataAndControlInfluencees<'a> {
     pub fn new(src: SPDGNode, ctrl: &'a SPDG) -> Self {
         let bfs = Bfs::new(&ctrl.graph, src);
         let walker_iter = Walker::iter(bfs, &ctrl.graph);
-        Self { walker: walker_iter }
+        Self {
+            walker: walker_iter,
+        }
     }
 }
 
@@ -149,7 +154,9 @@ impl fmt::Debug for CtrlFlowsTo {
 #[test]
 fn test_data_flows_to() {
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx.controller_by_name(Identifier::new_intern("controller")).unwrap();
+    let controller = ctx
+        .controller_by_name(Identifier::new_intern("controller"))
+        .unwrap();
     let src = ctx.controller_argument(controller, 0).unwrap();
     let sink1 = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
     let sink2 = crate::test_utils::get_sink_node(&ctx, controller, "sink2").unwrap();
@@ -160,7 +167,9 @@ fn test_data_flows_to() {
 #[test]
 fn test_ctrl_flows_to() {
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx.controller_by_name(Identifier::new_intern("controller_ctrl")).unwrap();
+    let controller = ctx
+        .controller_by_name(Identifier::new_intern("controller_ctrl"))
+        .unwrap();
     let src_a = ctx.controller_argument(controller, 0).unwrap();
     let src_b = ctx.controller_argument(controller, 1).unwrap();
     let src_c = ctx.controller_argument(controller, 2).unwrap();
@@ -176,7 +185,9 @@ fn test_ctrl_flows_to() {
 #[test]
 fn test_flows_to() {
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx.controller_by_name(Identifier::new_intern("controller_data_ctrl")).unwrap();
+    let controller = ctx
+        .controller_by_name(Identifier::new_intern("controller_data_ctrl"))
+        .unwrap();
     let src_a = ctx.controller_argument(controller, 0).unwrap();
     let src_b = ctx.controller_argument(controller, 1).unwrap();
     let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
@@ -192,7 +203,9 @@ fn test_flows_to() {
 #[test]
 fn test_args_flow_to_cs() {
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx.controller_by_name(Identifier::new_intern("controller_data_ctrl")).unwrap();
+    let controller = ctx
+        .controller_by_name(Identifier::new_intern("controller_data_ctrl"))
+        .unwrap();
     let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
     let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1").unwrap();
 

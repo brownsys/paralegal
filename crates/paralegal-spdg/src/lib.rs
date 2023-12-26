@@ -29,7 +29,6 @@ pub mod rustc_proxies;
 mod tiny_bitset;
 pub mod utils;
 
-use indexical::define_index_type;
 use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
@@ -39,12 +38,12 @@ use std::{borrow::Cow, fmt, hash::Hash, iter};
 #[cfg(not(feature = "rustc"))]
 use utils::serde_map_via_vec;
 
+use crate::rustc_portable::LocalDefId;
 pub use crate::tiny_bitset::TinyBitSet;
-pub use std::collections::{HashMap, HashSet};
 use petgraph::graph::NodeIndex;
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::IntoNodeIdentifiers;
-use crate::rustc_portable::LocalDefId;
+pub use std::collections::{HashMap, HashSet};
 
 pub type Endpoint = LocalDefId;
 pub type TypeId = DefId;
@@ -232,7 +231,6 @@ mod ser_localdefid_map {
     }
 }
 
-
 #[cfg(feature = "rustc")]
 mod ser_defid_map {
     use serde::{Deserialize, Serialize};
@@ -289,10 +287,7 @@ pub enum DefKind {
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]
 pub enum InstructionInfo {
     Statement,
-    FunctionCall(
-        #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
-        DefId
-    ),
+    FunctionCall(#[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))] DefId),
     Terminator,
     Start,
 }
@@ -327,15 +322,12 @@ pub struct TypeDescription {
 
 #[cfg(feature = "rustc")]
 mod ser_defid_vec {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use crate::rustc_proxies;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     #[derive(Serialize, Deserialize)]
     #[repr(transparent)]
-    struct DefIdWrap(
-        #[serde(with = "rustc_proxies::DefId")]
-        crate::DefId,
-    );
+    struct DefIdWrap(#[serde(with = "rustc_proxies::DefId")] crate::DefId);
 
     pub fn serialize<S: Serializer>(
         v: &Vec<crate::DefId>,
@@ -344,15 +336,14 @@ mod ser_defid_vec {
         unsafe { Vec::<DefIdWrap>::serialize(std::mem::transmute(v), serializer) }
     }
 
-    pub fn deserialize<
-        'de,
-        D: Deserializer<'de>,
-    >(
+    pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Vec<crate::DefId>, D::Error> {
-        unsafe { Ok(std::mem::transmute(
-            Vec::<DefIdWrap>::deserialize(deserializer)?
-        )) }
+        unsafe {
+            Ok(std::mem::transmute(Vec::<DefIdWrap>::deserialize(
+                deserializer,
+            )?))
+        }
     }
 }
 
@@ -363,9 +354,7 @@ impl ProgramDescription {
     pub fn all_sources(&self) -> HashSet<Node> {
         self.controllers
             .values()
-            .flat_map(|c| {
-                c.all_sources()
-            })
+            .flat_map(|c| c.all_sources())
             .collect()
     }
     /// Gather all [`DataSource`]s that are mentioned in this program description.
@@ -374,10 +363,7 @@ impl ProgramDescription {
     pub fn all_sources_with_ctrl(&self) -> HashSet<(Endpoint, Node)> {
         self.controllers
             .iter()
-            .flat_map(|(name, c)| {
-                c.all_sources()
-                    .map(|ds| (*name, ds))
-            })
+            .flat_map(|(name, c)| c.all_sources().map(|ds| (*name, ds)))
             .collect()
     }
     /// Gather all [`DataSink`]s mentioned in this program description
@@ -397,14 +383,16 @@ impl ProgramDescription {
     /// in more places. So this extracts the call sites from sources as well as
     /// sinks.
     pub fn all_call_sites(&self) -> HashSet<CallString> {
-        self.controllers.values()
-            .flat_map(|v|
-                v.graph.edge_weights().map(|e| e.at)
+        self.controllers
+            .values()
+            .flat_map(|v| {
+                v.graph
+                    .edge_weights()
+                    .map(|e| e.at)
                     .chain(v.graph.node_weights().map(|n| n.at))
-            )
+            })
             .collect()
     }
-
 }
 
 /// An identifier for any kind of object (functions, markers, etc.).
@@ -518,29 +506,33 @@ pub struct SPDG {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct Types(
-    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))]
-    pub Vec<TypeId>
-);
+pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))] pub Vec<TypeId>);
 
 impl SPDG {
-    pub fn node_info(&self, node: Node) -> &NodeInfo  {
+    pub fn node_info(&self, node: Node) -> &NodeInfo {
         self.graph.node_weight(node).unwrap()
     }
 
     /// Returns an iterator over all the data sinks in the `data_flow` relation.
     pub fn data_sinks(&self) -> impl Iterator<Item = Node> + '_ {
-        self.graph.edge_references().filter(|e| e.weight().is_data()).map(|e| e.source().into()).unique()
+        self.graph
+            .edge_references()
+            .filter(|e| e.weight().is_data())
+            .map(|e| e.source().into())
+            .unique()
     }
 
     /// Returns an iterator over all the callsites in the `ctrl_flow` relation.
     pub fn call_sites(&self) -> impl Iterator<Item = Node> + '_ {
-        self.graph.edge_references().filter(|e| e.weight().is_control()).map(|e| e.source().into()).unique()
+        self.graph
+            .edge_references()
+            .filter(|e| e.weight().is_control())
+            .map(|e| e.source().into())
+            .unique()
     }
 
     /// Gather all [`Node`]s that are mentioned in this controller including data and control flow.
     pub fn all_sources(&self) -> impl Iterator<Item = Node> + '_ {
         self.graph.node_identifiers().map(Into::into)
     }
-
 }

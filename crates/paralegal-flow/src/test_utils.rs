@@ -5,25 +5,25 @@ extern crate rustc_middle;
 extern crate rustc_span;
 use crate::{
     desc::{Identifier, ProgramDescription},
-    ir::{CallOnlyFlow},
+    ir::CallOnlyFlow,
     serializers::{Bodies, InstructionProxy},
     utils::outfile_pls,
     HashSet, Symbol,
 };
 
-use paralegal_spdg::{rustc_portable::DefId, DefInfo, Node, Endpoint, SPDG};
+use paralegal_spdg::{rustc_portable::DefId, DefInfo, Endpoint, Node, SPDG};
 use rustc_middle::mir;
 
 use either::Either;
 
 use crate::pdg::{CallString, GlobalLocation, LocationOrStart};
+use crate::utils::CallStringExt;
 use itertools::Itertools;
+use petgraph::graph::NodeIndex;
+use petgraph::visit::{Control, DfsEvent, EdgeRef};
 use std::borrow::Cow;
 use std::io::prelude::*;
 use std::path::Path;
-use petgraph::graph::NodeIndex;
-use petgraph::visit::{Control, DfsEvent, EdgeRef};
-use crate::utils::CallStringExt;
 
 lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -222,7 +222,6 @@ pub fn run_forge(file: &str) -> bool {
         .success()
 }
 
-
 /// A deserialized version of [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow)
 pub struct G {
     pub graph: CallOnlyFlow,
@@ -287,9 +286,8 @@ impl G {
         dir: EdgeSelection,
     ) -> bool {
         self.graph.location_dependencies.iter().all(|(&c, deps)| {
-            let iter_all_dep_sets = ||
-                dir
-                    .use_data()
+            let iter_all_dep_sets = || {
+                dir.use_data()
                     .then_some(deps.input_deps.iter())
                     .into_iter()
                     .flatten()
@@ -298,14 +296,10 @@ impl G {
                             .then_some([&deps.ctrl_deps].into_iter())
                             .into_iter()
                             .flatten(),
-                    );
-            (!n.match_(c)
-                || iter_all_dep_sets()
-                    .all(|d| d.is_empty()))
-                && iter_all_dep_sets()
-                    .flatten()
-                    .copied()
-                    .all(|d| !n.match_(d))
+                    )
+            };
+            (!n.match_(c) || iter_all_dep_sets().all(|d| d.is_empty()))
+                && iter_all_dep_sets().flatten().copied().all(|d| !n.match_(d))
         })
     }
 
@@ -339,7 +333,11 @@ impl G {
             })
             .copied()
     }
-    pub fn connects<From: MatchCallSite + Copy, To: GetCallSites>(&self, from: From, to: To) -> bool {
+    pub fn connects<From: MatchCallSite + Copy, To: GetCallSites>(
+        &self,
+        from: From,
+        to: To,
+    ) -> bool {
         self.connects_configurable(from, to, EdgeSelection::Both)
     }
 
@@ -557,11 +555,17 @@ pub trait HasGraph<'g>: Sized + Copy {
 
     fn has_marker(self, marker: &str) -> bool {
         let marker = Identifier::new_intern(marker);
-        self.graph().desc.type_info.values()
+        self.graph()
+            .desc
+            .type_info
+            .values()
             .any(|t| t.markers.contains(&marker))
-            || self.graph().desc.controllers.values().any(|c|
-                c.markers.values().any(|m| m.contains(&marker))
-            )
+            || self
+                .graph()
+                .desc
+                .controllers
+                .values()
+                .any(|c| c.markers.values().any(|m| m.contains(&marker)))
     }
 }
 
@@ -624,12 +628,10 @@ impl<'g> CtrlRef<'g> {
             .graph
             .edge_references()
             .map(|v| v.weight().at)
-            .filter(|m| m.leaf().function.to_def_id() == fun.ident )
-            .map(|call_site| {
-                CallStringRef {
-                    ctrl: self,
-                    call_site,
-                }
+            .filter(|m| m.leaf().function.to_def_id() == fun.ident)
+            .map(|call_site| CallStringRef {
+                ctrl: self,
+                call_site,
             })
             .collect();
         all.dedup_by_key(|r| r.call_site);
@@ -685,21 +687,17 @@ impl<'g> CallStringRef<'g> {
         let graph = &self.ctrl.ctrl.graph;
         let mut all: Vec<_> = graph
             .edge_references()
-            .filter(|e|
-                e.weight().at == self.call_site
-            )
+            .filter(|e| e.weight().at == self.call_site)
             .filter_map(|e| {
                 let src = graph.node_weight(e.source())?;
-                Some(
-                    e.source(),
-                )
+                Some(e.source())
             })
             .collect();
         // TODO Sort?
         //all.sort_by_key(|s| s.node);
         NodeRefs {
             nodes: all,
-            graph: self.ctrl
+            graph: self.ctrl,
         }
     }
 
@@ -726,7 +724,7 @@ impl<'g> NodeRefs<'g> {
     pub fn nth(&self, i: usize) -> Option<NodeRef<'g>> {
         Some(NodeRef {
             graph: self.graph,
-            node: *self.nodes.get(i)?
+            node: *self.nodes.get(i)?,
         })
     }
 }
@@ -740,17 +738,11 @@ impl<'g> HasGraph<'g> for &NodeRef<'g> {
     fn graph(self) -> &'g PreFrg {
         self.graph.graph
     }
-
 }
 
 impl<'g> NodeRef<'g> {
     fn flows_to(&self, other: &NodeRef<'g>) -> bool {
-        petgraph::algo::has_path_connecting(
-            &self.graph.ctrl.graph,
-            self.node,
-            other.node,
-            None
-        )
+        petgraph::algo::has_path_connecting(&self.graph.ctrl.graph, self.node, other.node, None)
     }
 
     pub fn node(&self) -> Node {
@@ -797,22 +789,15 @@ pub trait FlowsTo {
             return false;
         }
         let targets = other.nodes().iter().copied().collect::<HashSet<_>>();
-        let mut starts =
-            self.nodes().iter().copied().peekable();
+        let mut starts = self.nodes().iter().copied().peekable();
         if starts.peek().is_none() {
             return false;
         }
-        let result = petgraph::visit::depth_first_search(
-            &self.spdg().graph,
-            starts,
-            |event| match event {
+        let result =
+            petgraph::visit::depth_first_search(&self.spdg().graph, starts, |event| match event {
                 DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
                 _ => Control::Continue,
-            }
-        );
-        matches!(
-            result,
-            Control::Break(())
-        )
+            });
+        matches!(result, Control::Break(()))
     }
 }

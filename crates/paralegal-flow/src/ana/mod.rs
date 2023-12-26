@@ -386,14 +386,19 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let raw_ty = place.ty(&body.body, self.tcx);
         match generics {
             None => raw_ty,
-            Some(g) => {
-                ty::Instance::resolve(self.tcx, ty::ParamEnv::reveal_all(), last.function.to_def_id(), g).unwrap().unwrap()
-                    .subst_mir_and_normalize_erasing_regions(
-                        self.tcx,
-                        ty::ParamEnv::reveal_all(),
-                        ty::EarlyBinder::bind(raw_ty),
-                    )
-            }
+            Some(g) => ty::Instance::resolve(
+                self.tcx,
+                ty::ParamEnv::reveal_all(),
+                last.function.to_def_id(),
+                g,
+            )
+            .unwrap()
+            .unwrap()
+            .subst_mir_and_normalize_erasing_regions(
+                self.tcx,
+                ty::ParamEnv::reveal_all(),
+                ty::EarlyBinder::bind(raw_ty),
+            ),
         }
     }
 }
@@ -440,7 +445,6 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
         .collect();
     DefInfo { name, path, kind }
 }
-
 
 /// A higher order function that increases the logging level if the `target`
 /// matches the one selected with the `debug` flag on the command line (and

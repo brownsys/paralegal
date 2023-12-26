@@ -68,11 +68,11 @@ pub mod call_only_flow_dot {
     use std::collections::HashSet;
 
     use crate::{
+        ir::CallOnlyFlow,
         pdg::{CallString, GlobalLocation},
-        ir::{CallOnlyFlow},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{unique_identifier_for_item, AsFnAndArgs, DfppBodyExt, TyCtxtExt, CallStringExt},
+        utils::{unique_identifier_for_item, AsFnAndArgs, CallStringExt, DfppBodyExt, TyCtxtExt},
         Either,
     };
 

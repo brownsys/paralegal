@@ -1,16 +1,22 @@
-use std::{io::Write, iter::empty, process::exit, sync::Arc};
 use std::ops::ControlFlow;
+use std::{io::Write, iter::empty, process::exit, sync::Arc};
 
-use paralegal_spdg::{Annotation, DefKind, Node as SPDGNode, NodeInfo, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription, SPDG, CallString, GlobalLocation, LocationOrStart, SPDGImpl, TypeId, Endpoint};
 pub use paralegal_spdg::rustc_portable::DefId;
+use paralegal_spdg::{
+    Annotation, CallString, DefKind, Endpoint, GlobalLocation, HashMap, HashSet, Identifier,
+    LocationOrStart, MarkerAnnotation, MarkerRefinement, Node as SPDGNode, NodeInfo,
+    ProgramDescription, SPDGImpl, TypeId, SPDG,
+};
 
 use anyhow::{anyhow, bail, ensure, Result};
 use indexical::{RefFamily, ToIndex};
 use itertools::{Either, Itertools};
-use petgraph::Incoming;
-use petgraph::prelude::Bfs;
-use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, IntoNodeReferences, NodeRef, Reversed, Walker};
 use paralegal_spdg::rustc_portable::LocalDefId;
+use petgraph::prelude::Bfs;
+use petgraph::visit::{
+    Control, DfsEvent, EdgeFiltered, EdgeRef, IntoNodeReferences, NodeRef, Reversed, Walker,
+};
+use petgraph::Incoming;
 
 use super::flows_to::CtrlFlowsTo;
 
@@ -62,7 +68,9 @@ pub struct Node {
 impl Node {
     /// Transform a Node into the associated Node with typ [`NodeType::CallSite`]
     pub fn associated_call_site(self, context: &Context) -> CallString {
-        context.desc.controllers[&self.ctrl_id].node_info(self.inner).at
+        context.desc.controllers[&self.ctrl_id]
+            .node_info(self.inner)
+            .at
     }
 
     /// Create a new node with no guarantee that it exists in the SPDG of the
@@ -75,15 +83,19 @@ impl Node {
     }
 }
 
-use petgraph::visit::{GraphRef, Visitable, IntoNeighbors};
+use petgraph::visit::{GraphRef, IntoNeighbors, Visitable};
 
-fn bfs_iter<G: IntoNeighbors + GraphRef + Visitable<NodeId = SPDGNode, Map = <SPDGImpl as Visitable>::Map>>(g: G, start: Node) -> impl Iterator<Item=Node> {
-    let walker_iter =
-        Walker::iter(
-            Bfs::new(g, start.inner),
-            g
-        );
-    walker_iter.map(move |inner| Node { ctrl_id: start.ctrl_id, inner })
+fn bfs_iter<
+    G: IntoNeighbors + GraphRef + Visitable<NodeId = SPDGNode, Map = <SPDGImpl as Visitable>::Map>,
+>(
+    g: G,
+    start: Node,
+) -> impl Iterator<Item = Node> {
+    let walker_iter = Walker::iter(Bfs::new(g, start.inner), g);
+    walker_iter.map(move |inner| Node {
+        ctrl_id: start.ctrl_id,
+        inner,
+    })
 }
 
 /// Interface for defining policies.
@@ -132,8 +144,11 @@ impl Context {
         }
     }
 
-    pub fn controllers_by_name(&self, name: Identifier) -> impl Iterator<Item=Endpoint> + '_ {
-        self.desc.controllers.iter().filter(move |(n, g)| g.name == name)
+    pub fn controllers_by_name(&self, name: Identifier) -> impl Iterator<Item = Endpoint> + '_ {
+        self.desc
+            .controllers
+            .iter()
+            .filter(move |(n, g)| g.name == name)
             .map(|t| *t.0)
     }
 
@@ -218,29 +233,23 @@ impl Context {
     }
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
-        desc.controllers.iter()
+        desc.controllers
+            .iter()
             .flat_map(|(&ctrl_id, spdg)| {
-                spdg.markers.iter().flat_map(move |(&inner, anns)|
-                    anns.iter().map(move |marker|
-                        (*marker, Either::Left(Node { inner, ctrl_id }))
-                    )
-                )
+                spdg.markers.iter().flat_map(move |(&inner, anns)| {
+                    anns.iter()
+                        .map(move |marker| (*marker, Either::Left(Node { inner, ctrl_id })))
+                })
             })
-            .chain(
-                desc.type_info.iter()
-                    .flat_map(|(k, v)|
-                        v.markers.iter().copied()
-                            .zip(
-                                std::iter::repeat(Either::Right(*k))
-                            )
-                    )
-            )
+            .chain(desc.type_info.iter().flat_map(|(k, v)| {
+                v.markers
+                    .iter()
+                    .copied()
+                    .zip(std::iter::repeat(Either::Right(*k)))
+            }))
             .into_grouping_map()
-            .fold(MarkerTargets::default(), |mut r,k, v| {
-                v.either(
-                    |node| r.nodes.push(node),
-                    |typ| r.types.push(typ),
-                );
+            .fold(MarkerTargets::default(), |mut r, k, v| {
+                v.either(|node| r.nodes.push(node), |typ| r.types.push(typ));
                 r
             })
     }
@@ -267,17 +276,21 @@ impl Context {
         let sink_cs_or_ds = sink.inner;
 
         match edge_type {
-            EdgeType::Data => self.flows_to[cf_id]
-                .data_flows_to[src_datasource.index()][sink_cs_or_ds.index()],
-            EdgeType::DataAndControl => DataAndControlInfluencees::new(
-                src_datasource,
-                &self.desc.controllers[cf_id],
-            )
-            .contains(&sink_cs_or_ds),
-            EdgeType::Control => {
-                self.desc.controllers.get(cf_id).unwrap().graph.edges(src_datasource)
-                    .any(|e| e.weight().is_control() && e.target() == sink_cs_or_ds)
+            EdgeType::Data => {
+                self.flows_to[cf_id].data_flows_to[src_datasource.index()][sink_cs_or_ds.index()]
             }
+            EdgeType::DataAndControl => {
+                DataAndControlInfluencees::new(src_datasource, &self.desc.controllers[cf_id])
+                    .contains(&sink_cs_or_ds)
+            }
+            EdgeType::Control => self
+                .desc
+                .controllers
+                .get(cf_id)
+                .unwrap()
+                .graph
+                .edges(src_datasource)
+                .any(|e| e.weight().is_control() && e.target() == sink_cs_or_ds),
         }
     }
 
@@ -285,16 +298,13 @@ impl Context {
         let ctrl = self.desc.controllers.get(&ctrl_id)?;
         let inner = *ctrl.arguments.get(index as usize)?;
 
-        Some(Node {
-            ctrl_id, inner
-        })
+        Some(Node { ctrl_id, inner })
     }
 
     /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:
     ///
     /// `some n where self.flows_to(influencer, n, EdgeType::Data) && self.flows_to(n, target, Edgetype::Control)`.
     pub fn has_ctrl_influence(&self, influencer: Node, target: Node) -> bool {
-
         self.flows_to(influencer, target, EdgeType::Control)
             || self
                 .influencees(influencer, EdgeType::Data)
@@ -316,38 +326,30 @@ impl Context {
 
         match edge_type {
             EdgeType::Data => {
-                let edges_filtered = EdgeFiltered::from_fn(
-                    reversed_graph,
-                    |e| e.weight().is_data()
-                );
+                let edges_filtered =
+                    EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_data());
                 Box::new(
                     // TODO: Yikes. Can't create a lazy iterator from
                     // `edges_filtered` because they must be taken by
                     // reference by `Walker::iter`
                     bfs_iter(&edges_filtered, sink)
                         .collect::<Vec<_>>()
-                        .into_iter()
+                        .into_iter(),
                 ) as Box<dyn Iterator<Item = Node> + 'a>
-            },
+            }
             EdgeType::Control => {
-                let edges_filtered = EdgeFiltered::from_fn(
-                    reversed_graph,
-                    |e| e.weight().is_control()
-                );
+                let edges_filtered =
+                    EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_control());
                 Box::new(
                     // TODO: Yikes. Can't create a lazy iterator from
                     // `edges_filtered` because they must be taken by
                     // reference by `Walker::iter`
                     bfs_iter(&edges_filtered, sink)
                         .collect::<Vec<_>>()
-                        .into_iter()
+                        .into_iter(),
                 ) as Box<_>
             }
-            EdgeType::DataAndControl => {
-                Box::new(
-                    bfs_iter(reversed_graph, sink)
-                ) as Box<_>
-            }
+            EdgeType::DataAndControl => Box::new(bfs_iter(reversed_graph, sink)) as Box<_>,
         }
     }
 
@@ -365,38 +367,28 @@ impl Context {
         let graph = &self.desc.controllers[cf_id].graph;
 
         match edge_type {
-            EdgeType::Data =>
-                Box::new(self.flows_to[&cf_id]
-                    .data_flows_to[src.inner.index()]
+            EdgeType::Data => Box::new(
+                self.flows_to[&cf_id].data_flows_to[src.inner.index()]
                     .iter_ones()
-                    .map(move |i| Node::unsafe_new(src_ctrl_id, i))
-                ) as Box<dyn Iterator<Item = Node> + 'a>,
-            EdgeType::DataAndControl =>
-                Box::new(
-                    bfs_iter(graph, src)
-                ) as Box<_>,
+                    .map(move |i| Node::unsafe_new(src_ctrl_id, i)),
+            ) as Box<dyn Iterator<Item = Node> + 'a>,
+            EdgeType::DataAndControl => Box::new(bfs_iter(graph, src)) as Box<_>,
             EdgeType::Control => {
-                let edges_filtered = EdgeFiltered::from_fn(
-                    graph,
-                    |e| e.weight().is_control()
-                );
+                let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_control());
                 Box::new(
                     bfs_iter(&edges_filtered, src)
                         // TODO: Yikes. Can't create a lazy iterator from
                         // `edges_filtered` because they must be taken by
                         // reference by `Walker::iter`
                         .collect::<Vec<_>>()
-                        .into_iter()
+                        .into_iter(),
                 ) as Box<_>
             }
         }
     }
 
     /// Returns an iterator over all objects marked with `marker`.
-    pub fn marked_nodes(
-        &self,
-        marker: Marker,
-    ) -> impl Iterator<Item = Node> + '_ {
+    pub fn marked_nodes(&self, marker: Marker) -> impl Iterator<Item = Node> + '_ {
         self.report_marker_if_absent(marker);
         self.marker_to_ids
             .get(&marker)
@@ -415,7 +407,7 @@ impl Context {
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
-        let types= self.get_node_types(node);
+        let types = self.get_node_types(node);
         if types.iter().any(|t| {
             self.marker_to_ids
                 .get(&marker)
@@ -425,14 +417,17 @@ impl Context {
             return true;
         }
 
-        self.desc.controllers[&node.ctrl_id].markers[&node.inner].iter()
+        self.desc.controllers[&node.ctrl_id].markers[&node.inner]
+            .iter()
             .any(|ann| *ann == marker)
     }
 
     /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
     pub fn all_nodes_for_ctrl(&self, ctrl_id: ControllerId) -> impl Iterator<Item = Node> + '_ {
         let ctrl = &self.desc.controllers[&ctrl_id];
-        ctrl.graph.node_indices().map(move |inner| Node { ctrl_id, inner })
+        ctrl.graph
+            .node_indices()
+            .map(move |inner| Node { ctrl_id, inner })
     }
 
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
@@ -447,7 +442,7 @@ impl Context {
             .filter_map(move |(src, ids)| {
                 ids.0.contains(&t).then_some(Node {
                     ctrl_id,
-                    inner: *src
+                    inner: *src,
                 })
             })
     }
@@ -503,26 +498,21 @@ impl Context {
 
         for (ctrl_id, starts) in start_map {
             let g = &self.desc.controllers[&ctrl_id].graph;
-            petgraph::visit::depth_first_search(
-                g,
-                starts,
-                |event| match event {
-                    DfsEvent::Discover(inner, _) => {
-                        let as_node = Node {ctrl_id, inner};
-                        if is_checkpoint(as_node) {
-                            num_checkpointed += 1;
-                            Control::<()>::Prune
-                        } else if is_terminal(as_node) {
-                            num_reached += 1;
-                            Control::Prune
-                        } else {
-                            Control::Continue
-                        }
+            petgraph::visit::depth_first_search(g, starts, |event| match event {
+                DfsEvent::Discover(inner, _) => {
+                    let as_node = Node { ctrl_id, inner };
+                    if is_checkpoint(as_node) {
+                        num_checkpointed += 1;
+                        Control::<()>::Prune
+                    } else if is_terminal(as_node) {
+                        num_reached += 1;
+                        Control::Prune
+                    } else {
+                        Control::Continue
                     }
-                    _ => Control::Continue,
                 }
-            );
-
+                _ => Control::Continue,
+            });
         }
 
         Ok(AlwaysHappensBefore {
@@ -537,7 +527,9 @@ impl Context {
     /// Return all types that are marked with `marker`
     pub fn marked_type<'a>(&'a self, marker: Marker) -> &[DefId] {
         self.report_marker_if_absent(marker);
-        self.marker_to_ids.get(&marker).map_or(&[], |i| i.types.as_slice())
+        self.marker_to_ids
+            .get(&marker)
+            .map_or(&[], |i| i.types.as_slice())
     }
 
     /// Return an example pair for a flow from an source from `from` to a sink
@@ -605,14 +597,19 @@ pub struct DisplayNode<'a> {
 
 impl<'a> std::fmt::Display for DisplayNode<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Controller: {:?}", self.ctx.desc.controllers[&self.node.ctrl_id].name)?;
+        write!(
+            f,
+            "Controller: {:?}",
+            self.ctx.desc.controllers[&self.node.ctrl_id].name
+        )?;
         f.write_str("\n")?;
 
         let spdg = &self.ctx.desc.controllers[&self.node.ctrl_id];
         let node = self.node.inner;
         if node == spdg.return_ {
             f.write_str("Return")
-        } else if let Some((idx, _)) = spdg.arguments.iter().enumerate().find(|(_, n)| **n == node) {
+        } else if let Some((idx, _)) = spdg.arguments.iter().enumerate().find(|(_, n)| **n == node)
+        {
             write!(f, "ControllerArgument:{idx}")
         } else {
             let info = spdg.node_info(node);
@@ -620,7 +617,6 @@ impl<'a> std::fmt::Display for DisplayNode<'a> {
         }
     }
 }
-
 
 /// Statistics about the result of running [`Context::always_happens_before`]
 /// that are useful to understand how the property failed.
@@ -707,13 +703,18 @@ impl AlwaysHappensBefore {
 #[test]
 fn test_context() {
     let ctx = crate::test_utils::test_ctx();
-    assert!(ctx.marked_type(Marker::new_intern("input")).iter().any(|id| ctx
-        .desc
-        .def_info
-        .get(id)
-        .map_or(false, |info| info.name.as_str().starts_with("Foo"))));
+    assert!(ctx
+        .marked_type(Marker::new_intern("input"))
+        .iter()
+        .any(|id| ctx
+            .desc
+            .def_info
+            .get(id)
+            .map_or(false, |info| info.name.as_str().starts_with("Foo"))));
 
-    let controller = ctx.controller_by_name(Identifier::new_intern("controller")).unwrap();
+    let controller = ctx
+        .controller_by_name(Identifier::new_intern("controller"))
+        .unwrap();
 
     // The two Foo inputs are marked as input via the type, input and output of identity also marked via the type
     assert_eq!(
@@ -749,9 +750,8 @@ fn test_context() {
 fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
-    let is_terminal = |end: Node| -> bool {
-        ctx.desc.controllers[&end.ctrl_id].return_ == end.inner
-    };
+    let is_terminal =
+        |end: Node| -> bool { ctx.desc.controllers[&end.ctrl_id].return_ == end.inner };
 
     let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_pass"))?;
     let pass = ctx.always_happens_before(
