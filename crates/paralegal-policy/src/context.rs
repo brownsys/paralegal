@@ -1,7 +1,7 @@
 use std::{io::Write, iter::empty, process::exit, sync::Arc};
 use std::ops::ControlFlow;
 
-use paralegal_spdg::{Annotation, DefKind, Node as SPDGNode, NodeInfo, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription, SPDG, CallString, GlobalLocation, LocationOrStart, SPDGImpl, TypeId};
+use paralegal_spdg::{Annotation, DefKind, Node as SPDGNode, NodeInfo, HashMap, HashSet, Identifier, MarkerAnnotation, MarkerRefinement, ProgramDescription, SPDG, CallString, GlobalLocation, LocationOrStart, SPDGImpl, TypeId, Endpoint};
 pub use paralegal_spdg::rustc_portable::DefId;
 
 use anyhow::{anyhow, bail, ensure, Result};
@@ -129,6 +129,20 @@ impl Context {
             desc,
             diagnostics: Default::default(),
             name_map,
+        }
+    }
+
+    pub fn controllers_by_name(&self, name: Identifier) -> impl Iterator<Item=Endpoint> + '_ {
+        self.desc.controllers.iter().filter(move |(n, g)| g.name == name)
+            .map(|t| *t.0)
+    }
+
+    pub fn controller_by_name(&self, name: Identifier) -> Result<Endpoint> {
+        let all = self.controllers_by_name(name).collect::<Vec<_>>();
+        match all.as_slice() {
+            [one] => Ok(*one),
+            [] => bail!("Found no controller named '{name}'"),
+            many => bail!("Found more than one controller named '{name}': {many:?}"),
         }
     }
 
@@ -693,13 +707,13 @@ impl AlwaysHappensBefore {
 #[test]
 fn test_context() {
     let ctx = crate::test_utils::test_ctx();
-    assert!(ctx.marked(Marker::new_intern("input")).any(|(id, _)| ctx
+    assert!(ctx.marked_type(Marker::new_intern("input")).iter().any(|id| ctx
         .desc
         .def_info
         .get(id)
         .map_or(false, |info| info.name.as_str().starts_with("Foo"))));
 
-    let controller = ctx.find_by_name("controller").unwrap();
+    let controller = ctx.controller_by_name(Identifier::new_intern("controller")).unwrap();
 
     // The two Foo inputs are marked as input via the type, input and output of identity also marked via the type
     assert_eq!(
@@ -739,7 +753,7 @@ fn test_happens_before() -> Result<()> {
         ctx.desc.controllers[&end.ctrl_id].return_ == end.inner
     };
 
-    let ctrl_name = ctx.find_by_name("happens_before_pass")?;
+    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_pass"))?;
     let pass = ctx.always_happens_before(
         ctx.all_nodes_for_ctrl(ctrl_name)
             .filter(|n| ctx.has_marker(Identifier::new_intern("start"), *n)),
@@ -750,7 +764,7 @@ fn test_happens_before() -> Result<()> {
     ensure!(pass.holds());
     ensure!(!pass.is_vacuous(), "{pass}");
 
-    let ctrl_name = ctx.find_by_name("happens_before_fail")?;
+    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_fail"))?;
 
     let fail = ctx.always_happens_before(
         ctx.all_nodes_for_ctrl(ctrl_name)
@@ -768,7 +782,7 @@ fn test_happens_before() -> Result<()> {
 #[test]
 fn test_influencees() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
-    let ctrl_name = ctx.find_by_name("influence")?;
+    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("influence"))?;
     let src_a = ctx.controller_argument(ctrl_name, 0).unwrap();
     let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
@@ -810,7 +824,7 @@ fn test_influencees() -> Result<()> {
 #[test]
 fn test_callsite_is_arg_influencee() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
-    let ctrl_name = ctx.find_by_name("influence")?;
+    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("influence"))?;
     let sink_arg = crate::test_utils::get_sink_node(&ctx, ctrl_name, "sink1").unwrap();
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
 
@@ -829,7 +843,7 @@ fn test_callsite_is_arg_influencee() -> Result<()> {
 #[test]
 fn test_influencers() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
-    let ctrl_name = ctx.find_by_name("influence")?;
+    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("influence"))?;
     let src_a = ctx.controller_argument(ctrl_name, 0).unwrap();
     let src_b = ctx.controller_argument(ctrl_name, 1).unwrap();
     let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
@@ -880,7 +894,7 @@ fn test_influencers() -> Result<()> {
 #[test]
 fn test_arg_is_callsite_influencer() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
-    let ctrl_name = ctx.find_by_name("influence")?;
+    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("influence"))?;
     let sink_arg = crate::test_utils::get_sink_node(&ctx, ctrl_name, "sink1").unwrap();
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
 
@@ -899,7 +913,7 @@ fn test_arg_is_callsite_influencer() -> Result<()> {
 #[test]
 fn test_has_ctrl_influence() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
-    let ctrl_name = ctx.find_by_name("ctrl_influence")?;
+    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("ctrl_influence"))?;
     let src_a = ctx.controller_argument(ctrl_name, 0).unwrap();
     let src_b = ctx.controller_argument(ctrl_name, 1).unwrap();
     let a_identity =

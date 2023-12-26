@@ -2,7 +2,7 @@ use crate::Context;
 use crate::ControllerId;
 use crate::Node;
 use paralegal_flow::test_utils::PreFrg;
-use paralegal_spdg::Identifier;
+use paralegal_spdg::{Identifier, InstructionInfo, Node as SPDGNode, SPDG};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -32,13 +32,29 @@ pub fn get_callsite_node<'a>(
     name: &'a str,
 ) -> Option<Node> {
     let name = Identifier::new_intern(name);
-    let inner = ctx.desc().controllers[&controller]
+    let ctrl = &ctx.desc().controllers[&controller];
+    let inner = ctrl
         .call_sites()
-        .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)?;
+        .find(|callsite| is_at_function_call_with_name(ctx, ctrl, name, *callsite))?;
     Some(crate::Node {
         ctrl_id: controller,
         inner,
     })
+}
+
+fn is_at_function_call_with_name(
+    ctx: &Context,
+    ctrl: &SPDG,
+    name: Identifier,
+    node: SPDGNode,
+) -> bool {
+    let weight = ctrl.graph.node_weight(node).unwrap().at;
+    let instruction = &ctx.desc().instruction_info[&weight.leaf()];
+    matches!(
+        instruction,
+        InstructionInfo::FunctionCall(did) if
+            ctx.desc().def_info[did].name == name
+    )
 }
 
 pub fn get_sink_node<'a>(
@@ -47,14 +63,10 @@ pub fn get_sink_node<'a>(
     name: &'a str,
 ) -> Option<Node> {
     let name = Identifier::new_intern(name);
-    let inner = ctx.desc().controllers[&controller]
+    let ctrl = &ctx.desc().controllers[&controller];
+    let inner = ctrl
         .data_sinks()
-        .find(|sink| match sink {
-            DataSink::Argument { function, .. } => {
-                ctx.desc().def_info[&function.function].name == name
-            }
-            _ => false,
-        })?;
+        .find(|sink| is_at_function_call_with_name(ctx, ctrl, name, *sink))?;
     Some(crate::Node {
         ctrl_id: controller,
         inner,

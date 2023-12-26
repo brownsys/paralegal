@@ -1,4 +1,4 @@
-use paralegal_spdg::{Node as SPDGNode, SPDG, SPDGImpl};
+use paralegal_spdg::{Identifier, Node as SPDGNode, SPDG, SPDGImpl};
 
 use bitvec::vec::BitVec;
 
@@ -149,7 +149,7 @@ impl fmt::Debug for CtrlFlowsTo {
 #[test]
 fn test_data_flows_to() {
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx.find_by_name("controller").unwrap();
+    let controller = ctx.controller_by_name(Identifier::new_intern("controller")).unwrap();
     let src = ctx.controller_argument(controller, 0).unwrap();
     let sink1 = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
     let sink2 = crate::test_utils::get_sink_node(&ctx, controller, "sink2").unwrap();
@@ -160,7 +160,7 @@ fn test_data_flows_to() {
 #[test]
 fn test_ctrl_flows_to() {
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx.find_by_name("controller_ctrl").unwrap();
+    let controller = ctx.controller_by_name(Identifier::new_intern("controller_ctrl")).unwrap();
     let src_a = ctx.controller_argument(controller, 0).unwrap();
     let src_b = ctx.controller_argument(controller, 1).unwrap();
     let src_c = ctx.controller_argument(controller, 2).unwrap();
@@ -176,7 +176,7 @@ fn test_ctrl_flows_to() {
 #[test]
 fn test_flows_to() {
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
+    let controller = ctx.controller_by_name(Identifier::new_intern("controller_data_ctrl")).unwrap();
     let src_a = ctx.controller_argument(controller, 0).unwrap();
     let src_b = ctx.controller_argument(controller, 1).unwrap();
     let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
@@ -192,7 +192,7 @@ fn test_flows_to() {
 #[test]
 fn test_args_flow_to_cs() {
     let ctx = crate::test_utils::test_ctx();
-    let controller = ctx.find_by_name("controller_data_ctrl").unwrap();
+    let controller = ctx.controller_by_name(Identifier::new_intern("controller_data_ctrl")).unwrap();
     let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1").unwrap();
     let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1").unwrap();
 

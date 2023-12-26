@@ -27,9 +27,9 @@ define_test!(without_return: ctrl -> {
     let src = ctrl.call_site(&src_fn);
     let dest_fn = graph.function("receiver");
     let dest_sink = ctrl.call_site(&dest_fn);
-    let dest = dest_sink.input().pop().unwrap();
+    let dest = dest_sink.input().nth(0).unwrap();
 
-    assert!(src.flows_to(&dest));
+    assert!(src.output().flows_to(&dest));
 });
 
 define_test!(with_return: ctrl -> {
@@ -38,9 +38,9 @@ define_test!(with_return: ctrl -> {
     let ctrl = ctrl.ctrl("with_return");
     let dest_fn = ctrl.function("receiver");
     let dest_sink = ctrl.call_site(&dest_fn);
-    let dest = dest_sink.input().pop().unwrap();
+    let dest = dest_sink.input().nth(0).unwrap();
 
-    assert!(src.flows_to(&dest));
+    assert!(src.output().flows_to(&dest));
 });
 
 define_test!(on_mut_var: ctrl -> {
@@ -48,9 +48,9 @@ define_test!(on_mut_var: ctrl -> {
     let src = ctrl.call_site(&src_fn);
     let dest_fn = ctrl.function("receiver");
     let dest_sink = ctrl.call_site(&dest_fn);
-    let dest = dest_sink.input().pop().unwrap();
+    let dest = dest_sink.input().nth(0).unwrap();
 
-    assert!(src.flows_to(&dest));
+    assert!(src.output().flows_to(&dest));
 });
 
 define_test!(on_mut_var_no_modify: ctrl -> {
@@ -58,9 +58,7 @@ define_test!(on_mut_var_no_modify: ctrl -> {
     if let Some(src) = ctrl.call_sites(&src_fn).pop() {
         let dest_fn = ctrl.function("receiver");
         if let Some(dest_sink) = ctrl.call_sites(&dest_fn).pop() {
-            if let Some(dest) = dest_sink.input().pop() {
-                assert!(!src.flows_to(&dest));
-            }
+            assert!(!dest_sink.input().flows_to(&dest_sink.output()));
         }
     }
 });
@@ -74,9 +72,9 @@ define_test!(field_sensitivity: ctrl -> {
     let produce_string = ctrl.call_site(&produce_string_fn);
     let read_string = ctrl.call_site(&consume_string_fn);
     let read_usize = ctrl.call_site(&consume_usize_fn);
-    assert!(produce_usize.flows_to(&read_usize.input()[0]));
-    assert!(!produce_usize.flows_to(&read_string.input()[0]));
-    assert!(produce_string.flows_to(&read_string.input()[0]));
+    assert!(produce_usize.output().flows_to(&read_usize.input().nth(0).unwrap()));
+    assert!(!produce_usize.output().flows_to(&read_string.input().nth(0).unwrap()));
+    assert!(produce_string.output().flows_to(&read_string.input().nth(0).unwrap()));
 });
 
 define_test_skip!(unused_labels: graph, field_sensitivity -> {
@@ -92,8 +90,8 @@ define_test!(field_sensitivity_across_clone: ctrl -> {
     let produce_string = ctrl.call_site(&produce_string_fn);
     let read_string = ctrl.call_site(&consume_string_fn);
     let read_usize = ctrl.call_site(&consume_usize_fn);
-    assert!(produce_usize.flows_to(&read_usize.input()[0]));
-    assert!(!produce_usize.flows_to(&read_string.input()[0]));
-    assert!(produce_string.flows_to(&read_string.input()[0]));
-    assert!(!produce_string.flows_to(&read_usize.input()[0]));
+    assert!(produce_usize.output().flows_to(&read_usize.input().nth(0).unwrap()));
+    assert!(!produce_usize.output().flows_to(&read_string.input().nth(0).unwrap()));
+    assert!(produce_string.output().flows_to(&read_string.input().nth(0).unwrap()));
+    assert!(!produce_string.output().flows_to(&read_usize.input().nth(0).unwrap()));
 });
