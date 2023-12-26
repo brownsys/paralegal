@@ -2,9 +2,7 @@
 //! and discovers functions marked for analysis.
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
-use crate::{
-    ana::SPDGGenerator, consts, desc::*, marker_db::MarkerDatabase, rust::*, utils::*, HashMap,
-};
+use crate::{ana::SPDGGenerator, consts, desc::*, marker_db::MarkerDatabase, rust::*, utils::*};
 
 use hir::{
     def_id::DefId,
@@ -18,12 +16,6 @@ use anyhow::Result;
 
 /// Values of this type can be matched against Rust attributes
 pub type AttrMatchT = Vec<Symbol>;
-
-/// A mapping of annotations that are attached to function calls.
-///
-/// XXX: This needs to be adjusted to attach to the actual call site instead of
-/// the function `DefId`
-pub type CallSiteAnnotations = HashMap<DefId, Vec<Annotation>>;
 
 /// This visitor traverses the items in the analyzed crate to discover
 /// annotations and analysis targets and store them in this struct. After the

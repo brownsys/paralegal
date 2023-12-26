@@ -1,21 +1,16 @@
-use std::ops::ControlFlow;
-use std::{io::Write, iter::empty, process::exit, sync::Arc};
+use std::{io::Write, process::exit, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::DefId;
 use paralegal_spdg::{
-    Annotation, CallString, DefKind, Endpoint, GlobalLocation, HashMap, HashSet, Identifier,
-    LocationOrStart, MarkerAnnotation, MarkerRefinement, Node as SPDGNode, NodeInfo,
-    ProgramDescription, SPDGImpl, TypeId, SPDG,
+    CallString, Endpoint, HashMap, Identifier, Node as SPDGNode, ProgramDescription, SPDGImpl,
+    TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, ensure, Result};
-use indexical::{RefFamily, ToIndex};
 use itertools::{Either, Itertools};
 use paralegal_spdg::rustc_portable::LocalDefId;
 use petgraph::prelude::Bfs;
-use petgraph::visit::{
-    Control, DfsEvent, EdgeFiltered, EdgeRef, IntoNodeReferences, NodeRef, Reversed, Walker,
-};
+use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, Walker};
 use petgraph::Incoming;
 
 use super::flows_to::CtrlFlowsTo;
@@ -148,7 +143,7 @@ impl Context {
         self.desc
             .controllers
             .iter()
-            .filter(move |(n, g)| g.name == name)
+            .filter(move |(_n, g)| g.name == name)
             .map(|t| *t.0)
     }
 
@@ -248,7 +243,7 @@ impl Context {
                     .zip(std::iter::repeat(Either::Right(*k)))
             }))
             .into_grouping_map()
-            .fold(MarkerTargets::default(), |mut r, k, v| {
+            .fold(MarkerTargets::default(), |mut r, _k, v| {
                 v.either(|node| r.nodes.push(node), |typ| r.types.push(typ));
                 r
             })
@@ -408,7 +403,7 @@ impl Context {
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
         let types = self.get_node_types(node);
-        if types.iter().any(|t| {
+        if types.iter().any(|_t| {
             self.marker_to_ids
                 .get(&marker)
                 .map(|markers| markers.nodes.contains(&node))
@@ -451,7 +446,7 @@ impl Context {
     pub fn roots(
         &self,
         ctrl_id: ControllerId,
-        edge_type: EdgeType,
+        _edge_type: EdgeType,
     ) -> impl Iterator<Item = Node> + '_ {
         let g = &self.desc.controllers[&ctrl_id].graph;
         g.externals(Incoming)

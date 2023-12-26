@@ -32,8 +32,8 @@ pub mod utils;
 use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{borrow::Cow, fmt, hash::Hash, iter};
+use serde::{Deserialize, Serialize};
+use std::{fmt, hash::Hash};
 
 #[cfg(not(feature = "rustc"))]
 use utils::serde_map_via_vec;

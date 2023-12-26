@@ -7,22 +7,15 @@ use crate::{
     desc::{Identifier, ProgramDescription},
     ir::CallOnlyFlow,
     serializers::{Bodies, InstructionProxy},
-    utils::outfile_pls,
     HashSet, Symbol,
 };
 
-use paralegal_spdg::{rustc_portable::DefId, DefInfo, Endpoint, Node, SPDG};
+use paralegal_spdg::{rustc_portable::DefId, DefInfo, Node, SPDG};
 use rustc_middle::mir;
 
-use either::Either;
-
 use crate::pdg::{CallString, GlobalLocation, LocationOrStart};
-use crate::utils::CallStringExt;
 use itertools::Itertools;
-use petgraph::graph::NodeIndex;
 use petgraph::visit::{Control, DfsEvent, EdgeRef};
-use std::borrow::Cow;
-use std::io::prelude::*;
 use std::path::Path;
 
 lazy_static! {
@@ -685,13 +678,10 @@ impl<'g> PartialEq<crate::desc::CallString> for CallStringRef<'g> {
 impl<'g> CallStringRef<'g> {
     pub fn input(&'g self) -> NodeRefs<'g> {
         let graph = &self.ctrl.ctrl.graph;
-        let mut all: Vec<_> = graph
+        let all: Vec<_> = graph
             .edge_references()
             .filter(|e| e.weight().at == self.call_site)
-            .filter_map(|e| {
-                let src = graph.node_weight(e.source())?;
-                Some(e.source())
-            })
+            .map(|e| e.source())
             .collect();
         // TODO Sort?
         //all.sort_by_key(|s| s.node);
@@ -784,7 +774,6 @@ pub trait FlowsTo {
     fn spdg_ident(&self) -> Identifier;
 
     fn flows_to(&self, other: &impl FlowsTo) -> bool {
-        use petgraph::visit::Control;
         if self.spdg_ident() != other.spdg_ident() {
             return false;
         }

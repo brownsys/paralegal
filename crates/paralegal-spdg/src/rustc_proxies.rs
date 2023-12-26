@@ -118,13 +118,13 @@ proxy_struct! {
 }
 
 #[cfg(feature = "rustc")]
-const LOCAL_CRATE: CrateNum = CrateNum { private: 0 };
+pub const LOCAL_CRATE: CrateNum = CrateNum { private: 0 };
 
 #[cfg(feature = "rustc")]
 static_assertions::const_assert!(LOCAL_CRATE.private == hir::def_id::LOCAL_CRATE.as_u32());
 
 impl LocalDefId {
-    fn to_def_id(self) -> DefId {
+    pub fn to_def_id(self) -> DefId {
         cfg_if!(
             if #[cfg(feature = "rustc")] {
                 let krate = hir::def_id::LOCAL_CRATE;

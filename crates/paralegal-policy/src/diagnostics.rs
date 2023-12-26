@@ -78,7 +78,7 @@
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{rustc_portable::DefId, Identifier, SPDG};
+use paralegal_spdg::{Identifier, SPDG};
 
 use crate::{Context, ControllerId};
 

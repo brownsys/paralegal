@@ -1,11 +1,8 @@
-use paralegal_spdg::{Identifier, Node as SPDGNode, SPDGImpl, SPDG};
+use paralegal_spdg::{Node as SPDGNode, SPDGImpl, SPDG};
 
 use bitvec::vec::BitVec;
 
-use std::io::sink;
-use std::{fmt, sync::Arc};
-
-use crate::{ControllerId, Node};
+use std::fmt;
 
 /// The transitive closure of the [`Ctrl::data_flow`] relation.
 ///
@@ -153,6 +150,7 @@ impl fmt::Debug for CtrlFlowsTo {
 
 #[test]
 fn test_data_flows_to() {
+    use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
         .controller_by_name(Identifier::new_intern("controller"))
@@ -166,6 +164,7 @@ fn test_data_flows_to() {
 
 #[test]
 fn test_ctrl_flows_to() {
+    use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
         .controller_by_name(Identifier::new_intern("controller_ctrl"))
@@ -184,6 +183,7 @@ fn test_ctrl_flows_to() {
 
 #[test]
 fn test_flows_to() {
+    use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
         .controller_by_name(Identifier::new_intern("controller_data_ctrl"))
@@ -202,6 +202,7 @@ fn test_flows_to() {
 
 #[test]
 fn test_args_flow_to_cs() {
+    use paralegal_spdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
         .controller_by_name(Identifier::new_intern("controller_data_ctrl"))

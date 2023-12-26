@@ -63,8 +63,7 @@ pub mod rust {
 }
 
 use args::{ClapArgs, LogLevelConfig};
-use desc::utils::{serde_map_via_vec, write_sep};
-use pretty::DocBuilder;
+use desc::utils::write_sep;
 use rust::*;
 
 use rustc_plugin::CrateFilter;
@@ -99,7 +98,7 @@ pub use paralegal_spdg as desc;
 
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
-use crate::utils::{outfile_pls, Print};
+use crate::utils::Print;
 
 pub use crate::marker_db::MarkerCtx;
 

@@ -56,10 +56,6 @@ fn is_call(tcx: TyCtxt, location: GlobalLocation) -> bool {
     matches!(term.kind, mir::TerminatorKind::Call { .. })
 }
 
-fn is_statement(tcx: TyCtxt, location: GlobalLocation) -> bool {
-    as_terminator(tcx, location).is_none()
-}
-
 fn search_ancestors<'tcx, G, I>(
     tcx: TyCtxt<'tcx>,
     g: G,

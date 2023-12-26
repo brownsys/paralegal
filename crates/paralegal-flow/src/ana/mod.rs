@@ -5,18 +5,16 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
-    dbg, desc::*, ir::*, rust::*, utils::CallStringExt, utils::*, DefId, Either, HashMap, HashSet,
-    LogLevelConfig, MarkerCtx, Symbol,
+    desc::*, rust::*, utils::CallStringExt, utils::*, DefId, HashMap, HashSet, LogLevelConfig,
+    MarkerCtx, Symbol,
 };
 use std::borrow::Cow;
-use std::io::Read;
 
 use anyhow::Result;
 use flowistry::pdg::graph::{DepEdgeKind, DepGraph};
-use paralegal_spdg::rustc_portable::LocalDefId;
-use petgraph::visit::{GraphBase, IntoEdgeReferences, IntoNodeReferences, NodeIndexable, NodeRef};
+use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
 
-use super::discover::{CallSiteAnnotations, FnToAnalyze};
+use super::discover::FnToAnalyze;
 
 pub mod inline;
 
@@ -46,7 +44,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
         target: &FnToAnalyze,
         known_def_ids: &mut impl Extend<DefId>,
     ) -> anyhow::Result<(Endpoint, SPDG)> {
-        let tcx = self.tcx;
         debug!("Handling target {}", target.name());
         let local_def_id = target.def_id.expect_local();
 
