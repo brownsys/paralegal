@@ -10,10 +10,10 @@ use crate::{
     HashSet, Symbol,
 };
 
-use paralegal_spdg::{rustc_portable::DefId, DefInfo, Node, SPDG};
+use paralegal_spdg::{rustc_portable::DefId, DefInfo, Node, NodeKind, SPDG};
 use rustc_middle::mir;
 
-use crate::pdg::{CallString, GlobalLocation, LocationOrStart};
+use crate::pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
 use petgraph::visit::{Control, DfsEvent, EdgeRef};
 use std::path::Path;
@@ -450,7 +450,7 @@ impl G {
                     .filter(|s| s.contents.contains(pattern))
                     .map(|s| GlobalLocation {
                         function: bid.expect_local(),
-                        location: LocationOrStart::Location(s.location),
+                        location: RichLocation::Location(s.location),
                     })
             })
             .collect()
@@ -595,7 +595,7 @@ impl PreFrg {
 pub struct CtrlRef<'g> {
     graph: &'g PreFrg,
     ident: Identifier,
-    ctrl: &'g crate::desc::SPDG,
+    ctrl: &'g SPDG,
 }
 
 impl<'g> PartialEq for CtrlRef<'g> {
@@ -616,12 +616,20 @@ impl<'g> CtrlRef<'g> {
     }
 
     pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallStringRef<'g>> {
+        let simple_sites = self
+            .graph
+            .desc
+            .instruction_info
+            .iter()
+            .filter_map(|(k, v)| (v.as_function_call()?.id == fun.ident).then_some(k))
+            .collect::<HashSet<_>>();
+
         let mut all: Vec<CallStringRef<'g>> = self
             .ctrl
             .graph
             .edge_references()
             .map(|v| v.weight().at)
-            .filter(|m| m.leaf().function.to_def_id() == fun.ident)
+            .filter(|m| simple_sites.contains(&m.leaf()))
             .map(|call_site| CallStringRef {
                 ctrl: self,
                 call_site,
@@ -669,8 +677,8 @@ pub struct CallStringRef<'g> {
     ctrl: &'g CtrlRef<'g>,
 }
 
-impl<'g> PartialEq<crate::desc::CallString> for CallStringRef<'g> {
-    fn eq(&self, other: &crate::desc::CallString) -> bool {
+impl<'g> PartialEq<CallString> for CallStringRef<'g> {
+    fn eq(&self, other: &CallString) -> bool {
         self.call_site == *other
     }
 }
@@ -678,23 +686,47 @@ impl<'g> PartialEq<crate::desc::CallString> for CallStringRef<'g> {
 impl<'g> CallStringRef<'g> {
     pub fn input(&'g self) -> NodeRefs<'g> {
         let graph = &self.ctrl.ctrl.graph;
-        let all: Vec<_> = graph
+        let mut nodes: Vec<_> = graph
             .edge_references()
             .filter(|e| e.weight().at == self.call_site)
-            .map(|e| e.source())
+            .filter_map(|e| {
+                let src = e.source();
+                let index = match graph.node_weight(src)?.kind {
+                    NodeKind::ActualParameter(p) => Some(p),
+                    _ => None,
+                }?;
+                Some((src, index))
+            })
+            .flat_map(move |(src, idxes)| idxes.into_iter_set_in_domain().map(move |i| (src, i)))
             .collect();
-        // TODO Sort?
-        //all.sort_by_key(|s| s.node);
+        nodes.sort_by_key(|s| s.1);
         NodeRefs {
-            nodes: all,
+            nodes: nodes.into_iter().map(|t| t.0).collect(),
             graph: self.ctrl,
         }
     }
 
     pub fn output(&self) -> NodeRefs<'g> {
-        todo!("Add after updating flowistry")
+        let graph = &self.ctrl.ctrl.graph;
+        let mut nodes: Vec<_> = graph
+            .edge_references()
+            .filter(|e| e.weight().at == self.call_site)
+            .filter_map(|e| {
+                let src = e.source();
+                let index = match graph.node_weight(src)?.kind {
+                    NodeKind::ActualReturn => Some(()),
+                    _ => None,
+                }?;
+                Some(src)
+            })
+            .collect();
+        // TODO include mutable return variables?
+        NodeRefs {
+            nodes,
+            graph: self.ctrl,
+        }
     }
-    pub fn call_site(&self) -> crate::desc::CallString {
+    pub fn call_site(&self) -> CallString {
         self.call_site
     }
 }

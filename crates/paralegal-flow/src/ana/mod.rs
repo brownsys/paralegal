@@ -64,12 +64,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 
     fn determine_return(&self, target: Endpoint, graph: &SPDGImpl) -> Node {
-        unimplemented!("Do after updating flowistry");
         let mut return_candidates = graph
             .node_references()
             .filter(|n| {
                 let at = n.weight().at;
-                let is_candidate = at.is_at_root();
+                let is_candidate = at.is_at_root() && at.leaf().location == RichLocation::End;
                 assert!(!is_candidate || target == at.leaf().function);
                 is_candidate
             })
@@ -84,7 +83,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .node_references()
             .filter(|n| {
                 let at = n.weight().at;
-                let is_candidate = at.is_at_root() && at.leaf().location == LocationOrStart::Start;
+                let is_candidate = at.is_at_root() && at.leaf().location == RichLocation::Start;
                 assert!(!is_candidate || target == at.leaf().function);
                 is_candidate
             })
@@ -111,22 +110,20 @@ impl<'tcx> SPDGGenerator<'tcx> {
         }
 
         let mut known_def_ids = HashSet::new();
-        let result = //crate::sah::HashVerifications::with(|hash_verifications| {
-            targets
-                .iter()
-                .map(|desc| {
-                    let target_name = desc.name();
-                    with_reset_level_if_target(self.opts, target_name, || {
-                        self.handle_target(
-                            //hash_verifications,
-                            desc,
-                            &mut known_def_ids,
-                        )
-                    })
+        let result = targets
+            .iter()
+            .map(|desc| {
+                let target_name = desc.name();
+                with_reset_level_if_target(self.opts, target_name, || {
+                    self.handle_target(
+                        //hash_verifications,
+                        desc,
+                        &mut known_def_ids,
+                    )
                 })
-                .collect::<Result<HashMap<Endpoint, SPDG>>>()
-                .map(|controllers| self.make_program_description(controllers, &known_def_ids)
-                );
+            })
+            .collect::<Result<HashMap<Endpoint, SPDG>>>()
+            .map(|controllers| self.make_program_description(controllers, &known_def_ids));
         result
     }
 
@@ -169,11 +166,15 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|i| {
                 let body = self.tcx.body_for_def_id(i.function).unwrap();
                 let info = match i.location {
-                    LocationOrStart::Start => InstructionInfo::Start,
-                    LocationOrStart::Location(loc) => match body.body.stmt_at(loc) {
+                    RichLocation::End => InstructionInfo::Return,
+                    RichLocation::Start => InstructionInfo::Start,
+                    RichLocation::Location(loc) => match body.body.stmt_at(loc) {
                         crate::Either::Right(term) => {
-                            if let Ok((fun, ..)) = term.as_fn_and_args(self.tcx) {
-                                InstructionInfo::FunctionCall(fun)
+                            if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
+                                InstructionInfo::FunctionCall(FunctionCallInfo {
+                                    id,
+                                    is_inlined: id.is_local(),
+                                })
                             } else {
                                 InstructionInfo::Terminator
                             }
@@ -186,12 +187,24 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .collect()
     }
 
-    fn annotations_for_argument(&self, function: DefId, arg_num: u32) -> Vec<Identifier> {
-        self.marker_ctx
+    fn annotations_for_function(
+        &self,
+        function: DefId,
+        mut filter: impl FnMut(&MarkerAnnotation) -> bool,
+    ) -> (Vec<Identifier>, Option<DefId>) {
+        let parent = get_parent(self.tcx, function);
+        let annotations = self
+            .marker_ctx
             .combined_markers(function)
-            .filter(|ann| ann.refinement.on_argument().contains(arg_num).unwrap())
+            .chain(
+                parent
+                    .into_iter()
+                    .flat_map(|parent| self.marker_ctx.combined_markers(parent)),
+            )
+            .filter(|ann| filter(*ann))
             .map(|ann| ann.marker)
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        (annotations, parent)
     }
 
     fn convert_graph(
@@ -217,42 +230,79 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
             let body = &tcx.body_for_def_id(leaf_loc.function).unwrap().body;
 
-            let (argument, is_external_call_source) = match leaf_loc.location {
-                LocationOrStart::Start => {
-                    if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) {
-                        let arg_num = weight.place.local.as_u32() - 1;
-                        known_def_ids.extend(Some(leaf_loc.function.to_def_id()));
-                        let parent = get_parent(self.tcx, leaf_loc.function.to_def_id());
-                        known_def_ids.extend(parent);
-                        let mut annotations =
-                            self.annotations_for_argument(leaf_loc.function.to_def_id(), arg_num);
-                        annotations.extend(
-                            parent
-                                .into_iter()
-                                .flat_map(|parent| self.annotations_for_argument(parent, arg_num)),
-                        );
-                        if !annotations.is_empty() {
-                            markers
-                                .entry(i)
-                                .or_insert_with(Default::default)
-                                .extend(annotations);
-                        }
+            let (kind, is_external_call_source) = match leaf_loc.location {
+                RichLocation::Start
+                    if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
+                {
+                    let function_id = leaf_loc.function.to_def_id();
+                    let arg_num = weight.place.local.as_u32() - 1;
+                    known_def_ids.extend(Some(leaf_loc.function.to_def_id()));
 
-                        (Some(arg_num), false)
+                    let (annotations, parent) = self.annotations_for_function(function_id, |ann| {
+                        ann.refinement.on_argument().contains(arg_num).unwrap()
+                    });
+
+                    known_def_ids.extend(parent);
+                    if !annotations.is_empty() {
+                        markers
+                            .entry(i)
+                            .or_insert_with(Default::default)
+                            .extend(annotations);
+                    }
+                    (NodeKind::FormalParameter(arg_num as u8), false)
+                }
+                RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
+                    let function_id = leaf_loc.function.to_def_id();
+                    let (annotations, parent) = self
+                        .annotations_for_function(function_id, |ann| ann.refinement.on_return());
+                    known_def_ids.extend(parent);
+                    if !annotations.is_empty() {
+                        markers
+                            .entry(i)
+                            .or_insert_with(Default::default)
+                            .extend(annotations);
+                    }
+                    (NodeKind::FormalReturn, false)
+                }
+                RichLocation::Location(loc) => {
+                    let stmt_at_loc = body.stmt_at(loc);
+                    let matches_place =
+                        |place| weight.place.simple_overlaps(place).contains_other();
+                    if let crate::Either::Right(
+                        term @ mir::Terminator {
+                            kind:
+                                mir::TerminatorKind::Call {
+                                    args, destination, ..
+                                },
+                            ..
+                        },
+                    ) = stmt_at_loc
+                    {
+                        let indices: TinyBitSet = args
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, op)| matches_place(op.place()?).then_some(i as u32))
+                            .collect::<TinyBitSet>();
+                        let (fun, ..) = term.as_fn_and_args(self.tcx).unwrap();
+                        let is_external = !fun.is_local();
+                        let kind = if !indices.is_empty() {
+                            NodeKind::ActualParameter(indices)
+                        } else if matches_place(*destination) {
+                            NodeKind::ActualReturn
+                        } else {
+                            NodeKind::Unspecified
+                        };
+                        (kind, is_external)
                     } else {
-                        (None, false)
+                        (NodeKind::Unspecified, false)
                     }
                 }
-                LocationOrStart::Location(loc) => {
-                    let stmt_at_loc = body.stmt_at(loc);
-                    // TODO Does not distinguish between external and internal calls
-                    (None, stmt_at_loc.is_right())
-                }
+                _ => (NodeKind::Unspecified, false),
             };
             index_map[i.index()] = g.add_node(NodeInfo {
                 at: weight.at,
                 description: format!("{:?}", weight.place),
-                argument,
+                kind,
             });
 
             let place_ty = self.determine_place_type(weight.place, weight.at);
@@ -349,7 +399,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         // Thread through each caller to recover generic arguments
         for caller in rest {
             let body = &self.tcx.body_for_def_id(caller.function).unwrap().body;
-            let LocationOrStart::Location(loc) = caller.location else {
+            let RichLocation::Location(loc) = caller.location else {
                 unreachable!()
             };
             let crate::Either::Right(terminator) = body.stmt_at(loc) else {

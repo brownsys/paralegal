@@ -1,6 +1,6 @@
 use std::{io::Write, process::exit, sync::Arc};
 
-pub use paralegal_spdg::rustc_portable::DefId;
+pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::{
     CallString, Endpoint, HashMap, Identifier, Node as SPDGNode, ProgramDescription, SPDGImpl,
     TypeId, SPDG,
@@ -8,7 +8,6 @@ use paralegal_spdg::{
 
 use anyhow::{anyhow, bail, ensure, Result};
 use itertools::{Either, Itertools};
-use paralegal_spdg::rustc_portable::LocalDefId;
 use petgraph::prelude::Bfs;
 use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, Walker};
 use petgraph::Incoming;

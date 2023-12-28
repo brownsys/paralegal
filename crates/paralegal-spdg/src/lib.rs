@@ -22,10 +22,6 @@ extern crate strum;
 
 pub use flowistry_pdg::*;
 
-#[cfg(feature = "rustc")]
-mod rustc_impls;
-pub mod rustc_portable;
-pub mod rustc_proxies;
 mod tiny_bitset;
 pub mod utils;
 
@@ -38,8 +34,8 @@ use std::{fmt, hash::Hash};
 #[cfg(not(feature = "rustc"))]
 use utils::serde_map_via_vec;
 
-use crate::rustc_portable::LocalDefId;
 pub use crate::tiny_bitset::TinyBitSet;
+use flowistry_pdg::rustc_portable::LocalDefId;
 use petgraph::graph::NodeIndex;
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::IntoNodeIdentifiers;
@@ -206,7 +202,7 @@ impl ObjectType {
 mod ser_localdefid_map {
     use serde::{Deserialize, Serialize};
 
-    use crate::rustc_proxies;
+    use flowistry_pdg::rustc_proxies;
 
     #[derive(Serialize, Deserialize)]
     struct Helper(#[serde(with = "rustc_proxies::LocalDefId")] super::LocalDefId);
@@ -235,7 +231,7 @@ mod ser_localdefid_map {
 mod ser_defid_map {
     use serde::{Deserialize, Serialize};
 
-    use crate::rustc_proxies;
+    use flowistry_pdg::rustc_proxies;
 
     #[derive(Serialize, Deserialize)]
     struct Helper(#[serde(with = "rustc_proxies::DefId")] super::DefId);
@@ -284,12 +280,33 @@ pub enum DefKind {
     Type,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq
+)]
+pub struct FunctionCallInfo {
+    pub is_inlined: bool,
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    pub id: DefId,
+}
+
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq, strum::EnumIs,
+)]
 pub enum InstructionInfo {
     Statement,
-    FunctionCall(#[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))] DefId),
+    FunctionCall(FunctionCallInfo),
     Terminator,
     Start,
+    Return,
+}
+
+impl InstructionInfo {
+    pub fn as_function_call(self) -> Option<FunctionCallInfo> {
+        match self {
+            InstructionInfo::FunctionCall(d) => Some(d),
+            _ => None,
+        }
+    }
 }
 
 /// The annotated program dependence graph.
@@ -322,7 +339,7 @@ pub struct TypeDescription {
 
 #[cfg(feature = "rustc")]
 mod ser_defid_vec {
-    use crate::rustc_proxies;
+    use flowistry_pdg::rustc_proxies;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     #[derive(Serialize, Deserialize)]
@@ -402,6 +419,11 @@ impl ProgramDescription {
 pub struct Identifier(Intern<String>);
 
 impl Identifier {
+    #[cfg(feature = "rustc")]
+    pub fn new(s: rustc::span::Symbol) -> Self {
+        Self::new_intern(s.as_str())
+    }
+
     /// Returns the underlying string from an identifier.
     pub fn as_str(&self) -> &str {
         self.0.as_str()
@@ -468,7 +490,16 @@ pub type Node = NodeIndex;
 pub struct NodeInfo {
     pub at: CallString,
     pub description: String,
-    pub argument: Option<u32>,
+    pub kind: NodeKind,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Copy, strum::EnumIs)]
+pub enum NodeKind {
+    FormalParameter(u8),
+    FormalReturn,
+    ActualParameter(TinyBitSet),
+    ActualReturn,
+    Unspecified,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -487,7 +518,7 @@ impl EdgeInfo {
     }
 }
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Deserialize, Serialize, strum::EnumIs)]
 pub enum EdgeKind {
     Data,
     Control,

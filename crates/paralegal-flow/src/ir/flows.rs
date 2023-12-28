@@ -38,7 +38,7 @@ fn as_terminator<'tcx>(
     tcx: TyCtxt<'tcx>,
     location: GlobalLocation,
 ) -> Option<&'tcx mir::Terminator<'tcx>> {
-    if let LocationOrStart::Location(loc) = location.location {
+    if let RichLocation::Location(loc) = location.location {
         tcx.body_for_def_id(location.function)
             .unwrap()
             .body
@@ -219,7 +219,7 @@ impl CallOnlyFlow {
                     .chain(Some(k))
             }))
         {
-            if let LocationOrStart::Location(loc) = dep.leaf().location {
+            if let RichLocation::Location(loc) = dep.leaf().location {
                 match tcx
                     .body_for_def_id(dep.leaf().function)
                     .unwrap()

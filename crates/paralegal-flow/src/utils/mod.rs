@@ -29,6 +29,7 @@ use crate::{
 };
 
 use crate::pdg::*;
+use std::cmp::Ordering;
 use std::{cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
 pub mod resolve;
@@ -509,6 +510,19 @@ pub fn read_places_with_provenance<'tcx>(
     places_read(tcx, l, stmt, None).flat_map(move |place| place.provenance(tcx).into_iter())
 }
 
+pub enum Overlap<'tcx> {
+    Equal,
+    Independent,
+    Parent(&'tcx [mir::PlaceElem<'tcx>]),
+    Child(&'tcx [mir::PlaceElem<'tcx>]),
+}
+
+impl<'tcx> Overlap<'tcx> {
+    pub fn contains_other(self) -> bool {
+        matches!(self, Overlap::Equal | Overlap::Parent(_))
+    }
+}
+
 /// Extension trait for [`Place`]s so we can implement methods on them. [`Self`]
 /// is only ever supposed to be instantiated as [`Place`].
 pub trait PlaceExt<'tcx> {
@@ -519,6 +533,8 @@ pub trait PlaceExt<'tcx> {
     /// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
     /// [_1.foo.bar, _1.foo, _1]`
     fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>; 2]>;
+
+    fn simple_overlaps(self, other: Place<'tcx>) -> Overlap<'tcx>;
 }
 
 impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
@@ -531,6 +547,23 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
             .collect();
         refs.reverse();
         refs
+    }
+
+    fn simple_overlaps(self, other: Place<'tcx>) -> Overlap<'tcx> {
+        if self.local != other.local
+            || self
+                .projection
+                .iter()
+                .zip(other.projection)
+                .any(|(one, other)| one != other)
+        {
+            return Overlap::Independent;
+        }
+        match self.projection.len().cmp(&other.projection.len()) {
+            Ordering::Less => Overlap::Parent(&other.projection[self.projection.len()..]),
+            Ordering::Greater => Overlap::Child(&self.projection[other.projection.len()..]),
+            Ordering::Equal => Overlap::Equal,
+        }
     }
 }
 
@@ -1156,13 +1189,13 @@ impl CallStringExt for CallString {
     }
 }
 
-trait LocationOrStartExt {
+trait RichLocationExt {
     fn is_real(self) -> bool;
 }
 
-impl LocationOrStartExt for LocationOrStart {
+impl RichLocationExt for RichLocation {
     fn is_real(self) -> bool {
-        matches!(self, LocationOrStart::Location(_))
+        matches!(self, RichLocation::Location(_))
     }
 }
 
