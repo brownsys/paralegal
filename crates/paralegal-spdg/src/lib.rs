@@ -280,9 +280,7 @@ pub enum DefKind {
     Type,
 }
 
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]
 pub struct FunctionCallInfo {
     pub is_inlined: bool,
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
@@ -549,7 +547,7 @@ impl SPDG {
         self.graph
             .edge_references()
             .filter(|e| e.weight().is_data())
-            .map(|e| e.source().into())
+            .map(|e| e.source())
             .unique()
     }
 
@@ -558,7 +556,7 @@ impl SPDG {
         self.graph
             .edge_references()
             .filter(|e| e.weight().is_control())
-            .map(|e| e.source().into())
+            .map(|e| e.source())
             .unique()
     }
 

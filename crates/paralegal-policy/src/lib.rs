@@ -49,6 +49,8 @@
 
 #![warn(missing_docs)]
 
+extern crate core;
+
 use anyhow::{ensure, Result};
 pub use paralegal_spdg;
 use paralegal_spdg::ProgramDescription;

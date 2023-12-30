@@ -75,6 +75,9 @@
 //! Note that some methods, like [`Context::always_happens_before`] add a named
 //! combinator context by themselves when you use their
 //! [`report`][crate::AlwaysHappensBefore::report] functions.
+
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 

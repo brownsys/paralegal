@@ -137,7 +137,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         // And now, for every mentioned method in an impl, add the markers on
         // the corresponding trait method also to the impl method.
         let def_info = known_def_ids
-            .into_iter()
+            .iter()
             .map(|id| (*id, def_info_for_item(*id, tcx)))
             .collect();
         ProgramDescription {
@@ -201,7 +201,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     .into_iter()
                     .flat_map(|parent| self.marker_ctx.combined_markers(parent)),
             )
-            .filter(|ann| filter(*ann))
+            .filter(|ann| filter(ann))
             .map(|ann| ann.marker)
             .collect::<Vec<_>>();
         (annotations, parent)

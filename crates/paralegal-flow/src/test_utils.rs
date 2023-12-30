@@ -708,12 +708,12 @@ impl<'g> CallStringRef<'g> {
 
     pub fn output(&self) -> NodeRefs<'g> {
         let graph = &self.ctrl.ctrl.graph;
-        let mut nodes: Vec<_> = graph
+        let nodes: Vec<_> = graph
             .edge_references()
             .filter(|e| e.weight().at == self.call_site)
             .filter_map(|e| {
                 let src = e.source();
-                let index = match graph.node_weight(src)?.kind {
+                match graph.node_weight(src)?.kind {
                     NodeKind::ActualReturn => Some(()),
                     _ => None,
                 }?;

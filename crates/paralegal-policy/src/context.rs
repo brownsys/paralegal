@@ -28,15 +28,29 @@ pub type ControllerId = LocalDefId;
 /// The type identifying a function that is used in call sites.
 pub type FunctionId = DefId;
 
+/// Identifier for a graph element that allows attaching a marker.
 pub type MarkableId = Node;
 
 type MarkerIndex = HashMap<Marker, MarkerTargets>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
 
+/// Collection of entities a particular marker has been applied to
 #[derive(Clone, Debug, Default)]
 pub struct MarkerTargets {
     types: Vec<TypeId>,
     nodes: Vec<MarkableId>,
+}
+
+impl MarkerTargets {
+    /// List of types marked with a particular marker
+    pub fn types(&self) -> &[TypeId] {
+        self.types.as_slice()
+    }
+
+    /// List of graph nodes marked with a particular marker
+    pub fn nodes(&self) -> &[MarkableId] {
+        self.nodes.as_slice()
+    }
 }
 
 /// Enum for identifying an edge type (data, control or both)
@@ -138,6 +152,12 @@ impl Context {
         }
     }
 
+    /// Find all controllers that bare this name.
+    ///
+    /// This function is intended for use in writing test cases. Actual policies
+    /// should generally refrain from working with controller names, other than
+    /// printing them in error messages or for debugging. Policies contingent on
+    /// controller names are likely unsound.
     pub fn controllers_by_name(&self, name: Identifier) -> impl Iterator<Item = Endpoint> + '_ {
         self.desc
             .controllers
@@ -146,6 +166,14 @@ impl Context {
             .map(|t| *t.0)
     }
 
+    /// Find a singular controller with this name.
+    ///
+    /// This function should only be used in tests as the same caveats apply as
+    /// in [`Self::controllers_by_name`].
+    ///
+    /// ### Returns `Err`
+    ///
+    /// If there is not *exactly* one controller of this name.
     pub fn controller_by_name(&self, name: Identifier) -> Result<Endpoint> {
         let all = self.controllers_by_name(name).collect::<Vec<_>>();
         match all.as_slice() {
@@ -288,6 +316,13 @@ impl Context {
         }
     }
 
+    /// Find the node that represents the `index`th argument of the controller
+    /// `ctrl_id`.
+    ///
+    /// ### Returns `None`
+    ///
+    /// If the controller with this id does not exist *or* the controller has
+    /// fewer than `index` arguments.
     pub fn controller_argument(&self, ctrl_id: ControllerId, index: u32) -> Option<Node> {
         let ctrl = self.desc.controllers.get(&ctrl_id)?;
         let inner = *ctrl.arguments.get(index as usize)?;

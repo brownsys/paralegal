@@ -75,7 +75,7 @@ impl CtrlFlowsTo {
             // Safety: We never resize/reallocate any of the vectors, so
             // mutating and reading them simultaneously is fine.
             let unsafe_flow_ref: &'_ [BitVec] =
-                unsafe { *std::mem::transmute::<&&mut [BitVec], &&[BitVec]>(&flows_to) };
+                unsafe { std::mem::transmute::<&&mut [BitVec], &&[BitVec]>(&flows_to) };
             while changed {
                 changed = false;
                 for src_idx in 0..flows_to.len() {

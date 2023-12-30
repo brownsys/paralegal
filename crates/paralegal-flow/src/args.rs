@@ -357,7 +357,7 @@ pub struct ModelCtrl {
 
 impl ModelCtrl {
     pub fn external_annotations(&self) -> Option<&std::path::Path> {
-        self.external_annotations.as_ref().map(|p| p.as_path())
+        self.external_annotations.as_deref()
     }
 }
 

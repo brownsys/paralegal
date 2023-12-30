@@ -34,10 +34,7 @@ impl CallOnlyFlow {
     }
 }
 
-fn as_terminator<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    location: GlobalLocation,
-) -> Option<&'tcx mir::Terminator<'tcx>> {
+fn as_terminator(tcx: TyCtxt<'_>, location: GlobalLocation) -> Option<&mir::Terminator<'_>> {
     if let RichLocation::Location(loc) = location.location {
         tcx.body_for_def_id(location.function)
             .unwrap()

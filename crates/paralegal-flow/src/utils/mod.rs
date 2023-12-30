@@ -37,6 +37,7 @@ pub mod resolve;
 mod print;
 pub use print::*;
 
+use crate::utils::FnResolution::{Final, Partial};
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
@@ -196,22 +197,21 @@ pub enum FnResolution<'tcx> {
 
 impl<'tcx> PartialOrd for FnResolution<'tcx> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        use FnResolution::*;
-        match (self, other) {
-            (Final(_), Partial(_)) => Some(std::cmp::Ordering::Greater),
-            (Partial(_), Final(_)) => Some(std::cmp::Ordering::Less),
-            (Partial(slf), Partial(otr)) => slf.partial_cmp(otr),
-            (Final(slf), Final(otr)) => match slf.def.partial_cmp(&otr.def) {
-                Some(std::cmp::Ordering::Equal) => slf.args.partial_cmp(otr.args),
-                result => result,
-            },
-        }
+        Some(self.cmp(other))
     }
 }
 
 impl<'tcx> Ord for FnResolution<'tcx> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
+        match (self, other) {
+            (Final(_), Partial(_)) => std::cmp::Ordering::Greater,
+            (Partial(_), Final(_)) => std::cmp::Ordering::Less,
+            (Partial(slf), Partial(otr)) => slf.cmp(otr),
+            (Final(slf), Final(otr)) => match slf.def.cmp(&otr.def) {
+                std::cmp::Ordering::Equal => slf.args.cmp(otr.args),
+                result => result,
+            },
+        }
     }
 }
 
@@ -1167,6 +1167,7 @@ impl IntoBodyId for DefId {
 }
 
 pub trait CallStringExt: Sized {
+    #[allow(clippy::wrong_self_convention)]
     fn is_at_root(self) -> bool;
     fn root(self) -> GlobalLocation;
     /// A unique number that represents this object
@@ -1190,6 +1191,7 @@ impl CallStringExt for CallString {
 }
 
 trait RichLocationExt {
+    #[allow(clippy::wrong_self_convention)]
     fn is_real(self) -> bool;
 }
 

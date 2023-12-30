@@ -52,8 +52,8 @@ fn is_at_function_call_with_name(
     let instruction = &ctx.desc().instruction_info[&weight.leaf()];
     matches!(
         instruction,
-        InstructionInfo::FunctionCall(did) if
-            ctx.desc().def_info[did].name == name
+        InstructionInfo::FunctionCall(call) if
+            ctx.desc().def_info[&call.id].name == name
     )
 }
 

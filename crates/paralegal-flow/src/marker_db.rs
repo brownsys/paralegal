@@ -213,11 +213,11 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
-        todo!();
-        None
-        // ty.defid().into_iter().flat_map(|did| {
-        //     self.combined_markers(did)
-        // })
+        let def_id = ty.defid()?;
+        self.combined_markers(def_id)
+            .next()
+            .is_some()
+            .then_some(def_id)
     }
 
     /// All markers placed on this function, directly or through the type plus
