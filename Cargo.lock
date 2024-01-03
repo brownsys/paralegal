@@ -837,6 +837,7 @@ name = "paralegal-spdg"
 version = "0.1.0"
 dependencies = [
  "cfg-if",
+ "dot",
  "flowistry_pdg",
  "indexical",
  "internment",

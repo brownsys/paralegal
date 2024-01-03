@@ -31,7 +31,6 @@ use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};
 use std::{fmt, hash::Hash};
 
-#[cfg(not(feature = "rustc"))]
 use utils::serde_map_via_vec;
 
 pub use crate::tiny_bitset::TinyBitSet;
@@ -320,6 +319,7 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     pub type_info: HashMap<TypeId, TypeDescription>,
 
+    #[serde(with = "serde_map_via_vec")]
     pub instruction_info: HashMap<GlobalLocation, InstructionInfo>,
 
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
@@ -484,6 +484,60 @@ pub fn hash_pls<T: Hash>(t: T) -> u64 {
 }
 
 pub type Node = NodeIndex;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct GlobalNode {
+    node: Node,
+    controller_id: LocalDefId,
+}
+
+impl GlobalNode {
+    /// Create a new node with no guarantee that it exists in the SPDG of the
+    /// controller.
+    pub fn unsafe_new(ctrl_id: LocalDefId, index: usize) -> Self {
+        GlobalNode {
+            controller_id: ctrl_id,
+            node: crate::Node::new(index),
+        }
+    }
+
+    pub fn local_node(self) -> Node {
+        self.node
+    }
+
+    pub fn controller_id(self) -> LocalDefId {
+        self.controller_id
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct GlobalEdge {
+    from: Node,
+    to: Node,
+    controller_id: LocalDefId,
+}
+
+impl GlobalEdge {
+    pub fn local_source(self) -> Node {
+        self.from
+    }
+
+    pub fn local_target(self) -> Node {
+        self.to
+    }
+
+    pub fn controller_id(self) -> LocalDefId {
+        self.controller_id
+    }
+
+    pub fn unsafe_new(controller_id: LocalDefId, from: usize, to: usize) -> Self {
+        Self {
+            controller_id,
+            from: Node::new(from),
+            to: Node::new(to),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeInfo {

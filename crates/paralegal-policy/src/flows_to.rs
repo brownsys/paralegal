@@ -19,7 +19,7 @@ use std::fmt;
 /// - [`CtrlFlowsTo`] and [`DataAndControlInfluencees`] vs functions in [`crate::Context`]:
 /// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`]
 /// utilize [`DataSource`] to [`CallSiteOrDataSink`], so do not provide all of the
-/// information that is needed answer questions about any kind of [`crate::Node`] and any
+/// information that is needed answer questions about any kind of [`crate::GlobalNode`] and any
 /// kind of [`crate::EdgeType`] in an intuitive way. The functions in [`crate::Context`] utilize
 /// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`].
 ///
@@ -46,7 +46,7 @@ use std::fmt;
 ///     - For [`crate::Context::influencers()`] and
 /// [`crate::Context::influencees()`], querying [`CtrlFlowsTo::data_flows_to`] Index
 /// vs [`DataAndControlInfluencees`] does not exhaustively
-/// return all type of [`crate::Node`]s since they only provide either [`DataSource`]
+/// return all type of [`crate::GlobalNode`]s since they only provide either [`DataSource`]
 /// influencers or [`CallSiteOrDataSink`] influencees.
 /// So, these functions add the [`NodeType::CallArgument`]s related to each
 /// [`NodeType::CallSite`] and the [`NodeType::CallSite`] related to each

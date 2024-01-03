@@ -1,10 +1,7 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
-use paralegal_spdg::{
-    CallString, Endpoint, HashMap, Identifier, Node as SPDGNode, ProgramDescription, SPDGImpl,
-    TypeId, SPDG,
-};
+use paralegal_spdg::{CallString, Endpoint, HashMap, Identifier, Node as SPDGNode, ProgramDescription, SPDGImpl, TypeId, SPDG, GlobalNode};
 
 use anyhow::{anyhow, bail, ensure, Result};
 use itertools::{Either, Itertools};
@@ -29,7 +26,7 @@ pub type ControllerId = LocalDefId;
 pub type FunctionId = DefId;
 
 /// Identifier for a graph element that allows attaching a marker.
-pub type MarkableId = Node;
+pub type MarkableId = GlobalNode;
 
 type MarkerIndex = HashMap<Marker, MarkerTargets>;
 type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
@@ -64,31 +61,8 @@ pub enum EdgeType {
     DataAndControl,
 }
 
-/// Data type representing nodes in the SPDG for a particular controller.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Node {
-    /// ControllerId of the node.
-    pub ctrl_id: ControllerId,
-    /// The data of the node.
-    pub inner: SPDGNode,
-}
-
-impl Node {
+impl GlobalNode {
     /// Transform a Node into the associated Node with typ [`NodeType::CallSite`]
-    pub fn associated_call_site(self, context: &Context) -> CallString {
-        context.desc.controllers[&self.ctrl_id]
-            .node_info(self.inner)
-            .at
-    }
-
-    /// Create a new node with no guarantee that it exists in the SPDG of the
-    /// controller.
-    fn unsafe_new(ctrl_id: ControllerId, index: usize) -> Self {
-        Node {
-            ctrl_id,
-            inner: SPDGNode::new(index),
-        }
-    }
 }
 
 use petgraph::visit::{GraphRef, IntoNeighbors, Visitable};
@@ -97,10 +71,10 @@ fn bfs_iter<
     G: IntoNeighbors + GraphRef + Visitable<NodeId = SPDGNode, Map = <SPDGImpl as Visitable>::Map>,
 >(
     g: G,
-    start: Node,
-) -> impl Iterator<Item = Node> {
+    start: GlobalNode,
+) -> impl Iterator<Item =GlobalNode> {
     let walker_iter = Walker::iter(Bfs::new(g, start.inner), g);
-    walker_iter.map(move |inner| Node {
+    walker_iter.map(move |inner| GlobalNode {
         ctrl_id: start.ctrl_id,
         inner,
     })
@@ -151,6 +125,13 @@ impl Context {
             name_map,
         }
     }
+
+    pub fn associated_call_site(&self, node: GlobalNode) -> CallString {
+        self.desc.controllers[&node.controller_id()]
+            .node_info(node.local_node())
+            .at
+    }
+
 
     /// Find all controllers that bare this name.
     ///
@@ -260,7 +241,7 @@ impl Context {
             .flat_map(|(&ctrl_id, spdg)| {
                 spdg.markers.iter().flat_map(move |(&inner, anns)| {
                     anns.iter()
-                        .map(move |marker| (*marker, Either::Left(Node { inner, ctrl_id })))
+                        .map(move |marker| (*marker, Either::Left(GlobalNode { inner, ctrl_id })))
                 })
             })
             .chain(desc.type_info.iter().flat_map(|(k, v)| {
@@ -288,7 +269,7 @@ impl Context {
     /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
     ///
     /// If you use flows_to with [`EdgeType::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
-    pub fn flows_to(&self, src: Node, sink: Node, edge_type: EdgeType) -> bool {
+    pub fn flows_to(&self, src: GlobalNode, sink: GlobalNode, edge_type: EdgeType) -> bool {
         if src.ctrl_id != sink.ctrl_id {
             return false;
         }
@@ -323,17 +304,17 @@ impl Context {
     ///
     /// If the controller with this id does not exist *or* the controller has
     /// fewer than `index` arguments.
-    pub fn controller_argument(&self, ctrl_id: ControllerId, index: u32) -> Option<Node> {
+    pub fn controller_argument(&self, ctrl_id: ControllerId, index: u32) -> Option<GlobalNode> {
         let ctrl = self.desc.controllers.get(&ctrl_id)?;
         let inner = *ctrl.arguments.get(index as usize)?;
 
-        Some(Node { ctrl_id, inner })
+        Some(GlobalNode { ctrl_id, inner })
     }
 
     /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:
     ///
     /// `some n where self.flows_to(influencer, n, EdgeType::Data) && self.flows_to(n, target, Edgetype::Control)`.
-    pub fn has_ctrl_influence(&self, influencer: Node, target: Node) -> bool {
+    pub fn has_ctrl_influence(&self, influencer: GlobalNode, target: GlobalNode) -> bool {
         self.flows_to(influencer, target, EdgeType::Control)
             || self
                 .influencees(influencer, EdgeType::Data)
@@ -345,9 +326,9 @@ impl Context {
     /// Does not return the input node. A CallSite sink will return all of the associated CallArgument nodes.
     pub fn influencers<'a>(
         &'a self,
-        sink: Node,
+        sink: GlobalNode,
         edge_type: EdgeType,
-    ) -> Box<dyn Iterator<Item = Node> + 'a> {
+    ) -> Box<dyn Iterator<Item =GlobalNode> + 'a> {
         use petgraph::visit::*;
         let cf_id = &sink.ctrl_id;
 
@@ -364,7 +345,7 @@ impl Context {
                     bfs_iter(&edges_filtered, sink)
                         .collect::<Vec<_>>()
                         .into_iter(),
-                ) as Box<dyn Iterator<Item = Node> + 'a>
+                ) as Box<dyn Iterator<Item =GlobalNode> + 'a>
             }
             EdgeType::Control => {
                 let edges_filtered =
@@ -387,9 +368,9 @@ impl Context {
     /// Does not return the input node. A CallArgument src will return the associated CallSite.
     pub fn influencees<'a>(
         &'a self,
-        src: Node,
+        src: GlobalNode,
         edge_type: EdgeType,
-    ) -> Box<dyn Iterator<Item = Node> + 'a> {
+    ) -> Box<dyn Iterator<Item =GlobalNode> + 'a> {
         let cf_id = &src.ctrl_id;
         let src_ctrl_id = src.ctrl_id;
 
@@ -399,8 +380,8 @@ impl Context {
             EdgeType::Data => Box::new(
                 self.flows_to[&cf_id].data_flows_to[src.inner.index()]
                     .iter_ones()
-                    .map(move |i| Node::unsafe_new(src_ctrl_id, i)),
-            ) as Box<dyn Iterator<Item = Node> + 'a>,
+                    .map(move |i| GlobalNode::unsafe_new(src_ctrl_id, i)),
+            ) as Box<dyn Iterator<Item =GlobalNode> + 'a>,
             EdgeType::DataAndControl => Box::new(bfs_iter(graph, src)) as Box<_>,
             EdgeType::Control => {
                 let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_control());
@@ -417,7 +398,7 @@ impl Context {
     }
 
     /// Returns an iterator over all objects marked with `marker`.
-    pub fn marked_nodes(&self, marker: Marker) -> impl Iterator<Item = Node> + '_ {
+    pub fn marked_nodes(&self, marker: Marker) -> impl Iterator<Item =GlobalNode> + '_ {
         self.report_marker_if_absent(marker);
         self.marker_to_ids
             .get(&marker)
@@ -427,7 +408,7 @@ impl Context {
     }
 
     /// Get the type(s) of a Node.
-    pub fn get_node_types(&self, node: Node) -> &[DefId] {
+    pub fn get_node_types(&self, node: GlobalNode) -> &[DefId] {
         self.desc.controllers[&node.ctrl_id]
             .types
             .get(&node.inner)
@@ -435,7 +416,7 @@ impl Context {
     }
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
-    pub fn has_marker(&self, marker: Marker, node: Node) -> bool {
+    pub fn has_marker(&self, marker: Marker, node: GlobalNode) -> bool {
         let types = self.get_node_types(node);
         if types.iter().any(|_t| {
             self.marker_to_ids
@@ -452,11 +433,11 @@ impl Context {
     }
 
     /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
-    pub fn all_nodes_for_ctrl(&self, ctrl_id: ControllerId) -> impl Iterator<Item = Node> + '_ {
+    pub fn all_nodes_for_ctrl(&self, ctrl_id: ControllerId) -> impl Iterator<Item =GlobalNode> + '_ {
         let ctrl = &self.desc.controllers[&ctrl_id];
         ctrl.graph
             .node_indices()
-            .map(move |inner| Node { ctrl_id, inner })
+            .map(move |inner| GlobalNode { ctrl_id, inner })
     }
 
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
@@ -464,12 +445,12 @@ impl Context {
         &self,
         ctrl_id: ControllerId,
         t: DefId,
-    ) -> impl Iterator<Item = Node> + '_ {
+    ) -> impl Iterator<Item =GlobalNode> + '_ {
         self.desc.controllers[&ctrl_id]
             .types
             .iter()
             .filter_map(move |(src, ids)| {
-                ids.0.contains(&t).then_some(Node {
+                ids.0.contains(&t).then_some(GlobalNode {
                     ctrl_id,
                     inner: *src,
                 })
@@ -481,10 +462,10 @@ impl Context {
         &self,
         ctrl_id: ControllerId,
         _edge_type: EdgeType,
-    ) -> impl Iterator<Item = Node> + '_ {
+    ) -> impl Iterator<Item =GlobalNode> + '_ {
         let g = &self.desc.controllers[&ctrl_id].graph;
         g.externals(Incoming)
-            .map(move |inner| Node { ctrl_id, inner })
+            .map(move |inner| GlobalNode { ctrl_id, inner })
     }
 
     /// Returns the input [`ProgramDescription`].
@@ -513,9 +494,9 @@ impl Context {
     /// always return the same result for the same input.
     pub fn always_happens_before(
         &self,
-        starting_points: impl Iterator<Item = Node>,
-        mut is_checkpoint: impl FnMut(Node) -> bool,
-        mut is_terminal: impl FnMut(Node) -> bool,
+        starting_points: impl Iterator<Item =GlobalNode>,
+        mut is_checkpoint: impl FnMut(GlobalNode) -> bool,
+        mut is_terminal: impl FnMut(GlobalNode) -> bool,
     ) -> Result<AlwaysHappensBefore> {
         let mut num_reached = 0;
         let mut num_checkpointed = 0;
@@ -529,7 +510,7 @@ impl Context {
             let g = &self.desc.controllers[&ctrl_id].graph;
             petgraph::visit::depth_first_search(g, starts, |event| match event {
                 DfsEvent::Discover(inner, _) => {
-                    let as_node = Node { ctrl_id, inner };
+                    let as_node = GlobalNode { ctrl_id, inner };
                     if is_checkpoint(as_node) {
                         num_checkpointed += 1;
                         Control::<()>::Prune
@@ -565,10 +546,10 @@ impl Context {
     /// in `to` if any exist.
     pub fn any_flows(
         &self,
-        from: &[Node],
-        to: &[Node],
+        from: &[GlobalNode],
+        to: &[GlobalNode],
         edge_type: EdgeType,
-    ) -> Option<(Node, Node)> {
+    ) -> Option<(GlobalNode, GlobalNode)> {
         from.iter().find_map(|src| {
             to.iter().find_map(|sink| {
                 self.flows_to(*src, *sink, edge_type)
@@ -588,7 +569,7 @@ impl Context {
     }
 
     /// Returns a DisplayNode for the given Node
-    pub fn describe_node(&self, node: Node) -> DisplayNode {
+    pub fn describe_node(&self, node: GlobalNode) -> DisplayNode {
         DisplayNode { ctx: self, node }
     }
 }
@@ -619,7 +600,7 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
 /// Provide display trait for Node in a Context.
 pub struct DisplayNode<'a> {
     /// Node to display.
-    pub node: Node,
+    pub node: GlobalNode,
     /// Context for the Node.
     pub ctx: &'a Context,
 }
@@ -780,7 +761,7 @@ fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
     let is_terminal =
-        |end: Node| -> bool { ctx.desc.controllers[&end.ctrl_id].return_ == end.inner };
+        |end: GlobalNode| -> bool { ctx.desc.controllers[&end.ctrl_id].return_ == end.inner };
 
     let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_pass"))?;
     let pass = ctx.always_happens_before(

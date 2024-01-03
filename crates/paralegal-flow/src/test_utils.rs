@@ -10,13 +10,16 @@ use crate::{
     HashSet, Symbol,
 };
 
-use paralegal_spdg::{rustc_portable::DefId, DefInfo, Node, NodeKind, SPDG};
+use paralegal_spdg::{rustc_portable::DefId, DefInfo, Node, NodeKind, SPDG, EdgeInfo};
 use rustc_middle::mir;
 
 use crate::pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
-use petgraph::visit::{Control, DfsEvent, EdgeRef};
+use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef};
 use std::path::Path;
+use petgraph::graph::EdgeReference;
+use crate::pdg::rustc_portable::LocalDefId;
+use crate::utils::CallStringExt;
 
 lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -49,16 +52,6 @@ pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
     rustc_span::create_default_session_if_not_set_then(|_| f())
 }
 
-/// Run paralegal-flow in the current directory, passing the
-/// `--dump-serialized-non-transitive-graph` flag, which dumps a
-/// [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow) for each controller.
-///
-/// The result is suitable for reading with
-/// [`read_non_transitive_graph_and_body`](crate::dbg::read_non_transitive_graph_and_body).
-pub fn run_paralegal_flow_with_graph_dump(dir: impl AsRef<Path>) -> bool {
-    run_paralegal_flow_with_graph_dump_and::<_, &str>(dir, [])
-}
-
 /// Crates a basic invocation of `cargo paralegal-flow`, ensuring that the `cargo-paralegal-flow`
 /// and `paralegal-flow` executables that were built from this project are (first) in the
 /// `PATH`.
@@ -88,30 +81,6 @@ pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
     cmd
 }
 
-/// Run paralegal-flow in the current directory, passing the
-/// `--dump-serialized-non-transitive-graph` flag, which dumps a
-/// [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow) for each controller.
-///
-/// The result is suitable for reading with
-/// [`read_non_transitive_graph_and_body`](crate::dbg::read_non_transitive_graph_and_body).
-///
-/// Allows for additional arguments to be passed to paralegal-flow
-pub fn run_paralegal_flow_with_graph_dump_and<I, S>(dir: impl AsRef<Path>, extra: I) -> bool
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<std::ffi::OsStr>,
-{
-    paralegal_flow_command(dir)
-        .args([
-            "--abort-after-analysis",
-            "--dump",
-            "serialized-non-transitive-graph",
-        ])
-        .args(extra)
-        .status()
-        .unwrap()
-        .success()
-}
 /// Run paralegal-flow in the current directory, passing the
 /// `--dump-serialized-flow-graph` which dumps the [`ProgramDescription`] as
 /// JSON.
@@ -160,36 +129,6 @@ macro_rules! define_test_skip {
     };
 }
 
-pub const CLEAN_TEMPORARIES: bool = true;
-
-/// A base template for tests that use the [G] representation.
-///
-/// This takes care of cleaning up the `.ntgb.json` files that are created for
-/// the tests. This is to ensure that tests cannot run on old versions of the
-/// output. Files are only removed if the test runs successfully.
-///
-/// Individual test files usually define a convenience macro that passes a
-/// test-file-global `analyze` and `crate_dir`.
-#[macro_export]
-macro_rules! define_G_test_template {
-    ($analyze:expr, $crate_dir:expr, $name:ident : $graph:ident -> $block:block) => {
-        #[test]
-        fn $name() {
-            assert!(*$analyze);
-            use_rustc(|| {
-                let $graph =
-                    with_current_directory($crate_dir, || G::from_file(Symbol::intern(stringify!($name)))).unwrap();
-                $block
-                if CLEAN_TEMPORARIES {
-                    let _guard = CWD_MUTEX.lock();
-                    let mut p : std::path::PathBuf = $crate_dir.into();
-                    p.push(concat!(stringify!($name), ".ntgb.json"));
-                    std::fs::remove_file(p).unwrap()
-                }
-            });
-        }
-    };
-}
 
 #[macro_export]
 macro_rules! define_flow_test_template {
@@ -215,42 +154,6 @@ pub fn run_forge(file: &str) -> bool {
         .success()
 }
 
-/// A deserialized version of [`CallOnlyFlow`](crate::ir::flows::CallOnlyFlow)
-pub struct G {
-    pub graph: CallOnlyFlow,
-    pub body: Bodies,
-    pub ctrl_name: Identifier,
-}
-
-pub trait GetCallSites {
-    fn get_call_sites(self, g: &CallOnlyFlow) -> HashSet<CallString>;
-}
-
-impl GetCallSites for GlobalLocation {
-    fn get_call_sites(self, g: &CallOnlyFlow) -> HashSet<CallString> {
-        g.all_locations_iter()
-            .filter(move |l| l.leaf() == self)
-            .copied()
-            .collect()
-    }
-}
-
-impl GetCallSites for CallString {
-    fn get_call_sites(self, _: &CallOnlyFlow) -> HashSet<CallString> {
-        [self].into_iter().collect()
-    }
-}
-
-pub trait MatchCallSite {
-    fn match_(self, call_site: CallString) -> bool;
-}
-
-impl MatchCallSite for GlobalLocation {
-    fn match_(self, call_site: CallString) -> bool {
-        self == call_site.leaf()
-    }
-}
-
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum EdgeSelection {
     Data,
@@ -264,237 +167,6 @@ impl EdgeSelection {
     }
     fn use_data(self) -> bool {
         matches!(self, EdgeSelection::Data | EdgeSelection::Both)
-    }
-}
-
-impl G {
-    /// Direct predecessor nodes of `n`
-    fn predecessors(&self, n: CallString) -> impl Iterator<Item = CallString> + '_ {
-        self.predecessors_configurable(n, EdgeSelection::Both)
-    }
-
-    pub fn connects_none_configurable<From: MatchCallSite + Copy>(
-        &self,
-        n: From,
-        dir: EdgeSelection,
-    ) -> bool {
-        self.graph.location_dependencies.iter().all(|(&c, deps)| {
-            let iter_all_dep_sets = || {
-                dir.use_data()
-                    .then_some(deps.input_deps.iter())
-                    .into_iter()
-                    .flatten()
-                    .chain(
-                        dir.use_control()
-                            .then_some([&deps.ctrl_deps].into_iter())
-                            .into_iter()
-                            .flatten(),
-                    )
-            };
-            (!n.match_(c) || iter_all_dep_sets().all(|d| d.is_empty()))
-                && iter_all_dep_sets().flatten().copied().all(|d| !n.match_(d))
-        })
-    }
-
-    pub fn connects_none<From: MatchCallSite + Copy>(&self, n: From) -> bool {
-        self.connects_none_configurable(n, EdgeSelection::Both)
-    }
-
-    fn predecessors_configurable(
-        &self,
-        n: CallString,
-        con_ty: EdgeSelection,
-    ) -> impl Iterator<Item = CallString> + '_ {
-        self.graph
-            .location_dependencies
-            .get(&n)
-            .into_iter()
-            .flat_map(move |deps| {
-                con_ty
-                    .use_control()
-                    .then(|| std::iter::once(&deps.ctrl_deps))
-                    .into_iter()
-                    .flatten()
-                    .chain(
-                        con_ty
-                            .use_data()
-                            .then(|| deps.input_deps.iter())
-                            .into_iter()
-                            .flatten(),
-                    )
-                    .flatten()
-            })
-            .copied()
-    }
-    pub fn connects<From: MatchCallSite + Copy, To: GetCallSites>(
-        &self,
-        from: From,
-        to: To,
-    ) -> bool {
-        self.connects_configurable(from, to, EdgeSelection::Both)
-    }
-
-    pub fn connects_data<From: MatchCallSite + Copy, To: GetCallSites>(
-        &self,
-        from: From,
-        to: To,
-    ) -> bool {
-        self.connects_configurable(from, to, EdgeSelection::Data)
-    }
-
-    pub fn connects_ctrl<From: MatchCallSite + Copy, To: GetCallSites>(
-        &self,
-        from: From,
-        to: To,
-    ) -> bool {
-        self.connects_configurable(from, to, EdgeSelection::Control)
-    }
-
-    /// Is there any path (using directed edges) from `from` to `to`.
-    pub fn connects_configurable<From: MatchCallSite + Copy, To: GetCallSites>(
-        &self,
-        from: From,
-        to: To,
-        con_ty: EdgeSelection,
-    ) -> bool {
-        let mut queue = to
-            .get_call_sites(&self.graph)
-            .into_iter()
-            .collect::<Vec<_>>();
-        let mut seen = HashSet::new();
-        while let Some(n) = queue.pop() {
-            if seen.contains(&n) {
-                continue;
-            } else {
-                seen.insert(n);
-            }
-            for next in self.predecessors_configurable(n, con_ty) {
-                if from.match_(next) {
-                    return true;
-                }
-                queue.push(next);
-            }
-        }
-        false
-    }
-
-    /// Is there an edge between `from` and `to`. Equivalent to testing if
-    /// `from` is in `g.predecessors(to)`.
-    pub fn connects_direct_data<From: MatchCallSite + Copy, To: GetCallSites>(
-        &self,
-        from: From,
-        to: To,
-    ) -> bool {
-        self.connects_direct_configurable(from, to, EdgeSelection::Data)
-    }
-
-    pub fn connects_direct<From: MatchCallSite + Copy, To: GetCallSites>(
-        &self,
-        from: From,
-        to: To,
-    ) -> bool {
-        self.connects_direct_configurable(from, to, EdgeSelection::Both)
-    }
-
-    pub fn connects_direct_ctrl<From: MatchCallSite + Copy, To: GetCallSites>(
-        &self,
-        from: From,
-        to: To,
-    ) -> bool {
-        self.connects_direct_configurable(from, to, EdgeSelection::Control)
-    }
-
-    fn connects_direct_configurable<From: MatchCallSite + Copy, To: GetCallSites>(
-        &self,
-        from: From,
-        to: To,
-        typ: EdgeSelection,
-    ) -> bool {
-        for to in to.get_call_sites(&self.graph).iter().copied() {
-            if self
-                .predecessors_configurable(to, typ)
-                .any(|l| from.match_(l))
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn returns_direct<From: MatchCallSite + Copy>(&self, from: From) -> bool {
-        self.graph
-            .return_dependencies
-            .iter()
-            .copied()
-            .any(|d| from.match_(d))
-    }
-
-    pub fn returns<From: MatchCallSite + Copy>(&self, from: From) -> bool {
-        self.returns_direct(from)
-            || self
-                .graph
-                .return_dependencies
-                .iter()
-                .any(|&r| self.connects(from, r))
-    }
-
-    /// Return all call sites for functions with names matching `pattern`.
-    pub fn function_calls(&self, pattern: &str) -> HashSet<GlobalLocation> {
-        self.body
-            .0
-            .iter()
-            .flat_map(|(bid, body)| {
-                body.1
-                     .0
-                    .iter()
-                    .filter(|s| s.contents.contains(pattern))
-                    .map(|s| GlobalLocation {
-                        function: bid.expect_local(),
-                        location: RichLocation::Location(s.location),
-                    })
-            })
-            .collect()
-    }
-
-    /// Like `function_calls` but requires that only one such call is found.
-    pub fn function_call(&self, pattern: &str) -> GlobalLocation {
-        let v = self.function_calls(pattern);
-        assert!(
-            v.len() == 1,
-            "function '{pattern}' should only occur once in {v:?} (found {})",
-            v.len()
-        );
-        v.into_iter().next().unwrap()
-    }
-
-    /// Deserialize from a `.ntgb.json` file for the controller named `s`
-    pub fn from_file(s: Symbol) -> Self {
-        let (graph, body) = crate::dbg::read_non_transitive_graph_and_body(
-            std::fs::File::open(format!("{}.ntgb.json", s.as_str())).unwrap(),
-        );
-        Self {
-            graph,
-            body,
-            ctrl_name: Identifier::new(s),
-        }
-    }
-    pub fn ctrl(&self) -> DefId {
-        *self
-            .body
-            .0
-            .iter()
-            .find_map(|(id, (name, _))| (*name == self.ctrl_name).then_some(id))
-            .unwrap()
-    }
-    /// Get the `n`th argument for this `bid` body.
-    pub fn argument(&self, bid: DefId, n: usize) -> mir::Location {
-        let body = &self.body.0[&bid];
-        body.1
-             .0
-            .iter()
-            .find(|InstructionProxy { contents, .. }| contents == format!("Argument _{n}").as_str())
-            .unwrap_or_else(|| panic!("Argument {n} not found in {:?}", body))
-            .location
     }
 }
 
@@ -514,9 +186,9 @@ pub trait HasGraph<'g>: Sized + Copy {
 
     fn function(self, name: impl AsRef<str>) -> FnRef<'g> {
         let name = Identifier::new_intern(name.as_ref());
-        let id = match self.graph().name_map[&name].as_slice() {
-            [one] => *one,
-            [] => panic!("Did not find name {name}"),
+        let id = match self.graph().name_map.get(&name).map(Vec::as_slice) {
+            Some([one]) => *one,
+            Some([]) | None => panic!("Did not find name {name}"),
             _ => panic!("Found too many function matching name {name}"),
         };
         FnRef {
@@ -534,12 +206,16 @@ pub trait HasGraph<'g>: Sized + Copy {
         CtrlRef {
             graph: self.graph(),
             ident,
-            ctrl: &self.graph().desc.controllers[&self.ctrl_hashed(name).expect_local()],
+            ctrl: &self.graph().desc.controllers[&self.ctrl_hashed(name)],
         }
     }
 
-    fn ctrl_hashed(self, name: &str) -> DefId {
-        match self.graph().name_map[&Identifier::new_intern(name)].as_slice() {
+    fn ctrl_hashed(self, name: &str) -> LocalDefId {
+        let candidates = self.graph().desc.controllers.iter()
+            .filter(|(id, info)| info.name.as_str() == name)
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
             [] => panic!("Could not find controller '{name}'"),
             [ctrl] => *ctrl,
             more => panic!("Too many matching controllers, found candidates: {more:?}"),
@@ -596,6 +272,38 @@ pub struct CtrlRef<'g> {
     graph: &'g PreFrg,
     ident: Identifier,
     ctrl: &'g SPDG,
+}
+
+impl<'g> CtrlRef<'g> {
+    pub fn return_value(&self) -> NodeRefs {
+        let graph = &self.ctrl.graph;
+        let nodes: Vec<_> = graph
+            .edge_references()
+            .filter(|e| {
+                let cs = e.weight().at;
+                cs.is_at_root() && cs.leaf().location.is_end()
+            })
+            .filter_map(|e| {
+                let src = e.source();
+                match graph.node_weight(src)?.kind {
+                    NodeKind::FormalReturn => Some(()),
+                    _ => None,
+                }?;
+                Some(src)
+            })
+            .collect();
+        // TODO include mutable return variables?
+        NodeRefs {
+            nodes,
+            graph: self,
+        }
+    }
+
+    pub fn returns(&self, other: &impl FlowsTo) -> bool {
+        other.flows_to_data(
+            &self.return_value()
+        )
+    }
 }
 
 impl<'g> PartialEq for CtrlRef<'g> {
@@ -763,10 +471,6 @@ impl<'g> HasGraph<'g> for &NodeRef<'g> {
 }
 
 impl<'g> NodeRef<'g> {
-    fn flows_to(&self, other: &NodeRef<'g>) -> bool {
-        petgraph::algo::has_path_connecting(&self.graph.ctrl.graph, self.node, other.node, None)
-    }
-
     pub fn node(&self) -> Node {
         self.node
     }
@@ -805,7 +509,31 @@ pub trait FlowsTo {
     fn spdg(&self) -> &SPDG;
     fn spdg_ident(&self) -> Identifier;
 
-    fn flows_to(&self, other: &impl FlowsTo) -> bool {
+    fn flows_to_data(&self, other: &impl FlowsTo) -> bool {
+        self.flows_to(other, EdgeSelection::Data)
+    }
+
+    fn flows_to_ctrl(&self, other: &impl FlowsTo) -> bool {
+        self.flows_to(other, EdgeSelection::Control)
+    }
+
+    fn flows_to_any(&self, other: &impl FlowsTo) -> bool {
+        self.flows_to(other, EdgeSelection::Both)
+    }
+
+    fn is_neighbor_ctrl(&self, other: &impl FlowsTo) -> bool {
+        self.is_neighbor(other, EdgeSelection::Control)
+    }
+
+    fn is_neighbor_data(&self, other: &impl FlowsTo) -> bool {
+        self.is_neighbor(other, EdgeSelection::Data)
+    }
+
+    fn is_neighbor_any(&self, other: &impl FlowsTo) -> bool {
+        self.is_neighbor(other, EdgeSelection::Both)
+    }
+
+    fn is_neighbor(&self, other: &impl FlowsTo, edge_selection: EdgeSelection) -> bool {
         if self.spdg_ident() != other.spdg_ident() {
             return false;
         }
@@ -814,8 +542,53 @@ pub trait FlowsTo {
         if starts.peek().is_none() {
             return false;
         }
+        starts.any(|n|
+            self.spdg().graph.edges(n)
+                .filter(|e|
+                    match edge_selection {
+                        EdgeSelection::Data => {
+                            e.weight().is_data()
+                        }
+                        EdgeSelection::Control => {
+                            e.weight().is_control()
+                        }
+                        EdgeSelection::Both => {
+                            true
+                        }
+                    }
+                )
+                .any(|e|
+                    targets.contains(&e.target())
+                )
+        )
+    }
+
+    fn flows_to(&self, other: &impl FlowsTo, edge_selection: EdgeSelection) -> bool {
+        if self.spdg_ident() != other.spdg_ident() {
+            return false;
+        }
+        let targets = other.nodes().iter().copied().collect::<HashSet<_>>();
+        let mut starts = self.nodes().iter().copied().peekable();
+        if starts.peek().is_none() {
+            return false;
+        }
+        fn data_only(e: EdgeReference<EdgeInfo>) -> bool {
+            e.weight().is_data()
+        }
+        fn control_only(e: EdgeReference<EdgeInfo>) -> bool {
+            e.weight().is_data()
+        }
+        fn all_edges(e: EdgeReference<EdgeInfo>) -> bool {
+            e.weight().is_data()
+        }
+        type F = fn(EdgeReference<EdgeInfo>) -> bool;
+        let graph = match edge_selection {
+            EdgeSelection::Data => EdgeFiltered(&self.spdg().graph, data_only as F),
+            EdgeSelection::Control => EdgeFiltered(&self.spdg().graph, control_only as F),
+            EdgeSelection::Both => EdgeFiltered(&self.spdg().graph, all_edges as F),
+        };
         let result =
-            petgraph::visit::depth_first_search(&self.spdg().graph, starts, |event| match event {
+            petgraph::visit::depth_first_search(&graph, starts, |event| match event {
                 DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
                 _ => Control::Continue,
             });

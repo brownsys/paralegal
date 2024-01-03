@@ -1,6 +1,6 @@
 use crate::Context;
 use crate::ControllerId;
-use crate::Node;
+use crate::GlobalNode;
 use paralegal_flow::test_utils::PreFrg;
 use paralegal_spdg::{Identifier, InstructionInfo, Node as SPDGNode, SPDG};
 use std::sync::Arc;
@@ -22,7 +22,7 @@ pub fn get_callsite_or_datasink_node<'a>(
     ctx: &'a Context,
     controller: ControllerId,
     name: &'a str,
-) -> Option<Node> {
+) -> Option<GlobalNode> {
     Some(get_callsite_node(ctx, controller, name).unwrap_or(get_sink_node(ctx, controller, name)?))
 }
 
@@ -30,13 +30,13 @@ pub fn get_callsite_node<'a>(
     ctx: &'a Context,
     controller: ControllerId,
     name: &'a str,
-) -> Option<Node> {
+) -> Option<GlobalNode> {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl
         .call_sites()
         .find(|callsite| is_at_function_call_with_name(ctx, ctrl, name, *callsite))?;
-    Some(crate::Node {
+    Some(crate::GlobalNode {
         ctrl_id: controller,
         inner,
     })
@@ -61,13 +61,13 @@ pub fn get_sink_node<'a>(
     ctx: &'a Context,
     controller: ControllerId,
     name: &'a str,
-) -> Option<Node> {
+) -> Option<GlobalNode> {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl
         .data_sinks()
         .find(|sink| is_at_function_call_with_name(ctx, ctrl, name, *sink))?;
-    Some(crate::Node {
+    Some(crate::GlobalNode {
         ctrl_id: controller,
         inner,
     })

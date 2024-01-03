@@ -169,11 +169,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 }
                 tcx.sess.abort_if_errors();
                 info!("All elems walked");
-                let result_path = compiler
-                    .build_output_filenames(compiler.session(), &[])
-                    .with_extension("ana.frg");
 
-                warn!("Due to potential overwrite issues with --result-path (with multiple targets in a crate) outputs were written to {} and {}", self.opts.result_path().display(), &result_path.display());
                 anyhow::Ok(
                     if self.opts.abort_after_analysis() {
                         rustc_driver::Compilation::Stop

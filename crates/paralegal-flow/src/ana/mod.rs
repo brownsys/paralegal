@@ -253,7 +253,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 {
                     let function_id = leaf_loc.function.to_def_id();
                     let arg_num = weight.place.local.as_u32() - 1;
-                    known_def_ids.extend(Some(leaf_loc.function.to_def_id()));
+                    known_def_ids.extend(Some(function_id));
 
                     let (annotations, parent) = self.annotations_for_function(function_id, |ann| {
                         ann.refinement.on_argument().contains(arg_num).unwrap()
@@ -270,6 +270,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 }
                 RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
                     let function_id = leaf_loc.function.to_def_id();
+                    known_def_ids.extend(Some(function_id));
                     let (annotations, parent) = self
                         .annotations_for_function(function_id, |ann| ann.refinement.on_return());
                     known_def_ids.extend(parent);
@@ -301,6 +302,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                             .filter_map(|(i, op)| matches_place(op.place()?).then_some(i as u32))
                             .collect::<TinyBitSet>();
                         let (fun, ..) = term.as_fn_and_args(self.tcx).unwrap();
+                        known_def_ids.extend(Some(fun));
                         let is_external = !fun.is_local();
                         let kind = if !indices.is_empty() {
                             NodeKind::ActualParameter(indices)
