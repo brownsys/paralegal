@@ -9,9 +9,12 @@ use crate::{
     MarkerCtx, Symbol,
 };
 use std::borrow::Cow;
+use std::fmt::{Display, Formatter};
 
 use anyhow::Result;
 use flowistry::pdg::graph::{DepEdgeKind, DepGraph};
+use paralegal_spdg::utils::display_list;
+use petgraph::graph::NodeIndex;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
 
 use super::discover::FnToAnalyze;
@@ -67,14 +70,28 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let mut return_candidates = graph
             .node_references()
             .filter(|n| {
-                let at = n.weight().at;
-                let is_candidate = at.is_at_root() && at.leaf().location == RichLocation::End;
+                let weight = n.weight();
+                let at = weight.at;
+                let is_candidate = weight.kind.is_formal_return()
+                    && at.is_at_root()
+                    && at.leaf().location == RichLocation::End;
                 assert!(!is_candidate || target == at.leaf().function);
                 is_candidate
             })
-            .map(|n| n.id());
+            .map(|n| n.id())
+            .peekable();
         let picked = return_candidates.next().unwrap();
-        assert!(return_candidates.next().is_none());
+        assert!(
+            return_candidates.peek().is_none(),
+            "Found too many candidates for the return. {} was picked but also \
+            found {}",
+            DisplayNode::pretty(picked, graph),
+            display_list(
+                return_candidates
+                    .map(|i| DisplayNode::pretty(i, graph))
+                    .collect::<Vec<_>>()
+            ),
+        );
         picked
     }
 
@@ -393,14 +410,17 @@ impl<'tcx> SPDGGenerator<'tcx> {
     ) -> mir::tcx::PlaceTy<'tcx> {
         let mut generics = None;
 
-        let locations = at.iter().collect::<Vec<_>>();
+        let locations = at.iter_from_root().collect::<Vec<_>>();
         let (last, rest) = locations.split_last().unwrap();
 
         // Thread through each caller to recover generic arguments
         for caller in rest {
             let body = &self.tcx.body_for_def_id(caller.function).unwrap().body;
             let RichLocation::Location(loc) = caller.location else {
-                unreachable!()
+                unreachable!(
+                    "Segment {} in {}, segments: {locations:?}",
+                    caller.location, at
+                );
             };
             let crate::Either::Right(terminator) = body.stmt_at(loc) else {
                 unreachable!()

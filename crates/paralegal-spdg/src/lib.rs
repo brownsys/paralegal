@@ -40,6 +40,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::IntoNodeIdentifiers;
 pub use std::collections::{HashMap, HashSet};
+use std::fmt::{Display, Formatter};
 
 pub type Endpoint = LocalDefId;
 pub type TypeId = DefId;
@@ -435,14 +436,14 @@ impl Identifier {
     }
 }
 
-impl std::fmt::Debug for Identifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.0.as_ref().fmt(f)
+impl fmt::Debug for Identifier {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        fmt::Display::fmt(self.0.as_ref(), f)
     }
 }
 
-impl std::fmt::Display for Identifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+impl Display for Identifier {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         self.0.as_ref().fmt(f)
     }
 }
@@ -498,6 +499,22 @@ pub enum NodeKind {
     ActualParameter(TinyBitSet),
     ActualReturn,
     Unspecified,
+}
+
+impl Display for NodeKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeKind::FormalParameter(i) => {
+                write!(f, "Formal Parameter [{i}]")
+            }
+            NodeKind::FormalReturn => f.write_str("Formal Return"),
+            NodeKind::ActualParameter(p) => {
+                write!(f, "Actual Parameters {}", p.display_pretty())
+            }
+            NodeKind::ActualReturn => f.write_str("Actual Return"),
+            NodeKind::Unspecified => f.write_str("Unspecified"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -563,5 +580,50 @@ impl SPDG {
     /// Gather all [`Node`]s that are mentioned in this controller including data and control flow.
     pub fn all_sources(&self) -> impl Iterator<Item = Node> + '_ {
         self.graph.node_identifiers().map(Into::into)
+    }
+}
+
+/// A structure with a [`Display`] implementation that shows information about a
+/// node index in a given graph.
+#[derive(Clone)]
+pub struct DisplayNode<'a> {
+    node: NodeIndex,
+    graph: &'a SPDGImpl,
+    detailed: bool,
+}
+
+impl<'a> DisplayNode<'a> {
+    pub fn pretty(node: NodeIndex, graph: &'a SPDGImpl) -> Self {
+        Self {
+            node,
+            graph,
+            detailed: true,
+        }
+    }
+
+    pub fn simple(node: NodeIndex, graph: &'a SPDGImpl) -> Self {
+        Self {
+            node,
+            graph,
+            detailed: false,
+        }
+    }
+}
+
+impl<'a> Display for DisplayNode<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let weight = self.graph.node_weight(self.node).unwrap();
+        if self.detailed {
+            write!(
+                f,
+                "{{{}}} ({}) {} @ {}",
+                self.node.index(),
+                weight.kind,
+                weight.description,
+                weight.at
+            )
+        } else {
+            write!(f, "{{{}}} {}", self.node.index(), weight.description)
+        }
     }
 }

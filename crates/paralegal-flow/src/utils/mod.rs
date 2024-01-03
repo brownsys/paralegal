@@ -1172,6 +1172,10 @@ pub trait CallStringExt: Sized {
     fn root(self) -> GlobalLocation;
     /// A unique number that represents this object
     fn stable_id(self) -> u64;
+
+    /// Opposite of [`CallString::iter`] where we iterate the locations with the
+    /// root first.
+    fn iter_from_root(self) -> std::vec::IntoIter<GlobalLocation>;
 }
 
 impl CallStringExt for CallString {
@@ -1180,13 +1184,19 @@ impl CallStringExt for CallString {
     }
 
     fn root(self) -> GlobalLocation {
-        self.iter().next().unwrap()
+        self.iter().last().unwrap()
     }
 
     /// XXX: Currently uses a hash, should ideally be the pointer value of the
     /// interned object though.
     fn stable_id(self) -> u64 {
         paralegal_spdg::hash_pls(self)
+    }
+
+    fn iter_from_root(self) -> std::vec::IntoIter<GlobalLocation> {
+        let mut from_leaf = self.iter().collect::<Vec<_>>();
+        from_leaf.reverse();
+        from_leaf.into_iter()
     }
 }
 

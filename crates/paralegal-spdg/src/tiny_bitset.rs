@@ -1,3 +1,6 @@
+use crate::utils::display_list;
+use std::fmt::{Display, Formatter, Write};
+
 /// A bit-set implemented with a [`u16`], supporting domains up to 16 elements.
 #[derive(
     Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Copy, serde::Serialize, serde::Deserialize,
@@ -60,6 +63,7 @@ impl TinyBitSet {
         index < 16
     }
 
+    /// How many bits are set to `true`?
     #[inline]
     pub fn count(self) -> u32 {
         self.0.count_ones()
@@ -72,14 +76,23 @@ impl TinyBitSet {
             .then(|| ((self.0.checked_shr(index).unwrap_or(1)) & 1) == 1)
     }
 
+    /// Similar to [`Self::contains`] but in the case of an `index` outside the
+    /// domain it returns `false` instead of `None`.
     #[inline]
     pub fn is_set(self, index: u32) -> bool {
         self.contains(index) == Some(true)
     }
 
+    /// Iterate over all set indices that are within the domain (less than 16).
     #[inline]
-    pub fn into_iter_set_in_domain(self) -> impl Iterator<Item = u32> {
+    pub fn into_iter_set_in_domain(self) -> impl Iterator<Item = u32> + Clone {
         (0..16).filter(move |i| self.contains(*i).unwrap_or(false))
+    }
+
+    /// Create a struct with a pretty [`Display`] implementation for this tiny
+    /// bit set.
+    pub fn display_pretty(self) -> DisplayTinyBitSet {
+        DisplayTinyBitSet { set: self }
     }
 }
 
@@ -129,6 +142,16 @@ impl std::ops::BitXor for TinyBitSet {
 impl std::ops::BitXorAssign for TinyBitSet {
     fn bitxor_assign(&mut self, rhs: Self) {
         self.0.bitxor_assign(rhs.0)
+    }
+}
+
+pub struct DisplayTinyBitSet {
+    set: TinyBitSet,
+}
+
+impl Display for DisplayTinyBitSet {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        display_list(self.set.into_iter_set_in_domain()).fmt(f)
     }
 }
 

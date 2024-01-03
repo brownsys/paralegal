@@ -1,4 +1,5 @@
 use std::fmt;
+use std::fmt::{Display, Formatter, Write};
 
 pub fn write_sep<
     E,
@@ -20,6 +21,22 @@ pub fn write_sep<
         f(e, fmt)?;
     }
     Ok(())
+}
+
+pub struct DisplayList<I> {
+    iter: I,
+}
+
+pub fn display_list<I>(iter: I) -> DisplayList<I> {
+    DisplayList { iter }
+}
+
+impl<E: Display, I: IntoIterator<Item = E> + Clone> Display for DisplayList<I> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_char('[')?;
+        write_sep(f, ", ", self.iter.clone(), |e, f| e.fmt(f))?;
+        f.write_char(']')
+    }
 }
 
 pub mod serde_map_via_vec {
