@@ -100,7 +100,7 @@ where
     S: AsRef<std::ffi::OsStr>,
 {
     paralegal_flow_command(dir)
-        .args(["--abort-after-analysis", "--dump", "serialized-flow-graph"])
+        .args(["--abort-after-analysis"])
         .args(extra)
         .status()
         .unwrap()

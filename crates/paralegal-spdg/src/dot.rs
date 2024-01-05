@@ -96,7 +96,12 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
 
             for n in nodes {
                 let weight = ctrl.graph.node_weight(*n).unwrap();
-                write!(s, "|<p{}>{}", n.index(), weight.description.replace("<", "&lt;").replace(">","&gt;"))?;
+                write!(
+                    s,
+                    "|<p{}>{}",
+                    n.index(),
+                    weight.description.replace("<", "&lt;").replace(">", "&gt;")
+                )?;
             }
 
             Ok::<_, std::fmt::Error>(s)

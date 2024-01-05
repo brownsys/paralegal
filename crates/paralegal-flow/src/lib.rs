@@ -158,7 +158,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
 
-                if self.opts.dbg().dump_call_only_flow() {
+                if self.opts.dbg().dump_spdg() {
                     let out = std::fs::File::create("call-only-flow.gv").unwrap();
                     paralegal_spdg::dot::dump(&desc, out).unwrap();
                 }

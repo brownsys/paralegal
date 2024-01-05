@@ -16,7 +16,8 @@ use crate::{
     utils::{body_name_pls, TyCtxtExt},
     HashMap, HashSet,
 };
-extern crate dot;
+
+pub mod dot;
 
 pub fn print_flowistry_matrix<'a: 'tcx, 'tcx, W: std::io::Write>(
     mut out: W,

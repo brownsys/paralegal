@@ -35,6 +35,7 @@ use std::{cell::RefCell, default::Default, hash::Hash, pin::Pin};
 pub mod resolve;
 
 mod print;
+
 pub use print::*;
 
 use crate::utils::FnResolution::{Final, Partial};

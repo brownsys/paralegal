@@ -5,7 +5,7 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
-    desc::*, rust::*, utils::*, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
+    dbg, desc::*, rust::*, utils::*, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
@@ -50,6 +50,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let local_def_id = target.def_id.expect_local();
 
         let flowistry_graph = flowistry::pdg::compute_pdg(self.tcx, local_def_id);
+        if self.opts.dbg().dump_flowistry_pdg() {
+            let out = std::fs::File::create(format!("{}.flowistry-pdg.gv", target.name)).unwrap();
+            dbg::dot::dump(&flowistry_graph, self.tcx, out).unwrap();
+        }
         let (graph, types, markers) = self.convert_graph(&flowistry_graph, known_def_ids);
         let arguments = self.determine_arguments(local_def_id, &graph);
         let return_ = self.determine_return(local_def_id, &graph);

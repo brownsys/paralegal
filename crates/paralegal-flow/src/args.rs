@@ -233,41 +233,11 @@ impl FromIterator<DumpOption> for DumpArgs {
     num_derive::FromPrimitive,
 )]
 enum DumpOption {
-    /// For each controller dump a dot representation for each [`mir::Body`] as
-    /// provided by rustc
-    CtrlMir,
-    /// For each controller dumps the calculated dataflow graphs as well as
-    /// information about the MIR to <name of controller>.ntgb.json. Can be
-    /// deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
-    SerializedNonTransitiveGraph,
-    /// Dumps a dot graph representation of the dataflow between function calls
-    /// calculated for each controller to <name of controller>.call-only-flow.gv
-    CallOnlyFlow,
-    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json)
-    /// format to "flow-graph.json". Used for testing.
-    SerializedFlowGraph,
-    /// Dump a `.df` file for each called function describing the dataflow
-    /// matrices calculated by the flowistry-style dataflow analysis
-    DataflowAnalysisResult,
-    /// Dump a `.inlined-pruned.gv` PDG for each called function describing the flow graph
-    /// after pruning with the place algebra (only useful without `--no-pruning`)
-    InlinedPrunedGraph,
-    /// Dump a `.inlined.gv` PDG after inlining called functions, but before pruning
-    InlinedGraph,
+    FlowistryPDG,
+    SPDG,
     /// Dump the MIR (`.mir`) of each called function (irrespective of whether they are a
     /// controller)
-    CalleeMir,
-    /// Dump the flow PDG before inlining the called functions
-    PreInlineGraph,
-    /// Dump a representation of the "regal" IR for each function (`.regal`)
-    RegalIr,
-    /// Dump the equations before inlining (`.local.eqs`)
-    LocalEquations,
-    /// Dump the equations after inlining (`.global.eqs`)
-    GlobalEquations,
-    LocalsGraph,
-    /// Deprecated alias for `dump_call_only_flow`
-    NonTransitiveGraph,
+    Mir,
     /// Dump everything we know of
     All,
 }
@@ -531,44 +501,13 @@ impl DumpArgs {
     fn has(&self, opt: DumpOption) -> bool {
         self.0.contains(DumpOption::All as u32).unwrap() || self.0.contains(opt as u32).unwrap()
     }
-    pub fn dump_ctrl_mir(&self) -> bool {
-        self.has(DumpOption::CtrlMir)
+
+    pub fn dump_flowistry_pdg(&self) -> bool {
+        self.has(DumpOption::FlowistryPDG)
     }
-    pub fn dump_serialized_non_transitive_graph(&self) -> bool {
-        self.has(DumpOption::SerializedNonTransitiveGraph)
-    }
-    pub fn dump_call_only_flow(&self) -> bool {
-        self.has(DumpOption::NonTransitiveGraph) || self.has(DumpOption::CallOnlyFlow)
-    }
-    pub fn dump_serialized_flow_graph(&self) -> bool {
-        self.has(DumpOption::SerializedFlowGraph)
-    }
-    pub fn dump_dataflow_analysis_result(&self) -> bool {
-        self.has(DumpOption::DataflowAnalysisResult)
-    }
-    pub fn dump_inlined_pruned_graph(&self) -> bool {
-        self.has(DumpOption::InlinedPrunedGraph)
-    }
-    pub fn dump_inlined_graph(&self) -> bool {
-        self.has(DumpOption::InlinedGraph)
-    }
-    pub fn dump_callee_mir(&self) -> bool {
-        self.has(DumpOption::CalleeMir)
-    }
-    pub fn dump_pre_inline_graph(&self) -> bool {
-        self.has(DumpOption::PreInlineGraph)
-    }
-    pub fn dump_regal_ir(&self) -> bool {
-        self.has(DumpOption::RegalIr)
-    }
-    pub fn dump_local_equations(&self) -> bool {
-        self.has(DumpOption::LocalEquations)
-    }
-    pub fn dump_global_equations(&self) -> bool {
-        self.has(DumpOption::GlobalEquations)
-    }
-    pub fn dump_locals_graph(&self) -> bool {
-        self.has(DumpOption::LocalsGraph)
+
+    pub fn dump_spdg(&self) -> bool {
+        self.has(DumpOption::SPDG)
     }
 }
 
