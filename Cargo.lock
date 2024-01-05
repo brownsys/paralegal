@@ -358,7 +358,6 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 [[package]]
 name = "flowistry"
 version = "0.5.41"
-source = "git+https://github.com/willcrichton/flowistry?rev=af8b6eb#af8b6eb7ac8fe780665b6e2decfacad48ee5d5bc"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -376,7 +375,6 @@ dependencies = [
 [[package]]
 name = "flowistry_pdg"
 version = "0.1.0"
-source = "git+https://github.com/willcrichton/flowistry?rev=af8b6eb#af8b6eb7ac8fe780665b6e2decfacad48ee5d5bc"
 dependencies = [
  "cfg-if",
  "internment",

@@ -5,8 +5,7 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
-    desc::*, rust::*, utils::CallStringExt, utils::*, DefId, HashMap, HashSet, LogLevelConfig,
-    MarkerCtx, Symbol,
+    desc::*, rust::*, utils::*, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};

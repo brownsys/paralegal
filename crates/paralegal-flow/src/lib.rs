@@ -155,28 +155,30 @@ impl rustc_driver::Callbacks for Callbacks {
             .enter(|tcx| {
                 tcx.sess.abort_if_errors();
                 let desc = discover::CollectingVisitor::new(tcx, self.opts).run()?;
-                if self.opts.dbg().dump_serialized_flow_graph() {
-                    serde_json::to_writer(
-                        &mut std::fs::OpenOptions::new()
-                            .truncate(true)
-                            .create(true)
-                            .write(true)
-                            .open(self.opts.graph_loc_path.clone())
-                            .unwrap(),
-                        &desc,
-                    )
-                    .unwrap();
-                }
-                tcx.sess.abort_if_errors();
                 info!("All elems walked");
+                tcx.sess.abort_if_errors();
 
-                anyhow::Ok(
-                    if self.opts.abort_after_analysis() {
-                        rustc_driver::Compilation::Stop
-                    } else {
-                        rustc_driver::Compilation::Continue
-                    }
+                if self.opts.dbg().dump_call_only_flow() {
+                    let out = std::fs::File::create("call-only-flow.gv").unwrap();
+                    paralegal_spdg::dot::dump(&desc, out).unwrap();
+                }
+
+                serde_json::to_writer(
+                    &mut std::fs::OpenOptions::new()
+                        .truncate(true)
+                        .create(true)
+                        .write(true)
+                        .open(self.opts.graph_loc_path.clone())
+                        .unwrap(),
+                    &desc,
                 )
+                .unwrap();
+
+                anyhow::Ok(if self.opts.abort_after_analysis() {
+                    rustc_driver::Compilation::Stop
+                } else {
+                    rustc_driver::Compilation::Continue
+                })
             })
             .unwrap()
     }

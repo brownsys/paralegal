@@ -22,6 +22,7 @@ extern crate strum;
 
 pub use flowistry_pdg::*;
 
+pub mod dot;
 mod tiny_bitset;
 pub mod utils;
 
@@ -35,7 +36,7 @@ use utils::serde_map_via_vec;
 
 pub use crate::tiny_bitset::TinyBitSet;
 use flowistry_pdg::rustc_portable::LocalDefId;
-use petgraph::graph::NodeIndex;
+use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::IntoNodeIdentifiers;
 pub use std::collections::{HashMap, HashSet};
@@ -501,6 +502,13 @@ impl GlobalNode {
         }
     }
 
+    pub fn from_local_node(ctrl_id: LocalDefId, node: Node) -> Self {
+        GlobalNode {
+            controller_id: ctrl_id,
+            node,
+        }
+    }
+
     pub fn local_node(self) -> Node {
         self.node
     }
@@ -512,30 +520,13 @@ impl GlobalNode {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GlobalEdge {
-    from: Node,
-    to: Node,
+    index: EdgeIndex,
     controller_id: LocalDefId,
 }
 
 impl GlobalEdge {
-    pub fn local_source(self) -> Node {
-        self.from
-    }
-
-    pub fn local_target(self) -> Node {
-        self.to
-    }
-
     pub fn controller_id(self) -> LocalDefId {
         self.controller_id
-    }
-
-    pub fn unsafe_new(controller_id: LocalDefId, from: usize, to: usize) -> Self {
-        Self {
-            controller_id,
-            from: Node::new(from),
-            to: Node::new(to),
-        }
     }
 }
 

@@ -2,7 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{define_test_skip, define_flow_test_template, test_utils::*, Symbol};
+use paralegal_flow::{define_flow_test_template, define_test_skip, test_utils::*, Symbol};
 
 const CRATE_DIR: &str = "tests/non-transitive-graph-tests";
 

@@ -14,7 +14,8 @@ test = []
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }
 
-flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "af8b6eb" }
+flowistry = { path = "../../../flowistry/crates/flowistry" }
+#flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "af8b6eb" }
 
 rustc_plugin = "=0.7.4-nightly-2023-08-25"
 rustc_utils = { version = "=0.7.4-nightly-2023-08-25", features = ["indexical"] }

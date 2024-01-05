@@ -475,28 +475,6 @@ impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisit
     }
 }
 
-/// Extension trait for [`Location`]. This lets us implement methods on
-/// [`Location`]. [`Self`] is only ever supposed to be instantiated as
-/// [`Location`].
-pub trait LocationExt {
-    /// This function deals with the fact that flowistry uses special locations
-    /// to refer to function arguments. Those locations are not recognized the
-    /// rustc functions that operate on MIR and thus need to be filtered before
-    /// doing things such as indexing into a `mir::Body`.
-    fn is_real(&self, body: &mir::Body) -> bool;
-}
-
-impl LocationExt for Location {
-    fn is_real(&self, body: &mir::Body) -> bool {
-        body.basic_blocks.get(self.block).map(|bb|
-                // Its `<=` because if len == statement_index it refers to the
-                // terminator
-                // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
-                self.statement_index <= bb.statements.len())
-            == Some(true)
-    }
-}
-
 /// Return the places that are read in this statements and possible ref/deref
 /// un-layerings of those places.
 ///
@@ -1163,51 +1141,6 @@ impl IntoBodyId for LocalDefId {
 impl IntoBodyId for DefId {
     fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
         self.as_local()?.into_body_id(tcx)
-    }
-}
-
-pub trait CallStringExt: Sized {
-    #[allow(clippy::wrong_self_convention)]
-    fn is_at_root(self) -> bool;
-    fn root(self) -> GlobalLocation;
-    /// A unique number that represents this object
-    fn stable_id(self) -> u64;
-
-    /// Opposite of [`CallString::iter`] where we iterate the locations with the
-    /// root first.
-    fn iter_from_root(self) -> std::vec::IntoIter<GlobalLocation>;
-}
-
-impl CallStringExt for CallString {
-    fn is_at_root(self) -> bool {
-        self.iter().count() == 1
-    }
-
-    fn root(self) -> GlobalLocation {
-        self.iter().last().unwrap()
-    }
-
-    /// XXX: Currently uses a hash, should ideally be the pointer value of the
-    /// interned object though.
-    fn stable_id(self) -> u64 {
-        paralegal_spdg::hash_pls(self)
-    }
-
-    fn iter_from_root(self) -> std::vec::IntoIter<GlobalLocation> {
-        let mut from_leaf = self.iter().collect::<Vec<_>>();
-        from_leaf.reverse();
-        from_leaf.into_iter()
-    }
-}
-
-trait RichLocationExt {
-    #[allow(clippy::wrong_self_convention)]
-    fn is_real(self) -> bool;
-}
-
-impl RichLocationExt for RichLocation {
-    fn is_real(self) -> bool {
-        matches!(self, RichLocation::Location(_))
     }
 }
 

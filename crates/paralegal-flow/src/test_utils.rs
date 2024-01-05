@@ -10,16 +10,15 @@ use crate::{
     HashSet, Symbol,
 };
 
-use paralegal_spdg::{rustc_portable::DefId, DefInfo, Node, NodeKind, SPDG, EdgeInfo};
+use paralegal_spdg::{rustc_portable::DefId, DefInfo, EdgeInfo, Node, NodeKind, SPDG};
 use rustc_middle::mir;
 
+use crate::pdg::rustc_portable::LocalDefId;
 use crate::pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
+use petgraph::graph::EdgeReference;
 use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef};
 use std::path::Path;
-use petgraph::graph::EdgeReference;
-use crate::pdg::rustc_portable::LocalDefId;
-use crate::utils::CallStringExt;
 
 lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -129,7 +128,6 @@ macro_rules! define_test_skip {
     };
 }
 
-
 #[macro_export]
 macro_rules! define_flow_test_template {
     ($analyze:expr, $crate_name:expr, $name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
@@ -211,7 +209,11 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 
     fn ctrl_hashed(self, name: &str) -> LocalDefId {
-        let candidates = self.graph().desc.controllers.iter()
+        let candidates = self
+            .graph()
+            .desc
+            .controllers
+            .iter()
             .filter(|(id, info)| info.name.as_str() == name)
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
@@ -293,16 +295,11 @@ impl<'g> CtrlRef<'g> {
             })
             .collect();
         // TODO include mutable return variables?
-        NodeRefs {
-            nodes,
-            graph: self,
-        }
+        NodeRefs { nodes, graph: self }
     }
 
     pub fn returns(&self, other: &impl FlowsTo) -> bool {
-        other.flows_to_data(
-            &self.return_value()
-        )
+        other.flows_to_data(&self.return_value())
     }
 }
 
@@ -542,25 +539,17 @@ pub trait FlowsTo {
         if starts.peek().is_none() {
             return false;
         }
-        starts.any(|n|
-            self.spdg().graph.edges(n)
-                .filter(|e|
-                    match edge_selection {
-                        EdgeSelection::Data => {
-                            e.weight().is_data()
-                        }
-                        EdgeSelection::Control => {
-                            e.weight().is_control()
-                        }
-                        EdgeSelection::Both => {
-                            true
-                        }
-                    }
-                )
-                .any(|e|
-                    targets.contains(&e.target())
-                )
-        )
+        starts.any(|n| {
+            self.spdg()
+                .graph
+                .edges(n)
+                .filter(|e| match edge_selection {
+                    EdgeSelection::Data => e.weight().is_data(),
+                    EdgeSelection::Control => e.weight().is_control(),
+                    EdgeSelection::Both => true,
+                })
+                .any(|e| targets.contains(&e.target()))
+        })
     }
 
     fn flows_to(&self, other: &impl FlowsTo, edge_selection: EdgeSelection) -> bool {
@@ -587,11 +576,10 @@ pub trait FlowsTo {
             EdgeSelection::Control => EdgeFiltered(&self.spdg().graph, control_only as F),
             EdgeSelection::Both => EdgeFiltered(&self.spdg().graph, all_edges as F),
         };
-        let result =
-            petgraph::visit::depth_first_search(&graph, starts, |event| match event {
-                DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
-                _ => Control::Continue,
-            });
+        let result = petgraph::visit::depth_first_search(&graph, starts, |event| match event {
+            DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
+            _ => Control::Continue,
+        });
         matches!(result, Control::Break(()))
     }
 }

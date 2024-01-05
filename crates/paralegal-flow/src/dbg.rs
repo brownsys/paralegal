@@ -72,7 +72,7 @@ pub mod call_only_flow_dot {
         pdg::{CallString, GlobalLocation},
         rust::mir::{Statement, StatementKind},
         rust::TyCtxt,
-        utils::{unique_identifier_for_item, AsFnAndArgs, CallStringExt, DfppBodyExt, TyCtxtExt},
+        utils::{unique_identifier_for_item, AsFnAndArgs, DfppBodyExt, TyCtxtExt},
         Either,
     };
 

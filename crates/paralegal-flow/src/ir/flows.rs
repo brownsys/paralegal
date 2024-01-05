@@ -1,4 +1,3 @@
-use crate::utils::CallStringExt;
 use crate::{
     mir,
     pdg::*,
