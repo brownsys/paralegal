@@ -49,7 +49,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
         debug!("Handling target {}", target.name());
         let local_def_id = target.def_id.expect_local();
 
-        let flowistry_graph = flowistry::pdg::compute_pdg(self.tcx, local_def_id);
+        let params = flowistry::pdg::PdgParams::new(self.tcx, local_def_id).with_false_call_edges();
+
+        let flowistry_graph = flowistry::pdg::compute_pdg(params);
         if self.opts.dbg().dump_flowistry_pdg() {
             let out = std::fs::File::create(format!("{}.flowistry-pdg.gv", target.name)).unwrap();
             dbg::dot::dump(&flowistry_graph, self.tcx, out).unwrap();
