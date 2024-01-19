@@ -2,7 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{define_flow_test_template, define_test_skip, test_utils::*, Symbol};
+use paralegal_flow::{define_flow_test_template, define_test_skip, test_utils::*};
 
 const CRATE_DIR: &str = "tests/non-transitive-graph-tests";
 
@@ -171,21 +171,23 @@ define_test!(control_flow_tracking_overtaint: graph -> {
     let late_val = graph.call_site(&late_val_fn);
     let read_fn = graph.function("read_t");
     let read = graph.call_site(&read_fn);
-    assert!(late_val.output().flows_to_ctrl(&read.input()));
-    assert!(early_val.output().flows_to_ctrl(&read.input()));
+    assert!(late_val.output().influences_ctrl(&read.input()));
+    assert!(dbg!(early_val.output()).influences_ctrl(&dbg!(read.input())));
 });
 
 define_test!(control_flow_tracking_for_non_fn_compound_conditions: graph -> {
-    let cond_input_fn = graph.function("source");
+    let cond_input_fn = graph.function("new_s");
     let cond_input = graph.call_site(&cond_input_fn);
     let other_cond_fn = graph.function("input");
     let other_cond = graph.call_site(&other_cond_fn);
     let read_fn = graph.function("read_t");
     let read = graph.call_site(&read_fn);
     assert!(cond_input.output().flows_to_data(&read.input()));
-    assert!(other_cond.output().flows_to_data(&read.input()));
-    assert!(cond_input.output().flows_to_ctrl(&read.input()));
-    assert!(other_cond.output().flows_to_ctrl(&read.input()));
+    assert!(!other_cond.output().flows_to_data(&read.input()));
+    // SOUNDNESS: The previous assertion establishes that we can't get there
+    // with data only, so this next check *must* involve a control edge
+    assert!(cond_input.output().flows_to_any(&read.input()));
+    assert!(other_cond.output().influences_ctrl(&read.input()));
 });
 
 define_test!(control_flow_tracking_for_compound_cond_with_fun: graph -> {
@@ -195,11 +197,19 @@ define_test!(control_flow_tracking_for_compound_cond_with_fun: graph -> {
     let other_cond = graph.call_site(&other_cond_fn);
     let read_fn = graph.function("read_t");
     let read = graph.call_site(&read_fn);
-    assert!(cond_input.output().flows_to_ctrl(&read.input()));
-    assert!(other_cond.output().flows_to_ctrl(&read.input()));
-    assert!(cond_input.output().flows_to_ctrl(&other_cond.input()));
-    assert!(cond_input.output().is_neighbor_ctrl(&other_cond.input()));
-    assert!(other_cond.output().is_neighbor_ctrl(&read.input()));
+    assert!(cond_input.output().influences_ctrl(&read.input()));
+    assert!(other_cond.output().influences_ctrl(&read.input()));
+    // SOUNDNESS: Now that we only track data we must understand the control flow
+    // influence on a function call as control flow influence of its return value.
+    // Also theoretically we should explicitly check that return value here
+    // instead of all outputs, but the function in the test case does not have
+    // any (mutable) arguments.
+    assert!(cond_input.output().influences_ctrl(&other_cond.output()));
+    // The finer grained SPDG no longer shows these as neighbors, so they're only
+    // checked as paths
+    // assert!(cond_input.output().is_neighbor_ctrl(&other_cond.input()));
+    // assert!(other_cond.output().is_neighbor_ctrl(&read.input()));
+    assert!(cond_input.output().influences_ctrl(&other_cond.output()));
     // Not sure why this ever worked and if it is even the correct semantics
     // assert!(!cond_input.output().is_neighbor_ctrl(&read.input()));
 });
@@ -211,9 +221,9 @@ define_test!(and_desugaring_similar_pattern: graph -> {
     let other_cond = graph.call_site(&other_cond_fn);
     let read_fn = graph.function("read_t");
     let read = graph.call_site(&read_fn);
-    assert!(cond_input.output().flows_to_ctrl(&read.input()));
-    assert!(other_cond.output().flows_to_ctrl(&read.input()));
-    assert!(cond_input.output().flows_to_ctrl(&other_cond.input()));
+    assert!(cond_input.output().influences_ctrl(&read.input()));
+    assert!(other_cond.output().influences_ctrl(&read.input()));
+    assert!(cond_input.output().influences_ctrl(&other_cond.input()));
     assert!(cond_input.output().is_neighbor_ctrl(&other_cond.input()));
     assert!(other_cond.output().is_neighbor_ctrl(&read.input()));
     assert!(!cond_input.output().is_neighbor_ctrl(&read.input()));

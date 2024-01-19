@@ -6,7 +6,6 @@ extern crate rustc_span;
 
 use crate::{
     desc::{Identifier, ProgramDescription},
-    ir::CallOnlyFlow,
     serializers::{Bodies, InstructionProxy},
     HashSet, Symbol,
 };
@@ -23,6 +22,7 @@ use petgraph::graph::EdgeReference;
 use petgraph::visit::{
     Control, DfsEvent, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoNodeReferences,
 };
+use petgraph::Direction;
 use std::path::Path;
 
 lazy_static! {
@@ -451,10 +451,23 @@ impl<'g> HasGraph<'g> for &CallStringRef<'g> {
     }
 }
 
-#[derive(Debug)]
 pub struct NodeRefs<'g> {
     nodes: Vec<Node>,
     graph: &'g CtrlRef<'g>,
+}
+
+impl Debug for NodeRefs<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_list();
+        for &n in &self.nodes {
+            let weight = self.graph.ctrl.graph.node_weight(n).unwrap();
+            list.entry(&format!(
+                "{} @ {} ({:?})",
+                weight.description, weight.at, weight.kind
+            ));
+        }
+        list.finish()
+    }
 }
 
 impl<'g> NodeRefs<'g> {
@@ -562,34 +575,62 @@ pub trait FlowsTo {
         })
     }
 
+    /// A special case of a path between `self` and `other` where the last edge is control
+    fn influences_ctrl(&self, other: &impl FlowsTo) -> bool {
+        if self.spdg_ident() != other.spdg_ident() {
+            return false;
+        }
+
+        let nodes = other
+            .nodes()
+            .iter()
+            .flat_map(|n| {
+                self.spdg()
+                    .graph
+                    .edges_directed(*n, Direction::Incoming)
+                    .filter(|e| e.weight().kind.is_control())
+                    .map(|e| e.source())
+            })
+            .collect::<HashSet<_>>();
+        flows_to_impl(self.nodes(), EdgeSelection::Both, self.spdg(), nodes)
+    }
+
     fn flows_to(&self, other: &impl FlowsTo, edge_selection: EdgeSelection) -> bool {
         if self.spdg_ident() != other.spdg_ident() {
             return false;
         }
-        let targets = other.nodes().iter().copied().collect::<HashSet<_>>();
-        let mut starts = self.nodes().iter().copied().peekable();
-        if starts.peek().is_none() {
-            return false;
-        }
-        fn data_only(e: EdgeReference<EdgeInfo>) -> bool {
-            e.weight().is_data()
-        }
-        fn control_only(e: EdgeReference<EdgeInfo>) -> bool {
-            e.weight().is_data()
-        }
-        fn all_edges(e: EdgeReference<EdgeInfo>) -> bool {
-            e.weight().is_data()
-        }
-        type F = fn(EdgeReference<EdgeInfo>) -> bool;
-        let graph = match edge_selection {
-            EdgeSelection::Data => EdgeFiltered(&self.spdg().graph, data_only as F),
-            EdgeSelection::Control => EdgeFiltered(&self.spdg().graph, control_only as F),
-            EdgeSelection::Both => EdgeFiltered(&self.spdg().graph, all_edges as F),
-        };
-        let result = petgraph::visit::depth_first_search(&graph, starts, |event| match event {
-            DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
-            _ => Control::Continue,
-        });
-        matches!(result, Control::Break(()))
+        flows_to_impl(self.nodes(), edge_selection, self.spdg(), other.nodes().iter().copied())
     }
+}
+
+fn flows_to_impl(
+    from: &[Node],
+    edge_selection: EdgeSelection,
+    spdg: &SPDG,
+    other: impl IntoIterator<Item = Node>,
+) -> bool {
+    let targets = other.into_iter().collect::<HashSet<_>>();
+    if from.is_empty() || targets.is_empty() {
+        return false;
+    }
+    fn data_only(e: EdgeReference<EdgeInfo>) -> bool {
+        e.weight().is_data()
+    }
+    fn control_only(e: EdgeReference<EdgeInfo>) -> bool {
+        e.weight().is_control()
+    }
+    fn all_edges(e: EdgeReference<EdgeInfo>) -> bool {
+        true
+    }
+    type F = fn(EdgeReference<EdgeInfo>) -> bool;
+    let graph = match edge_selection {
+        EdgeSelection::Data => EdgeFiltered(&spdg.graph, data_only as F),
+        EdgeSelection::Control => EdgeFiltered(&spdg.graph, control_only as F),
+        EdgeSelection::Both => EdgeFiltered(&spdg.graph, all_edges as F),
+    };
+    let result = petgraph::visit::depth_first_search(&graph, from.iter().copied(), |event| match event {
+        DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
+        _ => Control::Continue,
+    });
+    matches!(result, Control::Break(()))
 }
