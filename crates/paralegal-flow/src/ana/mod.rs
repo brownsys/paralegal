@@ -10,7 +10,7 @@ use crate::{
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use flowistry::pdg::graph::{DepEdgeKind, DepGraph};
 use paralegal_spdg::utils::display_list;
 use petgraph::graph::NodeIndex;
@@ -45,7 +45,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         //_hash_verifications: &mut HashVerifications,
         target: &FnToAnalyze,
         known_def_ids: &mut impl Extend<DefId>,
-    ) -> anyhow::Result<(Endpoint, SPDG)> {
+    ) -> Result<(Endpoint, SPDG)> {
         debug!("Handling target {}", target.name());
         let local_def_id = target.def_id.expect_local();
 
@@ -56,8 +56,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let flowistry_graph = flowistry::pdg::compute_pdg(params);
         if self.opts.dbg().dump_flowistry_pdg() {
-            let out = std::fs::File::create(format!("{}.flowistry-pdg.gv", target.name)).unwrap();
-            dbg::dot::dump(&flowistry_graph, self.tcx, out).unwrap();
+            flowistry_graph.generate_graphviz(format!("{}.flowistry-pdg.pdf", target.name))?
         }
         let (graph, types, markers) = self.convert_graph(&flowistry_graph, known_def_ids);
         let arguments = self.determine_arguments(local_def_id, &graph);

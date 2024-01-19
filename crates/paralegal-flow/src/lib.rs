@@ -83,7 +83,6 @@ pub mod ann_parse;
 mod args;
 pub mod dbg;
 mod discover;
-pub mod ir;
 //mod sah;
 pub mod serializers;
 #[macro_use]
