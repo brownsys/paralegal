@@ -49,7 +49,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
         debug!("Handling target {}", target.name());
         let local_def_id = target.def_id.expect_local();
 
-        let params = flowistry::pdg::PdgParams::new(self.tcx, local_def_id).with_false_call_edges();
+        let marker_context = self.marker_ctx.clone();
+        let params = flowistry::pdg::PdgParams::new(self.tcx, local_def_id).with_call_filter(
+            move |function, _call_string| !marker_context.is_marked(function.def_id()),
+        );
 
         let flowistry_graph = flowistry::pdg::compute_pdg(params);
         if self.opts.dbg().dump_flowistry_pdg() {

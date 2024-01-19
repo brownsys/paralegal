@@ -3,12 +3,14 @@ extern crate either;
 extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
+
 use crate::{
     desc::{Identifier, ProgramDescription},
     ir::CallOnlyFlow,
     serializers::{Bodies, InstructionProxy},
     HashSet, Symbol,
 };
+use std::fmt::{Debug, Formatter};
 
 use paralegal_spdg::{rustc_portable::DefId, DefInfo, EdgeInfo, Node, NodeKind, SPDG};
 use rustc_middle::mir;
@@ -16,8 +18,11 @@ use rustc_middle::mir;
 use crate::pdg::rustc_portable::LocalDefId;
 use crate::pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
+use petgraph::data::DataMap;
 use petgraph::graph::EdgeReference;
-use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef};
+use petgraph::visit::{
+    Control, DfsEvent, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoNodeReferences,
+};
 use std::path::Path;
 
 lazy_static! {
@@ -240,6 +245,7 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 }
 
+#[derive(Debug)]
 pub struct PreFrg {
     pub desc: ProgramDescription,
     pub name_map: crate::HashMap<Identifier, Vec<crate::DefId>>,
@@ -276,25 +282,31 @@ pub struct CtrlRef<'g> {
     ctrl: &'g SPDG,
 }
 
+impl<'g> Debug for CtrlRef<'g> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CtrlRef")
+            .field("ident", &self.ident)
+            .finish()
+    }
+}
+
 impl<'g> CtrlRef<'g> {
     pub fn return_value(&self) -> NodeRefs {
         let graph = &self.ctrl.graph;
         let nodes: Vec<_> = graph
-            .edge_references()
-            .filter(|e| {
-                let cs = e.weight().at;
-                cs.is_at_root() && cs.leaf().location.is_end()
+            .node_references()
+            .filter(|(node, weight)| {
+                let cs = weight.at;
+                cs.is_at_root()
+                    && cs.leaf().location.is_end()
+                    && matches!(
+                        weight.kind,
+                        NodeKind::FormalReturn | NodeKind::FormalParameter(_)
+                    )
             })
-            .filter_map(|e| {
-                let src = e.source();
-                match graph.node_weight(src)?.kind {
-                    NodeKind::FormalReturn => Some(()),
-                    _ => None,
-                }?;
-                Some(src)
-            })
+            .map(|(node, _)| node)
             .collect();
-        // TODO include mutable return variables?
+        // TODO only include mutable formal parameters?
         NodeRefs { nodes, graph: self }
     }
 
@@ -321,20 +333,19 @@ impl<'g> CtrlRef<'g> {
     }
 
     pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallStringRef<'g>> {
-        let simple_sites = self
-            .graph
-            .desc
-            .instruction_info
-            .iter()
-            .filter_map(|(k, v)| (v.as_function_call()?.id == fun.ident).then_some(k))
-            .collect::<HashSet<_>>();
+        let instruction_info = &self.graph.desc.instruction_info;
 
         let mut all: Vec<CallStringRef<'g>> = self
             .ctrl
             .graph
-            .edge_references()
-            .map(|v| v.weight().at)
-            .filter(|m| simple_sites.contains(&m.leaf()))
+            .edge_weights()
+            .map(|v| v.at)
+            .chain(self.ctrl.graph.node_weights().map(|info| info.at))
+            .filter(|m| {
+                instruction_info[&m.leaf()]
+                    .as_function_call()
+                    .map_or(false, |i| i.id == fun.ident)
+            })
             .map(|call_site| CallStringRef {
                 ctrl: self,
                 call_site,
@@ -392,15 +403,11 @@ impl<'g> CallStringRef<'g> {
     pub fn input(&'g self) -> NodeRefs<'g> {
         let graph = &self.ctrl.ctrl.graph;
         let mut nodes: Vec<_> = graph
-            .edge_references()
-            .filter(|e| e.weight().at == self.call_site)
-            .filter_map(|e| {
-                let src = e.source();
-                let index = match graph.node_weight(src)?.kind {
-                    NodeKind::ActualParameter(p) => Some(p),
-                    _ => None,
-                }?;
-                Some((src, index))
+            .node_references()
+            .filter(|(n, weight)| weight.at == self.call_site)
+            .filter_map(|(n, weight)| match weight.kind {
+                NodeKind::ActualParameter(p) => Some((n, p)),
+                _ => None,
             })
             .flat_map(move |(src, idxes)| idxes.into_iter_set_in_domain().map(move |i| (src, i)))
             .collect();
@@ -413,19 +420,21 @@ impl<'g> CallStringRef<'g> {
 
     pub fn output(&self) -> NodeRefs<'g> {
         let graph = &self.ctrl.ctrl.graph;
-        let nodes: Vec<_> = graph
+        let mut nodes: Vec<_> = graph
             .edge_references()
             .filter(|e| e.weight().at == self.call_site)
-            .filter_map(|e| {
-                let src = e.source();
-                match graph.node_weight(src)?.kind {
-                    NodeKind::ActualReturn => Some(()),
-                    _ => None,
-                }?;
-                Some(src)
-            })
+            .map(|e| e.source())
+            .chain(
+                graph
+                    .node_references()
+                    .filter(|(n, weight)| weight.at == self.call_site)
+                    .filter_map(|(n, weight)| {
+                        matches!(weight.kind, NodeKind::ActualReturn).then_some(n)
+                    }),
+            )
             .collect();
-        // TODO include mutable return variables?
+        nodes.sort();
+        nodes.dedup();
         NodeRefs {
             nodes,
             graph: self.ctrl,
@@ -442,6 +451,7 @@ impl<'g> HasGraph<'g> for &CallStringRef<'g> {
     }
 }
 
+#[derive(Debug)]
 pub struct NodeRefs<'g> {
     nodes: Vec<Node>,
     graph: &'g CtrlRef<'g>,
