@@ -54,6 +54,21 @@ impl<'tcx> SPDGGenerator<'tcx> {
             move |function, _call_string| !marker_context.is_marked(function.def_id()),
         );
 
+        if self.opts.dbg().dump_mir() {
+            let mut file =
+                std::fs::File::create(format!("{}.mir", body_name_pls(self.tcx, local_def_id)))?;
+            mir::pretty::write_mir_fn(
+                self.tcx,
+                &self
+                    .tcx
+                    .body_for_def_id_default_policy(local_def_id)
+                    .ok_or_else(|| anyhow!("Body not found"))?
+                    .body,
+                &mut |_, _| Ok(()),
+                &mut file,
+            )?
+        }
+
         let flowistry_graph = flowistry::pdg::compute_pdg(params);
         if self.opts.dbg().dump_flowistry_pdg() {
             flowistry_graph.generate_graphviz(format!("{}.flowistry-pdg.pdf", target.name))?

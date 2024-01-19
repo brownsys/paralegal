@@ -509,6 +509,10 @@ impl DumpArgs {
     pub fn dump_spdg(&self) -> bool {
         self.has(DumpOption::SPDG)
     }
+
+    pub fn dump_mir(&self) -> bool {
+        self.has(DumpOption::Mir)
+    }
 }
 
 /// Dependency specific configuration
