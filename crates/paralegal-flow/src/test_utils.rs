@@ -11,7 +11,7 @@ use crate::{
 };
 use std::fmt::{Debug, Formatter};
 
-use paralegal_spdg::{rustc_portable::DefId, DefInfo, EdgeInfo, Node, NodeKind, SPDG};
+use paralegal_spdg::{rustc_portable::DefId, DefInfo, EdgeInfo, EdgeKind, Node, NodeKind, SPDG};
 use rustc_middle::mir;
 
 use crate::pdg::rustc_portable::LocalDefId;
@@ -170,6 +170,15 @@ impl EdgeSelection {
     }
     fn use_data(self) -> bool {
         matches!(self, EdgeSelection::Data | EdgeSelection::Both)
+    }
+
+    fn conforms(self, kind: EdgeKind) -> bool {
+        matches!(
+            (self, kind),
+            (EdgeSelection::Both, _)
+                | (EdgeSelection::Data, EdgeKind::Data)
+                | (EdgeSelection::Control, EdgeKind::Control)
+        )
     }
 }
 
@@ -451,6 +460,14 @@ impl<'g> HasGraph<'g> for &CallStringRef<'g> {
     }
 }
 
+/// Selecting input or output nodes for a given call site can now return multiple
+/// nodes that are independently tracked by the SPDG if we are dealing with an aggregated
+/// object, where the fields are tracked independently, or a pointer where the value behind
+/// the pointer is tracked separately.
+///
+/// This type makes it easier to deal with such node collections by allowing you to interrogate
+/// flows from and to the collection via [`FlowsTo`]. Make sure to read the documentation on this
+/// type's instance of [`FlowsTo`] for the semantics.
 pub struct NodeRefs<'g> {
     nodes: Vec<Node>,
     graph: &'g CtrlRef<'g>,
@@ -476,6 +493,14 @@ impl<'g> NodeRefs<'g> {
             graph: self.graph,
             node: *self.nodes.get(i)?,
         })
+    }
+
+    pub fn as_singles(&self) -> impl Iterator<Item = NodeRef<'g>> + '_ {
+        let graph = self.graph;
+        self.nodes
+            .iter()
+            .copied()
+            .map(|node| NodeRef { node, graph })
     }
 }
 
@@ -510,6 +535,10 @@ impl FlowsTo for NodeRef<'_> {
     }
 }
 
+/// If this type is used as an argument to the methods here (both as self or as other) the
+/// collection of nodes is interpreted as an "any". E.g. if this is the source, a connection
+/// from just one of the nodes to the target need exist. Conversely if used as a target only
+/// one of the nodes need be reached from the source.
 impl FlowsTo for NodeRefs<'_> {
     fn nodes(&self) -> &[Node] {
         self.nodes.as_slice()
@@ -524,86 +553,119 @@ impl FlowsTo for NodeRefs<'_> {
     }
 }
 
+/// Lets us test if two graph nodes are connected. For convenience multiple nodes
+/// can be tested at a time via `NodeRefs`.
 pub trait FlowsTo {
     fn nodes(&self) -> &[Node];
     fn spdg(&self) -> &SPDG;
     fn spdg_ident(&self) -> Identifier;
 
+    /// Is there a path consisting of only data flow edges connecting `self` to `other`
     fn flows_to_data(&self, other: &impl FlowsTo) -> bool {
-        self.flows_to(other, EdgeSelection::Data)
+        flows_to_impl(self, other, EdgeSelection::Data)
     }
 
+    /// Is there a path consisting of only control flow edges connecting `self` to `other`
     fn flows_to_ctrl(&self, other: &impl FlowsTo) -> bool {
-        self.flows_to(other, EdgeSelection::Control)
+        flows_to_impl(self, other, EdgeSelection::Control)
     }
 
+    /// Is there a path connecting `self` to `other`
     fn flows_to_any(&self, other: &impl FlowsTo) -> bool {
-        self.flows_to(other, EdgeSelection::Both)
+        flows_to_impl(self, other, EdgeSelection::Both)
     }
 
+    /// Is there a control flow edge connecting `self` to `other`
     fn is_neighbor_ctrl(&self, other: &impl FlowsTo) -> bool {
-        self.is_neighbor(other, EdgeSelection::Control)
+        is_neighbor_impl(self, other, EdgeSelection::Control)
     }
 
+    /// Is there a data flow edge connecting `self` to `other`
     fn is_neighbor_data(&self, other: &impl FlowsTo) -> bool {
-        self.is_neighbor(other, EdgeSelection::Data)
+        is_neighbor_impl(self, other, EdgeSelection::Data)
     }
 
+    /// Is there any type of edge connecting `self` to `other`
     fn is_neighbor_any(&self, other: &impl FlowsTo) -> bool {
-        self.is_neighbor(other, EdgeSelection::Both)
-    }
-
-    fn is_neighbor(&self, other: &impl FlowsTo, edge_selection: EdgeSelection) -> bool {
-        if self.spdg_ident() != other.spdg_ident() {
-            return false;
-        }
-        let targets = other.nodes().iter().copied().collect::<HashSet<_>>();
-        let mut starts = self.nodes().iter().copied().peekable();
-        if starts.peek().is_none() {
-            return false;
-        }
-        starts.any(|n| {
-            self.spdg()
-                .graph
-                .edges(n)
-                .filter(|e| match edge_selection {
-                    EdgeSelection::Data => e.weight().is_data(),
-                    EdgeSelection::Control => e.weight().is_control(),
-                    EdgeSelection::Both => true,
-                })
-                .any(|e| targets.contains(&e.target()))
-        })
+        is_neighbor_impl(self, other, EdgeSelection::Both)
     }
 
     /// A special case of a path between `self` and `other` where the last edge is control
     fn influences_ctrl(&self, other: &impl FlowsTo) -> bool {
-        if self.spdg_ident() != other.spdg_ident() {
-            return false;
-        }
-
-        let nodes = other
-            .nodes()
-            .iter()
-            .flat_map(|n| {
-                self.spdg()
-                    .graph
-                    .edges_directed(*n, Direction::Incoming)
-                    .filter(|e| e.weight().kind.is_control())
-                    .map(|e| e.source())
-            })
-            .collect::<HashSet<_>>();
-        flows_to_impl(self.nodes(), EdgeSelection::Both, self.spdg(), nodes)
+        influences_ctrl_impl(self, other, EdgeSelection::Both)
     }
 
-    fn flows_to(&self, other: &impl FlowsTo, edge_selection: EdgeSelection) -> bool {
-        if self.spdg_ident() != other.spdg_ident() {
-            return false;
-        }
-        flows_to_impl(self.nodes(), edge_selection, self.spdg(), other.nodes().iter().copied())
+    fn influences_next_control(&self, other: &impl FlowsTo) -> bool {
+        influences_ctrl_impl(self, other, EdgeSelection::Data)
     }
 }
 
+fn influences_ctrl_impl(
+    slf: &(impl FlowsTo + ?Sized),
+    other: &impl FlowsTo,
+    edge_selection: EdgeSelection,
+) -> bool {
+    if slf.spdg_ident() != other.spdg_ident() {
+        return false;
+    }
+
+    let nodes = other
+        .nodes()
+        .iter()
+        .flat_map(|n| {
+            slf.spdg()
+                .graph
+                .edges_directed(*n, Direction::Incoming)
+                .filter(|e| e.weight().kind.is_control())
+                .map(|e| e.source())
+        })
+        .collect::<HashSet<_>>();
+    generic_flows_to(slf.nodes(), edge_selection, slf.spdg(), nodes)
+}
+
+fn is_neighbor_impl(
+    slf: &(impl FlowsTo + ?Sized),
+    other: &impl FlowsTo,
+    edge_selection: EdgeSelection,
+) -> bool {
+    if slf.spdg_ident() != other.spdg_ident() {
+        return false;
+    }
+    let targets = other.nodes().iter().copied().collect::<HashSet<_>>();
+    let mut starts = slf.nodes().iter().copied().peekable();
+    if starts.peek().is_none() {
+        return false;
+    }
+    starts.any(|n| {
+        slf.spdg()
+            .graph
+            .edges(n)
+            .filter(|e| match edge_selection {
+                EdgeSelection::Data => e.weight().is_data(),
+                EdgeSelection::Control => e.weight().is_control(),
+                EdgeSelection::Both => true,
+            })
+            .any(|e| targets.contains(&e.target()))
+    })
+}
+
 fn flows_to_impl(
+    slf: &(impl FlowsTo + ?Sized),
+    other: &impl FlowsTo,
+    edge_selection: EdgeSelection,
+) -> bool {
+    if slf.spdg_ident() != other.spdg_ident() {
+        return false;
+    }
+    generic_flows_to(
+        slf.nodes(),
+        edge_selection,
+        slf.spdg(),
+        other.nodes().iter().copied(),
+    )
+}
+
+fn generic_flows_to(
     from: &[Node],
     edge_selection: EdgeSelection,
     spdg: &SPDG,
@@ -628,9 +690,10 @@ fn flows_to_impl(
         EdgeSelection::Control => EdgeFiltered(&spdg.graph, control_only as F),
         EdgeSelection::Both => EdgeFiltered(&spdg.graph, all_edges as F),
     };
-    let result = petgraph::visit::depth_first_search(&graph, from.iter().copied(), |event| match event {
-        DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
-        _ => Control::Continue,
-    });
+    let result =
+        petgraph::visit::depth_first_search(&graph, from.iter().copied(), |event| match event {
+            DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
+            _ => Control::Continue,
+        });
     matches!(result, Control::Break(()))
 }
