@@ -11,7 +11,9 @@ use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
 use anyhow::{anyhow, Result};
+use flowistry::pdg::CallChanges;
 use flowistry::pdg::graph::{DepEdgeKind, DepGraph};
+use flowistry::pdg::SkipCall::{NoSkip, Skip};
 use paralegal_spdg::utils::display_list;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
@@ -50,9 +52,16 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let local_def_id = target.def_id.expect_local();
 
         let marker_context = self.marker_ctx.clone();
-        let params = flowistry::pdg::PdgParams::new(self.tcx, local_def_id).with_call_filter(
-            move |function, _call_string| !marker_context.is_marked(function.def_id()),
-        );
+        let params = flowistry::pdg::PdgParams::new(self.tcx, local_def_id).with_call_change_callback(
+            move |info| {
+                let changes = CallChanges::default();
+
+                if marker_context.is_marked(info.callee.def_id()) {
+                    changes.with_skip(Skip)
+                } else {
+                    changes
+                }
+        });
 
         if self.opts.dbg().dump_mir() {
             let mut file =

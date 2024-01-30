@@ -102,7 +102,7 @@ define_test!(loop_retains_dependency : graph -> {
     let get = graph.call_site(&get_fn);
     let get_other_fn = graph.function("get_other_data");
     let get_other = graph.call_site(&get_other_fn);
-    let dp_fn = graph.function("dp_user_data");
+    let dp_fn = graph.function("dp_user_data_with");
     let dp = graph.call_site(&dp_fn);
     let modify_other_fn = graph.function("modify_other_data");
     let modify_other = graph.call_site(&modify_other_fn);
