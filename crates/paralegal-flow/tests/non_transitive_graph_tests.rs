@@ -223,8 +223,10 @@ define_test!(and_desugaring_similar_pattern: graph -> {
     let read = graph.call_site(&read_fn);
     assert!(cond_input.output().influences_ctrl(&read.input()));
     assert!(other_cond.output().influences_ctrl(&read.input()));
-    assert!(cond_input.output().influences_ctrl(&other_cond.input()));
-    assert!(cond_input.output().is_neighbor_ctrl(&other_cond.input()));
-    assert!(other_cond.output().is_neighbor_ctrl(&read.input()));
-    assert!(!cond_input.output().is_neighbor_ctrl(&read.input()));
+    // SOUNDNESS: Need to target the output here, because this function takes no arguments.
+    assert!(cond_input.output().influences_ctrl(&other_cond.output()));
+    // The finer grained SPDG no longer has these as neighbors
+    // assert!(cond_input.output().is_neighbor_ctrl(&other_cond.output()));
+    assert!(other_cond.output().influences_next_control(&read.input()));
+    assert!(!cond_input.output().influences_next_control(&read.input()));
 });
