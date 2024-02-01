@@ -10,6 +10,7 @@ use crate::{
     HashSet, Symbol,
 };
 use std::fmt::{Debug, Formatter};
+use std::hash::{Hash, Hasher};
 
 use paralegal_spdg::{rustc_portable::DefId, DefInfo, EdgeInfo, EdgeKind, Node, NodeKind, SPDG};
 use rustc_middle::mir;
@@ -364,7 +365,7 @@ impl<'g> CtrlRef<'g> {
     pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallStringRef<'g>> {
         let instruction_info = &self.graph.desc.instruction_info;
 
-        let mut all: Vec<CallStringRef<'g>> = self
+        let mut all: HashSet<CallStringRef<'g>> = self
             .ctrl
             .graph
             .edge_weights()
@@ -380,8 +381,7 @@ impl<'g> CtrlRef<'g> {
                 call_site,
             })
             .collect();
-        all.dedup_by_key(|r| r.call_site);
-        all
+        Vec::from_iter(all.into_iter())
     }
 
     pub fn call_site(&'g self, fun: &'g FnRef<'g>) -> CallStringRef<'g> {
@@ -421,6 +421,20 @@ pub struct CallStringRef<'g> {
     call_site: CallString,
     ctrl: &'g CtrlRef<'g>,
 }
+
+impl Hash for CallStringRef<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.call_site.hash(state)
+    }
+}
+
+impl PartialEq for CallStringRef<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.call_site.eq(&other.call_site)
+    }
+}
+
+impl Eq for CallStringRef<'_> {}
 
 impl<'g> PartialEq<CallString> for CallStringRef<'g> {
     fn eq(&self, other: &CallString) -> bool {
