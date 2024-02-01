@@ -30,7 +30,8 @@ define_test!(return_is_tracked : graph -> {
     assert!(graph.returns(&get.output()));
 });
 
-define_test!(simple_happens_before_has_connections: graph -> {
+define_test_skip!(simple_happens_before_has_connections "Strong updates don't work properly in Flowistry. See\
+https://github.com/willcrichton/flowistry/issues/90": graph -> {
     let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
     let dp_fn = graph.function("dp_user_data");
@@ -41,7 +42,10 @@ define_test!(simple_happens_before_has_connections: graph -> {
     assert!(get.output().flows_to_data(&dp.input()));
     assert!(dp.output().flows_to_data(&send.input()));
     assert!(get.output().flows_to_data(&send.input()));
-    assert!(!get.output().flows_to_data(&send.input()));
+    assert!(get.output().always_happens_before_data(
+        &dp.input(),
+        &send.input(),
+    ))
 });
 
 define_test!(happens_before_if_has_connections : graph -> {
@@ -54,6 +58,10 @@ define_test!(happens_before_if_has_connections : graph -> {
     assert!(get.output().flows_to_data(&dp.input(),));
     assert!(dp.output().flows_to_data(&send.input()));
     assert!(get.output().flows_to_data(&send.input()));
+    assert!(!get.output().always_happens_before_data(
+        &dp.input(),
+        &send.input(),
+    ));
 });
 
 define_test!(data_influenced_conditional_happens_before: graph -> {
@@ -69,6 +77,8 @@ define_test!(data_influenced_conditional_happens_before: graph -> {
 });
 
 define_test!(conditional_happens_before_with_two_parents_before_if: graph -> {
+    // Here we test that if the "happens_before" is conditional then
+    // "always_happens_before" does not hold.
     let get_fn = graph.function("get_user_data_with");
     let get = graph.call_site(&get_fn);
     let dp_fn = graph.function("dp_user_data");
@@ -81,8 +91,14 @@ define_test!(conditional_happens_before_with_two_parents_before_if: graph -> {
     assert!(get.output().flows_to_data(&dp.input()));
     assert!(dp.output().flows_to_data(&send.input()));
     assert!(get.output().flows_to_data(&send.input()));
-    assert!(!push.output().flows_to_data(&send.input()));
-    assert!(!push.output().flows_to_data(&dp.input()));
+    assert!(!push.output().always_happens_before_data(
+        &get.input(),
+        &send.input(),
+    ));
+    assert!(!push.output().always_happens_before_data(
+        &dp.input(),
+        &send.input(),
+    ));
 });
 
 define_test!(loops : graph -> {
@@ -108,6 +124,7 @@ define_test!(loop_retains_dependency : graph -> {
     let modify_other = graph.call_site(&modify_other_fn);
     let send_fn = graph.function("send_user_data");
     let send = graph.call_site(&send_fn);
+
     assert!(get.output().flows_to_data(&dp.input()));
     assert!(get_other.output().flows_to_data(&dp.input()));
     assert!(modify_other.output().flows_to_data(&dp.input()));
@@ -151,7 +168,9 @@ define_test!(on_mut_var : graph -> {
     assert!(modify.output().flows_to_data(&receive.input()));
 });
 
-define_test!(spurious_connections_in_deref: graph -> {
+define_test_skip!(spurious_connections_in_deref "Strong updates don't work properly in Flowistry. See\
+https://github.com/willcrichton/flowistry/issues/90": graph -> {
+    // An "always_happens_before" but via return value
     let source_fn = graph.function("new_s");
     let source = graph.call_site(&source_fn);
     let modify_fn = graph.function("deref");
@@ -160,8 +179,10 @@ define_test!(spurious_connections_in_deref: graph -> {
     let receive = graph.call_site(&receive_fn);
     assert!(source.output().flows_to_data(&modify.input()));
     assert!(modify.output().flows_to_data(&receive.input()));
-    assert!(!source.output().flows_to_data(&receive.input()));
-    assert!(source.output().flows_to_data(&receive.input()));
+    assert!(source.output().always_happens_before_data(
+        &modify.input(),
+        &receive.input(),
+    ))
 });
 
 define_test!(control_flow_tracking_overtaint: graph -> {

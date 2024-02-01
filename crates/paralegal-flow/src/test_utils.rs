@@ -164,6 +164,8 @@ pub enum EdgeSelection {
     Both,
 }
 
+type EdgeFilter = fn(EdgeReference<EdgeInfo>) -> bool;
+
 impl EdgeSelection {
     fn use_control(self) -> bool {
         matches!(self, EdgeSelection::Control | EdgeSelection::Both)
@@ -179,6 +181,24 @@ impl EdgeSelection {
                 | (EdgeSelection::Data, EdgeKind::Data)
                 | (EdgeSelection::Control, EdgeKind::Control)
         )
+    }
+
+    fn filter_graph<G: IntoEdgeReferences>(self, g: G) -> EdgeFiltered<G, EdgeFilter> {
+        fn data_only(e: EdgeReference<EdgeInfo>) -> bool {
+            e.weight().is_data()
+        }
+        fn control_only(e: EdgeReference<EdgeInfo>) -> bool {
+            e.weight().is_control()
+        }
+        fn all_edges(e: EdgeReference<EdgeInfo>) -> bool {
+            true
+        }
+
+        match self {
+            EdgeSelection::Data => EdgeFiltered(g, data_only as EdgeFilter),
+            EdgeSelection::Control => EdgeFiltered(g, control_only as EdgeFilter),
+            EdgeSelection::Both => EdgeFiltered(g, all_edges as EdgeFilter),
+        }
     }
 }
 
@@ -598,6 +618,18 @@ pub trait FlowsTo {
     fn influences_next_control(&self, other: &impl FlowsTo) -> bool {
         influences_ctrl_impl(self, other, EdgeSelection::Data)
     }
+
+    fn always_happens_before_data(&self, checkpoint: &impl FlowsTo, target: &impl FlowsTo) -> bool {
+        always_happens_before_impl(self, checkpoint, target, EdgeSelection::Data)
+    }
+
+    fn always_happens_before_ctrl(&self, checkpoint: &impl FlowsTo, target: &impl FlowsTo) -> bool {
+        always_happens_before_impl(self, checkpoint, target, EdgeSelection::Control)
+    }
+
+    fn always_happens_before_any(&self, checkpoint: &impl FlowsTo, target: &impl FlowsTo) -> bool {
+        always_happens_before_impl(self, checkpoint, target, EdgeSelection::Both)
+    }
 }
 
 fn influences_ctrl_impl(
@@ -665,6 +697,36 @@ fn flows_to_impl(
     )
 }
 
+fn always_happens_before_impl(
+    src: &(impl FlowsTo + ?Sized),
+    checkpoint: &impl FlowsTo,
+    target: &impl FlowsTo,
+    edge_selection: EdgeSelection,
+) -> bool {
+    use petgraph::visit::Control;
+    if src.spdg_ident() != target.spdg_ident() {
+        return true;
+    } else if src.spdg_ident() != checkpoint.spdg_ident() {
+        return false;
+    }
+
+    let spdg = src.spdg();
+
+    let graph = edge_selection.filter_graph(&spdg.graph);
+
+    let result = petgraph::visit::depth_first_search(
+        &graph,
+        src.nodes().iter().copied(),
+        |event| match event {
+            DfsEvent::Discover(n, _) if checkpoint.nodes().contains(&n) => Control::Prune,
+            DfsEvent::Discover(n, _) if target.nodes().contains(&n) => Control::Break(()),
+            _ => Control::Continue,
+        },
+    );
+
+    !matches!(result, Control::Break(()))
+}
+
 fn generic_flows_to(
     from: &[Node],
     edge_selection: EdgeSelection,
@@ -675,21 +737,9 @@ fn generic_flows_to(
     if from.is_empty() || targets.is_empty() {
         return false;
     }
-    fn data_only(e: EdgeReference<EdgeInfo>) -> bool {
-        e.weight().is_data()
-    }
-    fn control_only(e: EdgeReference<EdgeInfo>) -> bool {
-        e.weight().is_control()
-    }
-    fn all_edges(e: EdgeReference<EdgeInfo>) -> bool {
-        true
-    }
-    type F = fn(EdgeReference<EdgeInfo>) -> bool;
-    let graph = match edge_selection {
-        EdgeSelection::Data => EdgeFiltered(&spdg.graph, data_only as F),
-        EdgeSelection::Control => EdgeFiltered(&spdg.graph, control_only as F),
-        EdgeSelection::Both => EdgeFiltered(&spdg.graph, all_edges as F),
-    };
+
+    let graph = edge_selection.filter_graph(&spdg.graph);
+
     let result =
         petgraph::visit::depth_first_search(&graph, from.iter().copied(), |event| match event {
             DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
