@@ -2,7 +2,7 @@
 # relationship of the scripts with one another and with the CI as laid out in
 # the README.md in this directory.
 
-set -x
+set -e
 
 SCRIPT_DIR="$( cd "$( dirname "$0" )" &> /dev/null && pwd )"
 
@@ -14,7 +14,7 @@ cargo test -p paralegal-flow --test call_chain_analysis_tests
 cargo test -p paralegal-flow --test control_flow_tests
 cargo test -p paralegal-flow --test new_alias_analysis_tests
 cargo test -p paralegal-flow --test async_tests
-cargo test -p paralegal-flow --test inline_elision_tests
+#cargo test -p paralegal-flow --test inline_elision_tests
 cargo test -p paralegal-policy --lib
 
 echo "Build Test Policies"

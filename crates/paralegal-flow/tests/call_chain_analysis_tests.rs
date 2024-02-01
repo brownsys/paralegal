@@ -55,10 +55,10 @@ define_test!(on_mut_var: ctrl -> {
 
 define_test!(on_mut_var_no_modify: ctrl -> {
     let src_fn = ctrl.function("source");
-    if let Some(_src) = ctrl.call_sites(&src_fn).pop() {
+    if let Some(src) = ctrl.call_sites(&src_fn).pop() {
         let dest_fn = ctrl.function("receiver");
         if let Some(dest_sink) = ctrl.call_sites(&dest_fn).pop() {
-            assert!(!dest_sink.input().flows_to_data(&dest_sink.output()));
+            assert!(!src.output().flows_to_data(&dest_sink.input()));
         }
     }
 });

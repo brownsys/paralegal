@@ -1,8 +1,7 @@
 use crate::Context;
 use crate::ControllerId;
-use crate::GlobalNode;
 use paralegal_flow::test_utils::PreFrg;
-use paralegal_spdg::{Identifier, InstructionInfo, Node as SPDGNode, SPDG};
+use paralegal_spdg::{GlobalNode, Identifier, InstructionInfo, Node as SPDGNode, SPDG};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -36,10 +35,7 @@ pub fn get_callsite_node<'a>(
     let inner = ctrl
         .call_sites()
         .find(|callsite| is_at_function_call_with_name(ctx, ctrl, name, *callsite))?;
-    Some(crate::GlobalNode {
-        ctrl_id: controller,
-        inner,
-    })
+    Some(GlobalNode::from_local_node(controller, inner))
 }
 
 fn is_at_function_call_with_name(
@@ -67,8 +63,5 @@ pub fn get_sink_node<'a>(
     let inner = ctrl
         .data_sinks()
         .find(|sink| is_at_function_call_with_name(ctx, ctrl, name, *sink))?;
-    Some(crate::GlobalNode {
-        ctrl_id: controller,
-        inner,
-    })
+    Some(GlobalNode::from_local_node(controller, inner))
 }

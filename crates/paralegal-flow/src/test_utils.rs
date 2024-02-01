@@ -12,18 +12,21 @@ use crate::{
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 
-use paralegal_spdg::{rustc_portable::DefId, DefInfo, EdgeInfo, EdgeKind, Node, NodeKind, SPDG};
+use paralegal_spdg::{
+    rustc_portable::DefId, DefInfo, EdgeInfo, EdgeKind, Node, NodeKind, SPDGImpl, SPDG,
+};
 use rustc_middle::mir;
 
 use crate::pdg::rustc_portable::LocalDefId;
 use crate::pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
-use petgraph::data::DataMap;
-use petgraph::graph::EdgeReference;
 use petgraph::visit::{
-    Control, DfsEvent, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoNodeReferences,
+    Control, Data, DfsEvent, EdgeFiltered, EdgeRef, FilterEdge, GraphBase, IntoEdgeReferences,
+    IntoEdges, IntoNodeReferences, Reversed,
 };
 use petgraph::Direction;
+use petgraph::{data::DataMap, visit::IntoNeighbors};
+use petgraph::{graph::EdgeReference, visit::Visitable};
 use std::path::Path;
 
 lazy_static! {
@@ -165,8 +168,6 @@ pub enum EdgeSelection {
     Both,
 }
 
-type EdgeFilter = fn(EdgeReference<EdgeInfo>) -> bool;
-
 impl EdgeSelection {
     fn use_control(self) -> bool {
         matches!(self, EdgeSelection::Control | EdgeSelection::Both)
@@ -184,21 +185,24 @@ impl EdgeSelection {
         )
     }
 
-    fn filter_graph<G: IntoEdgeReferences>(self, g: G) -> EdgeFiltered<G, EdgeFilter> {
-        fn data_only(e: EdgeReference<EdgeInfo>) -> bool {
+    fn filter_graph<G: IntoEdgeReferences + Data<EdgeWeight = EdgeInfo>>(
+        self,
+        g: G,
+    ) -> EdgeFiltered<G, fn(G::EdgeRef) -> bool> {
+        fn data_only<E: EdgeRef<Weight = EdgeInfo>>(e: E) -> bool {
             e.weight().is_data()
         }
-        fn control_only(e: EdgeReference<EdgeInfo>) -> bool {
+        fn control_only<E: EdgeRef<Weight = EdgeInfo>>(e: E) -> bool {
             e.weight().is_control()
         }
-        fn all_edges(e: EdgeReference<EdgeInfo>) -> bool {
+        fn all_edges<E: EdgeRef<Weight = EdgeInfo>>(_: E) -> bool {
             true
         }
 
         match self {
-            EdgeSelection::Data => EdgeFiltered(g, data_only as EdgeFilter),
-            EdgeSelection::Control => EdgeFiltered(g, control_only as EdgeFilter),
-            EdgeSelection::Both => EdgeFiltered(g, all_edges as EdgeFilter),
+            EdgeSelection::Data => EdgeFiltered(g, data_only as fn(G::EdgeRef) -> bool),
+            EdgeSelection::Control => EdgeFiltered(g, control_only as fn(G::EdgeRef) -> bool),
+            EdgeSelection::Both => EdgeFiltered(g, all_edges as fn(G::EdgeRef) -> bool),
         }
     }
 }
@@ -445,6 +449,11 @@ impl<'g> PartialEq<CallString> for CallStringRef<'g> {
 impl<'g> CallStringRef<'g> {
     pub fn input(&'g self) -> NodeRefs<'g> {
         let graph = &self.ctrl.ctrl.graph;
+        // Alternative??
+        // let nodes = graph.edge_references()
+        //     .filter(|e| e.weight().at == self.call_site)
+        //     .map(|e| e.source())
+        //     .colelct();
         let mut nodes: Vec<_> = graph
             .node_references()
             .filter(|(n, weight)| weight.at == self.call_site)
@@ -455,6 +464,7 @@ impl<'g> CallStringRef<'g> {
             .flat_map(move |(src, idxes)| idxes.into_iter_set_in_domain().map(move |i| (src, i)))
             .collect();
         nodes.sort_by_key(|s| s.1);
+        nodes.dedup();
         NodeRefs {
             nodes: nodes.into_iter().map(|t| t.0).collect(),
             graph: self.ctrl,
@@ -466,7 +476,7 @@ impl<'g> CallStringRef<'g> {
         let mut nodes: Vec<_> = graph
             .edge_references()
             .filter(|e| e.weight().at == self.call_site)
-            .map(|e| e.source())
+            .map(|e| e.target())
             .chain(
                 graph
                     .node_references()
@@ -624,25 +634,58 @@ pub trait FlowsTo {
         is_neighbor_impl(self, other, EdgeSelection::Both)
     }
 
-    /// A special case of a path between `self` and `other` where the last edge is control
+    /// A special case of a path between `self` and `other`.
+    /// All edges are data, except the last one. This is meant to convey
+    /// a "direct" control flow influence.
     fn influences_ctrl(&self, other: &impl FlowsTo) -> bool {
         influences_ctrl_impl(self, other, EdgeSelection::Both)
     }
 
+    /// A special case of a path between `self` and `other`.
+    /// All edges are data, except the last one. This is meant to convey
+    /// a control flow influence, though it might be indirect (a farther out
+    /// `if` for instance).
     fn influences_next_control(&self, other: &impl FlowsTo) -> bool {
         influences_ctrl_impl(self, other, EdgeSelection::Data)
     }
 
+    /// Does every data path from `self` to `target` pass through one of `checkpoint`.
     fn always_happens_before_data(&self, checkpoint: &impl FlowsTo, target: &impl FlowsTo) -> bool {
         always_happens_before_impl(self, checkpoint, target, EdgeSelection::Data)
     }
 
+    /// Does every control flow path from `self` to `target` pass through one of `checkpoint`.
     fn always_happens_before_ctrl(&self, checkpoint: &impl FlowsTo, target: &impl FlowsTo) -> bool {
         always_happens_before_impl(self, checkpoint, target, EdgeSelection::Control)
     }
 
+    /// Does every path from `self` to `target` pass through one of `checkpoint`.
     fn always_happens_before_any(&self, checkpoint: &impl FlowsTo, target: &impl FlowsTo) -> bool {
         always_happens_before_impl(self, checkpoint, target, EdgeSelection::Both)
+    }
+
+    /// Is there no data flow path from `self` to `target` that crosses through `checkpoint`
+    fn never_happens_before_data(&self, checkpoint: &impl FlowsTo, target: &impl FlowsTo) -> bool {
+        never_happens_before(self, checkpoint, target, EdgeSelection::Data)
+    }
+
+    /// Is there no control flow path from `self` to `target` that crosses through `checkpoint`
+    fn never_happens_before_ctrl(&self, checkpoint: &impl FlowsTo, target: &impl FlowsTo) -> bool {
+        never_happens_before(self, checkpoint, target, EdgeSelection::Control)
+    }
+
+    /// Is there no path from `self` to `target` that crosses through `checkpoint`
+    fn never_happens_before_any(&self, checkpoint: &impl FlowsTo, target: &impl FlowsTo) -> bool {
+        never_happens_before(self, checkpoint, target, EdgeSelection::Both)
+    }
+
+    /// There are no outgoing connections from this (set of) node(s)
+    fn is_terminal(&self) -> bool {
+        !self
+            .nodes()
+            .iter()
+            .copied()
+            .any(|n| self.spdg().graph.neighbors(n).next().is_some())
     }
 }
 
@@ -717,26 +760,71 @@ fn always_happens_before_impl(
     target: &impl FlowsTo,
     edge_selection: EdgeSelection,
 ) -> bool {
-    use petgraph::visit::Control;
     if src.spdg_ident() != target.spdg_ident() {
         return true;
-    } else if src.spdg_ident() != checkpoint.spdg_ident() {
-        return false;
     }
 
     let spdg = src.spdg();
 
-    let graph = edge_selection.filter_graph(&spdg.graph);
+    happens_before_impl(
+        src.nodes(),
+        checkpoint.nodes(),
+        target.nodes(),
+        edge_selection,
+        &spdg.graph,
+    )
+}
 
-    let result = petgraph::visit::depth_first_search(
-        &graph,
-        src.nodes().iter().copied(),
-        |event| match event {
-            DfsEvent::Discover(n, _) if checkpoint.nodes().contains(&n) => Control::Prune,
-            DfsEvent::Discover(n, _) if target.nodes().contains(&n) => Control::Break(()),
+fn never_happens_before(
+    src: &(impl FlowsTo + ?Sized),
+    checkpoint: &impl FlowsTo,
+    target: &impl FlowsTo,
+    edge_selection: EdgeSelection,
+) -> bool {
+    if src.spdg_ident() != target.spdg_ident() || checkpoint.spdg_ident() != target.spdg_ident() {
+        return true;
+    }
+
+    let g = &edge_selection.filter_graph(&src.spdg().graph);
+
+    fn reachable<G: Visitable + IntoNeighbors + GraphBase<NodeId = Node>>(
+        g: G,
+        start: &[Node],
+        end: &[Node],
+    ) -> bool {
+        let result = petgraph::visit::depth_first_search(g, start.iter().copied(), |ev| match ev {
+            DfsEvent::Discover(n, _) if end.contains(&n) => Control::Break(()),
             _ => Control::Continue,
-        },
-    );
+        });
+        matches!(result, Control::Break(()))
+    }
+
+    !checkpoint
+        .nodes()
+        .iter()
+        .copied()
+        .any(|n| reachable(g, src.nodes(), &[n]) && reachable(g, &[n], target.nodes()))
+}
+
+fn happens_before_impl<G>(
+    from: &[Node],
+    via: &[Node],
+    to: &[Node],
+    edge_selection: EdgeSelection,
+    graph: G,
+) -> bool
+where
+    G: Visitable + IntoEdges + GraphBase<NodeId = Node> + Data<EdgeWeight = EdgeInfo>,
+    fn(G::EdgeRef) -> bool: FilterEdge<G::EdgeRef>,
+{
+    let graph = edge_selection.filter_graph(graph);
+
+    let result =
+        petgraph::visit::depth_first_search(&graph, from.iter().cloned(), |event| match event {
+            DfsEvent::Discover(n, _) if via.contains(&n) => Control::Prune,
+            DfsEvent::Discover(n, _) if to.contains(&n) => Control::Break(()),
+            _ => Control::Continue,
+        });
 
     !matches!(result, Control::Break(()))
 }
