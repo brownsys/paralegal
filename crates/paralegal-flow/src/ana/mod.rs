@@ -11,6 +11,7 @@ use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
 use anyhow::{anyhow, Result};
+use either::Either;
 use flowistry::pdg::graph::{DepEdgeKind, DepGraph};
 use flowistry::pdg::CallChanges;
 use flowistry::pdg::SkipCall::{NoSkip, Skip};
@@ -86,7 +87,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         if self.opts.dbg().dump_flowistry_pdg() {
             flowistry_graph.generate_graphviz(format!("{}.flowistry-pdg.pdf", target.name))?
         }
-        let (graph, types, markers) = self.convert_graph(&flowistry_graph, known_def_ids);
+        let (graph, types, markers) = self.convert_graph(target.def_id.expect_local(), &flowistry_graph, known_def_ids);
         let arguments = self.determine_arguments(local_def_id, &graph);
         let return_ = self.determine_return(local_def_id, &graph);
         let spdg = SPDG {
@@ -261,6 +262,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
     fn convert_graph(
         &self,
+        target: LocalDefId,
         dep_graph: &DepGraph<'tcx>,
         known_def_ids: &mut impl Extend<DefId>,
     ) -> (
@@ -359,7 +361,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 kind,
             });
 
-            let place_ty = self.determine_place_type(weight.place, weight.at);
+            let place_ty = self.determine_place_type(target, weight.place, weight.at);
 
             let type_markers = self.type_is_marked(place_ty, is_external_call_source);
             known_def_ids.extend(type_markers.iter().copied());
@@ -440,26 +442,33 @@ impl<'tcx> SPDGGenerator<'tcx> {
         }
     }
 
+    fn expect_stmt_at(&self, loc: GlobalLocation) -> Either<&'tcx mir::Statement<'tcx>, &'tcx mir::Terminator<'tcx>> {
+        let body = &self.tcx.body_for_def_id(loc.function).unwrap().body;
+        let RichLocation::Location(loc) = loc.location else {
+            unreachable!();
+        };
+        body.stmt_at(loc)
+    }
+
     fn determine_place_type(
         &self,
+        root_function: LocalDefId,
         place: mir::Place<'tcx>,
         at: CallString,
     ) -> mir::tcx::PlaceTy<'tcx> {
         let mut generics = None;
 
         let locations = at.iter_from_root().collect::<Vec<_>>();
-        let (last, rest) = locations.split_last().unwrap();
+        let (last, mut rest) = locations.split_last().unwrap();
 
+        if self.tcx.asyncness(root_function).is_async() {
+            let (first, tail) = rest.split_first().unwrap();
+            assert!(self.expect_stmt_at(*first).is_left());
+            rest = tail;
+        }
         // Thread through each caller to recover generic arguments
         for caller in rest {
-            let body = &self.tcx.body_for_def_id(caller.function).unwrap().body;
-            let RichLocation::Location(loc) = caller.location else {
-                unreachable!(
-                    "Segment {} in {}, segments: {locations:?}",
-                    caller.location, at
-                );
-            };
-            let crate::Either::Right(terminator) = body.stmt_at(loc) else {
+            let crate::Either::Right(terminator) = self.expect_stmt_at(*caller) else {
                 unreachable!()
             };
             let term = match generics {
