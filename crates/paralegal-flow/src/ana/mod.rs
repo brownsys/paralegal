@@ -16,7 +16,6 @@ use flowistry::pdg::graph::{DepEdgeKind, DepGraph};
 use flowistry::pdg::CallChanges;
 use flowistry::pdg::SkipCall::{NoSkip, Skip};
 use paralegal_spdg::utils::display_list;
-use petgraph::graph::NodeIndex;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
 
 use super::discover::FnToAnalyze;
@@ -87,7 +86,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
         if self.opts.dbg().dump_flowistry_pdg() {
             flowistry_graph.generate_graphviz(format!("{}.flowistry-pdg.pdf", target.name))?
         }
-        let (graph, types, markers) = self.convert_graph(target.def_id.expect_local(), &flowistry_graph, known_def_ids);
+        let (graph, types, markers) = self.convert_graph(
+            target.def_id.expect_local(),
+            &flowistry_graph,
+            known_def_ids,
+        );
         let arguments = self.determine_arguments(local_def_id, &graph);
         let return_ = self.determine_return(local_def_id, &graph);
         let spdg = SPDG {
@@ -442,7 +445,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
         }
     }
 
-    fn expect_stmt_at(&self, loc: GlobalLocation) -> Either<&'tcx mir::Statement<'tcx>, &'tcx mir::Terminator<'tcx>> {
+    fn expect_stmt_at(
+        &self,
+        loc: GlobalLocation,
+    ) -> Either<&'tcx mir::Statement<'tcx>, &'tcx mir::Terminator<'tcx>> {
         let body = &self.tcx.body_for_def_id(loc.function).unwrap().body;
         let RichLocation::Location(loc) = loc.location else {
             unreachable!();
@@ -456,66 +462,53 @@ impl<'tcx> SPDGGenerator<'tcx> {
         place: mir::Place<'tcx>,
         at: CallString,
     ) -> mir::tcx::PlaceTy<'tcx> {
-        let mut generics = None;
-
         let locations = at.iter_from_root().collect::<Vec<_>>();
         let (last, mut rest) = locations.split_last().unwrap();
 
         if self.tcx.asyncness(root_function).is_async() {
             let (first, tail) = rest.split_first().unwrap();
+            // The body of a top-level `async` function binds a closure to the
+            // return place `_0`. Here we expect are looking at the statement
+            // that does this binding.
             assert!(self.expect_stmt_at(*first).is_left());
             rest = tail;
         }
+        let resolution = rest.iter().fold(
+            FnResolution::Partial(root_function.to_def_id()),
+            |resolution, caller| {
+                let crate::Either::Right(terminator) = self.expect_stmt_at(*caller) else {
+                    unreachable!()
+                };
+                let term = match resolution {
+                    FnResolution::Final(instance) => {
+                        Cow::Owned(instance.subst_mir_and_normalize_erasing_regions(
+                            self.tcx,
+                            self.tcx.param_env(resolution.def_id()),
+                            ty::EarlyBinder::bind(terminator.clone()),
+                        ))
+                    }
+                    FnResolution::Partial(_) => Cow::Borrowed(terminator),
+                };
+                let (instance, ..) = term.as_instance_and_args(self.tcx).unwrap();
+                instance
+            },
+        );
         // Thread through each caller to recover generic arguments
-        for caller in rest {
-            let crate::Either::Right(terminator) = self.expect_stmt_at(*caller) else {
-                unreachable!()
-            };
-            let term = match generics {
-                Some(args) => {
-                    let instance = ty::Instance::resolve(
-                        self.tcx,
-                        ty::ParamEnv::reveal_all(),
-                        caller.function.to_def_id(),
-                        args,
-                    )
-                    .unwrap()
-                    .unwrap();
-                    Cow::Owned(instance.subst_mir_and_normalize_erasing_regions(
-                        self.tcx,
-                        ty::ParamEnv::reveal_all(),
-                        ty::EarlyBinder::bind(terminator.clone()),
-                    ))
-                }
-                None => Cow::Borrowed(terminator),
-            };
-            let (instance, ..) = term.as_instance_and_args(self.tcx).unwrap();
-            generics = Some(match instance {
-                FnResolution::Final(i) => i.args,
-                FnResolution::Partial(_) => ty::List::empty(),
-            });
-        }
         let body = self.tcx.body_for_def_id(last.function).unwrap();
         let raw_ty = place.ty(&body.body, self.tcx);
-        match generics {
-            None => raw_ty,
-            Some(g) => ty::Instance::resolve(
+        match resolution {
+            FnResolution::Partial(_) => raw_ty,
+            FnResolution::Final(instance) => instance.subst_mir_and_normalize_erasing_regions(
                 self.tcx,
                 ty::ParamEnv::reveal_all(),
-                last.function.to_def_id(),
-                g,
-            )
-            .unwrap()
-            .unwrap()
-            .subst_mir_and_normalize_erasing_regions(
-                self.tcx,
-                ty::ParamEnv::reveal_all(),
-                ty::EarlyBinder::bind(raw_ty),
+                ty::EarlyBinder::bind(self.tcx.erase_regions(raw_ty)),
             ),
         }
     }
 }
 
+/// If `did` is a method of an `impl` of a trait, then return the `DefId` that
+/// refers to the method on the trait definition.
 fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
     let ident = tcx.opt_item_ident(did)?;
     let kind = match tcx.def_kind(did) {
