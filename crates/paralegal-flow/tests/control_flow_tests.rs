@@ -2,8 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use indexical::ToIndex;
-use paralegal_flow::{test_utils::*, Symbol};
+use paralegal_flow::test_utils::*;
 
 const CRATE_DIR: &str = "tests/control-flow-tests";
 
