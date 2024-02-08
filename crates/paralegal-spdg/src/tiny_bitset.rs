@@ -1,5 +1,5 @@
 use crate::utils::display_list;
-use std::fmt::{Display, Formatter, Write};
+use std::fmt::{Display, Formatter};
 
 /// A bit-set implemented with a [`u16`], supporting domains up to 16 elements.
 #[derive(

@@ -6,27 +6,23 @@ extern crate rustc_span;
 
 use crate::{
     desc::{Identifier, ProgramDescription},
-    serializers::{Bodies, InstructionProxy},
-    HashSet, Symbol,
+    HashSet,
 };
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 
-use paralegal_spdg::{
-    rustc_portable::DefId, DefInfo, EdgeInfo, EdgeKind, Node, NodeKind, SPDGImpl, SPDG,
-};
-use rustc_middle::mir;
+use paralegal_spdg::{rustc_portable::DefId, DefInfo, EdgeInfo, EdgeKind, Node, NodeKind, SPDG};
 
 use crate::pdg::rustc_portable::LocalDefId;
-use crate::pdg::{CallString, GlobalLocation, RichLocation};
+use crate::pdg::CallString;
 use itertools::Itertools;
+use petgraph::visit::IntoNeighbors;
+use petgraph::visit::Visitable;
 use petgraph::visit::{
     Control, Data, DfsEvent, EdgeFiltered, EdgeRef, FilterEdge, GraphBase, IntoEdgeReferences,
-    IntoEdges, IntoNodeReferences, Reversed,
+    IntoEdges, IntoNodeReferences,
 };
 use petgraph::Direction;
-use petgraph::{data::DataMap, visit::IntoNeighbors};
-use petgraph::{graph::EdgeReference, visit::Visitable};
 use std::path::Path;
 
 lazy_static! {
@@ -253,7 +249,7 @@ pub trait HasGraph<'g>: Sized + Copy {
             .desc
             .controllers
             .iter()
-            .filter(|(id, info)| info.name.as_str() == name)
+            .filter(|(_id, info)| info.name.as_str() == name)
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
         match candidates.as_slice() {
@@ -329,7 +325,7 @@ impl<'g> CtrlRef<'g> {
         let graph = &self.ctrl.graph;
         let nodes: Vec<_> = graph
             .node_references()
-            .filter(|(node, weight)| {
+            .filter(|(_node, weight)| {
                 let cs = weight.at;
                 cs.is_at_root()
                     && cs.leaf().location.is_end()
@@ -369,7 +365,7 @@ impl<'g> CtrlRef<'g> {
     pub fn call_sites(&'g self, fun: &'g FnRef<'g>) -> Vec<CallStringRef<'g>> {
         let instruction_info = &self.graph.desc.instruction_info;
 
-        let mut all: HashSet<CallStringRef<'g>> = self
+        let all: HashSet<CallStringRef<'g>> = self
             .ctrl
             .graph
             .edge_weights()
@@ -385,7 +381,7 @@ impl<'g> CtrlRef<'g> {
                 call_site,
             })
             .collect();
-        Vec::from_iter(all.into_iter())
+        Vec::from_iter(all)
     }
 
     pub fn call_site(&'g self, fun: &'g FnRef<'g>) -> CallStringRef<'g> {
@@ -456,7 +452,7 @@ impl<'g> CallStringRef<'g> {
         //     .colelct();
         let mut nodes: Vec<_> = graph
             .node_references()
-            .filter(|(n, weight)| weight.at == self.call_site)
+            .filter(|(_n, weight)| weight.at == self.call_site)
             .filter_map(|(n, weight)| match weight.kind {
                 NodeKind::ActualParameter(p) => Some((n, p)),
                 _ => None,
@@ -480,7 +476,7 @@ impl<'g> CallStringRef<'g> {
             .chain(
                 graph
                     .node_references()
-                    .filter(|(n, weight)| weight.at == self.call_site)
+                    .filter(|(_n, weight)| weight.at == self.call_site)
                     .filter_map(|(n, weight)| {
                         matches!(weight.kind, NodeKind::ActualReturn).then_some(n)
                     }),

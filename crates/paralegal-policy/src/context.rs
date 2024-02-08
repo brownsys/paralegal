@@ -122,6 +122,8 @@ impl Context {
         }
     }
 
+    /// Find the call string that identifies the call site or statement at which
+    /// this node is captured.
     pub fn associated_call_site(&self, node: GlobalNode) -> CallString {
         self.desc.controllers[&node.controller_id()]
             .node_info(node.local_node())

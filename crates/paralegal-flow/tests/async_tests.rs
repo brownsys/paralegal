@@ -2,7 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{define_test_skip, test_utils::*, Symbol};
+use paralegal_flow::{define_test_skip, test_utils::*};
 
 const CRATE_DIR: &str = "tests/async-tests";
 

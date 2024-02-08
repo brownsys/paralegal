@@ -8,10 +8,7 @@
 //! to stdout, a file or a log statement. Some take additional information (such
 //! as [TyCtxt]) to get contextual information that is used to make the output
 //! more useful.
-use crate::{
-    rust::{mir, TyCtxt},
-    utils::TyCtxtExt,
-};
+use crate::rust::mir;
 
 pub fn print_flowistry_matrix<'a: 'tcx, 'tcx, W: std::io::Write>(
     mut out: W,
@@ -57,8 +54,6 @@ impl<'a> std::fmt::Display for PrintableMatrix<'a> {
         Ok(())
     }
 }
-
-use crate::serializers::{Bodies, BodyProxy};
 
 /// All locations that a body has (helper)
 pub fn locations_of_body<'a: 'tcx, 'tcx>(

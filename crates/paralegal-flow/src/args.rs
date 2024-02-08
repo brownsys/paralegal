@@ -233,8 +233,8 @@ impl FromIterator<DumpOption> for DumpArgs {
     num_derive::FromPrimitive,
 )]
 enum DumpOption {
-    FlowistryPDG,
-    SPDG,
+    FlowistryPdg,
+    Spdg,
     /// Dump the MIR (`.mir`) of each called function (irrespective of whether they are a
     /// controller)
     Mir,
@@ -503,11 +503,11 @@ impl DumpArgs {
     }
 
     pub fn dump_flowistry_pdg(&self) -> bool {
-        self.has(DumpOption::FlowistryPDG)
+        self.has(DumpOption::FlowistryPdg)
     }
 
     pub fn dump_spdg(&self) -> bool {
-        self.has(DumpOption::SPDG)
+        self.has(DumpOption::Spdg)
     }
 
     pub fn dump_mir(&self) -> bool {

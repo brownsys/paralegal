@@ -145,7 +145,7 @@ impl rustc_driver::Callbacks for Callbacks {
     // that (when retrieving the MIR bodies for instance)
     fn after_expansion<'tcx>(
         &mut self,
-        compiler: &rustc_interface::interface::Compiler,
+        _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries

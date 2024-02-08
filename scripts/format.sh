@@ -51,13 +51,13 @@ echo "$PREFIX main repo"
 run
 
 echo "$PREFIX properties"
-run -C props
+run -Zunstable-options -C props
 
 echo "$PREFIX Guide Project"
-run -C guide/file-db-example
+run -Zunstable-options -C guide/file-db-example
 
 echo "$PREFIX Guide Policy"
-run -C guide/deletion-policy
+run -Zunstable-options -C guide/deletion-policy
 
 echo "$PREFIX Test Crates"
 
@@ -70,10 +70,11 @@ then
 
         if [ -a "$TEST_DIR/$dir/Cargo.toml" ]
         then
-            echo $PREFIX $dir
-            run -C "$TEST_DIR/$dir"
+            echo "  " $dir
+            run -Zunstable-options -C "$TEST_DIR/$dir"
         fi
     done
 
-    run -C "crates/paralegal-policy/tests/test-crate"
+    echo "  " paralegal-policy/tests/test-crate
+    run -Zunstable-options -C "crates/paralegal-policy/tests/test-crate"
 fi

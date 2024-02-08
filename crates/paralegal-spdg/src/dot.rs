@@ -1,8 +1,8 @@
-use crate::{GlobalEdge, GlobalNode, InstructionInfo, Node, ProgramDescription};
+use crate::{GlobalEdge, InstructionInfo, Node, ProgramDescription};
 use dot::{CompassPoint, Edges, Id, LabelText, Nodes};
 use flowistry_pdg::rustc_portable::LocalDefId;
-use flowistry_pdg::{CallString, GlobalLocation};
-use itertools::Itertools;
+use flowistry_pdg::CallString;
+
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::collections::HashMap;
@@ -79,17 +79,17 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
             use std::fmt::Write;
             let mut s = String::new();
 
-            write!(s, "{}|", n.to_string().replace("←", "@"))?;
+            write!(s, "{}|", n.to_string().replace('←', "@"))?;
 
             match instruction {
-                InstructionInfo::Statement => s.push_str("S"),
+                InstructionInfo::Statement => s.push('S'),
                 InstructionInfo::FunctionCall(function) => {
                     let info = &self.spdg.def_info[&function.id];
                     write!(s, "{}", info.name)?
                 }
-                InstructionInfo::Terminator => s.push_str("T"),
+                InstructionInfo::Terminator => s.push('T'),
                 InstructionInfo::Start => {
-                    s.push_str("*");
+                    s.push('*');
                 }
                 InstructionInfo::Return => s.push_str("end"),
             };
@@ -100,7 +100,7 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
                     s,
                     "|<p{}>{}",
                     n.index(),
-                    weight.description.replace("<", "&lt;").replace(">", "&gt;")
+                    weight.description.replace('<', "&lt;").replace('>', "&gt;")
                 )?;
             }
 

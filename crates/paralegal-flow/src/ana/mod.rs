@@ -5,16 +5,15 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
-    dbg, desc::*, rust::*, utils::*, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
+    desc::*, rust::*, utils::*, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 use std::borrow::Cow;
-use std::fmt::{Display, Formatter};
 
 use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry::pdg::graph::{DepEdgeKind, DepGraph};
 use flowistry::pdg::CallChanges;
-use flowistry::pdg::SkipCall::{NoSkip, Skip};
+use flowistry::pdg::SkipCall::Skip;
 use paralegal_spdg::utils::display_list;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
 

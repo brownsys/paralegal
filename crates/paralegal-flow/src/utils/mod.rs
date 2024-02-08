@@ -28,7 +28,6 @@ use crate::{
     Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
-use crate::pdg::*;
 use std::cmp::Ordering;
 use std::{cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
