@@ -49,11 +49,11 @@ define_test!(awaiting_works : graph -> {
 });
 
 define_test!(two_data_over_boundary : graph -> {
-    let get_fn = graph.function(" get_user_data(");
+    let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
     let get2_fn = graph.function("get_user_data2");
     let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data(");
+    let send_fn = graph.function("send_user_data");
     let send = graph.call_site(&send_fn);
     let send2_fn = graph.function("send_user_data2");
     let send2 = graph.call_site(&send2_fn);
@@ -64,11 +64,12 @@ define_test!(two_data_over_boundary : graph -> {
     assert!(!get2.output().flows_to_data(&send.input()));
 });
 
-define_test!(inlining_crate_local_async_fns : graph -> {
+define_test_skip!(inlining_crate_local_async_fns "Strong updates don't work properly in Flowistry. See\
+https://github.com/willcrichton/flowistry/issues/90": : graph -> {
 
     let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
-    let dp_fn = graph.function(" dp_user_data");
+    let dp_fn = graph.function("dp_user_data");
     let dp = graph.call_site(&dp_fn);
     let send_fn = graph.function("send_user_data");
     let send = graph.call_site(&send_fn);
@@ -87,15 +88,15 @@ define_test_skip!(arguments_work "arguments are not emitted properly in the grap
 });
 
 define_test!(no_inlining_overtaint : graph -> {
-    let get_fn = graph.function(" get_user_data(");
+    let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
     let get2_fn = graph.function("get_user_data2");
     let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data(");
+    let send_fn = graph.function("send_user_data");
     let send = graph.call_site(&send_fn);
     let send2_fn = graph.function("send_user_data2");
     let send2 = graph.call_site(&send2_fn);
-    let dp_fn = graph.function(" dp_user_data");
+    let dp_fn = graph.function("dp_user_data");
     let dp = graph.call_site(&dp_fn);
 
     assert!(get.output().flows_to_data(&send.input()));
@@ -108,11 +109,11 @@ define_test!(no_inlining_overtaint : graph -> {
 });
 
 define_test!(no_immutable_inlining_overtaint : graph -> {
-    let get_fn = graph.function(" get_user_data(");
+    let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
     let get2_fn = graph.function("get_user_data2");
     let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data(");
+    let send_fn = graph.function("send_user_data");
     let send = graph.call_site(&send_fn);
     let send2_fn = graph.function("send_user_data2");
     let send2 = graph.call_site(&send2_fn);
@@ -136,7 +137,7 @@ define_test!(remove_poll_match: graph -> {
     let get_context = graph.call_site(&get_context_fn);
     let into_future_fn = graph.function("into_future");
     let into_future = graph.call_site(&into_future_fn);
-    let _f_fn = graph.function(" f(");
+    let _f_fn = graph.function("f");
     let _f = graph.call_site(&_f_fn);
     assert!(input.output().flows_to_data(&target.input()));
 
@@ -152,7 +153,7 @@ define_test!(no_overtaint_over_poll: graph -> {
     let another_input_fn = graph.function("another_input");
     let another_input = graph.call_site(&another_input_fn);
 
-    let target_fn = graph.function(" target");
+    let target_fn = graph.function("target");
     let target = graph.call_site(&target_fn);
     let another_target_fn = graph.function("another_target");
     let another_target = graph.call_site(&another_target_fn);

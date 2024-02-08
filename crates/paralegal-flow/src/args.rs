@@ -199,12 +199,6 @@ impl From<ParseableDumpArgs> for DumpArgs {
 /// cli, internally we use the snake-case version of the option as a method on
 /// this type. This is so we can rename the outer UI without breaking code or
 /// even combine options together.
-///
-/// As of writing these docs clap doesn't have a way to attach extra constraints
-/// to a derived impl (e.g. `Args` of `GArgs`). And so it has to be added to the
-/// type variable at the struct definition itself. That means this compressed
-/// type, that is only meant to be queried but not parsed needs an impl for
-/// these contraints, hence the `undefined!()`.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct DumpArgs(TinyBitSet);
 
