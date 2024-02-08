@@ -619,7 +619,7 @@ impl<'a> std::fmt::Display for DisplayNode<'a> {
 
         let spdg = &self.ctx.desc.controllers[&self.node.controller_id()];
         let node = self.node.local_node();
-        if node == spdg.return_ {
+        if Some(node) == spdg.return_ {
             f.write_str("Return")
         } else if let Some((idx, _)) = spdg.arguments.iter().enumerate().find(|(_, n)| **n == node)
         {
@@ -764,7 +764,7 @@ fn test_happens_before() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
 
     let is_terminal = |end: GlobalNode| -> bool {
-        ctx.desc.controllers[&end.controller_id()].return_ == end.local_node()
+        ctx.desc.controllers[&end.controller_id()].return_ == Some(end.local_node())
     };
 
     let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_pass"))?;

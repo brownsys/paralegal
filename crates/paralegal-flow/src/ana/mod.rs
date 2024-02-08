@@ -104,7 +104,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         Ok((local_def_id, spdg))
     }
 
-    fn determine_return(&self, target: Endpoint, graph: &SPDGImpl) -> Node {
+    fn determine_return(&self, target: Endpoint, graph: &SPDGImpl) -> Option<Node> {
         let mut return_candidates = graph
             .node_references()
             .filter(|n| {
@@ -118,7 +118,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             })
             .map(|n| n.id())
             .peekable();
-        let picked = return_candidates.next().unwrap();
+        let picked = return_candidates.next()?;
         assert!(
             return_candidates.peek().is_none(),
             "Found too many candidates for the return. {} was picked but also \
@@ -130,7 +130,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     .collect::<Vec<_>>()
             ),
         );
-        picked
+        Some(picked)
     }
 
     fn determine_arguments(&self, target: Endpoint, graph: &SPDGImpl) -> Vec<Node> {

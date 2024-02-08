@@ -592,7 +592,8 @@ pub struct SPDG {
     pub graph: SPDGImpl,
     pub markers: HashMap<Node, Vec<Identifier>>,
     pub arguments: Vec<Node>,
-    pub return_: Node,
+    /// If the return is `()` or `!` then this is `None`
+    pub return_: Option<Node>,
     pub types: HashMap<Node, Types>,
 }
 

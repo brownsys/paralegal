@@ -160,4 +160,14 @@ async fn no_overtaint_over_poll() {
     another_target(t.1);
 }
 
+#[paralegal::analyze]
+async fn return_from_async() -> usize {
+    some_input()
+}
+
+#[paralegal::analyze]
+async fn async_return_from_async() -> usize {
+    id_fun(some_input()).await
+}
+
 fn main() {}

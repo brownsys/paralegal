@@ -162,3 +162,15 @@ define_test!(no_overtaint_over_poll: graph -> {
     assert!(!input.output().flows_to_data(&another_target.input()));
     assert!(!another_input.output().flows_to_data(&target.input()));
 });
+
+define_test!(return_from_async: graph -> {
+    let input_fn = graph.function("some_input");
+    let input = graph.call_site(&input_fn);
+    assert!(graph.returns(&input.output()))
+});
+
+define_test!(async_return_from_async: graph -> {
+    let input_fn = graph.function("some_input");
+    let input = graph.call_site(&input_fn);
+    assert!(graph.returns(&input.output()))
+});
