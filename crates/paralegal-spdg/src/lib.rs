@@ -537,6 +537,12 @@ pub struct NodeInfo {
     pub kind: NodeKind,
 }
 
+impl Display for NodeInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} @ {} ({})", self.description, self.at, self.kind)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Copy, strum::EnumIs)]
 pub enum NodeKind {
     FormalParameter(u8),
@@ -568,6 +574,12 @@ pub struct EdgeInfo {
     pub at: CallString,
 }
 
+impl Display for EdgeInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.at, self.kind)
+    }
+}
+
 impl EdgeInfo {
     pub fn is_data(&self) -> bool {
         matches!(self.kind, EdgeKind::Data)
@@ -578,7 +590,9 @@ impl EdgeInfo {
     }
 }
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq, Deserialize, Serialize, strum::EnumIs)]
+#[derive(
+    Clone, Debug, Copy, Eq, PartialEq, Deserialize, Serialize, strum::EnumIs, strum::Display,
+)]
 pub enum EdgeKind {
     Data,
     Control,
@@ -626,6 +640,12 @@ impl SPDG {
     /// Gather all [`Node`]s that are mentioned in this controller including data and control flow.
     pub fn all_sources(&self) -> impl Iterator<Item = Node> + '_ {
         self.graph.node_identifiers().map(Into::into)
+    }
+
+    pub fn dump_dot(&self, mut out: impl std::io::Write) -> std::io::Result<()> {
+        use petgraph::dot::{Config, Dot};
+        let dot = Dot::with_config(&self.graph, &[Config::NodeIndexLabel]);
+        write!(out, "{dot}")
     }
 }
 

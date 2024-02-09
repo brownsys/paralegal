@@ -446,23 +446,25 @@ impl<'g> CallStringRef<'g> {
     pub fn input(&'g self) -> NodeRefs<'g> {
         let graph = &self.ctrl.ctrl.graph;
         // Alternative??
-        // let nodes = graph.edge_references()
-        //     .filter(|e| e.weight().at == self.call_site)
-        //     .map(|e| e.source())
-        //     .colelct();
         let mut nodes: Vec<_> = graph
-            .node_references()
-            .filter(|(_n, weight)| weight.at == self.call_site)
-            .filter_map(|(n, weight)| match weight.kind {
-                NodeKind::ActualParameter(p) => Some((n, p)),
-                _ => None,
-            })
-            .flat_map(move |(src, idxes)| idxes.into_iter_set_in_domain().map(move |i| (src, i)))
+            .edge_references()
+            .filter(|e| e.weight().at == self.call_site)
+            .map(|e| e.source())
             .collect();
-        nodes.sort_by_key(|s| s.1);
+        // let mut nodes: Vec<_> = graph
+        //     .node_references()
+        //     .filter(|(_n, weight)| weight.at == self.call_site)
+        //     .filter_map(|(n, weight)| match weight.kind {
+        //         NodeKind::ActualParameter(p) => Some((n, p)),
+        //         _ => None,
+        //     })
+        //     .flat_map(move |(src, idxes)| idxes.into_iter_set_in_domain().map(move |i| (src, i)))
+        //     .collect();
+        // nodes.sort_by_key(|s| s.1);
+        nodes.sort();
         nodes.dedup();
         NodeRefs {
-            nodes: nodes.into_iter().map(|t| t.0).collect(),
+            nodes: nodes, //.into_iter().map(|t| t.0).collect(),
             graph: self.ctrl,
         }
     }
@@ -717,20 +719,21 @@ fn is_neighbor_impl(
         return false;
     }
     let targets = other.nodes().iter().copied().collect::<HashSet<_>>();
-    let mut starts = slf.nodes().iter().copied().peekable();
-    if starts.peek().is_none() {
+    if slf.nodes().is_empty() {
         return false;
     }
-    starts.any(|n| {
-        slf.spdg()
-            .graph
-            .edges(n)
-            .filter(|e| match edge_selection {
-                EdgeSelection::Data => e.weight().is_data(),
-                EdgeSelection::Control => e.weight().is_control(),
-                EdgeSelection::Both => true,
-            })
-            .any(|e| targets.contains(&e.target()))
+    slf.nodes().iter().any(|&n| {
+        targets.contains(&n)
+            || slf
+                .spdg()
+                .graph
+                .edges(n)
+                .filter(|e| match edge_selection {
+                    EdgeSelection::Data => e.weight().is_data(),
+                    EdgeSelection::Control => e.weight().is_control(),
+                    EdgeSelection::Both => true,
+                })
+                .any(|e| targets.contains(&e.target()))
     })
 }
 
@@ -816,12 +819,12 @@ where
     let graph = edge_selection.filter_graph(graph);
 
     let result =
-        petgraph::visit::depth_first_search(&graph, from.iter().cloned(), |event| match dbg!(event) {
+        petgraph::visit::depth_first_search(&graph, from.iter().cloned(), |event| match event {
             DfsEvent::Discover(n, _) if via.contains(&n) => Control::Prune,
             DfsEvent::Discover(n, _) if to.contains(&n) => {
                 println!("Breaking on {n:?}");
                 Control::Break(())
-            },
+            }
             _ => Control::Continue,
         });
 
@@ -842,9 +845,11 @@ fn generic_flows_to(
     let graph = edge_selection.filter_graph(&spdg.graph);
 
     let result =
-        petgraph::visit::depth_first_search(&graph, from.iter().copied(), |event| match event {
-            DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
-            _ => Control::Continue,
+        petgraph::visit::depth_first_search(&graph, from.iter().copied(), |event| {
+            match dbg!(event) {
+                DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
+                _ => Control::Continue,
+            }
         });
     matches!(result, Control::Break(()))
 }

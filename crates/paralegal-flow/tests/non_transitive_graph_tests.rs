@@ -30,8 +30,7 @@ define_test!(return_is_tracked : graph -> {
     assert!(graph.returns(&get.output()));
 });
 
-define_test_skip!(simple_happens_before_has_connections "Strong updates don't work properly in Flowistry. See\
-https://github.com/willcrichton/flowistry/issues/90": graph -> {
+define_test!(simple_happens_before_has_connections : graph -> {
     let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
     let dp_fn = graph.function("dp_user_data");
@@ -42,9 +41,9 @@ https://github.com/willcrichton/flowistry/issues/90": graph -> {
     assert!(get.output().flows_to_data(&dp.input()));
     assert!(dp.output().flows_to_data(&send.input()));
     assert!(get.output().flows_to_data(&send.input()));
-    assert!(get.output().always_happens_before_data(
-        &dp.input(),
-        &send.input(),
+    assert!(dbg!(get.output()).always_happens_before_data(
+        &dbg!(dp.output()),
+        &dbg!(send.input()),
     ))
 });
 
@@ -59,7 +58,7 @@ define_test!(happens_before_if_has_connections : graph -> {
     assert!(dp.output().flows_to_data(&send.input()));
     assert!(get.output().flows_to_data(&send.input()));
     assert!(!get.output().always_happens_before_data(
-        &dp.input(),
+        &dp.output(),
         &send.input(),
     ));
 });
@@ -91,12 +90,12 @@ define_test!(conditional_happens_before_with_two_parents_before_if: graph -> {
     assert!(get.output().flows_to_data(&dp.input()));
     assert!(dp.output().flows_to_data(&send.input()));
     assert!(get.output().flows_to_data(&send.input()));
-    assert!(!push.output().always_happens_before_data(
-        &get.input(),
+    assert!(push.output().always_happens_before_data(
+        &get.output(),
         &send.input(),
     ));
     assert!(!push.output().always_happens_before_data(
-        &dp.input(),
+        &dp.output(),
         &send.input(),
     ));
 });
@@ -180,7 +179,7 @@ https://github.com/willcrichton/flowistry/issues/90": graph -> {
     assert!(source.output().flows_to_data(&modify.input()));
     assert!(modify.output().flows_to_data(&receive.input()));
     assert!(source.output().always_happens_before_data(
-        &modify.input(),
+        &modify.output(),
         &receive.input(),
     ))
 });

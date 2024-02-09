@@ -30,7 +30,7 @@ define_test!(process_basic : graph -> {
     assert!(get.output().flows_to_data(&check.input()));
     assert!(!check.output().flows_to_data(&send.input()));
     assert!(get.output().flows_to_data(&send.input()));
-    assert!(get.output().never_happens_before_data(&check.input(), &send.input()));
+    assert!(get.output().never_happens_before_data(&check.output(), &send.input()));
 });
 
 define_test!(process_if : graph -> {
@@ -59,7 +59,7 @@ define_test!(process_if_after : graph -> {
     assert!(get.output().flows_to_data(&check.input()));
     assert!(check.output().influences_next_control(&modify.input()));
     assert!(modify.output().flows_to_data(&send.input()));
-    assert!(!check.output().influences_next_control(&send.input()));
+    assert!(!check.output().influences_next_control(&send.output()));
 });
 
 define_test!(process_nested_if : graph -> {
@@ -110,7 +110,7 @@ define_test!(process_if_not_function_call : graph -> {
     assert!(!getx.output().flows_to_data(&get.input()));
     assert!(getx.output().influences_next_control(&modify.input()));
     assert!(modify.output().flows_to_data(&send.input()));
-    assert!(!getx.output().influences_next_control(&send.input()));
+    assert!(!getx.output().influences_next_control(&send.output()));
 });
 
 define_test!(process_no_args : graph -> {

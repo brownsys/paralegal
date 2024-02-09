@@ -32,8 +32,7 @@ define_test!(track_mutable_modify : graph -> {
     assert!(source.output().is_neighbor_data(&read.input()));
 });
 
-define_test_skip!(eliminate_return_connection "Strong updates don't work properly in Flowistry. See\
-https://github.com/willcrichton/flowistry/issues/90" : graph -> {
+define_test!(eliminate_return_connection : graph -> {
     let source_fn = graph.function("new_s");
     let source = graph.call_site(&source_fn);
     let pass_through_fn = graph.function("deref_t");
@@ -41,11 +40,10 @@ https://github.com/willcrichton/flowistry/issues/90" : graph -> {
     let read_fn = graph.function("read");
     let read = graph.call_site(&read_fn);
 
-    assert!(dbg!(source.output()).always_happens_before_data(&dbg!(pass_through.input()), &dbg!(read.input())));
+    assert!(dbg!(source.output()).always_happens_before_data(&dbg!(pass_through.output()), &dbg!(read.input())));
 });
 
-define_test_skip!(eliminate_mut_input_connection "Strong updates don't work properly in Flowistry. See\
-https://github.com/willcrichton/flowistry/issues/90" : graph -> {
+define_test!(eliminate_mut_input_connection: graph -> {
     let source_fn = graph.function("new_s");
     let source = graph.call_site(&source_fn);
     let push_fn = graph.function("push");
@@ -55,7 +53,7 @@ https://github.com/willcrichton/flowistry/issues/90" : graph -> {
 
     assert!(source.output().is_neighbor_data(&push.input()));
     assert!(push.output().is_neighbor_data(&read.input()));
-    assert!(source.output().always_happens_before_data(&push.input(), &read.input()));
+    assert!(source.output().always_happens_before_data(&push.output(), &read.input()));
 });
 
 define_test_skip!(input_elimination_isnt_a_problem_empty "Strong updates don't work properly in Flowistry. See\
@@ -68,8 +66,7 @@ https://github.com/willcrichton/flowistry/issues/90" : graph -> {
     assert!(!source.output().flows_to_data(&read.input()));
 });
 
-define_test_skip!(input_elimination_isnt_a_problem_vec_push "Strong updates don't work properly in Flowistry. See\
-https://github.com/willcrichton/flowistry/issues/90" : graph -> {
+define_test!(input_elimination_isnt_a_problem_vec_push  : graph -> {
     // I don't remember how important it is for this test case that these test
     // "neighbor" relations but some of the assertions here are no longer a
     // neighbors. This is both because statements are now in the PDG and because
@@ -91,12 +88,11 @@ https://github.com/willcrichton/flowistry/issues/90" : graph -> {
     assert!(push.output().flows_to_data(&read.input()));
     assert!(source.output().flows_to_data(&push.input()));
     // This is where the overtaint happens
-    assert!(insert.output().always_happens_before_data(&push.input(), &read.input()));
-    assert!(source.output().always_happens_before_data(&push.input(), &read.input()));
+    assert!(insert.output().always_happens_before_data(&push.output(), &read.input()));
+    assert!(source.output().always_happens_before_data(&push.output(), &read.input()));
 });
 
-define_test_skip!(input_elimination_isnt_a_problem_statement "Strong updates don't work properly in Flowistry. See\
-https://github.com/willcrichton/flowistry/issues/90" : graph -> {
+define_test_skip!(input_elimination_isnt_a_problem_statement : graph -> {
     let src_1_fn = graph.function("new_s");
     let src_1 = graph.call_site(&src_1_fn);
     let src_2_fn = graph.function("another_s");
