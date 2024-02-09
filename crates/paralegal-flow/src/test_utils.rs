@@ -309,7 +309,7 @@ impl PreFrg {
 pub struct CtrlRef<'g> {
     graph: &'g PreFrg,
     ident: Identifier,
-    ctrl: &'g SPDG,
+    pub ctrl: &'g SPDG,
 }
 
 impl<'g> Debug for CtrlRef<'g> {
@@ -519,7 +519,7 @@ impl Debug for NodeRefs<'_> {
         for &n in &self.nodes {
             let weight = self.graph.ctrl.graph.node_weight(n).unwrap();
             list.entry(&format!(
-                "{} @ {} ({:?})",
+                "{n:?} {} @ {} ({:?})",
                 weight.description, weight.at, weight.kind
             ));
         }
@@ -816,9 +816,12 @@ where
     let graph = edge_selection.filter_graph(graph);
 
     let result =
-        petgraph::visit::depth_first_search(&graph, from.iter().cloned(), |event| match event {
+        petgraph::visit::depth_first_search(&graph, from.iter().cloned(), |event| match dbg!(event) {
             DfsEvent::Discover(n, _) if via.contains(&n) => Control::Prune,
-            DfsEvent::Discover(n, _) if to.contains(&n) => Control::Break(()),
+            DfsEvent::Discover(n, _) if to.contains(&n) => {
+                println!("Breaking on {n:?}");
+                Control::Break(())
+            },
             _ => Control::Continue,
         });
 

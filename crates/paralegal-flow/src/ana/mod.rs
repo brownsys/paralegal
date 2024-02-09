@@ -279,7 +279,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let mut types: HashMap<NodeIndex, Types> = HashMap::new();
         let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
 
-        let mut index_map = vec![<SPDGImpl as GraphBase>::NodeId::end(); input.node_bound()];
+        let default_index = <SPDGImpl as GraphBase>::NodeId::end();
+        let mut index_map = vec![default_index; input.node_bound()];
 
         for (i, weight) in input.node_references() {
             let leaf_loc = weight.at.leaf();
@@ -357,6 +358,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 }
                 _ => (NodeKind::Unspecified, false),
             };
+            debug_assert!(index_map[i.index()] == default_index);
             index_map[i.index()] = g.add_node(NodeInfo {
                 at: weight.at,
                 description: format!("{:?}", weight.place),
