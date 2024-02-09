@@ -100,7 +100,7 @@ async fn arity2_inlineable_async_dp_user_data(_: &mut UserData, user_data: &mut 
 async fn no_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
-    arity2_inlineable_async_dp_user_data(&mut ud1, &mut ud2);
+    arity2_inlineable_async_dp_user_data(&mut ud1, &mut ud2).await;
     send_user_data(&ud1);
     send_user_data2(&ud2);
 }
