@@ -821,10 +821,7 @@ where
     let result =
         petgraph::visit::depth_first_search(&graph, from.iter().cloned(), |event| match event {
             DfsEvent::Discover(n, _) if via.contains(&n) => Control::Prune,
-            DfsEvent::Discover(n, _) if to.contains(&n) => {
-                println!("Breaking on {n:?}");
-                Control::Break(())
-            }
+            DfsEvent::Discover(n, _) if to.contains(&n) => Control::Break(()),
             _ => Control::Continue,
         });
 
@@ -845,11 +842,9 @@ fn generic_flows_to(
     let graph = edge_selection.filter_graph(&spdg.graph);
 
     let result =
-        petgraph::visit::depth_first_search(&graph, from.iter().copied(), |event| {
-            match dbg!(event) {
-                DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
-                _ => Control::Continue,
-            }
+        petgraph::visit::depth_first_search(&graph, from.iter().copied(), |event| match event {
+            DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
+            _ => Control::Continue,
         });
     matches!(result, Control::Break(()))
 }
