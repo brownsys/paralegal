@@ -56,8 +56,7 @@ define_test!(eliminate_mut_input_connection: graph -> {
     assert!(source.output().always_happens_before_data(&push.output(), &read.input()));
 });
 
-define_test_skip!(input_elimination_isnt_a_problem_empty "Strong updates don't work properly in Flowistry. See\
-https://github.com/willcrichton/flowistry/issues/90" : graph -> {
+define_test!(input_elimination_isnt_a_problem_empty: graph -> {
     let source_fn = graph.function("new_s");
     let source = graph.call_site(&source_fn);
     let read_fn = graph.function("read");
@@ -92,7 +91,7 @@ define_test!(input_elimination_isnt_a_problem_vec_push  : graph -> {
     assert!(source.output().always_happens_before_data(&push.output(), &read.input()));
 });
 
-define_test_skip!(input_elimination_isnt_a_problem_statement : graph -> {
+define_test!(input_elimination_isnt_a_problem_statement : graph -> {
     let src_1_fn = graph.function("new_s");
     let src_1 = graph.call_site(&src_1_fn);
     let src_2_fn = graph.function("another_s");
