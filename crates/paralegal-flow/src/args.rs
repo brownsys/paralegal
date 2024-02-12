@@ -11,10 +11,31 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
+use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
 use crate::utils::TinyBitSet;
 use crate::{num_derive, num_traits::FromPrimitive};
+
+#[derive(thiserror::Error, Debug)]
+enum VarError {
+    #[error("env variable value is not unicode, approximate key and value are {}: {}", key.to_string_lossy(), value.to_string_lossy())]
+    NotUnicode { key: OsString, value: OsString },
+}
+
+/// A thin wrapper around `std::env::var` that returns `None` if the variable is
+/// not present.
+fn env_var_expect_unicode(k: impl AsRef<OsStr>) -> Result<Option<String>, VarError> {
+    let k_ref = k.as_ref();
+    match std::env::var(k_ref) {
+        Ok(v) => Ok(Some(v)),
+        Err(std::env::VarError::NotUnicode(u)) => Err(VarError::NotUnicode {
+            key: k_ref.to_owned(),
+            value: u,
+        }),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+    }
+}
 
 impl TryFrom<ClapArgs> for Args {
     type Error = Error;
@@ -28,16 +49,26 @@ impl TryFrom<ClapArgs> for Args {
             relaxed,
             target,
             abort_after_analysis,
-            anactrl,
+            mut anactrl,
             modelctrl,
             dump,
             marker_control,
         } = value;
         let mut dump: DumpArgs = dump.into();
-        if let Ok(from_env) = std::env::var("PARALEGAL_DUMP") {
+        if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
             let from_env =
                 DumpArgs::from_str(&from_env, false).map_err(|s| anyhow::anyhow!("{}", s))?;
             dump.0 |= from_env.0;
+        }
+        anactrl.analyze = anactrl
+            .analyze
+            .iter()
+            .flat_map(|s| s.split(",").map(ToOwned::to_owned))
+            .collect();
+        if let Some(from_env) = env_var_expect_unicode("PARALEGAL_ANALYZE")? {
+            anactrl
+                .analyze
+                .extend(from_env.split(",").map(ToOwned::to_owned));
         }
         let build_config_file = std::path::Path::new("Paralegal.toml");
         let build_config = if build_config_file.exists() {
@@ -396,6 +427,11 @@ impl MarkerControl {
 /// Arguments that control the flow analysis
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
 pub struct AnalysisCtrl {
+    /// Target this function as analysis target. Command line version of
+    /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
+    /// function. May be specified multiple times.
+    #[clap(long)]
+    analyze: Vec<String>,
     /// Disables all recursive analysis (both paralegal_flow's inlining as well as
     /// Flowistry's recursive analysis).
     ///
@@ -486,6 +522,10 @@ impl PruningStrategy {
 }
 
 impl AnalysisCtrl {
+    pub fn selected_targets(&self) -> &[String] {
+        &self.analyze
+    }
+
     /// Are we recursing into (unmarked) called functions with the analysis?
     pub fn use_recursive_analysis(&self) -> bool {
         !self.no_cross_function_analysis

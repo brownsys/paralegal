@@ -16,6 +16,8 @@ use rustc_span::{symbol::Ident, Span, Symbol};
 
 use anyhow::Result;
 
+use self::resolve::expect_resolve_string_to_def_id;
+
 /// Values of this type can be matched against Rust attributes
 pub type AttrMatchT = Vec<Symbol>;
 
@@ -58,10 +60,22 @@ impl FnToAnalyze {
 
 impl<'tcx> CollectingVisitor<'tcx> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
+        let functions_to_analyze = opts
+            .anactrl()
+            .selected_targets()
+            .iter()
+            .filter_map(|path| {
+                let def_id = expect_resolve_string_to_def_id(tcx, path, opts.relaxed())?;
+                Some(FnToAnalyze {
+                    def_id,
+                    name: tcx.opt_item_ident(def_id).unwrap(),
+                })
+            })
+            .collect();
         Self {
             tcx,
             opts,
-            functions_to_analyze: vec![],
+            functions_to_analyze,
             marker_ctx: MarkerDatabase::init(tcx, opts),
         }
     }
