@@ -59,11 +59,7 @@ impl Res {
 /// that `def_path_res` is used. In the case of errors they are reported to the
 /// user and `None` is returned so the caller has the option of making progress
 /// before exiting.
-pub fn expect_resolve_string_to_def_id<'a>(
-    tcx: TyCtxt,
-    path: &'a str,
-    relaxed: bool,
-) -> Option<DefId> {
+pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -> Option<DefId> {
     let segment_vec = path.split("::").collect::<Vec<_>>();
     let res = def_path_res(tcx, &segment_vec)
         .map_err(|e| tcx.sess.err(format!("Could not resolve {path}: {e:?}")))

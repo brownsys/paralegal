@@ -63,12 +63,12 @@ impl TryFrom<ClapArgs> for Args {
         anactrl.analyze = anactrl
             .analyze
             .iter()
-            .flat_map(|s| s.split(",").map(ToOwned::to_owned))
+            .flat_map(|s| s.split(',').map(ToOwned::to_owned))
             .collect();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_ANALYZE")? {
             anactrl
                 .analyze
-                .extend(from_env.split(",").map(ToOwned::to_owned));
+                .extend(from_env.split(',').map(ToOwned::to_owned));
         }
         let build_config_file = std::path::Path::new("Paralegal.toml");
         let build_config = if build_config_file.exists() {
