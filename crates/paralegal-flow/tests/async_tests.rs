@@ -64,8 +64,7 @@ define_test!(two_data_over_boundary : graph -> {
     assert!(!get2.output().flows_to_data(&send.input()));
 });
 
-define_test_skip!(inlining_crate_local_async_fns "Strong updates don't work properly in Flowistry. See\
-https://github.com/willcrichton/flowistry/issues/90": : graph -> {
+define_test!(inlining_crate_local_async_fns: graph -> {
 
     let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
@@ -87,7 +86,9 @@ define_test_skip!(arguments_work "arguments are not emitted properly in the grap
     assert!(graph.connects_data((data, send.1), send));
 });
 
-define_test!(no_inlining_overtaint : graph -> {
+define_test!(no_inlining_overtaint
+    :
+    graph -> {
     let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
     let get2_fn = graph.function("get_user_data2");

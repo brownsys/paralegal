@@ -448,7 +448,7 @@ impl<'g> CallStringRef<'g> {
         // Alternative??
         let mut nodes: Vec<_> = graph
             .edge_references()
-            .filter(|e| e.weight().at == self.call_site)
+            .filter(|e| e.weight().at == self.call_site && e.weight().is_data())
             .map(|e| e.source())
             .collect();
         // let mut nodes: Vec<_> = graph
@@ -473,7 +473,7 @@ impl<'g> CallStringRef<'g> {
         let graph = &self.ctrl.ctrl.graph;
         let mut nodes: Vec<_> = graph
             .edge_references()
-            .filter(|e| e.weight().at == self.call_site)
+            .filter(|e| e.weight().at == self.call_site && e.weight().is_data())
             .map(|e| e.target())
             .chain(
                 graph
