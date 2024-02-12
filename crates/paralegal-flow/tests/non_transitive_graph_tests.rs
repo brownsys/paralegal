@@ -167,7 +167,7 @@ define_test!(on_mut_var : graph -> {
     assert!(modify.output().flows_to_data(&receive.input()));
 });
 
-define_test_skip!(spurious_connections_in_deref "Strong updates don't work properly in Flowistry. See\
+define_test_skip!(spurious_connections_in_deref "Returning references has undecided PDG semantics. See\
 https://github.com/willcrichton/flowistry/issues/90": graph -> {
     // An "always_happens_before" but via return value
     let source_fn = graph.function("new_s");

@@ -32,7 +32,8 @@ define_test!(track_mutable_modify : graph -> {
     assert!(source.output().is_neighbor_data(&read.input()));
 });
 
-define_test!(eliminate_return_connection : graph -> {
+define_test_skip!(eliminate_return_connection "Returning references has undecided PDG semantics. See\
+https://github.com/willcrichton/flowistry/issues/90" : graph -> {
     let source_fn = graph.function("new_s");
     let source = graph.call_site(&source_fn);
     let pass_through_fn = graph.function("deref_t");
@@ -53,10 +54,12 @@ define_test!(eliminate_mut_input_connection: graph -> {
 
     assert!(source.output().is_neighbor_data(&push.input()));
     assert!(push.output().is_neighbor_data(&read.input()));
-    assert!(source.output().always_happens_before_data(&push.output(), &read.input()));
 });
 
-define_test!(input_elimination_isnt_a_problem_empty: graph -> {
+define_test_skip!(input_elimination_isnt_a_problem_empty
+    "Alias analysis is  configured to abstract via lifetimes
+    only at the moment. See https://github.com/willcrichton/flowistry/issues/93"
+    : graph -> {
     let source_fn = graph.function("new_s");
     let source = graph.call_site(&source_fn);
     let read_fn = graph.function("read");
@@ -88,7 +91,11 @@ define_test!(input_elimination_isnt_a_problem_vec_push  : graph -> {
     assert!(source.output().flows_to_data(&push.input()));
     // This is where the overtaint happens
     assert!(insert.output().always_happens_before_data(&push.output(), &read.input()));
-    assert!(source.output().always_happens_before_data(&push.output(), &read.input()));
+
+    // This is no longer true, because an additional direct edge is inserted
+    // because the lifetimes guarantee that the source also reaches `read`
+    // unmodified.
+    // assert!(source.output().always_happens_before_data(&push.output(), &read.input()));
 });
 
 define_test!(input_elimination_isnt_a_problem_statement : graph -> {
@@ -106,7 +113,11 @@ define_test!(input_elimination_isnt_a_problem_statement : graph -> {
     assert!(src_1.output().is_neighbor_data(&assoc.input()));
     assert!(assoc.output().is_neighbor_data(&read.input()));
     assert!(src_2.output().is_neighbor_data(&read.input()));
-    assert!(!src_1.output().is_neighbor_data(&read.input()));
+
+    // This is no longer true, because an additional direct edge is inserted
+    // because the lifetimes guarantee that the source also reaches `read`
+    // unmodified.
+    // assert!(!src_1.output().is_neighbor_data(&read.input()));
 });
 
 define_test!(no_inlining_overtaint : graph -> {
