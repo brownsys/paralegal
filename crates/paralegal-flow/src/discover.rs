@@ -66,6 +66,10 @@ impl<'tcx> CollectingVisitor<'tcx> {
             .iter()
             .filter_map(|path| {
                 let def_id = expect_resolve_string_to_def_id(tcx, path, opts.relaxed())?;
+                if !def_id.is_local() {
+                    tcx.sess.span_err(tcx.def_span(def_id), "found an external function as analysis target. Analysis targets are required to be local.");
+                    return None;
+                }
                 Some(FnToAnalyze {
                     def_id,
                     name: tcx.opt_item_ident(def_id).unwrap(),
