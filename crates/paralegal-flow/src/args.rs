@@ -429,7 +429,8 @@ impl MarkerControl {
 pub struct AnalysisCtrl {
     /// Target this function as analysis target. Command line version of
     /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
-    /// function. May be specified multiple times.
+    /// function. May be specified multiple times and multiple, comma separated
+    /// paths may be supplied at the same time.
     #[clap(long)]
     analyze: Vec<String>,
     /// Disables all recursive analysis (both paralegal_flow's inlining as well as
@@ -522,6 +523,7 @@ impl PruningStrategy {
 }
 
 impl AnalysisCtrl {
+    /// Externally (via command line) selected analysis targets
     pub fn selected_targets(&self) -> &[String] {
         &self.analyze
     }
