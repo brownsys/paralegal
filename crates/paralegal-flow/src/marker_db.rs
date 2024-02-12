@@ -16,8 +16,8 @@ use crate::{
     desc::{Annotation, MarkerAnnotation},
     mir, ty,
     utils::{
-        AsFnAndArgs, FnResolution, GenericArgExt, IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt,
-        TyExt,
+        resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, GenericArgExt,
+        IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt, TyExt,
     },
     DefId, HashMap, LocalDefId, TyCtxt,
 };
@@ -322,27 +322,13 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
             }),
         )
         .unwrap();
-        use crate::utils::resolve::{def_path_res, Res};
         let new_map: ExternalMarkers = from_toml
             .iter()
             .filter_map(|(path, marker)| {
-                let segment_vec = path.split("::").collect::<Vec<_>>();
-                let res = def_path_res(tcx, &segment_vec)
-                    .map_err(|err| tcx.sess.err(format!("Could not resolve {path}: {err:?}")))
-                    .ok()?;
-                let did = match res {
-                    Res::Def(_, did) => Some(did),
-                    other => {
-                        let msg = format!("{path} did not resolve to an item ({other:?})");
-                        if opts.relaxed() {
-                            tcx.sess.warn(msg);
-                        } else {
-                            tcx.sess.err(msg);
-                        }
-                        None
-                    }
-                }?;
-                Some((did, marker.clone()))
+                Some((
+                    expect_resolve_string_to_def_id(tcx, path, opts.relaxed())?,
+                    marker.clone(),
+                ))
             })
             .collect();
         new_map
