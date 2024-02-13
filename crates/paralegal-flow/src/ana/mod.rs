@@ -44,106 +44,16 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn handle_target(
         &self,
         //_hash_verifications: &mut HashVerifications,
-        target: &FnToAnalyze,
+        target: FnToAnalyze,
         known_def_ids: &mut impl Extend<DefId>,
     ) -> Result<(Endpoint, SPDG)> {
         debug!("Handling target {}", target.name());
         let local_def_id = target.def_id.expect_local();
 
-        let marker_context = self.marker_ctx.clone();
-        let params = flowistry::pdg::PdgParams::new(self.tcx, local_def_id);
-        let params = if self.opts.anactrl().use_recursive_analysis() {
-            params.with_call_change_callback(move |info| {
-                let changes = CallChanges::default();
-
-                if marker_context.is_marked(info.callee.def_id()) {
-                    changes.with_skip(Skip)
-                } else {
-                    changes
-                }
-            })
-        } else {
-            params.with_call_change_callback(|_| CallChanges::default().with_skip(Skip))
-        };
-
-        if self.opts.dbg().dump_mir() {
-            let mut file =
-                std::fs::File::create(format!("{}.mir", body_name_pls(self.tcx, local_def_id)))?;
-            mir::pretty::write_mir_fn(
-                self.tcx,
-                &self
-                    .tcx
-                    .body_for_def_id_default_policy(local_def_id)
-                    .ok_or_else(|| anyhow!("Body not found"))?
-                    .body,
-                &mut |_, _| Ok(()),
-                &mut file,
-            )?
-        }
-
-        let flowistry_graph = flowistry::pdg::compute_pdg(params);
-        if self.opts.dbg().dump_flowistry_pdg() {
-            flowistry_graph.generate_graphviz(format!("{}.flowistry-pdg.pdf", target.name))?
-        }
-        let (graph, types, markers) = self.convert_graph(
-            target.def_id.expect_local(),
-            &flowistry_graph,
-            known_def_ids,
-        );
-        let arguments = self.determine_arguments(local_def_id, &graph);
-        let return_ = self.determine_return(local_def_id, &graph);
-        let spdg = SPDG {
-            graph,
-            name: Identifier::new(target.name()),
-            arguments,
-            markers,
-            return_,
-            types,
-        };
+        let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
+        let spdg = converter.make_spdg();
 
         Ok((local_def_id, spdg))
-    }
-
-    fn determine_return(&self, target: Endpoint, graph: &SPDGImpl) -> Option<Node> {
-        let mut return_candidates = graph
-            .node_references()
-            .filter(|n| {
-                let weight = n.weight();
-                let at = weight.at;
-                let is_candidate = weight.kind.is_formal_return()
-                    && at.is_at_root()
-                    && at.leaf().location == RichLocation::End;
-                assert!(!is_candidate || target == at.leaf().function);
-                is_candidate
-            })
-            .map(|n| n.id())
-            .peekable();
-        let picked = return_candidates.next()?;
-        assert!(
-            return_candidates.peek().is_none(),
-            "Found too many candidates for the return. {} was picked but also \
-            found {}",
-            DisplayNode::pretty(picked, graph),
-            display_list(
-                return_candidates
-                    .map(|i| DisplayNode::pretty(i, graph))
-                    .collect::<Vec<_>>()
-            ),
-        );
-        Some(picked)
-    }
-
-    fn determine_arguments(&self, target: Endpoint, graph: &SPDGImpl) -> Vec<Node> {
-        graph
-            .node_references()
-            .filter(|n| {
-                let at = n.weight().at;
-                let is_candidate = at.is_at_root() && at.leaf().location == RichLocation::Start;
-                assert!(!is_candidate || target == at.leaf().function);
-                is_candidate
-            })
-            .map(|n| n.id())
-            .collect()
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -151,7 +61,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
-    pub fn analyze(&self, targets: &[FnToAnalyze]) -> Result<ProgramDescription> {
+    pub fn analyze(&self, targets: Vec<FnToAnalyze>) -> Result<ProgramDescription> {
         if let LogLevelConfig::Targeted(s) = self.opts.debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
@@ -166,7 +76,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let mut known_def_ids = HashSet::new();
         let result = targets
-            .iter()
+            .into_iter()
             .map(|desc| {
                 let target_name = desc.name();
                 with_reset_level_if_target(self.opts, target_name, || {
@@ -242,159 +152,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .collect()
     }
 
-    fn annotations_for_function(
-        &self,
-        function: DefId,
-        mut filter: impl FnMut(&MarkerAnnotation) -> bool,
-    ) -> (Vec<Identifier>, Option<DefId>) {
-        let parent = get_parent(self.tcx, function);
-        let annotations = self
-            .marker_ctx
-            .combined_markers(function)
-            .chain(
-                parent
-                    .into_iter()
-                    .flat_map(|parent| self.marker_ctx.combined_markers(parent)),
-            )
-            .filter(|ann| filter(ann))
-            .map(|ann| ann.marker)
-            .collect::<Vec<_>>();
-        (annotations, parent)
-    }
-
-    fn convert_graph(
-        &self,
-        target: LocalDefId,
-        dep_graph: &DepGraph<'tcx>,
-        known_def_ids: &mut impl Extend<DefId>,
-    ) -> (
-        SPDGImpl,
-        HashMap<Node, Types>,
-        HashMap<Node, Vec<Identifier>>,
-    ) {
-        use petgraph::prelude::*;
-        let tcx = self.tcx;
-        let input = &dep_graph.graph;
-        let mut g = SPDGImpl::new();
-        let mut types: HashMap<NodeIndex, Types> = HashMap::new();
-        let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
-
-        let default_index = <SPDGImpl as GraphBase>::NodeId::end();
-        let mut index_map = vec![default_index; input.node_bound()];
-
-        for (i, weight) in input.node_references() {
-            let leaf_loc = weight.at.leaf();
-
-            let body = &tcx.body_for_def_id(leaf_loc.function).unwrap().body;
-
-            let (kind, is_external_call_source) = match leaf_loc.location {
-                RichLocation::Start
-                    if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
-                {
-                    let function_id = leaf_loc.function.to_def_id();
-                    let arg_num = weight.place.local.as_u32() - 1;
-                    known_def_ids.extend(Some(function_id));
-
-                    let (annotations, parent) = self.annotations_for_function(function_id, |ann| {
-                        ann.refinement.on_argument().contains(arg_num).unwrap()
-                    });
-
-                    known_def_ids.extend(parent);
-                    if !annotations.is_empty() {
-                        markers
-                            .entry(i)
-                            .or_insert_with(Default::default)
-                            .extend(annotations);
-                    }
-                    (NodeKind::FormalParameter(arg_num as u8), false)
-                }
-                RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
-                    let function_id = leaf_loc.function.to_def_id();
-                    known_def_ids.extend(Some(function_id));
-                    let (annotations, parent) = self
-                        .annotations_for_function(function_id, |ann| ann.refinement.on_return());
-                    known_def_ids.extend(parent);
-                    if !annotations.is_empty() {
-                        markers
-                            .entry(i)
-                            .or_insert_with(Default::default)
-                            .extend(annotations);
-                    }
-                    (NodeKind::FormalReturn, false)
-                }
-                RichLocation::Location(loc) => {
-                    let stmt_at_loc = body.stmt_at(loc);
-                    let matches_place =
-                        |place| weight.place.simple_overlaps(place).contains_other();
-                    if let crate::Either::Right(
-                        term @ mir::Terminator {
-                            kind:
-                                mir::TerminatorKind::Call {
-                                    args, destination, ..
-                                },
-                            ..
-                        },
-                    ) = stmt_at_loc
-                    {
-                        let indices: TinyBitSet = args
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, op)| matches_place(op.place()?).then_some(i as u32))
-                            .collect::<TinyBitSet>();
-                        let (fun, ..) = term.as_fn_and_args(self.tcx).unwrap();
-                        known_def_ids.extend(Some(fun));
-                        let is_external = !fun.is_local();
-                        let kind = if !indices.is_empty() {
-                            NodeKind::ActualParameter(indices)
-                        } else if matches_place(*destination) {
-                            NodeKind::ActualReturn
-                        } else {
-                            NodeKind::Unspecified
-                        };
-                        (kind, is_external)
-                    } else {
-                        (NodeKind::Unspecified, false)
-                    }
-                }
-                _ => (NodeKind::Unspecified, false),
-            };
-            debug_assert!(index_map[i.index()] == default_index);
-            index_map[i.index()] = g.add_node(NodeInfo {
-                at: weight.at,
-                description: format!("{:?}", weight.place),
-                kind,
-            });
-
-            let place_ty = self.determine_place_type(target, weight.place, weight.at);
-
-            let type_markers = self.type_is_marked(place_ty, is_external_call_source);
-            known_def_ids.extend(type_markers.iter().copied());
-            if !type_markers.is_empty() {
-                types
-                    .entry(i)
-                    .or_insert_with(Default::default)
-                    .0
-                    .extend(type_markers)
-            }
-        }
-
-        for e in input.edge_references() {
-            g.add_edge(
-                index_map[e.source().index()],
-                index_map[e.target().index()],
-                EdgeInfo {
-                    at: e.weight().at,
-                    kind: match e.weight().kind {
-                        DepEdgeKind::Control => EdgeKind::Control,
-                        DepEdgeKind::Data => EdgeKind::Data,
-                    },
-                },
-            );
-        }
-
-        (g, types, markers)
-    }
-
     fn collect_type_info(
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
@@ -431,26 +188,35 @@ impl<'tcx> SPDGGenerator<'tcx> {
             })
             .collect()
     }
+}
 
-    fn type_is_marked(&self, typ: mir::tcx::PlaceTy<'tcx>, walk: bool) -> Vec<TypeId> {
-        if walk {
-            self.marker_ctx
-                .all_type_markers(typ.ty)
-                .map(|t| t.1 .1)
-                .collect()
-        } else {
-            self.marker_ctx
-                .type_has_surface_markers(typ.ty)
-                .into_iter()
-                .collect()
-        }
+struct GraphConverter<'tcx, 'a, C> {
+    generator: &'a SPDGGenerator<'tcx>,
+    known_def_ids: &'a mut C,
+    target: FnToAnalyze,
+    dep_graph: DepGraph<'tcx>,
+    /// Same as the ID stored in self.target, but as a local def id
+    local_def_id: LocalDefId,
+}
+
+impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
+    fn tcx(&self) -> TyCtxt<'tcx> {
+        self.generator.tcx
+    }
+
+    fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
+        &self.generator.marker_ctx
+    }
+
+    fn entrypoint_is_async(&self) -> bool {
+        self.tcx().asyncness(self.local_def_id).is_async()
     }
 
     fn expect_stmt_at(
         &self,
         loc: GlobalLocation,
     ) -> Either<&'tcx mir::Statement<'tcx>, &'tcx mir::Terminator<'tcx>> {
-        let body = &self.tcx.body_for_def_id(loc.function).unwrap().body;
+        let body = &self.tcx().body_for_def_id(loc.function).unwrap().body;
         let RichLocation::Location(loc) = loc.location else {
             unreachable!();
         };
@@ -463,10 +229,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
         place: mir::Place<'tcx>,
         at: CallString,
     ) -> mir::tcx::PlaceTy<'tcx> {
+        let tcx = self.tcx();
         let locations = at.iter_from_root().collect::<Vec<_>>();
         let (last, mut rest) = locations.split_last().unwrap();
 
-        if self.tcx.asyncness(root_function).is_async() {
+        if self.entrypoint_is_async() {
             let (first, tail) = rest.split_first().unwrap();
             // The body of a top-level `async` function binds a closure to the
             // return place `_0`. Here we expect are looking at the statement
@@ -483,28 +250,307 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 let term = match resolution {
                     FnResolution::Final(instance) => {
                         Cow::Owned(instance.subst_mir_and_normalize_erasing_regions(
-                            self.tcx,
-                            self.tcx.param_env(resolution.def_id()),
+                            tcx,
+                            tcx.param_env(resolution.def_id()),
                             ty::EarlyBinder::bind(terminator.clone()),
                         ))
                     }
                     FnResolution::Partial(_) => Cow::Borrowed(terminator),
                 };
-                let (instance, ..) = term.as_instance_and_args(self.tcx).unwrap();
+                let (instance, ..) = term.as_instance_and_args(tcx).unwrap();
                 instance
             },
         );
         // Thread through each caller to recover generic arguments
-        let body = self.tcx.body_for_def_id(last.function).unwrap();
-        let raw_ty = place.ty(&body.body, self.tcx);
+        let body = tcx.body_for_def_id(last.function).unwrap();
+        let raw_ty = place.ty(&body.body, tcx);
         match resolution {
             FnResolution::Partial(_) => raw_ty,
             FnResolution::Final(instance) => instance.subst_mir_and_normalize_erasing_regions(
-                self.tcx,
+                tcx,
                 ty::ParamEnv::reveal_all(),
-                ty::EarlyBinder::bind(self.tcx.erase_regions(raw_ty)),
+                ty::EarlyBinder::bind(tcx.erase_regions(raw_ty)),
             ),
         }
+    }
+    fn annotations_for_function(
+        &self,
+        function: DefId,
+        mut filter: impl FnMut(&MarkerAnnotation) -> bool,
+    ) -> (Vec<Identifier>, Option<DefId>) {
+        let parent = get_parent(self.tcx(), function);
+        let annotations = self
+            .marker_ctx()
+            .combined_markers(function)
+            .chain(
+                parent
+                    .into_iter()
+                    .flat_map(|parent| self.marker_ctx().combined_markers(parent)),
+            )
+            .filter(|ann| filter(ann))
+            .map(|ann| ann.marker)
+            .collect::<Vec<_>>();
+        (annotations, parent)
+    }
+
+    fn create_flowistry_graph(
+        generator: &SPDGGenerator<'tcx>,
+        local_def_id: LocalDefId,
+    ) -> Result<DepGraph<'tcx>> {
+        let tcx = generator.tcx;
+        let opts = generator.opts;
+        let marker_context = generator.marker_ctx.clone();
+        let params = flowistry::pdg::PdgParams::new(tcx, local_def_id);
+        let params = if opts.anactrl().use_recursive_analysis() {
+            params.with_call_change_callback(move |info| {
+                let changes = CallChanges::default();
+
+                if marker_context.is_marked(info.callee.def_id()) {
+                    changes.with_skip(Skip)
+                } else {
+                    changes
+                }
+            })
+        } else {
+            params.with_call_change_callback(|_| CallChanges::default().with_skip(Skip))
+        };
+
+        if opts.dbg().dump_mir() {
+            let mut file =
+                std::fs::File::create(format!("{}.mir", body_name_pls(tcx, local_def_id)))?;
+            mir::pretty::write_mir_fn(
+                tcx,
+                &tcx.body_for_def_id_default_policy(local_def_id)
+                    .ok_or_else(|| anyhow!("Body not found"))?
+                    .body,
+                &mut |_, _| Ok(()),
+                &mut file,
+            )?
+        }
+
+        Ok(flowistry::pdg::compute_pdg(params))
+    }
+
+    fn new_with_flowistry(
+        generator: &'a SPDGGenerator<'tcx>,
+        known_def_ids: &'a mut C,
+        target: FnToAnalyze,
+    ) -> Result<Self> {
+        let local_def_id = target.def_id.expect_local();
+        let dep_graph = Self::create_flowistry_graph(generator, local_def_id)?;
+
+        if generator.opts.dbg().dump_flowistry_pdg() {
+            dep_graph.generate_graphviz(format!("{}.flowistry-pdg.pdf", target.name))?
+        }
+
+        Ok(Self {
+            generator,
+            known_def_ids,
+            target,
+            dep_graph,
+            local_def_id,
+        })
+    }
+
+    fn make_spdg(mut self) -> SPDG {
+        let (graph, types, markers) = self.make_spdg_impl();
+        let arguments = self.determine_arguments(&graph);
+        let return_ = self.determine_return(&graph);
+        SPDG {
+            graph,
+            name: Identifier::new(self.target.name()),
+            arguments,
+            markers,
+            return_,
+            types,
+        }
+    }
+
+    fn make_spdg_impl(
+        &mut self,
+    ) -> (
+        SPDGImpl,
+        HashMap<Node, Types>,
+        HashMap<Node, Vec<Identifier>>,
+    ) {
+        use petgraph::prelude::*;
+        let tcx = self.tcx();
+        let input = &self.dep_graph.graph;
+        let target = self.local_def_id;
+        let mut g = SPDGImpl::new();
+        let mut types: HashMap<NodeIndex, Types> = HashMap::new();
+        let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
+
+        let default_index = <SPDGImpl as GraphBase>::NodeId::end();
+        let mut index_map = vec![default_index; input.node_bound()];
+
+        for (i, weight) in input.node_references() {
+            let leaf_loc = weight.at.leaf();
+
+            let body = &tcx.body_for_def_id(leaf_loc.function).unwrap().body;
+
+            let (kind, is_external_call_source) = match leaf_loc.location {
+                RichLocation::Start
+                    if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
+                {
+                    let function_id = leaf_loc.function.to_def_id();
+                    let arg_num = weight.place.local.as_u32() - 1;
+                    self.known_def_ids.extend(Some(function_id));
+
+                    let (annotations, parent) = self.annotations_for_function(function_id, |ann| {
+                        ann.refinement.on_argument().contains(arg_num).unwrap()
+                    });
+
+                    self.known_def_ids.extend(parent);
+                    if !annotations.is_empty() {
+                        markers
+                            .entry(i)
+                            .or_insert_with(Default::default)
+                            .extend(annotations);
+                    }
+                    (NodeKind::FormalParameter(arg_num as u8), false)
+                }
+                RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
+                    let function_id = leaf_loc.function.to_def_id();
+                    self.known_def_ids.extend(Some(function_id));
+                    let (annotations, parent) = self
+                        .annotations_for_function(function_id, |ann| ann.refinement.on_return());
+                    self.known_def_ids.extend(parent);
+                    if !annotations.is_empty() {
+                        markers
+                            .entry(i)
+                            .or_insert_with(Default::default)
+                            .extend(annotations);
+                    }
+                    (NodeKind::FormalReturn, false)
+                }
+                RichLocation::Location(loc) => {
+                    let stmt_at_loc = body.stmt_at(loc);
+                    let matches_place =
+                        |place| weight.place.simple_overlaps(place).contains_other();
+                    if let crate::Either::Right(
+                        term @ mir::Terminator {
+                            kind:
+                                mir::TerminatorKind::Call {
+                                    args, destination, ..
+                                },
+                            ..
+                        },
+                    ) = stmt_at_loc
+                    {
+                        let indices: TinyBitSet = args
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, op)| matches_place(op.place()?).then_some(i as u32))
+                            .collect::<TinyBitSet>();
+                        let (fun, ..) = term.as_fn_and_args(tcx).unwrap();
+                        self.known_def_ids.extend(Some(fun));
+                        let is_external = !fun.is_local();
+                        let kind = if !indices.is_empty() {
+                            NodeKind::ActualParameter(indices)
+                        } else if matches_place(*destination) {
+                            NodeKind::ActualReturn
+                        } else {
+                            NodeKind::Unspecified
+                        };
+                        (kind, is_external)
+                    } else {
+                        (NodeKind::Unspecified, false)
+                    }
+                }
+                _ => (NodeKind::Unspecified, false),
+            };
+            debug_assert!(index_map[i.index()] == default_index);
+            index_map[i.index()] = g.add_node(NodeInfo {
+                at: weight.at,
+                description: format!("{:?}", weight.place),
+                kind,
+            });
+
+            let place_ty = self.determine_place_type(target, weight.place, weight.at);
+
+            let type_markers = self.type_is_marked(place_ty, is_external_call_source);
+            self.known_def_ids.extend(type_markers.iter().copied());
+            if !type_markers.is_empty() {
+                types
+                    .entry(i)
+                    .or_insert_with(Default::default)
+                    .0
+                    .extend(type_markers)
+            }
+        }
+
+        for e in input.edge_references() {
+            g.add_edge(
+                index_map[e.source().index()],
+                index_map[e.target().index()],
+                EdgeInfo {
+                    at: e.weight().at,
+                    kind: match e.weight().kind {
+                        DepEdgeKind::Control => EdgeKind::Control,
+                        DepEdgeKind::Data => EdgeKind::Data,
+                    },
+                },
+            );
+        }
+
+        (g, types, markers)
+    }
+
+    fn type_is_marked(&self, typ: mir::tcx::PlaceTy<'tcx>, walk: bool) -> Vec<TypeId> {
+        if walk {
+            self.marker_ctx()
+                .all_type_markers(typ.ty)
+                .map(|t| t.1 .1)
+                .collect()
+        } else {
+            self.marker_ctx()
+                .type_has_surface_markers(typ.ty)
+                .into_iter()
+                .collect()
+        }
+    }
+
+    fn determine_return(&self, graph: &SPDGImpl) -> Option<Node> {
+        let mut return_candidates = graph
+            .node_references()
+            .filter(|n| {
+                let weight = n.weight();
+                let at = weight.at;
+                let is_candidate = weight.kind.is_formal_return()
+                    && at.is_at_root()
+                    && at.leaf().location == RichLocation::End;
+                assert!(!is_candidate || self.local_def_id == at.leaf().function);
+                is_candidate
+            })
+            .map(|n| n.id())
+            .peekable();
+        let picked = return_candidates.next()?;
+        assert!(
+            return_candidates.peek().is_none(),
+            "Found too many candidates for the return. {} was picked but also \
+            found {}",
+            DisplayNode::pretty(picked, graph),
+            display_list(
+                return_candidates
+                    .map(|i| DisplayNode::pretty(i, graph))
+                    .collect::<Vec<_>>()
+            ),
+        );
+        Some(picked)
+    }
+
+    fn determine_arguments(&self, graph: &SPDGImpl) -> Vec<Node> {
+        graph
+            .node_references()
+            .filter(|n| {
+                let at = n.weight().at;
+                let is_candidate = at.is_at_root() && at.leaf().location == RichLocation::Start;
+                assert!(!is_candidate || self.local_def_id == at.leaf().function);
+                is_candidate
+            })
+            .map(|n| n.id())
+            .collect()
     }
 }
 

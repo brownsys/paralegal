@@ -71,7 +71,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         let tcx = self.tcx;
         tcx.hir().visit_all_item_likes_in_crate(&mut self);
         let targets = std::mem::take(&mut self.functions_to_analyze);
-        self.into_generator().analyze(&targets)
+        self.into_generator().analyze(targets)
     }
 
     /// Does the function named by this id have the `paralegal_flow::analyze` annotation
