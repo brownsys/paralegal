@@ -8,13 +8,14 @@ use crate::{
     desc::*, rust::*, utils::*, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 use std::borrow::Cow;
+use std::rc::Rc;
 
 use anyhow::{anyhow, Result};
 use either::Either;
-use flowistry::pdg::graph::{DepEdgeKind, DepGraph};
+use flowistry::pdg::graph::{DepEdgeKind, DepGraph, DepNode};
 use flowistry::pdg::CallChanges;
 use flowistry::pdg::SkipCall::Skip;
-use paralegal_spdg::utils::display_list;
+use paralegal_spdg::{utils::display_list, Node};
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
 
 use super::discover::FnToAnalyze;
@@ -194,12 +195,37 @@ struct GraphConverter<'tcx, 'a, C> {
     generator: &'a SPDGGenerator<'tcx>,
     known_def_ids: &'a mut C,
     target: FnToAnalyze,
-    dep_graph: DepGraph<'tcx>,
+    dep_graph: Rc<DepGraph<'tcx>>,
     /// Same as the ID stored in self.target, but as a local def id
     local_def_id: LocalDefId,
+    types: HashMap<Node, Types>,
+    markers: HashMap<Node, Vec<Identifier>>,
 }
 
 impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
+    fn new_with_flowistry(
+        generator: &'a SPDGGenerator<'tcx>,
+        known_def_ids: &'a mut C,
+        target: FnToAnalyze,
+    ) -> Result<Self> {
+        let local_def_id = target.def_id.expect_local();
+        let dep_graph = Rc::new(Self::create_flowistry_graph(generator, local_def_id)?);
+
+        if generator.opts.dbg().dump_flowistry_pdg() {
+            dep_graph.generate_graphviz(format!("{}.flowistry-pdg.pdf", target.name))?
+        }
+
+        Ok(Self {
+            generator,
+            known_def_ids,
+            target,
+            dep_graph,
+            local_def_id,
+            types: Default::default(),
+            markers: Default::default(),
+        })
+    }
+
     fn tcx(&self) -> TyCtxt<'tcx> {
         self.generator.tcx
     }
@@ -223,14 +249,86 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         body.stmt_at(loc)
     }
 
-    fn determine_place_type(
-        &self,
-        root_function: LocalDefId,
-        place: mir::Place<'tcx>,
-        at: CallString,
-    ) -> mir::tcx::PlaceTy<'tcx> {
+    fn determine_node_kind(&mut self, i: Node, weight: &DepNode<'tcx>) -> (NodeKind, bool) {
+        let leaf_loc = weight.at.leaf();
+
+        let body = &self.tcx().body_for_def_id(leaf_loc.function).unwrap().body;
+
+        match leaf_loc.location {
+            RichLocation::Start
+                if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
+            {
+                let function_id = leaf_loc.function.to_def_id();
+                let arg_num = weight.place.local.as_u32() - 1;
+                self.known_def_ids.extend(Some(function_id));
+
+                let (annotations, parent) = self.annotations_for_function(function_id, |ann| {
+                    ann.refinement.on_argument().contains(arg_num).unwrap()
+                });
+
+                self.known_def_ids.extend(parent);
+                if !annotations.is_empty() {
+                    self.markers
+                        .entry(i)
+                        .or_insert_with(Default::default)
+                        .extend(annotations);
+                }
+                (NodeKind::FormalParameter(arg_num as u8), false)
+            }
+            RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
+                let function_id = leaf_loc.function.to_def_id();
+                self.known_def_ids.extend(Some(function_id));
+                let (annotations, parent) =
+                    self.annotations_for_function(function_id, |ann| ann.refinement.on_return());
+                self.known_def_ids.extend(parent);
+                if !annotations.is_empty() {
+                    self.markers
+                        .entry(i)
+                        .or_insert_with(Default::default)
+                        .extend(annotations);
+                }
+                (NodeKind::FormalReturn, false)
+            }
+            RichLocation::Location(loc) => {
+                let stmt_at_loc = body.stmt_at(loc);
+                let matches_place = |place| weight.place.simple_overlaps(place).contains_other();
+                if let crate::Either::Right(
+                    term @ mir::Terminator {
+                        kind:
+                            mir::TerminatorKind::Call {
+                                args, destination, ..
+                            },
+                        ..
+                    },
+                ) = stmt_at_loc
+                {
+                    let indices: TinyBitSet = args
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, op)| matches_place(op.place()?).then_some(i as u32))
+                        .collect::<TinyBitSet>();
+                    let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
+                    self.known_def_ids.extend(Some(fun));
+                    let is_external = !fun.is_local();
+                    let kind = if !indices.is_empty() {
+                        NodeKind::ActualParameter(indices)
+                    } else if matches_place(*destination) {
+                        NodeKind::ActualReturn
+                    } else {
+                        NodeKind::Unspecified
+                    };
+                    (kind, is_external)
+                } else {
+                    (NodeKind::Unspecified, false)
+                }
+            }
+            _ => (NodeKind::Unspecified, false),
+        }
+    }
+
+    fn determine_place_type(&self, weight: &DepNode<'tcx>) -> mir::tcx::PlaceTy<'tcx> {
         let tcx = self.tcx();
-        let locations = at.iter_from_root().collect::<Vec<_>>();
+        let locations = weight.at.iter_from_root().collect::<Vec<_>>();
         let (last, mut rest) = locations.split_last().unwrap();
 
         if self.entrypoint_is_async() {
@@ -242,7 +340,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             rest = tail;
         }
         let resolution = rest.iter().fold(
-            FnResolution::Partial(root_function.to_def_id()),
+            FnResolution::Partial(self.local_def_id.to_def_id()),
             |resolution, caller| {
                 let crate::Either::Right(terminator) = self.expect_stmt_at(*caller) else {
                     unreachable!()
@@ -263,7 +361,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         );
         // Thread through each caller to recover generic arguments
         let body = tcx.body_for_def_id(last.function).unwrap();
-        let raw_ty = place.ty(&body.body, tcx);
+        let raw_ty = weight.place.ty(&body.body, tcx);
         match resolution {
             FnResolution::Partial(_) => raw_ty,
             FnResolution::Final(instance) => instance.subst_mir_and_normalize_erasing_regions(
@@ -273,6 +371,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             ),
         }
     }
+
     fn annotations_for_function(
         &self,
         function: DefId,
@@ -291,6 +390,25 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             .map(|ann| ann.marker)
             .collect::<Vec<_>>();
         (annotations, parent)
+    }
+
+    fn handle_node_types(
+        &mut self,
+        i: Node,
+        weight: &DepNode<'tcx>,
+        is_external_call_source: bool,
+    ) {
+        let place_ty = self.determine_place_type(weight);
+
+        let type_markers = self.type_is_marked(place_ty, is_external_call_source);
+        self.known_def_ids.extend(type_markers.iter().copied());
+        if !type_markers.is_empty() {
+            self.types
+                .entry(i)
+                .or_insert_with(Default::default)
+                .0
+                .extend(type_markers)
+        }
     }
 
     fn create_flowistry_graph(
@@ -331,135 +449,31 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         Ok(flowistry::pdg::compute_pdg(params))
     }
 
-    fn new_with_flowistry(
-        generator: &'a SPDGGenerator<'tcx>,
-        known_def_ids: &'a mut C,
-        target: FnToAnalyze,
-    ) -> Result<Self> {
-        let local_def_id = target.def_id.expect_local();
-        let dep_graph = Self::create_flowistry_graph(generator, local_def_id)?;
-
-        if generator.opts.dbg().dump_flowistry_pdg() {
-            dep_graph.generate_graphviz(format!("{}.flowistry-pdg.pdf", target.name))?
-        }
-
-        Ok(Self {
-            generator,
-            known_def_ids,
-            target,
-            dep_graph,
-            local_def_id,
-        })
-    }
-
     fn make_spdg(mut self) -> SPDG {
-        let (graph, types, markers) = self.make_spdg_impl();
+        let graph = self.make_spdg_impl();
         let arguments = self.determine_arguments(&graph);
         let return_ = self.determine_return(&graph);
         SPDG {
             graph,
             name: Identifier::new(self.target.name()),
             arguments,
-            markers,
+            markers: self.markers,
             return_,
-            types,
+            types: self.types,
         }
     }
 
-    fn make_spdg_impl(
-        &mut self,
-    ) -> (
-        SPDGImpl,
-        HashMap<Node, Types>,
-        HashMap<Node, Vec<Identifier>>,
-    ) {
+    fn make_spdg_impl(&mut self) -> SPDGImpl {
         use petgraph::prelude::*;
-        let tcx = self.tcx();
-        let input = &self.dep_graph.graph;
-        let target = self.local_def_id;
+        let g_ref = self.dep_graph.clone();
+        let input = &g_ref.graph;
         let mut g = SPDGImpl::new();
-        let mut types: HashMap<NodeIndex, Types> = HashMap::new();
-        let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
 
         let default_index = <SPDGImpl as GraphBase>::NodeId::end();
         let mut index_map = vec![default_index; input.node_bound()];
 
         for (i, weight) in input.node_references() {
-            let leaf_loc = weight.at.leaf();
-
-            let body = &tcx.body_for_def_id(leaf_loc.function).unwrap().body;
-
-            let (kind, is_external_call_source) = match leaf_loc.location {
-                RichLocation::Start
-                    if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
-                {
-                    let function_id = leaf_loc.function.to_def_id();
-                    let arg_num = weight.place.local.as_u32() - 1;
-                    self.known_def_ids.extend(Some(function_id));
-
-                    let (annotations, parent) = self.annotations_for_function(function_id, |ann| {
-                        ann.refinement.on_argument().contains(arg_num).unwrap()
-                    });
-
-                    self.known_def_ids.extend(parent);
-                    if !annotations.is_empty() {
-                        markers
-                            .entry(i)
-                            .or_insert_with(Default::default)
-                            .extend(annotations);
-                    }
-                    (NodeKind::FormalParameter(arg_num as u8), false)
-                }
-                RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
-                    let function_id = leaf_loc.function.to_def_id();
-                    self.known_def_ids.extend(Some(function_id));
-                    let (annotations, parent) = self
-                        .annotations_for_function(function_id, |ann| ann.refinement.on_return());
-                    self.known_def_ids.extend(parent);
-                    if !annotations.is_empty() {
-                        markers
-                            .entry(i)
-                            .or_insert_with(Default::default)
-                            .extend(annotations);
-                    }
-                    (NodeKind::FormalReturn, false)
-                }
-                RichLocation::Location(loc) => {
-                    let stmt_at_loc = body.stmt_at(loc);
-                    let matches_place =
-                        |place| weight.place.simple_overlaps(place).contains_other();
-                    if let crate::Either::Right(
-                        term @ mir::Terminator {
-                            kind:
-                                mir::TerminatorKind::Call {
-                                    args, destination, ..
-                                },
-                            ..
-                        },
-                    ) = stmt_at_loc
-                    {
-                        let indices: TinyBitSet = args
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, op)| matches_place(op.place()?).then_some(i as u32))
-                            .collect::<TinyBitSet>();
-                        let (fun, ..) = term.as_fn_and_args(tcx).unwrap();
-                        self.known_def_ids.extend(Some(fun));
-                        let is_external = !fun.is_local();
-                        let kind = if !indices.is_empty() {
-                            NodeKind::ActualParameter(indices)
-                        } else if matches_place(*destination) {
-                            NodeKind::ActualReturn
-                        } else {
-                            NodeKind::Unspecified
-                        };
-                        (kind, is_external)
-                    } else {
-                        (NodeKind::Unspecified, false)
-                    }
-                }
-                _ => (NodeKind::Unspecified, false),
-            };
+            let (kind, is_external_call_source) = self.determine_node_kind(i, weight);
             debug_assert!(index_map[i.index()] == default_index);
             index_map[i.index()] = g.add_node(NodeInfo {
                 at: weight.at,
@@ -467,17 +481,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 kind,
             });
 
-            let place_ty = self.determine_place_type(target, weight.place, weight.at);
-
-            let type_markers = self.type_is_marked(place_ty, is_external_call_source);
-            self.known_def_ids.extend(type_markers.iter().copied());
-            if !type_markers.is_empty() {
-                types
-                    .entry(i)
-                    .or_insert_with(Default::default)
-                    .0
-                    .extend(type_markers)
-            }
+            self.handle_node_types(i, weight, is_external_call_source);
         }
 
         for e in input.edge_references() {
@@ -494,7 +498,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             );
         }
 
-        (g, types, markers)
+        g
     }
 
     fn type_is_marked(&self, typ: mir::tcx::PlaceTy<'tcx>, walk: bool) -> Vec<TypeId> {
