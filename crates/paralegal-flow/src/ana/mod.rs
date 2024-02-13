@@ -516,16 +516,27 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     fn determine_return(&self, graph: &SPDGImpl) -> Option<Node> {
+        // In async functions
+        let match_root_function = if self.entrypoint_is_async() {
+            |at: CallString| {
+                at.len() == 2
+                    && matches!(
+                        at.iter_from_root().nth(1),
+                        Some(GlobalLocation {
+                            location: RichLocation::End,
+                            ..
+                        })
+                    )
+            }
+        } else {
+            |at: CallString| at.is_at_root() && at.leaf().location == RichLocation::End
+        };
         let mut return_candidates = graph
             .node_references()
             .filter(|n| {
                 let weight = n.weight();
                 let at = weight.at;
-                let is_candidate = weight.kind.is_formal_return()
-                    && at.is_at_root()
-                    && at.leaf().location == RichLocation::End;
-                assert!(!is_candidate || self.local_def_id == at.leaf().function);
-                is_candidate
+                weight.kind.is_formal_return() && match_root_function(at)
             })
             .map(|n| n.id())
             .peekable();

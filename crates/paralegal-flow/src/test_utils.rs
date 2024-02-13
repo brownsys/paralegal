@@ -322,21 +322,13 @@ impl<'g> Debug for CtrlRef<'g> {
 
 impl<'g> CtrlRef<'g> {
     pub fn return_value(&self) -> NodeRefs {
-        let graph = &self.ctrl.graph;
-        let nodes: Vec<_> = graph
-            .node_references()
-            .filter(|(_node, weight)| {
-                let cs = weight.at;
-                cs.is_at_root()
-                    && cs.leaf().location.is_end()
-                    && matches!(
-                        weight.kind,
-                        NodeKind::FormalReturn | NodeKind::FormalParameter(_)
-                    )
-            })
-            .map(|(node, _)| node)
-            .collect();
         // TODO only include mutable formal parameters?
+        let nodes = self
+            .ctrl
+            .return_
+            .as_ref()
+            .map_or(&[] as &[_], std::slice::from_ref)
+            .to_vec();
         NodeRefs { nodes, graph: self }
     }
 

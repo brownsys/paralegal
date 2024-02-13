@@ -168,6 +168,11 @@ define_test!(no_overtaint_over_poll: graph -> {
 define_test!(return_from_async: graph -> {
     let input_fn = graph.function("some_input");
     let input = graph.call_site(&input_fn);
+    if let Some(n) = graph.ctrl.return_ {
+        println!("{n:?} {}", graph.ctrl.graph.node_weight(n).unwrap())
+    } else {
+        println!("No return")
+    };
     assert!(graph.returns(&input.output()))
 });
 
