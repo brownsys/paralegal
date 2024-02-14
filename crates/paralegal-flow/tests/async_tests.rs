@@ -2,7 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{define_test_skip, test_utils::*};
+use paralegal_flow::test_utils::*;
 
 const CRATE_DIR: &str = "tests/async-tests";
 
@@ -12,11 +12,8 @@ lazy_static! {
 }
 
 macro_rules! define_test {
-    ($name:ident: $ctrl:ident -> $block:block) => {
-        define_test!($name: $ctrl, $name -> $block);
-    };
-    ($name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
-        paralegal_flow::define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $name: $ctrl, $ctrl_name -> $block);
+    ($($t:tt)*) => {
+        paralegal_flow::define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $($t)*);
     };
 }
 
@@ -31,15 +28,17 @@ define_test!(top_level_inlining_happens : graph -> {
     assert!(get.output().flows_to_data(&dp.input()));
     assert!(dp.output().flows_to_data(&send.input()));
     assert!(get.output().flows_to_data(&send.input()));
-    assert!(!get.output().is_neighbor_data(&send.input()))
+    // This used to check for neighbors. But now "input" is not actually nodes
+    // at the same location as the call site but one ahead, so the gap shortened.
+    assert!(!get.output().overlaps(&send.input()))
 });
 
 define_test!(awaiting_works : graph -> {
-    let get_fn = graph.function("async_get_user_data");
+    let get_fn = graph.async_function("async_get_user_data");
     let get = graph.call_site(&get_fn);
-    let dp_fn = graph.function("async_dp_user_data");
+    let dp_fn = graph.async_function("async_dp_user_data");
     let dp = graph.call_site(&dp_fn);
-    let send_fn = graph.function("async_send_user_data");
+    let send_fn = graph.async_function("async_send_user_data");
     let send = graph.call_site(&send_fn);
 
     assert!(get.output().flows_to_data(&dp.input()));
@@ -79,16 +78,19 @@ define_test!(inlining_crate_local_async_fns: graph -> {
     assert!(!get.output().is_neighbor_data(&send.input()))
 });
 
-define_test_skip!(arguments_work "arguments are not emitted properly in the graph data structure the test is defined over, making the test fail. When I manually inspected the (visual) graph dump this test case seemed to be correct." : graph -> {
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
-    let data = graph.argument(graph.ctrl(), 0);
-    assert!(graph.connects_data((data, send.1), send));
-});
+// define_test!(arguments_work skip
+//     "arguments are not emitted properly in the graph data structure the test is defined over, making the test fail. When I manually inspected the (visual) graph dump this test case seemed to be correct." : graph -> {
+//     let send_fn = graph.function("send_user_data");
+//     let send = graph.call_site(&send_fn);
+//     let data = graph.argument(graph.ctrl(), 0);
+//     assert!(graph.connects_data((data, send.1), send));
+// });
 
 define_test!(no_inlining_overtaint
-    :
-    graph -> {
+    skip
+    "Alias analysis is problematic with async.
+    See https://github.com/willcrichton/flowistry/issues/93"
+    : graph -> {
     let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
     let get2_fn = graph.function("get_user_data2");
@@ -125,7 +127,67 @@ define_test!(no_immutable_inlining_overtaint : graph -> {
     assert!(!get2.output().flows_to_data(&send.input()));
 });
 
-define_test!(remove_poll_match: graph -> {
+define_test!(no_mixed_mutability_borrow_inlining_overtaint
+    skip
+    "Alias analysis is problematic with async.
+    See https://github.com/willcrichton/flowistry/issues/93"
+    : graph -> {
+    let get_fn = graph.function("get_user_data");
+    let get = graph.call_site(&get_fn);
+    let get2_fn = graph.function("get_user_data2");
+    let get2 = graph.call_site(&get2_fn);
+    let send_fn = graph.function("send_user_data");
+    let send = graph.call_site(&send_fn);
+    let send2_fn = graph.function("send_user_data2");
+    let send2 = graph.call_site(&send2_fn);
+
+    assert!(get.output().flows_to_data(&send.input()));
+    assert!(get2.output().flows_to_data(&send2.input()));
+    assert!(!get2.output().flows_to_data(&send.input()));
+    assert!(!get.output().flows_to_data(&send2.input()));
+});
+
+define_test!(no_mixed_mutability_inlining_overtaint
+    skip
+    "Alias analysis is problematic with async.
+    See https://github.com/willcrichton/flowistry/issues/93"
+    : graph -> {
+    let get_fn = graph.function("get_user_data");
+    let get = graph.call_site(&get_fn);
+    let get2_fn = graph.function("get_user_data2");
+    let get2 = graph.call_site(&get2_fn);
+    let send_fn = graph.function("send_user_data");
+    let send = graph.call_site(&send_fn);
+    let send2_fn = graph.function("send_user_data2");
+    let send2 = graph.call_site(&send2_fn);
+
+    assert!(get.output().flows_to_data(&send.input()));
+    assert!(get2.output().flows_to_data(&send2.input()));
+    assert!(!get2.output().flows_to_data(&send.input()));
+    assert!(!get.output().flows_to_data(&send2.input()));
+});
+
+define_test!(no_value_inlining_overtaint : graph -> {
+    let get_fn = graph.function("get_user_data");
+    let get = graph.call_site(&get_fn);
+    let get2_fn = graph.function("get_user_data2");
+    let get2 = graph.call_site(&get2_fn);
+    let send_fn = graph.function("send_user_data");
+    let send = graph.call_site(&send_fn);
+    let send2_fn = graph.function("send_user_data2");
+    let send2 = graph.call_site(&send2_fn);
+
+    assert!(get.output().flows_to_data(&send.input()));
+    assert!(get2.output().flows_to_data(&send2.input()));
+    assert!(!get.output().flows_to_data(&send2.input()));
+    assert!(!get2.output().flows_to_data(&send.input()));
+});
+
+define_test!(remove_poll_match
+    skip
+    "We no longer remove the state machine. I preserve this test case
+    if we want to do that removal in the future."
+    : graph -> {
     let input_fn = graph.function("some_input");
     let input = graph.call_site(&input_fn);
     let target_fn = graph.function("target");
@@ -148,7 +210,11 @@ define_test!(remove_poll_match: graph -> {
     assert!(into_future.output().is_terminal());
 });
 
-define_test!(no_overtaint_over_poll: graph -> {
+define_test!(no_overtaint_over_poll
+    skip
+    "Field level precision across function calls is broken.
+    See https://github.com/willcrichton/flowistry/issues/94."
+    : graph -> {
     let input_fn = graph.function("some_input");
     let input = graph.call_site(&input_fn);
     let another_input_fn = graph.function("another_input");
@@ -161,7 +227,7 @@ define_test!(no_overtaint_over_poll: graph -> {
 
     assert!(input.output().flows_to_data(&target.input()));
     assert!(another_input.output().flows_to_data(&another_target.input()));
-    assert!(!input.output().flows_to_data(&another_target.input()));
+    assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
     assert!(!another_input.output().flows_to_data(&target.input()));
 });
 

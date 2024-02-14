@@ -2,7 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{define_flow_test_template, define_test_skip, test_utils::*};
+use paralegal_flow::{define_flow_test_template, test_utils::*};
 
 const CRATE_DIR: &str = "tests/new-alias-analysis-tests";
 
@@ -11,11 +11,8 @@ lazy_static! {
 }
 
 macro_rules! define_test {
-    ($name:ident: $ctrl:ident -> $block:block) => {
-        define_test!($name: $ctrl, $name -> $block);
-    };
-    ($name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $name: $ctrl, $ctrl_name -> $block);
+    ($($t:tt)*) => {
+        define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $($t)*);
     };
 }
 
@@ -32,8 +29,9 @@ define_test!(track_mutable_modify : graph -> {
     assert!(source.output().is_neighbor_data(&read.input()));
 });
 
-define_test_skip!(eliminate_return_connection "Returning references has undecided PDG semantics. See\
-https://github.com/willcrichton/flowistry/issues/90" : graph -> {
+define_test!(eliminate_return_connection skip
+    "Returning references has undecided PDG semantics. See\
+    https://github.com/willcrichton/flowistry/issues/90" : graph -> {
     let source_fn = graph.function("new_s");
     let source = graph.call_site(&source_fn);
     let pass_through_fn = graph.function("deref_t");
@@ -56,7 +54,8 @@ define_test!(eliminate_mut_input_connection: graph -> {
     assert!(push.output().is_neighbor_data(&read.input()));
 });
 
-define_test_skip!(input_elimination_isnt_a_problem_empty
+define_test!(input_elimination_isnt_a_problem_empty
+    skip
     "Alias analysis is  configured to abstract via lifetimes
     only at the moment. See https://github.com/willcrichton/flowistry/issues/93"
     : graph -> {

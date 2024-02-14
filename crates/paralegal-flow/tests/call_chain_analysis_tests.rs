@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{define_flow_test_template, define_test_skip, test_utils::*};
+use paralegal_flow::{define_flow_test_template, test_utils::*};
 
 const TEST_CRATE_NAME: &str = "tests/call-chain-analysis-tests";
 
@@ -13,11 +13,8 @@ lazy_static! {
 }
 
 macro_rules! define_test {
-    ($name:ident: $ctrl:ident -> $block:block) => {
-        define_test!($name: $ctrl, $name -> $block);
-    };
-    ($name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $name: $ctrl, $ctrl_name -> $block);
+    ($($t:tt)*) => {
+        define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
     };
 }
 
@@ -101,7 +98,7 @@ define_test!(field_sensitivity: ctrl -> {
     assert!(usize_call_sites.contains(&Checked));
 });
 
-define_test_skip!(unused_labels: graph, field_sensitivity -> {
+define_test!(unused_labels skip "": graph, field_sensitivity -> {
     assert!(graph.has_marker("otherwise_unused"));
 });
 
@@ -143,4 +140,46 @@ define_test!(field_sensitivity_across_clone: ctrl -> {
     }
     assert!(!produce_usize.output().flows_to_data(&read_string.input()));
     assert!(produce_string.output().flows_to_data(&read_string.input()));
+});
+
+define_test!(no_overtaint_over_fn_call
+    skip
+    "Field level precision across function calls is broken.
+    See https://github.com/willcrichton/flowistry/issues/94."
+    : graph -> {
+    let input_fn = graph.function("input");
+    let input = graph.call_site(&input_fn);
+    let another_input_fn = graph.function("source");
+    let another_input = graph.call_site(&another_input_fn);
+
+    let target_fn = graph.function("target");
+    let target = graph.call_site(&target_fn);
+    let another_target_fn = graph.function("another_target");
+    let another_target = graph.call_site(&another_target_fn);
+
+    assert!(input.output().flows_to_data(&target.input()));
+    assert!(another_input.output().flows_to_data(&another_target.input()));
+    assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
+    assert!(!another_input.output().flows_to_data(&target.input()));
+});
+
+define_test!(no_overtaint_over_generic_fn_call
+    skip
+    "Field level precision across function calls is broken.
+    See https://github.com/willcrichton/flowistry/issues/94."
+    : graph -> {
+    let input_fn = graph.function("input");
+    let input = graph.call_site(&input_fn);
+    let another_input_fn = graph.function("source");
+    let another_input = graph.call_site(&another_input_fn);
+
+    let target_fn = graph.function("target");
+    let target = graph.call_site(&target_fn);
+    let another_target_fn = graph.function("another_target");
+    let another_target = graph.call_site(&another_target_fn);
+
+    assert!(input.output().flows_to_data(&target.input()));
+    assert!(another_input.output().flows_to_data(&another_target.input()));
+    assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
+    assert!(!another_input.output().flows_to_data(&target.input()));
 });

@@ -5,7 +5,10 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
-    desc::*, rust::*, utils::*, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
+    desc::*,
+    rust::{hir::def, *},
+    utils::*,
+    DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -422,8 +425,25 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let params = if opts.anactrl().use_recursive_analysis() {
             params.with_call_change_callback(move |info| {
                 let changes = CallChanges::default();
+                let def_id = info.callee.def_id();
+                let async_parent = || {
+                    // should actually check for async closure, this is the
+                    // closest I could think of
+                    if matches!(tcx.def_kind(def_id), def::DefKind::Generator) {
+                        let parent = tcx.opt_parent(def_id)?;
+                        tcx.asyncness(parent).is_async().then_some(parent)
+                    } else {
+                        None
+                    }
+                };
 
-                if marker_context.is_marked(info.callee.def_id()) {
+                // NOTE: Special considerations for async functions: if we see
+                // an async generator we check the function that returned it and
+                // skip if that function is marked because markers cannot be
+                // attached to the closure function directly.
+                if marker_context.is_marked(def_id)
+                    || async_parent().map_or(false, |parent| marker_context.is_marked(parent))
+                {
                     changes.with_skip(Skip)
                 } else {
                     changes
@@ -588,7 +608,6 @@ fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
 }
 
 fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
-    use hir::def;
     let name = crate::utils::identifier_for_item(tcx, id);
     let kind = match tcx.def_kind(id) {
         def::DefKind::Closure => DefKind::Closure,

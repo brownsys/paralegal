@@ -112,31 +112,17 @@ where
         .success()
 }
 
-/// Define a test that is skipped. This can be used to temporarily disable the
-/// test. A message can be passed after the test name explaining why it was
-/// skipped and the message will be printed when the test is skipped.
-///
-/// Everything but the first ident and the message are ignored, so the idea is
-/// that whatever `define_test` macro you're using and whatever format that
-/// macro imposes this should still serve as a drop-in replacement so that you
-/// can later remove the `_skip` part and have your test back immediately.
-#[macro_export]
-macro_rules! define_test_skip {
-    ($name:ident $message:literal $($ignored:tt)*) => {
-        #[test]
-        fn $name() {
-            eprintln!(concat!("Skipping test ", stringify!($name), " ", $message));
-        }
-    };
-    ($name:ident $($ignored:tt)*) => {
-        define_test_skip!($name "" $($ignored)*);
-    };
-}
-
 #[macro_export]
 macro_rules! define_flow_test_template {
-    ($analyze:expr, $crate_name:expr, $name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
+    ($analyze:expr, $crate_name:expr, $name:ident skip $reason:literal : $ctrl:ident, $ctrl_name:ident -> $block:block) => {
+        $crate::define_flow_test_template!($analyze, $crate_name, #[ignore] $name : $ctrl, $ctrl_name -> $block);
+    };
+    ($analyze:expr, $crate_name:expr, $name:ident $(skip $reason:literal)? : $ctrl:ident -> $block:block) => {
+        $crate::define_flow_test_template!($analyze, $crate_name, $name $(skip $reason)?: $ctrl, $name -> $block);
+    };
+    ($analyze:expr, $crate_name:expr, $(#[$attr:tt])* $name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
         #[test]
+        $(#[$attr])*
         fn $name() {
             assert!(*$analyze);
             use_rustc(|| {
@@ -217,6 +203,7 @@ pub trait HasGraph<'g>: Sized + Copy {
         )
     }
 
+    /// Use [Self::async_function] for async functions
     fn function(self, name: impl AsRef<str>) -> FnRef<'g> {
         let name = Identifier::new_intern(name.as_ref());
         let id = match self.graph().name_map.get(&name).map(Vec::as_slice) {
@@ -228,6 +215,10 @@ pub trait HasGraph<'g>: Sized + Copy {
             graph: self.graph(),
             ident: id,
         }
+    }
+
+    fn async_function(self, name: impl AsRef<str>) -> FnRef<'g> {
+        self.function(format!("{}_generator", name.as_ref()))
     }
 
     fn info_for(self, id: DefId) -> &'g DefInfo {
@@ -593,6 +584,10 @@ pub trait FlowsTo {
     fn nodes(&self) -> &[Node];
     fn spdg(&self) -> &SPDG;
     fn spdg_ident(&self) -> Identifier;
+
+    fn overlaps(&self, other: &impl FlowsTo) -> bool {
+        self.nodes().iter().any(|n| other.nodes().contains(n))
+    }
 
     /// Is there a path consisting of only data flow edges connecting `self` to `other`
     fn flows_to_data(&self, other: &impl FlowsTo) -> bool {

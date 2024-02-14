@@ -2,7 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{define_flow_test_template, define_test_skip, test_utils::*};
+use paralegal_flow::{define_flow_test_template, test_utils::*};
 
 const CRATE_DIR: &str = "tests/non-transitive-graph-tests";
 
@@ -12,11 +12,8 @@ lazy_static! {
 }
 
 macro_rules! define_test {
-    ($name:ident: $ctrl:ident -> $block:block) => {
-        define_test!($name: $ctrl, $name -> $block);
-    };
-    ($name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $name: $ctrl, $ctrl_name -> $block);
+    ($($t:tt)*) => {
+        define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $($t)*);
     };
 }
 
@@ -132,15 +129,15 @@ define_test!(loop_retains_dependency : graph -> {
     assert!(get.output().flows_to_data(&send.input()));
 });
 
-define_test_skip!(arguments : graph -> {
-    let body_id = *graph.body.0.keys().next().unwrap();
-    let a1 = graph.argument(body_id, 0);
+// define_test!(arguments : graph -> {
+//     let body_id = *graph.body.0.keys().next().unwrap();
+//     let a1 = graph.argument(body_id, 0);
 
-    let dp_fn = graph.function("dp_user_data");
-    let dp = graph.call_site(&dp_fn);
+//     let dp_fn = graph.function("dp_user_data");
+//     let dp = graph.call_site(&dp_fn);
 
-    assert!(graph.connects((a1, body_id), dp));
-});
+//     assert!(graph.connects((a1, body_id), dp));
+// });
 
 define_test!(modify_pointer : graph -> {
     let get_fn = graph.function("get_user_data");
@@ -167,8 +164,10 @@ define_test!(on_mut_var : graph -> {
     assert!(modify.output().flows_to_data(&receive.input()));
 });
 
-define_test_skip!(spurious_connections_in_deref "Returning references has undecided PDG semantics. See\
-https://github.com/willcrichton/flowistry/issues/90": graph -> {
+define_test!(spurious_connections_in_deref
+    skip
+    "Returning references has undecided PDG semantics. See\
+    https://github.com/willcrichton/flowistry/issues/90": graph -> {
     // An "always_happens_before" but via return value
     let source_fn = graph.function("new_s");
     let source = graph.call_site(&source_fn);
