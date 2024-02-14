@@ -85,6 +85,29 @@ fn find_primitive_impls<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> impl Iterator<It
     tcx.incoherent_impls(ty).iter().copied()
 }
 
+/// A small helper wrapper around [`def_path_res`] that represents a common way
+/// that `def_path_res` is used. In the case of errors they are reported to the
+/// user and `None` is returned so the caller has the option of making progress
+/// before exiting.
+pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -> Option<DefId> {
+    let segment_vec = path.split("::").collect::<Vec<_>>();
+    let res = def_path_res(tcx, &segment_vec)
+        .map_err(|e| tcx.sess.err(format!("Could not resolve {path}: {e:?}")))
+        .ok()?;
+    match res {
+        Res::Def(_, did) => Some(did),
+        other => {
+            let msg = format!("expected {path} to resolve to an item, got {other:?}");
+            if relaxed {
+                tcx.sess.warn(msg);
+            } else {
+                tcx.sess.err(msg);
+            };
+            None
+        }
+    }
+}
+
 /// Lifted from `clippy_utils`
 pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, ResolutionError<'a>> {
     fn item_child_by_name<'a>(
