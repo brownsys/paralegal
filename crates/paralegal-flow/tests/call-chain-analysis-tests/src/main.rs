@@ -139,3 +139,19 @@ fn no_overtaint_over_generic_fn_call() {
     target(t.0);
     another_target(t.1);
 }
+
+#[paralegal::analyze]
+fn no_overtaint_over_nested_fn_call() {
+    let p = input();
+    let q = source();
+    forwarder((p, q));
+}
+
+fn forwarder(t: (usize, i32)) {
+    acceptor(t)
+}
+
+fn acceptor(t: (usize, i32)) {
+    target(t.0);
+    another_target(t.1);
+}

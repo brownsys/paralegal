@@ -183,3 +183,25 @@ define_test!(no_overtaint_over_generic_fn_call
     assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
     assert!(!another_input.output().flows_to_data(&target.input()));
 });
+
+define_test!(no_overtaint_over_nested_fn_call
+    skip
+    "Field level precision across function calls is broken.
+    See https://github.com/willcrichton/flowistry/issues/94."
+    : graph -> {
+    let input_fn = graph.function("input");
+    let input = graph.call_site(&input_fn);
+    let another_input_fn = graph.function("source");
+    let another_input = graph.call_site(&another_input_fn);
+
+    let target_fn = graph.function("target");
+    let target = graph.call_site(&target_fn);
+    let another_target_fn = graph.function("another_target");
+    let another_target = graph.call_site(&another_target_fn);
+
+    assert!(input.output().flows_to_data(&target.input()));
+    assert!(another_input.output().flows_to_data(&another_target.input()));
+    assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
+    assert!(!another_input.output().flows_to_data(&target.input()));
+
+});
