@@ -326,6 +326,19 @@ impl<'g> CtrlRef<'g> {
     pub fn returns(&self, other: &impl FlowsTo) -> bool {
         other.flows_to_data(&self.return_value())
     }
+
+    pub fn marked<'a>(&'a self, marker: Identifier) -> NodeRefs<'a> {
+        NodeRefs {
+            nodes: self
+                .ctrl
+                .markers
+                .iter()
+                .filter(|(_, markers)| markers.contains(&marker))
+                .map(|(n, _)| *n)
+                .collect(),
+            graph: self,
+        }
+    }
 }
 
 impl<'g> PartialEq for CtrlRef<'g> {
@@ -526,6 +539,10 @@ impl<'g> NodeRefs<'g> {
             .iter()
             .copied()
             .map(|node| NodeRef { node, graph })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
     }
 }
 

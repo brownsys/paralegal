@@ -81,6 +81,19 @@ async fn two_data_over_boundary() {
 }
 
 #[paralegal::analyze]
+async fn markers() {
+    #[paralegal::marker(source, return)]
+    async fn src() -> usize {
+        0
+    }
+
+    #[paralegal::marker(sink, arguments = [0])]
+    async fn snk(snk: usize) {}
+
+    snk(src().await).await
+}
+
+#[paralegal::analyze]
 async fn arguments_work(d: UserData) {
     send_user_data(&d);
 }

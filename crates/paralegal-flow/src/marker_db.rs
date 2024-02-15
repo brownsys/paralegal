@@ -14,6 +14,7 @@ use crate::{
     args::{Args, MarkerControl},
     consts,
     desc::{Annotation, MarkerAnnotation},
+    hir::def::DefKind,
     mir, ty,
     utils::{
         resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, FnResolutionExt,
@@ -64,7 +65,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn local_annotations(&self, def_id: LocalDefId) -> &[Annotation] {
         self.db()
             .local_annotations
-            .get(&def_id)
+            .get(&self.defid_rewrite(def_id.to_def_id()).expect_local())
             .map_or(&[], |o| o.as_slice())
     }
 
@@ -75,7 +76,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn external_markers<D: IntoDefId>(&self, did: D) -> &[MarkerAnnotation] {
         self.db()
             .external_annotations
-            .get(&did.into_def_id(self.tcx()))
+            .get(&self.defid_rewrite(did.into_def_id(self.tcx())))
             .map_or(&[], |v| v.as_slice())
     }
 
@@ -89,6 +90,20 @@ impl<'tcx> MarkerCtx<'tcx> {
             .into_iter()
             .flat_map(|anns| anns.iter().flat_map(Annotation::as_marker))
             .chain(self.external_markers(def_id).iter())
+    }
+
+    /// For async handling. If this id corresponds to an async closure we try to
+    /// resolve its parent item which the markers would actually be placed on.
+    fn defid_rewrite(&self, def_id: DefId) -> DefId {
+        let def_kind = self.tcx().def_kind(def_id);
+        if matches!(def_kind, DefKind::Generator) {
+            if let Some(parent) = self.tcx().opt_parent(def_id) {
+                if self.tcx().asyncness(parent).is_async() {
+                    return parent;
+                }
+            };
+        }
+        def_id
     }
 
     /// Are there any external markers on this item?

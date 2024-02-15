@@ -3,6 +3,7 @@
 extern crate lazy_static;
 
 use paralegal_flow::test_utils::*;
+use paralegal_spdg::Identifier;
 
 const CRATE_DIR: &str = "tests/async-tests";
 
@@ -246,4 +247,13 @@ define_test!(async_return_from_async: graph -> {
     let input_fn = graph.function("some_input");
     let input = graph.call_site(&input_fn);
     assert!(graph.returns(&input.output()))
+});
+
+define_test!(markers: graph -> {
+    let input = graph.marked(Identifier::new_intern("source"));
+    let output = graph.marked(Identifier::new_intern("sink"));
+
+    assert!(!input.is_empty());
+    assert!(!output.is_empty());
+    assert!(input.flows_to_data(&output));
 });
