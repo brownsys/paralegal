@@ -202,7 +202,6 @@ struct GraphConverter<'tcx, 'a, C> {
     /// Same as the ID stored in self.target, but as a local def id
     local_def_id: LocalDefId,
     types: HashMap<Node, Types>,
-    markers: HashMap<Node, Vec<Identifier>>,
 }
 
 impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
@@ -225,7 +224,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             dep_graph,
             local_def_id,
             types: Default::default(),
-            markers: Default::default(),
         })
     }
 
@@ -252,7 +250,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         body.stmt_at(loc)
     }
 
-    fn determine_node_kind(&mut self, i: Node, weight: &DepNode<'tcx>) -> (NodeKind, bool) {
+    fn determine_node_kind(&mut self, weight: &DepNode<'tcx>) -> (NodeKind, bool, Vec<Identifier>) {
         let leaf_loc = weight.at.leaf();
 
         let body = &self.tcx().body_for_def_id(leaf_loc.function).unwrap().body;
@@ -270,13 +268,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 });
 
                 self.known_def_ids.extend(parent);
-                if !annotations.is_empty() {
-                    self.markers
-                        .entry(i)
-                        .or_insert_with(Default::default)
-                        .extend(annotations);
-                }
-                (NodeKind::FormalParameter(arg_num as u8), false)
+                (NodeKind::FormalParameter(arg_num as u8), false, annotations)
             }
             RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
                 let function_id = leaf_loc.function.to_def_id();
@@ -284,13 +276,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 let (annotations, parent) =
                     self.annotations_for_function(function_id, |ann| ann.refinement.on_return());
                 self.known_def_ids.extend(parent);
-                if !annotations.is_empty() {
-                    self.markers
-                        .entry(i)
-                        .or_insert_with(Default::default)
-                        .extend(annotations);
-                }
-                (NodeKind::FormalReturn, false)
+                (NodeKind::FormalReturn, false, annotations)
             }
             RichLocation::Location(loc) => {
                 let stmt_at_loc = body.stmt_at(loc);
@@ -320,12 +306,12 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     } else {
                         NodeKind::Unspecified
                     };
-                    (kind, is_external)
+                    (kind, is_external, vec![])
                 } else {
-                    (NodeKind::Unspecified, false)
+                    (NodeKind::Unspecified, false, vec![])
                 }
             }
-            _ => (NodeKind::Unspecified, false),
+            _ => (NodeKind::Unspecified, false, vec![]),
         }
     }
 
@@ -450,36 +436,42 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     fn make_spdg(mut self) -> SPDG {
-        let graph = self.make_spdg_impl();
+        let (graph, markers) = self.make_spdg_impl();
         let arguments = self.determine_arguments(&graph);
         let return_ = self.determine_return(&graph);
         SPDG {
             graph,
             name: Identifier::new(self.target.name()),
             arguments,
-            markers: self.markers,
+            markers,
             return_,
             types: self.types,
         }
     }
 
-    fn make_spdg_impl(&mut self) -> SPDGImpl {
+    fn make_spdg_impl(&mut self) -> (SPDGImpl, HashMap<Node, Vec<Identifier>>) {
         use petgraph::prelude::*;
         let g_ref = self.dep_graph.clone();
         let input = &g_ref.graph;
         let mut g = SPDGImpl::new();
+        let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
 
         let default_index = <SPDGImpl as GraphBase>::NodeId::end();
         let mut index_map = vec![default_index; input.node_bound()];
 
         for (i, weight) in input.node_references() {
-            let (kind, is_external_call_source) = self.determine_node_kind(i, weight);
+            let (kind, is_external_call_source, node_markers) = self.determine_node_kind(weight);
             debug_assert!(index_map[i.index()] == default_index);
-            index_map[i.index()] = g.add_node(NodeInfo {
+            let new_idx = g.add_node(NodeInfo {
                 at: weight.at,
                 description: format!("{:?}", weight.place),
                 kind,
             });
+            index_map[i.index()] = new_idx;
+
+            if !node_markers.is_empty() {
+                markers.entry(new_idx).or_default().extend(node_markers)
+            }
 
             self.handle_node_types(i, weight, is_external_call_source);
         }
@@ -498,7 +490,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             );
         }
 
-        g
+        (g, markers)
     }
 
     fn type_is_marked(&self, typ: mir::tcx::PlaceTy<'tcx>, walk: bool) -> Vec<TypeId> {

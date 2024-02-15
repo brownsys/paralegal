@@ -428,8 +428,11 @@ impl Context {
             return true;
         }
 
-        self.desc.controllers[&node.controller_id()].markers[&node.local_node()]
-            .iter()
+        self.desc.controllers[&node.controller_id()]
+            .markers
+            .get(&node.local_node())
+            .into_iter()
+            .flatten()
             .any(|ann| *ann == marker)
     }
 

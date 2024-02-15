@@ -81,7 +81,7 @@ impl CtrlFlowsTo {
                 for src_idx in 0..flows_to.len() {
                     for intermediate_idx in unsafe_flow_ref[src_idx].iter_ones() {
                         for sink_idx in unsafe_flow_ref[intermediate_idx].iter_ones() {
-                            changed |= flows_to[src_idx][sink_idx];
+                            changed |= !flows_to[src_idx][sink_idx];
                             flows_to[src_idx].set(sink_idx, true);
                         }
                     }
