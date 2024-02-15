@@ -94,14 +94,28 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
                 InstructionInfo::Return => s.push_str("end"),
             };
 
-            for n in nodes {
-                let weight = ctrl.graph.node_weight(*n).unwrap();
-                write!(
-                    s,
-                    "|<p{}>{}",
-                    n.index(),
-                    weight.description.replace('<', "&lt;").replace('>', "&gt;")
-                )?;
+            for &n in nodes {
+                let weight = ctrl.graph.node_weight(n).unwrap();
+                let markers = &ctrl.markers[&n];
+                write!(s, "|")?;
+                let write_id_and_desc = |s: &mut String| {
+                    write!(
+                        s,
+                        "|<p{}>{}",
+                        n.index(),
+                        weight.description.replace('<', "&lt;").replace('>', "&gt;")
+                    )
+                };
+                if markers.is_empty() {
+                    write_id_and_desc(&mut s)
+                } else {
+                    write!(s, "{{")?;
+                    write_id_and_desc(&mut s)?;
+                    for m in markers {
+                        write!(s, "| {m}")?;
+                    }
+                    write!(s, "}}")
+                }?
             }
 
             Ok::<_, std::fmt::Error>(s)
