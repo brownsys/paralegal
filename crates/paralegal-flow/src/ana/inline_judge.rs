@@ -1,4 +1,8 @@
-use crate::{mir::Place, utils::FnResolution, AnalysisCtrl, MarkerCtx, TyCtxt};
+use crate::{
+    mir::Place,
+    utils::{FnResolution, FnResolutionExt},
+    AnalysisCtrl, MarkerCtx, TyCtxt,
+};
 
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.
@@ -30,6 +34,7 @@ impl<'tcx> InlineJudge<'tcx> {
         has_no_outputs || !args.iter().cloned().flatten().any(place_has_dependencies)
     }
 
+    #[allow(dead_code)]
     /// Is it safe to elide this function, e.g. abstract by its dataflow effects
     /// alone?
     pub fn can_be_elided(
@@ -71,7 +76,7 @@ impl<'tcx> InlineJudge<'tcx> {
 
     /// Access to uninterpreted marker information
     ///
-    /// This should only be used to issue warnings. For semnatically meaningful
+    /// This should only be used to issue warnings. For semantically meaningful
     /// interpretations of markers on function should be implemented on this
     /// judge instead.
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {

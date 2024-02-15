@@ -16,8 +16,8 @@ use crate::{
     desc::{Annotation, MarkerAnnotation},
     mir, ty,
     utils::{
-        resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, IntoDefId, IntoHirId,
-        MetaItemMatch, TyCtxtExt, TyExt,
+        resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, FnResolutionExt,
+        IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt, TyExt,
     },
     DefId, HashMap, LocalDefId, TyCtxt,
 };

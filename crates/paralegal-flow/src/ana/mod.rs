@@ -23,7 +23,7 @@ use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
 
 use super::discover::FnToAnalyze;
 
-pub mod inline;
+mod inline_judge;
 
 /// Read-only database of information the analysis needs.
 ///
@@ -420,39 +420,19 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) -> Result<DepGraph<'tcx>> {
         let tcx = generator.tcx;
         let opts = generator.opts;
-        let marker_context = generator.marker_ctx.clone();
-        let params = flowistry::pdg::PdgParams::new(tcx, local_def_id);
-        let params = if opts.anactrl().use_recursive_analysis() {
-            params.with_call_change_callback(move |info| {
+        let judge =
+            inline_judge::InlineJudge::new(generator.marker_ctx.clone(), tcx, opts.anactrl());
+        let params = flowistry::pdg::PdgParams::new(tcx, local_def_id).with_call_change_callback(
+            move |info| {
                 let changes = CallChanges::default();
-                let def_id = info.callee.def_id();
-                let async_parent = || {
-                    // should actually check for async closure, this is the
-                    // closest I could think of
-                    if matches!(tcx.def_kind(def_id), def::DefKind::Generator) {
-                        let parent = tcx.opt_parent(def_id)?;
-                        tcx.asyncness(parent).is_async().then_some(parent)
-                    } else {
-                        None
-                    }
-                };
 
-                // NOTE: Special considerations for async functions: if we see
-                // an async generator we check the function that returned it and
-                // skip if that function is marked because markers cannot be
-                // attached to the closure function directly.
-                if marker_context.is_marked(def_id)
-                    || async_parent().map_or(false, |parent| marker_context.is_marked(parent))
-                {
-                    changes.with_skip(Skip)
-                } else {
+                if judge.should_inline(info.callee) {
                     changes
+                } else {
+                    changes.with_skip(Skip)
                 }
-            })
-        } else {
-            params.with_call_change_callback(|_| CallChanges::default().with_skip(Skip))
-        };
-
+            },
+        );
         if opts.dbg().dump_mir() {
             let mut file =
                 std::fs::File::create(format!("{}.mir", body_name_pls(tcx, local_def_id)))?;

@@ -28,6 +28,8 @@ use crate::{
     Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
+pub use flowistry::pdg::FnResolution;
+
 use std::cmp::Ordering;
 use std::{cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
@@ -37,7 +39,6 @@ mod print;
 
 pub use print::*;
 
-use crate::utils::FnResolution::{Final, Partial};
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
@@ -189,40 +190,7 @@ impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
-pub enum FnResolution<'tcx> {
-    Final(ty::Instance<'tcx>),
-    Partial(DefId),
-}
-
-impl<'tcx> PartialOrd for FnResolution<'tcx> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<'tcx> Ord for FnResolution<'tcx> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match (self, other) {
-            (Final(_), Partial(_)) => std::cmp::Ordering::Greater,
-            (Partial(_), Final(_)) => std::cmp::Ordering::Less,
-            (Partial(slf), Partial(otr)) => slf.cmp(otr),
-            (Final(slf), Final(otr)) => match slf.def.cmp(&otr.def) {
-                std::cmp::Ordering::Equal => slf.args.cmp(otr.args),
-                result => result,
-            },
-        }
-    }
-}
-
-impl<'tcx> FnResolution<'tcx> {
-    pub fn def_id(self) -> DefId {
-        match self {
-            FnResolution::Final(f) => f.def_id(),
-            FnResolution::Partial(p) => p,
-        }
-    }
-
+pub trait FnResolutionExt<'tcx> {
     /// Get the most precise type signature we can for this function, erase any
     /// regions and discharge binders.
     ///
@@ -230,7 +198,11 @@ impl<'tcx> FnResolution<'tcx> {
     ///
     /// Emits warnings if a precise signature could not be obtained or there
     /// were type variables not instantiated.
-    pub fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed> {
+    fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed>;
+}
+
+impl<'tcx> FnResolutionExt<'tcx> for FnResolution<'tcx> {
+    fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed> {
         let sess = tcx.sess;
         let def_id = self.def_id();
         let def_span = tcx.def_span(def_id);
@@ -319,15 +291,6 @@ impl FunctionKind {
             Err(tcx
                 .sess
                 .span_err(tcx.def_span(def_id), "Expected this item to be a function."))
-        }
-    }
-}
-
-impl<'tcx> std::fmt::Display for FnResolution<'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FnResolution::Final(sub) => std::fmt::Debug::fmt(sub, f),
-            FnResolution::Partial(p) => std::fmt::Debug::fmt(p, f),
         }
     }
 }
