@@ -608,7 +608,7 @@ pub struct SPDG {
     pub arguments: Vec<Node>,
     /// If the return is `()` or `!` then this is `None`
     pub return_: Option<Node>,
-    pub types: HashMap<Node, Types>,
+    pub type_assigns: HashMap<Node, Types>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]

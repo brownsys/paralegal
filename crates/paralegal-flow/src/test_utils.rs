@@ -10,6 +10,7 @@ use crate::{
 };
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
+use std::process::Command;
 
 use paralegal_spdg::{rustc_portable::DefId, DefInfo, EdgeInfo, EdgeKind, Node, NodeKind, SPDG};
 
@@ -60,6 +61,13 @@ pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
 /// and `paralegal-flow` executables that were built from this project are (first) in the
 /// `PATH`.
 pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
+    // Force paralegal-flow binary to be built
+    let success = Command::new("cargo")
+        .args(["build", "-p", "paralegal-flow"])
+        .status()
+        .unwrap()
+        .success();
+    assert!(success);
     let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
     let cargo_paralegal_flow_path = Path::new("../../target/debug/cargo-paralegal-flow")
         .canonicalize()
@@ -77,7 +85,7 @@ pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
     }));
     new_path.push(":");
     new_path.push(path);
-    let mut cmd = std::process::Command::new(cargo_paralegal_flow_path);
+    let mut cmd = Command::new(cargo_paralegal_flow_path);
     cmd.arg("paralegal-flow")
         .env("PATH", new_path)
         .current_dir(dir);
@@ -392,7 +400,10 @@ impl<'g> CtrlRef<'g> {
     }
 
     pub fn types_for(&'g self, target: Node) -> &[DefId] {
-        self.ctrl.types.get(&target).map_or(&[], |t| t.0.as_slice())
+        self.ctrl
+            .type_assigns
+            .get(&target)
+            .map_or(&[], |t| t.0.as_slice())
     }
 }
 

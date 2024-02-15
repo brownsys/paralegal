@@ -14,6 +14,7 @@ use petgraph::Incoming;
 
 use super::flows_to::CtrlFlowsTo;
 
+use crate::Diagnostics;
 use crate::{
     assert_error, assert_warning,
     diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
@@ -411,29 +412,22 @@ impl Context {
     /// Get the type(s) of a Node.
     pub fn get_node_types(&self, node: GlobalNode) -> &[DefId] {
         self.desc.controllers[&node.controller_id()]
-            .types
+            .type_assigns
             .get(&node.local_node())
             .map_or(&[], |v| v.0.as_slice())
     }
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: GlobalNode) -> bool {
-        let types = self.get_node_types(node);
-        if types.iter().any(|_t| {
-            self.marker_to_ids
-                .get(&marker)
-                .map(|markers| markers.nodes.contains(&node))
-                .unwrap_or(false)
-        }) {
-            return true;
-        }
-
-        self.desc.controllers[&node.controller_id()]
-            .markers
-            .get(&node.local_node())
-            .into_iter()
-            .flatten()
-            .any(|ann| *ann == marker)
+        let Some(marked) = self.marker_to_ids.get(&marker) else {
+            self.warning(format!("No marker named '{marker}' known"));
+            return false;
+        };
+        marked.nodes.contains(&node)
+            || self
+                .get_node_types(node)
+                .iter()
+                .any(|t| marked.types.contains(&t))
     }
 
     /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
@@ -737,7 +731,7 @@ fn test_context() {
         ctx.all_nodes_for_ctrl(controller)
             .filter(|n| ctx.has_marker(Marker::new_intern("input"), *n))
             .count(),
-        4
+        3
     );
     // Return of identity marked as src
     assert_eq!(
@@ -751,7 +745,7 @@ fn test_context() {
         ctx.all_nodes_for_ctrl(controller)
             .filter(|n| ctx.has_marker(Marker::new_intern("sink"), *n))
             .count(),
-        2
+        3
     );
     // The 3rd argument and the return of the controller.
     assert_eq!(

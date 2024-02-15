@@ -94,6 +94,12 @@ impl TinyBitSet {
     pub fn display_pretty(self) -> DisplayTinyBitSet {
         DisplayTinyBitSet { set: self }
     }
+
+    /// A new bit set that contains elements that are both in `self` and
+    /// `other`. Same as using `&`
+    pub fn intersection(self, other: Self) -> Self {
+        self & other
+    }
 }
 
 impl FromIterator<u32> for TinyBitSet {

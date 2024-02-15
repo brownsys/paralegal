@@ -162,7 +162,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     ) -> HashMap<TypeId, TypeDescription> {
         let types = controllers
             .values()
-            .flat_map(|v| v.types.values())
+            .flat_map(|v| v.type_assigns.values())
             .flat_map(|t| &t.0)
             .copied()
             .collect::<HashSet<_>>();
@@ -306,8 +306,26 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     } else {
                         NodeKind::Unspecified
                     };
-                    (kind, is_external, vec![])
+                    // TODO implement matching the unspecified node type. OR we
+                    // could make sure that there are no unspecified nodes here
+                    let annotations = match kind {
+                        NodeKind::ActualReturn => {
+                            self.annotations_for_function(fun, |ann| ann.refinement.on_return())
+                                .0
+                        }
+                        NodeKind::ActualParameter(index) => {
+                            self.annotations_for_function(fun, |ann| {
+                                !ann.refinement.on_argument().intersection(index).is_empty()
+                            })
+                            .0
+                        }
+                        NodeKind::Unspecified => vec![],
+                        _ => unreachable!(),
+                    };
+                    eprintln!("{fun:?}: {annotations:?}");
+                    (kind, is_external, annotations)
                 } else {
+                    // TODO attach annotations if the return value is a marked type
                     (NodeKind::Unspecified, false, vec![])
                 }
             }
@@ -445,7 +463,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             arguments,
             markers,
             return_,
-            types: self.types,
+            type_assigns: self.types,
         }
     }
 
@@ -473,7 +491,13 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 markers.entry(new_idx).or_default().extend(node_markers)
             }
 
-            self.handle_node_types(i, weight, is_external_call_source);
+            // TODO decide if this is correct.
+            if kind.is_actual_return()
+                || (kind.is_formal_parameter()
+                    && matches!(self.try_as_root(weight.at), Some(l) if l.location == RichLocation::Start))
+            {
+                self.handle_node_types(new_idx, weight, is_external_call_source);
+            }
         }
 
         for e in input.edge_references() {
@@ -507,28 +531,27 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
+    /// Similar to `CallString::is_at_root`, but takes into account top-level
+    /// async functions
+    fn try_as_root(&self, at: CallString) -> Option<GlobalLocation> {
+        if self.entrypoint_is_async() && at.len() == 2 {
+            at.iter_from_root().nth(1)
+        } else if at.is_at_root() {
+            Some(at.leaf())
+        } else {
+            None
+        }
+    }
+
     fn determine_return(&self, graph: &SPDGImpl) -> Option<Node> {
         // In async functions
-        let match_root_function = if self.entrypoint_is_async() {
-            |at: CallString| {
-                at.len() == 2
-                    && matches!(
-                        at.iter_from_root().nth(1),
-                        Some(GlobalLocation {
-                            location: RichLocation::End,
-                            ..
-                        })
-                    )
-            }
-        } else {
-            |at: CallString| at.is_at_root() && at.leaf().location == RichLocation::End
-        };
         let mut return_candidates = graph
             .node_references()
             .filter(|n| {
                 let weight = n.weight();
                 let at = weight.at;
-                weight.kind.is_formal_return() && match_root_function(at)
+                weight.kind.is_formal_return()
+                    && matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::End)
             })
             .map(|n| n.id())
             .peekable();

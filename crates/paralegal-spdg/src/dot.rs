@@ -96,7 +96,14 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
 
             for &n in nodes {
                 let weight = ctrl.graph.node_weight(n).unwrap();
-                let markers = &ctrl.markers[&n];
+                let markers = ctrl.markers.get(&n).into_iter().flatten();
+                let type_markers = ctrl.type_assigns.get(&n).into_iter().flat_map(|typ| {
+                    typ.0
+                        .iter()
+                        .map(|t| &self.spdg.type_info[t].markers)
+                        .flatten()
+                });
+                let mut all_markers = markers.chain(type_markers).copied().peekable();
                 write!(s, "|")?;
                 let write_id_and_desc = |s: &mut String| {
                     write!(
@@ -106,15 +113,15 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
                         weight.description.replace('<', "&lt;").replace('>', "&gt;")
                     )
                 };
-                if markers.is_empty() {
-                    write_id_and_desc(&mut s)
-                } else {
+                if all_markers.peek().is_some() {
                     write!(s, "{{")?;
                     write_id_and_desc(&mut s)?;
-                    for m in markers {
+                    for m in all_markers {
                         write!(s, "| {m}")?;
                     }
                     write!(s, "}}")
+                } else {
+                    write_id_and_desc(&mut s)
                 }?
             }
 
