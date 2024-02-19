@@ -3,7 +3,11 @@ extern crate anyhow;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
-use paralegal_policy::{assert_error, paralegal_spdg::Identifier, Marker, Node, PolicyContext};
+use paralegal_policy::{
+    assert_error,
+    paralegal_spdg::{traverse::EdgeSelection, GlobalNode, Identifier},
+    Marker, PolicyContext,
+};
 
 pub struct CommunityProp {
     cx: Arc<PolicyContext>,
@@ -14,16 +18,13 @@ impl CommunityProp {
         CommunityProp { cx }
     }
 
-    fn flow_to_auth(&self, sink: Node, marker: Marker) -> bool {
+    fn flow_to_auth(&self, sink: GlobalNode, marker: Marker) -> bool {
         let mut auth_nodes = self
             .cx
-            .all_nodes_for_ctrl(sink.ctrl_id)
+            .all_nodes_for_ctrl(sink.controller_id())
             .filter(|n| self.cx.has_marker(marker, *n));
 
-        auth_nodes.any(|src| {
-            self.cx
-                .flows_to(src, sink, paralegal_policy::EdgeType::Control)
-        })
+        auth_nodes.any(|src| self.cx.flows_to(src, sink, EdgeSelection::Control))
     }
 
     pub fn check(&mut self) {

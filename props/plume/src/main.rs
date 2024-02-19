@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use paralegal_policy::{Context, Diagnostics, Marker};
+use paralegal_policy::{paralegal_spdg::traverse::EdgeSelection, Context, Diagnostics, Marker};
 
 macro_rules! marker {
     ($id:ident) => {
@@ -10,7 +10,7 @@ macro_rules! marker {
 }
 
 fn check(ctx: Arc<Context>) -> Result<()> {
-    let user_data_types = ctx.marked_type(marker!(user_data)).collect::<Vec<_>>();
+    let user_data_types = ctx.marked_type(marker!(user_data));
 
     let found = ctx.all_controllers().find(|(deleter_id, _)| {
         let delete_sinks = ctx
@@ -19,7 +19,7 @@ fn check(ctx: Arc<Context>) -> Result<()> {
             .collect::<Vec<_>>();
         user_data_types.iter().all(|&t| {
             let sources = ctx.srcs_with_type(*deleter_id, t).collect::<Vec<_>>();
-            ctx.any_flows(&sources, &delete_sinks, paralegal_policy::EdgeType::Data)
+            ctx.any_flows(&sources, &delete_sinks, EdgeSelection::Data)
                 .is_some()
         })
     });
@@ -29,10 +29,10 @@ fn check(ctx: Arc<Context>) -> Result<()> {
     if let Some((found, _)) = found {
         println!(
             "Found {} deletes all user data types",
-            ctx.describe_def(found)
+            ctx.desc().controllers[&found].name
         );
         for t in user_data_types {
-            println!("Found user data {}", ctx.describe_def(t));
+            println!("Found user data {}", ctx.describe_def(*t));
         }
     }
     Ok(())

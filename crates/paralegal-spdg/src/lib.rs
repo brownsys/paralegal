@@ -201,6 +201,7 @@ impl ObjectType {
     }
 }
 
+#[allow(dead_code)]
 mod ser_localdefid_map {
     use serde::{Deserialize, Serialize};
 
