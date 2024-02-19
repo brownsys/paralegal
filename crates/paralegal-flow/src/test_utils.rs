@@ -12,7 +12,11 @@ use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::process::Command;
 
-use paralegal_spdg::{rustc_portable::DefId, DefInfo, EdgeInfo, EdgeKind, Node, NodeKind, SPDG};
+use paralegal_spdg::{
+    rustc_portable::DefId,
+    traverse::{generic_flows_to, EdgeSelection},
+    DefInfo, EdgeInfo, Node, NodeKind, SPDG,
+};
 
 use crate::pdg::rustc_portable::LocalDefId;
 use crate::pdg::CallString;
@@ -20,8 +24,7 @@ use itertools::Itertools;
 use petgraph::visit::IntoNeighbors;
 use petgraph::visit::Visitable;
 use petgraph::visit::{
-    Control, Data, DfsEvent, EdgeFiltered, EdgeRef, FilterEdge, GraphBase, IntoEdgeReferences,
-    IntoEdges, IntoNodeReferences,
+    Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges, IntoNodeReferences,
 };
 use petgraph::Direction;
 use std::path::Path;
@@ -149,52 +152,6 @@ pub fn run_forge(file: &str) -> bool {
         .status()
         .unwrap()
         .success()
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub enum EdgeSelection {
-    Data,
-    Control,
-    Both,
-}
-
-impl EdgeSelection {
-    fn use_control(self) -> bool {
-        matches!(self, EdgeSelection::Control | EdgeSelection::Both)
-    }
-    fn use_data(self) -> bool {
-        matches!(self, EdgeSelection::Data | EdgeSelection::Both)
-    }
-
-    fn conforms(self, kind: EdgeKind) -> bool {
-        matches!(
-            (self, kind),
-            (EdgeSelection::Both, _)
-                | (EdgeSelection::Data, EdgeKind::Data)
-                | (EdgeSelection::Control, EdgeKind::Control)
-        )
-    }
-
-    fn filter_graph<G: IntoEdgeReferences + Data<EdgeWeight = EdgeInfo>>(
-        self,
-        g: G,
-    ) -> EdgeFiltered<G, fn(G::EdgeRef) -> bool> {
-        fn data_only<E: EdgeRef<Weight = EdgeInfo>>(e: E) -> bool {
-            e.weight().is_data()
-        }
-        fn control_only<E: EdgeRef<Weight = EdgeInfo>>(e: E) -> bool {
-            e.weight().is_control()
-        }
-        fn all_edges<E: EdgeRef<Weight = EdgeInfo>>(_: E) -> bool {
-            true
-        }
-
-        match self {
-            EdgeSelection::Data => EdgeFiltered(g, data_only as fn(G::EdgeRef) -> bool),
-            EdgeSelection::Control => EdgeFiltered(g, control_only as fn(G::EdgeRef) -> bool),
-            EdgeSelection::Both => EdgeFiltered(g, all_edges as fn(G::EdgeRef) -> bool),
-        }
-    }
 }
 
 pub trait HasGraph<'g>: Sized + Copy {
@@ -722,7 +679,12 @@ fn influences_ctrl_impl(
                 .map(|e| e.source())
         })
         .collect::<HashSet<_>>();
-    generic_flows_to(slf.nodes(), edge_selection, slf.spdg(), nodes)
+    generic_flows_to(
+        slf.nodes().iter().copied(),
+        edge_selection,
+        slf.spdg(),
+        nodes,
+    )
 }
 
 fn is_neighbor_impl(
@@ -761,7 +723,7 @@ fn flows_to_impl(
         return false;
     }
     generic_flows_to(
-        slf.nodes(),
+        slf.nodes().iter().copied(),
         edge_selection,
         slf.spdg(),
         other.nodes().iter().copied(),
@@ -841,25 +803,4 @@ where
         });
 
     !matches!(result, Control::Break(()))
-}
-
-fn generic_flows_to(
-    from: &[Node],
-    edge_selection: EdgeSelection,
-    spdg: &SPDG,
-    other: impl IntoIterator<Item = Node>,
-) -> bool {
-    let targets = other.into_iter().collect::<HashSet<_>>();
-    if from.is_empty() || targets.is_empty() {
-        return false;
-    }
-
-    let graph = edge_selection.filter_graph(&spdg.graph);
-
-    let result =
-        petgraph::visit::depth_first_search(&graph, from.iter().copied(), |event| match event {
-            DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
-            _ => Control::Continue,
-        });
-    matches!(result, Control::Break(()))
 }

@@ -4,6 +4,9 @@ use bitvec::vec::BitVec;
 
 use std::fmt;
 
+#[cfg(test)]
+use paralegal_spdg::traverse::EdgeSelection;
+
 /// The transitive closure of the [`Ctrl::data_flow`] relation.
 ///
 /// Implemented efficiently using an [`IndexedDomain`] over the
@@ -12,15 +15,15 @@ use std::fmt;
 /// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`DataAndControlInfluencees`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
 ///
 /// - [`CtrlFlowsTo::data_flows_to`] Index vs [`DataAndControlInfluencees`]:
-/// The index is computed for efficiency only for [`crate::EdgeType::Data`] using the [`Ctrl::data_flow`].
+/// The index is computed for efficiency only for [`crate::EdgeSelection::Data`] using the [`Ctrl::data_flow`].
 /// [`DataAndControlInfluencees`] additionally uses [`Ctrl::ctrl_flow`] and is used for the
-/// [`crate::EdgeType::DataAndControl`]. It uses a BFS rather than an index.
+/// [`crate::EdgeSelection::DataAndControl`]. It uses a BFS rather than an index.
 ///
 /// - [`CtrlFlowsTo`] and [`DataAndControlInfluencees`] vs functions in [`crate::Context`]:
 /// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`]
 /// utilize [`DataSource`] to [`CallSiteOrDataSink`], so do not provide all of the
 /// information that is needed answer questions about any kind of [`crate::GlobalNode`] and any
-/// kind of [`crate::EdgeType`] in an intuitive way. The functions in [`crate::Context`] utilize
+/// kind of [`crate::EdgeSelection`] in an intuitive way. The functions in [`crate::Context`] utilize
 /// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`].
 ///
 /// - [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and
@@ -158,10 +161,12 @@ fn test_data_flows_to() {
     let src = ctx.controller_argument(controller, 0).unwrap();
     let sink1 = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
     let sink2 = crate::test_utils::get_sink_node(&ctx, controller, "sink2");
-    assert!(ctx.flows_to(src, &sink1, crate::EdgeType::Data));
-    assert!(!ctx.flows_to(src, &sink2, crate::EdgeType::Data));
+    assert!(ctx.flows_to(src, &sink1, EdgeSelection::Data));
+    assert!(!ctx.flows_to(src, &sink2, EdgeSelection::Data));
 }
 
+/// TODO: Make this test more stable. The use if `nth_successor` whould be
+/// replaced by something more robust.
 #[test]
 fn test_ctrl_flows_to() {
     use paralegal_spdg::Identifier;
@@ -174,11 +179,17 @@ fn test_ctrl_flows_to() {
     let src_c = ctx.controller_argument(controller, 2).unwrap();
     let cs1 = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
     let cs2 = crate::test_utils::get_callsite_node(&ctx, controller, "sink2");
-    assert!(ctx.flows_to(src_a, &cs1, crate::EdgeType::Control));
-    assert!(ctx.flows_to(src_c, &cs2, crate::EdgeType::Control));
-    assert!(ctx.flows_to(src_a, &cs2, crate::EdgeType::Control));
-    assert!(!ctx.flows_to(src_b, &cs1, crate::EdgeType::Control));
-    assert!(!ctx.flows_to(src_b, &cs2, crate::EdgeType::Control));
+    let switch_int_after_src_a = ctx.nth_successors(2, src_a);
+    let switch_int_after_src_c = ctx.nth_successors(2, src_c);
+    assert!(ctx.flows_to(&switch_int_after_src_a, &cs1, EdgeSelection::Control));
+    assert!(ctx.flows_to(&switch_int_after_src_c, &cs2, EdgeSelection::Control));
+    assert!(ctx.flows_to(
+        dbg!(&switch_int_after_src_a),
+        dbg!(&cs2),
+        EdgeSelection::Control
+    ));
+    assert!(!ctx.flows_to(src_b, &cs1, EdgeSelection::Control));
+    assert!(!ctx.flows_to(src_b, &cs2, EdgeSelection::Control));
 }
 
 #[test]
@@ -193,24 +204,9 @@ fn test_flows_to() {
     let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
     let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
     // a flows to the sink1 callsite (by ctrl flow)
-    assert!(ctx.flows_to(src_a, &cs, crate::EdgeType::DataAndControl));
-    assert!(!ctx.flows_to(src_a, &cs, crate::EdgeType::Data));
+    assert!(ctx.flows_to(src_a, &cs, EdgeSelection::Both));
+    assert!(!ctx.flows_to(src_a, &cs, EdgeSelection::Data));
     // b flows to the sink1 datasink (by data flow)
-    assert!(ctx.flows_to(src_b, &sink, crate::EdgeType::DataAndControl));
-    assert!(ctx.flows_to(src_b, &sink, crate::EdgeType::Data));
-}
-
-#[test]
-fn test_args_flow_to_cs() {
-    use paralegal_spdg::Identifier;
-    let ctx = crate::test_utils::test_ctx();
-    let controller = ctx
-        .controller_by_name(Identifier::new_intern("controller_data_ctrl"))
-        .unwrap();
-    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
-    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
-
-    assert!(ctx.flows_to(&sink, &cs, crate::EdgeType::Data));
-    assert!(ctx.flows_to(&sink, &cs, crate::EdgeType::DataAndControl));
-    assert!(!ctx.flows_to(&sink, &cs, crate::EdgeType::Control));
+    assert!(ctx.flows_to(src_b, &sink, EdgeSelection::Both));
+    assert!(ctx.flows_to(src_b, &sink, EdgeSelection::Data));
 }

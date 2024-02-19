@@ -1,6 +1,7 @@
 use std::{io::Write, process::exit, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
+use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
     CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, IntoIterGlobalNodes,
     Node as SPDGNode, ProgramDescription, SPDGImpl, TypeId, SPDG,
@@ -9,7 +10,7 @@ use paralegal_spdg::{
 use anyhow::{anyhow, bail, ensure, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
-use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, Walker};
+use petgraph::visit::{Control, DfsEvent, EdgeFiltered, Walker};
 use petgraph::Incoming;
 
 use super::flows_to::CtrlFlowsTo;
@@ -18,7 +19,6 @@ use crate::Diagnostics;
 use crate::{
     assert_error, assert_warning,
     diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
-    flows_to::DataAndControlInfluencees,
 };
 
 /// User-defined PDG markers.
@@ -52,17 +52,6 @@ impl MarkerTargets {
     pub fn nodes(&self) -> &[MarkableId] {
         self.nodes.as_slice()
     }
-}
-
-/// Enum for identifying an edge type (data, control or both)
-#[derive(Clone, Copy)]
-pub enum EdgeType {
-    /// Only consider dataflow edges
-    Data,
-    /// Only consider control flow edges
-    Control,
-    /// Consider both types of edges
-    DataAndControl,
 }
 
 use petgraph::visit::{GraphRef, IntoNeighbors, Visitable};
@@ -278,44 +267,32 @@ impl Context {
     ///
     /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
     ///
-    /// If you use flows_to with [`EdgeType::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
+    /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
     pub fn flows_to(
         &self,
-        src: impl IntoIterGlobalNodes + Sized,
-        sink: impl IntoIterGlobalNodes + Sized,
-        edge_type: EdgeType,
+        src: impl IntoIterGlobalNodes,
+        sink: impl IntoIterGlobalNodes,
+        edge_type: EdgeSelection,
     ) -> bool {
-        let targets = sink.into_cluster_map();
-        src.into_clusters().into_iter().any(|cluster| {
-            let cf_id = cluster.controller_id();
-            let Some(targets) = targets.get(&cf_id) else {
-                return false;
-            };
-            cluster.nodes().iter().any(|src| {
-                let src_datasource = src;
+        let cf_id = src.controller_id();
+        if sink.controller_id() != cf_id {
+            return false;
+        }
 
-                match edge_type {
-                    EdgeType::Data => {
-                        let flows_to = &self.flows_to[&cf_id];
-                        targets.iter().any(|sink| {
-                            flows_to.data_flows_to[src_datasource.index()][sink.index()]
-                        })
-                    }
-                    EdgeType::DataAndControl => targets.iter().any(|sink| {
-                        DataAndControlInfluencees::new(*src, &self.desc.controllers[&cf_id])
-                            .contains(&sink)
-                    }),
-                    EdgeType::Control => {
-                        let edges = self.desc.controllers[&cf_id]
-                            .graph
-                            .edges(*src)
-                            .filter(|e| e.weight().is_control())
-                            .map(|e| e.target());
-                        overlaps(edges, targets.iter().copied())
-                    }
-                }
+        if edge_type.is_data() {
+            let flows_to = &self.flows_to[&cf_id];
+            src.iter_nodes().any(|src| {
+                sink.iter_nodes()
+                    .any(|sink| flows_to.data_flows_to[src.index()][sink.index()])
             })
-        })
+        } else {
+            generic_flows_to(
+                src.iter_nodes(),
+                edge_type,
+                &self.desc.controllers[&cf_id],
+                sink.iter_nodes(),
+            )
+        }
     }
 
     /// Find the node that represents the `index`th argument of the controller
@@ -334,16 +311,16 @@ impl Context {
 
     /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:
     ///
-    /// `some n where self.flows_to(influencer, n, EdgeType::Data) && self.flows_to(n, target, Edgetype::Control)`.
+    /// `some n where self.flows_to(influencer, n, EdgeSelection::Data) && self.flows_to(n, target, EdgeSelection::Control)`.
     pub fn has_ctrl_influence(
         &self,
         influencer: impl IntoIterGlobalNodes + Sized + Copy,
         target: impl IntoIterGlobalNodes + Sized + Copy,
     ) -> bool {
-        self.flows_to(influencer, target, EdgeType::Control)
+        self.flows_to(influencer, target, EdgeSelection::Control)
             || self
-                .influencees(influencer, EdgeType::Data)
-                .any(|inf| self.flows_to(inf, target, EdgeType::Control))
+                .influencees(influencer, EdgeSelection::Data)
+                .any(|inf| self.flows_to(inf, target, EdgeSelection::Control))
     }
 
     /// Returns iterator over all Nodes that influence the given sink Node.
@@ -352,31 +329,28 @@ impl Context {
     pub fn influencers<'a>(
         &'a self,
         sink: impl IntoIterGlobalNodes + Sized,
-        edge_type: EdgeType,
+        edge_type: EdgeSelection,
     ) -> impl Iterator<Item = GlobalNode> + 'a {
         use petgraph::visit::*;
-        sink.into_clusters().into_iter().flat_map(move |cluster| {
-            let cf_id = cluster.controller_id();
-            let nodes = cluster.nodes().iter().copied();
+        let cf_id = sink.controller_id();
+        let nodes = sink.iter_nodes();
 
-            let reversed_graph = Reversed(&self.desc.controllers[&cf_id].graph);
+        let reversed_graph = Reversed(&self.desc.controllers[&cf_id].graph);
 
-            match edge_type {
-                EdgeType::Data => {
-                    let edges_filtered =
-                        EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_data());
-                    bfs_iter(&edges_filtered, cf_id, nodes).collect::<Vec<_>>()
-                }
-                EdgeType::Control => {
-                    let edges_filtered =
-                        EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_control());
-                    bfs_iter(&edges_filtered, cf_id, nodes).collect::<Vec<_>>()
-                }
-                EdgeType::DataAndControl => {
-                    bfs_iter(reversed_graph, cf_id, nodes).collect::<Vec<_>>()
-                }
+        match edge_type {
+            EdgeSelection::Data => {
+                let edges_filtered =
+                    EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_data());
+                bfs_iter(&edges_filtered, cf_id, nodes).collect::<Vec<_>>()
             }
-        })
+            EdgeSelection::Control => {
+                let edges_filtered =
+                    EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_control());
+                bfs_iter(&edges_filtered, cf_id, nodes).collect::<Vec<_>>()
+            }
+            EdgeSelection::Both => bfs_iter(reversed_graph, cf_id, nodes).collect::<Vec<_>>(),
+        }
+        .into_iter()
     }
 
     /// Returns iterator over all Nodes that are influenced by the given src Node.
@@ -385,33 +359,28 @@ impl Context {
     pub fn influencees<'a>(
         &'a self,
         src: impl IntoIterGlobalNodes + Sized,
-        edge_type: EdgeType,
+        edge_type: EdgeSelection,
     ) -> impl Iterator<Item = GlobalNode> + 'a {
-        src.into_clusters().into_iter().flat_map(move |cluster| {
-            let cf_id = cluster.controller_id();
+        let cf_id = src.controller_id();
 
-            let graph = &self.desc.controllers[&cf_id].graph;
+        let graph = &self.desc.controllers[&cf_id].graph;
 
-            match edge_type {
-                EdgeType::Data => cluster
-                    .nodes()
-                    .iter()
-                    .flat_map(|src| {
-                        self.flows_to[&cf_id].data_flows_to[src.index()]
-                            .iter_ones()
-                            .map(move |i| GlobalNode::unsafe_new(cf_id, i))
-                    })
-                    .collect::<Vec<_>>(),
-                EdgeType::DataAndControl => {
-                    bfs_iter(graph, cf_id, cluster.nodes().iter().copied()).collect::<Vec<_>>()
-                }
-                EdgeType::Control => {
-                    let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_control());
-                    bfs_iter(&edges_filtered, cf_id, cluster.nodes().iter().copied())
-                        .collect::<Vec<_>>()
-                }
+        match edge_type {
+            EdgeSelection::Data => src
+                .iter_nodes()
+                .flat_map(|src| {
+                    self.flows_to[&cf_id].data_flows_to[src.index()]
+                        .iter_ones()
+                        .map(move |i| GlobalNode::unsafe_new(cf_id, i))
+                })
+                .collect::<Vec<_>>(),
+            EdgeSelection::Both => bfs_iter(graph, cf_id, src.iter_nodes()).collect::<Vec<_>>(),
+            EdgeSelection::Control => {
+                let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_control());
+                bfs_iter(&edges_filtered, cf_id, src.iter_nodes()).collect::<Vec<_>>()
             }
-        })
+        }
+        .into_iter()
     }
 
     /// Returns an iterator over all objects marked with `marker`.
@@ -476,7 +445,7 @@ impl Context {
     pub fn roots(
         &self,
         ctrl_id: ControllerId,
-        _edge_type: EdgeType,
+        _edge_type: EdgeSelection,
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         let g = &self.desc.controllers[&ctrl_id].graph;
         g.externals(Incoming)
@@ -563,7 +532,7 @@ impl Context {
         &self,
         from: &[GlobalNode],
         to: &[GlobalNode],
-        edge_type: EdgeType,
+        edge_type: EdgeSelection,
     ) -> Option<(GlobalNode, GlobalNode)> {
         from.iter().find_map(|src| {
             to.iter().find_map(|sink| {
@@ -589,6 +558,23 @@ impl Context {
             node.local_node(),
             &self.desc.controllers[&node.controller_id()],
         )
+    }
+
+    #[cfg(test)]
+    pub fn nth_successors(
+        &self,
+        n: usize,
+        src: impl IntoIterGlobalNodes + Sized,
+    ) -> paralegal_spdg::NodeCluster {
+        use paralegal_spdg::NodeCluster;
+
+        let mut start: Vec<_> = src.iter_nodes().collect();
+        let ctrl = &self.desc.controllers[&src.controller_id()].graph;
+
+        for _ in 0..n {
+            start = start.into_iter().flat_map(|n| ctrl.neighbors(n)).collect();
+        }
+        NodeCluster::new(src.controller_id(), start)
     }
 }
 
@@ -697,6 +683,7 @@ impl AlwaysHappensBefore {
     }
 }
 
+#[cfg(test)]
 fn overlaps<T: Eq + std::hash::Hash>(
     one: impl IntoIterator<Item = T>,
     other: impl IntoIterator<Item = T>,
@@ -816,11 +803,11 @@ fn test_influencees() -> Result<()> {
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
 
     let influencees_data_control = ctx
-        .influencees(dbg!(src_a), EdgeType::DataAndControl)
+        .influencees(dbg!(src_a), EdgeSelection::Both)
         .unique()
         .collect::<Vec<_>>();
     let influencees_data = ctx
-        .influencees(src_a, EdgeType::Data)
+        .influencees(src_a, EdgeSelection::Data)
         .unique()
         .collect::<Vec<_>>();
 
@@ -867,11 +854,11 @@ fn test_influencers() -> Result<()> {
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
 
     let influencers_data_control = ctx
-        .influencers(dbg!(&sink_callsite), EdgeType::DataAndControl)
+        .influencers(dbg!(&sink_callsite), EdgeSelection::Both)
         .unique()
         .collect::<Vec<_>>();
     let influencers_data = ctx
-        .influencers(&sink_callsite, EdgeType::Data)
+        .influencers(&sink_callsite, EdgeSelection::Data)
         .unique()
         .collect::<Vec<_>>();
 
