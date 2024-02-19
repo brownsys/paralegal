@@ -28,7 +28,7 @@ impl DeletionProp {
         let types_to_check = self
             .cx
             .marked_type(marker!(sensitive))
-            .into_iter()
+            .iter()
             .filter(|t| {
                 {
                     // If there is any controller

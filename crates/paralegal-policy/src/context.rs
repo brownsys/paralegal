@@ -4,13 +4,13 @@ pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
     CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, IntoIterGlobalNodes,
-    Node as SPDGNode, ProgramDescription, SPDGImpl, TypeId, SPDG,
+    Node as SPDGNode, NodeCluster, ProgramDescription, SPDGImpl, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, ensure, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
-use petgraph::visit::{Control, DfsEvent, EdgeFiltered, Walker};
+use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, Walker};
 use petgraph::Incoming;
 
 use super::flows_to::CtrlFlowsTo;
@@ -326,11 +326,11 @@ impl Context {
     /// Returns iterator over all Nodes that influence the given sink Node.
     ///
     /// Does not return the input node. A CallSite sink will return all of the associated CallArgument nodes.
-    pub fn influencers<'a>(
-        &'a self,
+    pub fn influencers(
+        &self,
         sink: impl IntoIterGlobalNodes + Sized,
         edge_type: EdgeSelection,
-    ) -> impl Iterator<Item = GlobalNode> + 'a {
+    ) -> impl Iterator<Item = GlobalNode> + '_ {
         use petgraph::visit::*;
         let cf_id = sink.controller_id();
         let nodes = sink.iter_nodes();
@@ -356,11 +356,11 @@ impl Context {
     /// Returns iterator over all Nodes that are influenced by the given src Node.
     ///
     /// Does not return the input node. A CallArgument src will return the associated CallSite.
-    pub fn influencees<'a>(
-        &'a self,
+    pub fn influencees(
+        &self,
         src: impl IntoIterGlobalNodes + Sized,
         edge_type: EdgeSelection,
-    ) -> impl Iterator<Item = GlobalNode> + 'a {
+    ) -> impl Iterator<Item = GlobalNode> + '_ {
         let cf_id = src.controller_id();
 
         let graph = &self.desc.controllers[&cf_id].graph;
@@ -411,7 +411,7 @@ impl Context {
             || self
                 .get_node_types(node)
                 .iter()
-                .any(|t| marked.types.contains(&t))
+                .any(|t| marked.types.contains(t))
     }
 
     /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
@@ -560,14 +560,39 @@ impl Context {
         )
     }
 
+    /// Return which data is being read from for the modification performed at
+    /// this location
+    pub fn inputs_of(&self, call_string: CallString) -> NodeCluster {
+        let ctrl_id = call_string.root().function;
+        NodeCluster::new(
+            ctrl_id,
+            self.desc.controllers[&ctrl_id]
+                .graph
+                .edge_references()
+                .filter(|e| e.weight().at == call_string)
+                .map(|e| e.source()),
+        )
+    }
+
+    /// Return which data is being written to at this location
+    pub fn outputs_of(&self, call_string: CallString) -> NodeCluster {
+        let ctrl_id = call_string.root().function;
+        NodeCluster::new(
+            ctrl_id,
+            self.desc.controllers[&ctrl_id]
+                .graph
+                .edge_references()
+                .filter(|e| e.weight().at == call_string)
+                .map(|e| e.target()),
+        )
+    }
+
     #[cfg(test)]
     pub fn nth_successors(
         &self,
         n: usize,
         src: impl IntoIterGlobalNodes + Sized,
     ) -> paralegal_spdg::NodeCluster {
-        use paralegal_spdg::NodeCluster;
-
         let mut start: Vec<_> = src.iter_nodes().collect();
         let ctrl = &self.desc.controllers[&src.controller_id()].graph;
 

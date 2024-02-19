@@ -18,7 +18,7 @@ use either::Either;
 use flowistry::pdg::graph::{DepEdgeKind, DepGraph, DepNode};
 use flowistry::pdg::CallChanges;
 use flowistry::pdg::SkipCall::Skip;
-use paralegal_spdg::{utils::display_list, Node};
+use paralegal_spdg::Node;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
 
 use super::discover::FnToAnalyze;
@@ -79,7 +79,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
         }
 
         let mut known_def_ids = HashSet::new();
-        let result = targets
+
+        targets
             .into_iter()
             .map(|desc| {
                 let target_name = desc.name();
@@ -92,8 +93,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 })
             })
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
-            .map(|controllers| self.make_program_description(controllers, &known_def_ids));
-        result
+            .map(|controllers| self.make_program_description(controllers, &known_def_ids))
     }
 
     fn make_program_description(
@@ -432,11 +432,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let type_markers = self.type_is_marked(place_ty, is_external_call_source);
         self.known_def_ids.extend(type_markers.iter().copied());
         if !type_markers.is_empty() {
-            self.types
-                .entry(i)
-                .or_insert_with(Default::default)
-                .0
-                .extend(type_markers)
+            self.types.entry(i).or_default().0.extend(type_markers)
         }
     }
 

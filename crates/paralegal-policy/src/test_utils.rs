@@ -38,7 +38,7 @@ pub fn get_callsite_node<'a>(
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl
         .all_sources()
-        .filter_map(|node| is_at_function_call_with_name(ctx, ctrl, name, node).then_some(node));
+        .filter(|node| is_at_function_call_with_name(ctx, ctrl, name, *node));
     NodeCluster::new(controller, inner)
 }
 

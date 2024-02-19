@@ -292,7 +292,7 @@ impl<'g> CtrlRef<'g> {
         other.flows_to_data(&self.return_value())
     }
 
-    pub fn marked<'a>(&'a self, marker: Identifier) -> NodeRefs<'a> {
+    pub fn marked(&self, marker: Identifier) -> NodeRefs<'_> {
         NodeRefs {
             nodes: self
                 .ctrl
@@ -428,7 +428,7 @@ impl<'g> CallStringRef<'g> {
         nodes.sort();
         nodes.dedup();
         NodeRefs {
-            nodes: nodes, //.into_iter().map(|t| t.0).collect(),
+            nodes, //.into_iter().map(|t| t.0).collect(),
             graph: self.ctrl,
         }
     }

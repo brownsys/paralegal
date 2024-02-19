@@ -97,12 +97,11 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
             for &n in nodes {
                 let weight = ctrl.graph.node_weight(n).unwrap();
                 let markers = ctrl.markers.get(&n).into_iter().flatten();
-                let type_markers = ctrl.type_assigns.get(&n).into_iter().flat_map(|typ| {
-                    typ.0
-                        .iter()
-                        .map(|t| &self.spdg.type_info[t].markers)
-                        .flatten()
-                });
+                let type_markers = ctrl
+                    .type_assigns
+                    .get(&n)
+                    .into_iter()
+                    .flat_map(|typ| typ.0.iter().flat_map(|t| &self.spdg.type_info[t].markers));
                 let mut all_markers = markers.chain(type_markers).copied().peekable();
                 write!(s, "|")?;
                 let write_id_and_desc = |s: &mut String| {
