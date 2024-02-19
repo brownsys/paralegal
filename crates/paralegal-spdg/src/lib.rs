@@ -484,6 +484,51 @@ pub fn hash_pls<T: Hash>(t: T) -> u64 {
     hasher.finish()
 }
 
+pub trait IntoIterGlobalNodes {
+    type Iter: Iterator<Item = GlobalNode>;
+    fn iter_global_nodes(self) -> Self::Iter;
+
+    /// A convenience method for gathering multiple node(cluster)s together.
+    ///
+    /// Returns `None` if the controller id's don't match or both iterators are empty.
+    fn extended(self, other: impl IntoIterGlobalNodes) -> Option<NodeCluster>
+    where
+        Self: Sized,
+    {
+        NodeCluster::try_from_iterator(
+            self.iter_global_nodes()
+                .chain(other.iter_global_nodes())
+                .peekable(),
+        )
+    }
+
+    fn to_local_cluster(self) -> Option<NodeCluster>
+    where
+        Self: Sized,
+    {
+        NodeCluster::try_from_iterator(self.iter_global_nodes())
+    }
+
+    fn into_cluster_map(self) -> HashMap<LocalDefId, Vec<Node>>
+    where
+        Self: Sized,
+    {
+        self.iter_global_nodes()
+            .map(|n| (n.controller_id, n.node))
+            .into_group_map()
+    }
+
+    fn into_clusters(self) -> Vec<NodeCluster>
+    where
+        Self: Sized,
+    {
+        self.into_cluster_map()
+            .into_iter()
+            .map(|(controller_id, nodes)| NodeCluster::new(controller_id, nodes))
+            .collect()
+    }
+}
+
 pub type Node = NodeIndex;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -515,6 +560,76 @@ impl GlobalNode {
 
     pub fn controller_id(self) -> LocalDefId {
         self.controller_id
+    }
+}
+
+impl IntoIterGlobalNodes for GlobalNode {
+    type Iter = std::iter::Once<GlobalNode>;
+    fn iter_global_nodes(self) -> Self::Iter {
+        std::iter::once(self)
+    }
+}
+
+#[derive(Debug, Hash, Clone)]
+pub struct NodeCluster {
+    controller_id: LocalDefId,
+    nodes: Box<[Node]>,
+}
+
+pub struct NodeClusterIter<'a> {
+    controller_id: LocalDefId,
+    inner: std::slice::Iter<'a, Node>,
+}
+
+impl Iterator for NodeClusterIter<'_> {
+    type Item = GlobalNode;
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = *self.inner.next()?;
+        Some(GlobalNode {
+            controller_id: self.controller_id,
+            node,
+        })
+    }
+}
+
+impl<'a> IntoIterGlobalNodes for &'a NodeCluster {
+    type Iter = NodeClusterIter<'a>;
+    fn iter_global_nodes(self) -> Self::Iter {
+        NodeClusterIter {
+            controller_id: self.controller_id,
+            inner: self.nodes.iter(),
+        }
+    }
+}
+
+impl NodeCluster {
+    pub fn new(controller_id: LocalDefId, nodes: impl IntoIterator<Item = Node>) -> Self {
+        Self {
+            controller_id,
+            nodes: nodes.into_iter().collect::<Vec<_>>().into(),
+        }
+    }
+
+    pub fn controller_id(&self) -> LocalDefId {
+        self.controller_id
+    }
+
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
+    /// Attempt to collect the nodes into one cluster.
+    ///
+    /// Returns `None` if not all nodes are from the same controller.
+    pub fn try_from_iterator(it: impl IntoIterator<Item = GlobalNode>) -> Option<Self> {
+        let mut combined = it.into_iter().peekable();
+        let controller_id = combined.peek()?.controller_id;
+        Some(NodeCluster::new(
+            controller_id,
+            combined
+                .map(|n| (n.controller_id == controller_id).then_some(n.node))
+                .collect::<Option<Vec<_>>>()?,
+        ))
     }
 }
 
@@ -624,7 +739,7 @@ impl SPDG {
         self.graph
             .edge_references()
             .filter(|e| e.weight().is_data())
-            .map(|e| e.source())
+            .map(|e| e.target())
             .unique()
     }
 

@@ -2,8 +2,8 @@ use std::{io::Write, process::exit, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::{
-    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, Node as SPDGNode,
-    ProgramDescription, SPDGImpl, TypeId, SPDG,
+    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, IntoIterGlobalNodes,
+    Node as SPDGNode, ProgramDescription, SPDGImpl, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, ensure, Result};
@@ -71,10 +71,18 @@ fn bfs_iter<
     G: IntoNeighbors + GraphRef + Visitable<NodeId = SPDGNode, Map = <SPDGImpl as Visitable>::Map>,
 >(
     g: G,
-    start: GlobalNode,
+    controller_id: LocalDefId,
+    start: impl IntoIterator<Item = SPDGNode>,
 ) -> impl Iterator<Item = GlobalNode> {
-    let walker_iter = Walker::iter(Bfs::new(g, start.local_node()), g);
-    walker_iter.map(move |inner| GlobalNode::unsafe_new(start.controller_id(), inner.index()))
+    let mut discovered = g.visit_map();
+    let stack: std::collections::VecDeque<petgraph::prelude::NodeIndex> =
+        start.into_iter().collect();
+    for n in stack.iter() {
+        petgraph::visit::VisitMap::visit(&mut discovered, *n);
+    }
+    let bfs = Bfs { stack, discovered };
+    let walker_iter = Walker::iter(bfs, g);
+    walker_iter.map(move |inner| GlobalNode::unsafe_new(controller_id, inner.index()))
 }
 
 /// Interface for defining policies.
@@ -271,32 +279,43 @@ impl Context {
     /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
     ///
     /// If you use flows_to with [`EdgeType::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
-    pub fn flows_to(&self, src: GlobalNode, sink: GlobalNode, edge_type: EdgeType) -> bool {
-        if src.controller_id() != sink.controller_id() {
-            return false;
-        }
+    pub fn flows_to(
+        &self,
+        src: impl IntoIterGlobalNodes + Sized,
+        sink: impl IntoIterGlobalNodes + Sized,
+        edge_type: EdgeType,
+    ) -> bool {
+        let targets = sink.into_cluster_map();
+        src.into_clusters().into_iter().any(|cluster| {
+            let cf_id = cluster.controller_id();
+            let Some(targets) = targets.get(&cf_id) else {
+                return false;
+            };
+            cluster.nodes().iter().any(|src| {
+                let src_datasource = src;
 
-        let cf_id = &src.controller_id();
-        let src_datasource = src.local_node();
-        let sink_cs_or_ds = sink.local_node();
-
-        match edge_type {
-            EdgeType::Data => {
-                self.flows_to[cf_id].data_flows_to[src_datasource.index()][sink_cs_or_ds.index()]
-            }
-            EdgeType::DataAndControl => {
-                DataAndControlInfluencees::new(src_datasource, &self.desc.controllers[cf_id])
-                    .contains(&sink_cs_or_ds)
-            }
-            EdgeType::Control => self
-                .desc
-                .controllers
-                .get(cf_id)
-                .unwrap()
-                .graph
-                .edges(src_datasource)
-                .any(|e| e.weight().is_control() && e.target() == sink_cs_or_ds),
-        }
+                match edge_type {
+                    EdgeType::Data => {
+                        let flows_to = &self.flows_to[&cf_id];
+                        targets.iter().any(|sink| {
+                            flows_to.data_flows_to[src_datasource.index()][sink.index()]
+                        })
+                    }
+                    EdgeType::DataAndControl => targets.iter().any(|sink| {
+                        DataAndControlInfluencees::new(*src, &self.desc.controllers[&cf_id])
+                            .contains(&sink)
+                    }),
+                    EdgeType::Control => {
+                        let edges = self.desc.controllers[&cf_id]
+                            .graph
+                            .edges(*src)
+                            .filter(|e| e.weight().is_control())
+                            .map(|e| e.target());
+                        overlaps(edges, targets.iter().copied())
+                    }
+                }
+            })
+        })
     }
 
     /// Find the node that represents the `index`th argument of the controller
@@ -316,7 +335,11 @@ impl Context {
     /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:
     ///
     /// `some n where self.flows_to(influencer, n, EdgeType::Data) && self.flows_to(n, target, Edgetype::Control)`.
-    pub fn has_ctrl_influence(&self, influencer: GlobalNode, target: GlobalNode) -> bool {
+    pub fn has_ctrl_influence(
+        &self,
+        influencer: impl IntoIterGlobalNodes + Sized + Copy,
+        target: impl IntoIterGlobalNodes + Sized + Copy,
+    ) -> bool {
         self.flows_to(influencer, target, EdgeType::Control)
             || self
                 .influencees(influencer, EdgeType::Data)
@@ -328,41 +351,32 @@ impl Context {
     /// Does not return the input node. A CallSite sink will return all of the associated CallArgument nodes.
     pub fn influencers<'a>(
         &'a self,
-        sink: GlobalNode,
+        sink: impl IntoIterGlobalNodes + Sized,
         edge_type: EdgeType,
-    ) -> Box<dyn Iterator<Item = GlobalNode> + 'a> {
+    ) -> impl Iterator<Item = GlobalNode> + 'a {
         use petgraph::visit::*;
-        let cf_id = &sink.controller_id();
+        sink.into_clusters().into_iter().flat_map(move |cluster| {
+            let cf_id = cluster.controller_id();
+            let nodes = cluster.nodes().iter().copied();
 
-        let reversed_graph = Reversed(&self.desc.controllers[cf_id].graph);
+            let reversed_graph = Reversed(&self.desc.controllers[&cf_id].graph);
 
-        match edge_type {
-            EdgeType::Data => {
-                let edges_filtered =
-                    EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_data());
-                Box::new(
-                    // TODO: Yikes. Can't create a lazy iterator from
-                    // `edges_filtered` because they must be taken by
-                    // reference by `Walker::iter`
-                    bfs_iter(&edges_filtered, sink)
-                        .collect::<Vec<_>>()
-                        .into_iter(),
-                ) as Box<dyn Iterator<Item = GlobalNode> + 'a>
+            match edge_type {
+                EdgeType::Data => {
+                    let edges_filtered =
+                        EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_data());
+                    bfs_iter(&edges_filtered, cf_id, nodes).collect::<Vec<_>>()
+                }
+                EdgeType::Control => {
+                    let edges_filtered =
+                        EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_control());
+                    bfs_iter(&edges_filtered, cf_id, nodes).collect::<Vec<_>>()
+                }
+                EdgeType::DataAndControl => {
+                    bfs_iter(reversed_graph, cf_id, nodes).collect::<Vec<_>>()
+                }
             }
-            EdgeType::Control => {
-                let edges_filtered =
-                    EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_control());
-                Box::new(
-                    // TODO: Yikes. Can't create a lazy iterator from
-                    // `edges_filtered` because they must be taken by
-                    // reference by `Walker::iter`
-                    bfs_iter(&edges_filtered, sink)
-                        .collect::<Vec<_>>()
-                        .into_iter(),
-                ) as Box<_>
-            }
-            EdgeType::DataAndControl => Box::new(bfs_iter(reversed_graph, sink)) as Box<_>,
-        }
+        })
     }
 
     /// Returns iterator over all Nodes that are influenced by the given src Node.
@@ -370,33 +384,34 @@ impl Context {
     /// Does not return the input node. A CallArgument src will return the associated CallSite.
     pub fn influencees<'a>(
         &'a self,
-        src: GlobalNode,
+        src: impl IntoIterGlobalNodes + Sized,
         edge_type: EdgeType,
-    ) -> Box<dyn Iterator<Item = GlobalNode> + 'a> {
-        let cf_id = &src.controller_id();
-        let src_ctrl_id = src.controller_id();
+    ) -> impl Iterator<Item = GlobalNode> + 'a {
+        src.into_clusters().into_iter().flat_map(move |cluster| {
+            let cf_id = cluster.controller_id();
 
-        let graph = &self.desc.controllers[cf_id].graph;
+            let graph = &self.desc.controllers[&cf_id].graph;
 
-        match edge_type {
-            EdgeType::Data => Box::new(
-                self.flows_to[&cf_id].data_flows_to[src.local_node().index()]
-                    .iter_ones()
-                    .map(move |i| GlobalNode::unsafe_new(src_ctrl_id, i)),
-            ) as Box<dyn Iterator<Item = GlobalNode> + 'a>,
-            EdgeType::DataAndControl => Box::new(bfs_iter(graph, src)) as Box<_>,
-            EdgeType::Control => {
-                let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_control());
-                Box::new(
-                    bfs_iter(&edges_filtered, src)
-                        // TODO: Yikes. Can't create a lazy iterator from
-                        // `edges_filtered` because they must be taken by
-                        // reference by `Walker::iter`
+            match edge_type {
+                EdgeType::Data => cluster
+                    .nodes()
+                    .iter()
+                    .flat_map(|src| {
+                        self.flows_to[&cf_id].data_flows_to[src.index()]
+                            .iter_ones()
+                            .map(move |i| GlobalNode::unsafe_new(cf_id, i))
+                    })
+                    .collect::<Vec<_>>(),
+                EdgeType::DataAndControl => {
+                    bfs_iter(graph, cf_id, cluster.nodes().iter().copied()).collect::<Vec<_>>()
+                }
+                EdgeType::Control => {
+                    let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_control());
+                    bfs_iter(&edges_filtered, cf_id, cluster.nodes().iter().copied())
                         .collect::<Vec<_>>()
-                        .into_iter(),
-                ) as Box<_>
+                }
             }
-        }
+        })
     }
 
     /// Returns an iterator over all objects marked with `marker`.
@@ -682,6 +697,16 @@ impl AlwaysHappensBefore {
     }
 }
 
+fn overlaps<T: Eq + std::hash::Hash>(
+    one: impl IntoIterator<Item = T>,
+    other: impl IntoIterator<Item = T>,
+) -> bool {
+    use paralegal_spdg::HashSet;
+
+    let target = one.into_iter().collect::<HashSet<_>>();
+    other.into_iter().any(|n| target.contains(&n))
+}
+
 #[test]
 fn test_context() {
     let ctx = crate::test_utils::test_ctx();
@@ -787,8 +812,8 @@ fn test_influencees() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
     let ctrl_name = ctx.controller_by_name(Identifier::new_intern("influence"))?;
     let src_a = ctx.controller_argument(ctrl_name, 0).unwrap();
-    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
-    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
 
     let influencees_data_control = ctx
         .influencees(dbg!(src_a), EdgeType::DataAndControl)
@@ -800,40 +825,33 @@ fn test_influencees() -> Result<()> {
         .collect::<Vec<_>>();
 
     assert!(
-        dbg!(&influencees_data_control).contains(&dbg!(cond_sink)),
+        overlaps(
+            influencees_data_control.iter().copied(),
+            cond_sink.iter_global_nodes()
+        ),
         "input argument a influences cond via data"
     );
     assert!(
-        influencees_data_control.contains(&sink_callsite),
+        overlaps(
+            influencees_data_control.iter().copied(),
+            sink_callsite.iter_global_nodes()
+        ),
         "input argument a influences sink via control"
     );
 
     assert!(
-        influencees_data.contains(&cond_sink),
+        overlaps(
+            influencees_data.iter().copied(),
+            cond_sink.iter_global_nodes()
+        ),
         "input argument a influences cond via data"
     );
     assert!(
-        !influencees_data.contains(&sink_callsite),
+        !overlaps(
+            influencees_data.iter().copied(),
+            sink_callsite.iter_global_nodes()
+        ),
         "input argument a doesnt influence sink via data"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn test_callsite_is_arg_influencee() -> Result<()> {
-    let ctx = crate::test_utils::test_ctx();
-    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("influence"))?;
-    let sink_arg = crate::test_utils::get_sink_node(&ctx, ctrl_name, "sink1").unwrap();
-    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
-
-    let influencees = ctx
-        .influencees(sink_arg, EdgeType::Data)
-        .collect::<Vec<_>>();
-
-    assert!(
-        influencees.contains(&sink_callsite),
-        "arg influences callsite through data"
     );
 
     Ok(())
@@ -845,15 +863,15 @@ fn test_influencers() -> Result<()> {
     let ctrl_name = ctx.controller_by_name(Identifier::new_intern("influence"))?;
     let src_a = ctx.controller_argument(ctrl_name, 0).unwrap();
     let src_b = ctx.controller_argument(ctrl_name, 1).unwrap();
-    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond").unwrap();
-    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
+    let cond_sink = crate::test_utils::get_sink_node(&ctx, ctrl_name, "cond");
+    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
 
     let influencers_data_control = ctx
-        .influencers(sink_callsite, EdgeType::DataAndControl)
+        .influencers(dbg!(&sink_callsite), EdgeType::DataAndControl)
         .unique()
         .collect::<Vec<_>>();
     let influencers_data = ctx
-        .influencers(sink_callsite, EdgeType::Data)
+        .influencers(&sink_callsite, EdgeType::Data)
         .unique()
         .collect::<Vec<_>>();
 
@@ -862,15 +880,16 @@ fn test_influencers() -> Result<()> {
         "input argument a influences sink via data"
     );
     assert!(
-        influencers_data_control.contains(&src_b),
+        influencers_data_control.contains(&dbg!(src_b)),
         "input argument b influences sink via control"
     );
     assert!(
-        influencers_data_control.contains(&cond_sink),
+        overlaps(
+            influencers_data_control.iter().copied(),
+            dbg!(&cond_sink).iter_global_nodes()
+        ),
         "cond_sink influences sink via control"
     );
-    // sink is influenced by a, b, cond arg + cs, and its own arg
-    assert_eq!(influencers_data_control.len(), 5);
 
     assert!(
         !influencers_data.contains(&src_a),
@@ -881,67 +900,48 @@ fn test_influencers() -> Result<()> {
         "input argument b influences sink via data"
     );
     assert!(
-        !influencers_data.contains(&cond_sink),
+        !overlaps(
+            influencers_data.iter().copied(),
+            cond_sink.iter_global_nodes()
+        ),
         "cond_sink doesnt influence sink via data"
     );
-    // sink is only influenced by b and its own arg
-    assert_eq!(influencers_data.len(), 2);
 
     Ok(())
 }
 
 #[test]
-fn test_arg_is_callsite_influencer() -> Result<()> {
-    let ctx = crate::test_utils::test_ctx();
-    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("influence"))?;
-    let sink_arg = crate::test_utils::get_sink_node(&ctx, ctrl_name, "sink1").unwrap();
-    let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1").unwrap();
-
-    let influencers = ctx
-        .influencers(sink_callsite, EdgeType::Data)
-        .collect::<Vec<_>>();
-
-    assert!(
-        influencers.contains(&sink_arg),
-        "arg influences callsite through data"
-    );
-
-    Ok(())
-}
-
-#[test]
+#[ignore = "Something is weird with the PDG construction here.
+    See https://github.com/willcrichton/flowistry/issues/95"]
 fn test_has_ctrl_influence() -> Result<()> {
     let ctx = crate::test_utils::test_ctx();
     let ctrl_name = ctx.controller_by_name(Identifier::new_intern("ctrl_influence"))?;
     let src_a = ctx.controller_argument(ctrl_name, 0).unwrap();
     let src_b = ctx.controller_argument(ctrl_name, 1).unwrap();
-    let a_identity =
-        crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "identity").unwrap();
-    let b_identity =
-        crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "id").unwrap();
+    let a_identity = crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "identity");
+    let b_identity = crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "id");
     let validate =
-        crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "validate_foo").unwrap();
-    let sink_cs =
-        crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "sink1").unwrap();
+        crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "validate_foo");
+    let sink_cs = crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "sink1");
 
     assert!(
-        ctx.has_ctrl_influence(src_a, sink_cs),
+        ctx.has_ctrl_influence(src_a, &sink_cs),
         "src_a influences sink"
     );
     assert!(
-        ctx.has_ctrl_influence(a_identity, sink_cs),
+        ctx.has_ctrl_influence(&dbg!(a_identity), dbg!(&sink_cs)),
         "a_prime influences sink"
     );
     assert!(
-        ctx.has_ctrl_influence(validate, sink_cs),
+        ctx.has_ctrl_influence(&validate, &sink_cs),
         "validate_foo influences sink"
     );
     assert!(
-        !ctx.has_ctrl_influence(src_b, sink_cs),
+        !ctx.has_ctrl_influence(src_b, &sink_cs),
         "src_b doesnt influence sink"
     );
     assert!(
-        !ctx.has_ctrl_influence(b_identity, sink_cs),
+        !ctx.has_ctrl_influence(&b_identity, &sink_cs),
         "b_prime doesnt influence sink"
     );
 

@@ -1,8 +1,9 @@
 use crate::Context;
 use crate::ControllerId;
 use paralegal_flow::test_utils::PreFrg;
-use paralegal_spdg::{GlobalNode, Identifier, InstructionInfo, Node as SPDGNode, SPDG};
-use petgraph::visit::EdgeRef;
+use paralegal_spdg::IntoIterGlobalNodes;
+use paralegal_spdg::NodeCluster;
+use paralegal_spdg::{Identifier, InstructionInfo, Node as SPDGNode, SPDG};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -22,21 +23,23 @@ pub fn get_callsite_or_datasink_node<'a>(
     ctx: &'a Context,
     controller: ControllerId,
     name: &'a str,
-) -> Option<GlobalNode> {
-    Some(get_callsite_node(ctx, controller, name).unwrap_or(get_sink_node(ctx, controller, name)?))
+) -> NodeCluster {
+    get_callsite_node(ctx, controller, name)
+        .extended(&get_sink_node(ctx, controller, name))
+        .unwrap()
 }
 
 pub fn get_callsite_node<'a>(
     ctx: &'a Context,
     controller: ControllerId,
     name: &'a str,
-) -> Option<GlobalNode> {
+) -> NodeCluster {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl
         .all_sources()
-        .find_map(|node| is_at_function_call_with_name(ctx, ctrl, name, node).then_some(node))?;
-    Some(GlobalNode::from_local_node(controller, inner))
+        .filter_map(|node| is_at_function_call_with_name(ctx, ctrl, name, node).then_some(node));
+    NodeCluster::new(controller, inner)
 }
 
 fn is_at_function_call_with_name(
@@ -54,15 +57,11 @@ fn is_at_function_call_with_name(
     )
 }
 
-pub fn get_sink_node<'a>(
-    ctx: &'a Context,
-    controller: ControllerId,
-    name: &'a str,
-) -> Option<GlobalNode> {
+pub fn get_sink_node<'a>(ctx: &'a Context, controller: ControllerId, name: &'a str) -> NodeCluster {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl
         .data_sinks()
-        .find(|sink| is_at_function_call_with_name(ctx, ctrl, name, *sink))?;
-    Some(GlobalNode::from_local_node(controller, inner))
+        .filter(|sink| is_at_function_call_with_name(ctx, ctrl, name, *sink));
+    NodeCluster::new(controller, inner)
 }
