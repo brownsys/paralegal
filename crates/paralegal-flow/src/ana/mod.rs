@@ -194,6 +194,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 }
 
+fn default_index() -> <SPDGImpl as GraphBase>::NodeId {
+    <SPDGImpl as GraphBase>::NodeId::end()
+}
+
 struct GraphConverter<'tcx, 'a, C> {
     generator: &'a SPDGGenerator<'tcx>,
     known_def_ids: &'a mut C,
@@ -202,6 +206,8 @@ struct GraphConverter<'tcx, 'a, C> {
     /// Same as the ID stored in self.target, but as a local def id
     local_def_id: LocalDefId,
     types: HashMap<Node, Types>,
+    index_map: Box<[Node]>,
+    spdg: SPDGImpl,
 }
 
 impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
@@ -221,9 +227,11 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             generator,
             known_def_ids,
             target,
+            index_map: vec![default_index(); dep_graph.as_ref().graph.node_bound()].into(),
             dep_graph,
             local_def_id,
             types: Default::default(),
+            spdg: Default::default(),
         })
     }
 
@@ -248,6 +256,20 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             unreachable!();
         };
         body.stmt_at(loc)
+    }
+
+    fn register_node(&mut self, old: Node, new: NodeInfo) -> Node {
+        let new_node = self.spdg.add_node(new);
+        let r = &mut self.index_map[old.index()];
+        assert_eq!(*r, default_index());
+        *r = new_node;
+        new_node
+    }
+
+    fn new_node_for(&self, old: Node) -> Node {
+        let res = self.index_map[old.index()];
+        assert_ne!(res, default_index());
+        res
     }
 
     fn determine_node_kind(&mut self, weight: &DepNode<'tcx>) -> (NodeKind, bool, Vec<Identifier>) {
@@ -454,11 +476,11 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     fn make_spdg(mut self) -> SPDG {
-        let (graph, markers) = self.make_spdg_impl();
-        let arguments = self.determine_arguments(&graph);
-        let return_ = self.determine_return(&graph);
+        let markers = self.make_spdg_impl();
+        let arguments = self.determine_arguments();
+        let return_ = self.determine_return();
         SPDG {
-            graph,
+            graph: self.spdg,
             name: Identifier::new(self.target.name()),
             arguments,
             markers,
@@ -467,25 +489,23 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
-    fn make_spdg_impl(&mut self) -> (SPDGImpl, HashMap<Node, Vec<Identifier>>) {
+    /// This initializes the fields `spdg` and `index_map` and should be called first
+    fn make_spdg_impl(&mut self) -> HashMap<Node, Vec<Identifier>> {
         use petgraph::prelude::*;
         let g_ref = self.dep_graph.clone();
         let input = &g_ref.graph;
-        let mut g = SPDGImpl::new();
         let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
-
-        let default_index = <SPDGImpl as GraphBase>::NodeId::end();
-        let mut index_map = vec![default_index; input.node_bound()];
 
         for (i, weight) in input.node_references() {
             let (kind, is_external_call_source, node_markers) = self.determine_node_kind(weight);
-            debug_assert!(index_map[i.index()] == default_index);
-            let new_idx = g.add_node(NodeInfo {
-                at: weight.at,
-                description: format!("{:?}", weight.place),
-                kind,
-            });
-            index_map[i.index()] = new_idx;
+            let new_idx = self.register_node(
+                i,
+                NodeInfo {
+                    at: weight.at,
+                    description: format!("{:?}", weight.place),
+                    kind,
+                },
+            );
 
             if !node_markers.is_empty() {
                 markers.entry(new_idx).or_default().extend(node_markers)
@@ -501,9 +521,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
 
         for e in input.edge_references() {
-            g.add_edge(
-                index_map[e.source().index()],
-                index_map[e.target().index()],
+            self.spdg.add_edge(
+                self.new_node_for(e.source()),
+                self.new_node_for(e.target()),
                 EdgeInfo {
                     at: e.weight().at,
                     kind: match e.weight().kind {
@@ -514,7 +534,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             );
         }
 
-        (g, markers)
+        markers
     }
 
     fn type_is_marked(&self, typ: mir::tcx::PlaceTy<'tcx>, walk: bool) -> Vec<TypeId> {
@@ -543,9 +563,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
-    fn determine_return(&self, graph: &SPDGImpl) -> Option<Node> {
+    fn determine_return(&self) -> Option<Node> {
         // In async functions
-        let mut return_candidates = graph
+        let mut return_candidates = self
+            .spdg
             .node_references()
             .filter(|n| {
                 let weight = n.weight();
@@ -558,28 +579,29 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let picked = return_candidates.next()?;
         assert!(
             return_candidates.peek().is_none(),
-            "Found too many candidates for the return. {} was picked but also \
-            found {}",
-            DisplayNode::pretty(picked, graph),
-            display_list(
-                return_candidates
-                    .map(|i| DisplayNode::pretty(i, graph))
-                    .collect::<Vec<_>>()
-            ),
+            "Found too many candidates for the return."
         );
         Some(picked)
     }
 
-    fn determine_arguments(&self, graph: &SPDGImpl) -> Vec<Node> {
-        graph
+    fn determine_arguments(&self) -> Vec<Node> {
+        let mut g_nodes: Vec<_> = self
+            .dep_graph
+            .graph
             .node_references()
             .filter(|n| {
                 let at = n.weight().at;
-                let is_candidate = at.is_at_root() && at.leaf().location == RichLocation::Start;
-                assert!(!is_candidate || self.local_def_id == at.leaf().function);
+                let is_candidate =
+                    matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::Start);
                 is_candidate
             })
-            .map(|n| n.id())
+            .collect();
+
+        g_nodes.sort_by_key(|(_, i)| i.place.local);
+
+        g_nodes
+            .into_iter()
+            .map(|n| self.new_node_for(n.id()))
             .collect()
     }
 }

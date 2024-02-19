@@ -2,6 +2,7 @@ use crate::Context;
 use crate::ControllerId;
 use paralegal_flow::test_utils::PreFrg;
 use paralegal_spdg::{GlobalNode, Identifier, InstructionInfo, Node as SPDGNode, SPDG};
+use petgraph::visit::EdgeRef;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -33,8 +34,8 @@ pub fn get_callsite_node<'a>(
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl
-        .call_sites()
-        .find(|callsite| is_at_function_call_with_name(ctx, ctrl, name, *callsite))?;
+        .all_sources()
+        .find_map(|node| is_at_function_call_with_name(ctx, ctrl, name, node).then_some(node))?;
     Some(GlobalNode::from_local_node(controller, inner))
 }
 

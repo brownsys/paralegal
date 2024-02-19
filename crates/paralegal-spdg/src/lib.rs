@@ -36,7 +36,7 @@ use utils::serde_map_via_vec;
 
 pub use crate::tiny_bitset::TinyBitSet;
 use flowistry_pdg::rustc_portable::LocalDefId;
-use petgraph::graph::{EdgeIndex, NodeIndex};
+use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::IntoNodeIdentifiers;
 pub use std::collections::{HashMap, HashSet};
@@ -628,13 +628,8 @@ impl SPDG {
             .unique()
     }
 
-    /// Returns an iterator over all the callsites in the `ctrl_flow` relation.
-    pub fn call_sites(&self) -> impl Iterator<Item = Node> + '_ {
-        self.graph
-            .edge_references()
-            .filter(|e| e.weight().is_control())
-            .map(|e| e.source())
-            .unique()
+    pub fn edges(&self) -> impl Iterator<Item = EdgeReference<'_, EdgeInfo>> + '_ {
+        self.graph.edge_references()
     }
 
     /// Gather all [`Node`]s that are mentioned in this controller including data and control flow.
@@ -643,8 +638,8 @@ impl SPDG {
     }
 
     pub fn dump_dot(&self, mut out: impl std::io::Write) -> std::io::Result<()> {
-        use petgraph::dot::{Config, Dot};
-        let dot = Dot::with_config(&self.graph, &[Config::NodeIndexLabel]);
+        use petgraph::dot::Dot;
+        let dot = Dot::with_config(&self.graph, &[]);
         write!(out, "{dot}")
     }
 }
@@ -654,12 +649,12 @@ impl SPDG {
 #[derive(Clone)]
 pub struct DisplayNode<'a> {
     node: NodeIndex,
-    graph: &'a SPDGImpl,
+    graph: &'a SPDG,
     detailed: bool,
 }
 
 impl<'a> DisplayNode<'a> {
-    pub fn pretty(node: NodeIndex, graph: &'a SPDGImpl) -> Self {
+    pub fn pretty(node: NodeIndex, graph: &'a SPDG) -> Self {
         Self {
             node,
             graph,
@@ -667,7 +662,7 @@ impl<'a> DisplayNode<'a> {
         }
     }
 
-    pub fn simple(node: NodeIndex, graph: &'a SPDGImpl) -> Self {
+    pub fn simple(node: NodeIndex, graph: &'a SPDG) -> Self {
         Self {
             node,
             graph,
@@ -678,7 +673,7 @@ impl<'a> DisplayNode<'a> {
 
 impl<'a> Display for DisplayNode<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let weight = self.graph.node_weight(self.node).unwrap();
+        let weight = self.graph.graph.node_weight(self.node).unwrap();
         if self.detailed {
             write!(
                 f,
