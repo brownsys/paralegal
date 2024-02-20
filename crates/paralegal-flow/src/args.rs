@@ -51,6 +51,7 @@ impl TryFrom<ClapArgs> for Args {
             modelctrl,
             dump,
             marker_control,
+            cargo_args,
         } = value;
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
@@ -91,6 +92,7 @@ impl TryFrom<ClapArgs> for Args {
             dump,
             build_config,
             marker_control,
+            cargo_args,
         })
     }
 }
@@ -118,6 +120,8 @@ pub struct Args {
     dump: DumpArgs,
     /// Additional configuration for the build process/rustc
     build_config: BuildConfig,
+    /// Additional options for cargo
+    cargo_args: Vec<String>,
 }
 
 /// Arguments as exposed on the command line.
@@ -163,6 +167,9 @@ pub struct ClapArgs {
     /// Additional arguments that control debug args specifically
     #[clap(flatten)]
     dump: ParseableDumpArgs,
+    /// Pass through for additional cargo arguments (like --features)
+    #[clap(last = true)]
+    cargo_args: Vec<String>,
 }
 
 #[derive(Clone, clap::Args)]
@@ -324,6 +331,10 @@ impl Args {
 
     pub fn marker_control(&self) -> &MarkerControl {
         &self.marker_control
+    }
+
+    pub fn cargo_args(&self) -> &[String] {
+        &self.cargo_args
     }
 }
 

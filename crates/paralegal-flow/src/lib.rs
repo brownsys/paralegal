@@ -119,10 +119,6 @@ struct ArgWrapper {
     /// The actual arguments
     #[clap(flatten)]
     args: ClapArgs,
-
-    /// Pass through for additional cargo arguments (like --features)
-    #[clap(last = true)]
-    cargo_args: Vec<String>,
 }
 
 struct Callbacks {
@@ -227,10 +223,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // Override the SYSROOT so that it points to the version we were
         // compiled against.
         //
-        // This is actually not necessary for *this* binary, but it will bne
-        // inherited by the calls to `cargo` and `rustc` does by `rustc_plugin`
-        // and thus those will link against the version of `std` that we
-        // require.
+        // This is actually not necessary for *this* binary, but it will be
+        // inherited by the calls to `cargo` and `rustc` done by `rustc_plugin`
+        // and thus those will use the version of `std` that matches the nightly
+        // compiler version we link against.
         std::env::set_var("SYSROOT", env!("SYSROOT_PATH"));
 
         add_to_rustflags(["--cfg".into(), "paralegal".into()]).unwrap();
@@ -238,8 +234,11 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         rustc_plugin::RustcPluginArgs {
             args: args.args.try_into().unwrap(),
             filter: CrateFilter::AllCrates,
-            //cargo_args: args.cargo_args,
         }
+    }
+
+    fn modify_cargo(&self, cargo: &mut std::process::Command, args: &Self::Args) {
+        cargo.args(args.cargo_args());
     }
 
     fn run(
