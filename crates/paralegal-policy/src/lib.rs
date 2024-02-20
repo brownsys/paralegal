@@ -95,8 +95,7 @@ impl SPDGGenCommand {
     }
 
     /// Use a custom binary or base invocation as command.
-    pub fn custom(mut cmd: Command) -> Self {
-        cmd.args(["--dump", "serialized-flow-graph"]);
+    pub fn custom(cmd: Command) -> Self {
         Self(cmd)
     }
 
@@ -130,7 +129,7 @@ impl SPDGGenCommand {
     /// terminate successfully.
     ///
     /// To run yor properties on the results see [`GraphLocation`].
-    pub fn run(mut self, dir: impl AsRef<Path>) -> Result<GraphLocation> {
+    pub fn run(&mut self, dir: impl AsRef<Path>) -> Result<GraphLocation> {
         let status = self.0.current_dir(dir.as_ref()).status()?;
         ensure!(status.success(), "Compilation failed");
         Ok(GraphLocation::std(dir.as_ref()))
