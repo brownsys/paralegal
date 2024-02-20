@@ -19,8 +19,8 @@ cargo test -p paralegal-policy --lib
 
 echo "Build Test Policies"
 
-cargo -C props build --verbose
+cargo -Zunstable-options -C props build --verbose
 
 echo "Test Guide Project"
 
-cargo -C guide/deletion-policy run
+cargo -Zunstable-options -C guide/deletion-policy run
