@@ -101,3 +101,7 @@ jobs:
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Here come the complaints
       run: scripts/doc-check.sh
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
