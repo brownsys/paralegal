@@ -7,66 +7,15 @@ use std::fmt;
 #[cfg(test)]
 use paralegal_spdg::traverse::EdgeSelection;
 
-/// The transitive closure of the [`Ctrl::data_flow`] relation.
-///
-/// Implemented efficiently using an [`IndexedDomain`] over the
-/// [`DataSource`] and [`CallSiteOrDataSink`] types.
-///
-/// ## Relationship of [`CtrlFlowsTo::data_flows_to`], [`DataAndControlInfluencees`], [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and [`crate::Context::influencees()`]
-///
-/// - [`CtrlFlowsTo::data_flows_to`] Index vs [`DataAndControlInfluencees`]:
-/// The index is computed for efficiency only for [`crate::EdgeSelection::Data`] using the [`Ctrl::data_flow`].
-/// [`DataAndControlInfluencees`] additionally uses [`Ctrl::ctrl_flow`] and is used for the
-/// [`crate::EdgeSelection::DataAndControl`]. It uses a BFS rather than an index.
-///
-/// - [`CtrlFlowsTo`] and [`DataAndControlInfluencees`] vs functions in [`crate::Context`]:
-/// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`]
-/// utilize [`DataSource`] to [`CallSiteOrDataSink`], so do not provide all of the
-/// information that is needed answer questions about any kind of [`crate::GlobalNode`] and any
-/// kind of [`crate::EdgeSelection`] in an intuitive way. The functions in [`crate::Context`] utilize
-/// [`CtrlFlowsTo`] and [`DataAndControlInfluencees`].
-///
-/// - [`crate::Context::flows_to()`], [`crate::Context::influencers()`] and
-/// [`crate::Context::influencees()`] work for any kind of node as their srcs or sinks.
-///
-///     - [`NodeType::ControllerArgument`] cannot act as a sink
-/// ([`crate::Context::flows_to()`] will always return false with it as the sink argument
-/// and [`crate::Context::influencers()`] will be empty).
-///
-///     - [`NodeType::Return`] cannot act as a src ([`crate::Context::flows_to()`]
-///  will always return false with it as the src argument and
-/// [`crate::Context::influencees()`] will be empty).
-///
-///     - For all other node type combinations, the src node will be
-/// translated to its respective [`DataSource`] (i.e. for a
-/// [`NodeType::CallArgument`], the [`DataSource::FunctionCall`] will be used) and
-/// the sink node will be translated to its respective [`CallSiteOrDataSink`] and
-///  the correct index will be queried. Additionally, we also special-case
-/// relationships between [`NodeType::CallArgument`] and [`NodeType::CallSite`] to
-/// capture the data-flow between them, which would otherwise be lost through the
-/// aforementioned procedure.
-///
-///     - For [`crate::Context::influencers()`] and
-/// [`crate::Context::influencees()`], querying [`CtrlFlowsTo::data_flows_to`] Index
-/// vs [`DataAndControlInfluencees`] does not exhaustively
-/// return all type of [`crate::GlobalNode`]s since they only provide either [`DataSource`]
-/// influencers or [`CallSiteOrDataSink`] influencees.
-/// So, these functions add the [`NodeType::CallArgument`]s related to each
-/// [`NodeType::CallSite`] and the [`NodeType::CallSite`] related to each
-/// [`NodeType::CallArgument`] respectively.
+/// Precomputed indices for common queries of a PDG.
 pub struct CtrlFlowsTo {
-    // /// Mapping from [`CallSiteOrDataSink::CallSite`]s to the [`CallSiteOrDataSink::DataSink(CallArgument)`]s that they are related to.
-    // pub callsites_to_callargs: std::collections::HashMap<SPDGNode, Vec<SPDGNode>>,
-    /// The transitive closure of the [`Ctrl::data_flow`] relation.
-    /// If a source flows to a [`DataSink::Argument`], it also flows into its CallSite.
-    ///
-    /// See the [`IndexMatrix`] documentation for details on how to
-    /// query this representation of the relation.
+    /// The densely packed transitive closure of the
+    /// [`paralegal_spdg::EdgeKind::Data`] edges.
     pub data_flows_to: Vec<BitVec>,
 }
 
 impl CtrlFlowsTo {
-    /// Constructs the transitive closure from a [`Ctrl`].
+    /// Constructs the transitive closure from a [`SPDG`].
     pub fn build(spdg: &SPDG) -> Self {
         use petgraph::prelude::*;
         let domain_size = spdg.graph.node_count();
@@ -114,8 +63,8 @@ impl CtrlFlowsTo {
 
 use petgraph::visit::{Bfs, GraphBase, Visitable, Walker, WalkerIter};
 
-/// An [`Iterator`] over the [`CallSiteOrDataSink`]s from the given src in
-/// the transitive closure of data and control flow of the given [`Ctrl`].
+/// An [`Iterator`] over the [`SPDGNode`]s from the given src in
+/// the transitive closure of data and control flow of the given [`SPDG`].
 pub struct DataAndControlInfluencees<'a> {
     walker: WalkerIter<
         Bfs<<SPDGImpl as GraphBase>::NodeId, <SPDGImpl as Visitable>::Map>,
@@ -124,8 +73,8 @@ pub struct DataAndControlInfluencees<'a> {
 }
 
 impl<'a> DataAndControlInfluencees<'a> {
-    /// Create a new DataAndControlInfluencees iterator that iterates through
-    /// [`CallSiteOrDataSink`]s that depend on the provided src in the provided
+    /// Create a new iterator that iterates through nodes
+    /// that depend on the provided src in the provided
     /// controller.
     pub fn new(src: SPDGNode, ctrl: &'a SPDG) -> Self {
         let bfs = Bfs::new(&ctrl.graph, src);

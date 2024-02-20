@@ -48,7 +48,7 @@ pub type TypeId = DefId;
 pub type Function = Identifier;
 
 /// Name of the file used for emitting the JSON serialized
-/// [`ProgramDescription`](crate::ProgramDescription).
+/// [`ProgramDescription`].
 pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
 
 /// Types of annotations we support.
@@ -367,40 +367,20 @@ mod ser_defid_vec {
 }
 
 impl ProgramDescription {
-    /// Gather all [`DataSource`]s that are mentioned in this program description.
+    /// Gather all data sources that are mentioned in this program description.
     ///
     /// Essentially just `self.controllers.flat_map(|c| c.keys())`
-    pub fn all_sources(&self) -> HashSet<Node> {
-        self.controllers
-            .values()
-            .flat_map(|c| c.all_sources())
-            .collect()
-    }
-    /// Gather all [`DataSource`]s that are mentioned in this program description.
-    ///
-    /// Essentially just `self.controllers.flat_map(|c| c.keys())`
-    pub fn all_sources_with_ctrl(&self) -> HashSet<(Endpoint, Node)> {
+    pub fn all_nodes(&self) -> HashSet<GlobalNode> {
         self.controllers
             .iter()
-            .flat_map(|(name, c)| c.all_sources().map(|ds| (*name, ds)))
-            .collect()
-    }
-    /// Gather all [`DataSink`]s mentioned in this program description
-    ///
-    /// Essentially just `self.controllers.flat_map(|c| c.values())`
-    pub fn all_sinks(&self) -> HashSet<Node> {
-        self.controllers
-            .values()
-            .flat_map(|ctrl| ctrl.data_sinks())
+            .flat_map(|(name, c)| {
+                c.all_sources()
+                    .map(|ds| GlobalNode::unsafe_new(*name, ds.index()))
+            })
             .collect()
     }
 
-    /// Gather all [`CallSite`]s that are mentioned in this program description.
-    ///
-    /// This function is a bit more subtle than [`Self::all_sinks`] and
-    /// [`Self::all_sources`] (which are simple maps), because call sites occur
-    /// in more places. So this extracts the call sites from sources as well as
-    /// sinks.
+    /// Gather all [`CallString`]s that are mentioned in this program description.
     pub fn all_call_sites(&self) -> HashSet<CallString> {
         self.controllers
             .values()

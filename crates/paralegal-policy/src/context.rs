@@ -457,8 +457,8 @@ impl Context {
         &self.desc
     }
 
-    /// Returns all the [`Annotation::OType`]s for a controller `id`.
-    pub fn otypes(&self, id: DefId) -> &[DefId] {
+    /// Returns all the type alias annotation for a given type
+    pub fn otypes(&self, id: TypeId) -> &[TypeId] {
         self.desc()
             .type_info
             .get(&id)
