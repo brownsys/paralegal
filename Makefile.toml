@@ -1,0 +1,138 @@
+[env]
+TEST_DIR = "crates/paralegal-flow/tests"
+
+[config]
+default_to_workspace = false
+
+[tasks.install]
+command = "cargo"
+args = ["install", "--locked", "--path", "crates/paralegal-flow"]
+
+[tasks.pdg-tests]
+dependencies = [
+    "analyzer-tests",
+    "policy-framework-tests",
+    "test-policies",
+    "guide-project",
+]
+
+[tasks.check-all]
+dependencies = ["format-check-all", "clippy-check-all", "doc-check"]
+
+[tasks.fix-all]
+dependencies = ["format-all", "clippy-all"]
+
+[tasks.analyzer-tests]
+command = "cargo"
+args = [
+    "test",
+    "-p",
+    "paralegal-flow",
+    "--test",
+    "non_transitive_graph_tests",
+    "--test",
+    "call_chain_analysis_tests",
+    "--test",
+    "control_flow_tests",
+    "--test",
+    "new_alias_analysis_tests",
+    "--test",
+    "async_tests",
+]
+
+[tasks.policy-framework-tests]
+command = "cargo"
+args = ["test", "-p", "paralegal-policy", "--lib"]
+
+[tasks.test-policies]
+cwd = "props"
+command = "cargo"
+args = ["build"]
+
+[tasks.guide-project]
+cwd = "guide/deletion-policy"
+command = "cargo"
+args = ["run"]
+
+[tasks.doc-check]
+dependencies = [
+    "rustdoc-paralegal-spdg",
+    "rustdoc-paralegal-policy",
+    "rustdoc-paralegal",
+]
+
+[tasks.rustdoc-one]
+private = true
+command = "cargo"
+args = ["rustdoc", "-p", "${RUSTDOC_TARGET}", "--", "-Drustdoc::all"]
+
+[tasks.rustdoc-paralegal-spdg]
+extend = "rustdoc-one"
+env = { "RUSTDOC_TARGET" = "paralegal-spdg" }
+
+[tasks.rustdoc-paralegal-policy]
+extend = "rustdoc-one"
+env = { "RUSTDOC_TARGET" = "paralegal-policy" }
+
+[tasks.rustdoc-paralegal]
+extend = "rustdoc-one"
+env = { "RUSTDOC_TARGET" = "paralegal" }
+
+[tasks.format-all]
+env = { "FORMAT_ARGS" = "fmt", "INCLUDE_TESTS" = "true" }
+run_task = "format-run"
+
+[tasks.format-check-all]
+env = { "FORMAT_ARGS" = "fmt --check", "INCLUDE_TESTS" = "true" }
+run_task = "format-run"
+
+[tasks.clippy-all]
+env = { "FORMAT_ARGS" = "clippy --fix --allow-staged --all -- -Dwarnings" }
+run_task = "format-run"
+
+[tasks.clippy-check-all]
+env = { "FORMAT_ARGS" = "clippy --all -- -Dwarnings" }
+run_task = "format-run"
+
+[tasks.format-base]
+private = true
+command = "cargo"
+args = ["@@split(FORMAT_ARGS, )"]
+
+[tasks.format-run]
+private = true
+dependencies = [
+    "format-props",
+    "format-guide-example",
+    "format-guide-policy",
+    "format-tests",
+]
+
+[tasks.format-props]
+private = true
+cwd = "props"
+run_task = "format-base"
+
+[tasks.format-guide-example]
+private = true
+cwd = "guide/file-db-example"
+run_task = "format-base"
+
+[tasks.format-guide-policy]
+private = true
+cwd = "guide/deletion-policy"
+run_task = "format-base"
+
+[tasks.format-tests]
+private = true
+condition = { env_set = ["INCLUDE_TESTS"] }
+script = '''
+for dir in $(ls $TEST_DIR)
+do
+    if [ -a "$TEST_DIR/$dir/Cargo.toml" ]
+    then
+        cd "$TEST_DIR/$dir" && cargo ${FORMAT_ARGS}
+    fi
+done
+cd "crates/paralegal-policy/tests/test-crate" && cargo ${FORMAT_ARGS}
+'''
