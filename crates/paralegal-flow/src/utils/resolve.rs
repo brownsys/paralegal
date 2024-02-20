@@ -91,18 +91,23 @@ fn find_primitive_impls<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> impl Iterator<It
 /// before exiting.
 pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -> Option<DefId> {
     let segment_vec = path.split("::").collect::<Vec<_>>();
+    let report_err = if relaxed {
+        |tcx: TyCtxt<'_>, err: String| {
+            tcx.sess.warn(err);
+        }
+    } else {
+        |tcx: TyCtxt<'_>, err| {
+            tcx.sess.err(err);
+        }
+    };
     let res = def_path_res(tcx, &segment_vec)
-        .map_err(|e| tcx.sess.err(format!("Could not resolve {path}: {e:?}")))
+        .map_err(|e| report_err(tcx, format!("Could not resolve {path}: {e:?}")))
         .ok()?;
     match res {
         Res::Def(_, did) => Some(did),
         other => {
             let msg = format!("expected {path} to resolve to an item, got {other:?}");
-            if relaxed {
-                tcx.sess.warn(msg);
-            } else {
-                tcx.sess.err(msg);
-            };
+            report_err(tcx, msg);
             None
         }
     }
@@ -181,14 +186,14 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
         }
     }
 
-    let (base, _first, path) = match *path {
-        [base, first, ref path @ ..] => (base, first, path),
+    let (base, path) = match *path {
         [primitive] => {
             let sym = Symbol::intern(primitive);
             return PrimTy::from_name(sym)
                 .map(Res::PrimTy)
                 .ok_or(ResolutionError::CannotResolvePrimitiveType(sym));
         }
+        [base, ref path @ ..] => (base, path),
         [] => return Err(ResolutionError::PathIsEmpty),
     };
 
@@ -209,8 +214,8 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
     let starts = find_primitive_impls(tcx, base)
         .chain(find_crates(tcx, Symbol::intern(base)))
         .chain(local_crate)
-        .map(|id| Res::Def(tcx.def_kind(id), id));
-
+        .map(|id| Res::Def(tcx.def_kind(id), id))
+        .collect::<Vec<_>>();
     let mut last = Err(ResolutionError::EmptyStarts);
     for first in starts {
         last = path
