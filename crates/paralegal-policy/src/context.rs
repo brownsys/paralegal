@@ -792,9 +792,7 @@ fn test_happens_before() -> Result<()> {
         .all_nodes_for_ctrl(ctrl_name)
         .filter(|n| ctx.has_marker(start_marker, *n))
         .collect::<Vec<_>>();
-    for &s in &start {
-        println!("start: {}", ctx.describe_node(s));
-    }
+
     let pass = ctx.always_happens_before(
         start,
         |checkpoint| ctx.has_marker(bless_marker, checkpoint),

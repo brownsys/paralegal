@@ -235,11 +235,7 @@ define_test!(no_overtaint_over_poll
 define_test!(return_from_async: graph -> {
     let input_fn = graph.function("some_input");
     let input = graph.call_site(&input_fn);
-    if let Some(n) = graph.spdg().return_ {
-        println!("{n:?} {}", graph.spdg().graph.node_weight(n).unwrap())
-    } else {
-        println!("No return")
-    };
+
     assert!(graph.returns(&input.output()))
 });
 
