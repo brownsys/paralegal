@@ -167,7 +167,7 @@ impl rustc_driver::Callbacks for Callbacks {
                         .truncate(true)
                         .create(true)
                         .write(true)
-                        .open(self.opts.graph_loc_path.clone())
+                        .open(self.opts.result_path())
                         .unwrap(),
                     &desc,
                 )

@@ -12,7 +12,6 @@
 use anyhow::Error;
 use clap::ValueEnum;
 use std::ffi::{OsStr, OsString};
-use std::str::FromStr;
 
 use crate::utils::TinyBitSet;
 use crate::{num_derive, num_traits::FromPrimitive};
@@ -45,7 +44,6 @@ impl TryFrom<ClapArgs> for Args {
             debug,
             debug_target,
             result_path,
-            graph_loc_path,
             relaxed,
             target,
             abort_after_analysis,
@@ -85,7 +83,6 @@ impl TryFrom<ClapArgs> for Args {
             verbose,
             log_level_config,
             result_path,
-            graph_loc_path,
             relaxed,
             target,
             abort_after_analysis,
@@ -105,8 +102,6 @@ pub struct Args {
     log_level_config: LogLevelConfig,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
-    /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
-    pub(crate) graph_loc_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     relaxed: bool,
 
@@ -144,12 +139,9 @@ pub struct ClapArgs {
     debug: bool,
     #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
     debug_target: Option<String>,
-    /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
-    #[clap(long, default_value = "analysis_result.frg")]
-    result_path: std::path::PathBuf,
     /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
     #[clap(long, default_value = "flow-graph.json")]
-    graph_loc_path: std::path::PathBuf,
+    result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     #[clap(long, env = "PARALEGAL_RELAXED")]
     relaxed: bool,
@@ -389,87 +381,6 @@ pub struct AnalysisCtrl {
     /// Also implies --no-pruning, because pruning only makes sense after inlining
     #[clap(long, env)]
     no_cross_function_analysis: bool,
-    /// Do not prune paths based on unreachability via projection algebra.
-    /// Essentially turns off cross-procedure field sensitivity.
-    #[clap(long, env)]
-    no_pruning: bool,
-    #[clap(long, env)]
-    pruning_strategy: Option<PruningStrategy>,
-    /// Perform an aggressive removal of call sites.
-    ///
-    /// "conservative": removes call sites that have inputs, outputs, no
-    /// control flow influence and no markers
-    /// "aggressive": removes call sites that have inputs, outputs (outputs
-    /// could be control flow) and no markers
-    ///
-    /// By default disabled entirely and no removal is performed
-    #[clap(long, env)]
-    remove_inconsequential_calls: Option<String>,
-
-    #[clap(long, env)]
-    drop_clone: bool,
-    #[clap(long, env)]
-    drop_poll: bool,
-
-    #[clap(long, env)]
-    remove_poll_ctrl_influence: bool,
-
-    #[clap(long, env)]
-    inline_elision: bool,
-
-    #[clap(long, env)]
-    inline_no_arg_closures: bool,
-}
-
-/// How are we treating inconsequential call sites?
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum InconsequentialCallRemovalPolicy {
-    /// Remove call sites that have no markers, no control flow influence, but
-    /// inputs and outputs
-    Conservative,
-    /// Remove call sites that have no markers, but inputs and outputs (outputs
-    /// could be control flow)
-    Aggressive,
-    /// Remove no call sites
-    Disabled,
-}
-
-impl InconsequentialCallRemovalPolicy {
-    /// Are we removing call sites?
-    pub fn is_enabled(self) -> bool {
-        !matches!(self, InconsequentialCallRemovalPolicy::Disabled)
-    }
-    /// Are we removing sources of control flow?
-    pub fn remove_ctrl_flow_source(self) -> bool {
-        matches!(self, InconsequentialCallRemovalPolicy::Aggressive)
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize, Debug)]
-pub enum PruningStrategy {
-    NewEdgesNotPreviouslyPruned,
-    NotPreviouslyPrunedEdges,
-    NewEdges,
-    NoPruning,
-}
-
-impl FromStr for PruningStrategy {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "minimal" => Ok(PruningStrategy::NewEdgesNotPreviouslyPruned),
-            "new-edges" => Ok(PruningStrategy::NewEdges),
-            "not-previously-pruned" => Ok(PruningStrategy::NotPreviouslyPrunedEdges),
-            "disabled" => Ok(PruningStrategy::NoPruning),
-            _ => Err(format!("Unknown pruning strategy '{s}'")),
-        }
-    }
-}
-
-impl PruningStrategy {
-    pub fn enabled(self) -> bool {
-        !matches!(self, PruningStrategy::NoPruning)
-    }
 }
 
 impl AnalysisCtrl {
@@ -481,54 +392,6 @@ impl AnalysisCtrl {
     /// Are we recursing into (unmarked) called functions with the analysis?
     pub fn use_recursive_analysis(&self) -> bool {
         !self.no_cross_function_analysis
-    }
-    /// Are we pruning with the projection algebra? (e.g. is cross function
-    /// field-sensitivity enabled?)
-    pub fn use_pruning(&self) -> bool {
-        self.pruning_strategy().enabled()
-    }
-
-    pub fn pruning_strategy(&self) -> PruningStrategy {
-        if self.no_pruning {
-            assert_eq!(self.pruning_strategy, None);
-            PruningStrategy::NoPruning
-        } else {
-            self.pruning_strategy
-                .unwrap_or(PruningStrategy::NewEdgesNotPreviouslyPruned)
-        }
-    }
-
-    /// What policy wrt. call site removal are we following?
-    pub fn remove_inconsequential_calls(&self) -> InconsequentialCallRemovalPolicy {
-        use InconsequentialCallRemovalPolicy::*;
-        if let Some(s) = self.remove_inconsequential_calls.as_ref() {
-            match s.as_str() {
-                "conservative" => Conservative,
-                "aggressive" => Aggressive,
-                _ => {
-                    error!("Could not parse inconsequential call removal policy '{s}', defaulting to 'conservative'.");
-                    Conservative
-                }
-            }
-        } else {
-            Disabled
-        }
-    }
-
-    pub fn drop_poll(&self) -> bool {
-        self.drop_poll
-    }
-
-    pub fn drop_clone(&self) -> bool {
-        self.drop_clone
-    }
-
-    pub fn avoid_inlining(&self) -> bool {
-        self.inline_elision
-    }
-
-    pub fn inline_no_arg_closures(&self) -> bool {
-        self.inline_no_arg_closures
     }
 }
 
