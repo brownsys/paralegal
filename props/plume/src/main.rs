@@ -56,7 +56,6 @@ fn main() -> Result<()> {
         "--external-annotations",
         "external-annotations.toml",
         "--abort-after-analysis",
-        "--inline-elision",
         "--target",
         "plume_models",
         "--",
