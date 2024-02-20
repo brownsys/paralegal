@@ -191,11 +191,11 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 
     fn ctrl(self, name: &str) -> CtrlRef<'g> {
-        let ident = Identifier::new_intern(name);
+        let id = self.ctrl_hashed(name);
         CtrlRef {
             graph: self.graph(),
-            ident,
-            ctrl: &self.graph().desc.controllers[&self.ctrl_hashed(name)],
+            id,
+            ctrl: &self.graph().desc.controllers[&id],
         }
     }
 
@@ -264,15 +264,27 @@ impl PreFrg {
 #[derive(Clone)]
 pub struct CtrlRef<'g> {
     graph: &'g PreFrg,
-    ident: Identifier,
-    pub ctrl: &'g SPDG,
+    id: LocalDefId,
+    ctrl: &'g SPDG,
 }
 
 impl<'g> Debug for CtrlRef<'g> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CtrlRef")
-            .field("ident", &self.ident)
+            .field("ident", &self.ctrl.name)
             .finish()
+    }
+}
+
+impl<'g> PartialEq for CtrlRef<'g> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<'g> HasGraph<'g> for &CtrlRef<'g> {
+    fn graph(self) -> &'g PreFrg {
+        self.graph.graph()
     }
 }
 
@@ -304,22 +316,11 @@ impl<'g> CtrlRef<'g> {
             graph: self,
         }
     }
-}
 
-impl<'g> PartialEq for CtrlRef<'g> {
-    fn eq(&self, other: &Self) -> bool {
-        self.ident == other.ident
+    pub fn id(&self) -> LocalDefId {
+        self.id
     }
-}
-
-impl<'g> HasGraph<'g> for &CtrlRef<'g> {
-    fn graph(self) -> &'g PreFrg {
-        self.graph.graph()
-    }
-}
-
-impl<'g> CtrlRef<'g> {
-    pub fn spdg(&self) -> &'g crate::desc::SPDG {
+    pub fn spdg(&self) -> &'g SPDG {
         self.ctrl
     }
 
@@ -541,7 +542,7 @@ impl FlowsTo for NodeRef<'_> {
     }
 
     fn spdg_ident(&self) -> Identifier {
-        self.graph.ident
+        self.graph.spdg().name
     }
 }
 
@@ -559,7 +560,7 @@ impl FlowsTo for NodeRefs<'_> {
     }
 
     fn spdg_ident(&self) -> Identifier {
-        self.graph.ident
+        self.graph.spdg().name
     }
 }
 

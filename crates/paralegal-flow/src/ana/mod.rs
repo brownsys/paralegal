@@ -344,7 +344,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         NodeKind::Unspecified => vec![],
                         _ => unreachable!(),
                     };
-                    eprintln!("{fun:?}: {annotations:?}");
                     (kind, is_external, annotations)
                 } else {
                     // TODO attach annotations if the return value is a marked type

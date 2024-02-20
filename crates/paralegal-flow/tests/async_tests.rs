@@ -235,8 +235,8 @@ define_test!(no_overtaint_over_poll
 define_test!(return_from_async: graph -> {
     let input_fn = graph.function("some_input");
     let input = graph.call_site(&input_fn);
-    if let Some(n) = graph.ctrl.return_ {
-        println!("{n:?} {}", graph.ctrl.graph.node_weight(n).unwrap())
+    if let Some(n) = graph.spdg().return_ {
+        println!("{n:?} {}", graph.spdg().graph.node_weight(n).unwrap())
     } else {
         println!("No return")
     };
@@ -252,6 +252,9 @@ define_test!(async_return_from_async: graph -> {
 define_test!(markers: graph -> {
     let input = graph.marked(Identifier::new_intern("source"));
     let output = graph.marked(Identifier::new_intern("sink"));
+
+    let out = std::fs::File::create("graph.gv").unwrap();
+    paralegal_spdg::dot::dump_for_controller(&graph.graph().desc, out, graph.id()).unwrap();
 
     assert!(!input.is_empty());
     assert!(!output.is_empty());
