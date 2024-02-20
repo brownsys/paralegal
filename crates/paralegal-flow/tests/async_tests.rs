@@ -253,9 +253,6 @@ define_test!(markers: graph -> {
     let input = graph.marked(Identifier::new_intern("source"));
     let output = graph.marked(Identifier::new_intern("sink"));
 
-    let out = std::fs::File::create("graph.gv").unwrap();
-    paralegal_spdg::dot::dump_for_controller(&graph.graph().desc, out, graph.id()).unwrap();
-
     assert!(!input.is_empty());
     assert!(!output.is_empty());
     assert!(input.flows_to_data(&output));
