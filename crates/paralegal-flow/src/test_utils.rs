@@ -155,9 +155,9 @@ macro_rules! define_flow_test_template {
     ($analyze:expr, $crate_name:expr, $name:ident $(skip $reason:literal)? : $ctrl:ident -> $block:block) => {
         $crate::define_flow_test_template!($analyze, $crate_name, $name $(skip $reason)?: $ctrl, $name -> $block);
     };
-    ($analyze:expr, $crate_name:expr, $(#[$attr:tt])* $name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
+    ($analyze:expr, $crate_name:expr, $(#[$($attr:tt)+])* $name:ident: $ctrl:ident, $ctrl_name:ident -> $block:block) => {
         #[test]
-        $(#[$attr])*
+        $(#[$($attr)+])*
         fn $name() {
             assert!(*$analyze);
             use_rustc(|| {
