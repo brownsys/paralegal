@@ -45,6 +45,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
     /// Perform the analysis for one `#[paralegal_flow::analyze]` annotated function and
     /// return the representation suitable for emitting into Forge.
+    /// 
+    /// Main work for a single target is performed by [`GraphConverter`].
     fn handle_target(
         &self,
         //_hash_verifications: &mut HashVerifications,
@@ -96,6 +98,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|controllers| self.make_program_description(controllers, &known_def_ids))
     }
 
+    /// Given the PDGs and a record of all [`DefId`]s we've seen, compile
+    /// auxillary information the policies will need into the artifact to be
+    /// emitted.
     fn make_program_description(
         &self,
         controllers: HashMap<Endpoint, SPDG>,
@@ -117,6 +122,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
         }
     }
 
+    /// Create an [`InstructionInfo`] record for each [`GlobalLocation`]
+    /// mentioned in the controllers.
     fn collect_instruction_info(
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
@@ -156,6 +163,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .collect()
     }
 
+    /// Create a [`TypeDescription`] record for each marked type that as
+    /// mentioned in the PDG.
     fn collect_type_info(
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
@@ -198,19 +207,37 @@ fn default_index() -> <SPDGImpl as GraphBase>::NodeId {
     <SPDGImpl as GraphBase>::NodeId::end()
 }
 
+/// Structure responsible for converting one [`DepGraph`] into an [`SPDG`].
+///
+/// Intended usage is to call [`Self::new_with_flowistry`] to initialize, then
+/// [`Self::make_spdg`] to convert.
 struct GraphConverter<'tcx, 'a, C> {
+    // Immutable information
+    /// The parent generator
     generator: &'a SPDGGenerator<'tcx>,
-    known_def_ids: &'a mut C,
+    /// Information about the function this PDG belongs to
     target: FnToAnalyze,
+    /// The flowistry graph we are converting
     dep_graph: Rc<DepGraph<'tcx>>,
     /// Same as the ID stored in self.target, but as a local def id
     local_def_id: LocalDefId,
+
+    // Mutable fields
+
+    /// Where we write every [`DefId`] we encounter into.
+    known_def_ids: &'a mut C,
+    /// A map of which nodes are of which (marked) type. We build this up during
+    /// conversion. 
     types: HashMap<Node, Types>,
+    /// Mapping from old node indices to new node indices. Use
+    /// [`Self::register_node`] to insert and [`Self::new_node_for`] to query.
     index_map: Box<[Node]>,
+    /// The converted graph we are creating
     spdg: SPDGImpl,
 }
 
 impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
+    /// Initialize a new converter by creating an initial PDG using flowistry.
     fn new_with_flowistry(
         generator: &'a SPDGGenerator<'tcx>,
         known_def_ids: &'a mut C,
@@ -243,10 +270,12 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         &self.generator.marker_ctx
     }
 
+    /// Is the top-level function (entrypoint) an `async fn`
     fn entrypoint_is_async(&self) -> bool {
         self.tcx().asyncness(self.local_def_id).is_async()
     }
 
+    /// Find the statement at this location or fail.
     fn expect_stmt_at(
         &self,
         loc: GlobalLocation,
@@ -258,6 +287,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         body.stmt_at(loc)
     }
 
+    /// Insert this node into the converted graph, return it's auto-assigned id
+    /// and register it as corresponding to `old` in the initial graph. Fails if
+    /// there is already a node registered as corresponding to `old`.
     fn register_node(&mut self, old: Node, new: NodeInfo) -> Node {
         let new_node = self.spdg.add_node(new);
         let r = &mut self.index_map[old.index()];
@@ -266,12 +298,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         new_node
     }
 
+    /// Get the id of the new node that was registered for this old node.
     fn new_node_for(&self, old: Node) -> Node {
         let res = self.index_map[old.index()];
         assert_ne!(res, default_index());
         res
     }
 
+    /// Try to discern if this node is a special [`NodeKind`]. Also returns if
+    /// the location corresponds to a function call for an external function and
+    /// any marker annotations on this node.
     fn determine_node_kind(&mut self, weight: &DepNode<'tcx>) -> (NodeKind, bool, Vec<Identifier>) {
         let leaf_loc = weight.at.leaf();
 
@@ -354,6 +390,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
+    /// Reconstruct the type for the data this node represents.
     fn determine_place_type(&self, weight: &DepNode<'tcx>) -> mir::tcx::PlaceTy<'tcx> {
         let tcx = self.tcx();
         let locations = weight.at.iter_from_root().collect::<Vec<_>>();
@@ -400,6 +437,13 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
+    /// Fetch annotations item identified by this `id`. 
+    ///
+    /// The callback is used to filter out annotations where the "refinement"
+    /// doesn't match. The idea is that the caller of this function knows
+    /// whether they are looking for annotations on an argument or return of a
+    /// function identified by this `id` or on a type and the callback should be
+    /// used to enforce this.
     fn annotations_for_function(
         &self,
         function: DefId,
@@ -420,6 +464,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         (annotations, parent)
     }
 
+    /// Check if this node is of a marked type and register that type.
     fn handle_node_types(
         &mut self,
         i: Node,
@@ -435,6 +480,8 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
+    /// Create an initial flowistry graph for the function identified by
+    /// `local_def_id`.
     fn create_flowistry_graph(
         generator: &SPDGGenerator<'tcx>,
         local_def_id: LocalDefId,
@@ -470,6 +517,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         Ok(flowistry::pdg::compute_pdg(params))
     }
 
+    /// Consume the generator and compile the [`SPDG`].
     fn make_spdg(mut self) -> SPDG {
         let markers = self.make_spdg_impl();
         let arguments = self.determine_arguments();
@@ -532,6 +580,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         markers
     }
 
+    /// Return the (sub)types of this type that are marked.
     fn type_is_marked(&self, typ: mir::tcx::PlaceTy<'tcx>, walk: bool) -> Vec<TypeId> {
         if walk {
             self.marker_ctx()
@@ -558,6 +607,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
+    /// Try to find the node corresponding to the values returned from this
+    /// controller.
+    ///
+    /// TODO: Include mutable inputs
     fn determine_return(&self) -> Option<Node> {
         // In async functions
         let mut return_candidates = self
@@ -579,6 +632,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         Some(picked)
     }
 
+    /// Determine the set if nodes corresponding to the inputs to the
+    /// entrypoint. The order is guaranteed to be the same as the source-level
+    /// function declaration.
     fn determine_arguments(&self) -> Vec<Node> {
         let mut g_nodes: Vec<_> = self
             .dep_graph

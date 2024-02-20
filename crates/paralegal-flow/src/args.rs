@@ -257,10 +257,12 @@ impl FromIterator<DumpOption> for DumpArgs {
     num_derive::FromPrimitive,
 )]
 enum DumpOption {
+    /// A simple PDG rendering per controller provided by flowistry
     FlowistryPdg,
+    /// A PDG rendering that includes markers and is grouped by call site.
+    /// Includes all controllers that are analyzed.
     Spdg,
-    /// Dump the MIR (`.mir`) of each called function (irrespective of whether they are a
-    /// controller)
+    /// Dump the MIR (`.mir`) of each called controller
     Mir,
     /// Dump everything we know of
     All,

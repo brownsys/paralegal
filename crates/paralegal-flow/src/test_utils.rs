@@ -123,10 +123,34 @@ where
         .success()
 }
 
+/// A "meta-macro" that should be used to implement a `define_test!` macro in a
+/// test suite. The idea is to provide the first two arguments per test-suite and
+/// forward the rest to be provided on a per-test basis. For example:
+///
+/// ```
+/// macro_rules! define_test {
+///     ($($t:tt)*) => {
+///         define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $($t)*);
+///     };
+/// }
+/// ```
+///
+/// The arguments are as follows:
+/// - `$analyze`: a lazy boolean to wait for which indicates that the analysis
+///   has finished. 
+/// - `$crate_name`: The path to the crate that was analyzed
+/// - `$name`: The name to use for the test function.
+/// - `skip $reason`: Optional. If this is provided the test will be
+///   `#[ignore]`d. The `$reason` is mandatory and should explain why this test
+///   is skipped and under which conditions it should be reenabled.
+/// - `$ctrl`: The name to bind the deserialized SPDG to.
+/// - `$ctrl_name`: The entry point for which to retrieve the SPDG, defaults to
+///   `$name` if omitted.
+/// - `$block`: The test code.
 #[macro_export]
 macro_rules! define_flow_test_template {
     ($analyze:expr, $crate_name:expr, $name:ident skip $reason:literal : $ctrl:ident, $ctrl_name:ident -> $block:block) => {
-        $crate::define_flow_test_template!($analyze, $crate_name, #[ignore] $name : $ctrl, $ctrl_name -> $block);
+        $crate::define_flow_test_template!($analyze, $crate_name, #[ignore = $reason] $name : $ctrl, $ctrl_name -> $block);
     };
     ($analyze:expr, $crate_name:expr, $name:ident $(skip $reason:literal)? : $ctrl:ident -> $block:block) => {
         $crate::define_flow_test_template!($analyze, $crate_name, $name $(skip $reason)?: $ctrl, $name -> $block);
@@ -143,15 +167,6 @@ macro_rules! define_flow_test_template {
             })
         }
     };
-}
-
-pub fn run_forge(file: &str) -> bool {
-    std::process::Command::new("racket")
-        .arg(file)
-        .stdout(std::process::Stdio::piped())
-        .status()
-        .unwrap()
-        .success()
 }
 
 pub trait HasGraph<'g>: Sized + Copy {
