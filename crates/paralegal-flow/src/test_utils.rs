@@ -137,7 +137,7 @@ where
 ///
 /// The arguments are as follows:
 /// - `$analyze`: a lazy boolean to wait for which indicates that the analysis
-///   has finished. 
+///   has finished.
 /// - `$crate_name`: The path to the crate that was analyzed
 /// - `$name`: The name to use for the test function.
 /// - `skip $reason`: Optional. If this is provided the test will be

@@ -45,7 +45,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
     /// Perform the analysis for one `#[paralegal_flow::analyze]` annotated function and
     /// return the representation suitable for emitting into Forge.
-    /// 
+    ///
     /// Main work for a single target is performed by [`GraphConverter`].
     fn handle_target(
         &self,
@@ -223,11 +223,10 @@ struct GraphConverter<'tcx, 'a, C> {
     local_def_id: LocalDefId,
 
     // Mutable fields
-
     /// Where we write every [`DefId`] we encounter into.
     known_def_ids: &'a mut C,
     /// A map of which nodes are of which (marked) type. We build this up during
-    /// conversion. 
+    /// conversion.
     types: HashMap<Node, Types>,
     /// Mapping from old node indices to new node indices. Use
     /// [`Self::register_node`] to insert and [`Self::new_node_for`] to query.
@@ -437,7 +436,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
-    /// Fetch annotations item identified by this `id`. 
+    /// Fetch annotations item identified by this `id`.
     ///
     /// The callback is used to filter out annotations where the "refinement"
     /// doesn't match. The idea is that the caller of this function knows
