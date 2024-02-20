@@ -126,13 +126,19 @@ run_task = "format-base"
 [tasks.format-tests]
 private = true
 condition = { env_set = ["INCLUDE_TESTS"] }
+script_runner = "@duckscript"
 script = '''
-for dir in $(ls $TEST_DIR)
-do
-    if [ -a "$TEST_DIR/$dir/Cargo.toml" ]
-    then
-        cd "$TEST_DIR/$dir" && cargo ${FORMAT_ARGS}
-    fi
-done
-cd "crates/paralegal-policy/tests/test-crate" && cargo ${FORMAT_ARGS}
+wd = pwd
+test_glob = concat ${TEST_DIR} /*
+test_dirs = glob_array ${test_glob}
+for dir in ${test_dirs}
+    cargo_toml_path = concat ${dir} /Cargo.toml
+    if is_path_exists ${cargo_toml_path}
+        cd ${dir}
+        exec --fail-on-error cargo %{FORMAT_ARGS}
+        cd ${wd}
+    end
+end
+cd crates/paralegal-policy/tests/test-crate
+exec cargo %{FORMAT_ARGS}
 '''

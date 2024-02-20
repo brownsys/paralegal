@@ -6,10 +6,7 @@ fn some_bool() -> bool {
 }
 
 #[paralegal::analyze]
-pub async fn survive_on_broken(
-    metrics: Metrics,
-)  {
-
+pub async fn survive_on_broken(metrics: Metrics) {
     let mut tags = Tags::from_head();
     {
         tags.add_extra("audience_key", "");
@@ -18,9 +15,7 @@ pub async fn survive_on_broken(
     }
 
     match get_result() {
-        Ok(response) => {
-
-        }
+        Ok(response) => {}
         Err(e) => {
             if e.kind == 0 {
                 tags.extend(e.tags.clone());
@@ -176,7 +171,6 @@ impl Tags {
             self.extra.insert(key.to_owned(), value.to_owned());
         }
     }
-
 }
 
 #[paralegal::marker(sensitive, arguments = [0])]
