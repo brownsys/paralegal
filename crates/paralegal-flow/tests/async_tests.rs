@@ -8,8 +8,7 @@ use paralegal_spdg::Identifier;
 const CRATE_DIR: &str = "tests/async-tests";
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool =
-        run_paralegal_flow_with_flow_graph_dump_and(CRATE_DIR, ["--drop-poll"]);
+    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump(CRATE_DIR);
 }
 
 macro_rules! define_test {
