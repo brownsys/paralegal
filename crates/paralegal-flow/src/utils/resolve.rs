@@ -214,8 +214,7 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
     let starts = find_primitive_impls(tcx, base)
         .chain(find_crates(tcx, Symbol::intern(base)))
         .chain(local_crate)
-        .map(|id| Res::Def(tcx.def_kind(id), id))
-        .collect::<Vec<_>>();
+        .map(|id| Res::Def(tcx.def_kind(id), id));
     let mut last = Err(ResolutionError::EmptyStarts);
     for first in starts {
         last = path
