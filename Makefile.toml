@@ -127,6 +127,21 @@ env = { "FORMAT_ARGS" = "clippy --all -- -Dwarnings" }
 run_task = "format-run"
 
 [tasks.format-base]
+description = """\
+This is bit ugly, because we want to reuse this tasks
+
+- In different directories (controlled by the `FORMAT_WD` env variable)
+- With different base comamnds (`cargo clippy` vs `cargo fmt`)
+- With different goals (check vs fix)
+
+The last two are both done via the `FORMAT_ARGS` command.
+
+Basically this task doesn't do anything, the only reason it exists is so that we can
+combine multiple partially configured runs of this in the `format-run` task. That run
+configures the various places where this task is called on, then the top-level tasks
+(`format-check-all`, `format-all`, `clippy-check-all`, `clippy-all`) select the actual
+command to run but is able to reuse the targets to run the commands on.
+"""
 private = true
 cwd = "${FORMAT_WD}"
 command = "cargo"
