@@ -57,13 +57,11 @@ fn main() -> Result<()> {
         "external-annotations.toml",
         "--abort-after-analysis",
         "--target",
-        "plume_models",
+        "plume-models",
         "--",
         "--no-default-features",
         "--features",
         "postgres",
-        "-p",
-        "plume-models",
     ]);
     cmd.get_command().args(args.cargo_args);
     cmd.run(args.plume_dir)?.with_context(check)?;

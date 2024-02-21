@@ -238,6 +238,36 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
     }
 
     fn modify_cargo(&self, cargo: &mut std::process::Command, args: &Self::Args) {
+        // All right so actually all that's happening here is that we drop the
+        // "--all" that rustc_plugin automatically adds in such cases where the
+        // arguments passed to paralegal indicate that we are supposed to run
+        // only on select crates.
+        //
+        // There isn't a nice way to do this so we hand-code what amounts to a
+        // call to `cargo.clone()`, but with the one modification of removing
+        // that argument.
+        let args_select_package = args.cargo_args().iter().any(|a| a.starts_with("-p") || a == "--package");
+        if args.target().is_some() | args_select_package {
+            let mut new_cmd = std::process::Command::new(cargo.get_program());
+            for (k, v) in cargo.get_envs() {
+                if let Some(v) = v {
+                    new_cmd.env(k, v);
+                } else {
+                    new_cmd.env_remove(k);
+                }
+            }
+            if let Some(wd) = cargo.get_current_dir() {
+                new_cmd.current_dir(wd);
+            }
+            new_cmd.args(
+                cargo.get_args().filter(|a| *a != "--all")
+            );
+            *cargo = new_cmd
+        }
+        if let Some(target) = args.target().as_ref() {
+            assert!(!args_select_package);
+            cargo.args(["-p", target]);
+        }
         cargo.args(args.cargo_args());
     }
 
@@ -280,9 +310,11 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
 
         let is_primary_package = std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
 
+        let our_target = plugin_args.target().map(|t| t.replace('-', "_"));
+
         let is_target = crate_name
             .as_ref()
-            .and_then(|s| plugin_args.target().map(|t| s == t))
+            .and_then(|s| our_target.as_ref().map(|t| s == t))
             .unwrap_or(is_primary_package);
 
         let is_build_script = crate_name
