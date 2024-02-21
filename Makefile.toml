@@ -1,3 +1,16 @@
+# This directory contains the scripts that run our CI activity and checks.
+# The idea is that these scripts let you easily replicate CI steps locally.
+#
+# The most common tasks are
+# - `fix-all` tries to fix all the formatting and code style issues. This is
+#   most likely the command you want to run.
+# - `check-all` runs all the formatting and code-style checks we also run in CI
+#   This performs all teh same operations as `fix-ll` but complains instead of
+#   solving them.
+# - `pdg-tests` which runs our current complete test suite
+#
+# The CI actually runs some of these checks in separate steps to provide easier
+# insight into which part failed.
 [env]
 TEST_DIR = "crates/paralegal-flow/tests"
 CARGO_TERM_VERBOSE = { condition = { env_true = ["CI"] }, value = "true" }
