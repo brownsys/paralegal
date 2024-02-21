@@ -128,6 +128,7 @@ run_task = "format-run"
 
 [tasks.format-base]
 private = true
+cwd = "${FORMAT_WD}"
 command = "cargo"
 args = ["@@split(FORMAT_ARGS, )"]
 
@@ -142,17 +143,17 @@ dependencies = [
 
 [tasks.format-props]
 private = true
-cwd = "props"
+env = { "FORMAT_WD" = "." }
 run_task = "format-base"
 
 [tasks.format-guide-example]
 private = true
-cwd = "guide/file-db-example"
+env = { "FORMAT_WD" = "guide/file-db-example" }
 run_task = "format-base"
 
 [tasks.format-guide-policy]
 private = true
-cwd = "guide/deletion-policy"
+env = { "FORMAT_WD" = "guide/deletion-policy" }
 run_task = "format-base"
 
 [tasks.format-tests]
