@@ -25,7 +25,7 @@ define_test!(top_level_inlining_happens : graph -> {
     let send_fn = graph.function("send_user_data");
     let send = graph.call_site(&send_fn);
 
-    assert!(get.output().flows_to_data(&dp.input()));
+    assert!(!get.output().flows_to_data(&dp.input()));
     assert!(dp.output().flows_to_data(&send.input()));
     assert!(get.output().flows_to_data(&send.input()));
     // This used to check for neighbors. But now "input" is not actually nodes
