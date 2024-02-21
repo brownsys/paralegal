@@ -9,8 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  FORGE_REVISION: aa2e8a67a8ff38db145dcb1a1aa5c02d0b851235
-  racket_version: 8.1
 
 jobs:
   compiler-tests:
@@ -42,7 +40,7 @@ jobs:
         command: install
         args: --debug cargo-make
     - name: Build
-      run: cargo install --locked --path crates/paralegal-flow --verbose
+      run: cargo make install
     - name: Run tests
       run: cargo make pdg-tests
 
