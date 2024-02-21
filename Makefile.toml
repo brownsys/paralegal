@@ -203,3 +203,17 @@ end
 cd crates/paralegal-policy/tests/test-crate
 exec cargo %{FORMAT_ARGS}
 '''
+
+[tasks.populate-doc-dir]
+dependencies = ["get-rustc-docs"]
+script_runner = "@duckscript"
+script = '''
+source_path = concat ${RUSTUP_HOME} /toolchains/ ${RUSTUP_TOOLCHAIN} /share/doc/rust/html/rustc
+mkdir docs
+mv doc-src/index.html docs
+mv ${source_path} docs/compiler
+'''
+
+[tasks.get-rustc-docs]
+command = "rustup"
+args = ["component", "add", "rustc-docs"]
