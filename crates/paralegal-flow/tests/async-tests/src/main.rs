@@ -81,6 +81,19 @@ async fn two_data_over_boundary() {
 }
 
 #[paralegal::analyze]
+async fn markers() {
+    #[paralegal::marker(source, return)]
+    async fn src() -> usize {
+        0
+    }
+
+    #[paralegal::marker(sink, arguments = [0])]
+    async fn snk(snk: usize) {}
+
+    snk(src().await).await
+}
+
+#[paralegal::analyze]
 async fn arguments_work(d: UserData) {
     send_user_data(&d);
 }
@@ -100,7 +113,20 @@ async fn arity2_inlineable_async_dp_user_data(_: &mut UserData, user_data: &mut 
 async fn no_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
-    arity2_inlineable_async_dp_user_data(&mut ud1, &mut ud2);
+    arity2_inlineable_async_dp_user_data(&mut ud1, &mut ud2).await;
+    send_user_data(&ud1);
+    send_user_data2(&ud2);
+}
+
+async fn arity2_inlineable_async_dp_user_data2(_: &UserData, user_data: &mut UserData) {
+    dp_user_data(user_data)
+}
+
+#[paralegal::analyze]
+async fn no_mixed_mutability_borrow_inlining_overtaint() {
+    let mut ud1 = get_user_data();
+    let mut ud2 = get_user_data2();
+    arity2_inlineable_async_dp_user_data2(&ud1, &mut ud2).await;
     send_user_data(&ud1);
     send_user_data2(&ud2);
 }
@@ -114,7 +140,31 @@ async fn send_both(ud1: &UserData, ud2: &UserData) {
 async fn no_immutable_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
-    send_both(&ud1, &ud2);
+    send_both(&ud1, &ud2).await;
+}
+
+async fn send_both2(ud1: &UserData, ud2: &mut UserData) {
+    send_user_data(&ud1);
+    send_user_data2(&ud2);
+}
+
+#[paralegal::analyze]
+async fn no_mixed_mutability_inlining_overtaint() {
+    let mut ud1 = get_user_data();
+    let mut ud2 = get_user_data2();
+    send_both2(&ud1, &mut ud2).await;
+}
+
+async fn move_send_both(ud1: UserData, ud2: UserData) {
+    send_user_data(&ud1);
+    send_user_data2(&ud2);
+}
+
+#[paralegal::analyze]
+async fn no_value_inlining_overtaint() {
+    let mut ud1 = get_user_data();
+    let mut ud2 = get_user_data2();
+    move_send_both(ud1, ud2).await;
 }
 
 #[paralegal::marker(noinline)]
@@ -158,6 +208,16 @@ async fn no_overtaint_over_poll() {
     let t = id_fun((p, q)).await;
     target(t.0);
     another_target(t.1);
+}
+
+#[paralegal::analyze]
+async fn return_from_async() -> usize {
+    some_input()
+}
+
+#[paralegal::analyze]
+async fn async_return_from_async() -> usize {
+    id_fun(some_input()).await
 }
 
 fn main() {}

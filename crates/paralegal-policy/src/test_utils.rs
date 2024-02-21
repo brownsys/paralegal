@@ -1,9 +1,9 @@
 use crate::Context;
 use crate::ControllerId;
-use crate::Node;
 use paralegal_flow::test_utils::PreFrg;
-use paralegal_spdg::DataSink;
-use paralegal_spdg::Identifier;
+use paralegal_spdg::IntoIterGlobalNodes;
+use paralegal_spdg::NodeCluster;
+use paralegal_spdg::{Identifier, InstructionInfo, Node as SPDGNode, SPDG};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -23,41 +23,45 @@ pub fn get_callsite_or_datasink_node<'a>(
     ctx: &'a Context,
     controller: ControllerId,
     name: &'a str,
-) -> Option<Node> {
-    Some(get_callsite_node(ctx, controller, name).unwrap_or(get_sink_node(ctx, controller, name)?))
+) -> NodeCluster {
+    get_callsite_node(ctx, controller, name)
+        .extended(&get_sink_node(ctx, controller, name))
+        .unwrap()
 }
 
 pub fn get_callsite_node<'a>(
     ctx: &'a Context,
     controller: ControllerId,
     name: &'a str,
-) -> Option<Node> {
+) -> NodeCluster {
     let name = Identifier::new_intern(name);
-    let node = ctx.desc().controllers[&controller]
-        .call_sites()
-        .find(|callsite| ctx.desc().def_info[&callsite.function].name == name)?;
-    Some(crate::Node {
-        ctrl_id: controller,
-        typ: node.clone().into(),
-    })
+    let ctrl = &ctx.desc().controllers[&controller];
+    let inner = ctrl
+        .all_sources()
+        .filter(|node| is_at_function_call_with_name(ctx, ctrl, name, *node));
+    NodeCluster::new(controller, inner)
 }
 
-pub fn get_sink_node<'a>(
-    ctx: &'a Context,
-    controller: ControllerId,
-    name: &'a str,
-) -> Option<Node> {
+fn is_at_function_call_with_name(
+    ctx: &Context,
+    ctrl: &SPDG,
+    name: Identifier,
+    node: SPDGNode,
+) -> bool {
+    let weight = ctrl.graph.node_weight(node).unwrap().at;
+    let instruction = &ctx.desc().instruction_info[&weight.leaf()];
+    matches!(
+        instruction,
+        InstructionInfo::FunctionCall(call) if
+            ctx.desc().def_info[&call.id].name == name
+    )
+}
+
+pub fn get_sink_node<'a>(ctx: &'a Context, controller: ControllerId, name: &'a str) -> NodeCluster {
     let name = Identifier::new_intern(name);
-    let node = ctx.desc().controllers[&controller]
+    let ctrl = &ctx.desc().controllers[&controller];
+    let inner = ctrl
         .data_sinks()
-        .find(|sink| match sink {
-            DataSink::Argument { function, .. } => {
-                ctx.desc().def_info[&function.function].name == name
-            }
-            _ => false,
-        })?;
-    Some(crate::Node {
-        ctrl_id: controller,
-        typ: node.clone().into(),
-    })
+        .filter(|sink| is_at_function_call_with_name(ctx, ctrl, name, *sink));
+    NodeCluster::new(controller, inner)
 }

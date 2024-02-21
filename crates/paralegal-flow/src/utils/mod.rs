@@ -4,12 +4,10 @@ extern crate smallvec;
 use hir::def::DefKind;
 use thiserror::Error;
 
-use paralegal_spdg::{CallSite, DataSource};
 use smallvec::SmallVec;
 
 use crate::{
     desc::Identifier,
-    ir::{GlobalLocation, GlobalLocationS},
     rust::{
         ast,
         hir::{
@@ -20,7 +18,7 @@ use crate::{
             BodyId,
         },
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
-        rustc_data_structures::fx::{FxHashMap, FxHashSet},
+        rustc_borrowck::consumers::BodyWithBorrowckFacts,
         rustc_data_structures::intern::Interned,
         rustc_span::{symbol::Ident, Span},
         rustc_target::spec::abi::Abi,
@@ -30,11 +28,15 @@ use crate::{
     Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
-use std::{borrow::Cow, cell::RefCell, default::Default, hash::Hash, pin::Pin};
+pub use flowistry::pdg::FnResolution;
+
+use std::cmp::Ordering;
+use std::{cell::RefCell, default::Default, hash::Hash, pin::Pin};
 
 pub mod resolve;
 
 mod print;
+
 pub use print::*;
 
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
@@ -132,10 +134,10 @@ pub trait GenericArgExt<'tcx> {
     fn as_type(&self) -> Option<ty::Ty<'tcx>>;
 }
 
-impl<'tcx> GenericArgExt<'tcx> for ty::subst::GenericArg<'tcx> {
+impl<'tcx> GenericArgExt<'tcx> for ty::GenericArg<'tcx> {
     fn as_type(&self) -> Option<ty::Ty<'tcx>> {
         match self.unpack() {
-            ty::subst::GenericArgKind::Type(t) => Some(t),
+            ty::GenericArgKind::Type(t) => Some(t),
             _ => None,
         }
     }
@@ -188,41 +190,7 @@ impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
-pub enum FnResolution<'tcx> {
-    Final(ty::Instance<'tcx>),
-    Partial(DefId),
-}
-
-impl<'tcx> PartialOrd for FnResolution<'tcx> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        use FnResolution::*;
-        match (self, other) {
-            (Final(_), Partial(_)) => Some(std::cmp::Ordering::Greater),
-            (Partial(_), Final(_)) => Some(std::cmp::Ordering::Less),
-            (Partial(slf), Partial(otr)) => slf.partial_cmp(otr),
-            (Final(slf), Final(otr)) => match slf.def.partial_cmp(&otr.def) {
-                Some(std::cmp::Ordering::Equal) => slf.substs.partial_cmp(otr.substs),
-                result => result,
-            },
-        }
-    }
-}
-
-impl<'tcx> Ord for FnResolution<'tcx> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}
-
-impl<'tcx> FnResolution<'tcx> {
-    pub fn def_id(self) -> DefId {
-        match self {
-            FnResolution::Final(f) => f.def_id(),
-            FnResolution::Partial(p) => p,
-        }
-    }
-
+pub trait FnResolutionExt<'tcx> {
     /// Get the most precise type signature we can for this function, erase any
     /// regions and discharge binders.
     ///
@@ -230,14 +198,18 @@ impl<'tcx> FnResolution<'tcx> {
     ///
     /// Emits warnings if a precise signature could not be obtained or there
     /// were type variables not instantiated.
-    pub fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed> {
+    fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed>;
+}
+
+impl<'tcx> FnResolutionExt<'tcx> for FnResolution<'tcx> {
+    fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed> {
         let sess = tcx.sess;
         let def_id = self.def_id();
         let def_span = tcx.def_span(def_id);
         let fn_kind = FunctionKind::for_def_id(tcx, def_id)?;
         let late_bound_sig = match (self, fn_kind) {
             (FnResolution::Final(sub), FunctionKind::Generator) => {
-                let gen = sub.substs.as_generator();
+                let gen = sub.args.as_generator();
                 ty::Binder::dummy(ty::FnSig {
                     inputs_and_output: tcx.mk_type_list(&[gen.resume_ty(), gen.return_ty()]),
                     c_variadic: false,
@@ -245,7 +217,7 @@ impl<'tcx> FnResolution<'tcx> {
                     abi: Abi::Rust,
                 })
             }
-            (FnResolution::Final(sub), FunctionKind::Closure) => sub.substs.as_closure().sig(),
+            (FnResolution::Final(sub), FunctionKind::Closure) => sub.args.as_closure().sig(),
             (FnResolution::Final(sub), FunctionKind::Plain) => {
                 sub.ty(tcx, ty::ParamEnv::reveal_all()).fn_sig(tcx)
             }
@@ -319,15 +291,6 @@ impl FunctionKind {
             Err(tcx
                 .sess
                 .span_err(tcx.def_span(def_id), "Expected this item to be a function."))
-        }
-    }
-}
-
-impl<'tcx> std::fmt::Display for FnResolution<'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FnResolution::Final(sub) => std::fmt::Debug::fmt(sub, f),
-            FnResolution::Partial(p) => std::fmt::Debug::fmt(p, f),
         }
     }
 }
@@ -475,28 +438,6 @@ impl<'tcx, F: FnMut(&mir::Place<'tcx>)> mir::visit::Visitor<'tcx> for PlaceVisit
     }
 }
 
-/// Extension trait for [`Location`]. This lets us implement methods on
-/// [`Location`]. [`Self`] is only ever supposed to be instantiated as
-/// [`Location`].
-pub trait LocationExt {
-    /// This function deals with the fact that flowistry uses special locations
-    /// to refer to function arguments. Those locations are not recognized the
-    /// rustc functions that operate on MIR and thus need to be filtered before
-    /// doing things such as indexing into a `mir::Body`.
-    fn is_real(&self, body: &mir::Body) -> bool;
-}
-
-impl LocationExt for Location {
-    fn is_real(&self, body: &mir::Body) -> bool {
-        body.basic_blocks.get(self.block).map(|bb|
-                // Its `<=` because if len == statement_index it refers to the
-                // terminator
-                // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html
-                self.statement_index <= bb.statements.len())
-            == Some(true)
-    }
-}
-
 /// Return the places that are read in this statements and possible ref/deref
 /// un-layerings of those places.
 ///
@@ -510,6 +451,19 @@ pub fn read_places_with_provenance<'tcx>(
     places_read(tcx, l, stmt, None).flat_map(move |place| place.provenance(tcx).into_iter())
 }
 
+pub enum Overlap<'tcx> {
+    Equal,
+    Independent,
+    Parent(&'tcx [mir::PlaceElem<'tcx>]),
+    Child(&'tcx [mir::PlaceElem<'tcx>]),
+}
+
+impl<'tcx> Overlap<'tcx> {
+    pub fn contains_other(self) -> bool {
+        matches!(self, Overlap::Equal | Overlap::Parent(_))
+    }
+}
+
 /// Extension trait for [`Place`]s so we can implement methods on them. [`Self`]
 /// is only ever supposed to be instantiated as [`Place`].
 pub trait PlaceExt<'tcx> {
@@ -520,6 +474,8 @@ pub trait PlaceExt<'tcx> {
     /// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
     /// [_1.foo.bar, _1.foo, _1]`
     fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>; 2]>;
+
+    fn simple_overlaps(self, other: Place<'tcx>) -> Overlap<'tcx>;
 }
 
 impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
@@ -532,6 +488,23 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
             .collect();
         refs.reverse();
         refs
+    }
+
+    fn simple_overlaps(self, other: Place<'tcx>) -> Overlap<'tcx> {
+        if self.local != other.local
+            || self
+                .projection
+                .iter()
+                .zip(other.projection)
+                .any(|(one, other)| one != other)
+        {
+            return Overlap::Independent;
+        }
+        match self.projection.len().cmp(&other.projection.len()) {
+            Ordering::Less => Overlap::Parent(&other.projection[self.projection.len()..]),
+            Ordering::Greater => Overlap::Child(&self.projection[other.projection.len()..]),
+            Ordering::Equal => Overlap::Equal,
+        }
     }
 }
 
@@ -953,11 +926,8 @@ pub trait TyCtxtExt<'tcx> {
     /// unavailable.
     fn body_for_def_id(
         self,
-        def_id: DefId,
-    ) -> Result<
-        &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
-        BodyResolutionError,
-    >;
+        local_def_id: LocalDefId,
+    ) -> Result<&'tcx BodyWithBorrowckFacts<'tcx>, BodyResolutionError>;
 
     /// Essentially the same as [`Self::body_for_def_id`] but handles errors
     /// according to our default policy which is as follows:
@@ -972,38 +942,29 @@ pub trait TyCtxtExt<'tcx> {
     ///       crate-local and that might be surprising.
     fn body_for_def_id_default_policy(
         self,
-        def_id: DefId,
-    ) -> Option<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>>;
+        local_def_id: LocalDefId,
+    ) -> Option<&'tcx BodyWithBorrowckFacts<'tcx>>;
 }
 
 impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     fn body_for_def_id(
         self,
-        def_id: DefId,
-    ) -> Result<
-        &'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>,
-        BodyResolutionError,
-    > {
-        let local_def_id = def_id.as_local().ok_or(BodyResolutionError::External)?;
+        local_def_id: LocalDefId,
+    ) -> Result<&'tcx BodyWithBorrowckFacts<'tcx>, BodyResolutionError> {
         let def_kind = self.def_kind(local_def_id);
         if !def_kind.is_fn_like() {
             return Err(BodyResolutionError::NotAFunction);
-        } else if def_kind == DefKind::AssocFn && let Some(trt) = self.trait_of_item(def_id) {
+        } else if def_kind == DefKind::AssocFn && let Some(trt) = self.trait_of_item(local_def_id.to_def_id()) {
             return Err(BodyResolutionError::IsTraitAssocFn(trt));
         }
-        Ok(
-            rustc_utils::mir::borrowck_facts::get_simplified_body_with_borrowck_facts(
-                self,
-                local_def_id,
-            ),
-        )
+        Ok(rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts(self, local_def_id))
     }
 
     fn body_for_def_id_default_policy(
         self,
-        def_id: DefId,
-    ) -> Option<&'tcx rustc_utils::mir::borrowck_facts::CachedSimplifedBodyWithFacts<'tcx>> {
-        match self.body_for_def_id(def_id) {
+        local_def_id: LocalDefId,
+    ) -> Option<&'tcx BodyWithBorrowckFacts<'tcx>> {
+        match self.body_for_def_id(local_def_id) {
             Ok(b) => Some(b),
             Err(e) => {
                 let sess = self.sess;
@@ -1011,7 +972,7 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
                     BodyResolutionError::External => (),
                     BodyResolutionError::IsTraitAssocFn(r#trait) => {
                         sess.struct_span_warn(
-                            self.def_span(def_id),
+                            self.def_span(local_def_id.to_def_id()),
                             "cannot analyze this function as it is a trait method with \
                             no body (probably caused by the use of `dyn`)",
                         )
@@ -1019,7 +980,10 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
                         .emit();
                     }
                     BodyResolutionError::NotAFunction => {
-                        sess.span_fatal(self.def_span(def_id), "this item is not a function");
+                        sess.span_fatal(
+                            self.def_span(local_def_id.to_def_id()),
+                            "this item is not a function",
+                        );
                     }
                 };
                 None
@@ -1056,91 +1020,6 @@ macro_rules! sym_vec {
     ($($e:expr),*) => {
         vec![$(Symbol::intern($e)),*]
     };
-}
-
-type SparseMatrixImpl<K, V> = FxHashMap<K, FxHashSet<V>>;
-
-#[derive(Debug, Clone)]
-pub struct SparseMatrix<K, V> {
-    matrix: SparseMatrixImpl<K, V>,
-    empty_set: FxHashSet<V>,
-}
-
-impl<'a, Q: Eq + std::hash::Hash + ?Sized, K: Eq + std::hash::Hash + std::borrow::Borrow<Q>, V>
-    std::ops::Index<&'a Q> for SparseMatrix<K, V>
-{
-    type Output = <SparseMatrixImpl<K, V> as std::ops::Index<&'a Q>>::Output;
-    fn index(&self, index: &Q) -> &Self::Output {
-        &self.matrix[index]
-    }
-}
-
-impl<K, V> Default for SparseMatrix<K, V> {
-    fn default() -> Self {
-        Self {
-            matrix: Default::default(),
-            empty_set: Default::default(),
-        }
-    }
-}
-
-impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> PartialEq for SparseMatrix<K, V> {
-    fn eq(&self, other: &Self) -> bool {
-        self.matrix.eq(&other.matrix)
-    }
-}
-impl<K: Eq + std::hash::Hash, V: Eq + std::hash::Hash> Eq for SparseMatrix<K, V> {}
-
-impl<K, V> SparseMatrix<K, V> {
-    pub fn set(&mut self, k: K, v: V) -> bool
-    where
-        K: Eq + std::hash::Hash,
-        V: Eq + std::hash::Hash,
-    {
-        self.row_mut(k).insert(v)
-    }
-
-    pub fn rows(&self) -> impl Iterator<Item = (&K, &FxHashSet<V>)> {
-        self.matrix.iter()
-    }
-
-    pub fn row(&self, k: &K) -> &FxHashSet<V>
-    where
-        K: Eq + std::hash::Hash,
-    {
-        self.matrix.get(k).unwrap_or(&self.empty_set)
-    }
-
-    pub fn row_mut(&mut self, k: K) -> &mut FxHashSet<V>
-    where
-        K: Eq + std::hash::Hash,
-    {
-        self.matrix.entry(k).or_insert_with(HashSet::default)
-    }
-
-    pub fn has(&self, k: &K) -> bool
-    where
-        K: Eq + std::hash::Hash,
-    {
-        !self.matrix.get(k).map_or(true, HashSet::is_empty)
-    }
-
-    pub fn union_row(&mut self, k: &K, row: Cow<FxHashSet<V>>) -> bool
-    where
-        K: Eq + std::hash::Hash + Clone,
-        V: Eq + std::hash::Hash + Clone,
-    {
-        let mut changed = false;
-        if !self.has(k) {
-            changed = !row.is_empty();
-            self.matrix.insert(k.clone(), row.into_owned());
-        } else {
-            let set = self.row_mut(k.clone());
-            row.iter()
-                .for_each(|elem| changed |= set.insert(elem.clone()));
-        }
-        changed
-    }
 }
 
 pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilter, f: F) -> R {
@@ -1228,51 +1107,6 @@ impl IntoBodyId for DefId {
     }
 }
 
-pub trait CallSiteExt {
-    fn new(loc: &GlobalLocation, function: DefId) -> Self;
-}
-
-impl CallSiteExt for CallSite {
-    fn new(location: &GlobalLocation, function: DefId) -> Self {
-        Self {
-            location: *location,
-            function,
-        }
-    }
-}
-
-/// Create a Forge friendly descriptor for this location as a source of data
-/// in a model flow.
-pub fn data_source_from_global_location<F: FnOnce(mir::Location) -> bool>(
-    loc: GlobalLocation,
-    tcx: TyCtxt,
-    is_real_location: F,
-) -> DataSource {
-    let GlobalLocationS {
-        location: dep_loc,
-        function: dep_fun,
-    } = loc.innermost();
-    let is_real_location = is_real_location(dep_loc);
-    if loc.is_at_root() && !is_real_location {
-        DataSource::Argument(loc.outermost_location().statement_index - 1)
-    } else {
-        let terminator =
-                tcx.body_for_def_id(dep_fun)
-                    .unwrap()
-                    .simplified_body()
-                    .maybe_stmt_at(dep_loc)
-                    .unwrap_or_else(|e|
-                        panic!("Could not convert {loc} to data source with body {}. is at root: {}, is real: {}. Reason: {e:?}", body_name_pls(tcx, dep_fun.expect_local()), loc.is_at_root(), is_real_location)
-                    )
-                    .right()
-                    .expect("not a terminator");
-        DataSource::FunctionCall(CallSite::new(
-            &loc,
-            terminator.as_fn_and_args(tcx).unwrap().0,
-        ))
-    }
-}
-
 pub trait Spanned<'tcx> {
     fn span(&self, tcx: TyCtxt<'tcx>) -> Span;
 }
@@ -1305,7 +1139,7 @@ impl<'tcx> Spanned<'tcx> for DefId {
 
 impl<'tcx> Spanned<'tcx> for (LocalDefId, mir::Location) {
     fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
-        let body = tcx.body_for_def_id(self.0.to_def_id()).unwrap();
-        (body.simplified_body(), self.1).span(tcx)
+        let body = tcx.body_for_def_id(self.0).unwrap();
+        (&body.body, self.1).span(tcx)
     }
 }

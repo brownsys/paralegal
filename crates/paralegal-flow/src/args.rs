@@ -12,7 +12,6 @@
 use anyhow::Error;
 use clap::ValueEnum;
 use std::ffi::{OsStr, OsString};
-use std::str::FromStr;
 
 use crate::utils::TinyBitSet;
 use crate::{num_derive, num_traits::FromPrimitive};
@@ -45,7 +44,6 @@ impl TryFrom<ClapArgs> for Args {
             debug,
             debug_target,
             result_path,
-            graph_loc_path,
             relaxed,
             target,
             abort_after_analysis,
@@ -53,6 +51,7 @@ impl TryFrom<ClapArgs> for Args {
             modelctrl,
             dump,
             marker_control,
+            cargo_args,
         } = value;
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
@@ -85,7 +84,6 @@ impl TryFrom<ClapArgs> for Args {
             verbose,
             log_level_config,
             result_path,
-            graph_loc_path,
             relaxed,
             target,
             abort_after_analysis,
@@ -94,6 +92,7 @@ impl TryFrom<ClapArgs> for Args {
             dump,
             build_config,
             marker_control,
+            cargo_args,
         })
     }
 }
@@ -105,8 +104,6 @@ pub struct Args {
     log_level_config: LogLevelConfig,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
-    /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
-    pub(crate) graph_loc_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     relaxed: bool,
 
@@ -123,6 +120,8 @@ pub struct Args {
     dump: DumpArgs,
     /// Additional configuration for the build process/rustc
     build_config: BuildConfig,
+    /// Additional options for cargo
+    cargo_args: Vec<String>,
 }
 
 /// Arguments as exposed on the command line.
@@ -144,12 +143,9 @@ pub struct ClapArgs {
     debug: bool,
     #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
     debug_target: Option<String>,
-    /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
-    #[clap(long, default_value = "analysis_result.frg")]
-    result_path: std::path::PathBuf,
     /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
     #[clap(long, default_value = "flow-graph.json")]
-    graph_loc_path: std::path::PathBuf,
+    result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     #[clap(long, env = "PARALEGAL_RELAXED")]
     relaxed: bool,
@@ -171,6 +167,9 @@ pub struct ClapArgs {
     /// Additional arguments that control debug args specifically
     #[clap(flatten)]
     dump: ParseableDumpArgs,
+    /// Pass through for additional cargo arguments (like --features)
+    #[clap(last = true)]
+    cargo_args: Vec<String>,
 }
 
 #[derive(Clone, clap::Args)]
@@ -230,12 +229,6 @@ impl From<ParseableDumpArgs> for DumpArgs {
 /// cli, internally we use the snake-case version of the option as a method on
 /// this type. This is so we can rename the outer UI without breaking code or
 /// even combine options together.
-///
-/// As of writing these docs clap doesn't have a way to attach extra constraints
-/// to a derived impl (e.g. `Args` of `GArgs`). And so it has to be added to the
-/// type variable at the struct definition itself. That means this compressed
-/// type, that is only meant to be queried but not parsed needs an impl for
-/// these contraints, hence the `undefined!()`.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct DumpArgs(TinyBitSet);
 
@@ -264,41 +257,13 @@ impl FromIterator<DumpOption> for DumpArgs {
     num_derive::FromPrimitive,
 )]
 enum DumpOption {
-    /// For each controller dump a dot representation for each [`mir::Body`] as
-    /// provided by rustc
-    CtrlMir,
-    /// For each controller dumps the calculated dataflow graphs as well as
-    /// information about the MIR to <name of controller>.ntgb.json. Can be
-    /// deserialized with `crate::dbg::read_non_transitive_graph_and_body`.
-    SerializedNonTransitiveGraph,
-    /// Dumps a dot graph representation of the dataflow between function calls
-    /// calculated for each controller to <name of controller>.call-only-flow.gv
-    CallOnlyFlow,
-    /// Dump a complete `crate::desc::ProgramDescription` in serialized (json)
-    /// format to "flow-graph.json". Used for testing.
-    SerializedFlowGraph,
-    /// Dump a `.df` file for each called function describing the dataflow
-    /// matrices calculated by the flowistry-style dataflow analysis
-    DataflowAnalysisResult,
-    /// Dump a `.inlined-pruned.gv` PDG for each called function describing the flow graph
-    /// after pruning with the place algebra (only useful without `--no-pruning`)
-    InlinedPrunedGraph,
-    /// Dump a `.inlined.gv` PDG after inlining called functions, but before pruning
-    InlinedGraph,
-    /// Dump the MIR (`.mir`) of each called function (irrespective of whether they are a
-    /// controller)
-    CalleeMir,
-    /// Dump the flow PDG before inlining the called functions
-    PreInlineGraph,
-    /// Dump a representation of the "regal" IR for each function (`.regal`)
-    RegalIr,
-    /// Dump the equations before inlining (`.local.eqs`)
-    LocalEquations,
-    /// Dump the equations after inlining (`.global.eqs`)
-    GlobalEquations,
-    LocalsGraph,
-    /// Deprecated alias for `dump_call_only_flow`
-    NonTransitiveGraph,
+    /// A simple PDG rendering per controller provided by flowistry
+    FlowistryPdg,
+    /// A PDG rendering that includes markers and is grouped by call site.
+    /// Includes all controllers that are analyzed.
+    Spdg,
+    /// Dump the MIR (`.mir`) of each called controller
+    Mir,
     /// Dump everything we know of
     All,
 }
@@ -343,6 +308,7 @@ impl Args {
     pub fn anactrl(&self) -> &AnalysisCtrl {
         &self.anactrl
     }
+
     pub fn modelctrl(&self) -> &ModelCtrl {
         &self.modelctrl
     }
@@ -368,6 +334,10 @@ impl Args {
     pub fn marker_control(&self) -> &MarkerControl {
         &self.marker_control
     }
+
+    pub fn cargo_args(&self) -> &[String] {
+        &self.cargo_args
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
@@ -383,26 +353,11 @@ pub struct ModelCtrl {
     /// `dump_serialized_flow_graph`.
     #[clap(long, env)]
     external_annotations: Option<std::path::PathBuf>,
-
-    #[clap(long, env, default_value_t = crate::frg::Version::V1)]
-    model_version: crate::frg::Version,
-
-    #[clap(long, env)]
-    skip_sigs: bool,
 }
 
 impl ModelCtrl {
-    /// What (if any) is the path to the file containing external annotations
     pub fn external_annotations(&self) -> Option<&std::path::Path> {
         self.external_annotations.as_deref()
-    }
-
-    pub fn model_version(&self) -> crate::frg::Version {
-        self.model_version
-    }
-
-    pub fn skip_sigs(&self) -> bool {
-        self.skip_sigs
     }
 }
 
@@ -439,87 +394,6 @@ pub struct AnalysisCtrl {
     /// Also implies --no-pruning, because pruning only makes sense after inlining
     #[clap(long, env)]
     no_cross_function_analysis: bool,
-    /// Do not prune paths based on unreachability via projection algebra.
-    /// Essentially turns off cross-procedure field sensitivity.
-    #[clap(long, env)]
-    no_pruning: bool,
-    #[clap(long, env)]
-    pruning_strategy: Option<PruningStrategy>,
-    /// Perform an aggressive removal of call sites.
-    ///
-    /// "conservative": removes call sites that have inputs, outputs, no
-    /// control flow influence and no markers
-    /// "aggressive": removes call sites that have inputs, outputs (outputs
-    /// could be control flow) and no markers
-    ///
-    /// By default disabled entirely and no removal is performed
-    #[clap(long, env)]
-    remove_inconsequential_calls: Option<String>,
-
-    #[clap(long, env)]
-    drop_clone: bool,
-    #[clap(long, env)]
-    drop_poll: bool,
-
-    #[clap(long, env)]
-    remove_poll_ctrl_influence: bool,
-
-    #[clap(long, env)]
-    inline_elision: bool,
-
-    #[clap(long, env)]
-    inline_no_arg_closures: bool,
-}
-
-/// How are we treating inconsequential call sites?
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum InconsequentialCallRemovalPolicy {
-    /// Remove call sites that have no markers, no control flow influence, but
-    /// inputs and outputs
-    Conservative,
-    /// Remove call sites that have no markers, but inputs and outputs (outputs
-    /// could be control flow)
-    Aggressive,
-    /// Remove no call sites
-    Disabled,
-}
-
-impl InconsequentialCallRemovalPolicy {
-    /// Are we removing call sites?
-    pub fn is_enabled(self) -> bool {
-        !matches!(self, InconsequentialCallRemovalPolicy::Disabled)
-    }
-    /// Are we removing sources of control flow?
-    pub fn remove_ctrl_flow_source(self) -> bool {
-        matches!(self, InconsequentialCallRemovalPolicy::Aggressive)
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize, Debug)]
-pub enum PruningStrategy {
-    NewEdgesNotPreviouslyPruned,
-    NotPreviouslyPrunedEdges,
-    NewEdges,
-    NoPruning,
-}
-
-impl FromStr for PruningStrategy {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "minimal" => Ok(PruningStrategy::NewEdgesNotPreviouslyPruned),
-            "new-edges" => Ok(PruningStrategy::NewEdges),
-            "not-previously-pruned" => Ok(PruningStrategy::NotPreviouslyPrunedEdges),
-            "disabled" => Ok(PruningStrategy::NoPruning),
-            _ => Err(format!("Unknown pruning strategy '{s}'")),
-        }
-    }
-}
-
-impl PruningStrategy {
-    pub fn enabled(self) -> bool {
-        !matches!(self, PruningStrategy::NoPruning)
-    }
 }
 
 impl AnalysisCtrl {
@@ -532,54 +406,6 @@ impl AnalysisCtrl {
     pub fn use_recursive_analysis(&self) -> bool {
         !self.no_cross_function_analysis
     }
-    /// Are we pruning with the projection algebra? (e.g. is cross function
-    /// field-sensitivity enabled?)
-    pub fn use_pruning(&self) -> bool {
-        self.pruning_strategy().enabled()
-    }
-
-    pub fn pruning_strategy(&self) -> PruningStrategy {
-        if self.no_pruning {
-            assert_eq!(self.pruning_strategy, None);
-            PruningStrategy::NoPruning
-        } else {
-            self.pruning_strategy
-                .unwrap_or(PruningStrategy::NewEdgesNotPreviouslyPruned)
-        }
-    }
-
-    /// What policy wrt. call site removal are we following?
-    pub fn remove_inconsequential_calls(&self) -> InconsequentialCallRemovalPolicy {
-        use InconsequentialCallRemovalPolicy::*;
-        if let Some(s) = self.remove_inconsequential_calls.as_ref() {
-            match s.as_str() {
-                "conservative" => Conservative,
-                "aggressive" => Aggressive,
-                _ => {
-                    error!("Could not parse inconsequential call removal policy '{s}', defaulting to 'conservative'.");
-                    Conservative
-                }
-            }
-        } else {
-            Disabled
-        }
-    }
-
-    pub fn drop_poll(&self) -> bool {
-        self.drop_poll
-    }
-
-    pub fn drop_clone(&self) -> bool {
-        self.drop_clone
-    }
-
-    pub fn avoid_inlining(&self) -> bool {
-        self.inline_elision
-    }
-
-    pub fn inline_no_arg_closures(&self) -> bool {
-        self.inline_no_arg_closures
-    }
 }
 
 impl DumpArgs {
@@ -587,44 +413,17 @@ impl DumpArgs {
     fn has(&self, opt: DumpOption) -> bool {
         self.0.contains(DumpOption::All as u32).unwrap() || self.0.contains(opt as u32).unwrap()
     }
-    pub fn dump_ctrl_mir(&self) -> bool {
-        self.has(DumpOption::CtrlMir)
+
+    pub fn dump_flowistry_pdg(&self) -> bool {
+        self.has(DumpOption::FlowistryPdg)
     }
-    pub fn dump_serialized_non_transitive_graph(&self) -> bool {
-        self.has(DumpOption::SerializedNonTransitiveGraph)
+
+    pub fn dump_spdg(&self) -> bool {
+        self.has(DumpOption::Spdg)
     }
-    pub fn dump_call_only_flow(&self) -> bool {
-        self.has(DumpOption::NonTransitiveGraph) || self.has(DumpOption::CallOnlyFlow)
-    }
-    pub fn dump_serialized_flow_graph(&self) -> bool {
-        self.has(DumpOption::SerializedFlowGraph)
-    }
-    pub fn dump_dataflow_analysis_result(&self) -> bool {
-        self.has(DumpOption::DataflowAnalysisResult)
-    }
-    pub fn dump_inlined_pruned_graph(&self) -> bool {
-        self.has(DumpOption::InlinedPrunedGraph)
-    }
-    pub fn dump_inlined_graph(&self) -> bool {
-        self.has(DumpOption::InlinedGraph)
-    }
-    pub fn dump_callee_mir(&self) -> bool {
-        self.has(DumpOption::CalleeMir)
-    }
-    pub fn dump_pre_inline_graph(&self) -> bool {
-        self.has(DumpOption::PreInlineGraph)
-    }
-    pub fn dump_regal_ir(&self) -> bool {
-        self.has(DumpOption::RegalIr)
-    }
-    pub fn dump_local_equations(&self) -> bool {
-        self.has(DumpOption::LocalEquations)
-    }
-    pub fn dump_global_equations(&self) -> bool {
-        self.has(DumpOption::GlobalEquations)
-    }
-    pub fn dump_locals_graph(&self) -> bool {
-        self.has(DumpOption::LocalsGraph)
+
+    pub fn dump_mir(&self) -> bool {
+        self.has(DumpOption::Mir)
     }
 }
 

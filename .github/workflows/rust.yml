@@ -41,38 +41,6 @@ jobs:
     - name: Run tests
       run: scripts/compiler-tests.sh
 
-  intergration-tests:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    - name: Build Compiler
-      run: cargo build --verbose
-    - name: Cache Racket dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cache/racket
-          ~/.local/share/racket
-        key: ${{ runner.os }}-integration-tests-${{ env.racket_version }}-${{ env.FORGE_REVISION }}
-    - name: Install Racket
-      uses: Bogdanp/setup-racket@v1.10
-      with:
-        architecture: 'x64'
-        distribution: 'full'
-        variant: 'CS'
-        version: ${{ env.racket_version }}
-    - name: Install Forge
-      run: |
-        cd ..
-        git clone https://github.com/tnelson/Forge
-        cd Forge
-        git checkout ${FORGE_REVISION}
-        cd forge
-        raco pkg install --auto || raco setup forge
-    - name: Run Tests
-      run: scripts/integration-tests.sh
-
   format-check:
     name: Format Control
     runs-on: ubuntu-latest
@@ -133,3 +101,9 @@ jobs:
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Here come the complaints
       run: scripts/doc-check.sh
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3

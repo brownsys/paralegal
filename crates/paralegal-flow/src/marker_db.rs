@@ -14,9 +14,10 @@ use crate::{
     args::{Args, MarkerControl},
     consts,
     desc::{Annotation, MarkerAnnotation},
+    hir::def::DefKind,
     mir, ty,
     utils::{
-        resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, GenericArgExt,
+        resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, FnResolutionExt,
         IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt, TyExt,
     },
     DefId, HashMap, LocalDefId, TyCtxt,
@@ -64,7 +65,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn local_annotations(&self, def_id: LocalDefId) -> &[Annotation] {
         self.db()
             .local_annotations
-            .get(&def_id)
+            .get(&self.defid_rewrite(def_id.to_def_id()).expect_local())
             .map_or(&[], |o| o.as_slice())
     }
 
@@ -75,7 +76,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn external_markers<D: IntoDefId>(&self, did: D) -> &[MarkerAnnotation] {
         self.db()
             .external_annotations
-            .get(&did.into_def_id(self.tcx()))
+            .get(&self.defid_rewrite(did.into_def_id(self.tcx())))
             .map_or(&[], |v| v.as_slice())
     }
 
@@ -89,6 +90,20 @@ impl<'tcx> MarkerCtx<'tcx> {
             .into_iter()
             .flat_map(|anns| anns.iter().flat_map(Annotation::as_marker))
             .chain(self.external_markers(def_id).iter())
+    }
+
+    /// For async handling. If this id corresponds to an async closure we try to
+    /// resolve its parent item which the markers would actually be placed on.
+    fn defid_rewrite(&self, def_id: DefId) -> DefId {
+        let def_kind = self.tcx().def_kind(def_id);
+        if matches!(def_kind, DefKind::Generator) {
+            if let Some(parent) = self.tcx().opt_parent(def_id) {
+                if self.tcx().asyncness(parent).is_async() {
+                    return parent;
+                }
+            };
+        }
+        def_id
     }
 
     /// Are there any external markers on this item?
@@ -151,17 +166,20 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
     fn compute_marker_reachable(&self, res: FnResolution<'tcx>) -> bool {
-        let Some(body) = self.tcx().body_for_def_id_default_policy(res.def_id()) else {
+        let Some(body) = self
+            .tcx()
+            .body_for_def_id_default_policy(res.def_id().expect_local())
+        else {
             return false;
         };
-        let body = body.simplified_body();
+        let body = &body.body;
         body.basic_blocks.iter().any(|bbdat| {
             let term = match res {
                 FnResolution::Final(inst) => {
                     Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
                         self.tcx(),
                         ty::ParamEnv::reveal_all(),
-                        bbdat.terminator().clone(),
+                        ty::EarlyBinder::bind(bbdat.terminator().clone()),
                     ))
                 }
                 FnResolution::Partial(_) => Cow::Borrowed(bbdat.terminator()),
@@ -210,6 +228,14 @@ impl<'tcx> MarkerCtx<'tcx> {
                     .zip(std::iter::repeat((typ, did)))
             })
         })
+    }
+
+    pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
+        let def_id = ty.defid()?;
+        self.combined_markers(def_id)
+            .next()
+            .is_some()
+            .then_some(def_id)
     }
 
     /// All markers placed on this function, directly or through the type plus

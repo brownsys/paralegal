@@ -102,3 +102,56 @@ fn field_sensitivity_across_clone() {
     read_string(s.string_field);
     read_usize(distraction);
 }
+
+#[paralegal::marker(noinline)]
+fn input() -> usize {
+    0
+}
+
+fn generic_id_fun<T>(t: T) -> T {
+    t
+}
+
+fn id_fun<T, G>(t: (T, G)) -> (T, G) {
+    t
+}
+
+#[paralegal::marker(noinline)]
+fn target<T>(t: T) {}
+
+#[paralegal::marker(noinline)]
+fn another_target<T>(t: T) {}
+
+#[paralegal::analyze]
+fn no_overtaint_over_fn_call() {
+    let p = input();
+    let q = source();
+    let t = id_fun((p, q));
+    target(t.0);
+    another_target(t.1);
+}
+
+#[paralegal::analyze]
+fn no_overtaint_over_generic_fn_call() {
+    let p = input();
+    let q = source();
+    let t = generic_id_fun((p, q));
+    target(t.0);
+    another_target(t.1);
+}
+
+#[paralegal::analyze]
+fn no_overtaint_over_nested_fn_call() {
+    let p = input();
+    let q = source();
+    forwarder((p, q));
+}
+
+fn forwarder(t: (usize, i32)) {
+    acceptor(t)
+}
+
+fn acceptor(t: (usize, i32)) {
+    target(t.0);
+    another_target(t.1);
+}

@@ -14,10 +14,18 @@ test = []
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }
 
-flowistry = { git = "https://github.com/brownsys/flowistry", rev = "f3b27bb1e06a13c599ea56beca7aa047f7d291e5" }
+#flowistry = { path = "../../../flowistry/crates/flowistry" }
+flowistry = { git = "https://github.com/brownsys/flowistry", rev = "d1fcc76509032dd94f5255fd03c0ad0397efe834" }
+#flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "3b0a12668894220010d715092bb6e9fb2cefb5ba" }
 
-rustc_utils = "=0.6.0-nightly-2023-04-12"
-rustc_plugin = "=0.6.0-nightly-2023-04-12"
+rustc_plugin = "=0.7.4-nightly-2023-08-25"
+rustc_utils = { version = "=0.7.4-nightly-2023-08-25", features = [
+    "indexical",
+] }
+indexical = { version = "0.3.1", default-features = false, features = [
+    "rustc",
+] }
+
 
 clap = { version = "=4.3.24", features = ["derive", "cargo", "env"] }
 serde = { workspace = true, features = ["derive"] }
@@ -30,12 +38,12 @@ log = "0.4"
 simple_logger = "2"
 num-derive = "0.4"
 num-traits = "0.2"
-petgraph = "0.6"
+petgraph = { workspace = true }
 humantime = "2"
 
 
 #dot = "0.1"
-dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106"}
+dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106" }
 #dot = {path = "../../clones/dot-rust" }
 
 serde_bare = "0.5.0"
@@ -54,7 +62,7 @@ thiserror = "1"
 chrono = "0.4"
 
 [dev-dependencies]
-paralegal-flow = {path = ".", features = ["test"]}
+paralegal-flow = { path = ".", features = ["test"] }
 
 [[bin]]
 name = "cargo-paralegal-flow"

@@ -10,10 +10,7 @@
 //! for free.
 use crate::{
     consts,
-    desc::{
-        ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind,
-        TypeDescriptor,
-    },
+    desc::{ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind},
     rust::*,
     utils,
     utils::{write_sep, Print, TinyBitSet},
@@ -207,7 +204,7 @@ pub fn tiny_bitset(i: I) -> R<TinyBitSet> {
 }
 
 /// Parser for the payload of the `#[paralegal_flow::output_type(...)]` annotation.
-pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Vec<TypeDescriptor> {
+pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Vec<DefId> {
     match ann {
         ast::AttrArgs::Delimited(dargs) => {
             let mut p = nom::multi::separated_list0(

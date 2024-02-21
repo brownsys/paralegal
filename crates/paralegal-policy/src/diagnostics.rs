@@ -75,10 +75,13 @@
 //! Note that some methods, like [`Context::always_happens_before`] add a named
 //! combinator context by themselves when you use their
 //! [`report`][crate::AlwaysHappensBefore::report] functions.
+
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{rustc_portable::DefId, Ctrl, Identifier};
+use paralegal_spdg::{Identifier, SPDG};
 
 use crate::{Context, ControllerId};
 
@@ -256,7 +259,7 @@ impl PolicyContext {
     /// diagnostic context management.
     pub fn named_controller<A>(
         self: Arc<Self>,
-        id: DefId,
+        id: ControllerId,
         policy: impl FnOnce(Arc<ControllerContext>) -> A,
     ) -> A {
         policy(Arc::new(ControllerContext {
@@ -291,7 +294,7 @@ impl HasDiagnosticsBase for PolicyContext {
 /// See the [module level documentation][self] for more information on
 /// diagnostic context management.
 pub struct ControllerContext {
-    id: DefId,
+    id: ControllerId,
     inner: Arc<dyn HasDiagnosticsBase>,
 }
 
@@ -339,7 +342,7 @@ impl ControllerContext {
     }
 
     /// Access the current controller contents
-    pub fn current(&self) -> &Ctrl {
+    pub fn current(&self) -> &SPDG {
         &self.inner.as_ctx().desc().controllers[&self.id]
     }
 
@@ -361,7 +364,7 @@ impl ControllerContext {
 
 impl HasDiagnosticsBase for ControllerContext {
     fn record(&self, msg: String, severity: Severity, mut context: DiagnosticContextStack) {
-        let name = self.as_ctx().desc().def_info[&self.id].name;
+        let name = self.as_ctx().desc().controllers[&self.id].name;
         context.push(format!("[controller: {}]", name));
         self.inner.record(msg, severity, context)
     }
@@ -445,7 +448,7 @@ impl Context {
     /// diagnostic context management.
     pub fn named_controller<A>(
         self: Arc<Self>,
-        id: DefId,
+        id: ControllerId,
         policy: impl FnOnce(Arc<ControllerContext>) -> A,
     ) -> A {
         policy(Arc::new(ControllerContext {

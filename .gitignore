@@ -11,3 +11,8 @@ flow-graph.json
 
 # Delete this if we want to include a rustfmt configuration
 .rustfmt.toml
+
+/.idea/
+
+.DS_Store
+*.flowistry-pdg.pdf

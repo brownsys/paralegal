@@ -3,13 +3,7 @@
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `paralegal_flow` and
 //! `cargo-paralegal-flow` (a structure suggested by [rustc_plugin]).
-#![feature(
-    rustc_private,
-    min_specialization,
-    drain_filter,
-    box_patterns,
-    let_chains
-)]
+#![feature(rustc_private, min_specialization, box_patterns, let_chains)]
 #[macro_use]
 extern crate clap;
 extern crate ordermap;
@@ -29,7 +23,6 @@ extern crate petgraph;
 extern crate num_derive;
 extern crate num_traits;
 
-#[macro_use]
 pub extern crate rustc_index;
 extern crate rustc_serialize;
 
@@ -70,8 +63,7 @@ pub mod rust {
 }
 
 use args::{ClapArgs, LogLevelConfig};
-use desc::utils::{serde_map_via_vec, write_sep};
-use pretty::DocBuilder;
+use desc::utils::write_sep;
 use rust::*;
 
 use rustc_plugin::CrateFilter;
@@ -91,14 +83,13 @@ pub mod ann_parse;
 mod args;
 pub mod dbg;
 mod discover;
-pub mod frg;
-pub mod ir;
 //mod sah;
 pub mod serializers;
 #[macro_use]
 pub mod utils;
 pub mod consts;
 pub mod marker_db;
+mod pdg;
 #[cfg(feature = "test")]
 pub mod test_utils;
 
@@ -106,10 +97,7 @@ pub use paralegal_spdg as desc;
 
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
-use crate::{
-    frg::{call_site_to_string, ForgeConverter},
-    utils::{outfile_pls, Print},
-};
+use crate::utils::Print;
 
 pub use crate::marker_db::MarkerCtx;
 
@@ -131,10 +119,6 @@ struct ArgWrapper {
     /// The actual arguments
     #[clap(flatten)]
     args: ClapArgs,
-
-    /// Pass through for additional cargo arguments (like --features)
-    #[clap(last = true)]
-    cargo_args: Vec<String>,
 }
 
 struct Callbacks {
@@ -144,12 +128,6 @@ struct Callbacks {
 struct NoopCallbacks {}
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
-
-#[derive(serde::Deserialize, serde::Serialize)]
-pub struct AdditionalInfo {
-    #[serde(with = "serde_map_via_vec")]
-    pub call_sites: HashMap<String, desc::CallSite>,
-}
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
@@ -163,7 +141,7 @@ impl rustc_driver::Callbacks for Callbacks {
     // that (when retrieving the MIR bodies for instance)
     fn after_expansion<'tcx>(
         &mut self,
-        compiler: &rustc_interface::interface::Compiler,
+        _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries
@@ -172,49 +150,30 @@ impl rustc_driver::Callbacks for Callbacks {
             .enter(|tcx| {
                 tcx.sess.abort_if_errors();
                 let desc = discover::CollectingVisitor::new(tcx, self.opts).run()?;
-                if self.opts.dbg().dump_serialized_flow_graph() {
-                    serde_json::to_writer(
-                        &mut std::fs::OpenOptions::new()
-                            .truncate(true)
-                            .create(true)
-                            .write(true)
-                            .open(self.opts.graph_loc_path.clone())
-                            .unwrap(),
-                        &desc,
-                    )
-                    .unwrap();
-                }
-                tcx.sess.abort_if_errors();
                 info!("All elems walked");
-                let result_path = compiler
-                    .build_output_filenames(compiler.session(), &[])
-                    .with_extension("ana.frg");
-                let mut outf = outfile_pls(&result_path)?;
-                let doc_alloc = pretty::BoxAllocator;
-                let converter = ForgeConverter::new(desc, tcx);
-                let doc: DocBuilder<_, ()> = converter.serialize_forge(&doc_alloc, self.opts.modelctrl());
-                doc.render(100, &mut outf)?;
-                let mut outf_2 = outfile_pls(self.opts.result_path())?;
-                doc.render(100, &mut outf_2)?;
+                tcx.sess.abort_if_errors();
 
-                let info_path = compiler.build_output_filenames(compiler.session(), &[])
-                    .with_extension("info.json");
-                let info = AdditionalInfo {
-                    call_sites: converter.desc().all_call_sites().into_iter().map(|cs| (call_site_to_string(tcx, cs), *cs)).collect()
-                };
-                serde_json::to_writer(outfile_pls(info_path)?, &info)?;
+                if self.opts.dbg().dump_spdg() {
+                    let out = std::fs::File::create("call-only-flow.gv").unwrap();
+                    paralegal_spdg::dot::dump(&desc, out).unwrap();
+                }
 
-                let info_path2 = self.opts.result_path().with_extension("info.json");
-
-                serde_json::to_writer(outfile_pls(info_path2)?, &info)?;
-                warn!("Due to potential overwrite issues with --result-path (with multiple targets in a crate) outputs were written to {} and {}", self.opts.result_path().display(), &result_path.display());
-                anyhow::Ok(
-                    if self.opts.abort_after_analysis() {
-                        rustc_driver::Compilation::Stop
-                    } else {
-                        rustc_driver::Compilation::Continue
-                    }
+                serde_json::to_writer(
+                    &mut std::fs::OpenOptions::new()
+                        .truncate(true)
+                        .create(true)
+                        .write(true)
+                        .open(self.opts.result_path())
+                        .unwrap(),
+                    &desc,
                 )
+                .unwrap();
+
+                anyhow::Ok(if self.opts.abort_after_analysis() {
+                    rustc_driver::Compilation::Stop
+                } else {
+                    rustc_driver::Compilation::Continue
+                })
             })
             .unwrap()
     }
@@ -264,10 +223,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // Override the SYSROOT so that it points to the version we were
         // compiled against.
         //
-        // This is actually not necessary for *this* binary, but it will bne
-        // inherited by the calls to `cargo` and `rustc` does by `rustc_plugin`
-        // and thus those will link against the version of `std` that we
-        // require.
+        // This is actually not necessary for *this* binary, but it will be
+        // inherited by the calls to `cargo` and `rustc` done by `rustc_plugin`
+        // and thus those will use the version of `std` that matches the nightly
+        // compiler version we link against.
         std::env::set_var("SYSROOT", env!("SYSROOT_PATH"));
 
         add_to_rustflags(["--cfg".into(), "paralegal".into()]).unwrap();
@@ -275,8 +234,42 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         rustc_plugin::RustcPluginArgs {
             args: args.args.try_into().unwrap(),
             filter: CrateFilter::AllCrates,
-            cargo_args: args.cargo_args,
         }
+    }
+
+    fn modify_cargo(&self, cargo: &mut std::process::Command, args: &Self::Args) {
+        // All right so actually all that's happening here is that we drop the
+        // "--all" that rustc_plugin automatically adds in such cases where the
+        // arguments passed to paralegal indicate that we are supposed to run
+        // only on select crates.
+        //
+        // There isn't a nice way to do this so we hand-code what amounts to a
+        // call to `cargo.clone()`, but with the one modification of removing
+        // that argument.
+        let args_select_package = args
+            .cargo_args()
+            .iter()
+            .any(|a| a.starts_with("-p") || a == "--package");
+        if args.target().is_some() | args_select_package {
+            let mut new_cmd = std::process::Command::new(cargo.get_program());
+            for (k, v) in cargo.get_envs() {
+                if let Some(v) = v {
+                    new_cmd.env(k, v);
+                } else {
+                    new_cmd.env_remove(k);
+                }
+            }
+            if let Some(wd) = cargo.get_current_dir() {
+                new_cmd.current_dir(wd);
+            }
+            new_cmd.args(cargo.get_args().filter(|a| *a != "--all"));
+            *cargo = new_cmd
+        }
+        if let Some(target) = args.target().as_ref() {
+            assert!(!args_select_package);
+            cargo.args(["-p", target]);
+        }
+        cargo.args(args.cargo_args());
     }
 
     fn run(
@@ -318,9 +311,11 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
 
         let is_primary_package = std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
 
+        let our_target = plugin_args.target().map(|t| t.replace('-', "_"));
+
         let is_target = crate_name
             .as_ref()
-            .and_then(|s| plugin_args.target().map(|t| s == t))
+            .and_then(|s| our_target.as_ref().map(|t| s == t))
             .unwrap_or(is_primary_package);
 
         let is_build_script = crate_name

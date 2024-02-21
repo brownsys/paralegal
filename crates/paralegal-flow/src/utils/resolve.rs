@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use crate::{ast, hir, ty, DefId, Symbol, TyCtxt};
 use ast::Mutability;
 use hir::{
@@ -9,7 +7,7 @@ use hir::{
     def_id::LOCAL_CRATE,
     ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
 };
-use ty::{fast_reject::SimplifiedType::*, FloatTy, IntTy, UintTy};
+use ty::{fast_reject::SimplifiedType, FloatTy, IntTy, UintTy};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Res {
@@ -55,24 +53,61 @@ impl Res {
     }
 }
 
+fn find_primitive_impls<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> impl Iterator<Item = DefId> + 'tcx {
+    let ty = match name {
+        "bool" => SimplifiedType::Bool,
+        "char" => SimplifiedType::Char,
+        "str" => SimplifiedType::Str,
+        "array" => SimplifiedType::Array,
+        "slice" => SimplifiedType::Slice,
+        // FIXME: rustdoc documents these two using just `pointer`.
+        //
+        // Maybe this is something we should do here too.
+        "const_ptr" => SimplifiedType::Ptr(Mutability::Not),
+        "mut_ptr" => SimplifiedType::Ptr(Mutability::Mut),
+        "isize" => SimplifiedType::Int(IntTy::Isize),
+        "i8" => SimplifiedType::Int(IntTy::I8),
+        "i16" => SimplifiedType::Int(IntTy::I16),
+        "i32" => SimplifiedType::Int(IntTy::I32),
+        "i64" => SimplifiedType::Int(IntTy::I64),
+        "i128" => SimplifiedType::Int(IntTy::I128),
+        "usize" => SimplifiedType::Uint(UintTy::Usize),
+        "u8" => SimplifiedType::Uint(UintTy::U8),
+        "u16" => SimplifiedType::Uint(UintTy::U16),
+        "u32" => SimplifiedType::Uint(UintTy::U32),
+        "u64" => SimplifiedType::Uint(UintTy::U64),
+        "u128" => SimplifiedType::Uint(UintTy::U128),
+        "f32" => SimplifiedType::Float(FloatTy::F32),
+        "f64" => SimplifiedType::Float(FloatTy::F64),
+        _ => return [].iter().copied(),
+    };
+
+    tcx.incoherent_impls(ty).iter().copied()
+}
+
 /// A small helper wrapper around [`def_path_res`] that represents a common way
 /// that `def_path_res` is used. In the case of errors they are reported to the
 /// user and `None` is returned so the caller has the option of making progress
 /// before exiting.
 pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -> Option<DefId> {
     let segment_vec = path.split("::").collect::<Vec<_>>();
+    let report_err = if relaxed {
+        |tcx: TyCtxt<'_>, err: String| {
+            tcx.sess.warn(err);
+        }
+    } else {
+        |tcx: TyCtxt<'_>, err| {
+            tcx.sess.err(err);
+        }
+    };
     let res = def_path_res(tcx, &segment_vec)
-        .map_err(|e| tcx.sess.err(format!("Could not resolve {path}: {e:?}")))
+        .map_err(|e| report_err(tcx, format!("Could not resolve {path}: {e:?}")))
         .ok()?;
     match res {
         Res::Def(_, did) => Some(did),
         other => {
             let msg = format!("expected {path} to resolve to an item, got {other:?}");
-            if relaxed {
-                tcx.sess.warn(msg);
-            } else {
-                tcx.sess.err(msg);
-            };
+            report_err(tcx, msg);
             None
         }
     }
@@ -151,78 +186,42 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
         }
     }
 
-    fn find_primitive<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Option<&'tcx [DefId]> {
-        let single = |ty| Some(tcx.incoherent_impls(ty));
-        let empty = || None;
-        match name {
-            "bool" => single(BoolSimplifiedType),
-            "char" => single(CharSimplifiedType),
-            "str" => single(StrSimplifiedType),
-            "array" => single(ArraySimplifiedType),
-            "slice" => single(SliceSimplifiedType),
-            // FIXME: rustdoc documents these two using just `pointer`.
-            //
-            // Maybe this is something we should do here too.
-            "const_ptr" => single(PtrSimplifiedType(Mutability::Not)),
-            "mut_ptr" => single(PtrSimplifiedType(Mutability::Mut)),
-            "isize" => single(IntSimplifiedType(IntTy::Isize)),
-            "i8" => single(IntSimplifiedType(IntTy::I8)),
-            "i16" => single(IntSimplifiedType(IntTy::I16)),
-            "i32" => single(IntSimplifiedType(IntTy::I32)),
-            "i64" => single(IntSimplifiedType(IntTy::I64)),
-            "i128" => single(IntSimplifiedType(IntTy::I128)),
-            "usize" => single(UintSimplifiedType(UintTy::Usize)),
-            "u8" => single(UintSimplifiedType(UintTy::U8)),
-            "u16" => single(UintSimplifiedType(UintTy::U16)),
-            "u32" => single(UintSimplifiedType(UintTy::U32)),
-            "u64" => single(UintSimplifiedType(UintTy::U64)),
-            "u128" => single(UintSimplifiedType(UintTy::U128)),
-            "f32" => single(FloatSimplifiedType(FloatTy::F32)),
-            "f64" => single(FloatSimplifiedType(FloatTy::F64)),
-            _ => empty(),
-        }
-    }
-    fn find_crate(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
-        tcx.crates(())
-            .iter()
-            .copied()
-            .find(|&num| tcx.crate_name(num).as_str() == name)
-            .map(CrateNum::as_def_id)
-    }
-
-    let (base, first, path) = match *path {
-        [base, first, ref path @ ..] => (base, first, path),
+    let (base, path) = match *path {
         [primitive] => {
             let sym = Symbol::intern(primitive);
             return PrimTy::from_name(sym)
                 .map(Res::PrimTy)
                 .ok_or(ResolutionError::CannotResolvePrimitiveType(sym));
         }
+        [base, ref path @ ..] => (base, path),
         [] => return Err(ResolutionError::PathIsEmpty),
     };
 
     let local_crate = if tcx.crate_name(LOCAL_CRATE) == Symbol::intern(base) || base == "crate" {
-        Some(Cow::Owned(vec![LOCAL_CRATE.as_def_id()]))
+        Some(LOCAL_CRATE.as_def_id())
     } else {
         None
     };
 
-    let base_mods = find_primitive(tcx, base)
-        .map(Cow::Borrowed)
-        .or(local_crate)
-        .or(find_crate(tcx, base).map(|i| Cow::Owned(vec![i])))
-        .ok_or(ResolutionError::CouldNotResolveCrate(base))?;
-    let starts = base_mods
-        .iter()
-        .filter_map(|id| item_child_by_name(tcx, *id, first));
+    fn find_crates(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = DefId> + '_ {
+        tcx.crates(())
+            .iter()
+            .copied()
+            .filter(move |&num| tcx.crate_name(num) == name)
+            .map(CrateNum::as_def_id)
+    }
 
+    let starts = find_primitive_impls(tcx, base)
+        .chain(find_crates(tcx, Symbol::intern(base)))
+        .chain(local_crate)
+        .map(|id| Res::Def(tcx.def_kind(id), id));
     let mut last = Err(ResolutionError::EmptyStarts);
     for first in starts {
         last = path
             .iter()
             .copied()
             // for each segment, find the child item
-            .try_fold(first?, |res, segment| {
+            .try_fold(first, |res, segment| {
                 let def_id = res.def_id();
                 if let Some(item) = item_child_by_name(tcx, def_id, segment) {
                     item

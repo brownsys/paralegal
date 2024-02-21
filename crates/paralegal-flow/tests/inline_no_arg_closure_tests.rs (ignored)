@@ -20,28 +20,28 @@ macro_rules! define_test {
 define_test!(simple: graph -> {
     let src = graph.function_call("input");
     let sink = graph.function_call("sink");
-    assert!(graph.connects(&src, &sink));
+    assert!(graph.connects(src, sink));
 });
 
 define_test!(local: graph -> {
     let src = graph.function_call("input");
     let sink = graph.function_call("sink");
-    assert!(graph.connects(&src, &sink));
+    assert!(graph.connects(src, sink));
 });
 
 define_test!(closure_arg: graph -> {
     let src = graph.function_call("input");
     let sink = graph.function_calls("sink").into_iter().collect::<Vec<_>>();
-    assert!(sink.is_empty() || (sink.len() == 1 && !graph.connects(&src, &sink[0])))
+    assert!(sink.is_empty() || (sink.len() == 1 && !graph.connects(src, sink[0])))
 });
 
 define_test!(caller_arg: graph -> {
     let src = graph.function_call("input");
     let sink = graph.function_calls("sink").into_iter().collect::<Vec<_>>();
-    assert!(sink.is_empty() || (sink.len() == 1 && !graph.connects(&src, &sink[0])))
+    assert!(sink.is_empty() || (sink.len() == 1 && !graph.connects(src, sink[0])))
 });
 define_test!(return_connect: graph -> {
     let src = graph.function_call("input");
     let sink = graph.function_call("sink");
-    assert!(graph.connects(&src, &sink));
+    assert!(graph.connects(src, sink));
 });

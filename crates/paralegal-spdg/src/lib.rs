@@ -20,34 +20,35 @@ pub(crate) mod rustc {
 
 extern crate strum;
 
-pub mod global_location;
-#[cfg(feature = "rustc")]
-mod rustc_impls;
-pub mod rustc_portable;
-pub mod rustc_proxies;
+pub use flowistry_pdg::*;
+
+pub mod dot;
 mod tiny_bitset;
+pub mod traverse;
 pub mod utils;
 
-use global_location::GlobalLocation;
-use indexical::define_index_type;
 use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{borrow::Cow, fmt, hash::Hash, iter};
+use serde::{Deserialize, Serialize};
+use std::{fmt, hash::Hash};
 
-#[cfg(not(feature = "rustc"))]
 use utils::serde_map_via_vec;
 
 pub use crate::tiny_bitset::TinyBitSet;
+use flowistry_pdg::rustc_portable::LocalDefId;
+use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
+use petgraph::prelude::EdgeRef;
+use petgraph::visit::IntoNodeIdentifiers;
 pub use std::collections::{HashMap, HashSet};
+use std::fmt::{Display, Formatter};
 
-pub type Endpoint = DefId;
-pub type TypeDescriptor = DefId;
+pub type Endpoint = LocalDefId;
+pub type TypeId = DefId;
 pub type Function = Identifier;
 
 /// Name of the file used for emitting the JSON serialized
-/// [`ProgramDescription`](crate::ProgramDescription).
+/// [`ProgramDescription`].
 pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
 
 /// Types of annotations we support.
@@ -59,7 +60,7 @@ pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, strum::EnumIs)]
 pub enum Annotation {
     Marker(MarkerAnnotation),
-    OType(#[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))] TypeDescriptor),
+    OType(#[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))] TypeId),
     Exception(ExceptionAnnotation),
 }
 
@@ -72,8 +73,8 @@ impl Annotation {
         }
     }
 
-    /// If this is an [`Annotation::OType`], returns the underlying [`TypeDescriptor`].
-    pub fn as_otype(&self) -> Option<TypeDescriptor> {
+    /// If this is an [`Annotation::OType`], returns the underlying [`TypeId`].
+    pub fn as_otype(&self) -> Option<TypeId> {
         match self {
             Annotation::OType(t) => Some(*t),
             _ => None,
@@ -200,13 +201,40 @@ impl ObjectType {
     }
 }
 
-pub type AnnotationMap = HashMap<DefId, (Vec<Annotation>, ObjectType)>;
+#[allow(dead_code)]
+mod ser_localdefid_map {
+    use serde::{Deserialize, Serialize};
+
+    use flowistry_pdg::rustc_proxies;
+
+    #[derive(Serialize, Deserialize)]
+    struct Helper(#[serde(with = "rustc_proxies::LocalDefId")] super::LocalDefId);
+
+    pub fn serialize<S: serde::Serializer, V: serde::Serialize>(
+        map: &super::HashMap<super::LocalDefId, V>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        map.iter()
+            .map(|(k, v)| (Helper(*k), v))
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>, V: serde::Deserialize<'de>>(
+        deserializer: D,
+    ) -> Result<super::HashMap<super::LocalDefId, V>, D::Error> {
+        Ok(Vec::deserialize(deserializer)?
+            .into_iter()
+            .map(|(Helper(k), v)| (k, v))
+            .collect())
+    }
+}
 
 #[cfg(feature = "rustc")]
 mod ser_defid_map {
     use serde::{Deserialize, Serialize};
 
-    use crate::rustc_proxies;
+    use flowistry_pdg::rustc_proxies;
 
     #[derive(Serialize, Deserialize)]
     struct Helper(#[serde(with = "rustc_proxies::DefId")] super::DefId);
@@ -255,18 +283,47 @@ pub enum DefKind {
     Type,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]
+pub struct FunctionCallInfo {
+    pub is_inlined: bool,
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    pub id: DefId,
+}
+
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq, strum::EnumIs,
+)]
+pub enum InstructionInfo {
+    Statement,
+    FunctionCall(FunctionCallInfo),
+    Terminator,
+    Start,
+    Return,
+}
+
+impl InstructionInfo {
+    pub fn as_function_call(self) -> Option<FunctionCallInfo> {
+        match self {
+            InstructionInfo::FunctionCall(d) => Some(d),
+            _ => None,
+        }
+    }
+}
+
 /// The annotated program dependence graph.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
-    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    #[cfg_attr(feature = "rustc", serde(with = "ser_localdefid_map"))]
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     /// Mapping from function names to dependencies within the function.
-    pub controllers: HashMap<Endpoint, Ctrl>,
+    pub controllers: HashMap<Endpoint, SPDG>,
 
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
-    /// Mapping from objects to annotations on those objects.
-    pub annotations: AnnotationMap,
+    pub type_info: HashMap<TypeId, TypeDescription>,
+
+    #[serde(with = "serde_map_via_vec")]
+    pub instruction_info: HashMap<GlobalLocation, InstructionInfo>,
 
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
@@ -274,92 +331,65 @@ pub struct ProgramDescription {
     pub def_info: HashMap<DefId, DefInfo>,
 }
 
-impl ProgramDescription {
-    /// Gather all [`DataSource`]s that are mentioned in this program description.
-    ///
-    /// Essentially just `self.controllers.flat_map(|c| c.keys())`
-    pub fn all_sources(&self) -> HashSet<&DataSource> {
-        self.controllers
-            .values()
-            .flat_map(|c| {
-                c.data_flow
-                    .0
-                    .keys()
-                    .chain(c.types.0.keys())
-                    .chain(c.ctrl_flow.0.keys())
-            })
-            .collect()
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TypeDescription {
+    pub rendering: String,
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))]
+    pub otypes: Vec<TypeId>,
+    pub markers: Vec<Identifier>,
+}
+
+#[cfg(feature = "rustc")]
+mod ser_defid_vec {
+    use flowistry_pdg::rustc_proxies;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    #[repr(transparent)]
+    struct DefIdWrap(#[serde(with = "rustc_proxies::DefId")] crate::DefId);
+
+    pub fn serialize<S: Serializer>(
+        v: &Vec<crate::DefId>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        unsafe { Vec::<DefIdWrap>::serialize(std::mem::transmute(v), serializer) }
     }
-    /// Gather all [`DataSource`]s that are mentioned in this program description.
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<crate::DefId>, D::Error> {
+        unsafe {
+            Ok(std::mem::transmute(Vec::<DefIdWrap>::deserialize(
+                deserializer,
+            )?))
+        }
+    }
+}
+
+impl ProgramDescription {
+    /// Gather all data sources that are mentioned in this program description.
     ///
     /// Essentially just `self.controllers.flat_map(|c| c.keys())`
-    pub fn all_sources_with_ctrl(&self) -> HashSet<(DefId, &DataSource)> {
+    pub fn all_nodes(&self) -> HashSet<GlobalNode> {
         self.controllers
             .iter()
             .flat_map(|(name, c)| {
-                c.data_flow
-                    .0
-                    .keys()
-                    .chain(c.types.0.keys())
-                    .chain(c.ctrl_flow.0.keys())
-                    .map(|ds| (*name, ds))
-            })
-            .collect()
-    }
-    /// Gather all [`DataSink`]s mentioned in this program description
-    ///
-    /// Essentially just `self.controllers.flat_map(|c| c.values())`
-    pub fn all_sinks(&self) -> HashSet<&DataSink> {
-        self.controllers
-            .values()
-            .flat_map(|ctrl| ctrl.data_flow.0.values().flat_map(|v| v.iter()))
-            .collect()
-    }
-
-    /// Gather all [`CallSite`]s that are mentioned in this program description.
-    ///
-    /// This function is a bit more subtle than [`Self::all_sinks`] and
-    /// [`Self::all_sources`] (which are simple maps), because call sites occur
-    /// in more places. So this extracts the call sites from sources as well as
-    /// sinks.
-    pub fn all_call_sites(&self) -> HashSet<&CallSite> {
-        self.controllers
-            .values()
-            .flat_map(|ctrl| {
-                ctrl.data_flow
-                    .0
-                    .values()
-                    .flat_map(|v| v.iter().filter_map(DataSink::as_argument).map(|s| s.0))
-                    .chain(
-                        ctrl.data_flow
-                            .0
-                            .keys()
-                            .filter_map(|src| src.as_function_call()),
-                    )
-                    .chain(
-                        ctrl.ctrl_flow
-                            .0
-                            .keys()
-                            .filter_map(|src| src.as_function_call()),
-                    )
-                    .chain(ctrl.ctrl_flow.0.values().flat_map(|v| v.iter()))
+                c.all_sources()
+                    .map(|ds| GlobalNode::unsafe_new(*name, ds.index()))
             })
             .collect()
     }
 
-    /// Gather all function identifiers that are mentioned in this program description.
-    ///
-    /// Essentially just `self.all_call_sites().map(|cs| cs.function)`
-    pub fn all_functions(&self) -> HashSet<DefId> {
-        self.all_call_sites()
-            .into_iter()
-            .map(|cs| cs.function)
-            .chain(
-                self.annotations
-                    .iter()
-                    .filter(|f| f.1 .1.as_function().is_some())
-                    .map(|f| *f.0),
-            )
+    /// Gather all [`CallString`]s that are mentioned in this program description.
+    pub fn all_call_sites(&self) -> HashSet<CallString> {
+        self.controllers
+            .values()
+            .flat_map(|v| {
+                v.graph
+                    .edge_weights()
+                    .map(|e| e.at)
+                    .chain(v.graph.node_weights().map(|n| n.at))
+            })
             .collect()
     }
 }
@@ -371,6 +401,11 @@ impl ProgramDescription {
 pub struct Identifier(Intern<String>);
 
 impl Identifier {
+    #[cfg(feature = "rustc")]
+    pub fn new(s: rustc::span::Symbol) -> Self {
+        Self::new_intern(s.as_str())
+    }
+
     /// Returns the underlying string from an identifier.
     pub fn as_str(&self) -> &str {
         self.0.as_str()
@@ -384,117 +419,15 @@ impl Identifier {
     }
 }
 
-impl std::fmt::Debug for Identifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+impl fmt::Debug for Identifier {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        fmt::Display::fmt(self.0.as_ref(), f)
+    }
+}
+
+impl Display for Identifier {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         self.0.as_ref().fmt(f)
-    }
-}
-
-impl std::fmt::Display for Identifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.0.as_ref().fmt(f)
-    }
-}
-
-/// Because we need these kinds of associations so often I made a separate type
-/// for it. Also allows us to serialize it more conveniently.
-#[derive(Debug)]
-pub struct Relation<X, Y>(pub HashMap<X, HashSet<Y>>);
-
-impl<X, Y> std::ops::Deref for Relation<X, Y> {
-    type Target = HashMap<X, HashSet<Y>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<X, Y> std::ops::DerefMut for Relation<X, Y> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<X: Serialize, Y: Serialize + Hash + Eq> Serialize for Relation<X, Y> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        self.0.iter().collect::<Vec<_>>().serialize(serializer)
-    }
-}
-
-impl<'de, X: Deserialize<'de> + Hash + Eq, Y: Deserialize<'de> + Hash + Eq> Deserialize<'de>
-    for Relation<X, Y>
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        <Vec<_> as Deserialize<'de>>::deserialize(deserializer)
-            .map(|v| Self(v.into_iter().collect()))
-    }
-}
-
-impl<X, Y> Relation<X, Y> {
-    /// Constructs an empty relation.
-    pub fn empty() -> Self {
-        Relation(HashMap::new())
-    }
-}
-
-/// A global location in the program where a function is being called.
-#[derive(Hash, Eq, PartialEq, Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct CallSite {
-    /// The location of the call.
-    pub location: GlobalLocation,
-
-    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
-    /// The id of the function being called.
-    pub function: DefId,
-}
-
-define_index_type! {
-    /// Index over [`CallSite`], for use with `indexical` index sets.
-    pub struct CallSiteIndex for CallSite = u32;
-}
-
-// Either CallSite or DataSink type
-#[derive(Hash, Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
-pub enum CallSiteOrDataSink {
-    CallSite(CallSite),
-    DataSink(DataSink),
-}
-define_index_type! {
-    /// Index over [`CallSite`], for use with `indexical` index sets.
-    pub struct CallSiteOrDataSinkIndex for CallSiteOrDataSink = u32;
-}
-
-impl From<CallSite> for CallSiteOrDataSink {
-    fn from(cs: CallSite) -> Self {
-        CallSiteOrDataSink::CallSite(cs)
-    }
-}
-
-impl From<DataSink> for CallSiteOrDataSink {
-    fn from(ds: DataSink) -> Self {
-        CallSiteOrDataSink::DataSink(ds)
-    }
-}
-
-impl CallSiteOrDataSink {
-    pub fn as_call_site(&self) -> Option<&CallSite> {
-        match self {
-            Self::CallSite(cs) => Some(cs),
-            _ => None,
-        }
-    }
-
-    pub fn as_data_sink(&self) -> Option<&DataSink> {
-        match self {
-            Self::DataSink(ds) => Some(ds),
-            _ => None,
-        }
     }
 }
 
@@ -526,226 +459,318 @@ fn short_hash_always_six_digits() {
 }
 
 /// Calculate a hash for this object
-fn hash_pls<T: Hash>(t: T) -> u64 {
+pub fn hash_pls<T: Hash>(t: T) -> u64 {
     use std::hash::Hasher;
     let mut hasher = std::collections::hash_map::DefaultHasher::default();
     t.hash(&mut hasher);
     hasher.finish()
 }
 
-// impl std::string::ToString for CallSite {
-//     fn to_string(&self) -> String {
-//         format!(
-//             "cs_{}_{}",
-//             self.function.as_str(),
-//             ShortHash::new(self.location),
-//         )
-//     }
-// }
-
-/// A representation of something that can emit data into the flow.
-///
-/// Convenience match functions are provided (for use e.g. in
-/// [`Iterator::filter_map`]) with [`Self::as_function_call`] and [`Self::as_argument`].
-#[derive(Hash, Eq, PartialEq, Clone, Serialize, Deserialize, Debug)]
-pub enum DataSource {
-    /// The result of a function call in the controller body. Can be the return
-    /// value or a mutable argument that was passed to the call.
-    FunctionCall(CallSite),
-
-    /// An argument to the controller function.
-    Argument(usize),
+pub struct GlobalNodeIter<I: IntoIterGlobalNodes> {
+    controller_id: LocalDefId,
+    iter: I::Iter,
 }
 
-define_index_type! {
-    /// Index over [`DataSource`], for use with `indexical` index sets.
-    pub struct DataSourceIndex for DataSource = u32;
+impl<I: IntoIterGlobalNodes> Iterator for GlobalNodeIter<I> {
+    type Item = GlobalNode;
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(GlobalNode {
+            controller_id: self.controller_id,
+            node: self.iter.next()?,
+        })
+    }
 }
 
-impl DataSource {
-    /// If this is a [`DataSource::FunctionCall`], then returns the underlying [`CallSite`].
-    pub fn as_function_call(&self) -> Option<&CallSite> {
-        match self {
-            DataSource::FunctionCall(i) => Some(i),
-            _ => None,
+pub trait IntoIterGlobalNodes: Sized + Copy {
+    type Iter: Iterator<Item = Node>;
+    fn iter_nodes(self) -> Self::Iter;
+
+    fn controller_id(self) -> LocalDefId;
+
+    fn iter_global_nodes(self) -> GlobalNodeIter<Self> {
+        GlobalNodeIter {
+            controller_id: self.controller_id(),
+            iter: self.iter_nodes(),
         }
     }
 
-    /// If this is a [`DataSource::Argument`], then returns the underlying argument index.
-    pub fn as_argument(&self) -> Option<usize> {
-        match self {
-            DataSource::Argument(a) => Some(*a),
-            _ => None,
+    /// A convenience method for gathering multiple node(cluster)s together.
+    ///
+    /// Returns `None` if the controller id's don't match or both iterators are empty.
+    fn extended(self, other: impl IntoIterGlobalNodes) -> Option<NodeCluster> {
+        if self.controller_id() != other.controller_id() {
+            return None;
         }
-    }
-}
-
-impl From<CallSite> for DataSource {
-    fn from(cs: CallSite) -> Self {
-        DataSource::FunctionCall(cs)
-    }
-}
-
-/// A representation of something that can receive data from the flow.
-///
-/// [`Self::as_argument`] is provided for convenience of matching.
-#[derive(Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize, Debug)]
-pub enum DataSink {
-    Argument { function: CallSite, arg_slot: usize },
-    Return,
-}
-
-impl DataSink {
-    /// If this is a `DataSink::Argument`, then returns that branch's fields.
-    pub fn as_argument(&self) -> Option<(&CallSite, usize)> {
-        match self {
-            DataSink::Argument { function, arg_slot } => Some((function, *arg_slot)),
-            _ => None,
-        }
-    }
-}
-
-define_index_type! {
-    /// Index over [`DataSink`], for use with `indexical` index sets.
-    pub struct DataSinkIndex for DataSink = u32;
-}
-
-pub type CtrlTypes = Relation<DataSource, TypeDescriptor>;
-
-#[cfg(feature = "rustc")]
-mod ser_ctrl_types {
-    use serde::{Deserialize, Serialize};
-
-    use crate::rustc_proxies;
-
-    #[derive(Serialize, Deserialize)]
-    struct Helper(#[serde(with = "rustc_proxies::DefId")] super::DefId);
-
-    pub fn serialize<S: serde::Serializer>(
-        map: &super::CtrlTypes,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        map.iter()
-            .map(|(k, v)| (k.clone(), v.iter().copied().map(Helper).collect::<Vec<_>>()))
-            .collect::<Vec<_>>()
-            .serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<super::CtrlTypes, D::Error> {
-        Ok(crate::Relation(
-            Vec::deserialize(deserializer)?
-                .into_iter()
-                .map(|(k, v): (_, Vec<_>)| (k, v.into_iter().map(|Helper(id)| id).collect()))
-                .collect(),
+        Some(NodeCluster::new(
+            self.controller_id(),
+            self.iter_nodes().chain(other.iter_nodes()).peekable(),
         ))
     }
+
+    fn to_local_cluster(self) -> NodeCluster {
+        NodeCluster::new(self.controller_id(), self.iter_nodes())
+    }
 }
 
-/// Dependencies within a controller function.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Ctrl {
-    /// Non-transitive data dependencies between sources and sinks.
-    pub data_flow: Relation<DataSource, DataSink>,
+pub type Node = NodeIndex;
 
-    /// Transitive control dependencies between sources and call sites.
-    pub ctrl_flow: Relation<DataSource, CallSite>,
-
-    #[cfg_attr(feature = "rustc", serde(with = "ser_ctrl_types"))]
-    /// Annotations on types in a controller.
-    ///
-    /// Only types that have annotations are present in this map, meaning
-    /// that it is guaranteed that for any key `k` that
-    /// `map.get(k).is_empty() == false`.
-    pub types: CtrlTypes,
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct GlobalNode {
+    node: Node,
+    controller_id: LocalDefId,
 }
 
-impl Default for Ctrl {
-    fn default() -> Self {
-        Ctrl {
-            data_flow: Relation::empty(),
-            ctrl_flow: Relation::empty(),
-            types: Relation::empty(),
+impl GlobalNode {
+    /// Create a new node with no guarantee that it exists in the SPDG of the
+    /// controller.
+    pub fn unsafe_new(ctrl_id: LocalDefId, index: usize) -> Self {
+        GlobalNode {
+            controller_id: ctrl_id,
+            node: crate::Node::new(index),
+        }
+    }
+
+    pub fn from_local_node(ctrl_id: LocalDefId, node: Node) -> Self {
+        GlobalNode {
+            controller_id: ctrl_id,
+            node,
+        }
+    }
+
+    pub fn local_node(self) -> Node {
+        self.node
+    }
+
+    pub fn controller_id(self) -> LocalDefId {
+        self.controller_id
+    }
+}
+
+impl IntoIterGlobalNodes for GlobalNode {
+    type Iter = std::iter::Once<Node>;
+    fn iter_nodes(self) -> Self::Iter {
+        std::iter::once(self.local_node())
+    }
+
+    fn controller_id(self) -> LocalDefId {
+        self.controller_id
+    }
+}
+
+#[derive(Debug, Hash, Clone)]
+pub struct NodeCluster {
+    controller_id: LocalDefId,
+    nodes: Box<[Node]>,
+}
+
+pub struct NodeClusterIter<'a> {
+    inner: std::slice::Iter<'a, Node>,
+}
+
+impl Iterator for NodeClusterIter<'_> {
+    type Item = Node;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().copied()
+    }
+}
+
+impl<'a> IntoIterGlobalNodes for &'a NodeCluster {
+    type Iter = NodeClusterIter<'a>;
+    fn iter_nodes(self) -> Self::Iter {
+        NodeClusterIter {
+            inner: self.nodes.iter(),
+        }
+    }
+
+    fn controller_id(self) -> LocalDefId {
+        self.controller_id
+    }
+}
+
+impl NodeCluster {
+    pub fn new(controller_id: LocalDefId, nodes: impl IntoIterator<Item = Node>) -> Self {
+        Self {
+            controller_id,
+            nodes: nodes.into_iter().collect::<Vec<_>>().into(),
+        }
+    }
+
+    pub fn controller_id(&self) -> LocalDefId {
+        self.controller_id
+    }
+
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct GlobalEdge {
+    index: EdgeIndex,
+    controller_id: LocalDefId,
+}
+
+impl GlobalEdge {
+    pub fn controller_id(self) -> LocalDefId {
+        self.controller_id
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NodeInfo {
+    pub at: CallString,
+    pub description: String,
+    pub kind: NodeKind,
+}
+
+impl Display for NodeInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} @ {} ({})", self.description, self.at, self.kind)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Copy, strum::EnumIs)]
+pub enum NodeKind {
+    FormalParameter(u8),
+    FormalReturn,
+    ActualParameter(TinyBitSet),
+    ActualReturn,
+    Unspecified,
+}
+
+impl Display for NodeKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeKind::FormalParameter(i) => {
+                write!(f, "Formal Parameter [{i}]")
+            }
+            NodeKind::FormalReturn => f.write_str("Formal Return"),
+            NodeKind::ActualParameter(p) => {
+                write!(f, "Actual Parameters {}", p.display_pretty())
+            }
+            NodeKind::ActualReturn => f.write_str("Actual Return"),
+            NodeKind::Unspecified => f.write_str("Unspecified"),
         }
     }
 }
 
-impl Ctrl {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EdgeInfo {
+    pub kind: EdgeKind,
+    pub at: CallString,
+}
+
+impl Display for EdgeInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.at, self.kind)
+    }
+}
+
+impl EdgeInfo {
+    pub fn is_data(&self) -> bool {
+        matches!(self.kind, EdgeKind::Data)
+    }
+
+    pub fn is_control(&self) -> bool {
+        matches!(self.kind, EdgeKind::Control)
+    }
+}
+
+#[derive(
+    Clone, Debug, Copy, Eq, PartialEq, Deserialize, Serialize, strum::EnumIs, strum::Display,
+)]
+pub enum EdgeKind {
+    Data,
+    Control,
+}
+
+pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SPDG {
+    pub name: Identifier,
+    pub graph: SPDGImpl,
+    pub markers: HashMap<Node, Vec<Identifier>>,
+    pub arguments: Vec<Node>,
+    /// If the return is `()` or `!` then this is `None`
+    pub return_: Option<Node>,
+    pub type_assigns: HashMap<Node, Types>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))] pub Vec<TypeId>);
+
+impl SPDG {
+    pub fn node_info(&self, node: Node) -> &NodeInfo {
+        self.graph.node_weight(node).unwrap()
+    }
+
     /// Returns an iterator over all the data sinks in the `data_flow` relation.
-    pub fn data_sinks(&self) -> impl Iterator<Item = &DataSink> + '_ {
-        self.data_flow.0.values().flatten().unique()
+    pub fn data_sinks(&self) -> impl Iterator<Item = Node> + '_ {
+        self.graph
+            .edge_references()
+            .filter(|e| e.weight().is_data())
+            .map(|e| e.target())
+            .unique()
     }
 
-    /// Returns an iterator over all the callsites in the `ctrl_flow` relation.
-    pub fn call_sites(&self) -> impl Iterator<Item = &CallSite> + '_ {
-        self.ctrl_flow.0.values().flatten().unique()
+    pub fn edges(&self) -> impl Iterator<Item = EdgeReference<'_, EdgeInfo>> + '_ {
+        self.graph.edge_references()
     }
 
-    /*** Below are constructor methods intended for use within paralegal-flow. ***/
+    /// Gather all [`Node`]s that are mentioned in this controller including data and control flow.
+    pub fn all_sources(&self) -> impl Iterator<Item = Node> + '_ {
+        self.graph.node_identifiers().map(Into::into)
+    }
 
-    /// Extend the `types` map with the input iterator.
-    pub fn add_types(
-        &mut self,
-        i: impl IntoIterator<Item = (DataSource, HashSet<TypeDescriptor>)>,
-    ) {
-        for (ident, set) in i {
-            self.types.0.entry(ident).or_default().extend(set);
+    pub fn dump_dot(&self, mut out: impl std::io::Write) -> std::io::Result<()> {
+        use petgraph::dot::Dot;
+        let dot = Dot::with_config(&self.graph, &[]);
+        write!(out, "{dot}")
+    }
+}
+
+/// A structure with a [`Display`] implementation that shows information about a
+/// node index in a given graph.
+#[derive(Clone)]
+pub struct DisplayNode<'a> {
+    node: NodeIndex,
+    graph: &'a SPDG,
+    detailed: bool,
+}
+
+impl<'a> DisplayNode<'a> {
+    pub fn pretty(node: NodeIndex, graph: &'a SPDG) -> Self {
+        Self {
+            node,
+            graph,
+            detailed: true,
         }
     }
 
-    /// Construct an empty controller with the given [`CtrlTypes`].
-    pub fn with_input_types(types: CtrlTypes) -> Self {
-        Ctrl {
-            data_flow: Relation::empty(),
-            ctrl_flow: Relation::empty(),
-            types,
+    pub fn simple(node: NodeIndex, graph: &'a SPDG) -> Self {
+        Self {
+            node,
+            graph,
+            detailed: false,
         }
     }
+}
 
-    /// Add one data flow between `from` and `to`.
-    pub fn add_data_flow(&mut self, from: Cow<DataSource>, to: DataSink) {
-        let m = &mut self.data_flow.0;
-        if let Some(e) = m.get_mut(&from) {
-            e.insert(to);
+impl<'a> Display for DisplayNode<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let weight = self.graph.graph.node_weight(self.node).unwrap();
+        if self.detailed {
+            write!(
+                f,
+                "{{{}}} ({}) {} @ {}",
+                self.node.index(),
+                weight.kind,
+                weight.description,
+                weight.at
+            )
         } else {
-            m.insert(from.into_owned(), iter::once(to).collect());
+            write!(f, "{{{}}} {}", self.node.index(), weight.description)
         }
-    }
-
-    /// Add one control flow between `from` and `to`.
-    pub fn add_ctrl_flow(&mut self, from: Cow<DataSource>, to: CallSite) {
-        let m = &mut self.ctrl_flow.0;
-        if let Some(e) = m.get_mut(&from) {
-            e.insert(to);
-        } else {
-            m.insert(from.into_owned(), iter::once(to).collect());
-        }
-    }
-
-    /// Gather all [`DataSource`]s that are mentioned in this controller including data and control flow.
-    pub fn all_sources(&self) -> impl Iterator<Item = &DataSource> + '_ {
-        self.data_flow
-            .0
-            .keys()
-            .chain(self.types.0.keys())
-            .chain(self.ctrl_flow.0.keys())
-            .dedup()
-    }
-
-    /// Gather all [`DataSink`]s or [`CallSite`]s that are mentioned in this controller including data and control flow.
-    pub fn all_call_sites_or_sinks(&self) -> impl Iterator<Item = CallSiteOrDataSink> + '_ {
-        self.data_flow
-            .0
-            .values()
-            .flatten()
-            .flat_map(|s| match s {
-                DataSink::Argument { function, .. } => {
-                    vec![(*function).into(), (*s).into()]
-                }
-                _ => vec![(*s).into()],
-            })
-            .chain(self.ctrl_flow.0.values().flatten().map(|cs| (*cs).into()))
-            .dedup()
     }
 }

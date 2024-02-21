@@ -2,13 +2,13 @@
 name = "paralegal-spdg"
 version = "0.1.0"
 edition = "2021"
-description = "Graph structure created by the `paralegal-flow` etractor and consumed by policies written with the `paralegal-policy` framework."
+description = "Graph structure created by the `paralegal-flow` extractor and consumed by policies written with the `paralegal-policy` framework."
 
 [package.metadata.rust-analyzer]
 rustc_private = true
 
 [features]
-rustc = []
+rustc = ["flowistry_pdg/rustc"]
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
@@ -18,3 +18,9 @@ indexical = { workspace = true }
 itertools = "0.11.0"
 strum = { version = "0.25", features = ["derive"] }
 cfg-if = "1"
+#flowistry_pdg = { path = "../../../flowistry/crates/flowistry_pdg" }
+flowistry_pdg = { git = "https://github.com/brownsys/flowistry", rev = "d1fcc76509032dd94f5255fd03c0ad0397efe834" }
+#flowistry_pdg = { git = "https://github.com/willcrichton/flowistry", rev = "3b0a12668894220010d715092bb6e9fb2cefb5ba" }
+petgraph = { workspace = true }
+static_assertions = "1"
+dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106" }
