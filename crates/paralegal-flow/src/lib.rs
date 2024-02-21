@@ -246,7 +246,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // There isn't a nice way to do this so we hand-code what amounts to a
         // call to `cargo.clone()`, but with the one modification of removing
         // that argument.
-        let args_select_package = args.cargo_args().iter().any(|a| a.starts_with("-p") || a == "--package");
+        let args_select_package = args
+            .cargo_args()
+            .iter()
+            .any(|a| a.starts_with("-p") || a == "--package");
         if args.target().is_some() | args_select_package {
             let mut new_cmd = std::process::Command::new(cargo.get_program());
             for (k, v) in cargo.get_envs() {
@@ -259,9 +262,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             if let Some(wd) = cargo.get_current_dir() {
                 new_cmd.current_dir(wd);
             }
-            new_cmd.args(
-                cargo.get_args().filter(|a| *a != "--all")
-            );
+            new_cmd.args(cargo.get_args().filter(|a| *a != "--all"));
             *cargo = new_cmd
         }
         if let Some(target) = args.target().as_ref() {
