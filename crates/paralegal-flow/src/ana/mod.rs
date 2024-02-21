@@ -5,6 +5,7 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
+    ann::{Annotation, MarkerAnnotation},
     desc::*,
     rust::{hir::def, *},
     utils::*,

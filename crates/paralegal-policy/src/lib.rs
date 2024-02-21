@@ -53,7 +53,9 @@ extern crate core;
 
 use anyhow::{ensure, Result};
 pub use paralegal_spdg;
-use paralegal_spdg::ProgramDescription;
+pub use paralegal_spdg::{
+    traverse::EdgeSelection, GlobalNode, IntoIterGlobalNodes, ProgramDescription,
+};
 use std::{
     fs::File,
     path::{Path, PathBuf},

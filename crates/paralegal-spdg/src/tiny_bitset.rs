@@ -161,9 +161,12 @@ impl Display for DisplayTinyBitSet {
     }
 }
 
+/// Serialization that is readable. Serializes the set as a list of integers
+/// (that are set to one).
 pub mod pretty {
     use super::TinyBitSet;
 
+    /// See [module level documentation][self]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<TinyBitSet, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -172,6 +175,7 @@ pub mod pretty {
             .map(|v| v.into_iter().collect())
     }
 
+    /// See [module level documentation][self]
     pub fn serialize<S>(set: &TinyBitSet, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,

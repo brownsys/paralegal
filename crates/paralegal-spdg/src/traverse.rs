@@ -1,3 +1,5 @@
+//! Utilities for traversing an SPDG
+
 use std::collections::HashSet;
 
 use petgraph::visit::{Control, Data, DfsEvent, EdgeFiltered, EdgeRef, IntoEdgeReferences};
@@ -6,21 +8,28 @@ use crate::{EdgeInfo, EdgeKind, Node};
 
 use super::SPDG;
 
+/// Which type of edges should be considered for a given traversal
 #[derive(Clone, Copy, Eq, PartialEq, strum::EnumIs)]
 pub enum EdgeSelection {
+    /// Consider only edges with [`crate::EdgeKind::Data`]
     Data,
+    /// Consider only edges with [`crate::EdgeKind::Control`]
     Control,
+    /// Consider both data and control flow edges in any combination
     Both,
 }
 
 impl EdgeSelection {
+    /// Does this selection admit edges of type [`crate::EdgeKind::Control`]
     pub fn use_control(self) -> bool {
         matches!(self, EdgeSelection::Control | EdgeSelection::Both)
     }
+    /// Does this selection admit edges of type [`crate::EdgeKind::Data`]
     pub fn use_data(self) -> bool {
         matches!(self, EdgeSelection::Data | EdgeSelection::Both)
     }
 
+    /// Is this edge kind admissible?
     pub fn conforms(self, kind: EdgeKind) -> bool {
         matches!(
             (self, kind),
@@ -30,6 +39,7 @@ impl EdgeSelection {
         )
     }
 
+    /// Create a graph adaptor that implements this edge selection.
     pub fn filter_graph<G: IntoEdgeReferences + Data<EdgeWeight = EdgeInfo>>(
         self,
         g: G,
@@ -52,6 +62,8 @@ impl EdgeSelection {
     }
 }
 
+/// A primitive that queries whether we can reach from one set of nodes to
+/// another
 pub fn generic_flows_to(
     from: impl IntoIterator<Item = Node>,
     edge_selection: EdgeSelection,
