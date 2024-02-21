@@ -101,7 +101,7 @@ async fn arguments_work(d: UserData) {
 #[paralegal::analyze]
 async fn inlining_crate_local_async_fns() {
     let mut user_data = get_user_data();
-inlineable_async_dp_user_data(&mut user_data).await;
+    inlineable_async_dp_user_data(&mut user_data).await;
     send_user_data(&user_data);
 }
 

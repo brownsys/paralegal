@@ -21,7 +21,7 @@ fn main() -> Result<()> {
 fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
     let user_data_types = ctx.marked_type(Marker::new_intern("user_data"));
 
-    let found = ctx.all_controllers().any(|(deleter_id, ignored)| {
+    let found = ctx.all_controllers().any(|(deleter_id, _ignored)| {
         let delete_sinks = ctx
             .all_nodes_for_ctrl(deleter_id)
             .filter(|n| ctx.has_marker(Marker::new_intern("deletes"), *n))
