@@ -1,0 +1,205 @@
+# This directory contains the scripts that run our CI activity and checks.
+# The idea is that these scripts let you easily replicate CI steps locally.
+#
+# The most common tasks are
+# - `fix-all` tries to fix all the formatting and code style issues. This is
+#   most likely the command you want to run.
+# - `check-all` runs all the formatting and code-style checks we also run in CI
+#   This performs all teh same operations as `fix-ll` but complains instead of
+#   solving them.
+# - `pdg-tests` which runs our current complete test suite
+#
+# The CI actually runs some of these checks in separate steps to provide easier
+# insight into which part failed.
+[env]
+TEST_DIR = "crates/paralegal-flow/tests"
+CARGO_TERM_VERBOSE = { condition = { env_true = ["CI"] }, value = "true" }
+
+[config]
+default_to_workspace = false
+
+[tasks.install]
+command = "cargo"
+args = ["install", "--locked", "--path", "crates/paralegal-flow"]
+
+[tasks.pdg-tests]
+description = "The suite of synthetic tests for the PDG and the policy framweork."
+dependencies = [
+    "analyzer-tests",
+    "policy-framework-tests",
+    "test-policies",
+    "guide-project",
+]
+
+[tasks.check-all]
+description = "Perform all formatting-like checks. This is the same set that runs in the CI."
+dependencies = ["format-check-all", "clippy-check-all", "doc-check"]
+
+[tasks.fix-all]
+description = """\
+Attempt to perform any formatting and code structure related fixes.
+
+Note: This uses the clippy-fix command under the hood. This can introduce
+breaking changes and so this tscript only passes `--allow-staged` to the
+fix command. What this means for you is that you need to stage (or commit)
+your changes in git for the fix command to work. This is a precaution that
+allows you to inspect, test and potentially reject clippy's changes before
+accepting them.
+
+Because we invoke the fix command multiple separate time it may fail again
+because of unstaged changes after applying the first fix. Inspect the changes,
+stage them and rerun the script until no more errors occur.
+"""
+dependencies = ["format-all", "clippy-all"]
+
+[tasks.analyzer-tests]
+description = "Low-level tests for the PDG emitted by the analyzer specifically."
+command = "cargo"
+args = [
+    "test",
+    "-p",
+    "paralegal-flow",
+    "--test",
+    "non_transitive_graph_tests",
+    "--test",
+    "call_chain_analysis_tests",
+    "--test",
+    "control_flow_tests",
+    "--test",
+    "new_alias_analysis_tests",
+    "--test",
+    "async_tests",
+]
+
+[tasks.policy-framework-tests]
+description = "Tests related to the correctness of the policy framework."
+command = "cargo"
+args = ["test", "-p", "paralegal-policy", "--lib"]
+
+[tasks.test-policies]
+description = "Attempts to build the test policies to ensure their API is still served."
+cwd = "props"
+command = "cargo"
+args = ["build"]
+
+[tasks.guide-project]
+description = "Build and run the policy from the guide."
+cwd = "guide/deletion-policy"
+command = "cargo"
+args = ["run"]
+
+[tasks.doc-check]
+dependencies = [
+    "rustdoc-paralegal-spdg",
+    "rustdoc-paralegal-policy",
+    "rustdoc-paralegal",
+]
+
+[tasks.rustdoc-one]
+private = true
+command = "cargo"
+args = ["rustdoc", "-p", "${RUSTDOC_TARGET}", "--", "-Drustdoc::all"]
+
+[tasks.rustdoc-paralegal-spdg]
+extend = "rustdoc-one"
+env = { "RUSTDOC_TARGET" = "paralegal-spdg" }
+
+[tasks.rustdoc-paralegal-policy]
+extend = "rustdoc-one"
+env = { "RUSTDOC_TARGET" = "paralegal-policy" }
+
+[tasks.rustdoc-paralegal]
+extend = "rustdoc-one"
+env = { "RUSTDOC_TARGET" = "paralegal" }
+
+[tasks.format-all]
+env = { "FORMAT_ARGS" = "fmt", "INCLUDE_TESTS" = "true" }
+run_task = "format-run"
+
+[tasks.format-check-all]
+env = { "FORMAT_ARGS" = "fmt --check", "INCLUDE_TESTS" = "true" }
+run_task = "format-run"
+
+[tasks.clippy-all]
+description = """\
+Note: You are using the clippy-fix command. Because this can introduce breaking
+changes this script only passes `--allow-staged` to the fix command. What this
+means for you is that you need to stage (or commit) your changes in git for the
+fix command to work. This is a precaution that allows you to inspect, test and
+potentially reject clippy's changes before accepting them.
+
+Because we invoke the fix command multiple separate time it may fail again
+because of unstaged changes after applying the first fix. Inspect the changes,
+stage them and rerun the script until no more errors occur.
+"""
+env = { "FORMAT_ARGS" = "clippy --fix --allow-staged --all -- -Dwarnings" }
+run_task = "format-run"
+
+[tasks.clippy-check-all]
+env = { "FORMAT_ARGS" = "clippy --all -- -Dwarnings" }
+run_task = "format-run"
+
+[tasks.format-base]
+description = """\
+This is bit ugly, because we want to reuse this tasks
+
+- In different directories (controlled by the `FORMAT_WD` env variable)
+- With different base comamnds (`cargo clippy` vs `cargo fmt`)
+- With different goals (check vs fix)
+
+The last two are both done via the `FORMAT_ARGS` command.
+
+Basically this task doesn't do anything, the only reason it exists is so that we can
+combine multiple partially configured runs of this in the `format-run` task. That run
+configures the various places where this task is called on, then the top-level tasks
+(`format-check-all`, `format-all`, `clippy-check-all`, `clippy-all`) select the actual
+command to run but is able to reuse the targets to run the commands on.
+"""
+private = true
+cwd = "${FORMAT_WD}"
+command = "cargo"
+args = ["@@split(FORMAT_ARGS, )"]
+
+[tasks.format-run]
+private = true
+dependencies = [
+    "format-props",
+    "format-guide-example",
+    "format-guide-policy",
+    "format-tests",
+]
+
+[tasks.format-props]
+private = true
+env = { "FORMAT_WD" = "." }
+run_task = "format-base"
+
+[tasks.format-guide-example]
+private = true
+env = { "FORMAT_WD" = "guide/file-db-example" }
+run_task = "format-base"
+
+[tasks.format-guide-policy]
+private = true
+env = { "FORMAT_WD" = "guide/deletion-policy" }
+run_task = "format-base"
+
+[tasks.format-tests]
+private = true
+condition = { env_set = ["INCLUDE_TESTS"] }
+script_runner = "@duckscript"
+script = '''
+wd = pwd
+test_glob = concat ${TEST_DIR} /*
+test_dirs = glob_array ${test_glob}
+for dir in ${test_dirs}
+    cargo_toml_path = concat ${dir} /Cargo.toml
+    if is_path_exists ${cargo_toml_path}
+        cd ${dir}
+        exec --fail-on-error cargo %{FORMAT_ARGS}
+        cd ${wd}
+    end
+end
+cd crates/paralegal-policy/tests/test-crate
+exec cargo %{FORMAT_ARGS}
+'''

@@ -9,8 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  FORGE_REVISION: aa2e8a67a8ff38db145dcb1a1aa5c02d0b851235
-  racket_version: 8.1
 
 jobs:
   compiler-tests:
@@ -36,10 +34,15 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+    - name: Install cargo-make
+      uses: actions-rs/cargo@v1
+      with:
+        command: install
+        args: --debug cargo-make
     - name: Build
-      run: cargo install --locked --path crates/paralegal-flow --verbose
+      run: cargo make install
     - name: Run tests
-      run: scripts/compiler-tests.sh
+      run: cargo make pdg-tests
 
   format-check:
     name: Format Control
@@ -53,8 +56,13 @@ jobs:
       with:
         path: ~/.rustup
         key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+    - name: Install cargo-make
+      uses: actions-rs/cargo@v1
+      with:
+        command: install
+        args: --debug cargo-make
     - name: Run checks
-      run: scripts/format.sh fmt-check
+      run: cargo make format-check-all
 
   linting:
     name: Clippy
@@ -76,8 +84,13 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+    - name: Install cargo-make
+      uses: actions-rs/cargo@v1
+      with:
+        command: install
+        args: --debug cargo-make
     - name: Here come the complaints
-      run: scripts/format.sh clippy-check
+      run: cargo make clippy-check-all
 
   documentation:
     name: Documentation Test
@@ -99,11 +112,10 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+    - name: Install cargo-make
+      uses: actions-rs/cargo@v1
+      with:
+        command: install
+        args: --debug cargo-make
     - name: Here come the complaints
-      run: scripts/doc-check.sh
-
-  integration-tests:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
+      run: cargo make doc-check
