@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use paralegal_spdg::{rustc_proxies, tiny_bitset_pretty, Identifier, TinyBitSet, TypeId};
 
+pub mod db;
 pub mod parse;
 
 /// Types of annotations we support.

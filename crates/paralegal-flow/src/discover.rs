@@ -2,7 +2,7 @@
 //! and discovers functions marked for analysis.
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
-use crate::{ana::SPDGGenerator, consts, desc::*, marker_db::MarkerDatabase, rust::*, utils::*};
+use crate::{ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, rust::*, utils::*};
 
 use hir::{
     def_id::DefId,

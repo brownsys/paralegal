@@ -4,25 +4,29 @@
 //! [`CollectingVisitor`](crate::discover::CollectingVisitor) and then calling
 //! [`analyze`](SPDGGenerator::analyze).
 
+use super::discover::FnToAnalyze;
 use crate::{
     ann::{Annotation, MarkerAnnotation},
     desc::*,
     rust::{hir::def, *},
+    ty::TyKind,
     utils::*,
     DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
+use paralegal_spdg::Node;
+
 use std::borrow::Cow;
 use std::rc::Rc;
 
 use anyhow::{anyhow, Result};
 use either::Either;
-use flowistry::pdg::graph::{DepEdgeKind, DepGraph, DepNode};
-use flowistry::pdg::CallChanges;
-use flowistry::pdg::SkipCall::Skip;
-use paralegal_spdg::Node;
+use flowistry::pdg::{
+    graph::{DepEdgeKind, DepGraph, DepNode},
+    CallChanges,
+    SkipCall::Skip,
+};
+use itertools::Itertools;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
-
-use super::discover::FnToAnalyze;
 
 mod inline_judge;
 
@@ -115,8 +119,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .iter()
             .map(|id| (*id, def_info_for_item(*id, tcx)))
             .collect();
+        let type_info = self.collect_type_info();
+        type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
-            type_info: self.collect_type_info(&controllers),
+            type_info,
             instruction_info: self.collect_instruction_info(&controllers),
             controllers,
             def_info,
@@ -166,41 +172,33 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
     /// Create a [`TypeDescription`] record for each marked type that as
     /// mentioned in the PDG.
-    fn collect_type_info(
-        &self,
-        controllers: &HashMap<Endpoint, SPDG>,
-    ) -> HashMap<TypeId, TypeDescription> {
-        let types = controllers
-            .values()
-            .flat_map(|v| v.type_assigns.values())
-            .flat_map(|t| &t.0)
-            .copied()
-            .collect::<HashSet<_>>();
-        types
-            .into_iter()
-            .map(|t| {
-                (
-                    t,
-                    TypeDescription {
-                        rendering: format!("{t:?}"),
-                        otypes: if let Some(l) = t.as_local() {
-                            self.marker_ctx
-                                .local_annotations(l)
-                                .iter()
-                                .filter_map(Annotation::as_otype)
-                                .collect()
-                        } else {
-                            vec![]
-                        },
-                        markers: self
-                            .marker_ctx
-                            .combined_markers(t)
-                            .map(|t| t.marker)
-                            .collect(),
-                    },
-                )
-            })
-            .collect()
+    fn collect_type_info(&self) -> TypeInfoMap {
+        self.marker_ctx
+            .all_annotations()
+            .filter(|(id, _)| def_kind_for_item(*id, self.tcx).is_type())
+            .into_grouping_map()
+            .fold_with(
+                |id, _| TypeDescription {
+                    rendering: format!("{id:?}"),
+                    otypes: vec![],
+                    markers: vec![],
+                },
+                |mut desc, _, ann| {
+                    match ann {
+                        Either::Right(MarkerAnnotation { refinement, marker })
+                        | Either::Left(Annotation::Marker(MarkerAnnotation {
+                            refinement,
+                            marker,
+                        })) => {
+                            assert!(refinement.on_self());
+                            desc.markers.push(*marker)
+                        }
+                        Either::Left(Annotation::OType(id)) => desc.otypes.push(*id),
+                        _ => panic!("Unexpected type of annotation {ann:?}"),
+                    }
+                    desc
+                },
+            )
     }
 }
 
@@ -473,6 +471,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) {
         let place_ty = self.determine_place_type(weight);
 
+        if matches!(
+            place_ty.ty.peel_refs().kind(),
+            TyKind::FnDef { .. }
+                | TyKind::FnPtr(_)
+                | TyKind::Closure { .. }
+                | TyKind::Generator { .. }
+        ) {
+            // Functions are handled separately
+            return;
+        }
         let type_markers = self.type_is_marked(place_ty, is_external_call_source);
         self.known_def_ids.extend(type_markers.iter().copied());
         if !type_markers.is_empty() {
@@ -657,6 +665,25 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 }
 
+/// Checks the invariant that [`SPDGGenerator::collect_type_info`] should
+/// produce a map that is a superset of the types found in all the `types` maps
+/// on [`SPDG`].
+///
+/// Additionally this also inserts missing types into the map *only* for
+/// generators created by async functions.
+fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
+    controllers
+        .values()
+        .flat_map(|spdg| spdg.type_assigns.values())
+        .flat_map(|types| &types.0)
+        .for_each(|t| {
+            assert!(
+                types.contains_key(t),
+                "Invariant broken: Type {t:?} is not present in type map"
+            );
+        })
+}
+
 /// If `did` is a method of an `impl` of a trait, then return the `DefId` that
 /// refers to the method on the trait definition.
 fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
@@ -675,9 +702,8 @@ fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
     Some(id)
 }
 
-fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
-    let name = crate::utils::identifier_for_item(tcx, id);
-    let kind = match tcx.def_kind(id) {
+fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
+    match tcx.def_kind(id) {
         def::DefKind::Closure => DefKind::Closure,
         def::DefKind::Generator => DefKind::Generator,
         kind if kind.is_fn_like() => DefKind::Fn,
@@ -687,7 +713,12 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
         | def::DefKind::TyAlias { .. }
         | def::DefKind::Enum => DefKind::Type,
         _ => unreachable!("{}", tcx.def_path_debug_str(id)),
-    };
+    }
+}
+
+fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
+    let name = crate::utils::identifier_for_item(tcx, id);
+    let kind = def_kind_for_item(id, tcx);
     let def_path = tcx.def_path(id);
     let path = std::iter::once(Identifier::new(tcx.crate_name(def_path.krate)))
         .chain(def_path.data.iter().filter_map(|segment| {

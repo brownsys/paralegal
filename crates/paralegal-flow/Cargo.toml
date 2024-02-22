@@ -55,7 +55,7 @@ toml = "0.7"
 # This is just for pinning this dependency
 camino = "= 1.0.9"
 serial_test = "2.0.0"
-itertools = "0.11.0"
+itertools = "0.12"
 anyhow = "1.0.72"
 thiserror = "1"
 
