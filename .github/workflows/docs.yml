@@ -21,17 +21,19 @@ jobs:
       run: |
         git config --local user.email "docmaster+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
+    - name: Install cargo-make
+      uses: actions-rs/cargo@v1
+      with:
+        command: install
+        args: --debug cargo-make
     - name: Prepare
       run: |
         cargo doc --document-private-items
         mkdir docs
         cp -R target/doc docs/libs
         rm -R .github
-    - name: Copy Rustc Docs
-      run: cargo run
-      working-directory: doc-src
-    - name: Copy index page
-      run: cp doc-src/index.html docs/index.html
+    - name: Copy rustc docs and index page
+      run: cargo make populate-doc-dir
     - name: Commit Doc Generation
       run: |
         git add docs
