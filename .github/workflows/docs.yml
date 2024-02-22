@@ -22,7 +22,7 @@ jobs:
         git config --local user.email "docmaster+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
     - name: Install cargo-make
-      run: cargo install --debug cargo-make
+      run: cargo install --force --debug cargo-make
     - name: Prepare
       run: |
         cargo doc --document-private-items

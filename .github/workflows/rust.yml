@@ -35,7 +35,7 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Install cargo-make
-      run: cargo install --debug cargo-make
+      run: cargo install --force --debug cargo-make
     - name: Build
       run: cargo make install
     - name: Run tests
@@ -54,7 +54,7 @@ jobs:
         path: ~/.rustup
         key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
     - name: Install cargo-make
-      run: cargo install --debug cargo-make
+      run: cargo install --force --debug cargo-make
     - name: Run checks
       run: cargo make format-check-all
 
@@ -79,7 +79,7 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Install cargo-make
-      run: cargo install --debug cargo-make
+      run: cargo install --force --debug cargo-make
     - name: Here come the complaints
       run: cargo make clippy-check-all
 
@@ -104,6 +104,6 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Install cargo-make
-      run: cargo install --debug cargo-make
+      run: cargo install --force --debug cargo-make
     - name: Here come the complaints
       run: cargo make doc-check
