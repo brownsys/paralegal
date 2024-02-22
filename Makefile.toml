@@ -132,12 +132,18 @@ Because we invoke the fix command multiple separate time it may fail again
 because of unstaged changes after applying the first fix. Inspect the changes,
 stage them and rerun the script until no more errors occur.
 """
-env = { "FORMAT_ARGS" = "clippy --fix --allow-staged --all -- -Dwarnings" }
 run_task = "format-run"
 
+[tasks.clippy-all.env]
+FORMAT_ARGS = "clippy --fix --allow-staged --all -- -Dwarnings"
+INCLUDE_TESTS = { unset = true }
+
 [tasks.clippy-check-all]
-env = { "FORMAT_ARGS" = "clippy --all -- -Dwarnings" }
 run_task = "format-run"
+
+[tasks.clippy-check-all.env]
+FORMAT_ARGS = "clippy --all -- -Dwarnings"
+INCLUDE_TESTS = { unset = true }
 
 [tasks.format-base]
 description = """\
