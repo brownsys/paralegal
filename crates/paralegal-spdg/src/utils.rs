@@ -1,6 +1,10 @@
+//! Utility functions and structs
+
 use std::fmt;
 use std::fmt::{Display, Formatter, Write};
 
+/// Write all elements from `it` into the formatter `fmt` using `f`, separating
+/// them with `sep`
 pub fn write_sep<
     E,
     I: IntoIterator<Item = E>,
@@ -23,10 +27,15 @@ pub fn write_sep<
     Ok(())
 }
 
+/// Has a [`Display`] implementation if the elements of the iterator inside have
+/// one. This will render them surrounded by `[` brackets and separated by `, `
+/// comma and space
+#[derive(Clone)]
 pub struct DisplayList<I> {
     iter: I,
 }
 
+/// Display this iterator as a list
 pub fn display_list<I>(iter: I) -> DisplayList<I> {
     DisplayList { iter }
 }

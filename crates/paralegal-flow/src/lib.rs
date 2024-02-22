@@ -79,7 +79,7 @@ pub use either::Either;
 pub use rustc_span::Symbol;
 
 pub mod ana;
-pub mod ann_parse;
+pub mod ann;
 mod args;
 pub mod dbg;
 mod discover;

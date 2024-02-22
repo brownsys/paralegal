@@ -1,3 +1,5 @@
+//! Display SPDGs as dot graphs
+
 use crate::{GlobalEdge, InstructionInfo, Node, ProgramDescription};
 use dot::{CompassPoint, Edges, Id, LabelText, Nodes};
 use flowistry_pdg::rustc_portable::LocalDefId;
@@ -186,10 +188,12 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
     }
 }
 
+/// Dump all SPDGs in a single dot expression
 pub fn dump<W: std::io::Write>(spdg: &ProgramDescription, out: W) -> std::io::Result<()> {
     dump_for_selection(spdg, out, |_| true)
 }
 
+/// Dump the SPDG for one select controller in dot format
 pub fn dump_for_controller(
     spdg: &ProgramDescription,
     out: impl std::io::Write,
@@ -210,6 +214,7 @@ pub fn dump_for_controller(
     Ok(())
 }
 
+/// Dump a selection of controllers into a dot expression.
 pub fn dump_for_selection(
     spdg: &ProgramDescription,
     mut out: impl std::io::Write,
