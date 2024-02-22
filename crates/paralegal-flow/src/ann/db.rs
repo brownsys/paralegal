@@ -20,7 +20,7 @@ use crate::{
         resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, FnResolutionExt,
         IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt, TyExt,
     },
-    DefId, HashMap, LocalDefId, TyCtxt,
+    DefId, Either, HashMap, LocalDefId, TyCtxt,
 };
 use rustc_utils::cache::CopyCache;
 
@@ -274,6 +274,25 @@ impl<'tcx> MarkerCtx<'tcx> {
             .into_iter()
             .flatten(),
         )
+    }
+
+    /// Iterate over all discovered annotations, whether local or external
+    pub fn all_annotations(
+        &self,
+    ) -> impl Iterator<Item = (DefId, Either<&Annotation, &MarkerAnnotation>)> {
+        self.0
+            .local_annotations
+            .iter()
+            .flat_map(|(&id, anns)| {
+                anns.iter()
+                    .map(move |ann| (id.to_def_id(), Either::Left(ann)))
+            })
+            .chain(
+                self.0
+                    .external_annotations
+                    .iter()
+                    .flat_map(|(&id, anns)| anns.iter().map(move |ann| (id, Either::Right(ann)))),
+            )
     }
 }
 /// The structure inside of [`MarkerCtx`].

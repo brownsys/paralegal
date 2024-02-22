@@ -179,18 +179,24 @@ impl InstructionInfo {
     }
 }
 
+/// information about each encountered type.
+pub type TypeInfoMap = HashMap<TypeId, TypeDescription>;
+
+/// Endpoints with their SPDGs
+pub type ControllerMap = HashMap<Endpoint, SPDG>;
+
 /// The annotated program dependence graph.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
     /// Entry points we analyzed and their PDGs
     #[cfg_attr(feature = "rustc", serde(with = "ser_localdefid_map"))]
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
-    pub controllers: HashMap<Endpoint, SPDG>,
+    pub controllers: ControllerMap,
 
     /// Metadata about types
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
-    pub type_info: HashMap<TypeId, TypeDescription>,
+    pub type_info: TypeInfoMap,
 
     /// Metadata about the instructions that are executed at all program
     /// locations we know about.
