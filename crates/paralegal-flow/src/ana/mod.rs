@@ -672,7 +672,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
 /// Additionally this also inserts missing types into the map *only* for
 /// generators created by async functions.
 fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
-    println!("{types:?}");
     controllers
         .values()
         .flat_map(|spdg| spdg.type_assigns.values())
