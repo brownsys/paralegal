@@ -4,26 +4,29 @@
 //! [`CollectingVisitor`](crate::discover::CollectingVisitor) and then calling
 //! [`analyze`](SPDGGenerator::analyze).
 
+use super::discover::FnToAnalyze;
 use crate::{
     ann::{Annotation, MarkerAnnotation},
     desc::*,
     rust::{hir::def, *},
+    ty::TyKind,
     utils::*,
     DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
+use paralegal_spdg::Node;
+
 use std::borrow::Cow;
 use std::rc::Rc;
 
 use anyhow::{anyhow, Result};
 use either::Either;
-use flowistry::pdg::graph::{DepEdgeKind, DepGraph, DepNode};
-use flowistry::pdg::CallChanges;
-use flowistry::pdg::SkipCall::Skip;
+use flowistry::pdg::{
+    graph::{DepEdgeKind, DepGraph, DepNode},
+    CallChanges,
+    SkipCall::Skip,
+};
 use itertools::Itertools;
-use paralegal_spdg::Node;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
-
-use super::discover::FnToAnalyze;
 
 mod inline_judge;
 
@@ -468,6 +471,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) {
         let place_ty = self.determine_place_type(weight);
 
+        if matches!(
+            place_ty.ty.peel_refs().kind(),
+            TyKind::FnDef { .. }
+                | TyKind::FnPtr(_)
+                | TyKind::Closure { .. }
+                | TyKind::Generator { .. }
+        ) {
+            // Functions are handled separately
+            return;
+        }
         let type_markers = self.type_is_marked(place_ty, is_external_call_source);
         self.known_def_ids.extend(type_markers.iter().copied());
         if !type_markers.is_empty() {
@@ -654,17 +667,21 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
 
 /// Checks the invariant that [`SPDGGenerator::collect_type_info`] should
 /// produce a map that is a superset of the types found in all the `types` maps
-/// on [`SPDG`]
+/// on [`SPDG`].
+///
+/// Additionally this also inserts missing types into the map *only* for
+/// generators created by async functions.
 fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
+    println!("{types:?}");
     controllers
         .values()
         .flat_map(|spdg| spdg.type_assigns.values())
-        .flat_map(|types| types.0.iter())
+        .flat_map(|types| &types.0)
         .for_each(|t| {
             assert!(
                 types.contains_key(t),
-                "Type {t:?} was not found in the type map"
-            )
+                "Invariant broken: Type {t:?} is not present in type map"
+            );
         })
 }
 

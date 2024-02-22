@@ -210,7 +210,7 @@ pub struct ProgramDescription {
 }
 
 /// Metadata about a type
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TypeDescription {
     /// How rustc would debug print this type
     pub rendering: String,
