@@ -2,7 +2,7 @@ name: Automated Documentation Update
 
 on:
   push:
-    branches: [ "docs-via-make" ]
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,7 +15,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        ref: 'docs-via-make'
+        ref: 'main'
         fetch-depth: 0
     - name: Configure Git
       run: |
