@@ -108,7 +108,12 @@ pub struct DfppPlugin;
 /// forwarded and `_progname` is only to comply with the calling convention of
 /// `cargo` (it passes the program name as first argument).
 #[derive(clap::Parser)]
-#[clap(version = concat!(crate_version!(), "\nbuilt ", env!("BUILD_TIME"), "\ncommit ", env!("COMMIT_HASH")), about)]
+#[clap(version = concat!(
+    crate_version!(),
+    "\nbuilt ", env!("BUILD_TIME"),
+    "\ncommit ", env!("COMMIT_HASH"),
+    "\nwith ", env!("RUSTC_VERSION"),
+) , about)]
 struct ArgWrapper {
     /// This argument doesn't do anything, but when cargo invokes `cargo-paralegal-flow`
     /// it always provides "paralegal-flow" as the first argument and since we parse with
@@ -240,7 +245,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // All right so actually all that's happening here is that we drop the
         // "--all" that rustc_plugin automatically adds in such cases where the
         // arguments passed to paralegal indicate that we are supposed to run
-        // only on select crates.
+        // only on select crates. Also we replace the `RUSTC_WORKSPACE_WRAPPER`
+        // argument with `RUSTC_WRAPPER`
+        // because of https://github.com/cognitive-engineering-lab/rustc_plugin/issues/19
         //
         // There isn't a nice way to do this so we hand-code what amounts to a
         // call to `cargo.clone()`, but with the one modification of removing
@@ -252,7 +259,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         if args.target().is_some() | args_select_package {
             let mut new_cmd = std::process::Command::new(cargo.get_program());
             for (k, v) in cargo.get_envs() {
-                if let Some(v) = v {
+                if k == "RUSTC_WORKSPACE_WRAPPER" {
+                    new_cmd.env("RUSTC_WRAPPER", v.unwrap());
+                } else if let Some(v) = v {
                     new_cmd.env(k, v);
                 } else {
                     new_cmd.env_remove(k);
@@ -265,8 +274,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             *cargo = new_cmd
         }
         if let Some(target) = args.target().as_ref() {
-            assert!(!args_select_package);
-            cargo.args(["-p", target]);
+            if !args_select_package {
+                cargo.args(["-p", target]);
+            }
         }
         cargo.args(args.cargo_args());
     }
