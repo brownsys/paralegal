@@ -631,13 +631,11 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     && matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::End)
             })
             .map(|n| n.id())
-            .peekable();
-        let picked = return_candidates.next()?;
-        assert!(
-            return_candidates.peek().is_none(),
-            "Found too many candidates for the return."
-        );
-        Some(picked)
+            .collect::<Vec<_>>();
+        if return_candidates.len() != 1 {
+            warn!("Found too many candidates for the return: {return_candidates:?}.");
+        }
+        return_candidates.pop()
     }
 
     /// Determine the set if nodes corresponding to the inputs to the
@@ -712,7 +710,7 @@ fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
         | def::DefKind::OpaqueTy
         | def::DefKind::TyAlias { .. }
         | def::DefKind::Enum => DefKind::Type,
-        _ => unreachable!("{}", tcx.def_path_debug_str(id)),
+        kind => unreachable!("{} ({:?})", tcx.def_path_debug_str(id), kind),
     }
 }
 
