@@ -954,7 +954,8 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
         let def_kind = self.def_kind(local_def_id);
         if !def_kind.is_fn_like() {
             return Err(BodyResolutionError::NotAFunction);
-        } else if def_kind == DefKind::AssocFn && let Some(trt) = self.trait_of_item(local_def_id.to_def_id()) {
+        }
+        if let Some(trt) = is_non_default_trait_method(self, local_def_id.to_def_id()) {
             return Err(BodyResolutionError::IsTraitAssocFn(trt));
         }
         Ok(rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts(self, local_def_id))
@@ -990,6 +991,16 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
             }
         }
     }
+}
+
+pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId> {
+    let assoc_item = tcx.opt_associated_item(function)?;
+    if assoc_item.container != ty::AssocItemContainer::TraitContainer
+        || assoc_item.defaultness(tcx).has_value()
+    {
+        return None;
+    }
+    assoc_item.trait_item_def_id
 }
 
 /// A struct that can be used to apply a [`FnMut`] to every [`Place`] in a MIR
