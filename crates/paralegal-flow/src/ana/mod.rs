@@ -502,7 +502,13 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             move |info| {
                 let changes = CallChanges::default();
 
-                if judge.should_inline(info.callee) {
+                if is_non_default_trait_method(tcx, info.callee.def_id()).is_some() {
+                    tcx.sess.span_warn(
+                        tcx.def_span(info.callee.def_id()),
+                        "Skipping analysis of unresolvable trait method.",
+                    );
+                    changes.with_skip(Skip)
+                } else if judge.should_inline(info.callee) {
                     changes
                 } else {
                     changes.with_skip(Skip)
