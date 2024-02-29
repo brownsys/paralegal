@@ -335,27 +335,17 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
-        let lvl = if plugin_args.debug().is_enabled() {
-            log::LevelFilter::Debug
-        } else if plugin_args.verbose() {
-            log::LevelFilter::Info
-        } else {
-            log::LevelFilter::Warn
-        };
+        let lvl = plugin_args.verbosity();
         // //let lvl = log::LevelFilter::Debug;
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
-            .with_module_level("flowistry", log::LevelFilter::Error)
+            //.with_module_level("flowistry", log::LevelFilter::Error)
             .with_module_level("rustc_utils", log::LevelFilter::Error)
             .without_timestamps()
             .init()
             .unwrap();
-        if matches!(*plugin_args.debug(), LogLevelConfig::Targeted(..)) {
-            log::set_max_level(if plugin_args.verbose() {
-                log::LevelFilter::Info
-            } else {
-                log::LevelFilter::Warn
-            });
+        if matches!(*plugin_args.direct_debug(), LogLevelConfig::Targeted(..)) {
+            log::set_max_level(log::LevelFilter::Warn);
         }
         let opts = Box::leak(Box::new(plugin_args));
 

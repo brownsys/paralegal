@@ -52,6 +52,7 @@ impl TryFrom<ClapArgs> for Args {
             dump,
             marker_control,
             cargo_args,
+            trace,
         } = value;
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
@@ -77,11 +78,19 @@ impl TryFrom<ClapArgs> for Args {
         };
         let log_level_config = match debug_target {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
-            _ if debug => LogLevelConfig::Enabled,
             _ => LogLevelConfig::Disabled,
         };
+        let verbosity = if trace {
+            log::LevelFilter::Trace
+        } else if debug {
+            log::LevelFilter::Debug
+        } else if verbose {
+            log::LevelFilter::Info
+        } else {
+            log::LevelFilter::Warn
+        };
         Ok(Args {
-            verbose,
+            verbosity,
             log_level_config,
             result_path,
             relaxed,
@@ -100,7 +109,7 @@ impl TryFrom<ClapArgs> for Args {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Args {
     /// Print additional logging output (up to the "info" level)
-    verbose: bool,
+    verbosity: log::LevelFilter,
     log_level_config: LogLevelConfig,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
@@ -141,6 +150,8 @@ pub struct ClapArgs {
     /// is enabled.
     #[clap(long, env = "PARALEGAL_DEBUG")]
     debug: bool,
+    #[clap(long, env = "PARALEGAL_TRACE")]
+    trace: bool,
     #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
     debug_target: Option<String>,
     /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
@@ -276,8 +287,12 @@ pub enum LogLevelConfig {
     Targeted(String),
     /// Logging for this level is not directly enabled
     Disabled,
-    /// Logging for this level was directly enabled
-    Enabled,
+}
+
+impl LogLevelConfig {
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, LogLevelConfig::Targeted(_))
+    }
 }
 
 impl std::fmt::Display for LogLevelConfig {
@@ -286,18 +301,12 @@ impl std::fmt::Display for LogLevelConfig {
     }
 }
 
-impl LogLevelConfig {
-    pub fn is_enabled(&self) -> bool {
-        matches!(self, LogLevelConfig::Targeted(..) | LogLevelConfig::Enabled)
-    }
-}
-
 impl Args {
     pub fn target(&self) -> Option<&str> {
         self.target.as_deref()
     }
     /// Returns the configuration specified for the `--debug` option
-    pub fn debug(&self) -> &LogLevelConfig {
+    pub fn direct_debug(&self) -> &LogLevelConfig {
         &self.log_level_config
     }
     /// Access the debug arguments
@@ -317,8 +326,8 @@ impl Args {
         self.result_path.as_path()
     }
     /// Should we output additional log messages (level `info`)
-    pub fn verbose(&self) -> bool {
-        self.verbose
+    pub fn verbosity(&self) -> log::LevelFilter {
+        self.verbosity
     }
     /// Warn instead of crashing the program in case of non-fatal errors
     pub fn relaxed(&self) -> bool {

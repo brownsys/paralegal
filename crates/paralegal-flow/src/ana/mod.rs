@@ -22,7 +22,7 @@ use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry::pdg::{
     graph::{DepEdgeKind, DepGraph, DepNode},
-    CallChanges,
+    is_async_trait_fn, CallChanges,
     SkipCall::Skip,
 };
 use itertools::Itertools;
@@ -73,7 +73,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     ///
     /// Should only be called after the visit.
     pub fn analyze(&self, targets: Vec<FnToAnalyze>) -> Result<ProgramDescription> {
-        if let LogLevelConfig::Targeted(s) = self.opts.debug() {
+        if let LogLevelConfig::Targeted(s) = self.opts.direct_debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
                 "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
@@ -245,7 +245,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let dep_graph = Rc::new(Self::create_flowistry_graph(generator, local_def_id)?);
 
         if generator.opts.dbg().dump_flowistry_pdg() {
-            dep_graph.generate_graphviz(format!("{}.flowistry-pdg.pdf", target.name))?
+            dep_graph.generate_graphviz(format!(
+                "{}.flowistry-pdg.pdf",
+                generator.tcx.def_path_str(target.def_id)
+            ))?
         }
 
         Ok(Self {
@@ -271,6 +274,11 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// Is the top-level function (entrypoint) an `async fn`
     fn entrypoint_is_async(&self) -> bool {
         self.tcx().asyncness(self.local_def_id).is_async()
+            || is_async_trait_fn(
+                self.tcx(),
+                self.local_def_id.to_def_id(),
+                &self.tcx().body_for_def_id(self.local_def_id).unwrap().body,
+            )
     }
 
     /// Find the statement at this location or fail.
@@ -405,8 +413,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let resolution = rest.iter().fold(
             FnResolution::Partial(self.local_def_id.to_def_id()),
             |resolution, caller| {
-                let crate::Either::Right(terminator) = self.expect_stmt_at(*caller) else {
-                    unreachable!()
+                let terminator = match self.expect_stmt_at(*caller) {
+                    Either::Right(t) => t,
+                    Either::Left(stmt) => unreachable!("{stmt:?}\nat {caller} in {}", weight.at),
                 };
                 let term = match resolution {
                     FnResolution::Final(instance) => {
@@ -516,8 +525,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             },
         );
         if opts.dbg().dump_mir() {
-            let mut file =
-                std::fs::File::create(format!("{}.mir", body_name_pls(tcx, local_def_id)))?;
+            let mut file = std::fs::File::create(format!(
+                "{}.mir",
+                tcx.def_path_str(local_def_id.to_def_id())
+            ))?;
             mir::pretty::write_mir_fn(
                 tcx,
                 &tcx.body_for_def_id_default_policy(local_def_id)
@@ -740,8 +751,8 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
 /// matches the one selected with the `debug` flag on the command line (and
 /// reset it afterward).
 fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
-    if matches!(opts.debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
-        with_temporary_logging_level(log::LevelFilter::Debug, f)
+    if matches!(opts.direct_debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
+        with_temporary_logging_level(opts.verbosity(), f)
     } else {
         f()
     }

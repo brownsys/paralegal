@@ -19,7 +19,7 @@ itertools = "0.11.0"
 strum = { version = "0.25", features = ["derive"] }
 cfg-if = "1"
 #flowistry_pdg = { path = "../../../flowistry/crates/flowistry_pdg" }
-flowistry_pdg = { git = "https://github.com/brownsys/flowistry", rev = "17f1d1a201c3fe97bb6ba8ae87341791fa4493b9" }
+flowistry_pdg = { git = "https://github.com/brownsys/flowistry", rev = "1b94b4180b4d9b5d20e60675c683a781b853d63f" }
 #flowistry_pdg = { git = "https://github.com/willcrichton/flowistry", rev = "3b0a12668894220010d715092bb6e9fb2cefb5ba" }
 petgraph = { workspace = true }
 static_assertions = "1"

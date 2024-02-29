@@ -1,7 +1,6 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
-use hir::def::DefKind;
 use thiserror::Error;
 
 use smallvec::SmallVec;
