@@ -422,7 +422,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         Cow::Owned(instance.subst_mir_and_normalize_erasing_regions(
                             tcx,
                             tcx.param_env(resolution.def_id()),
-                            ty::EarlyBinder::bind(terminator.clone()),
+                            ty::EarlyBinder::bind(tcx.erase_regions(terminator.clone())),
                         ))
                     }
                     FnResolution::Partial(_) => Cow::Borrowed(terminator),
@@ -480,20 +480,18 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) {
         let place_ty = self.determine_place_type(weight);
 
-        if matches!(
-            place_ty.ty.peel_refs().kind(),
-            TyKind::FnDef { .. }
-                | TyKind::FnPtr(_)
-                | TyKind::Closure { .. }
-                | TyKind::Generator { .. }
-        ) {
-            // Functions are handled separately
-            return;
-        }
-        let type_markers = self.type_is_marked(place_ty, is_external_call_source);
-        self.known_def_ids.extend(type_markers.iter().copied());
-        if !type_markers.is_empty() {
-            self.types.entry(i).or_default().0.extend(type_markers)
+        let node_types = self.type_is_marked(place_ty, is_external_call_source);
+        self.known_def_ids.extend(node_types.iter().copied());
+        let tcx = self.tcx();
+        if !node_types.is_empty() {
+            self.types
+                .entry(i)
+                .or_default()
+                .0
+                .extend(node_types.iter().filter(|t| match tcx.def_kind(*t) {
+                    def::DefKind::Generator => false,
+                    kind => !kind.is_fn_like(),
+                }))
         }
     }
 
