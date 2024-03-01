@@ -31,7 +31,7 @@ use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};
-use std::{fmt, hash::Hash};
+use std::{fmt, hash::Hash, path::PathBuf};
 
 use utils::serde_map_via_vec;
 
@@ -270,6 +270,7 @@ pub struct DefInfo {
     pub path: Vec<Identifier>,
     /// Kind of object
     pub kind: DefKind,
+    pub src_info: SrcCodeInfo,
 }
 
 /// Similar to `DefKind` in rustc but *not the same*!
@@ -281,6 +282,48 @@ pub enum DefKind {
     Generator,
     Closure,
     Type,
+}
+
+/// Encodes a source code location
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct SrcCodeSpan {
+    /// Printable location of the source code file - either an absolute path to library source code
+    /// or a path relative to within the compiled crate (e.g. `src/...`)
+    pub file_path: String,
+    /// Absolute path to source code file
+    pub abs_file_path: PathBuf,
+    /// The starting line of the location within the file (note: a one-based index)
+    pub start_line: usize,
+    /// The column of starting line that the location starts at within the file (note: a one-based index)
+    pub start_col: usize,
+    /// The ending line of the location within the file (note: a one-based index)
+    pub end_line: usize,
+    /// The column of ending line that the location ends at within the file (note: a one-based index)
+    pub end_col: usize,
+}
+
+/// Encodes a location of a call site
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct CallSiteSpan {
+    /// The source code location of the call site - if the call site occurs within a macro, this
+    /// refers to the macro's call site
+    pub loc: SrcCodeSpan,
+    /// The expanded location of the call site - if the call site occurs within a macro, this
+    /// refers to its location within the macro's definition
+    pub expanded_loc: SrcCodeSpan,
+}
+
+/// Encodes source code information for controllers and call site nodes in the SPDG
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct SrcCodeInfo {
+    /// Identifier of the function
+    pub func_iden: String,
+    /// Location of the header of the function's definition
+    pub func_header_loc: SrcCodeSpan,
+    /// Location of the function's call site, contains the source code locations of the
+    /// call chain from within the controller to the call site of said function (this field
+    /// is empty for a controller)
+    pub call_loc: Vec<CallSiteSpan>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]

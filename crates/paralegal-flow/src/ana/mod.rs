@@ -20,6 +20,7 @@ use flowistry::pdg::CallChanges;
 use flowistry::pdg::SkipCall::Skip;
 use paralegal_spdg::Node;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
+use rustc_span::{FileNameDisplayPreference, Span};
 
 use super::discover::FnToAnalyze;
 
@@ -114,11 +115,68 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .iter()
             .map(|id| (*id, def_info_for_item(*id, tcx)))
             .collect();
+
+        let call_sites: HashSet<&CallSite> = controllers
+            .values()
+            .flat_map(|ctrl| {
+                ctrl.all_sources()
+                    .filter_map(|src| src.as_function_call())
+                    .chain(
+                        ctrl.data_sinks()
+                            .filter_map(|sink| Some(sink.as_argument()?.0)),
+                    )
+                    .chain(ctrl.call_sites())
+            })
+            .collect();
+        let src_locs: HashMap<DefId, SrcCodeInfo> = call_sites
+            .into_iter()
+            .map(|call_site| {
+                let call_site_defid: DefId = call_site.function;
+                let locations: &[GlobalLocation] = call_site.location.as_slice();
+                let call_loc: Vec<CallSiteSpan> = locations
+                    .iter()
+                    .filter_map(|loc| {
+                        let body: &mir::Body<'_> = &tcx.body_for_def_id(loc.function).ok()?.body;
+                        let expanded_span: Span = body.stmt_at(loc.location).either(
+                            |statement| statement.source_info.span,
+                            |terminator| terminator.source_info.span,
+                        );
+                        let stmt_span = tcx.sess.source_map().stmt_span(expanded_span, body.span);
+                        Some(CallSiteSpan {
+                            loc: src_loc_for_span(stmt_span, tcx),
+                            expanded_loc: src_loc_for_span(expanded_span, tcx),
+                        })
+                    })
+                    .collect();
+                let func_def_span = tcx.def_span(call_site_defid);
+                (
+                    call_site_defid,
+                    SrcCodeInfo {
+                        func_iden: tcx.def_path_str(call_site_defid),
+                        func_header_loc: src_loc_for_span(func_def_span, tcx),
+                        call_loc,
+                    },
+                )
+            })
+            .chain(controllers.keys().map(|ctrl_id| {
+                let ctrl_span = tcx.def_span(ctrl_id.to_def_id());
+                (
+                    *ctrl_id,
+                    SrcCodeInfo {
+                        func_iden: tcx.def_path_str(*ctrl_id),
+                        func_header_loc: src_loc_for_span(ctrl_span, tcx),
+                        call_loc: Vec::<CallSiteSpan>::new(),
+                    },
+                )
+            }))
+            .collect();
+
         ProgramDescription {
             type_info: self.collect_type_info(&controllers),
             instruction_info: self.collect_instruction_info(&controllers),
             controllers,
             def_info,
+            src_locs,
         }
     }
 
@@ -200,6 +258,31 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 )
             })
             .collect()
+    }
+}
+
+fn src_loc_for_span(span: Span, tcx: TyCtxt) -> SrcCodeSpan {
+    let (source_file, start_line, start_col, end_line, end_col) =
+        tcx.sess.source_map().span_to_location_info(span);
+    let file_path = source_file
+        .expect("could not find source file")
+        .name
+        .display(FileNameDisplayPreference::Local)
+        .to_string();
+    let abs_file_path = if !file_path.starts_with('/') {
+        std::env::current_dir()
+            .expect("failed to obtain current working directory")
+            .join(&file_path)
+    } else {
+        std::path::PathBuf::from(&file_path)
+    };
+    SrcCodeSpan {
+        file_path,
+        abs_file_path,
+        start_line,
+        start_col,
+        end_line,
+        end_col,
     }
 }
 
