@@ -3,8 +3,9 @@ use std::{io::Write, process::exit, sync::Arc};
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
-    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, IntoIterGlobalNodes,
-    Node as SPDGNode, NodeCluster, ProgramDescription, SPDGImpl, TypeId, SPDG,
+    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, InstructionInfo,
+    IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo, ProgramDescription, SPDGImpl,
+    TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, ensure, Result};
@@ -72,7 +73,7 @@ fn bfs_iter<
     }
     let bfs = Bfs { stack, discovered };
     let walker_iter = Walker::iter(bfs, g);
-    walker_iter.map(move |inner| GlobalNode::unsafe_new(controller_id, inner.index()))
+    walker_iter.map(move |inner| GlobalNode::from_local_node(controller_id, inner))
 }
 
 /// Interface for defining policies.
@@ -586,6 +587,33 @@ impl Context {
                 .filter(|e| e.weight().at == call_string)
                 .map(|e| e.target()),
         )
+    }
+
+    /// Retrieve metadata about a node.
+    pub fn node_info(&self, node: GlobalNode) -> &NodeInfo {
+        self.desc.controllers[&node.controller_id()].node_info(node.local_node())
+    }
+
+    /// Retrieve metadata about the instruction executed by a specific node.
+    pub fn instruction_at_node(&self, node: GlobalNode) -> &InstructionInfo {
+        let node_info = self.node_info(node);
+        &self.desc.instruction_info[&node_info.at.leaf()]
+    }
+
+    /// Return the immediate successors of this node
+    pub fn successors(&self, node: GlobalNode) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.desc.controllers[&node.controller_id()]
+            .graph
+            .neighbors(node.local_node())
+            .map(move |n| GlobalNode::from_local_node(node.controller_id(), n))
+    }
+
+    /// Return the immediate predecessors of this node
+    pub fn predecessors(&self, node: GlobalNode) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.desc.controllers[&node.controller_id()]
+            .graph
+            .neighbors_directed(node.local_node(), petgraph::Direction::Incoming)
+            .map(move |n| GlobalNode::from_local_node(node.controller_id(), n))
     }
 
     #[cfg(test)]

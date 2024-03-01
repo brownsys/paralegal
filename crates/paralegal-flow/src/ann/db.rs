@@ -11,16 +11,16 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
+    ann::{Annotation, MarkerAnnotation},
     args::{Args, MarkerControl},
     consts,
-    desc::{Annotation, MarkerAnnotation},
     hir::def::DefKind,
     mir, ty,
     utils::{
         resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, FnResolutionExt,
         IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt, TyExt,
     },
-    DefId, HashMap, LocalDefId, TyCtxt,
+    DefId, Either, HashMap, LocalDefId, TyCtxt,
 };
 use rustc_utils::cache::CopyCache;
 
@@ -275,6 +275,25 @@ impl<'tcx> MarkerCtx<'tcx> {
             .flatten(),
         )
     }
+
+    /// Iterate over all discovered annotations, whether local or external
+    pub fn all_annotations(
+        &self,
+    ) -> impl Iterator<Item = (DefId, Either<&Annotation, &MarkerAnnotation>)> {
+        self.0
+            .local_annotations
+            .iter()
+            .flat_map(|(&id, anns)| {
+                anns.iter()
+                    .map(move |ann| (id.to_def_id(), Either::Left(ann)))
+            })
+            .chain(
+                self.0
+                    .external_annotations
+                    .iter()
+                    .flat_map(|(&id, anns)| anns.iter().map(move |ann| (id, Either::Right(ann)))),
+            )
+    }
 }
 /// The structure inside of [`MarkerCtx`].
 pub struct MarkerDatabase<'tcx> {
@@ -303,24 +322,22 @@ impl<'tcx> MarkerDatabase<'tcx> {
 
     /// Retrieve and parse the local annotations for this item.
     pub fn retrieve_local_annotations_for(&mut self, def_id: LocalDefId) {
+        use crate::ann::parse::{ann_match_fn, match_exception, otype_ann_match};
+
         let tcx = self.tcx;
         let hir = tcx.hir();
         let id = def_id.force_into_hir_id(tcx);
         let mut sink_matches = vec![];
         for a in hir.attrs(id) {
             if let Some(i) = a.match_get_ref(&consts::MARKER_MARKER) {
-                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)));
+                sink_matches.push(Annotation::Marker(ann_match_fn(i)));
             } else if let Some(i) = a.match_get_ref(&consts::LABEL_MARKER) {
                 warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
-                sink_matches.push(Annotation::Marker(crate::ann_parse::ann_match_fn(i)))
+                sink_matches.push(Annotation::Marker(ann_match_fn(i)))
             } else if let Some(i) = a.match_get_ref(&consts::OTYPE_MARKER) {
-                sink_matches.extend(
-                    crate::ann_parse::otype_ann_match(i, tcx)
-                        .into_iter()
-                        .map(Annotation::OType),
-                );
+                sink_matches.extend(otype_ann_match(i, tcx).into_iter().map(Annotation::OType));
             } else if let Some(i) = a.match_get_ref(&consts::EXCEPTION_MARKER) {
-                sink_matches.push(Annotation::Exception(crate::ann_parse::match_exception(i)));
+                sink_matches.push(Annotation::Exception(match_exception(i)));
             }
         }
         if !sink_matches.is_empty() {
@@ -332,7 +349,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
     }
 }
 
-type RawExternalMarkers = HashMap<String, Vec<crate::desc::MarkerAnnotation>>;
+type RawExternalMarkers = HashMap<String, Vec<crate::ann::MarkerAnnotation>>;
 
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.

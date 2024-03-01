@@ -6,6 +6,7 @@
 //! [`rustc_proxies`] module for all Rustc types within the PDG.
 
 #![cfg_attr(feature = "rustc", feature(rustc_private))]
+#![warn(missing_docs)]
 
 #[cfg(feature = "rustc")]
 pub(crate) mod rustc {
@@ -35,6 +36,7 @@ use std::{fmt, hash::Hash, path::PathBuf};
 
 use utils::serde_map_via_vec;
 
+pub use crate::tiny_bitset::pretty as tiny_bitset_pretty;
 pub use crate::tiny_bitset::TinyBitSet;
 use flowistry_pdg::rustc_portable::LocalDefId;
 use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
@@ -43,163 +45,16 @@ use petgraph::visit::IntoNodeIdentifiers;
 pub use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
+/// The types of identifiers that identify an entrypoint
 pub type Endpoint = LocalDefId;
+/// Identifiers for types
 pub type TypeId = DefId;
+/// Identifiers for functions
 pub type Function = Identifier;
 
 /// Name of the file used for emitting the JSON serialized
 /// [`ProgramDescription`].
 pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
-
-/// Types of annotations we support.
-///
-/// Usually you'd expect one of those annotation types in any given situation.
-/// For convenience the match methods [`Self::as_marker`], [`Self::as_otype`]
-/// and [`Self::as_exception`] are provided. These are particularly useful in
-/// conjunction with e.g. [`Iterator::filter_map`]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, strum::EnumIs)]
-pub enum Annotation {
-    Marker(MarkerAnnotation),
-    OType(#[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))] TypeId),
-    Exception(ExceptionAnnotation),
-}
-
-impl Annotation {
-    /// If this is an [`Annotation::Marker`], returns the underlying [`MarkerAnnotation`].
-    pub fn as_marker(&self) -> Option<&MarkerAnnotation> {
-        match self {
-            Annotation::Marker(l) => Some(l),
-            _ => None,
-        }
-    }
-
-    /// If this is an [`Annotation::OType`], returns the underlying [`TypeId`].
-    pub fn as_otype(&self) -> Option<TypeId> {
-        match self {
-            Annotation::OType(t) => Some(*t),
-            _ => None,
-        }
-    }
-
-    /// If this is an [`Annotation::Exception`], returns the underlying [`ExceptionAnnotation`].
-    pub fn as_exception(&self) -> Option<&ExceptionAnnotation> {
-        match self {
-            Annotation::Exception(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-pub type VerificationHash = u128;
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
-pub struct ExceptionAnnotation {
-    /// The value of the verification hash we found in the annotation. Is `None`
-    /// if there was no verification hash in the annotation.
-    pub verification_hash: Option<VerificationHash>,
-}
-
-/// A marker annotation and its refinements.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
-pub struct MarkerAnnotation {
-    /// The (unchanged) name of the marker as provided by the user
-    pub marker: Identifier,
-    #[serde(flatten)]
-    pub refinement: MarkerRefinement,
-}
-
-fn const_false() -> bool {
-    false
-}
-
-/// Refinements in the marker targeting. The default (no refinement provided) is
-/// `on_argument == vec![]` and `on_return == false`, which is also what is
-/// returned from [`Self::empty`].
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize)]
-pub struct MarkerRefinement {
-    #[serde(default, with = "crate::tiny_bitset::pretty")]
-    on_argument: TinyBitSet,
-    #[serde(default = "const_false")]
-    on_return: bool,
-}
-
-/// Disaggregated version of [`MarkerRefinement`]. Can be added to an existing
-/// refinement [`MarkerRefinement::merge_kind`].
-#[derive(Clone, Deserialize, Serialize)]
-pub enum MarkerRefinementKind {
-    Argument(#[serde(with = "crate::tiny_bitset::pretty")] TinyBitSet),
-    Return,
-}
-
-impl MarkerRefinement {
-    /// The default, empty aggregate refinement `Self { on_argument: vec![],
-    /// on_return: false }`
-    pub fn empty() -> Self {
-        Self {
-            on_argument: Default::default(),
-            on_return: false,
-        }
-    }
-
-    /// Merge the aggregate refinement with another discovered refinement and
-    /// check that they do not overwrite each other.
-    pub fn merge_kind(mut self, k: MarkerRefinementKind) -> Result<Self, String> {
-        match k {
-            MarkerRefinementKind::Argument(a) => {
-                if self.on_argument.is_empty() {
-                    self.on_argument = a;
-                    Ok(self)
-                } else {
-                    Err(format!(
-                        "Double argument annotation {:?} and {a:?}",
-                        self.on_argument
-                    ))
-                }
-            }
-            MarkerRefinementKind::Return => {
-                if !self.on_return {
-                    self.on_return = true;
-                    Ok(self)
-                } else {
-                    Err("Double on-return annotation".to_string())
-                }
-            }
-        }
-    }
-
-    /// Get the refinements on arguments
-    pub fn on_argument(&self) -> TinyBitSet {
-        self.on_argument
-    }
-
-    /// Is this refinement targeting the return value?
-    pub fn on_return(&self) -> bool {
-        self.on_return
-    }
-
-    /// True if this refinement is empty, i.e. the annotation is targeting the
-    /// item itself.
-    pub fn on_self(&self) -> bool {
-        self.on_argument.is_empty() && !self.on_return
-    }
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, strum::EnumIs)]
-pub enum ObjectType {
-    Function(usize),
-    Type,
-    Other,
-}
-
-impl ObjectType {
-    /// If this is [`Self::Function`], then return the payload.
-    pub fn as_function(&self) -> Option<usize> {
-        match self {
-            ObjectType::Function(f) => Some(*f),
-            _ => None,
-        }
-    }
-}
 
 #[allow(dead_code)]
 mod ser_localdefid_map {
@@ -278,9 +133,13 @@ pub struct DefInfo {
     Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, strum::EnumIs, strum::AsRefStr,
 )]
 pub enum DefKind {
+    /// A regular function object
     Fn,
+    /// The function corresponding to a generator
     Generator,
+    /// The function corresponding to a closure
     Closure,
+    /// A type
     Type,
 }
 
@@ -326,25 +185,35 @@ pub struct SrcCodeInfo {
     pub call_loc: Vec<CallSiteSpan>,
 }
 
+/// Metadata on a function call.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]
 pub struct FunctionCallInfo {
+    /// Has this call been inlined
     pub is_inlined: bool,
+    /// What is the ID of the item that was called here.
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
     pub id: DefId,
 }
 
+/// The type of instructions we may encounter
 #[derive(
     Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq, strum::EnumIs,
 )]
 pub enum InstructionInfo {
+    /// Some type of statement
     Statement,
+    /// A function call
     FunctionCall(FunctionCallInfo),
+    /// A basic block terminator, usually switchInt
     Terminator,
+    /// The beginning of a function
     Start,
+    /// The merged exit points of a function
     Return,
 }
 
 impl InstructionInfo {
+    /// If this identifies a function call, return the information inside.
     pub fn as_function_call(self) -> Option<FunctionCallInfo> {
         match self {
             InstructionInfo::FunctionCall(d) => Some(d),
@@ -353,18 +222,27 @@ impl InstructionInfo {
     }
 }
 
+/// information about each encountered type.
+pub type TypeInfoMap = HashMap<TypeId, TypeDescription>;
+
+/// Endpoints with their SPDGs
+pub type ControllerMap = HashMap<Endpoint, SPDG>;
+
 /// The annotated program dependence graph.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
+    /// Entry points we analyzed and their PDGs
     #[cfg_attr(feature = "rustc", serde(with = "ser_localdefid_map"))]
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
-    /// Mapping from function names to dependencies within the function.
-    pub controllers: HashMap<Endpoint, SPDG>,
+    pub controllers: ControllerMap,
 
+    /// Metadata about types
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
-    pub type_info: HashMap<TypeId, TypeDescription>,
+    pub type_info: TypeInfoMap,
 
+    /// Metadata about the instructions that are executed at all program
+    /// locations we know about.
     #[serde(with = "serde_map_via_vec")]
     pub instruction_info: HashMap<GlobalLocation, InstructionInfo>,
 
@@ -374,11 +252,15 @@ pub struct ProgramDescription {
     pub def_info: HashMap<DefId, DefInfo>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+/// Metadata about a type
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TypeDescription {
+    /// How rustc would debug print this type
     pub rendering: String,
+    /// Aliases
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))]
     pub otypes: Vec<TypeId>,
+    /// Attached markers. Guaranteed not to be empty.
     pub markers: Vec<Identifier>,
 }
 
@@ -418,7 +300,7 @@ impl ProgramDescription {
             .iter()
             .flat_map(|(name, c)| {
                 c.all_sources()
-                    .map(|ds| GlobalNode::unsafe_new(*name, ds.index()))
+                    .map(|ds| GlobalNode::from_local_node(*name, ds))
             })
             .collect()
     }
@@ -444,6 +326,7 @@ impl ProgramDescription {
 pub struct Identifier(Intern<String>);
 
 impl Identifier {
+    /// Intern a new identifier from a rustc [`rustc::span::Symbol`]
     #[cfg(feature = "rustc")]
     pub fn new(s: rustc::span::Symbol) -> Self {
         Self::new_intern(s.as_str())
@@ -483,6 +366,7 @@ impl Display for Identifier {
 pub struct ShortHash(u64);
 
 impl ShortHash {
+    /// Constructor
     pub fn new<T: Hash>(t: T) -> Self {
         // Six digits in hex
         Self(hash_pls(t) % 0x1_000_000)
@@ -509,6 +393,7 @@ pub fn hash_pls<T: Hash>(t: T) -> u64 {
     hasher.finish()
 }
 
+/// Return type of [`IntoIterGlobalNodes::iter_global_nodes`].
 pub struct GlobalNodeIter<I: IntoIterGlobalNodes> {
     controller_id: LocalDefId,
     iter: I::Iter,
@@ -524,12 +409,25 @@ impl<I: IntoIterGlobalNodes> Iterator for GlobalNodeIter<I> {
     }
 }
 
+/// This lets us be agnostic whether a primitive (such as `flows_to`) is called
+/// with a [`GlobalNode`] or `&NodeCluster`.
+///
+/// Note that while [`GlobalNode`] implements this trait [`NodeCluster`] *does
+/// not do so directly*, but it's reference `&NodeCluster` does.
 pub trait IntoIterGlobalNodes: Sized + Copy {
+    /// The iterator returned by [`Self::iter_nodes`]
     type Iter: Iterator<Item = Node>;
+
+    /// iterate over the local nodes
     fn iter_nodes(self) -> Self::Iter;
 
+    /// The controller id all of these nodes are located in.
     fn controller_id(self) -> LocalDefId;
 
+    /// Iterate all nodes as globally identified one's.
+    ///
+    /// The invariant of this iterator is that all `controller_id()`s of the
+    /// nodes in the iterator is the same as `self.controller_id()`.
     fn iter_global_nodes(self) -> GlobalNodeIter<Self> {
         GlobalNodeIter {
             controller_id: self.controller_id(),
@@ -550,13 +448,16 @@ pub trait IntoIterGlobalNodes: Sized + Copy {
         ))
     }
 
+    /// Collect the iterator into a cluster
     fn to_local_cluster(self) -> NodeCluster {
         NodeCluster::new(self.controller_id(), self.iter_nodes())
     }
 }
 
+/// Local nodes in an [`SPDGImpl`]
 pub type Node = NodeIndex;
 
+/// A globally identified node in an SPDG
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GlobalNode {
     node: Node,
@@ -573,6 +474,10 @@ impl GlobalNode {
         }
     }
 
+    /// Create a new globally identified node by pairing a node local to a
+    /// particular SPDG with it's controller id.
+    ///
+    /// Meant for internal use only.
     pub fn from_local_node(ctrl_id: LocalDefId, node: Node) -> Self {
         GlobalNode {
             controller_id: ctrl_id,
@@ -580,10 +485,12 @@ impl GlobalNode {
         }
     }
 
+    /// The local node in the SPDG
     pub fn local_node(self) -> Node {
         self.node
     }
 
+    /// The identifier for the SPDG this node is contained in
     pub fn controller_id(self) -> LocalDefId {
         self.controller_id
     }
@@ -600,12 +507,18 @@ impl IntoIterGlobalNodes for GlobalNode {
     }
 }
 
+/// A globally identified set of nodes that are all located in the same
+/// controller.
+///
+/// Sometimes it is more convenient to think about such a group instead of
+/// individual [`GlobalNode`]s
 #[derive(Debug, Hash, Clone)]
 pub struct NodeCluster {
     controller_id: LocalDefId,
     nodes: Box<[Node]>,
 }
 
+/// Iterate over a node cluster but yielding [`GlobalNode`]s
 pub struct NodeClusterIter<'a> {
     inner: std::slice::Iter<'a, Node>,
 }
@@ -631,6 +544,7 @@ impl<'a> IntoIterGlobalNodes for &'a NodeCluster {
 }
 
 impl NodeCluster {
+    /// Create a new cluster. This for internal use.
     pub fn new(controller_id: LocalDefId, nodes: impl IntoIterator<Item = Node>) -> Self {
         Self {
             controller_id,
@@ -638,15 +552,18 @@ impl NodeCluster {
         }
     }
 
+    /// Controller that these nodes belong to
     pub fn controller_id(&self) -> LocalDefId {
         self.controller_id
     }
 
+    /// Nodes in this cluster
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
     }
 }
 
+/// The global version of an edge that is tied to some specific entrypoint
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GlobalEdge {
     index: EdgeIndex,
@@ -654,15 +571,20 @@ pub struct GlobalEdge {
 }
 
 impl GlobalEdge {
+    /// The id of the controller that this edge is located in
     pub fn controller_id(self) -> LocalDefId {
         self.controller_id
     }
 }
 
+/// Node metadata in the [`SPDGImpl`]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeInfo {
+    /// Location of the node in the call stack
     pub at: CallString,
+    /// The debug print of the `mir::Place` that this node represents
     pub description: String,
+    /// Additional information of how this node is used in the source.
     pub kind: NodeKind,
 }
 
@@ -672,12 +594,19 @@ impl Display for NodeInfo {
     }
 }
 
+/// Additional information about what a given node may represent
 #[derive(Clone, Debug, Serialize, Deserialize, Copy, strum::EnumIs)]
 pub enum NodeKind {
+    /// The node is (part of) a formal parameter of a function (0-indexed). e.g.
+    /// in `fn foo(x: usize)` `x` would be a `FormalParameter(0)`.
     FormalParameter(u8),
+    /// Formal return of a function, e.g. `x` in `return x`;
     FormalReturn,
+    /// Parameter given to a function at the call site, e.g. `x` in `foo(x)`.
     ActualParameter(TinyBitSet),
+    /// Return value received from a call, e.g. `x` in `let x = foo(...);`
     ActualReturn,
+    /// Any other kind of node
     Unspecified,
 }
 
@@ -697,9 +626,12 @@ impl Display for NodeKind {
     }
 }
 
+/// Metadata for an edge in the [`SPDGImpl`]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EdgeInfo {
+    /// What type of edge it is
     pub kind: EdgeKind,
+    /// Where in the program this edge arises from
     pub at: CallString,
 }
 
@@ -710,40 +642,56 @@ impl Display for EdgeInfo {
 }
 
 impl EdgeInfo {
+    /// Same as `self.kind.is_data()`
     pub fn is_data(&self) -> bool {
         matches!(self.kind, EdgeKind::Data)
     }
 
+    /// Same as `self.kind.is_control()`
     pub fn is_control(&self) -> bool {
         matches!(self.kind, EdgeKind::Control)
     }
 }
 
+/// The type of an edge
 #[derive(
     Clone, Debug, Copy, Eq, PartialEq, Deserialize, Serialize, strum::EnumIs, strum::Display,
 )]
 pub enum EdgeKind {
+    /// The target can read data created by the source
     Data,
+    /// The source controls the execution of the target
     Control,
 }
 
+/// The graph portion of an [`SPDG`]
 pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
 
+/// A semantic PDG, e.g. a graph plus marker annotations
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SPDG {
+    /// The identifier of the entry point to this computation
     pub name: Identifier,
+    /// The PDG
     pub graph: SPDGImpl,
+    /// Nodes to which markers are assigned.
     pub markers: HashMap<Node, Vec<Identifier>>,
+    /// The nodes that represent arguments to the entrypoint
     pub arguments: Vec<Node>,
     /// If the return is `()` or `!` then this is `None`
     pub return_: Option<Node>,
+    /// Stores the assignment of relevant (e.g. marked) types to nodes. Node
+    /// that this contains multiple types for a single node, because it hold
+    /// top-level types and subtypes that may be marked.
     pub type_assigns: HashMap<Node, Types>,
 }
 
+/// Holds [`TypeId`]s that were assigned to a node.
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))] pub Vec<TypeId>);
 
 impl SPDG {
+    /// Retrieve metadata for this node
     pub fn node_info(&self, node: Node) -> &NodeInfo {
         self.graph.node_weight(node).unwrap()
     }
@@ -757,6 +705,7 @@ impl SPDG {
             .unique()
     }
 
+    /// An iterator over all edges in this graph.
     pub fn edges(&self) -> impl Iterator<Item = EdgeReference<'_, EdgeInfo>> + '_ {
         self.graph.edge_references()
     }
@@ -766,6 +715,7 @@ impl SPDG {
         self.graph.node_identifiers().map(Into::into)
     }
 
+    /// Dump this graph in dot format.
     pub fn dump_dot(&self, mut out: impl std::io::Write) -> std::io::Result<()> {
         use petgraph::dot::Dot;
         let dot = Dot::with_config(&self.graph, &[]);
@@ -783,6 +733,7 @@ pub struct DisplayNode<'a> {
 }
 
 impl<'a> DisplayNode<'a> {
+    /// Render the node in extended format
     pub fn pretty(node: NodeIndex, graph: &'a SPDG) -> Self {
         Self {
             node,
@@ -791,6 +742,7 @@ impl<'a> DisplayNode<'a> {
         }
     }
 
+    /// Render the node in simple format
     pub fn simple(node: NodeIndex, graph: &'a SPDG) -> Self {
         Self {
             node,

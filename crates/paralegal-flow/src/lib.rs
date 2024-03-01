@@ -79,7 +79,7 @@ pub use either::Either;
 pub use rustc_span::Symbol;
 
 pub mod ana;
-pub mod ann_parse;
+pub mod ann;
 mod args;
 pub mod dbg;
 mod discover;
@@ -88,7 +88,6 @@ pub mod serializers;
 #[macro_use]
 pub mod utils;
 pub mod consts;
-pub mod marker_db;
 mod pdg;
 #[cfg(feature = "test")]
 pub mod test_utils;
@@ -99,7 +98,7 @@ pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
 use crate::utils::Print;
 
-pub use crate::marker_db::MarkerCtx;
+pub use crate::ann::db::MarkerCtx;
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;

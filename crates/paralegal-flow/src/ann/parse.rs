@@ -8,9 +8,11 @@
 //! it gives us boundaries for parsers that lets us (re)combine them, but also
 //! that we get features that are annoying to implement (such as backtracking)
 //! for free.
+use super::{
+    ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind, VerificationHash,
+};
 use crate::{
     consts,
-    desc::{ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind},
     rust::*,
     utils,
     utils::{write_sep, Print, TinyBitSet},
@@ -250,7 +252,7 @@ pub(crate) fn match_exception(ann: &rustc_ast::AttrArgs) -> ExceptionAnnotation 
                         assert_token(TokenKind::Eq),
                     )),
                     lit(token::LitKind::Str, |s| {
-                        crate::desc::VerificationHash::from_str_radix(s, 16)
+                        VerificationHash::from_str_radix(s, 16)
                             .map_err(|e: std::num::ParseIntError| e.to_string())
                     }),
                 ))(i)?;
