@@ -121,61 +121,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|id| (*id, def_info_for_item(*id, tcx)))
             .collect();
 
-        let call_sites: HashSet<&CallSite> = controllers
-            .values()
-            .flat_map(|ctrl| {
-                ctrl.all_sources()
-                    .filter_map(|src| src.as_function_call())
-                    .chain(
-                        ctrl.data_sinks()
-                            .filter_map(|sink| Some(sink.as_argument()?.0)),
-                    )
-                    .chain(ctrl.call_sites())
-            })
-            .collect();
-        let src_locs: HashMap<DefId, SrcCodeInfo> = call_sites
-            .into_iter()
-            .map(|call_site| {
-                let call_site_defid: DefId = call_site.function;
-                let locations: &[GlobalLocation] = call_site.location.as_slice();
-                let call_loc: Vec<CallSiteSpan> = locations
-                    .iter()
-                    .filter_map(|loc| {
-                        let body: &mir::Body<'_> = &tcx.body_for_def_id(loc.function).ok()?.body;
-                        let expanded_span: Span = body.stmt_at(loc.location).either(
-                            |statement| statement.source_info.span,
-                            |terminator| terminator.source_info.span,
-                        );
-                        let stmt_span = tcx.sess.source_map().stmt_span(expanded_span, body.span);
-                        Some(CallSiteSpan {
-                            loc: src_loc_for_span(stmt_span, tcx),
-                            expanded_loc: src_loc_for_span(expanded_span, tcx),
-                        })
-                    })
-                    .collect();
-                let func_def_span = tcx.def_span(call_site_defid);
-                (
-                    call_site_defid,
-                    SrcCodeInfo {
-                        func_iden: tcx.def_path_str(call_site_defid),
-                        func_header_loc: src_loc_for_span(func_def_span, tcx),
-                        call_loc,
-                    },
-                )
-            })
-            .chain(controllers.keys().map(|ctrl_id| {
-                let ctrl_span = tcx.def_span(ctrl_id.to_def_id());
-                (
-                    *ctrl_id,
-                    SrcCodeInfo {
-                        func_iden: tcx.def_path_str(*ctrl_id),
-                        func_header_loc: src_loc_for_span(ctrl_span, tcx),
-                        call_loc: Vec::<CallSiteSpan>::new(),
-                    },
-                )
-            }))
-            .collect();
-
         let type_info = self.collect_type_info();
         type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
@@ -183,7 +128,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             instruction_info: self.collect_instruction_info(&controllers),
             controllers,
             def_info,
-            src_locs,
         }
     }
 
@@ -205,23 +149,51 @@ impl<'tcx> SPDGGenerator<'tcx> {
         all_instructions
             .into_iter()
             .map(|i| {
+                let tcx = self.tcx;
                 let body = self.tcx.body_for_def_id(i.function).unwrap();
+                let with_default_spans = |kind| {
+                    let default_span = src_loc_for_span(tcx.def_span(i.function.to_def_id()), tcx);
+                    InstructionInfo {
+                        kind,
+                        call_loc: CallSiteSpan {
+                            loc: default_span.clone(),
+                            expanded_loc: default_span,
+                        },
+                    }
+                };
+
                 let info = match i.location {
-                    RichLocation::End => InstructionInfo::Return,
-                    RichLocation::Start => InstructionInfo::Start,
-                    RichLocation::Location(loc) => match body.body.stmt_at(loc) {
-                        crate::Either::Right(term) => {
-                            if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
-                                InstructionInfo::FunctionCall(FunctionCallInfo {
-                                    id,
-                                    is_inlined: id.is_local(),
-                                })
-                            } else {
-                                InstructionInfo::Terminator
+                    RichLocation::End => with_default_spans(InstructionKind::Return),
+                    RichLocation::Start => with_default_spans(InstructionKind::Start),
+                    RichLocation::Location(loc) => {
+                        let (kind, expanded_span) = match body.body.stmt_at(loc) {
+                            crate::Either::Right(term) => {
+                                let kind = if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
+                                    InstructionKind::FunctionCall(FunctionCallInfo {
+                                        id,
+                                        is_inlined: id.is_local(),
+                                    })
+                                } else {
+                                    InstructionKind::Terminator
+                                };
+                                (kind, term.source_info.span)
                             }
+                            crate::Either::Left(stmt) => {
+                                (InstructionKind::Statement, stmt.source_info.span)
+                            }
+                        };
+                        let stmt_span = tcx
+                            .sess
+                            .source_map()
+                            .stmt_span(expanded_span, body.body.span);
+                        InstructionInfo {
+                            kind,
+                            call_loc: CallSiteSpan {
+                                loc: src_loc_for_span(stmt_span, tcx),
+                                expanded_loc: src_loc_for_span(expanded_span, tcx),
+                            },
                         }
-                        _ => InstructionInfo::Statement,
-                    },
+                    }
                 };
                 (i, info)
             })
@@ -812,7 +784,16 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
             }
         }))
         .collect();
-    DefInfo { name, path, kind }
+    let src_info = SrcCodeInfo {
+        func_iden: tcx.def_path_str(id),
+        func_header_loc: src_loc_for_span(tcx.def_span(id), tcx),
+    };
+    DefInfo {
+        name,
+        path,
+        kind,
+        src_info,
+    }
 }
 
 /// A higher order function that increases the logging level if the `target`

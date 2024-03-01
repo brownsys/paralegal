@@ -3,9 +3,9 @@ use std::{io::Write, process::exit, sync::Arc};
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
-    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, InstructionInfo,
-    IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo, ProgramDescription, SPDGImpl,
-    TypeId, SPDG,
+    CallSiteSpan, CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier,
+    InstructionInfo, IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo,
+    ProgramDescription, SPDGImpl, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, ensure, Result};
@@ -631,6 +631,11 @@ impl Context {
         NodeCluster::new(src.controller_id(), start)
     }
 
+    fn get_location(&self, node: GlobalNode) -> Option<&CallSiteSpan> {
+        let at = self.node_info(node).at;
+        Some(&self.desc().instruction_info.get(&at.leaf())?.call_loc)
+    }
+
     /// Prints a diagnostic message for a given problematic node, given the type and coloring
     /// of said diagnostic and the message to be printed
     fn print_node_diagnostic(
@@ -640,9 +645,13 @@ impl Context {
         node: GlobalNode,
         msg: &str,
     ) -> Result<()> {
-        let src_loc = self
-            .get_location(&node)
-            .ok_or(anyhow::Error::msg("node's location was not found in mapping"))?;
+        use std::io::BufRead;
+        let src_loc = &self
+            .get_location(node)
+            .ok_or(anyhow::Error::msg(
+                "node's location was not found in mapping",
+            ))?
+            .loc;
 
         let max_line_len = std::cmp::max(
             src_loc.start_line.to_string().len(),

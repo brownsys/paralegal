@@ -125,6 +125,7 @@ pub struct DefInfo {
     pub path: Vec<Identifier>,
     /// Kind of object
     pub kind: DefKind,
+    /// Information about the span
     pub src_info: SrcCodeInfo,
 }
 
@@ -179,10 +180,6 @@ pub struct SrcCodeInfo {
     pub func_iden: String,
     /// Location of the header of the function's definition
     pub func_header_loc: SrcCodeSpan,
-    /// Location of the function's call site, contains the source code locations of the
-    /// call chain from within the controller to the call site of said function (this field
-    /// is empty for a controller)
-    pub call_loc: Vec<CallSiteSpan>,
 }
 
 /// Metadata on a function call.
@@ -199,7 +196,7 @@ pub struct FunctionCallInfo {
 #[derive(
     Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq, strum::EnumIs,
 )]
-pub enum InstructionInfo {
+pub enum InstructionKind {
     /// Some type of statement
     Statement,
     /// A function call
@@ -212,11 +209,21 @@ pub enum InstructionInfo {
     Return,
 }
 
-impl InstructionInfo {
+/// Information about instructions
+#[derive(Serialize, Deserialize, Debug)]
+pub struct InstructionInfo {
+    /// The kind of instruction
+    pub kind: InstructionKind,
+    /// call chain from within the controller to the call site of said function (this field
+    /// is empty for a controller)
+    pub call_loc: CallSiteSpan,
+}
+
+impl InstructionKind {
     /// If this identifies a function call, return the information inside.
     pub fn as_function_call(self) -> Option<FunctionCallInfo> {
         match self {
-            InstructionInfo::FunctionCall(d) => Some(d),
+            InstructionKind::FunctionCall(d) => Some(d),
             _ => None,
         }
     }
