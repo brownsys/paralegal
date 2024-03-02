@@ -3,12 +3,13 @@ use std::{io::Write, process::exit, sync::Arc};
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
-    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, InstructionInfo,
-    IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo, ProgramDescription, SPDGImpl,
-    TypeId, SPDG,
+    CallSiteSpan, CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier,
+    InstructionInfo, IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo,
+    ProgramDescription, SPDGImpl, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, ensure, Result};
+use colored::*;
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
 use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, Walker};
@@ -629,6 +630,101 @@ impl Context {
         }
         NodeCluster::new(src.controller_id(), start)
     }
+
+    fn get_location(&self, node: GlobalNode) -> Option<&CallSiteSpan> {
+        let at = self.node_info(node).at;
+        Some(&self.desc().instruction_info.get(&at.leaf())?.call_loc)
+    }
+
+    /// Prints a diagnostic message for a given problematic node, given the type and coloring
+    /// of said diagnostic and the message to be printed
+    fn print_node_diagnostic(
+        &self,
+        diag_type: &str,
+        coloring: impl Fn(&str) -> ColoredString,
+        node: GlobalNode,
+        msg: &str,
+    ) -> Result<()> {
+        use std::io::BufRead;
+        let src_loc = &self
+            .get_location(node)
+            .ok_or(anyhow::Error::msg(
+                "node's location was not found in mapping",
+            ))?
+            .loc;
+
+        let max_line_len = std::cmp::max(
+            src_loc.start_line.to_string().len(),
+            src_loc.end_line.to_string().len(),
+        );
+
+        println!("{}: {}", coloring(diag_type), msg);
+        let tab: String = " ".repeat(max_line_len);
+        println!(
+            "{}{} {}:{}:{}",
+            tab,
+            as_blue("-->"),
+            src_loc.file_path,
+            src_loc.start_line,
+            src_loc.start_col,
+        );
+        println!("{} {}", tab, as_blue("|"));
+        let lines = std::io::BufReader::new(std::fs::File::open(&src_loc.abs_file_path)?)
+            .lines()
+            .skip(src_loc.start_line - 1)
+            .take(src_loc.end_line - src_loc.start_line + 1)
+            .enumerate();
+        for (i, line) in lines {
+            let line_content: String = line?;
+            let line_num = src_loc.start_line + i;
+            let end: usize = if line_num == src_loc.end_line {
+                src_loc.end_col
+            } else {
+                line_content.len() + 1
+            };
+            let start: usize = if line_num == src_loc.start_line {
+                src_loc.start_col
+            } else {
+                line_content
+                    .find(|c: char| !c.is_whitespace())
+                    .unwrap_or(end - 1)
+                    + 1
+            };
+            let tab_len = max_line_len - line_num.to_string().len();
+
+            println!(
+                "{}{} {} {}",
+                " ".repeat(tab_len),
+                as_blue(&line_num.to_string()),
+                as_blue("|"),
+                line_content
+            );
+            println!(
+                "{} {} {}{}",
+                tab,
+                as_blue("|"),
+                " ".repeat(start - 1),
+                coloring(&"^".repeat(end - start))
+            );
+        }
+        println!("{} {}", tab, as_blue("|"));
+        Ok(())
+    }
+
+    /// Prints an error message for a problematic node
+    pub fn print_node_error(&self, node: GlobalNode, msg: &str) -> () {
+        let _ = self.print_node_diagnostic("error", as_red, node, msg);
+    }
+
+    /// Prints a warning message for a problematic node
+    pub fn print_node_warning(&self, node: GlobalNode, msg: &str) -> () {
+        let _ = self.print_node_diagnostic("warning", as_yellow, node, msg);
+    }
+
+    /// Prints a note for a problematic node
+    pub fn print_node_note(&self, node: GlobalNode, msg: &str) -> () {
+        let _ = self.print_node_diagnostic("note", as_green, node, msg);
+    }
 }
 
 /// Provide display trait for DefId in a Context.
@@ -843,6 +939,20 @@ fn test_happens_before() -> Result<()> {
     ensure!(!fail.is_vacuous());
 
     Ok(())
+}
+
+// For colored output for error printing
+fn as_blue(input: &str) -> ColoredString {
+    input.blue()
+}
+fn as_green(input: &str) -> ColoredString {
+    input.green()
+}
+fn as_yellow(input: &str) -> ColoredString {
+    input.yellow()
+}
+fn as_red(input: &str) -> ColoredString {
+    input.red()
 }
 
 #[test]

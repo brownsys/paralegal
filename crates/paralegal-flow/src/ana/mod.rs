@@ -27,6 +27,7 @@ use flowistry::pdg::{
 };
 use itertools::Itertools;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
+use rustc_span::{FileNameDisplayPreference, Span};
 
 mod inline_judge;
 
@@ -119,6 +120,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .iter()
             .map(|id| (*id, def_info_for_item(*id, tcx)))
             .collect();
+
         let type_info = self.collect_type_info();
         type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
@@ -147,23 +149,51 @@ impl<'tcx> SPDGGenerator<'tcx> {
         all_instructions
             .into_iter()
             .map(|i| {
+                let tcx = self.tcx;
                 let body = self.tcx.body_for_def_id(i.function).unwrap();
+                let with_default_spans = |kind| {
+                    let default_span = src_loc_for_span(tcx.def_span(i.function.to_def_id()), tcx);
+                    InstructionInfo {
+                        kind,
+                        call_loc: CallSiteSpan {
+                            loc: default_span.clone(),
+                            expanded_loc: default_span,
+                        },
+                    }
+                };
+
                 let info = match i.location {
-                    RichLocation::End => InstructionInfo::Return,
-                    RichLocation::Start => InstructionInfo::Start,
-                    RichLocation::Location(loc) => match body.body.stmt_at(loc) {
-                        crate::Either::Right(term) => {
-                            if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
-                                InstructionInfo::FunctionCall(FunctionCallInfo {
-                                    id,
-                                    is_inlined: id.is_local(),
-                                })
-                            } else {
-                                InstructionInfo::Terminator
+                    RichLocation::End => with_default_spans(InstructionKind::Return),
+                    RichLocation::Start => with_default_spans(InstructionKind::Start),
+                    RichLocation::Location(loc) => {
+                        let (kind, expanded_span) = match body.body.stmt_at(loc) {
+                            crate::Either::Right(term) => {
+                                let kind = if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
+                                    InstructionKind::FunctionCall(FunctionCallInfo {
+                                        id,
+                                        is_inlined: id.is_local(),
+                                    })
+                                } else {
+                                    InstructionKind::Terminator
+                                };
+                                (kind, term.source_info.span)
                             }
+                            crate::Either::Left(stmt) => {
+                                (InstructionKind::Statement, stmt.source_info.span)
+                            }
+                        };
+                        let stmt_span = tcx
+                            .sess
+                            .source_map()
+                            .stmt_span(expanded_span, body.body.span);
+                        InstructionInfo {
+                            kind,
+                            call_loc: CallSiteSpan {
+                                loc: src_loc_for_span(stmt_span, tcx),
+                                expanded_loc: src_loc_for_span(expanded_span, tcx),
+                            },
                         }
-                        _ => InstructionInfo::Statement,
-                    },
+                    }
                 };
                 (i, info)
             })
@@ -199,6 +229,31 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     desc
                 },
             )
+    }
+}
+
+fn src_loc_for_span(span: Span, tcx: TyCtxt) -> SrcCodeSpan {
+    let (source_file, start_line, start_col, end_line, end_col) =
+        tcx.sess.source_map().span_to_location_info(span);
+    let file_path = source_file
+        .expect("could not find source file")
+        .name
+        .display(FileNameDisplayPreference::Local)
+        .to_string();
+    let abs_file_path = if !file_path.starts_with('/') {
+        std::env::current_dir()
+            .expect("failed to obtain current working directory")
+            .join(&file_path)
+    } else {
+        std::path::PathBuf::from(&file_path)
+    };
+    SrcCodeSpan {
+        file_path,
+        abs_file_path,
+        start_line,
+        start_col,
+        end_line,
+        end_col,
     }
 }
 
@@ -742,7 +797,16 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
             }
         }))
         .collect();
-    DefInfo { name, path, kind }
+    let src_info = SrcCodeInfo {
+        func_iden: tcx.def_path_str(id),
+        func_header_loc: src_loc_for_span(tcx.def_span(id), tcx),
+    };
+    DefInfo {
+        name,
+        path,
+        kind,
+        src_info,
+    }
 }
 
 /// A higher order function that increases the logging level if the `target`

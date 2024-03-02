@@ -3,7 +3,7 @@ use crate::ControllerId;
 use paralegal_flow::test_utils::PreFrg;
 use paralegal_spdg::IntoIterGlobalNodes;
 use paralegal_spdg::NodeCluster;
-use paralegal_spdg::{Identifier, InstructionInfo, Node as SPDGNode, SPDG};
+use paralegal_spdg::{Identifier, InstructionKind, Node as SPDGNode, SPDG};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -51,8 +51,8 @@ fn is_at_function_call_with_name(
     let weight = ctrl.graph.node_weight(node).unwrap().at;
     let instruction = &ctx.desc().instruction_info[&weight.leaf()];
     matches!(
-        instruction,
-        InstructionInfo::FunctionCall(call) if
+        instruction.kind,
+        InstructionKind::FunctionCall(call) if
             ctx.desc().def_info[&call.id].name == name
     )
 }
