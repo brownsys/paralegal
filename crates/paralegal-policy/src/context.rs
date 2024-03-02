@@ -11,7 +11,7 @@ use paralegal_spdg::{
 use anyhow::{anyhow, bail, ensure, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
-use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, Walker};
+use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, GraphBase, NodeIndexable, Walker};
 use petgraph::Incoming;
 
 use super::flows_to::CtrlFlowsTo;
@@ -483,7 +483,7 @@ impl Context {
         mut is_checkpoint: impl FnMut(GlobalNode) -> bool,
         mut is_terminal: impl FnMut(GlobalNode) -> bool,
     ) -> Result<AlwaysHappensBefore> {
-        let mut reached = HashSet::new();
+        let mut reached = HashMap::new();
         let mut checkpointed = HashSet::new();
 
         let start_map = starting_points
@@ -494,14 +494,25 @@ impl Context {
         for (ctrl_id, starts) in &start_map {
             let spdg = &self.desc.controllers[&ctrl_id];
             let g = &spdg.graph;
+            let mut origin_map = vec![<SPDGImpl as GraphBase>::NodeId::end(); g.node_bound()];
+            for s in starts {
+                origin_map[s.index()] = *s;
+            }
             petgraph::visit::depth_first_search(g, starts.iter().copied(), |event| match event {
+                DfsEvent::TreeEdge(from, to) => {
+                    origin_map[to.index()] = origin_map[from.index()];
+                    Control::<()>::Continue
+                }
                 DfsEvent::Discover(inner, _) => {
                     let as_node = GlobalNode::from_local_node(*ctrl_id, inner);
                     if is_checkpoint(as_node) {
                         checkpointed.insert(as_node);
                         Control::<()>::Prune
                     } else if is_terminal(as_node) {
-                        reached.insert(as_node);
+                        reached.insert(
+                            as_node,
+                            GlobalNode::from_local_node(*ctrl_id, origin_map[inner.index()]),
+                        );
                         Control::Prune
                     } else {
                         Control::Continue
@@ -510,19 +521,11 @@ impl Context {
                 _ => Control::Continue,
             });
         }
-        let started_with = start_map
-            .into_iter()
-            .flat_map(|(ctrl_id, nodes)| {
-                nodes
-                    .into_iter()
-                    .map(move |node| GlobalNode::from_local_node(ctrl_id, node))
-            })
-            .collect();
 
         Ok(AlwaysHappensBefore {
             reached: reached.into_iter().collect(),
             checkpointed: checkpointed.into_iter().collect(),
-            started_with,
+            started_with: start_map.values().map(Vec::len).sum(),
         })
     }
 
@@ -684,11 +687,11 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
 /// for-human-eyes-only.
 pub struct AlwaysHappensBefore {
     /// How many paths terminated at the end?
-    reached: Vec<GlobalNode>,
+    reached: Vec<(GlobalNode, GlobalNode)>,
     /// How many paths lead to the checkpoints?
     checkpointed: Vec<GlobalNode>,
     /// How large was the set of initial nodes this traversal started with.
-    started_with: Vec<GlobalNode>,
+    started_with: usize,
 }
 
 impl std::fmt::Display for AlwaysHappensBefore {
@@ -702,7 +705,7 @@ impl std::fmt::Display for AlwaysHappensBefore {
             started with {} nodes",
             self.reached.len(),
             self.checkpointed.len(),
-            self.started_with.len(),
+            self.started_with,
         )
     }
 }
@@ -718,15 +721,13 @@ impl AlwaysHappensBefore {
     /// nodes.
     pub fn report(&self, ctx: Arc<dyn HasDiagnosticsBase>) {
         let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
-        assert_warning!(ctx, self.started_with.len() != 0, "Started with 0 nodes.");
+        assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
         assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
         if !self.holds() {
-            for &reached in &self.reached {
+            for &(reached, from) in &self.reached {
                 ctx.print_node_error(reached, "Reached this terminal")
                     .unwrap();
-            }
-            for &start in &self.started_with {
-                ctx.print_node_note(start, "Started from here").unwrap();
+                ctx.print_node_note(from, "Started from this node").unwrap();
             }
             for &check in &self.checkpointed {
                 ctx.print_node_hint(check, "This checkpoint was reached")
