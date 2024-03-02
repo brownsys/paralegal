@@ -78,10 +78,11 @@
 
 #![allow(clippy::arc_with_non_send_sync)]
 
+use colored::*;
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{Identifier, SPDG};
+use paralegal_spdg::{GlobalNode, Identifier, SPDG};
 
 use crate::{Context, ControllerId};
 
@@ -132,6 +133,10 @@ pub enum Severity {
     Fail,
     /// This could indicate that the policy does not operate as intended.
     Warning,
+    /// Additional information for a diagnostic
+    Note,
+    /// Some helpful hint
+    Help,
 }
 
 impl Severity {
@@ -213,6 +218,164 @@ pub trait Diagnostics: HasDiagnosticsBase {
     fn warning(&self, msg: impl Into<String>) {
         self.record(msg.into(), Severity::Warning, vec![])
     }
+
+    /// Prints a diagnostic message for a given problematic node, given the type and coloring
+    /// of said diagnostic and the message to be printed
+    fn node_diagnostic(
+        &self,
+        node: GlobalNode,
+        msg: &str,
+        severity: Severity,
+    ) -> anyhow::Result<()> {
+        use std::fmt::Write;
+        let (diag_type, coloring) = match severity {
+            Severity::Fail => ("error", as_red as fn(&str) -> ColoredString),
+            Severity::Warning => ("warning", as_yellow as _),
+            Severity::Note => ("note", as_blue as _),
+            Severity::Help => ("help", as_green as _),
+        };
+
+        let mut s = String::new();
+        macro_rules! println {
+            ($($t:tt)*) => {
+                writeln!(s, $($t)*)?;
+            };
+        }
+        use std::io::BufRead;
+        let src_loc = &self
+            .as_ctx()
+            .get_location(node)
+            .ok_or(anyhow::Error::msg(
+                "node's location was not found in mapping",
+            ))?
+            .loc;
+
+        let max_line_len = std::cmp::max(
+            src_loc.start_line.to_string().len(),
+            src_loc.end_line.to_string().len(),
+        );
+
+        println!("{}: {}", coloring(diag_type), msg);
+        let tab: String = " ".repeat(max_line_len);
+        println!(
+            "{}{} {}:{}:{}",
+            tab,
+            as_blue("-->"),
+            src_loc.file_path,
+            src_loc.start_line,
+            src_loc.start_col,
+        );
+        println!("{} {}", tab, as_blue("|"));
+        let lines = std::io::BufReader::new(std::fs::File::open(&src_loc.abs_file_path)?)
+            .lines()
+            .skip(src_loc.start_line - 1)
+            .take(src_loc.end_line - src_loc.start_line + 1)
+            .enumerate();
+        for (i, line) in lines {
+            let line_content: String = line?;
+            let line_num = src_loc.start_line + i;
+            let end: usize = if line_num == src_loc.end_line {
+                line_length_while(&line_content[0..src_loc.end_col - 1], |_| true)
+            } else {
+                line_length_while(&line_content, |_| true)
+            };
+            let start: usize = if line_num == src_loc.start_line {
+                line_length_while(&line_content[0..src_loc.start_col - 1], |_| true)
+            } else {
+                line_length_while(&line_content, char::is_whitespace)
+            };
+            let tab_len = max_line_len - line_num.to_string().len();
+
+            println!(
+                "{}{} {} {}",
+                " ".repeat(tab_len),
+                as_blue(&line_num.to_string()),
+                as_blue("|"),
+                line_content.replace('\t', &" ".repeat(TAB_SIZE))
+            );
+            if start > end {
+                eprintln!("start: {start}\nend: {end}\nin {line_content:?}\nstart_line: {}\nline_num: {line_num}\nend_line: {}\nstart col: {}\nend col: {}", src_loc.start_line, src_loc.end_line, src_loc.start_col, src_loc.end_col);
+            }
+            println!(
+                "{} {} {}{}",
+                tab,
+                as_blue("|"),
+                " ".repeat(start),
+                coloring(&"^".repeat(end - start))
+            );
+        }
+        println!("{} {}", tab, as_blue("|"));
+        self.record(s, severity, vec![]);
+        Ok(())
+    }
+
+    /// Prints an error message for a problematic node
+    fn print_node_error(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
+        self.node_diagnostic(node, msg, Severity::Fail)
+    }
+
+    /// Prints a warning message for a problematic node
+    fn print_node_warning(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
+        self.node_diagnostic(node, msg, Severity::Warning)
+    }
+
+    /// Prints a note for a problematic node
+    fn print_node_note(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
+        self.node_diagnostic(node, msg, Severity::Note)
+    }
+
+    fn print_node_hint(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
+        self.node_diagnostic(node, msg, Severity::Help)
+    }
+}
+
+const TAB_SIZE: usize = 4;
+
+fn line_length_while(s: &str, mut cont: impl FnMut(char) -> bool) -> usize {
+    s.chars()
+        .fold((false, 0), |(found, num), c| {
+            if found || !cont(c) {
+                (true, num)
+            } else {
+                let more = if c == '\t' { TAB_SIZE } else { 1 };
+                (false, num + more)
+            }
+        })
+        .1
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::diagnostics::{line_length_while, TAB_SIZE};
+
+    #[test]
+    fn test_line_length() {
+        assert_eq!(line_length_while("  ", |_| true), 2);
+        assert_eq!(line_length_while("  . ", |_| true), 4);
+        assert_eq!(line_length_while("  . ", char::is_whitespace), 2);
+        assert_eq!(line_length_while("\t", |_| true), TAB_SIZE);
+        assert_eq!(line_length_while("\t . ", |_| true), TAB_SIZE + 3);
+        assert_eq!(line_length_while(" . \t", |_| true), TAB_SIZE + 3);
+        assert_eq!(line_length_while("\t. ", char::is_whitespace), TAB_SIZE);
+        assert_eq!(
+            line_length_while("\t \t. ", char::is_whitespace),
+            2 * TAB_SIZE + 1
+        );
+    }
+}
+
+// For colored output for error printing
+fn as_blue(input: &str) -> ColoredString {
+    input.blue()
+}
+fn as_green(input: &str) -> ColoredString {
+    input.green()
+}
+fn as_yellow(input: &str) -> ColoredString {
+    input.yellow()
+}
+fn as_red(input: &str) -> ColoredString {
+    input.red()
 }
 
 impl<T: HasDiagnosticsBase> Diagnostics for T {}
