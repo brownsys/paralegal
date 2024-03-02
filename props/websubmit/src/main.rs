@@ -1,9 +1,9 @@
 extern crate anyhow;
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 use anyhow::{bail, Result};
 use clap::Parser;
-use paralegal_policy::{assert_error, paralegal_spdg, Context, Marker, PolicyContext};
+use paralegal_policy::{assert_error, paralegal_spdg, Context, Diagnostics, Marker, PolicyContext};
 use paralegal_spdg::{traverse::EdgeSelection, Identifier};
 
 macro_rules! marker {
@@ -16,6 +16,13 @@ macro_rules! marker {
 /// function on every value (or an equivalent type) that is ever stored.
 pub struct DeletionProp {
     cx: Arc<PolicyContext>,
+}
+
+impl Deref for DeletionProp {
+    type Target = PolicyContext;
+    fn deref(&self) -> &Self::Target {
+        self.cx.deref()
+    }
 }
 
 impl DeletionProp {
@@ -92,6 +99,13 @@ pub struct ScopedStorageProp {
     cx: Arc<PolicyContext>,
 }
 
+impl Deref for ScopedStorageProp {
+    type Target = PolicyContext;
+    fn deref(&self) -> &Self::Target {
+        self.cx.deref()
+    }
+}
+
 impl ScopedStorageProp {
     pub fn new(cx: Arc<PolicyContext>) -> Self {
         ScopedStorageProp { cx }
@@ -99,10 +113,11 @@ impl ScopedStorageProp {
 
     pub fn check(self) -> Result<bool> {
         for c_id in self.cx.desc().controllers.keys() {
+            // first marker used to be `scopes_store` but that one was never defined??
             let scopes = self
                 .cx
                 .all_nodes_for_ctrl(*c_id)
-                .filter(|node| self.cx.has_marker(marker!(scopes_store), *node))
+                .filter(|node| self.cx.has_marker(marker!(scopes), *node))
                 .collect::<Vec<_>>();
             let stores = self
                 .cx
@@ -128,15 +143,12 @@ impl ScopedStorageProp {
                                     .influencers(*scope, EdgeSelection::Data)
                                     .any(|i| self.cx.has_marker(marker!(auth_witness), i))
                         });
-                        assert_error!(
-                            self.cx,
-                            found_scope,
-                            format!(
-                                "Stored sensitive isn't scoped. sensitive {} stored here: {}",
-                                self.cx.describe_node(sens),
-                                self.cx.describe_node(store)
-                            )
-                        );
+                        if !found_scope {
+                            self.print_node_error(store, "Sensitive value store is not scoped.")
+                                .unwrap();
+                            self.print_node_note(sens, "Sensitive value originates here")
+                                .unwrap();
+                        }
                         found_scope
                     }
                 })
@@ -168,6 +180,13 @@ pub fn run_sc_policy(ctx: Arc<Context>) -> Result<bool> {
 /// If sensitive data is released, the release must be scoped, and all inputs to the scope must be safe.
 pub struct AuthDisclosureProp {
     cx: Arc<PolicyContext>,
+}
+
+impl Deref for AuthDisclosureProp {
+    type Target = PolicyContext;
+    fn deref(&self) -> &Self::Target {
+        self.cx.deref()
+    }
 }
 
 impl AuthDisclosureProp {
@@ -223,14 +242,9 @@ impl AuthDisclosureProp {
                         .influencers(&sink_callsite, EdgeSelection::Data)
                         .filter(|n| self.cx.has_marker(marker!(scopes), *n))
                         .collect::<Vec<_>>();
-                    assert_error!(
-                        self.cx,
-                        !store_scopes.is_empty(),
-                        format!(
-                            "Did not find any scopes for sink {}",
-                            self.cx.describe_node(*sink)
-                        )
-                    );
+                    if store_scopes.is_empty() {
+                        self.print_node_error(*sink, "Did not find any scopes for this sink")?;
+                    }
 
                     // all flows are safe before scope
                     let safe_before_scope = self.cx.always_happens_before(
@@ -239,15 +253,6 @@ impl AuthDisclosureProp {
                         |n| store_scopes.contains(&n),
                     )?;
 
-                    assert_error!(
-                        self.cx,
-                        safe_before_scope.holds(),
-                        format!(
-                            "Sensitive {} flowed to sink {} which did not have safe scopes",
-                            self.cx.describe_node(sens),
-                            self.cx.describe_node(*sink),
-                        )
-                    );
                     safe_before_scope.report(self.cx.clone());
 
                     if !safe_before_scope.holds() {
@@ -269,12 +274,11 @@ pub fn run_dis_policy(ctx: Arc<Context>) -> Result<bool> {
 #[derive(Parser)]
 struct Args {
     /// path to WebSubmit directory.
-    #[clap(long)]
     ws_dir: std::path::PathBuf,
 
-    /// edit-<property>-<articulation point>-<short edit type>
-    #[clap(long, default_value = "none")]
-    edit_type: String,
+    /// `edit-<property>-<articulation point>-<short edit type>`
+    #[clap(long)]
+    edit_type: Option<String>,
 
     /// sc, del, or dis.
     #[clap(long)]
@@ -297,24 +301,13 @@ fn main() -> Result<()> {
     };
 
     let mut command = paralegal_policy::SPDGGenCommand::global();
-    command.get_command().args([
-        "--model-version",
-        "v2",
-        "--inline-elision",
-        "--skip-sigs",
-        "--abort-after-analysis",
-        "--external-annotations",
-        format!(
-            "{}baseline-external-annotations.toml",
-            args.ws_dir.to_string_lossy()
-        )
-        .as_str(),
-    ]);
+    command.external_annotations("baseline-external-annotations.toml");
+    command.abort_after_analysis();
 
-    if args.edit_type.as_str() != "none" {
+    if let Some(edit) = args.edit_type.as_ref() {
         command
             .get_command()
-            .args(["--", "--features", &args.edit_type]);
+            .args(["--", "--lib", "--features", &edit]);
     }
     command.run(args.ws_dir)?.with_context(prop)?;
 
