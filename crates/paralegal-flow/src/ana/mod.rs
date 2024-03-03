@@ -136,7 +136,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_instruction_info(
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
-    ) -> HashMap<GlobalLocation, InstructionInfo> {
+    ) -> HashMap<GlobalLocation, InstructionKind> {
         let all_instructions = controllers
             .values()
             .flat_map(|v| {
@@ -149,50 +149,27 @@ impl<'tcx> SPDGGenerator<'tcx> {
         all_instructions
             .into_iter()
             .map(|i| {
-                let tcx = self.tcx;
                 let body = self.tcx.body_for_def_id(i.function).unwrap();
-                let with_default_spans = |kind| {
-                    let default_span = src_loc_for_span(tcx.def_span(i.function.to_def_id()), tcx);
-                    InstructionInfo {
-                        kind,
-                        call_loc: CallSiteSpan {
-                            loc: default_span.clone(),
-                            expanded_loc: default_span,
-                        },
-                    }
-                };
 
                 let info = match i.location {
-                    RichLocation::End => with_default_spans(InstructionKind::Return),
-                    RichLocation::Start => with_default_spans(InstructionKind::Start),
+                    RichLocation::End => InstructionKind::Return,
+                    RichLocation::Start => InstructionKind::Start,
                     RichLocation::Location(loc) => {
-                        let (kind, expanded_span) = match body.body.stmt_at(loc) {
+                        let kind = match body.body.stmt_at(loc) {
                             crate::Either::Right(term) => {
-                                let kind = if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
+                                if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
                                     InstructionKind::FunctionCall(FunctionCallInfo {
                                         id,
                                         is_inlined: id.is_local(),
                                     })
                                 } else {
                                     InstructionKind::Terminator
-                                };
-                                (kind, term.source_info.span)
+                                }
                             }
-                            crate::Either::Left(stmt) => {
-                                (InstructionKind::Statement, stmt.source_info.span)
-                            }
+                            crate::Either::Left(_) => InstructionKind::Statement,
                         };
-                        let stmt_span = tcx
-                            .sess
-                            .source_map()
-                            .stmt_span(expanded_span, body.body.span);
-                        InstructionInfo {
-                            kind,
-                            call_loc: CallSiteSpan {
-                                loc: src_loc_for_span(stmt_span, tcx),
-                                expanded_loc: src_loc_for_span(expanded_span, tcx),
-                            },
-                        }
+
+                        kind
                     }
                 };
                 (i, info)
@@ -600,16 +577,34 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         use petgraph::prelude::*;
         let g_ref = self.dep_graph.clone();
         let input = &g_ref.graph;
+        let tcx = self.tcx();
         let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
 
         for (i, weight) in input.node_references() {
             let (kind, is_external_call_source, node_markers) = self.determine_node_kind(weight);
+            let at = weight.at.leaf();
+            let body = &tcx.body_for_def_id(at.function).unwrap().body;
+
+            let rustc_span = match at.location {
+                RichLocation::End | RichLocation::Start => {
+                    let def = &body.local_decls[weight.place.local];
+                    def.source_info.span
+                }
+                RichLocation::Location(loc) => {
+                    let expanded_span = match body.stmt_at(loc) {
+                        crate::Either::Right(term) => term.source_info.span,
+                        crate::Either::Left(stmt) => stmt.source_info.span,
+                    };
+                    tcx.sess.source_map().stmt_span(expanded_span, body.span)
+                }
+            };
             let new_idx = self.register_node(
                 i,
                 NodeInfo {
                     at: weight.at,
                     description: format!("{:?}", weight.place),
                     kind,
+                    span: src_loc_for_span(rustc_span, tcx),
                 },
             );
 

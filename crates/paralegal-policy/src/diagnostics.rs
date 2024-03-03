@@ -254,13 +254,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
         use std::io::BufRead;
         let node_kind = self.as_ctx().node_info(node).kind;
 
-        let src_loc = &self
-            .as_ctx()
-            .get_location(node)
-            .ok_or(anyhow::Error::msg(
-                "node's location was not found in mapping",
-            ))?
-            .loc;
+        let src_loc = &self.as_ctx().get_location(node);
 
         let max_line_len = std::cmp::max(
             src_loc.start_line.to_string().len(),

@@ -209,16 +209,6 @@ pub enum InstructionKind {
     Return,
 }
 
-/// Information about instructions
-#[derive(Serialize, Deserialize, Debug)]
-pub struct InstructionInfo {
-    /// The kind of instruction
-    pub kind: InstructionKind,
-    /// call chain from within the controller to the call site of said function (this field
-    /// is empty for a controller)
-    pub call_loc: CallSiteSpan,
-}
-
 impl InstructionKind {
     /// If this identifies a function call, return the information inside.
     pub fn as_function_call(self) -> Option<FunctionCallInfo> {
@@ -251,7 +241,7 @@ pub struct ProgramDescription {
     /// Metadata about the instructions that are executed at all program
     /// locations we know about.
     #[serde(with = "serde_map_via_vec")]
-    pub instruction_info: HashMap<GlobalLocation, InstructionInfo>,
+    pub instruction_info: HashMap<GlobalLocation, InstructionKind>,
 
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
@@ -593,6 +583,8 @@ pub struct NodeInfo {
     pub description: String,
     /// Additional information of how this node is used in the source.
     pub kind: NodeKind,
+    /// Span information for this node
+    pub span: SrcCodeSpan,
 }
 
 impl Display for NodeInfo {
