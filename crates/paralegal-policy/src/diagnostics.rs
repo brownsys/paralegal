@@ -128,7 +128,7 @@ macro_rules! assert_warning {
 
 /// Severity of a recorded diagnostic message
 #[derive(Debug, Clone, Copy, strum::AsRefStr)]
-#[strum(serialize_all = "camel_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum Severity {
     /// This indicates that the policy failed.
     Error,
