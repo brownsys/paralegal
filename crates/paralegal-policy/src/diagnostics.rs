@@ -293,11 +293,11 @@ impl<'a, A: ?Sized> DiagnosticBuilder<'a, A> {
     }
 
     fn with_child(
-        mut self,
+        &mut self,
         message: impl Into<String>,
         severity: Severity,
         span: Option<SrcCodeSpan>,
-    ) -> Self {
+    ) -> &mut Self {
         self.diagnostic.children.push(DiagnosticPart {
             message: message.into(),
             severity,
@@ -314,49 +314,53 @@ impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
     }
 
     /// Append a help message to the diagnostic.
-    pub fn with_help(self, message: impl Into<String>) -> Self {
+    pub fn with_help(&mut self, message: impl Into<String>) -> &mut Self {
         self.with_child(message, Severity::Help, None)
     }
 
     /// Append a help message with a source code span to the diagnostic.
-    pub fn with_span_help(self, span: SrcCodeSpan, message: impl Into<String>) -> Self {
+    pub fn with_span_help(&mut self, span: SrcCodeSpan, message: impl Into<String>) -> &mut Self {
         self.with_child(message, Severity::Help, Some(span))
     }
 
     /// Append a help message and the span of a graph node to the diagnostic.
-    pub fn with_node_help(self, node: GlobalNode, message: impl Into<String>) -> Self {
+    pub fn with_node_help(&mut self, node: GlobalNode, message: impl Into<String>) -> &mut Self {
         let span = self.base.as_ctx().get_location(node).clone();
         self.with_child(message, Severity::Help, Some(span))
     }
 
     /// Append a warning to the diagnostic.
-    pub fn with_warning(self, message: impl Into<String>) -> Self {
+    pub fn with_warning(&mut self, message: impl Into<String>) -> &mut Self {
         self.with_child(message, Severity::Warning, None)
     }
 
     /// Append a warning and the span of a graph node to the diagnostic.
-    pub fn with_span_warning(self, span: SrcCodeSpan, message: impl Into<String>) -> Self {
+    pub fn with_span_warning(
+        &mut self,
+        span: SrcCodeSpan,
+        message: impl Into<String>,
+    ) -> &mut Self {
         self.with_child(message, Severity::Warning, Some(span))
     }
 
     /// Append a warning with a source code span to the diagnostic.
-    pub fn with_node_warning(self, node: GlobalNode, message: impl Into<String>) -> Self {
+    pub fn with_node_warning(&mut self, node: GlobalNode, message: impl Into<String>) -> &mut Self {
         let span = self.base.as_ctx().get_location(node).clone();
         self.with_child(message, Severity::Warning, Some(span))
     }
 
     /// Append a note to the diagnostic.
-    pub fn with_note(self, message: impl Into<String>) -> Self {
+    pub fn with_note(&mut self, message: impl Into<String>) -> &mut Self {
         self.with_child(message, Severity::Note, None)
     }
 
     /// Append a note with a source code span to the diagnostic.
-    pub fn with_span_note(self, span: SrcCodeSpan, message: impl Into<String>) -> Self {
+    pub fn with_span_note(&mut self, span: SrcCodeSpan, message: impl Into<String>) -> &mut Self {
         self.with_child(message, Severity::Note, Some(span))
     }
 
     /// Append a note and the span of a graph node to the diagnostic.
-    pub fn with_node_note(self, node: GlobalNode, message: impl Into<String>) -> Self {
+    pub fn with_node_note(&mut self, node: GlobalNode, message: impl Into<String>) -> &mut Self {
         let span = self.base.as_ctx().get_location(node).clone();
         self.with_child(message, Severity::Note, Some(span))
     }
