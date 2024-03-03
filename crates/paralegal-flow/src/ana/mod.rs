@@ -602,6 +602,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let return_ = self.determine_return();
         SPDG {
             graph: self.spdg,
+            id: self.local_def_id,
             name: Identifier::new(self.target.name()),
             arguments,
             markers,

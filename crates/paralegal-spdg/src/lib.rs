@@ -679,6 +679,9 @@ pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
 pub struct SPDG {
     /// The identifier of the entry point to this computation
     pub name: Identifier,
+    /// The id
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::LocalDefId"))]
+    pub id: LocalDefId,
     /// The PDG
     pub graph: SPDGImpl,
     /// Nodes to which markers are assigned.
@@ -727,6 +730,19 @@ impl SPDG {
         use petgraph::dot::Dot;
         let dot = Dot::with_config(&self.graph, &[]);
         write!(out, "{dot}")
+    }
+
+    /// The arguments of this spdg. The same as the `arguments` field, but
+    /// conveniently paired with the controller id
+    pub fn arguments(&self) -> NodeCluster {
+        NodeCluster {
+            controller_id: self.id,
+            nodes: self.arguments.clone().into(),
+        }
+    }
+
+    pub fn node_types(&self, node: Node) -> &[TypeId] {
+        self.type_assigns.get(&node).map_or(&[], |r| &r.0)
     }
 }
 
