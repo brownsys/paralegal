@@ -727,9 +727,9 @@ impl AlwaysHappensBefore {
         assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
         if !self.holds() {
             for &(reached, from) in &self.reached {
-                ctx.struct_node_error(reached, "Reached this terminal")
-                    .with_node_note(from, "Started from this node")
-                    .emit();
+                let mut err = ctx.struct_node_error(reached, "Reached this terminal");
+                err.with_node_note(from, "Started from this node");
+                err.emit();
             }
         }
     }
