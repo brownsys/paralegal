@@ -219,6 +219,16 @@ pub trait Diagnostics: HasDiagnosticsBase {
         self.record(msg.into(), Severity::Warning, vec![])
     }
 
+    /// Emit a message that provides additional information to the user.
+    fn note(&self, msg: impl Into<String>) {
+        self.record(msg.into(), Severity::Note, vec![])
+    }
+
+    /// Emit a message that suggests something to the user.
+    fn hint(&self, msg: impl Into<String>) {
+        self.record(msg.into(), Severity::Help, vec![])
+    }
+
     /// Prints a diagnostic message for a given problematic node, given the type and coloring
     /// of said diagnostic and the message to be printed
     fn node_diagnostic(
@@ -229,10 +239,10 @@ pub trait Diagnostics: HasDiagnosticsBase {
     ) -> anyhow::Result<()> {
         use std::fmt::Write;
         let (diag_type, coloring) = match severity {
-            Severity::Fail => ("error", as_red as fn(&str) -> ColoredString),
-            Severity::Warning => ("warning", as_yellow as _),
-            Severity::Note => ("note", as_blue as _),
-            Severity::Help => ("help", as_green as _),
+            Severity::Fail => ("error", (|s| s.red()) as fn(&str) -> ColoredString),
+            Severity::Warning => ("warning", (|s: &str| s.yellow()) as _),
+            Severity::Note => ("note", (|s: &str| s.blue()) as _),
+            Severity::Help => ("help", (|s: &str| s.green()) as _),
         };
 
         let mut s = String::new();
@@ -242,6 +252,8 @@ pub trait Diagnostics: HasDiagnosticsBase {
             };
         }
         use std::io::BufRead;
+        let node_kind = self.as_ctx().node_info(node).kind;
+
         let src_loc = &self
             .as_ctx()
             .get_location(node)
@@ -258,14 +270,14 @@ pub trait Diagnostics: HasDiagnosticsBase {
         println!("{}: {}", coloring(diag_type), msg);
         let tab: String = " ".repeat(max_line_len);
         println!(
-            "{}{} {}:{}:{}",
+            "{}{} {}:{}:{} ({node_kind})",
             tab,
-            as_blue("-->"),
+            "-->".blue(),
             src_loc.file_path,
             src_loc.start_line,
             src_loc.start_col,
         );
-        println!("{} {}", tab, as_blue("|"));
+        println!("{} {}", tab, "|".blue());
         let lines = std::io::BufReader::new(std::fs::File::open(&src_loc.abs_file_path)?)
             .lines()
             .skip(src_loc.start_line - 1)
@@ -289,22 +301,19 @@ pub trait Diagnostics: HasDiagnosticsBase {
             println!(
                 "{}{} {} {}",
                 " ".repeat(tab_len),
-                as_blue(&line_num.to_string()),
-                as_blue("|"),
+                &line_num.to_string().blue(),
+                "|".blue(),
                 line_content.replace('\t', &" ".repeat(TAB_SIZE))
             );
-            if start > end {
-                eprintln!("start: {start}\nend: {end}\nin {line_content:?}\nstart_line: {}\nline_num: {line_num}\nend_line: {}\nstart col: {}\nend col: {}", src_loc.start_line, src_loc.end_line, src_loc.start_col, src_loc.end_col);
-            }
             println!(
                 "{} {} {}{}",
                 tab,
-                as_blue("|"),
+                "|".blue(),
                 " ".repeat(start),
                 coloring(&"^".repeat(end - start))
             );
         }
-        println!("{} {}", tab, as_blue("|"));
+        println!("{} {}", tab, "|".blue());
         self.record(s, severity, vec![]);
         Ok(())
     }
@@ -324,6 +333,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
         self.node_diagnostic(node, msg, Severity::Note)
     }
 
+    /// Print a hint with a node
     fn print_node_hint(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
         self.node_diagnostic(node, msg, Severity::Help)
     }
@@ -362,20 +372,6 @@ mod tests {
             2 * TAB_SIZE + 1
         );
     }
-}
-
-// For colored output for error printing
-fn as_blue(input: &str) -> ColoredString {
-    input.blue()
-}
-fn as_green(input: &str) -> ColoredString {
-    input.green()
-}
-fn as_yellow(input: &str) -> ColoredString {
-    input.yellow()
-}
-fn as_red(input: &str) -> ColoredString {
-    input.red()
 }
 
 impl<T: HasDiagnosticsBase> Diagnostics for T {}
