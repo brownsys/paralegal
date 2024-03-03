@@ -158,29 +158,26 @@ impl ScopedStorageProp {
                     {
                         return true;
                     }
-                    cx.print_node_error(store, loc!("Sensitive value store is not scoped."))
-                        .unwrap();
-                    cx.print_node_note(sens, loc!("Sensitive value originates here"))
-                        .unwrap();
+                    let mut err = cx.struct_node_error(store, loc!("Sensitive value store is not scoped."));
+                    err.with_node_note(sens, loc!("Sensitive value originates here"));
                     if eligible_scopes.is_empty() {
-                        self.warning(loc!("No scopes were found to flow to this node"));
+                        err.with_warning(loc!("No scopes were found to flow to this node"));
                         for &scope in &scopes {
-                            self.print_node_hint(scope, "This node would have been a valid scope")
-                                .unwrap();
+                            err.with_node_help(scope, "This node would have been a valid scope");
                     }
                     } else {
                         for scope in eligible_scopes {
-                            self.print_node_hint(scope, "This scope would have been eligible but is not influenced by an `auth_whitness`")
-                                .unwrap();
+                            err.with_node_help(scope, "This scope would have been eligible but is not influenced by an `auth_whitness`");
                         }
                         if witnesses.is_empty() {
                             found_local_witnesses = false;
-                            cx.warning(format!("No local `{witness_marker}` sources found."))
+                            err.with_warning(format!("No local `{witness_marker}` sources found."));
                         }
                         for w in witnesses.iter().copied() {
-                            cx.print_node_hint(w, &format!("This is a local source of `{witness_marker}`")).unwrap();
+                            err.with_node_help(w, &format!("This is a local source of `{witness_marker}`"));
                         }
                     }
+                    err.emit();
                     false
                 })
             });
@@ -284,8 +281,7 @@ impl AuthDisclosureProp {
                         .filter(|n| self.cx.has_marker(marker!(scopes), *n))
                         .collect::<Vec<_>>();
                     if store_scopes.is_empty() {
-                        self.print_node_error(*sink, loc!("Did not find any scopes for this sink"))
-                            .unwrap();
+                        self.node_error(*sink, loc!("Did not find any scopes for this sink"));
                     }
 
                     // all flows are safe before scope
@@ -307,11 +303,13 @@ impl AuthDisclosureProp {
             if some_failure {
                 let mut nodes = self.marked_nodes(marker!(scopes)).peekable();
                 if nodes.peek().is_none() {
-                    self.hint(loc!("No suitable scopes were found"))
-                }
-                for scope in nodes {
-                    self.print_node_note(scope, "This location would have been a suitable scope")
-                        .unwrap();
+                    let mut err = self.struct_help(loc!("No suitable scopes were found"));
+
+                    for scope in nodes {
+                        err.with_node_note(scope, "This location would have been a suitable scope");
+                    }
+
+                    err.emit();
                 }
                 return Ok(false);
             }

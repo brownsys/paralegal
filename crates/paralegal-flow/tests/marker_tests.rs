@@ -41,7 +41,7 @@ define_test!(trait_method_marker: ctrl -> {
             .iter()
             .any(|(node, markers)| {
                 let weight = spdg.graph.node_weight(*node).unwrap();
-                !matches!(ctrl.graph().desc.instruction_info[&weight.at.leaf()].kind,
+                !matches!(ctrl.graph().desc.instruction_info[&weight.at.leaf()],
                     InstructionKind::FunctionCall(fun) if fun.id == method.ident)
                 || markers.contains(&marker)
             }));
