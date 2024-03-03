@@ -633,12 +633,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 markers.entry(new_idx).or_default().extend(node_markers)
             }
 
+            let is_controller_argument = kind.is_formal_parameter()
+                && matches!(self.try_as_root(weight.at), Some(l) if l.location == RichLocation::Start);
+
             // TODO decide if this is correct.
-            if kind.is_actual_return()
-                || (kind.is_formal_parameter()
-                    && matches!(self.try_as_root(weight.at), Some(l) if l.location == RichLocation::Start))
-            {
-                self.handle_node_types(new_idx, weight, is_external_call_source);
+            if kind.is_actual_return() || is_controller_argument {
+                self.handle_node_types(
+                    new_idx,
+                    weight,
+                    is_external_call_source || is_controller_argument,
+                );
             }
         }
 
