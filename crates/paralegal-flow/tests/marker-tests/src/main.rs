@@ -1,5 +1,5 @@
 #[derive(Clone)]
-#[repr(transparent)]
+//#[repr(transparent)]
 #[paralegal::marker(wrapper)]
 pub struct Wrapper<T: ?Sized>(T);
 
@@ -28,4 +28,9 @@ impl Test for () {
 #[paralegal::analyze]
 fn trait_method_marker() {
     ().method()
+}
+
+#[paralegal::analyze]
+fn typed_input(w: Wrapper<u32>) {
+    consume_any(w)
 }
