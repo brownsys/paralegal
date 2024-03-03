@@ -592,12 +592,12 @@ pub trait Diagnostics: HasDiagnosticsBase {
     }
 }
 
-fn struct_node_diagnostic<'a, B: HasDiagnosticsBase + ?Sized>(
-    base: &'a B,
+fn struct_node_diagnostic<B: HasDiagnosticsBase + ?Sized>(
+    base: &B,
     node: GlobalNode,
     severity: Severity,
     msg: impl Into<String>,
-) -> DiagnosticBuilder<'a, B> {
+) -> DiagnosticBuilder<'_, B> {
     let span = base.as_ctx().get_location(node);
     DiagnosticBuilder::init(msg.into(), severity, Some(span.clone()), base)
 }
