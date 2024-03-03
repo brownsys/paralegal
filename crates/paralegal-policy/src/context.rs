@@ -687,6 +687,7 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
 /// [`Self::is_vacuous`]. Otherwise the information in this struct and its
 /// printed representations should be considered unstable and
 /// for-human-eyes-only.
+#[must_use = "call `report` or similar evaluations function to ensure the property is checked"]
 pub struct AlwaysHappensBefore {
     /// How many paths terminated at the end?
     reached: Vec<(GlobalNode, GlobalNode)>,
