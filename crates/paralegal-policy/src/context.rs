@@ -640,6 +640,7 @@ impl Context {
         NodeCluster::new(src.controller_id(), start)
     }
 
+    /// Get the span of a node
     pub fn get_location(&self, node: GlobalNode) -> &SrcCodeSpan {
         &self.node_info(node).span
     }
