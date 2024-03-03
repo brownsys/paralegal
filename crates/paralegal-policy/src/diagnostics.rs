@@ -229,12 +229,15 @@ pub trait Diagnostics: HasDiagnosticsBase {
         self.record(msg.into(), Severity::Help, vec![])
     }
 
-    /// Prints a diagnostic message for a given problematic node, given the type and coloring
-    /// of said diagnostic and the message to be printed
+    /// Prints a diagnostic message and the source code that corresponds to the
+    /// given node.
+    ///
+    /// The severity governs the severity of the emitted message (the same as
+    /// e.g. [`Self::error`]) and the coloring of the span information.
     fn node_diagnostic(
         &self,
         node: GlobalNode,
-        msg: &str,
+        msg: impl Into<String>,
         severity: Severity,
     ) -> anyhow::Result<()> {
         use std::fmt::Write;
@@ -261,7 +264,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
             src_loc.end_line.to_string().len(),
         );
 
-        println!("{}: {}", coloring(diag_type), msg);
+        println!("{}: {}", coloring(diag_type), msg.into());
         let tab: String = " ".repeat(max_line_len);
         println!(
             "{}{} {}:{}:{} ({node_kind})",

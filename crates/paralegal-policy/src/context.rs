@@ -84,9 +84,11 @@ fn bfs_iter<
 ///
 /// To communicate the results of your policies with the user you can emit
 /// diagnostic messages. To communicate a policy failure use
-/// [`error`](crate::Diagnostics::error) or the [`assert_error`] macro. To
+/// [`error`](crate::Diagnostics::error) or the [`crate::assert_error`] macro. To
 /// communicate suspicious circumstances that are not outright cause for failure
-/// use [`warning`](crate::Diagnostics::error) or [`assert_warning`].
+/// use [`warning`](crate::Diagnostics::warning) or [`assert_warning`]. For all
+/// types of errors, including those with span information for a particular
+/// node, see the [`crate::Diagnostics`] trait.
 ///
 /// Note that these methods just queue the diagnostics messages. To emit them
 /// (and potentially terminate the program if the policy does not hold) use
