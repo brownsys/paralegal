@@ -191,3 +191,19 @@ impl GraphLocation {
         Ok(Context::new(desc))
     }
 }
+
+/// A convenience macro that uses `file!`, `line!` and `column!` to return the
+/// string `"file:line:column"`. This can be used to mention policy source
+/// locations in policies.
+///
+/// If additional arguments are procided these are `concat!`ed to the end with a
+/// space in betwee the location and the rest.
+#[macro_export]
+macro_rules! loc {
+    () => {
+        concat!(file!(), ':', line!(), ':', column!(),)
+    };
+    ($($t:tt)+) => {
+        concat!(file!(), ':', line!(), ':', column!(), ' ', $($t)+)
+    };
+}
