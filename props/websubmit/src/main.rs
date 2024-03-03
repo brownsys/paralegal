@@ -3,8 +3,11 @@ use std::{ops::Deref, sync::Arc};
 
 use anyhow::{bail, Result};
 use clap::Parser;
-use paralegal_policy::{assert_error, paralegal_spdg, Context, Diagnostics, Marker, PolicyContext};
-use paralegal_spdg::{traverse::EdgeSelection, Identifier};
+use paralegal_policy::{
+    assert_error, loc, paralegal_spdg, Context, Diagnostics, IntoIterGlobalNodes, Marker,
+    PolicyContext,
+};
+use paralegal_spdg::{traverse::EdgeSelection, GlobalNode, Identifier};
 
 macro_rules! marker {
     ($id:ident) => {
@@ -112,59 +115,97 @@ impl ScopedStorageProp {
     }
 
     pub fn check(self) -> Result<bool> {
-        for c_id in self.cx.desc().controllers.keys() {
-            // first marker used to be `scopes_store` but that one was never defined??
-            let scopes = self
-                .cx
-                .all_nodes_for_ctrl(*c_id)
-                .filter(|node| self.cx.has_marker(marker!(scopes), *node))
-                .collect::<Vec<_>>();
-            let stores = self
-                .cx
-                .all_nodes_for_ctrl(*c_id)
+        let mut found_local_witnesses = true;
+        for cx in self.cx.clone().controller_contexts() {
+            let c_id = cx.id();
+            let scopes = cx
+                .all_nodes_for_ctrl(c_id)
+                .filter(|node| self.cx.has_marker(marker!(scopes_store), *node))
+                .collect::<Vec<GlobalNode>>();
+
+            let stores = cx
+                .all_nodes_for_ctrl(c_id)
                 .filter(|node| self.cx.has_marker(marker!(stores), *node))
                 .collect::<Vec<_>>();
-            let mut sensitives = self
-                .cx
-                .all_nodes_for_ctrl(*c_id)
+            let mut sensitives = cx
+                .all_nodes_for_ctrl(c_id)
                 .filter(|node| self.cx.has_marker(marker!(sensitive), *node));
+
+            let witness_marker = marker!(auth_witness);
+
+            let mut witnesses = cx
+                .all_nodes_for_ctrl(c_id)
+                .filter(|node| self.cx.has_marker(witness_marker, *node))
+                .collect::<Vec<_>>();
 
             let controller_valid = sensitives.all(|sens| {
                 stores.iter().all(|&store| {
                     // sensitive flows to store implies some scope flows to store callsite
-                    !(self.cx.flows_to(sens, store, EdgeSelection::Data)) || {
-                        let store_callsite = self.cx.inputs_of(self.cx.associated_call_site(store));
-                        // The sink that scope flows to may be another CallArgument attached to the store's CallSite, it doesn't need to be store itself.
-                        let found_scope = scopes.iter().any(|scope| {
-                            self.cx
-                                .flows_to(*scope, &store_callsite, EdgeSelection::Data)
-                                && self
-                                    .cx
-                                    .influencers(*scope, EdgeSelection::Data)
-                                    .any(|i| self.cx.has_marker(marker!(auth_witness), i))
-                        });
-                        if !found_scope {
-                            self.print_node_error(store, "Sensitive value store is not scoped.")
+                    if !cx.flows_to(sens, store, EdgeSelection::Data) {
+                        return true;
+                    }
+                    let store_callsite = cx.inputs_of(self.cx.associated_call_site(store));
+                    // The sink that scope flows to may be another CallArgument attached to the store's CallSite, it doesn't need to be store itself.
+                    let eligible_scopes = scopes.iter().copied().filter(|scope|
+                        cx
+                            .flows_to(*scope, &store_callsite, EdgeSelection::Data))
+                            .collect::<Vec<_>>();
+                    if eligible_scopes.iter().any(|&scope|
+
+                            cx
+                            .influencers(scope, EdgeSelection::Data)
+                            .any(|i| self.cx.has_marker(witness_marker, i)))
+                    {
+                        return true;
+                    }
+                    cx.print_node_error(store, loc!("Sensitive value store is not scoped."))
+                        .unwrap();
+                    cx.print_node_note(sens, loc!("Sensitive value originates here"))
+                        .unwrap();
+                    if eligible_scopes.is_empty() {
+                        self.warning(loc!("No scopes were found to flow to this node"));
+                        for &scope in &scopes {
+                            self.print_node_hint(scope, "This node would have been a valid scope")
                                 .unwrap();
-                            self.print_node_note(sens, "Sensitive value originates here")
+                    }
+                    } else {
+                        for scope in eligible_scopes {
+                            self.print_node_hint(scope, "This scope would have been eligible but is not influenced by an `auth_whitness`")
                                 .unwrap();
                         }
-                        found_scope
+                        if witnesses.is_empty() {
+                            found_local_witnesses = false;
+                            cx.warning(format!("No local `{witness_marker}` sources found."))
+                        }
+                        for w in witnesses.iter().copied() {
+                            cx.print_node_hint(w, &format!("This is a local source of `{witness_marker}`")).unwrap();
+                        }
                     }
+                    false
                 })
             });
 
             assert_error!(
-                self.cx,
+                cx,
                 controller_valid,
                 format!(
-                    "Violation detected for controller: {}",
-                    self.cx.desc().controllers[c_id].name
+                    loc!("Violation detected for controller: {}"),
+                    cx.current().name
                 ),
             );
 
             if !controller_valid {
-                return Ok(controller_valid);
+                if scopes.is_empty() {
+                    self.warning(loc!("No valid scopes were found"));
+                }
+                for a in cx.current().arguments().iter_global_nodes() {
+                    self.note(format!("{}", cx.describe_node(a)));
+                    let types = cx.current().node_types(a.local_node());
+                    for t in types {
+                        self.note(format!("{}", &cx.desc().type_info[&t].rendering))
+                    }
+                }
+                return Ok(false);
             }
         }
         Ok(true)
@@ -222,16 +263,16 @@ impl AuthDisclosureProp {
                 .all_nodes_for_ctrl(*c_id)
                 .filter(|n| self.cx.has_marker(marker!(sink), *n))
                 .collect::<Vec<_>>();
-            let sensitives = self
+            let mut sensitives = self
                 .cx
                 .all_nodes_for_ctrl(*c_id)
                 .filter(|node| self.cx.has_marker(marker!(sensitive), *node));
 
-            for sens in sensitives {
-                for sink in sinks.iter() {
+            let some_failure = sensitives.any(|sens| {
+                sinks.iter().any(|sink| {
                     // sensitive flows to store implies
                     if !self.cx.flows_to(sens, *sink, EdgeSelection::Data) {
-                        continue;
+                        return false;
                     }
 
                     let sink_callsite = self.cx.inputs_of(self.cx.associated_call_site(*sink));
@@ -243,22 +284,36 @@ impl AuthDisclosureProp {
                         .filter(|n| self.cx.has_marker(marker!(scopes), *n))
                         .collect::<Vec<_>>();
                     if store_scopes.is_empty() {
-                        self.print_node_error(*sink, "Did not find any scopes for this sink")?;
+                        self.print_node_error(*sink, loc!("Did not find any scopes for this sink"))
+                            .unwrap();
                     }
 
                     // all flows are safe before scope
-                    let safe_before_scope = self.cx.always_happens_before(
-                        roots.iter().cloned(),
-                        |n| safe_scopes.contains(&n),
-                        |n| store_scopes.contains(&n),
-                    )?;
+                    let safe_before_scope = self
+                        .cx
+                        .always_happens_before(
+                            roots.iter().cloned(),
+                            |n| safe_scopes.contains(&n),
+                            |n| store_scopes.contains(&n),
+                        )
+                        .unwrap();
 
                     safe_before_scope.report(self.cx.clone());
 
-                    if !safe_before_scope.holds() {
-                        return Ok(false);
-                    }
+                    !safe_before_scope.holds()
+                })
+            });
+
+            if some_failure {
+                let mut nodes = self.marked_nodes(marker!(scopes)).peekable();
+                if nodes.peek().is_none() {
+                    self.hint(loc!("No suitable scopes were found"))
                 }
+                for scope in nodes {
+                    self.print_node_note(scope, "This location would have been a suitable scope")
+                        .unwrap();
+                }
+                return Ok(false);
             }
         }
         Ok(true)
