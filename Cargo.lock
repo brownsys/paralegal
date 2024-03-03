@@ -843,6 +843,7 @@ dependencies = [
  "petgraph",
  "serde_json",
  "simple_logger",
+ "strum",
 ]
 
 [[package]]

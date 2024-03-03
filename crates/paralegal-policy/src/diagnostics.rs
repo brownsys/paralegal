@@ -127,10 +127,11 @@ macro_rules! assert_warning {
 }
 
 /// Severity of a recorded diagnostic message
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, strum::AsRefStr)]
+#[strum(serialize_all = "camel_case")]
 pub enum Severity {
     /// This indicates that the policy failed.
-    Fail,
+    Error,
     /// This could indicate that the policy does not operate as intended.
     Warning,
     /// Additional information for a diagnostic
@@ -141,7 +142,16 @@ pub enum Severity {
 
 impl Severity {
     fn must_abort(self) -> bool {
-        matches!(self, Severity::Fail)
+        matches!(self, Severity::Error)
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Severity::Error => Color::Red,
+            Severity::Warning => Color::Yellow,
+            Severity::Note => Color::Blue,
+            Severity::Help => Color::Green,
+        }
     }
 }
 
@@ -210,7 +220,7 @@ impl<T: HasDiagnosticsBase> HasDiagnosticsBase for Rc<T> {
 pub trait Diagnostics: HasDiagnosticsBase {
     /// Emit a message that is severe enough that it causes the policy to fail.
     fn error(&self, msg: impl Into<String>) {
-        self.record(msg.into(), Severity::Fail, vec![])
+        self.record(msg.into(), Severity::Error, vec![])
     }
 
     /// Emit a message that indicates to the user that the policy might be
@@ -225,7 +235,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
     }
 
     /// Emit a message that suggests something to the user.
-    fn hint(&self, msg: impl Into<String>) {
+    fn help(&self, msg: impl Into<String>) {
         self.record(msg.into(), Severity::Help, vec![])
     }
 
@@ -241,40 +251,30 @@ pub trait Diagnostics: HasDiagnosticsBase {
         severity: Severity,
     ) -> anyhow::Result<()> {
         use std::fmt::Write;
-        let (diag_type, coloring) = match severity {
-            Severity::Fail => ("error", (|s| s.red()) as fn(&str) -> ColoredString),
-            Severity::Warning => ("warning", (|s: &str| s.yellow()) as _),
-            Severity::Note => ("note", (|s: &str| s.blue()) as _),
-            Severity::Help => ("help", (|s: &str| s.green()) as _),
-        };
+        let coloring = severity.color();
 
         let mut s = String::new();
-        macro_rules! println {
-            ($($t:tt)*) => {
-                writeln!(s, $($t)*)?;
-            };
-        }
         use std::io::BufRead;
         let node_kind = self.as_ctx().node_info(node).kind;
 
-        let src_loc = &self.as_ctx().get_location(node);
+        let src_loc = self.as_ctx().get_location(node);
 
         let max_line_len = std::cmp::max(
             src_loc.start_line.to_string().len(),
             src_loc.end_line.to_string().len(),
         );
 
-        println!("{}: {}", coloring(diag_type), msg.into());
+        writeln!(s, "{}: {}", severity.as_ref().color(coloring), msg.into())?;
         let tab: String = " ".repeat(max_line_len);
-        println!(
-            "{}{} {}:{}:{} ({node_kind})",
-            tab,
+        writeln!(
+            s,
+            "{tab}{} {}:{}:{} ({node_kind})",
             "-->".blue(),
             src_loc.source_file.file_path,
             src_loc.start_line,
             src_loc.start_col,
-        );
-        println!("{} {}", tab, "|".blue());
+        )?;
+        writeln!(s, "{tab} {}", "|".blue())?;
         let lines =
             std::io::BufReader::new(std::fs::File::open(&src_loc.source_file.abs_file_path)?)
                 .lines()
@@ -294,31 +294,30 @@ pub trait Diagnostics: HasDiagnosticsBase {
             } else {
                 line_length_while(&line_content, char::is_whitespace)
             };
-            let tab_len = max_line_len - line_num.to_string().len();
 
-            println!(
-                "{}{} {} {}",
-                " ".repeat(tab_len),
+            writeln!(
+                s,
+                "{:<max_line_len$} {} {}",
                 &line_num.to_string().blue(),
                 "|".blue(),
                 line_content.replace('\t', &" ".repeat(TAB_SIZE))
-            );
-            println!(
-                "{} {} {}{}",
-                tab,
+            )?;
+            writeln!(
+                s,
+                "{tab} {} {}{}",
                 "|".blue(),
                 " ".repeat(start),
-                coloring(&"^".repeat(end - start))
-            );
+                "^".repeat(end - start).color(coloring)
+            )?;
         }
-        println!("{} {}", tab, "|".blue());
+        writeln!(s, "{tab} {}", "|".blue())?;
         self.record(s, severity, vec![]);
         Ok(())
     }
 
     /// Prints an error message for a problematic node
     fn print_node_error(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
-        self.node_diagnostic(node, msg, Severity::Fail)
+        self.node_diagnostic(node, msg, Severity::Error)
     }
 
     /// Prints a warning message for a problematic node

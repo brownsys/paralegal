@@ -155,6 +155,17 @@ dependencies = [
 
 [[package]]
 name = "colored"
+version = "1.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a5f741c91823341bebf717d4c71bda820630ce065443b58bd1b7451af008355"
+dependencies = [
+ "is-terminal",
+ "lazy_static",
+ "winapi",
+]
+
+[[package]]
+name = "colored"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2674ec482fbc38012cf31e6c42ba0177b431a0cb6f15fe40efa5aab1bda516f6"
@@ -462,6 +473,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitvec",
+ "colored 1.9.4",
  "indexical",
  "itertools 0.12.1",
  "lazy_static",
@@ -470,6 +482,7 @@ dependencies = [
  "petgraph",
  "serde_json",
  "simple_logger",
+ "strum",
 ]
 
 [[package]]
@@ -671,7 +684,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48047e77b528151aaf841a10a9025f9459da80ba820e425ff7eb005708a76dc7"
 dependencies = [
  "atty",
- "colored",
+ "colored 2.0.4",
  "log",
  "time",
  "winapi",
