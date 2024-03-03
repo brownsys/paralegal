@@ -729,10 +729,6 @@ impl AlwaysHappensBefore {
                     .unwrap();
                 ctx.print_node_note(from, "Started from this node").unwrap();
             }
-            for &check in &self.checkpointed {
-                ctx.print_node_hint(check, "This checkpoint was reached")
-                    .unwrap();
-            }
         }
     }
 
