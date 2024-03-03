@@ -82,7 +82,7 @@ use colored::*;
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{GlobalNode, Identifier, SPDG};
+use paralegal_spdg::{GlobalNode, Identifier, SrcCodeSpan, SPDG};
 
 use crate::{Context, ControllerId};
 
@@ -127,10 +127,11 @@ macro_rules! assert_warning {
 }
 
 /// Severity of a recorded diagnostic message
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, strum::AsRefStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum Severity {
     /// This indicates that the policy failed.
-    Fail,
+    Error,
     /// This could indicate that the policy does not operate as intended.
     Warning,
     /// Additional information for a diagnostic
@@ -141,18 +142,224 @@ pub enum Severity {
 
 impl Severity {
     fn must_abort(self) -> bool {
-        matches!(self, Severity::Fail)
+        matches!(self, Severity::Error)
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Severity::Error => Color::Red,
+            Severity::Warning => Color::Yellow,
+            Severity::Note => Color::Blue,
+            Severity::Help => Color::Green,
+        }
     }
 }
 
 /// Context provided to [`HasDiagnosticsBase::record`].
-pub type DiagnosticContextStack = Vec<String>;
+type DiagnosticContextStack = Vec<String>;
+
+/// Representation of a diagnostic message. You should not interact with this
+/// type directly but use the methods on [`Diagnostics`] or
+/// [`DiagnosticBuilder`] to create these.
+#[derive(Debug)]
+pub struct Diagnostic {
+    context: DiagnosticContextStack,
+    main: DiagnosticPart,
+    children: Vec<DiagnosticPart>,
+}
+
+impl Diagnostic {
+    fn write(&self, w: &mut impl std::fmt::Write) -> std::fmt::Result {
+        for ctx in self.context.iter().rev() {
+            write!(w, "{ctx} ")?;
+        }
+        self.main.write(w)?;
+        for c in &self.children {
+            c.write(w)?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
-struct Diagnostic {
+struct DiagnosticPart {
     message: String,
     severity: Severity,
-    context: DiagnosticContextStack,
+    span: Option<SrcCodeSpan>,
+}
+
+impl DiagnosticPart {
+    fn write(&self, s: &mut impl std::fmt::Write) -> std::fmt::Result {
+        let severity = self.severity;
+        let coloring = severity.color();
+
+        use std::io::BufRead;
+
+        writeln!(s, "{}: {}", severity.as_ref().color(coloring), self.message)?;
+        if let Some(src_loc) = &self.span {
+            let max_line_len = std::cmp::max(
+                src_loc.start_line.to_string().len(),
+                src_loc.end_line.to_string().len(),
+            );
+            let tab: String = " ".repeat(max_line_len);
+            writeln!(
+                s,
+                "{tab}{} {}:{}:{}",
+                "-->".blue(),
+                src_loc.source_file.file_path,
+                src_loc.start_line,
+                src_loc.start_col,
+            )?;
+            writeln!(s, "{tab} {}", "|".blue())?;
+            let lines = std::io::BufReader::new(
+                std::fs::File::open(&src_loc.source_file.abs_file_path).unwrap(),
+            )
+            .lines()
+            .skip(src_loc.start_line - 1)
+            .take(src_loc.end_line - src_loc.start_line + 1)
+            .enumerate();
+            for (i, line) in lines {
+                let line_content: String = line.unwrap();
+                let line_num = src_loc.start_line + i;
+                let end: usize = if line_num == src_loc.end_line {
+                    line_length_while(&line_content[0..src_loc.end_col - 1], |_| true)
+                } else {
+                    line_length_while(&line_content, |_| true)
+                };
+                let start: usize = if line_num == src_loc.start_line {
+                    line_length_while(&line_content[0..src_loc.start_col - 1], |_| true)
+                } else {
+                    line_length_while(&line_content, char::is_whitespace)
+                };
+
+                writeln!(
+                    s,
+                    "{:<max_line_len$} {} {}",
+                    &line_num.to_string().blue(),
+                    "|".blue(),
+                    line_content.replace('\t', &" ".repeat(TAB_SIZE))
+                )?;
+                writeln!(
+                    s,
+                    "{tab} {} {}{}",
+                    "|".blue(),
+                    " ".repeat(start),
+                    "^".repeat(end - start).color(coloring)
+                )?;
+            }
+            writeln!(s, "{tab} {}", "|".blue())?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Facility to create structured diagnostics including spans and multi-part
+/// messages. New builders are created with methods on [`Diagnostics`].
+/// `struct_<severity>` creates simple main diagnostics with only a message,
+/// `struct_node_<severity>` creates a main diagnostic with a message and the
+/// span of a graph node and `struct_span_<severity>` creates a main diagnostic
+/// with a message and a custom source code span.
+///
+/// The builder allows chaining additional sub diagnostics to the main
+/// diagnostic. Analogous to the initializers the `with_<severity>` family of
+/// functions adds simple messages, `with_node_<severity>` adds messages with
+/// spans from a node and `with_span_<severity>` adds messages with custom
+/// spans.
+///
+/// Make sure to call [`Self::emit`] after construction, otherwise the
+/// diagnostic is not shown.
+#[derive(Debug)]
+#[must_use = "you must call `emit`, otherwise the message is not shown"]
+pub struct DiagnosticBuilder<'a, A: ?Sized> {
+    diagnostic: Diagnostic,
+    base: &'a A,
+}
+
+impl<'a, A: ?Sized> DiagnosticBuilder<'a, A> {
+    fn init(message: String, severity: Severity, span: Option<SrcCodeSpan>, base: &'a A) -> Self {
+        DiagnosticBuilder {
+            diagnostic: Diagnostic {
+                context: vec![],
+                main: DiagnosticPart {
+                    message,
+                    severity,
+                    span,
+                },
+                children: vec![],
+            },
+            base,
+        }
+    }
+
+    fn with_child(
+        mut self,
+        message: impl Into<String>,
+        severity: Severity,
+        span: Option<SrcCodeSpan>,
+    ) -> Self {
+        self.diagnostic.children.push(DiagnosticPart {
+            message: message.into(),
+            severity,
+            span,
+        });
+        self
+    }
+}
+
+impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
+    /// Queue the diagnostic for display to the user.
+    pub fn emit(self) {
+        self.base.record(self.diagnostic)
+    }
+
+    /// Append a help message to the diagnostic.
+    pub fn with_help(self, message: impl Into<String>) -> Self {
+        self.with_child(message, Severity::Help, None)
+    }
+
+    /// Append a help message with a source code span to the diagnostic.
+    pub fn with_span_help(self, span: SrcCodeSpan, message: impl Into<String>) -> Self {
+        self.with_child(message, Severity::Help, Some(span))
+    }
+
+    /// Append a help message and the span of a graph node to the diagnostic.
+    pub fn with_node_help(self, node: GlobalNode, message: impl Into<String>) -> Self {
+        let span = self.base.as_ctx().get_location(node).clone();
+        self.with_child(message, Severity::Help, Some(span))
+    }
+
+    /// Append a warning to the diagnostic.
+    pub fn with_warning(self, message: impl Into<String>) -> Self {
+        self.with_child(message, Severity::Warning, None)
+    }
+
+    /// Append a warning and the span of a graph node to the diagnostic.
+    pub fn with_span_warning(self, span: SrcCodeSpan, message: impl Into<String>) -> Self {
+        self.with_child(message, Severity::Warning, Some(span))
+    }
+
+    /// Append a warning with a source code span to the diagnostic.
+    pub fn with_node_warning(self, node: GlobalNode, message: impl Into<String>) -> Self {
+        let span = self.base.as_ctx().get_location(node).clone();
+        self.with_child(message, Severity::Warning, Some(span))
+    }
+
+    /// Append a note to the diagnostic.
+    pub fn with_note(self, message: impl Into<String>) -> Self {
+        self.with_child(message, Severity::Note, None)
+    }
+
+    /// Append a note with a source code span to the diagnostic.
+    pub fn with_span_note(self, span: SrcCodeSpan, message: impl Into<String>) -> Self {
+        self.with_child(message, Severity::Note, Some(span))
+    }
+
+    /// Append a note and the span of a graph node to the diagnostic.
+    pub fn with_node_note(self, node: GlobalNode, message: impl Into<String>) -> Self {
+        let span = self.base.as_ctx().get_location(node).clone();
+        self.with_child(message, Severity::Note, Some(span))
+    }
 }
 
 /// Low level machinery for diagnostics.
@@ -166,16 +373,16 @@ pub trait HasDiagnosticsBase {
     /// This should be used by implementors of new wrappers, users should use
     /// high level functions like [`Diagnostics::error`] or
     /// [`Diagnostics::warning`] instead.
-    fn record(&self, msg: String, severity: Severity, context: DiagnosticContextStack);
+    fn record(&self, diagnostic: Diagnostic);
 
     /// Access to [`Context`], usually also available via [`std::ops::Deref`].
     fn as_ctx(&self) -> &Context;
 }
 
 impl<T: HasDiagnosticsBase> HasDiagnosticsBase for Arc<T> {
-    fn record(&self, msg: String, severity: Severity, context: DiagnosticContextStack) {
+    fn record(&self, diagnostic: Diagnostic) {
         let t: &T = self.as_ref();
-        t.record(msg, severity, context)
+        t.record(diagnostic)
     }
 
     fn as_ctx(&self) -> &Context {
@@ -188,8 +395,8 @@ impl<T: HasDiagnosticsBase> HasDiagnosticsBase for &'_ T {
         (*self).as_ctx()
     }
 
-    fn record(&self, msg: String, severity: Severity, context: DiagnosticContextStack) {
-        (*self).record(msg, severity, context)
+    fn record(&self, diagnostic: Diagnostic) {
+        (*self).record(diagnostic)
     }
 }
 
@@ -198,8 +405,8 @@ impl<T: HasDiagnosticsBase> HasDiagnosticsBase for Rc<T> {
         (**self).as_ctx()
     }
 
-    fn record(&self, msg: String, severity: Severity, context: DiagnosticContextStack) {
-        (**self).record(msg, severity, context)
+    fn record(&self, diagnostic: Diagnostic) {
+        (**self).record(diagnostic)
     }
 }
 
@@ -208,135 +415,187 @@ impl<T: HasDiagnosticsBase> HasDiagnosticsBase for Rc<T> {
 /// This is how any types implementing [`HasDiagnosticsBase`] should actually be
 /// used.
 pub trait Diagnostics: HasDiagnosticsBase {
+    /// Initialize a diagnostic builder for an error.
+    ///
+    /// This will fail the policy.
+    fn struct_error(&self, msg: impl Into<String>) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::init(msg.into(), Severity::Error, None, self)
+    }
+
+    /// Initialize a diagnostic builder for an error with a source code span.
+    ///
+    /// This will fail the policy.
+    fn struct_span_error(
+        &self,
+        span: SrcCodeSpan,
+        msg: impl Into<String>,
+    ) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::init(msg.into(), Severity::Error, Some(span), self)
+    }
+
+    /// Initialize a diagnostic builder for a warning.
+    ///
+    /// Does not fail the policy.
+    fn struct_warning(&self, msg: impl Into<String>) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::init(msg.into(), Severity::Warning, None, self)
+    }
+
+    /// Initialize a diagnostic builder for a warning with a source code span
+    ///
+    /// Does not fail the policy.
+    fn struct_span_warning(
+        &self,
+        span: SrcCodeSpan,
+        msg: impl Into<String>,
+    ) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::init(msg.into(), Severity::Warning, Some(span), self)
+    }
+
+    /// Initialize a diagnostic builder for a help message.
+    fn struct_help(&self, msg: impl Into<String>) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::init(msg.into(), Severity::Help, None, self)
+    }
+
+    /// Initialize a diagnostic builder for a help message with a source code span
+    fn struct_span_help(
+        &self,
+        span: SrcCodeSpan,
+        msg: impl Into<String>,
+    ) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::init(msg.into(), Severity::Help, Some(span), self)
+    }
+
+    /// Initialize a diagnostic builder for a note
+    fn struct_note(&self, msg: impl Into<String>) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::init(msg.into(), Severity::Note, None, self)
+    }
+
+    /// Initialize a diagnostic builder for a note with a source code span
+    fn struct_span_note(
+        &self,
+        span: SrcCodeSpan,
+        msg: impl Into<String>,
+    ) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::init(msg.into(), Severity::Note, Some(span), self)
+    }
+
     /// Emit a message that is severe enough that it causes the policy to fail.
     fn error(&self, msg: impl Into<String>) {
-        self.record(msg.into(), Severity::Fail, vec![])
+        self.struct_error(msg).emit()
     }
 
     /// Emit a message that indicates to the user that the policy might be
     /// fraudulent but could be correct.
     fn warning(&self, msg: impl Into<String>) {
-        self.record(msg.into(), Severity::Warning, vec![])
+        self.struct_warning(msg).emit()
     }
 
     /// Emit a message that provides additional information to the user.
     fn note(&self, msg: impl Into<String>) {
-        self.record(msg.into(), Severity::Note, vec![])
+        self.struct_note(msg).emit()
     }
 
     /// Emit a message that suggests something to the user.
-    fn hint(&self, msg: impl Into<String>) {
-        self.record(msg.into(), Severity::Help, vec![])
+    fn help(&self, msg: impl Into<String>) {
+        self.struct_help(msg).emit()
     }
 
-    /// Prints a diagnostic message for a given problematic node, given the type and coloring
-    /// of said diagnostic and the message to be printed
-    fn node_diagnostic(
+    /// Emit a message that is severe enough that it causes the policy to fail
+    /// with a source code span.
+    fn span_error(&self, msg: impl Into<String>, span: SrcCodeSpan) {
+        self.struct_span_error(span, msg).emit()
+    }
+
+    /// Emit a message that indicates to the user that the policy might be
+    /// fraudulent but could be correct. Includes a source code span.
+    fn span_warning(&self, msg: impl Into<String>, span: SrcCodeSpan) {
+        self.struct_span_warning(span, msg).emit()
+    }
+
+    /// Emit a message that provides additional information to the user.
+    fn span_note(&self, msg: impl Into<String>, span: SrcCodeSpan) {
+        self.struct_span_note(span, msg).emit()
+    }
+
+    /// Emit a message that suggests something to the user.
+    fn span_help(&self, msg: impl Into<String>, span: SrcCodeSpan) {
+        self.struct_span_help(span, msg).emit()
+    }
+
+    /// Initialize a diagnostic builder for an error with the span of a graph
+    /// node.
+    ///
+    /// This will fail the policy.
+    fn struct_node_error(
         &self,
         node: GlobalNode,
-        msg: &str,
-        severity: Severity,
-    ) -> anyhow::Result<()> {
-        use std::fmt::Write;
-        let (diag_type, coloring) = match severity {
-            Severity::Fail => ("error", (|s| s.red()) as fn(&str) -> ColoredString),
-            Severity::Warning => ("warning", (|s: &str| s.yellow()) as _),
-            Severity::Note => ("note", (|s: &str| s.blue()) as _),
-            Severity::Help => ("help", (|s: &str| s.green()) as _),
-        };
-
-        let mut s = String::new();
-        macro_rules! println {
-            ($($t:tt)*) => {
-                writeln!(s, $($t)*)?;
-            };
-        }
-        use std::io::BufRead;
-        let node_kind = self.as_ctx().node_info(node).kind;
-
-        let src_loc = &self
-            .as_ctx()
-            .get_location(node)
-            .ok_or(anyhow::Error::msg(
-                "node's location was not found in mapping",
-            ))?
-            .loc;
-
-        let max_line_len = std::cmp::max(
-            src_loc.start_line.to_string().len(),
-            src_loc.end_line.to_string().len(),
-        );
-
-        println!("{}: {}", coloring(diag_type), msg);
-        let tab: String = " ".repeat(max_line_len);
-        println!(
-            "{}{} {}:{}:{} ({node_kind})",
-            tab,
-            "-->".blue(),
-            src_loc.file_path,
-            src_loc.start_line,
-            src_loc.start_col,
-        );
-        println!("{} {}", tab, "|".blue());
-        let lines = std::io::BufReader::new(std::fs::File::open(&src_loc.abs_file_path)?)
-            .lines()
-            .skip(src_loc.start_line - 1)
-            .take(src_loc.end_line - src_loc.start_line + 1)
-            .enumerate();
-        for (i, line) in lines {
-            let line_content: String = line?;
-            let line_num = src_loc.start_line + i;
-            let end: usize = if line_num == src_loc.end_line {
-                line_length_while(&line_content[0..src_loc.end_col - 1], |_| true)
-            } else {
-                line_length_while(&line_content, |_| true)
-            };
-            let start: usize = if line_num == src_loc.start_line {
-                line_length_while(&line_content[0..src_loc.start_col - 1], |_| true)
-            } else {
-                line_length_while(&line_content, char::is_whitespace)
-            };
-            let tab_len = max_line_len - line_num.to_string().len();
-
-            println!(
-                "{}{} {} {}",
-                " ".repeat(tab_len),
-                &line_num.to_string().blue(),
-                "|".blue(),
-                line_content.replace('\t', &" ".repeat(TAB_SIZE))
-            );
-            println!(
-                "{} {} {}{}",
-                tab,
-                "|".blue(),
-                " ".repeat(start),
-                coloring(&"^".repeat(end - start))
-            );
-        }
-        println!("{} {}", tab, "|".blue());
-        self.record(s, severity, vec![]);
-        Ok(())
+        msg: impl Into<String>,
+    ) -> DiagnosticBuilder<'_, Self> {
+        struct_node_diagnostic(self, node, Severity::Error, msg)
     }
 
-    /// Prints an error message for a problematic node
-    fn print_node_error(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
-        self.node_diagnostic(node, msg, Severity::Fail)
+    /// Initialize a diagnostic builder for an error with the span of a graph
+    /// node.
+    ///
+    /// This will not fail the policy.
+    fn struct_node_warning(
+        &self,
+        node: GlobalNode,
+        msg: impl Into<String>,
+    ) -> DiagnosticBuilder<'_, Self> {
+        struct_node_diagnostic(self, node, Severity::Warning, msg)
     }
 
-    /// Prints a warning message for a problematic node
-    fn print_node_warning(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
-        self.node_diagnostic(node, msg, Severity::Warning)
+    /// Initialize a diagnostic builder for an note with the span of a graph
+    /// node.
+    fn struct_node_note(
+        &self,
+        node: GlobalNode,
+        msg: impl Into<String>,
+    ) -> DiagnosticBuilder<'_, Self> {
+        struct_node_diagnostic(self, node, Severity::Note, msg)
     }
 
-    /// Prints a note for a problematic node
-    fn print_node_note(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
-        self.node_diagnostic(node, msg, Severity::Note)
+    /// Initialize a diagnostic builder for an help message with the span of a graph
+    /// node.
+    fn struct_node_help(
+        &self,
+        node: GlobalNode,
+        msg: impl Into<String>,
+    ) -> DiagnosticBuilder<'_, Self> {
+        struct_node_diagnostic(self, node, Severity::Help, msg)
     }
 
-    /// Print a hint with a node
-    fn print_node_hint(&self, node: GlobalNode, msg: &str) -> anyhow::Result<()> {
-        self.node_diagnostic(node, msg, Severity::Help)
+    /// Emit an error, failing the policy, with the span of a graph node.
+    fn node_error(&self, node: GlobalNode, msg: impl Into<String>) {
+        self.struct_node_error(node, msg).emit()
     }
+
+    /// Emit an warning, that does not fail the policy, with the span of a graph
+    /// node.
+    fn node_warning(&self, node: GlobalNode, msg: impl Into<String>) {
+        self.struct_node_warning(node, msg).emit()
+    }
+
+    /// Emit a note with the span of a graph node.
+    fn node_note(&self, node: GlobalNode, msg: impl Into<String>) {
+        self.struct_node_note(node, msg).emit()
+    }
+
+    /// Emit a help message with the span of a graph node.
+    fn node_help(&self, node: GlobalNode, msg: impl Into<String>) {
+        self.struct_node_note(node, msg).emit()
+    }
+}
+
+fn struct_node_diagnostic<'a, B: HasDiagnosticsBase + ?Sized>(
+    base: &'a B,
+    node: GlobalNode,
+    severity: Severity,
+    msg: impl Into<String>,
+) -> DiagnosticBuilder<'a, B> {
+    let span = base.as_ctx().get_location(node);
+    DiagnosticBuilder::init(msg.into(), severity, Some(span.clone()), base)
 }
 
 const TAB_SIZE: usize = 4;
@@ -434,9 +693,9 @@ impl PolicyContext {
 }
 
 impl HasDiagnosticsBase for PolicyContext {
-    fn record(&self, msg: String, severity: Severity, mut context: DiagnosticContextStack) {
-        context.push(format!("[policy: {}]", self.name));
-        self.inner.record(msg, severity, context)
+    fn record(&self, mut diagnostic: Diagnostic) {
+        diagnostic.context.push(format!("[policy: {}]", self.name));
+        self.inner.record(diagnostic)
     }
 
     fn as_ctx(&self) -> &Context {
@@ -522,10 +781,10 @@ impl ControllerContext {
 }
 
 impl HasDiagnosticsBase for ControllerContext {
-    fn record(&self, msg: String, severity: Severity, mut context: DiagnosticContextStack) {
+    fn record(&self, mut diagnostic: Diagnostic) {
         let name = self.as_ctx().desc().controllers[&self.id].name;
-        context.push(format!("[controller: {}]", name));
-        self.inner.record(msg, severity, context)
+        diagnostic.context.push(format!("[controller: {}]", name));
+        self.inner.record(diagnostic)
     }
 
     fn as_ctx(&self) -> &Context {
@@ -575,9 +834,9 @@ impl CombinatorContext {
 }
 
 impl HasDiagnosticsBase for CombinatorContext {
-    fn record(&self, msg: String, severity: Severity, mut context: DiagnosticContextStack) {
-        context.push(format!("{}", self.name));
-        self.inner.record(msg, severity, context)
+    fn record(&self, mut diagnostic: Diagnostic) {
+        diagnostic.context.push(format!("{}", self.name));
+        self.inner.record(diagnostic)
     }
 
     fn as_ctx(&self) -> &Context {
@@ -638,6 +897,14 @@ impl Context {
 #[derive(Debug, Default)]
 pub(crate) struct DiagnosticsRecorder(std::sync::Mutex<Vec<Diagnostic>>);
 
+struct DisplayDiagnostic<'a>(&'a Diagnostic);
+
+impl<'a> std::fmt::Display for DisplayDiagnostic<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.write(f)
+    }
+}
+
 impl DiagnosticsRecorder {
     /// Emit queued diagnostics, draining the internal queue of diagnostics.
     ///
@@ -647,11 +914,8 @@ impl DiagnosticsRecorder {
         let w = &mut w;
         let mut can_continue = true;
         for diag in self.0.lock().unwrap().drain(..) {
-            for ctx in diag.context.iter().rev() {
-                write!(w, "{ctx} ")?;
-            }
-            writeln!(w, "{}", diag.message)?;
-            can_continue &= !diag.severity.must_abort();
+            writeln!(w, "{}", DisplayDiagnostic(&diag))?;
+            can_continue &= !diag.main.severity.must_abort();
         }
         Ok(can_continue)
     }
@@ -659,12 +923,8 @@ impl DiagnosticsRecorder {
 
 impl HasDiagnosticsBase for Context {
     /// Record a diagnostic message.
-    fn record(&self, message: String, severity: Severity, context: DiagnosticContextStack) {
-        self.diagnostics.0.lock().unwrap().push(Diagnostic {
-            message,
-            severity,
-            context,
-        })
+    fn record(&self, diagnostic: Diagnostic) {
+        self.diagnostics.0.lock().unwrap().push(diagnostic);
     }
 
     fn as_ctx(&self) -> &Context {

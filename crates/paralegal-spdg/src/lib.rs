@@ -126,7 +126,7 @@ pub struct DefInfo {
     /// Kind of object
     pub kind: DefKind,
     /// Information about the span
-    pub src_info: SrcCodeInfo,
+    pub src_info: SrcCodeSpan,
 }
 
 /// Similar to `DefKind` in rustc but *not the same*!
@@ -144,14 +144,39 @@ pub enum DefKind {
     Type,
 }
 
-/// Encodes a source code location
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct SrcCodeSpan {
+/// An interned [`SourceFileInfo`]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+pub struct SourceFile(Intern<SourceFileInfo>);
+
+impl std::ops::Deref for SourceFile {
+    type Target = SourceFileInfo;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Information about a source file
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+pub struct SourceFileInfo {
     /// Printable location of the source code file - either an absolute path to library source code
     /// or a path relative to within the compiled crate (e.g. `src/...`)
     pub file_path: String,
     /// Absolute path to source code file
     pub abs_file_path: PathBuf,
+}
+
+impl SourceFileInfo {
+    /// Intern the source file
+    pub fn intern(self) -> SourceFile {
+        SourceFile(Intern::new(self))
+    }
+}
+
+/// Encodes a source code location
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct SrcCodeSpan {
+    /// Which file this comes from
+    pub source_file: SourceFile,
     /// The starting line of the location within the file (note: a one-based index)
     pub start_line: usize,
     /// The column of starting line that the location starts at within the file (note: a one-based index)
@@ -160,26 +185,6 @@ pub struct SrcCodeSpan {
     pub end_line: usize,
     /// The column of ending line that the location ends at within the file (note: a one-based index)
     pub end_col: usize,
-}
-
-/// Encodes a location of a call site
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct CallSiteSpan {
-    /// The source code location of the call site - if the call site occurs within a macro, this
-    /// refers to the macro's call site
-    pub loc: SrcCodeSpan,
-    /// The expanded location of the call site - if the call site occurs within a macro, this
-    /// refers to its location within the macro's definition
-    pub expanded_loc: SrcCodeSpan,
-}
-
-/// Encodes source code information for controllers and call site nodes in the SPDG
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct SrcCodeInfo {
-    /// Identifier of the function
-    pub func_iden: String,
-    /// Location of the header of the function's definition
-    pub func_header_loc: SrcCodeSpan,
 }
 
 /// Metadata on a function call.
@@ -207,16 +212,6 @@ pub enum InstructionKind {
     Start,
     /// The merged exit points of a function
     Return,
-}
-
-/// Information about instructions
-#[derive(Serialize, Deserialize, Debug)]
-pub struct InstructionInfo {
-    /// The kind of instruction
-    pub kind: InstructionKind,
-    /// call chain from within the controller to the call site of said function (this field
-    /// is empty for a controller)
-    pub call_loc: CallSiteSpan,
 }
 
 impl InstructionKind {
@@ -251,7 +246,7 @@ pub struct ProgramDescription {
     /// Metadata about the instructions that are executed at all program
     /// locations we know about.
     #[serde(with = "serde_map_via_vec")]
-    pub instruction_info: HashMap<GlobalLocation, InstructionInfo>,
+    pub instruction_info: HashMap<GlobalLocation, InstructionKind>,
 
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
@@ -593,6 +588,8 @@ pub struct NodeInfo {
     pub description: String,
     /// Additional information of how this node is used in the source.
     pub kind: NodeKind,
+    /// Span information for this node
+    pub span: SrcCodeSpan,
 }
 
 impl Display for NodeInfo {

@@ -1,12 +1,18 @@
 [workspace]
 members = ["crates/*"]
-exclude = ["props", "crates/paralegal-flow/tests", "crates/paralegal-policy/tests", "crates/paralegal-explore"]
+exclude = [
+    "props",
+    "crates/paralegal-flow/tests",
+    "crates/paralegal-policy/tests",
+    "crates/paralegal-explore",
+]
 resolver = "2"
 
 [workspace.dependencies]
 indexical = "0.3.1"
 serde = "1.0.188"
 petgraph = { version = "0.6", features = ["serde-1"] }
+strum = { version = "0.25", features = ["derive"] }
 
 [profile.release]
 debug = true

@@ -116,7 +116,7 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
 
             write!(s, "{}|", self.format_call_string(*n))?;
 
-            match instruction.kind {
+            match instruction {
                 InstructionKind::Statement => s.push('S'),
                 InstructionKind::FunctionCall(function) => {
                     let info = &self.spdg.def_info[&function.id];
