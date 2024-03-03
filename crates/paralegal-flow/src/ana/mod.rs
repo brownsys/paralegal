@@ -224,9 +224,12 @@ fn src_loc_for_span(span: Span, tcx: TyCtxt) -> SrcCodeSpan {
     } else {
         std::path::PathBuf::from(&file_path)
     };
-    SrcCodeSpan {
+    let src_info = SourceFileInfo {
         file_path,
         abs_file_path,
+    };
+    SrcCodeSpan {
+        source_file: src_info.intern(),
         start_line,
         start_col,
         end_line,
@@ -779,15 +782,11 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
             }
         }))
         .collect();
-    let src_info = SrcCodeInfo {
-        func_iden: tcx.def_path_str(id),
-        func_header_loc: src_loc_for_span(tcx.def_span(id), tcx),
-    };
     DefInfo {
         name,
         path,
         kind,
-        src_info,
+        src_info: src_loc_for_span(tcx.def_span(id), tcx),
     }
 }
 

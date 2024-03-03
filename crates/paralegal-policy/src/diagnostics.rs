@@ -267,16 +267,17 @@ pub trait Diagnostics: HasDiagnosticsBase {
             "{}{} {}:{}:{} ({node_kind})",
             tab,
             "-->".blue(),
-            src_loc.file_path,
+            src_loc.source_file.file_path,
             src_loc.start_line,
             src_loc.start_col,
         );
         println!("{} {}", tab, "|".blue());
-        let lines = std::io::BufReader::new(std::fs::File::open(&src_loc.abs_file_path)?)
-            .lines()
-            .skip(src_loc.start_line - 1)
-            .take(src_loc.end_line - src_loc.start_line + 1)
-            .enumerate();
+        let lines =
+            std::io::BufReader::new(std::fs::File::open(&src_loc.source_file.abs_file_path)?)
+                .lines()
+                .skip(src_loc.start_line - 1)
+                .take(src_loc.end_line - src_loc.start_line + 1)
+                .enumerate();
         for (i, line) in lines {
             let line_content: String = line?;
             let line_num = src_loc.start_line + i;

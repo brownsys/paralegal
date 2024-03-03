@@ -126,7 +126,7 @@ pub struct DefInfo {
     /// Kind of object
     pub kind: DefKind,
     /// Information about the span
-    pub src_info: SrcCodeInfo,
+    pub src_info: SrcCodeSpan,
 }
 
 /// Similar to `DefKind` in rustc but *not the same*!
@@ -144,14 +144,39 @@ pub enum DefKind {
     Type,
 }
 
-/// Encodes a source code location
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct SrcCodeSpan {
+/// An interned [`SourceFileInfo`]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+pub struct SourceFile(Intern<SourceFileInfo>);
+
+impl std::ops::Deref for SourceFile {
+    type Target = SourceFileInfo;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Information about a source file
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+pub struct SourceFileInfo {
     /// Printable location of the source code file - either an absolute path to library source code
     /// or a path relative to within the compiled crate (e.g. `src/...`)
     pub file_path: String,
     /// Absolute path to source code file
     pub abs_file_path: PathBuf,
+}
+
+impl SourceFileInfo {
+    /// Intern the source file
+    pub fn intern(self) -> SourceFile {
+        SourceFile(Intern::new(self))
+    }
+}
+
+/// Encodes a source code location
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct SrcCodeSpan {
+    /// Which file this comes from
+    pub source_file: SourceFile,
     /// The starting line of the location within the file (note: a one-based index)
     pub start_line: usize,
     /// The column of starting line that the location starts at within the file (note: a one-based index)
@@ -160,26 +185,6 @@ pub struct SrcCodeSpan {
     pub end_line: usize,
     /// The column of ending line that the location ends at within the file (note: a one-based index)
     pub end_col: usize,
-}
-
-/// Encodes a location of a call site
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct CallSiteSpan {
-    /// The source code location of the call site - if the call site occurs within a macro, this
-    /// refers to the macro's call site
-    pub loc: SrcCodeSpan,
-    /// The expanded location of the call site - if the call site occurs within a macro, this
-    /// refers to its location within the macro's definition
-    pub expanded_loc: SrcCodeSpan,
-}
-
-/// Encodes source code information for controllers and call site nodes in the SPDG
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct SrcCodeInfo {
-    /// Identifier of the function
-    pub func_iden: String,
-    /// Location of the header of the function's definition
-    pub func_header_loc: SrcCodeSpan,
 }
 
 /// Metadata on a function call.
