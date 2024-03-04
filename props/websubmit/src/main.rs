@@ -362,7 +362,11 @@ fn main() -> Result<()> {
             .get_command()
             .args(["--", "--lib", "--features", &edit]);
     }
-    command.run(args.ws_dir)?.with_context(prop)?;
+    let mut cfg = paralegal_policy::Config::default();
+    cfg.always_happens_before_tracing = paralegal_policy::algo::ahb::TraceLevel::Full;
+    command
+        .run(args.ws_dir)?
+        .with_context_configured(cfg, prop)?;
 
     Ok(())
 }
