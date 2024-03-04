@@ -472,12 +472,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             assert!(self.expect_stmt_at(*first).is_left());
             rest = tail;
 
-            assert_eq!(place.local.as_u32(), 1);
-            assert!(place.projection.len() >= 1);
-            // in the case of async we'll keep the first projection
-            mir::Place {
-                local: place.local,
-                projection: self.tcx().mk_place_elems(&place.projection[..1]),
+            if place.local.as_u32() == 1 {
+                assert!(place.projection.len() >= 1);
+                // in the case of targeting the async closure (e.g. async args)
+                // we'll keep the first projection.
+                mir::Place {
+                    local: place.local,
+                    projection: self.tcx().mk_place_elems(&place.projection[..1]),
+                }
+            } else {
+                place
             }
         } else {
             place.local.into()
