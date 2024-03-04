@@ -1,4 +1,4 @@
-use std::{collections::HashSet, io::Write, process::exit, sync::Arc};
+use std::{io::Write, process::exit, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
@@ -8,19 +8,16 @@ use paralegal_spdg::{
     Span, TypeId, SPDG,
 };
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
-use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, GraphBase, NodeIndexable, Walker};
+use petgraph::visit::{EdgeFiltered, EdgeRef, Walker};
 use petgraph::Incoming;
 
-use super::flows_to::CtrlFlowsTo;
+use crate::algo::flows_to::CtrlFlowsTo;
 
 use crate::Diagnostics;
-use crate::{
-    assert_warning,
-    diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
-};
+use crate::{assert_warning, diagnostics::DiagnosticsRecorder};
 
 /// User-defined PDG markers.
 pub type Marker = Identifier;
@@ -102,13 +99,14 @@ pub struct Context {
     flows_to: FlowsTo,
     pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
+    pub(crate) config: Arc<super::Config>,
 }
 
 impl Context {
     /// Construct a [`Context`] from a [`ProgramDescription`].
     ///
     /// This also precomputes some data structures like an index over markers.
-    pub fn new(desc: ProgramDescription) -> Self {
+    pub fn new(desc: ProgramDescription, config: super::Config) -> Self {
         let name_map = desc
             .def_info
             .iter()
@@ -120,6 +118,7 @@ impl Context {
             desc,
             diagnostics: Default::default(),
             name_map,
+            config: Arc::new(config),
         }
     }
 
@@ -475,69 +474,6 @@ impl Context {
             .map_or(&[], |info| info.otypes.as_slice())
     }
 
-    /// Enforce that on every data flow path from the `starting_points` to `is_terminal` a
-    /// node satisfying `is_checkpoint` is passed.
-    ///
-    /// Fails if `ctrl_id` on a provided starting point is not found.
-    ///
-    /// The return value contains some statistics information about the
-    /// traversal. The property holds if [`AlwaysHappensBefore::holds`] is true.
-    ///
-    /// Note that `is_checkpoint` and `is_terminal` will be called many times
-    /// and should thus be efficient computations. In addition they should
-    /// always return the same result for the same input.
-    pub fn always_happens_before(
-        &self,
-        starting_points: impl IntoIterator<Item = GlobalNode>,
-        mut is_checkpoint: impl FnMut(GlobalNode) -> bool,
-        mut is_terminal: impl FnMut(GlobalNode) -> bool,
-    ) -> Result<AlwaysHappensBefore> {
-        let mut reached = HashMap::new();
-        let mut checkpointed = HashSet::new();
-
-        let start_map = starting_points
-            .into_iter()
-            .map(|i| (i.controller_id(), i.local_node()))
-            .into_group_map();
-
-        for (ctrl_id, starts) in &start_map {
-            let spdg = &self.desc.controllers[&ctrl_id];
-            let g = &spdg.graph;
-            let mut origin_map = vec![<SPDGImpl as GraphBase>::NodeId::end(); g.node_bound()];
-            for s in starts {
-                origin_map[s.index()] = *s;
-            }
-            petgraph::visit::depth_first_search(g, starts.iter().copied(), |event| match event {
-                DfsEvent::TreeEdge(from, to) => {
-                    origin_map[to.index()] = origin_map[from.index()];
-                    Control::<()>::Continue
-                }
-                DfsEvent::Discover(inner, _) => {
-                    let as_node = GlobalNode::from_local_node(*ctrl_id, inner);
-                    if is_checkpoint(as_node) {
-                        checkpointed.insert(as_node);
-                        Control::<()>::Prune
-                    } else if is_terminal(as_node) {
-                        reached.insert(
-                            as_node,
-                            GlobalNode::from_local_node(*ctrl_id, origin_map[inner.index()]),
-                        );
-                        Control::Prune
-                    } else {
-                        Control::Continue
-                    }
-                }
-                _ => Control::Continue,
-            });
-        }
-
-        Ok(AlwaysHappensBefore {
-            reached: reached.into_iter().collect(),
-            checkpointed: checkpointed.into_iter().collect(),
-            started_with: start_map.values().map(Vec::len).sum(),
-        })
-    }
-
     /// Return all types that are marked with `marker`
     pub fn marked_type(&self, marker: Marker) -> &[DefId] {
         self.report_marker_if_absent(marker);
@@ -678,110 +614,12 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
     }
 }
 
-/// Statistics about the result of running [`Context::always_happens_before`]
-/// that are useful to understand how the property failed.
-///
-/// The [`std::fmt::Display`] implementation presents the information in human
-/// readable form.
-///
-/// Note: Both the number of seen paths and the number of violation paths are
-/// approximations. This is because the traversal terminates when it reaches a
-/// node that was already seen. However it is guaranteed that if there
-/// are any violating paths, then the number of reaching paths reported in this
-/// struct is at least one (e.g. [`Self::holds`] is sound).
-///
-/// The stable API of this struct is [`Self::holds`], [`Self::assert_holds`] and
-/// [`Self::is_vacuous`]. Otherwise the information in this struct and its
-/// printed representations should be considered unstable and
-/// for-human-eyes-only.
-#[must_use = "call `report` or similar evaluations function to ensure the property is checked"]
-pub struct AlwaysHappensBefore {
-    /// How many paths terminated at the end?
-    reached: Vec<(GlobalNode, GlobalNode)>,
-    /// How many paths lead to the checkpoints?
-    checkpointed: Vec<GlobalNode>,
-    /// How large was the set of initial nodes this traversal started with.
-    started_with: usize,
-}
-
-impl std::fmt::Display for AlwaysHappensBefore {
-    /// Format the results of this combinator, using the `def_info` to print
-    /// readable names instead of ids
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} paths reached the terminal, \
-            {} paths reached the checkpoints, \
-            started with {} nodes",
-            self.reached.len(),
-            self.checkpointed.len(),
-            self.started_with,
-        )
-    }
-}
-
-lazy_static::lazy_static! {
-    static ref ALWAYS_HAPPENS_BEFORE_NAME: Identifier = Identifier::new_intern("always_happens_before");
-}
-
-impl AlwaysHappensBefore {
-    /// Check this property holds and report it as diagnostics in the context.
-    ///
-    /// Additionally reports if the property was vacuous or had no starting
-    /// nodes.
-    pub fn report(&self, ctx: Arc<dyn HasDiagnosticsBase>) {
-        let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
-        assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
-        assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
-        if !self.holds() {
-            for &(reached, from) in &self.reached {
-                let context = ctx.as_ctx();
-                let from_info = context.node_info(from);
-                let reached_info = context.node_info(reached);
-                let mut err = ctx.struct_node_error(
-                    reached,
-                    format!(
-                        "Reached this terminal {} ({}) -> {} ({})",
-                        from_info.description,
-                        from_info.kind,
-                        reached_info.description,
-                        reached_info.kind,
-                    ),
-                );
-                err.with_node_note(from, "Started from this node");
-                err.emit();
-            }
-        }
-    }
-
-    /// Returns `true` if the property that created these statistics holds.
-    pub fn holds(&self) -> bool {
-        self.reached.is_empty()
-    }
-
-    /// Fails if [`Self::holds`] is false.
-    pub fn assert_holds(&self) -> Result<()> {
-        ensure!(
-            self.holds(),
-            "AlwaysHappensBefore failed: found {} violating paths",
-            self.reached.len()
-        );
-        Ok(())
-    }
-
-    /// `true` if this policy applied to no paths. E.g. either no starting nodes
-    /// or no path from them can reach the terminal or the checkpoints (the
-    /// graphs are disjoined).
-    pub fn is_vacuous(&self) -> bool {
-        self.checkpointed.is_empty() && self.reached.is_empty()
-    }
-}
-
 #[cfg(test)]
 fn overlaps<T: Eq + std::hash::Hash>(
     one: impl IntoIterator<Item = T>,
     other: impl IntoIterator<Item = T>,
 ) -> bool {
+    use std::collections::HashSet;
     let target = one.into_iter().collect::<HashSet<_>>();
     other.into_iter().any(|n| target.contains(&n))
 }
@@ -830,58 +668,6 @@ fn test_context() {
             .count(),
         2
     );
-}
-
-#[test]
-#[ignore = "Something is weird with the PDG construction here.
-    See https://github.com/willcrichton/flowistry/issues/95"]
-fn test_happens_before() -> Result<()> {
-    use std::fs::File;
-    let ctx = crate::test_utils::test_ctx();
-
-    let start_marker = Identifier::new_intern("start");
-    let bless_marker = Identifier::new_intern("bless");
-
-    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_pass"))?;
-    let ctrl = &ctx.desc.controllers[&ctrl_name];
-    let f = File::create("graph.gv")?;
-    ctrl.dump_dot(f)?;
-
-    let Some(ret) = ctrl.return_ else {
-        unreachable!("No return found")
-    };
-
-    let is_terminal = |end: GlobalNode| -> bool {
-        assert_eq!(end.controller_id(), ctrl_name);
-        ret == end.local_node()
-    };
-    let start = ctx
-        .all_nodes_for_ctrl(ctrl_name)
-        .filter(|n| ctx.has_marker(start_marker, *n))
-        .collect::<Vec<_>>();
-
-    let pass = ctx.always_happens_before(
-        start,
-        |checkpoint| ctx.has_marker(bless_marker, checkpoint),
-        is_terminal,
-    )?;
-
-    ensure!(pass.holds(), "{pass}");
-    ensure!(!pass.is_vacuous(), "{pass}");
-
-    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_fail"))?;
-
-    let fail = ctx.always_happens_before(
-        ctx.all_nodes_for_ctrl(ctrl_name)
-            .filter(|n| ctx.has_marker(start_marker, *n)),
-        |check| ctx.has_marker(bless_marker, check),
-        is_terminal,
-    )?;
-
-    ensure!(!fail.holds());
-    ensure!(!fail.is_vacuous());
-
-    Ok(())
 }
 
 #[test]

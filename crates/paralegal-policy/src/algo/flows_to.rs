@@ -1,3 +1,5 @@
+//! Precomputed reachability queries
+
 use paralegal_spdg::{Node as SPDGNode, SPDGImpl, SPDG};
 
 use bitvec::vec::BitVec;

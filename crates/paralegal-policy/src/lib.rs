@@ -63,18 +63,18 @@ use std::{
     sync::Arc,
 };
 
+pub mod algo;
 mod context;
-mod flows_to;
 #[macro_use]
 pub mod diagnostics;
 #[cfg(test)]
 mod test_utils;
 
 pub use self::{
+    algo::flows_to::CtrlFlowsTo,
+    algo::flows_to::DataAndControlInfluencees,
     context::*,
     diagnostics::{CombinatorContext, Diagnostics, PolicyContext},
-    flows_to::CtrlFlowsTo,
-    flows_to::DataAndControlInfluencees,
 };
 
 /// Configuration of the `cargo paralegal-flow` command.
@@ -162,7 +162,19 @@ impl GraphLocation {
     /// Emits any recorded diagnostic messages to stdout and aborts the program
     /// if they were severe enough.
     pub fn with_context<A>(&self, prop: impl FnOnce(Arc<Context>) -> Result<A>) -> Result<A> {
-        let ctx = Arc::new(self.build_context()?);
+        self.with_context_configured(Default::default(), prop)
+    }
+
+    /// Builds a context, then runs the property.
+    ///
+    /// Emits any recorded diagnostic messages to stdout and aborts the program
+    /// if they were severe enough.
+    pub fn with_context_configured<A>(
+        &self,
+        config: Config,
+        prop: impl FnOnce(Arc<Context>) -> Result<A>,
+    ) -> Result<A> {
+        let ctx = Arc::new(self.build_context(config)?);
         assert_warning!(
             ctx,
             !ctx.desc().controllers.is_empty(),
@@ -178,7 +190,7 @@ impl GraphLocation {
     ///
     /// Prefer using [`Self::with_context`] which takes care of emitting any
     /// diagnostic messages after the property is done.
-    pub fn build_context(&self) -> Result<Context> {
+    pub fn build_context(&self, config: Config) -> Result<Context> {
         let _ = simple_logger::init_with_env();
 
         let desc = {
@@ -188,7 +200,22 @@ impl GraphLocation {
                 || format!("Reading SPDG (JSON) from {}", self.0.display()),
             )?
         };
-        Ok(Context::new(desc))
+        Ok(Context::new(desc, config))
+    }
+}
+
+/// Configuration for the framework
+#[derive(Clone, Debug)]
+pub struct Config {
+    /// How much information to retain for error messages in `always_happens_before`
+    pub always_happens_before_tracing: algo::ahb::TraceLevel,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            always_happens_before_tracing: algo::ahb::TraceLevel::StartAndEnd,
+        }
     }
 }
 
