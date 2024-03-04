@@ -624,7 +624,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             let at = weight.at.leaf();
             let body = &tcx.body_for_def_id(at.function).unwrap().body;
 
-            let rustc_span = match at.location {
+            let stmt_span = match at.location {
                 RichLocation::End | RichLocation::Start => {
                     let def = &body.local_decls[weight.place.local];
                     def.source_info.span
@@ -636,6 +636,14 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     };
                     tcx.sess.source_map().stmt_span(expanded_span, body.span)
                 }
+            };
+            let node_span = body.local_decls[weight.place.local].source_info.span;
+            // If the span from introducing a local variable is more precise
+            // than the one from the statement we use that.
+            let rustc_span = if stmt_span.contains(node_span) {
+                node_span
+            } else {
+                stmt_span
             };
             let new_idx = self.register_node(
                 i,
