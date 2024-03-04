@@ -126,7 +126,7 @@ pub struct DefInfo {
     /// Kind of object
     pub kind: DefKind,
     /// Information about the span
-    pub src_info: SrcCodeSpan,
+    pub src_info: Span,
 }
 
 /// Similar to `DefKind` in rustc but *not the same*!
@@ -172,19 +172,34 @@ impl SourceFileInfo {
     }
 }
 
+/// A "point" within a source file. Used to compose and compare spans.
+///
+/// NOTE: The ordering of this type must be such that if point "a" is earlier in
+/// the file than "b", then "a" < "b".
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord)]
+pub struct SpanCoord {
+    /// Line in the source file
+    pub line: u32,
+    /// Column of the line
+    pub col: u32,
+}
+
 /// Encodes a source code location
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-pub struct SrcCodeSpan {
+pub struct Span {
     /// Which file this comes from
     pub source_file: SourceFile,
-    /// The starting line of the location within the file (note: a one-based index)
-    pub start_line: usize,
-    /// The column of starting line that the location starts at within the file (note: a one-based index)
-    pub start_col: usize,
-    /// The ending line of the location within the file (note: a one-based index)
-    pub end_line: usize,
-    /// The column of ending line that the location ends at within the file (note: a one-based index)
-    pub end_col: usize,
+    /// Starting coordinates of the span
+    pub start: SpanCoord,
+    /// Ending coordinates of the span,
+    pub end: SpanCoord,
+}
+
+impl Span {
+    /// Is `other` completely contained within `self`
+    pub fn contains(&self, other: &Self) -> bool {
+        self.source_file == other.source_file && self.start <= other.start && self.end >= other.end
+    }
 }
 
 /// Metadata on a function call.
@@ -224,6 +239,15 @@ impl InstructionKind {
     }
 }
 
+/// Information about an instruction represented in the PDG
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InstructionInfo {
+    /// Classification of the instruction
+    pub kind: InstructionKind,
+    /// The source code span
+    pub span: Span,
+}
+
 /// information about each encountered type.
 pub type TypeInfoMap = HashMap<TypeId, TypeDescription>;
 
@@ -246,7 +270,7 @@ pub struct ProgramDescription {
     /// Metadata about the instructions that are executed at all program
     /// locations we know about.
     #[serde(with = "serde_map_via_vec")]
-    pub instruction_info: HashMap<GlobalLocation, InstructionKind>,
+    pub instruction_info: HashMap<GlobalLocation, InstructionInfo>,
 
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
@@ -589,7 +613,7 @@ pub struct NodeInfo {
     /// Additional information of how this node is used in the source.
     pub kind: NodeKind,
     /// Span information for this node
-    pub span: SrcCodeSpan,
+    pub span: Span,
 }
 
 impl Display for NodeInfo {

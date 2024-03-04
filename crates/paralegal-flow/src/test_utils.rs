@@ -350,6 +350,7 @@ impl<'g> CtrlRef<'g> {
             .chain(self.ctrl.graph.node_weights().map(|info| info.at))
             .filter(|m| {
                 instruction_info[&m.leaf()]
+                    .kind
                     .as_function_call()
                     .map_or(false, |i| i.id == fun.ident)
             })

@@ -3,9 +3,9 @@ use std::{collections::HashSet, io::Write, process::exit, sync::Arc};
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
-    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, InstructionKind,
+    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, InstructionInfo,
     IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo, ProgramDescription, SPDGImpl,
-    SrcCodeSpan, TypeId, SPDG,
+    Span, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, ensure, Result};
@@ -606,7 +606,7 @@ impl Context {
     }
 
     /// Retrieve metadata about the instruction executed by a specific node.
-    pub fn instruction_at_node(&self, node: GlobalNode) -> &InstructionKind {
+    pub fn instruction_at_node(&self, node: GlobalNode) -> &InstructionInfo {
         let node_info = self.node_info(node);
         &self.desc.instruction_info[&node_info.at.leaf()]
     }
@@ -643,7 +643,7 @@ impl Context {
     }
 
     /// Get the span of a node
-    pub fn get_location(&self, node: GlobalNode) -> &SrcCodeSpan {
+    pub fn get_location(&self, node: GlobalNode) -> &Span {
         &self.node_info(node).span
     }
 }
