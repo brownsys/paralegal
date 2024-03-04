@@ -380,8 +380,7 @@ impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
 
     /// Append a help message and the span of a graph node to the diagnostic.
     pub fn with_node_help(&mut self, node: GlobalNode, message: impl Into<String>) -> &mut Self {
-        let span = self.base.as_ctx().get_location(node).clone();
-        self.with_child(message, Severity::Help, Some(span))
+        self.with_node(Severity::Help, node, message.into())
     }
 
     /// Append a warning to the diagnostic.
@@ -396,8 +395,7 @@ impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
 
     /// Append a warning with a source code span to the diagnostic.
     pub fn with_node_warning(&mut self, node: GlobalNode, message: impl Into<String>) -> &mut Self {
-        let span = self.base.as_ctx().get_location(node).clone();
-        self.with_child(message, Severity::Warning, Some(span))
+        self.with_node(Severity::Warning, node, message.into())
     }
 
     /// Append a note to the diagnostic.
@@ -407,13 +405,20 @@ impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
 
     /// Append a note with a source code span to the diagnostic.
     pub fn with_span_note(&mut self, span: Span, message: impl Into<String>) -> &mut Self {
-        self.with_child(message, Severity::Note, Some(span))
+        self.with_child(message.into(), Severity::Note, Some(span))
     }
 
     /// Append a note and the span of a graph node to the diagnostic.
     pub fn with_node_note(&mut self, node: GlobalNode, message: impl Into<String>) -> &mut Self {
-        let span = self.base.as_ctx().get_location(node).clone();
-        self.with_child(message, Severity::Note, Some(span))
+        self.with_node(Severity::Note, node, message.into())
+    }
+
+    fn with_node(&mut self, severity: Severity, node: GlobalNode, message: String) -> &mut Self {
+        self.with_child(
+            message,
+            severity,
+            Some(highlighted_node_span(self.base.as_ctx(), node)),
+        )
     }
 }
 
@@ -663,20 +668,28 @@ pub trait Diagnostics: HasDiagnosticsBase {
     }
 }
 
+fn highlighted_node_span(ctx: &Context, node: GlobalNode) -> HighlightedSpan {
+    let node_span = ctx.get_location(node);
+    let stmt_span = &ctx.instruction_at_node(node).span;
+    if stmt_span.contains(node_span) {
+        HighlightedSpan::new(stmt_span.clone(), node_span.start, node_span.end)
+    } else {
+        stmt_span.clone().into()
+    }
+}
+
 fn struct_node_diagnostic<B: HasDiagnosticsBase + ?Sized>(
     base: &B,
     node: GlobalNode,
     severity: Severity,
     msg: impl Into<String>,
 ) -> DiagnosticBuilder<'_, B> {
-    let node_span = base.as_ctx().get_location(node);
-    let stmt_span = &base.as_ctx().instruction_at_node(node).span;
-    let span = if stmt_span.contains(node_span) {
-        HighlightedSpan::new(stmt_span.clone(), node_span.start, node_span.end)
-    } else {
-        stmt_span.clone().into()
-    };
-    DiagnosticBuilder::init(msg.into(), severity, Some(span.clone()), base)
+    DiagnosticBuilder::init(
+        msg.into(),
+        severity,
+        Some(highlighted_node_span(base.as_ctx(), node)),
+        base,
+    )
 }
 
 const TAB_SIZE: usize = 4;
