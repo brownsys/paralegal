@@ -738,6 +738,7 @@ impl SPDG {
         }
     }
 
+    /// All types (if any) assigned to this node
     pub fn node_types(&self, node: Node) -> &[TypeId] {
         self.type_assigns.get(&node).map_or(&[], |r| &r.0)
     }

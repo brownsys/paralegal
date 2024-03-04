@@ -9,7 +9,6 @@ use crate::{
     ann::{Annotation, MarkerAnnotation},
     desc::*,
     rust::{hir::def, *},
-    ty::TyKind,
     utils::*,
     DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
