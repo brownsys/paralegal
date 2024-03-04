@@ -348,7 +348,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// Try to discern if this node is a special [`NodeKind`]. Also returns if
     /// the location corresponds to a function call for an external function and
     /// any marker annotations on this node.
-    fn determine_node_kind(&mut self, weight: &DepNode<'tcx>) -> (NodeKind, bool, Vec<Identifier>) {
+    fn determine_node_kind(&mut self, weight: &DepNode<'tcx>) -> (NodeKind, Vec<Identifier>) {
         let leaf_loc = weight.at.leaf();
 
         let body = &self.tcx().body_for_def_id(leaf_loc.function).unwrap().body;
@@ -366,7 +366,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 });
 
                 self.known_def_ids.extend(parent);
-                (NodeKind::FormalParameter(arg_num as u8), false, annotations)
+                (NodeKind::FormalParameter(arg_num as u8), annotations)
             }
             RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
                 let function_id = leaf_loc.function.to_def_id();
@@ -374,7 +374,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 let (annotations, parent) =
                     self.annotations_for_function(function_id, |ann| ann.refinement.on_return());
                 self.known_def_ids.extend(parent);
-                (NodeKind::FormalReturn, false, annotations)
+                (NodeKind::FormalReturn, annotations)
             }
             RichLocation::Location(loc) => {
                 let stmt_at_loc = body.stmt_at(loc);
@@ -396,7 +396,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         .collect::<TinyBitSet>();
                     let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
                     self.known_def_ids.extend(Some(fun));
-                    let is_external = !fun.is_local();
                     let kind = if !indices.is_empty() {
                         NodeKind::ActualParameter(indices)
                     } else if matches_place(*destination) {
@@ -420,36 +419,52 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         NodeKind::Unspecified => vec![],
                         _ => unreachable!(),
                     };
-                    (kind, is_external, annotations)
+                    (kind, annotations)
                 } else {
                     // TODO attach annotations if the return value is a marked type
-                    (NodeKind::Unspecified, false, vec![])
+                    (NodeKind::Unspecified, vec![])
                 }
             }
-            _ => (NodeKind::Unspecified, false, vec![]),
+            _ => (NodeKind::Unspecified, vec![]),
         }
     }
 
     /// Reconstruct the type for the data this node represents.
-    fn determine_place_type(&self, weight: &DepNode<'tcx>) -> mir::tcx::PlaceTy<'tcx> {
+    fn determine_place_type(
+        &self,
+        at: CallString,
+        place: mir::Place<'tcx>,
+    ) -> mir::tcx::PlaceTy<'tcx> {
         let tcx = self.tcx();
-        let locations = weight.at.iter_from_root().collect::<Vec<_>>();
+        let locations = at.iter_from_root().collect::<Vec<_>>();
         let (last, mut rest) = locations.split_last().unwrap();
 
-        if self.entrypoint_is_async() {
+        // So actually we're going to check the base place only, because
+        // Flowistry sometimes tracks subplaces instead.
+        let place = if self.entrypoint_is_async() {
             let (first, tail) = rest.split_first().unwrap();
             // The body of a top-level `async` function binds a closure to the
             // return place `_0`. Here we expect are looking at the statement
             // that does this binding.
             assert!(self.expect_stmt_at(*first).is_left());
             rest = tail;
-        }
+
+            assert_eq!(place.local.as_u32(), 1);
+            assert!(place.projection.len() >= 1);
+            // in the case of async we'll keep the first projection
+            mir::Place {
+                local: place.local,
+                projection: self.tcx().mk_place_elems(&place.projection[..1]),
+            }
+        } else {
+            place.local.into()
+        };
         let resolution = rest.iter().fold(
             FnResolution::Partial(self.local_def_id.to_def_id()),
             |resolution, caller| {
                 let terminator = match self.expect_stmt_at(*caller) {
                     Either::Right(t) => t,
-                    Either::Left(stmt) => unreachable!("{stmt:?}\nat {caller} in {}", weight.at),
+                    Either::Left(stmt) => unreachable!("{stmt:?}\nat {caller} in {}", at),
                 };
                 let term = match resolution {
                     FnResolution::Final(instance) => {
@@ -467,7 +482,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         );
         // Thread through each caller to recover generic arguments
         let body = tcx.body_for_def_id(last.function).unwrap();
-        let raw_ty = weight.place.ty(&body.body, tcx);
+        let raw_ty = place.ty(&body.body, tcx);
         match resolution {
             FnResolution::Partial(_) => raw_ty,
             FnResolution::Final(instance) => instance.subst_mir_and_normalize_erasing_regions(
@@ -506,13 +521,19 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     /// Check if this node is of a marked type and register that type.
-    fn handle_node_types(
-        &mut self,
-        i: Node,
-        weight: &DepNode<'tcx>,
-        is_external_call_source: bool,
-    ) {
-        let place_ty = self.determine_place_type(weight);
+    fn handle_node_types(&mut self, i: Node, weight: &DepNode<'tcx>, kind: NodeKind) {
+        let is_controller_argument = kind.is_formal_parameter()
+            && matches!(self.try_as_root(weight.at), Some(l) if l.location == RichLocation::Start);
+
+        if kind.is_actual_return() {
+            assert!(weight.place.projection.is_empty());
+        } else if !is_controller_argument {
+            return;
+        }
+
+        let place_ty = self.determine_place_type(weight.at, weight.place);
+
+        let is_external_call_source = weight.at.leaf().location != RichLocation::End;
 
         let node_types = self.type_is_marked(place_ty, is_external_call_source);
         self.known_def_ids.extend(node_types.iter().copied());
@@ -599,7 +620,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
 
         for (i, weight) in input.node_references() {
-            let (kind, is_external_call_source, node_markers) = self.determine_node_kind(weight);
+            let (kind, node_markers) = self.determine_node_kind(weight);
             let at = weight.at.leaf();
             let body = &tcx.body_for_def_id(at.function).unwrap().body;
 
@@ -627,20 +648,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             );
 
             if !node_markers.is_empty() {
-                markers.entry(new_idx).or_default().extend(node_markers)
+                markers.entry(new_idx).or_default().extend(node_markers);
             }
 
-            let is_controller_argument = kind.is_formal_parameter()
-                && matches!(self.try_as_root(weight.at), Some(l) if l.location == RichLocation::Start);
-
-            // TODO decide if this is correct.
-            if kind.is_actual_return() || is_controller_argument {
-                self.handle_node_types(
-                    new_idx,
-                    weight,
-                    is_external_call_source || is_controller_argument,
-                );
-            }
+            self.handle_node_types(new_idx, weight, kind);
         }
 
         for e in input.edge_references() {
