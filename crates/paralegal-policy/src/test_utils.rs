@@ -51,7 +51,7 @@ fn is_at_function_call_with_name(
     let weight = ctrl.graph.node_weight(node).unwrap().at;
     let instruction = &ctx.desc().instruction_info[&weight.leaf()];
     matches!(
-        instruction,
+        instruction.kind,
         InstructionKind::FunctionCall(call) if
             ctx.desc().def_info[&call.id].name == name
     )

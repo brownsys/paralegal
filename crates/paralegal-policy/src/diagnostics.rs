@@ -82,7 +82,7 @@ use colored::*;
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{GlobalNode, Identifier, SrcCodeSpan, SPDG};
+use paralegal_spdg::{GlobalNode, Identifier, Span, SpanCoord, SPDG};
 
 use crate::{Context, ControllerId};
 
@@ -185,7 +185,42 @@ impl Diagnostic {
 struct DiagnosticPart {
     message: String,
     severity: Severity,
-    span: Option<SrcCodeSpan>,
+    span: Option<HighlightedSpan>,
+}
+
+#[derive(Clone, Debug)]
+struct SubSpan {
+    start: SpanCoord,
+    end: SpanCoord,
+}
+
+#[derive(Clone, Debug)]
+/// A span with only a portion highlighted.
+pub struct HighlightedSpan {
+    span: Span,
+    highlight: Option<SubSpan>,
+}
+
+impl HighlightedSpan {
+    /// Create a  new span with a highlighted section
+    pub fn new(span: Span, start: SpanCoord, end: SpanCoord) -> Self {
+        assert!(start >= span.start);
+        assert!(end <= span.end);
+        assert!(start <= end);
+        HighlightedSpan {
+            span,
+            highlight: Some(SubSpan { start, end }),
+        }
+    }
+}
+
+impl From<Span> for HighlightedSpan {
+    fn from(value: Span) -> Self {
+        Self {
+            span: value,
+            highlight: None,
+        }
+    }
 }
 
 impl DiagnosticPart {
@@ -197,40 +232,43 @@ impl DiagnosticPart {
 
         writeln!(s, "{}: {}", severity.as_ref().color(coloring), self.message)?;
         if let Some(src_loc) = &self.span {
-            let max_line_len = std::cmp::max(
-                src_loc.start_line.to_string().len(),
-                src_loc.end_line.to_string().len(),
-            );
+            let start_line = src_loc.span.start.line as usize;
+            let start_col = src_loc.span.start.col as usize;
+            let end_line = src_loc.span.end.line as usize;
+            let end_col = src_loc.span.end.col as usize;
+            let (hl_start_line, hl_start_col, hl_end_line, hl_end_col) =
+                if let Some(hl) = &src_loc.highlight {
+                    (
+                        hl.start.line as usize,
+                        hl.start.col as usize,
+                        hl.end.line as usize,
+                        hl.end.col as usize,
+                    )
+                } else {
+                    (start_line, start_col, end_line, end_col)
+                };
+            let max_line_len =
+                std::cmp::max(start_line.to_string().len(), end_line.to_string().len());
             let tab: String = " ".repeat(max_line_len);
             writeln!(
                 s,
                 "{tab}{} {}:{}:{}",
                 "-->".blue(),
-                src_loc.source_file.file_path,
-                src_loc.start_line,
-                src_loc.start_col,
+                src_loc.span.source_file.file_path,
+                start_line,
+                start_col,
             )?;
             writeln!(s, "{tab} {}", "|".blue())?;
             let lines = std::io::BufReader::new(
-                std::fs::File::open(&src_loc.source_file.abs_file_path).unwrap(),
+                std::fs::File::open(&src_loc.span.source_file.abs_file_path).unwrap(),
             )
             .lines()
-            .skip(src_loc.start_line - 1)
-            .take(src_loc.end_line - src_loc.start_line + 1)
+            .skip(start_line - 1)
+            .take(end_line - start_line + 1)
             .enumerate();
             for (i, line) in lines {
                 let line_content: String = line.unwrap();
-                let line_num = src_loc.start_line + i;
-                let end: usize = if line_num == src_loc.end_line {
-                    line_length_while(&line_content[0..src_loc.end_col - 1], |_| true)
-                } else {
-                    line_length_while(&line_content, |_| true)
-                };
-                let start: usize = if line_num == src_loc.start_line {
-                    line_length_while(&line_content[0..src_loc.start_col - 1], |_| true)
-                } else {
-                    line_length_while(&line_content, char::is_whitespace)
-                };
+                let line_num = start_line + i;
 
                 writeln!(
                     s,
@@ -239,13 +277,25 @@ impl DiagnosticPart {
                     "|".blue(),
                     line_content.replace('\t', &" ".repeat(TAB_SIZE))
                 )?;
-                writeln!(
-                    s,
-                    "{tab} {} {}{}",
-                    "|".blue(),
-                    " ".repeat(start),
-                    "^".repeat(end - start).color(coloring)
-                )?;
+                if line_num >= hl_start_line && line_num <= hl_end_line {
+                    let end: usize = if line_num == hl_end_line {
+                        line_length_while(&line_content[0..hl_end_col - 1], |_| true)
+                    } else {
+                        line_length_while(&line_content, |_| true)
+                    };
+                    let start: usize = if line_num == hl_start_line {
+                        line_length_while(&line_content[0..hl_start_col - 1], |_| true)
+                    } else {
+                        line_length_while(&line_content, char::is_whitespace)
+                    };
+                    writeln!(
+                        s,
+                        "{tab} {} {}{}",
+                        "|".blue(),
+                        " ".repeat(start),
+                        "^".repeat(end - start).color(coloring)
+                    )?;
+                }
             }
             writeln!(s, "{tab} {}", "|".blue())?;
         }
@@ -277,14 +327,19 @@ pub struct DiagnosticBuilder<'a, A: ?Sized> {
 }
 
 impl<'a, A: ?Sized> DiagnosticBuilder<'a, A> {
-    fn init(message: String, severity: Severity, span: Option<SrcCodeSpan>, base: &'a A) -> Self {
+    fn init(
+        message: String,
+        severity: Severity,
+        span: Option<impl Into<HighlightedSpan>>,
+        base: &'a A,
+    ) -> Self {
         DiagnosticBuilder {
             diagnostic: Diagnostic {
                 context: vec![],
                 main: DiagnosticPart {
                     message,
                     severity,
-                    span,
+                    span: span.map(Into::into),
                 },
                 children: vec![],
             },
@@ -296,12 +351,12 @@ impl<'a, A: ?Sized> DiagnosticBuilder<'a, A> {
         &mut self,
         message: impl Into<String>,
         severity: Severity,
-        span: Option<SrcCodeSpan>,
+        span: Option<impl Into<HighlightedSpan>>,
     ) -> &mut Self {
         self.diagnostic.children.push(DiagnosticPart {
             message: message.into(),
             severity,
-            span,
+            span: span.map(Into::into),
         });
         self
     }
@@ -315,11 +370,11 @@ impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
 
     /// Append a help message to the diagnostic.
     pub fn with_help(&mut self, message: impl Into<String>) -> &mut Self {
-        self.with_child(message, Severity::Help, None)
+        self.with_child(message, Severity::Help, Option::<HighlightedSpan>::None)
     }
 
     /// Append a help message with a source code span to the diagnostic.
-    pub fn with_span_help(&mut self, span: SrcCodeSpan, message: impl Into<String>) -> &mut Self {
+    pub fn with_span_help(&mut self, span: Span, message: impl Into<String>) -> &mut Self {
         self.with_child(message, Severity::Help, Some(span))
     }
 
@@ -331,15 +386,11 @@ impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
 
     /// Append a warning to the diagnostic.
     pub fn with_warning(&mut self, message: impl Into<String>) -> &mut Self {
-        self.with_child(message, Severity::Warning, None)
+        self.with_child(message, Severity::Warning, Option::<HighlightedSpan>::None)
     }
 
     /// Append a warning and the span of a graph node to the diagnostic.
-    pub fn with_span_warning(
-        &mut self,
-        span: SrcCodeSpan,
-        message: impl Into<String>,
-    ) -> &mut Self {
+    pub fn with_span_warning(&mut self, span: Span, message: impl Into<String>) -> &mut Self {
         self.with_child(message, Severity::Warning, Some(span))
     }
 
@@ -351,11 +402,11 @@ impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
 
     /// Append a note to the diagnostic.
     pub fn with_note(&mut self, message: impl Into<String>) -> &mut Self {
-        self.with_child(message, Severity::Note, None)
+        self.with_child(message, Severity::Note, Option::<HighlightedSpan>::None)
     }
 
     /// Append a note with a source code span to the diagnostic.
-    pub fn with_span_note(&mut self, span: SrcCodeSpan, message: impl Into<String>) -> &mut Self {
+    pub fn with_span_note(&mut self, span: Span, message: impl Into<String>) -> &mut Self {
         self.with_child(message, Severity::Note, Some(span))
     }
 
@@ -423,7 +474,12 @@ pub trait Diagnostics: HasDiagnosticsBase {
     ///
     /// This will fail the policy.
     fn struct_error(&self, msg: impl Into<String>) -> DiagnosticBuilder<'_, Self> {
-        DiagnosticBuilder::init(msg.into(), Severity::Error, None, self)
+        DiagnosticBuilder::init(
+            msg.into(),
+            Severity::Error,
+            Option::<HighlightedSpan>::None,
+            self,
+        )
     }
 
     /// Initialize a diagnostic builder for an error with a source code span.
@@ -431,7 +487,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
     /// This will fail the policy.
     fn struct_span_error(
         &self,
-        span: SrcCodeSpan,
+        span: impl Into<HighlightedSpan>,
         msg: impl Into<String>,
     ) -> DiagnosticBuilder<'_, Self> {
         DiagnosticBuilder::init(msg.into(), Severity::Error, Some(span), self)
@@ -441,7 +497,12 @@ pub trait Diagnostics: HasDiagnosticsBase {
     ///
     /// Does not fail the policy.
     fn struct_warning(&self, msg: impl Into<String>) -> DiagnosticBuilder<'_, Self> {
-        DiagnosticBuilder::init(msg.into(), Severity::Warning, None, self)
+        DiagnosticBuilder::init(
+            msg.into(),
+            Severity::Warning,
+            Option::<HighlightedSpan>::None,
+            self,
+        )
     }
 
     /// Initialize a diagnostic builder for a warning with a source code span
@@ -449,7 +510,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
     /// Does not fail the policy.
     fn struct_span_warning(
         &self,
-        span: SrcCodeSpan,
+        span: impl Into<HighlightedSpan>,
         msg: impl Into<String>,
     ) -> DiagnosticBuilder<'_, Self> {
         DiagnosticBuilder::init(msg.into(), Severity::Warning, Some(span), self)
@@ -457,13 +518,18 @@ pub trait Diagnostics: HasDiagnosticsBase {
 
     /// Initialize a diagnostic builder for a help message.
     fn struct_help(&self, msg: impl Into<String>) -> DiagnosticBuilder<'_, Self> {
-        DiagnosticBuilder::init(msg.into(), Severity::Help, None, self)
+        DiagnosticBuilder::init(
+            msg.into(),
+            Severity::Help,
+            Option::<HighlightedSpan>::None,
+            self,
+        )
     }
 
     /// Initialize a diagnostic builder for a help message with a source code span
     fn struct_span_help(
         &self,
-        span: SrcCodeSpan,
+        span: impl Into<HighlightedSpan>,
         msg: impl Into<String>,
     ) -> DiagnosticBuilder<'_, Self> {
         DiagnosticBuilder::init(msg.into(), Severity::Help, Some(span), self)
@@ -471,13 +537,18 @@ pub trait Diagnostics: HasDiagnosticsBase {
 
     /// Initialize a diagnostic builder for a note
     fn struct_note(&self, msg: impl Into<String>) -> DiagnosticBuilder<'_, Self> {
-        DiagnosticBuilder::init(msg.into(), Severity::Note, None, self)
+        DiagnosticBuilder::init(
+            msg.into(),
+            Severity::Note,
+            Option::<HighlightedSpan>::None,
+            self,
+        )
     }
 
     /// Initialize a diagnostic builder for a note with a source code span
     fn struct_span_note(
         &self,
-        span: SrcCodeSpan,
+        span: impl Into<HighlightedSpan>,
         msg: impl Into<String>,
     ) -> DiagnosticBuilder<'_, Self> {
         DiagnosticBuilder::init(msg.into(), Severity::Note, Some(span), self)
@@ -506,23 +577,23 @@ pub trait Diagnostics: HasDiagnosticsBase {
 
     /// Emit a message that is severe enough that it causes the policy to fail
     /// with a source code span.
-    fn span_error(&self, msg: impl Into<String>, span: SrcCodeSpan) {
+    fn span_error(&self, msg: impl Into<String>, span: Span) {
         self.struct_span_error(span, msg).emit()
     }
 
     /// Emit a message that indicates to the user that the policy might be
     /// fraudulent but could be correct. Includes a source code span.
-    fn span_warning(&self, msg: impl Into<String>, span: SrcCodeSpan) {
+    fn span_warning(&self, msg: impl Into<String>, span: Span) {
         self.struct_span_warning(span, msg).emit()
     }
 
     /// Emit a message that provides additional information to the user.
-    fn span_note(&self, msg: impl Into<String>, span: SrcCodeSpan) {
+    fn span_note(&self, msg: impl Into<String>, span: Span) {
         self.struct_span_note(span, msg).emit()
     }
 
     /// Emit a message that suggests something to the user.
-    fn span_help(&self, msg: impl Into<String>, span: SrcCodeSpan) {
+    fn span_help(&self, msg: impl Into<String>, span: Span) {
         self.struct_span_help(span, msg).emit()
     }
 
@@ -598,7 +669,13 @@ fn struct_node_diagnostic<B: HasDiagnosticsBase + ?Sized>(
     severity: Severity,
     msg: impl Into<String>,
 ) -> DiagnosticBuilder<'_, B> {
-    let span = base.as_ctx().get_location(node);
+    let node_span = base.as_ctx().get_location(node);
+    let stmt_span = &base.as_ctx().instruction_at_node(node).span;
+    let span = if stmt_span.contains(node_span) {
+        HighlightedSpan::new(stmt_span.clone(), node_span.start, node_span.end)
+    } else {
+        stmt_span.clone().into()
+    };
     DiagnosticBuilder::init(msg.into(), severity, Some(span.clone()), base)
 }
 

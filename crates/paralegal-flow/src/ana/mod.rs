@@ -26,7 +26,7 @@ use flowistry::pdg::{
 };
 use itertools::Itertools;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
-use rustc_span::{FileNameDisplayPreference, Span};
+use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
 
 mod inline_judge;
 
@@ -135,7 +135,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_instruction_info(
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
-    ) -> HashMap<GlobalLocation, InstructionKind> {
+    ) -> HashMap<GlobalLocation, InstructionInfo> {
         let all_instructions = controllers
             .values()
             .flat_map(|v| {
@@ -148,13 +148,13 @@ impl<'tcx> SPDGGenerator<'tcx> {
         all_instructions
             .into_iter()
             .map(|i| {
-                let body = self.tcx.body_for_def_id(i.function).unwrap();
+                let body = &self.tcx.body_for_def_id(i.function).unwrap().body;
 
-                let info = match i.location {
+                let kind = match i.location {
                     RichLocation::End => InstructionKind::Return,
                     RichLocation::Start => InstructionKind::Start,
                     RichLocation::Location(loc) => {
-                        let kind = match body.body.stmt_at(loc) {
+                        let kind = match body.stmt_at(loc) {
                             crate::Either::Right(term) => {
                                 if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
                                     InstructionKind::FunctionCall(FunctionCallInfo {
@@ -171,7 +171,26 @@ impl<'tcx> SPDGGenerator<'tcx> {
                         kind
                     }
                 };
-                (i, info)
+                let rust_span = match i.location {
+                    RichLocation::Location(loc) => {
+                        let expanded_span = match body.stmt_at(loc) {
+                            crate::Either::Right(term) => term.source_info.span,
+                            crate::Either::Left(stmt) => stmt.source_info.span,
+                        };
+                        self.tcx
+                            .sess
+                            .source_map()
+                            .stmt_span(expanded_span, body.span)
+                    }
+                    RichLocation::Start | RichLocation::End => self.tcx.def_span(i.function),
+                };
+                (
+                    i,
+                    InstructionInfo {
+                        kind,
+                        span: src_loc_for_span(rust_span, self.tcx),
+                    },
+                )
             })
             .collect()
     }
@@ -208,7 +227,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 }
 
-fn src_loc_for_span(span: Span, tcx: TyCtxt) -> SrcCodeSpan {
+fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
     let (source_file, start_line, start_col, end_line, end_col) =
         tcx.sess.source_map().span_to_location_info(span);
     let file_path = source_file
@@ -227,12 +246,16 @@ fn src_loc_for_span(span: Span, tcx: TyCtxt) -> SrcCodeSpan {
         file_path,
         abs_file_path,
     };
-    SrcCodeSpan {
+    Span {
         source_file: src_info.intern(),
-        start_line,
-        start_col,
-        end_line,
-        end_col,
+        start: SpanCoord {
+            line: start_line as u32,
+            col: start_col as u32,
+        },
+        end: SpanCoord {
+            line: end_line as u32,
+            col: end_col as u32,
+        },
     }
 }
 
@@ -624,34 +647,14 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             let at = weight.at.leaf();
             let body = &tcx.body_for_def_id(at.function).unwrap().body;
 
-            let stmt_span = match at.location {
-                RichLocation::End | RichLocation::Start => {
-                    let def = &body.local_decls[weight.place.local];
-                    def.source_info.span
-                }
-                RichLocation::Location(loc) => {
-                    let expanded_span = match body.stmt_at(loc) {
-                        crate::Either::Right(term) => term.source_info.span,
-                        crate::Either::Left(stmt) => stmt.source_info.span,
-                    };
-                    tcx.sess.source_map().stmt_span(expanded_span, body.span)
-                }
-            };
             let node_span = body.local_decls[weight.place.local].source_info.span;
-            // If the span from introducing a local variable is more precise
-            // than the one from the statement we use that.
-            let rustc_span = if stmt_span.contains(node_span) {
-                node_span
-            } else {
-                stmt_span
-            };
             let new_idx = self.register_node(
                 i,
                 NodeInfo {
                     at: weight.at,
                     description: format!("{:?}", weight.place),
                     kind,
-                    span: src_loc_for_span(rustc_span, tcx),
+                    span: src_loc_for_span(node_span, tcx),
                 },
             );
 
