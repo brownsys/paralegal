@@ -452,6 +452,11 @@ impl Context {
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         let g = &self.desc.controllers[&ctrl_id].graph;
         g.externals(Incoming)
+            .filter(|n| {
+                let w = g.node_weight(*n).unwrap();
+                w.at.leaf().location.is_start()
+                    || self.desc.instruction_info[&w.at.leaf()].is_function_call()
+            })
             .map(move |inner| GlobalNode::from_local_node(ctrl_id, inner))
     }
 
@@ -728,7 +733,19 @@ impl AlwaysHappensBefore {
         assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
         if !self.holds() {
             for &(reached, from) in &self.reached {
-                let mut err = ctx.struct_node_error(reached, "Reached this terminal");
+                let context = ctx.as_ctx();
+                let from_info = context.node_info(from);
+                let reached_info = context.node_info(reached);
+                let mut err = ctx.struct_node_error(
+                    reached,
+                    format!(
+                        "Reached this terminal {} ({}) -> {} ({})",
+                        from_info.description,
+                        from_info.kind,
+                        reached_info.description,
+                        reached_info.kind,
+                    ),
+                );
                 err.with_node_note(from, "Started from this node");
                 err.emit();
             }
