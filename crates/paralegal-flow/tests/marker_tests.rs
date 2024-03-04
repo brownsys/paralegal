@@ -48,8 +48,28 @@ define_test!(trait_method_marker: ctrl -> {
     }
 });
 
-define_test!(typed_input: ctrl -> {
+define_test!(wrapping_typed_input: ctrl -> {
     let marker = Identifier::new_intern("wrapper");
+    assert!(ctrl.spdg().arguments.iter().any(|node| {
+        let ts = ctrl.spdg().node_types(*node);
+        dbg!(ts).iter().any(|t| {
+            ctrl.graph().desc.type_info[t].markers.contains(&marker)
+        })
+    }))
+});
+
+define_test!(typed_input: ctrl -> {
+    let marker = Identifier::new_intern("marked");
+    assert!(ctrl.spdg().arguments.iter().any(|node| {
+        let ts = ctrl.spdg().node_types(*node);
+        dbg!(ts).iter().any(|t| {
+            ctrl.graph().desc.type_info[t].markers.contains(&marker)
+        })
+    }))
+});
+
+define_test!(typed_input_zst: ctrl -> {
+    let marker = Identifier::new_intern("marked");
     assert!(ctrl.spdg().arguments.iter().any(|node| {
         let ts = ctrl.spdg().node_types(*node);
         dbg!(ts).iter().any(|t| {

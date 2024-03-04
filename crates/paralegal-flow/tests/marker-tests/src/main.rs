@@ -31,6 +31,25 @@ fn trait_method_marker() {
 }
 
 #[paralegal::analyze]
-fn typed_input(w: Wrapper<u32>) {
+fn wrapping_typed_input(w: Wrapper<u32>) {
+    consume_any(w)
+}
+
+#[paralegal::marker(marked)]
+struct Marked {
+    f1: usize,
+    f2: bool,
+}
+
+#[paralegal::analyze]
+fn typed_input(w: Marked) {
+    consume_any(w)
+}
+
+#[paralegal::marker(marked)]
+struct MarkedZST;
+
+#[paralegal::analyze]
+fn typed_input_zst(w: MarkedZST) {
     consume_any(w)
 }
