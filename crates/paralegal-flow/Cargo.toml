@@ -15,7 +15,7 @@ test = []
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }
 
 #flowistry = { path = "../../../flowistry/crates/flowistry" }
-flowistry = { git = "https://github.com/brownsys/flowistry", rev = "1b94b4180b4d9b5d20e60675c683a781b853d63f" }
+flowistry = { git = "https://github.com/brownsys/flowistry", rev = "46f732a6bd81b065a0ab2d8976f4b82b9bfaf637" }
 #flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "3b0a12668894220010d715092bb6e9fb2cefb5ba" }
 
 rustc_plugin = "=0.7.4-nightly-2023-08-25"
