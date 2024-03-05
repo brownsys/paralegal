@@ -1,17 +1,17 @@
 extern crate anyhow;
 
-use anyhow::{Result};
+use anyhow::Result;
 use clap::Parser;
 use std::io::stdout;
+use std::iter::Filter;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::iter::Filter;
 use std::time::{Duration, Instant};
 
 use paralegal_policy::{
     assert_error,
     paralegal_spdg::{traverse::EdgeSelection, GlobalNode, Identifier},
-    Marker, PolicyContext, Context
+    Context, Marker, PolicyContext,
 };
 
 macro_rules! marker {
@@ -37,11 +37,12 @@ impl CommunityProp {
         let mut community_struct_nodes = self.cx.marked_nodes(marker!(community));
         let mut delete_check_nodes = self.cx.marked_nodes(marker!(community_delete_check));
         let mut ban_check_nodes = self.cx.marked_nodes(marker!(community_ban_check));
-    
+
         // if some community_struct
         community_struct_nodes.all(|community_struct| {
             // flows to some write
-            let community_writes : Vec<GlobalNode> = self.cx
+            let community_writes: Vec<GlobalNode> = self
+                .cx
                 .influencees(community_struct, EdgeSelection::Data)
                 .filter(|n| self.cx.has_marker(marker!(db_write), *n))
                 .collect();
@@ -53,17 +54,25 @@ impl CommunityProp {
                     // delete check has ctrl flow influence on the write
                     self.cx.has_ctrl_influence(delete_check, write)
                 });
-    
-                assert_error!(self.cx, has_delete_check, "Unauthorized community write: no delete check");
-    
+
+                assert_error!(
+                    self.cx,
+                    has_delete_check,
+                    "Unauthorized community write: no delete check"
+                );
+
                 let has_ban_check = ban_check_nodes.any(|ban_check| {
                     // community struct flows to ban check and
                     self.cx.flows_to(community_struct, ban_check, EdgeSelection::Data) &&
                     // ban check has ctrl flow influence on the write
                     self.cx.has_ctrl_influence(ban_check, write)
                 });
-    
-                assert_error!(self.cx, has_ban_check, "Unauthorized community write: no ban check");
+
+                assert_error!(
+                    self.cx,
+                    has_ban_check,
+                    "Unauthorized community write: no ban check"
+                );
             }
             true
         });
@@ -73,7 +82,7 @@ impl CommunityProp {
 }
 
 impl InstanceProp {
-    pub fn new(cx : Arc<PolicyContext>) -> Self {
+    pub fn new(cx: Arc<PolicyContext>) -> Self {
         InstanceProp { cx }
     }
 
@@ -85,74 +94,93 @@ impl InstanceProp {
 
         // all db writes must be authorized by a ban & delete check
         let has_delete_check = writes.all(|write| {
-            delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, write)) &&
-            ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, write))
+            delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, write))
+                && ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, write))
         });
 
-        assert_error!(self.cx, has_delete_check, "Missing delete check for instance authorization");
+        assert_error!(
+            self.cx,
+            has_delete_check,
+            "Missing delete check for instance authorization"
+        );
 
         // all db reads (that are not reading the active user) must be authorized by a ban & delete check
         let has_ban_check = reads.all(|read| {
             // you could also implement this by adding .filter(|n| !self.cx.has_marker(marker!(db_user_read), *n)).collect()
             // to line 80 and iterating over those nodes
             if !self.cx.has_marker(marker!(db_user_read), read) {
-                delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, read)) &&
-                ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, read))
+                delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, read))
+                    && ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, read))
             } else {
                 true
             }
         });
 
-        assert_error!(self.cx, has_ban_check, "Missing ban check for instance authorization");
+        assert_error!(
+            self.cx,
+            has_ban_check,
+            "Missing ban check for instance authorization"
+        );
 
         Ok(())
     }
-
 }
 
 #[derive(Parser)]
 struct Arguments {
     path: PathBuf,
+    #[clap(long)]
+    skip_compile: bool,
     #[clap(last = true)]
     extra_args: Vec<String>,
-}
-
-fn time<T>(f: impl FnOnce() -> T) -> (T, Duration) {
-    let now = Instant::now();
-    let result = f();
-    let elapsed = now.elapsed();
-    (result, elapsed)
 }
 
 fn main() -> anyhow::Result<()> {
     let args: &'static Arguments = Box::leak(Box::new(Arguments::parse()));
 
-    let mut cmd = paralegal_policy::SPDGGenCommand::global();
-    cmd.external_annotations("external-annotations.toml");
-    cmd.abort_after_analysis();
-    cmd.get_command().arg("--target").arg("lemmy_api");
-    cmd.get_command().args(&args.extra_args);
+    let graph_file = if args.skip_compile {
+        paralegal_policy::GraphLocation::std(&args.path)
+    } else {
+        let mut cmd = paralegal_policy::SPDGGenCommand::global();
+        cmd.external_annotations("external-annotations.toml");
+        cmd.abort_after_analysis();
+        cmd.get_command().arg("--target").arg("lemmy_api");
+        cmd.get_command().args(&args.extra_args);
+        cmd.run(&args.path)?
+    };
 
-    let (graph, compile_time) = time(|| cmd.run(&args.path));
-
-    let (res, policy_times) = time(|| {
-        let cx = Arc::new(graph?.build_context()?);
+    let res = graph_file.with_context(|cx| {
         let num_controllers = cx.desc().controllers.len();
-        let sum_nodes = cx.desc().controllers.values().map(|spdg| spdg.graph.node_count()).sum::<usize>();
-        println!("Analyzing over {num_controllers} controllers with avg {} nodes per graph", sum_nodes / num_controllers);
-        cx.clone().named_policy(Identifier::new_intern("Community Policy"), |cx| {
-            CommunityProp::new(cx.clone()).check()
-        });
-        cx.clone().named_policy(Identifier::new_intern("Instance Policy"), |cx| {
-            InstanceProp::new(cx.clone()).check()
-        });
-        anyhow::Ok(cx)
-    });
-    println!(
-        "Policy finished. Analysis took {}, policies took {}",
-        humantime::Duration::from(compile_time),
-        humantime::Duration::from(policy_times)
-    );
-    res?.emit_diagnostics_may_exit(stdout())?;
+        let sum_nodes = cx
+            .desc()
+            .controllers
+            .values()
+            .map(|spdg| spdg.graph.node_count())
+            .sum::<usize>();
+        println!(
+            "Analyzing over {num_controllers} controllers with avg {} nodes per graph",
+            sum_nodes / num_controllers
+        );
+        for ctrl in cx.desc().controllers.values() {
+            let num_nodes = ctrl.graph.node_count();
+            if num_nodes < 1000 {
+                println!(
+                    "{} has only {num_nodes} nodes",
+                    paralegal_policy::paralegal_spdg::DisplayPath::from(&ctrl.path)
+                );
+            }
+        }
+        cx.clone()
+            .named_policy(Identifier::new_intern("Community Policy"), |cx| {
+                CommunityProp::new(cx.clone()).check()
+            })?;
+        cx.clone()
+            .named_policy(Identifier::new_intern("Instance Policy"), |cx| {
+                InstanceProp::new(cx.clone()).check()
+            })?;
+        anyhow::Ok(())
+    })?;
+
+    println!("Policy finished. Stats {}", res.stats);
     anyhow::Ok(())
 }
