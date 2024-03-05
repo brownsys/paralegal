@@ -478,26 +478,25 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         let locations = at.iter_from_root().collect::<Vec<_>>();
         let (last, mut rest) = locations.split_last().unwrap();
 
-        // So actually we're going to check the base place only, because
-        // Flowistry sometimes tracks subplaces instead.
-        let place = if self.entrypoint_is_async() {
+        if self.entrypoint_is_async() {
             let (first, tail) = rest.split_first().unwrap();
             // The body of a top-level `async` function binds a closure to the
             // return place `_0`. Here we expect are looking at the statement
             // that does this binding.
             assert!(self.expect_stmt_at(*first).is_left());
             rest = tail;
+        }
 
-            if place.local.as_u32() == 1 {
-                assert!(place.projection.len() >= 1);
-                // in the case of targeting the async closure (e.g. async args)
+        // So actually we're going to check the base place only, because
+        // Flowistry sometimes tracks subplaces instead but we want the marker
+        // from the base place.
+        if self.entrypoint_is_async() && place.local.as_u32() == 1 && rest.len() == 1 {
+            assert!(place.projection.len() >= 1, "{place:?} at {rest:?}");
+            // in the case of targeting the top-level async closure (e.g. async args)
                 // we'll keep the first projection.
                 mir::Place {
                     local: place.local,
                     projection: self.tcx().mk_place_elems(&place.projection[..1]),
-                }
-            } else {
-                place
             }
         } else {
             place.local.into()
