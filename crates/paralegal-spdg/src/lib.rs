@@ -33,6 +33,7 @@ use itertools::Itertools;
 use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};
 use std::{fmt, hash::Hash, path::PathBuf};
+use utils::write_sep;
 
 use utils::serde_map_via_vec;
 
@@ -122,11 +123,32 @@ pub struct DefInfo {
     /// generated in the case of closures and generators
     pub name: Identifier,
     /// Def path to the object
-    pub path: Vec<Identifier>,
+    pub path: Box<[Identifier]>,
     /// Kind of object
     pub kind: DefKind,
     /// Information about the span
     pub src_info: Span,
+}
+
+/// Provides a way to format rust paths
+pub struct DisplayPath<'a>(&'a [Identifier]);
+
+impl Display for DisplayPath<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_sep(f, "::", self.0, Display::fmt)
+    }
+}
+
+impl<'a> From<&'a [Identifier]> for DisplayPath<'a> {
+    fn from(value: &'a [Identifier]) -> Self {
+        Self(value)
+    }
+}
+
+impl<'a> From<&'a Box<[Identifier]>> for DisplayPath<'a> {
+    fn from(value: &'a Box<[Identifier]>) -> Self {
+        value.as_ref().into()
+    }
 }
 
 /// Similar to `DefKind` in rustc but *not the same*!
@@ -700,6 +722,8 @@ pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
 pub struct SPDG {
     /// The identifier of the entry point to this computation
     pub name: Identifier,
+    /// The module path to this controller function
+    pub path: Box<[Identifier]>,
     /// The id
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::LocalDefId"))]
     pub id: LocalDefId,

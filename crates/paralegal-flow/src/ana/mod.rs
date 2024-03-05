@@ -493,10 +493,10 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         if self.entrypoint_is_async() && place.local.as_u32() == 1 && rest.len() == 1 {
             assert!(place.projection.len() >= 1, "{place:?} at {rest:?}");
             // in the case of targeting the top-level async closure (e.g. async args)
-                // we'll keep the first projection.
-                mir::Place {
-                    local: place.local,
-                    projection: self.tcx().mk_place_elems(&place.projection[..1]),
+            // we'll keep the first projection.
+            mir::Place {
+                local: place.local,
+                projection: self.tcx().mk_place_elems(&place.projection[..1]),
             }
         } else {
             place.local.into()
@@ -832,11 +832,9 @@ fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
     }
 }
 
-fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
-    let name = crate::utils::identifier_for_item(tcx, id);
-    let kind = def_kind_for_item(id, tcx);
+fn path_for_item(id: DefId, tcx: TyCtxt) -> Box<[Identifier]> {
     let def_path = tcx.def_path(id);
-    let path = std::iter::once(Identifier::new(tcx.crate_name(def_path.krate)))
+    std::iter::once(Identifier::new(tcx.crate_name(def_path.krate)))
         .chain(def_path.data.iter().filter_map(|segment| {
             use hir::definitions::DefPathDataName::*;
             match segment.data.name() {
@@ -844,10 +842,15 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
                 Anon { .. } => None,
             }
         }))
-        .collect();
+        .collect()
+}
+
+fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
+    let name = crate::utils::identifier_for_item(tcx, id);
+    let kind = def_kind_for_item(id, tcx);
     DefInfo {
         name,
-        path,
+        path: path_for_item(id, tcx),
         kind,
         src_info: src_loc_for_span(tcx.def_span(id), tcx),
     }

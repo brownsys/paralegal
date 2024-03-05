@@ -209,6 +209,7 @@ impl Context {
                 .get(candidate)
                 .ok_or_else(|| anyhow!("Impossible"))?
                 .path
+                .as_ref()
                 == path
             {
                 return Ok(*candidate);
@@ -613,7 +614,7 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
         let info = &self.ctx.desc().def_info[&self.def_id];
         f.write_str(info.kind.as_ref())?;
         f.write_str(" `")?;
-        for segment in &info.path {
+        for segment in info.path.as_ref() {
             f.write_str(segment.as_str())?;
             f.write_str("::")?;
         }
