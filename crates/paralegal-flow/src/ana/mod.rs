@@ -10,12 +10,12 @@ use crate::{
     desc::*,
     rust::{hir::def, *},
     utils::*,
-    DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
+    DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Stat, Symbol,
 };
 use paralegal_spdg::Node;
 
-use std::borrow::Cow;
 use std::rc::Rc;
+use std::{borrow::Cow, time::Instant};
 
 use anyhow::{anyhow, Result};
 use either::Either;
@@ -33,18 +33,25 @@ mod inline_judge;
 /// Read-only database of information the analysis needs.
 ///
 /// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
-pub struct SPDGGenerator<'tcx> {
+pub struct SPDGGenerator<'tcx, 'st> {
     pub marker_ctx: MarkerCtx<'tcx>,
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
+    stats: &'st mut crate::Stats,
 }
 
-impl<'tcx> SPDGGenerator<'tcx> {
-    pub fn new(marker_ctx: MarkerCtx<'tcx>, opts: &'static crate::Args, tcx: TyCtxt<'tcx>) -> Self {
+impl<'tcx, 'st> SPDGGenerator<'tcx, 'st> {
+    pub fn new(
+        marker_ctx: MarkerCtx<'tcx>,
+        opts: &'static crate::Args,
+        tcx: TyCtxt<'tcx>,
+        stats: &'st mut crate::Stats,
+    ) -> Self {
         Self {
             marker_ctx,
             opts,
             tcx,
+            stats,
         }
     }
 
@@ -53,12 +60,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
     ///
     /// Main work for a single target is performed by [`GraphConverter`].
     fn handle_target(
-        &self,
+        &mut self,
         //_hash_verifications: &mut HashVerifications,
         target: FnToAnalyze,
         known_def_ids: &mut impl Extend<DefId>,
     ) -> Result<(Endpoint, SPDG)> {
-        debug!("Handling target {}", target.name());
+        info!("Handling target {}", self.tcx.def_path_str(target.def_id));
         let local_def_id = target.def_id.expect_local();
 
         let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
@@ -72,7 +79,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
-    pub fn analyze(&self, targets: Vec<FnToAnalyze>) -> Result<ProgramDescription> {
+    pub fn analyze(&mut self, targets: Vec<FnToAnalyze>) -> Result<ProgramDescription> {
         if let LogLevelConfig::Targeted(s) = self.opts.direct_debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
@@ -100,7 +107,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 })
             })
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
-            .map(|controllers| self.make_program_description(controllers, &known_def_ids))
+            .map(|controllers| {
+                let start = Instant::now();
+                let desc = self.make_program_description(controllers, &known_def_ids);
+                self.stats.record(Stat::Conversion, start.elapsed());
+                desc
+            })
     }
 
     /// Given the PDGs and a record of all [`DefId`]s we've seen, compile
@@ -267,10 +279,10 @@ fn default_index() -> <SPDGImpl as GraphBase>::NodeId {
 ///
 /// Intended usage is to call [`Self::new_with_flowistry`] to initialize, then
 /// [`Self::make_spdg`] to convert.
-struct GraphConverter<'tcx, 'a, C> {
+struct GraphConverter<'tcx, 'a, 'st, C> {
     // Immutable information
     /// The parent generator
-    generator: &'a SPDGGenerator<'tcx>,
+    generator: &'a mut SPDGGenerator<'tcx, 'st>,
     /// Information about the function this PDG belongs to
     target: FnToAnalyze,
     /// The flowistry graph we are converting
@@ -291,15 +303,19 @@ struct GraphConverter<'tcx, 'a, C> {
     spdg: SPDGImpl,
 }
 
-impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
+impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
     /// Initialize a new converter by creating an initial PDG using flowistry.
     fn new_with_flowistry(
-        generator: &'a SPDGGenerator<'tcx>,
+        generator: &'a mut SPDGGenerator<'tcx, 'st>,
         known_def_ids: &'a mut C,
         target: FnToAnalyze,
     ) -> Result<Self> {
         let local_def_id = target.def_id.expect_local();
+        let start = Instant::now();
         let dep_graph = Rc::new(Self::create_flowistry_graph(generator, local_def_id)?);
+        generator
+            .stats
+            .record(crate::Stat::Flowistry, start.elapsed());
 
         if generator.opts.dbg().dump_flowistry_pdg() {
             dep_graph.generate_graphviz(format!(
@@ -580,7 +596,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// Create an initial flowistry graph for the function identified by
     /// `local_def_id`.
     fn create_flowistry_graph(
-        generator: &SPDGGenerator<'tcx>,
+        generator: &SPDGGenerator<'tcx, '_>,
         local_def_id: LocalDefId,
     ) -> Result<DepGraph<'tcx>> {
         let tcx = generator.tcx;
@@ -624,10 +640,15 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
 
     /// Consume the generator and compile the [`SPDG`].
     fn make_spdg(mut self) -> SPDG {
+        let start = Instant::now();
         let markers = self.make_spdg_impl();
         let arguments = self.determine_arguments();
         let return_ = self.determine_return();
+        self.generator
+            .stats
+            .record(Stat::Conversion, start.elapsed());
         SPDG {
+            path: path_for_item(self.local_def_id.to_def_id(), self.tcx()),
             graph: self.spdg,
             id: self.local_def_id,
             name: Identifier::new(self.target.name()),

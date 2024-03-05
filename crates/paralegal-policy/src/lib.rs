@@ -53,9 +53,11 @@ extern crate core;
 
 use anyhow::{ensure, Result};
 pub use paralegal_spdg;
+use paralegal_spdg::utils::TruncatedHumanTime;
 pub use paralegal_spdg::{
     traverse::EdgeSelection, GlobalNode, IntoIterGlobalNodes, ProgramDescription,
 };
+use std::time::{Duration, Instant};
 use std::{
     fs::File,
     path::{Path, PathBuf},
@@ -76,6 +78,44 @@ pub use self::{
     context::*,
     diagnostics::{CombinatorContext, Diagnostics, PolicyContext},
 };
+
+#[derive(Clone, Debug)]
+/// Statistics about the runtime of the various parts of a policy.
+pub struct Stats {
+    /// Runtime of the `paralegal-flow` command
+    pub analysis: Option<Duration>,
+    /// How long it took to create the indices
+    pub context_contruction: Duration,
+    /// How long the policy runs
+    pub policy: Duration,
+}
+
+impl std::fmt::Display for Stats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Analysis: ")?;
+        if let Some(ana) = self.analysis {
+            TruncatedHumanTime::from(ana).fmt(f)?;
+        } else {
+            f.write_str("no measurement")?;
+        }
+        write!(
+            f,
+            ", Index Creation: {}, Policy Execution: {}",
+            TruncatedHumanTime::from(self.context_contruction),
+            TruncatedHumanTime::from(self.policy)
+        )
+    }
+}
+
+/// Result of running a policy
+pub struct PolicyReturn<A> {
+    /// If the policy wants to return additional data, this is it
+    pub result: A,
+    /// Did the policy succeed.
+    pub success: bool,
+    /// Runtime statistics
+    pub stats: Stats,
+}
 
 /// Configuration of the `cargo paralegal-flow` command.
 ///
@@ -132,9 +172,12 @@ impl SPDGGenCommand {
     ///
     /// To run yor properties on the results see [`GraphLocation`].
     pub fn run(&mut self, dir: impl AsRef<Path>) -> Result<GraphLocation> {
+        let start = Instant::now();
         let status = self.0.current_dir(dir.as_ref()).status()?;
         ensure!(status.success(), "Compilation failed");
-        Ok(GraphLocation::std(dir.as_ref()))
+        let mut loc = GraphLocation::std(dir.as_ref());
+        loc.construction_time = Some(start.elapsed());
+        Ok(loc)
     }
 }
 
@@ -144,24 +187,36 @@ impl SPDGGenCommand {
 /// Can be created programmatically and automatically by running
 /// [`SPDGGenCommand::run`] or you can create one manually if you can `cargo
 /// paralegal-flow` by hand with [`Self::custom`].
-pub struct GraphLocation(PathBuf);
+pub struct GraphLocation {
+    path: PathBuf,
+    construction_time: Option<Duration>,
+}
 
 impl GraphLocation {
     /// Use the default graph file name in the specified directory.
     pub fn std(dir: impl AsRef<Path>) -> Self {
-        Self(dir.as_ref().join(paralegal_spdg::FLOW_GRAPH_OUT_NAME))
+        Self {
+            path: dir.as_ref().join(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
+            construction_time: None,
+        }
     }
 
     /// Use a completely custom path (directory and file name).
     pub fn custom(path: PathBuf) -> Self {
-        Self(path)
+        Self {
+            path,
+            construction_time: None,
+        }
     }
 
     /// Builds a context, then runs the property.
     ///
     /// Emits any recorded diagnostic messages to stdout and aborts the program
     /// if they were severe enough.
-    pub fn with_context<A>(&self, prop: impl FnOnce(Arc<Context>) -> Result<A>) -> Result<A> {
+    pub fn with_context<A>(
+        &self,
+        prop: impl FnOnce(Arc<Context>) -> Result<A>,
+    ) -> Result<PolicyReturn<A>> {
         self.with_context_configured(Default::default(), prop)
     }
 
@@ -173,16 +228,26 @@ impl GraphLocation {
         &self,
         config: Config,
         prop: impl FnOnce(Arc<Context>) -> Result<A>,
-    ) -> Result<A> {
+    ) -> Result<PolicyReturn<A>> {
         let ctx = Arc::new(self.build_context(config)?);
         assert_warning!(
             ctx,
             !ctx.desc().controllers.is_empty(),
             "No controllers found. Your policy is likely to be vacuous."
         );
+        let start = Instant::now();
         let result = prop(ctx.clone())?;
-        ctx.emit_diagnostics_may_exit(std::io::stdout())?;
-        Ok(result)
+
+        let success = ctx.emit_diagnostics(std::io::stdout())?;
+        Ok(PolicyReturn {
+            success,
+            result,
+            stats: Stats {
+                analysis: ctx.stats.0,
+                context_contruction: ctx.stats.1,
+                policy: start.elapsed(),
+            },
+        })
     }
 
     /// Read and parse this graph file, returning a [`Context`] suitable for
@@ -194,13 +259,15 @@ impl GraphLocation {
         let _ = simple_logger::init_with_env();
 
         let desc = {
-            let mut f = File::open(&self.0)?;
+            let mut f = File::open(&self.path)?;
             anyhow::Context::with_context(
                 serde_json::from_reader::<_, ProgramDescription>(&mut f),
-                || format!("Reading SPDG (JSON) from {}", self.0.display()),
+                || format!("Reading SPDG (JSON) from {}", self.path.display()),
             )?
         };
-        Ok(Context::new(desc, config))
+        let mut ctx = Context::new(desc, config);
+        ctx.stats.0 = self.construction_time;
+        Ok(ctx)
     }
 }
 

@@ -1,3 +1,4 @@
+use std::time::{Duration, Instant};
 use std::{io::Write, process::exit, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
@@ -100,6 +101,7 @@ pub struct Context {
     pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
     pub(crate) config: Arc<super::Config>,
+    pub(crate) stats: (Option<Duration>, Duration),
 }
 
 impl Context {
@@ -107,18 +109,24 @@ impl Context {
     ///
     /// This also precomputes some data structures like an index over markers.
     pub fn new(desc: ProgramDescription, config: super::Config) -> Self {
+        let start = Instant::now();
         let name_map = desc
             .def_info
             .iter()
             .map(|(k, v)| (v.name, *k))
             .into_group_map();
-        Context {
-            marker_to_ids: Self::build_index_on_markers(&desc),
-            flows_to: Self::build_flows_to(&desc),
+        let marker_to_ids = Self::build_index_on_markers(&desc);
+        let flows_to = Self::build_flows_to(&desc);
+        // Make sure no expensive computation happens in the constructor call
+        // below, otherwise the measurement of construction time will be off.
+        Self {
+            marker_to_ids,
             desc,
+            flows_to,
             diagnostics: Default::default(),
             name_map,
             config: Arc::new(config),
+            stats: (None, start.elapsed()),
         }
     }
 
