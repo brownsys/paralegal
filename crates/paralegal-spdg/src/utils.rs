@@ -98,6 +98,12 @@ pub mod serde_map_via_vec {
     }
 }
 
+/// A struct with a [`Display`] implementation taht renders a
+/// [`std::time::Duration`] in human readable form, similar to the `humantime`
+/// crate, but instead of rendering with arbitrary precision it only renders two
+/// "significant sections", e.g. "2h 5min" or "2d 20h". The sections are days
+/// (d), hours (h), minutes (min), seconds (s), miliseconds (ms), microseconds
+/// (μs) and nanoseconds (ns).
 pub struct TruncatedHumanTime(std::time::Duration);
 
 impl From<std::time::Duration> for TruncatedHumanTime {

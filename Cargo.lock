@@ -823,6 +823,7 @@ dependencies = [
  "chrono",
  "clap",
  "dot",
+ "enum-map",
  "flowistry",
  "humantime",
  "indexical",

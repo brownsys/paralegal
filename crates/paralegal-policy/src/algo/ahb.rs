@@ -4,7 +4,7 @@ use std::{collections::HashSet, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 
-use paralegal_spdg::{GlobalNode, HashMap, Identifier, Node, SPDGImpl};
+use paralegal_spdg::{GlobalNode, Identifier, Node, SPDGImpl};
 
 use anyhow::{ensure, Result};
 use itertools::Itertools;
