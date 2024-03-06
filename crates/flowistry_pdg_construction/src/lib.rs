@@ -24,7 +24,7 @@ pub mod graph;
 mod utils;
 
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.
-pub fn compute_pdg<'tcx>(params: PdgParams<'tcx>) -> DepGraph<'tcx> {
+pub fn compute_pdg(params: PdgParams<'_>) -> DepGraph<'_> {
     let constructor = GraphConstructor::root(params);
     constructor.construct()
 }

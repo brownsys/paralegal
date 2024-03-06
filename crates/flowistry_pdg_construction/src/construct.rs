@@ -1175,7 +1175,7 @@ fn try_as_async_trait_function<'tcx>(
 }
 
 /// Does this fucntion have a structure as created by the `#[async_trait]` macro
-pub fn is_async_trait_fn<'tcx>(tcx: TyCtxt, def_id: DefId, body: &Body<'tcx>) -> bool {
+pub fn is_async_trait_fn(tcx: TyCtxt, def_id: DefId, body: &Body<'_>) -> bool {
     try_as_async_trait_function(tcx, def_id, body).is_some()
 }
 
