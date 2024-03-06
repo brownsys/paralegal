@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "rustc")]
 use crate::{
-  rustc::{def_id, hir, mir},
-  rustc_impls::*,
+    rustc::{def_id, hir, mir},
+    rustc_impls::*,
 };
 
 /// Generates a struct that is a proxy for a Rustc type.
@@ -117,22 +117,22 @@ proxy_struct! {
 }
 
 impl HirId {
-  fn index(self) -> (usize, usize) {
-    (
-      self.owner.def_id.local_def_index.index(),
-      self.local_id.index(),
-    )
-  }
+    fn index(self) -> (usize, usize) {
+        (
+            self.owner.def_id.local_def_index.index(),
+            self.local_id.index(),
+        )
+    }
 }
 
 impl Ord for HirId {
-  fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-    (self.index()).cmp(&(other.index()))
-  }
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.index()).cmp(&(other.index()))
+    }
 }
 
 impl PartialOrd for HirId {
-  fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-    Some(self.cmp(other))
-  }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
