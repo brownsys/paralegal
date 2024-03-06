@@ -20,9 +20,9 @@ use std::rc::Rc;
 
 use anyhow::{anyhow, Result};
 use either::Either;
-use flowistry::pdg::{
+use flowistry_pdg_construction::{
     graph::{DepEdgeKind, DepGraph, DepNode},
-    CallChanges,
+    CallChanges, PdgParams,
     SkipCall::Skip,
 };
 use itertools::Itertools;
@@ -556,17 +556,15 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let opts = generator.opts;
         let judge =
             inline_judge::InlineJudge::new(generator.marker_ctx.clone(), tcx, opts.anactrl());
-        let params = flowistry::pdg::PdgParams::new(tcx, local_def_id).with_call_change_callback(
-            move |info| {
-                let changes = CallChanges::default();
+        let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(move |info| {
+            let changes = CallChanges::default();
 
-                if judge.should_inline(info.callee) {
-                    changes
-                } else {
-                    changes.with_skip(Skip)
-                }
-            },
-        );
+            if judge.should_inline(info.callee) {
+                changes
+            } else {
+                changes.with_skip(Skip)
+            }
+        });
         if opts.dbg().dump_mir() {
             let mut file =
                 std::fs::File::create(format!("{}.mir", body_name_pls(tcx, local_def_id)))?;
@@ -580,7 +578,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             )?
         }
 
-        Ok(flowistry::pdg::compute_pdg(params))
+        Ok(flowistry_pdg_construction::compute_pdg(params))
     }
 
     /// Consume the generator and compile the [`SPDG`].

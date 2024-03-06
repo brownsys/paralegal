@@ -373,7 +373,7 @@ source = "git+https://github.com/brownsys/flowistry?rev=d1fcc76509032dd94f5255fd
 dependencies = [
  "anyhow",
  "cfg-if",
- "flowistry_pdg",
+ "flowistry_pdg 0.1.0 (git+https://github.com/brownsys/flowistry?rev=d1fcc76509032dd94f5255fd03c0ad0397efe834)",
  "fluid-let",
  "indexical",
  "internment",
@@ -387,11 +387,37 @@ dependencies = [
 [[package]]
 name = "flowistry_pdg"
 version = "0.1.0"
+dependencies = [
+ "cfg-if",
+ "internment",
+ "serde",
+]
+
+[[package]]
+name = "flowistry_pdg"
+version = "0.1.0"
 source = "git+https://github.com/brownsys/flowistry?rev=d1fcc76509032dd94f5255fd03c0ad0397efe834#d1fcc76509032dd94f5255fd03c0ad0397efe834"
 dependencies = [
  "cfg-if",
  "internment",
  "serde",
+]
+
+[[package]]
+name = "flowistry_pdg_construction"
+version = "0.5.41"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "flowistry",
+ "flowistry_pdg 0.1.0",
+ "fluid-let",
+ "indexical",
+ "internment",
+ "itertools 0.12.0",
+ "log",
+ "petgraph",
+ "rustc_utils",
 ]
 
 [[package]]
@@ -800,7 +826,8 @@ dependencies = [
  "chrono",
  "clap",
  "dot",
- "flowistry",
+ "flowistry_pdg 0.1.0",
+ "flowistry_pdg_construction",
  "humantime",
  "indexical",
  "itertools 0.12.0",
@@ -852,7 +879,7 @@ version = "0.1.0"
 dependencies = [
  "cfg-if",
  "dot",
- "flowistry_pdg",
+ "flowistry_pdg 0.1.0",
  "indexical",
  "internment",
  "itertools 0.11.0",

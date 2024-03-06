@@ -13,6 +13,9 @@ indexical = "0.3.1"
 serde = "1.0.188"
 petgraph = { version = "0.6", features = ["serde-1"] }
 strum = { version = "0.25", features = ["derive"] }
+rustc_utils = { version = "=0.7.4-nightly-2023-08-25", features = [
+    "indexical",
+] }
 
 [profile.release]
 debug = true
