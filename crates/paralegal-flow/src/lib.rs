@@ -63,13 +63,16 @@ pub mod rust {
 }
 
 use args::{ClapArgs, LogLevelConfig};
-use desc::utils::write_sep;
+use desc::utils::{write_sep, TruncatedHumanTime};
 use rust::*;
 
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    time::{Duration, Instant},
+};
 
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
@@ -122,6 +125,45 @@ struct ArgWrapper {
 
 struct Callbacks {
     opts: &'static Args,
+    stats: Stats,
+    start: Instant,
+}
+
+#[derive(Debug, Clone, Copy, strum::AsRefStr, PartialEq, Eq, enum_map::Enum)]
+pub enum Stat {
+    Rustc,
+    Flowistry,
+    Conversion,
+    Serialization,
+}
+
+pub struct Stats(enum_map::EnumMap<Stat, Option<Duration>>);
+
+impl Stats {
+    pub fn record(&mut self, stat: Stat, duration: Duration) {
+        *self.0[stat].get_or_insert(Duration::ZERO) += duration
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Stat, Option<Duration>)> + '_ {
+        self.0.iter().map(|(k, v)| (k, *v))
+    }
+}
+
+impl Default for Stats {
+    fn default() -> Self {
+        Self(enum_map::enum_map! { _ => None })
+    }
+}
+
+impl Display for Stats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (s, dur) in self.iter() {
+            if let Some(dur) = dur {
+                write!(f, "{}: {}", s.as_ref(), TruncatedHumanTime::from(dur))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 struct NoopCallbacks {}
@@ -143,12 +185,14 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
+        self.stats.record(Stat::Rustc, self.start.elapsed());
         queries
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
                 tcx.sess.abort_if_errors();
-                let desc = discover::CollectingVisitor::new(tcx, self.opts).run()?;
+                let desc =
+                    discover::CollectingVisitor::new(tcx, self.opts, &mut self.stats).run()?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
 
@@ -157,6 +201,7 @@ impl rustc_driver::Callbacks for Callbacks {
                     paralegal_spdg::dot::dump(&desc, out).unwrap();
                 }
 
+                let ser = Instant::now();
                 serde_json::to_writer(
                     &mut std::fs::OpenOptions::new()
                         .truncate(true)
@@ -167,6 +212,9 @@ impl rustc_driver::Callbacks for Callbacks {
                     &desc,
                 )
                 .unwrap();
+                self.stats.record(Stat::Serialization, ser.elapsed());
+
+                println!("Analysis finished with timing: {}", self.stats);
 
                 anyhow::Ok(if self.opts.abort_after_analysis() {
                     rustc_driver::Compilation::Stop
@@ -360,6 +408,14 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             "Arguments: {}",
             Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
         );
-        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
+        rustc_driver::RunCompiler::new(
+            &compiler_args,
+            &mut Callbacks {
+                opts,
+                stats: Default::default(),
+                start: Instant::now(),
+            },
+        )
+        .run()
     }
 }
