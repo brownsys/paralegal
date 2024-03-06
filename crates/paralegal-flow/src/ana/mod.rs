@@ -19,9 +19,9 @@ use std::{borrow::Cow, time::Instant};
 
 use anyhow::{anyhow, Result};
 use either::Either;
-use flowistry::pdg::{
+use flowistry_pdg_construction::{
     graph::{DepEdgeKind, DepGraph, DepNode},
-    is_async_trait_fn, CallChanges,
+    is_async_trait_fn, CallChanges, PdgParams,
     SkipCall::Skip,
 };
 use itertools::Itertools;
@@ -602,23 +602,21 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         let opts = generator.opts;
         let judge =
             inline_judge::InlineJudge::new(generator.marker_ctx.clone(), tcx, opts.anactrl());
-        let params = flowistry::pdg::PdgParams::new(tcx, local_def_id).with_call_change_callback(
-            move |info| {
-                let changes = CallChanges::default();
+        let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(move |info| {
+            let changes = CallChanges::default();
 
-                if is_non_default_trait_method(tcx, info.callee.def_id()).is_some() {
-                    tcx.sess.span_warn(
-                        tcx.def_span(info.callee.def_id()),
-                        "Skipping analysis of unresolvable trait method.",
-                    );
-                    changes.with_skip(Skip)
-                } else if judge.should_inline(info.callee) {
-                    changes
-                } else {
-                    changes.with_skip(Skip)
-                }
-            },
-        );
+            if is_non_default_trait_method(tcx, info.callee.def_id()).is_some() {
+                tcx.sess.span_warn(
+                    tcx.def_span(info.callee.def_id()),
+                    "Skipping analysis of unresolvable trait method.",
+                );
+                changes.with_skip(Skip)
+            } else if judge.should_inline(info.callee) {
+                changes
+            } else {
+                changes.with_skip(Skip)
+            }
+        });
         if opts.dbg().dump_mir() {
             let mut file = std::fs::File::create(format!(
                 "{}.mir",
@@ -634,7 +632,7 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
             )?
         }
 
-        Ok(flowistry::pdg::compute_pdg(params))
+        Ok(flowistry_pdg_construction::compute_pdg(params))
     }
 
     /// Consume the generator and compile the [`SPDG`].

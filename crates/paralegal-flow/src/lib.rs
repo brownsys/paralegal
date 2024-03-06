@@ -91,7 +91,6 @@ pub mod serializers;
 #[macro_use]
 pub mod utils;
 pub mod consts;
-mod pdg;
 #[cfg(feature = "test")]
 pub mod test_utils;
 

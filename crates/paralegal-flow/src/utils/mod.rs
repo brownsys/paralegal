@@ -27,7 +27,7 @@ use crate::{
     Either, HashMap, HashSet, Symbol, TyCtxt,
 };
 
-pub use flowistry::pdg::FnResolution;
+pub use flowistry_pdg_construction::FnResolution;
 
 use std::cmp::Ordering;
 use std::{cell::RefCell, default::Default, hash::Hash, pin::Pin};
