@@ -27,6 +27,7 @@ use flowistry::pdg::{
 };
 use itertools::Itertools;
 use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
+use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
 
 mod inline_judge;
 
@@ -131,6 +132,7 @@ impl<'tcx, 'st> SPDGGenerator<'tcx, 'st> {
             .iter()
             .map(|id| (*id, def_info_for_item(*id, tcx)))
             .collect();
+
         let type_info = self.collect_type_info();
         type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
@@ -159,25 +161,49 @@ impl<'tcx, 'st> SPDGGenerator<'tcx, 'st> {
         all_instructions
             .into_iter()
             .map(|i| {
-                let body = self.tcx.body_for_def_id(i.function).unwrap();
-                let info = match i.location {
-                    RichLocation::End => InstructionInfo::Return,
-                    RichLocation::Start => InstructionInfo::Start,
-                    RichLocation::Location(loc) => match body.body.stmt_at(loc) {
-                        crate::Either::Right(term) => {
-                            if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
-                                InstructionInfo::FunctionCall(FunctionCallInfo {
-                                    id,
-                                    is_inlined: id.is_local(),
-                                })
-                            } else {
-                                InstructionInfo::Terminator
+                let body = &self.tcx.body_for_def_id(i.function).unwrap().body;
+
+                let kind = match i.location {
+                    RichLocation::End => InstructionKind::Return,
+                    RichLocation::Start => InstructionKind::Start,
+                    RichLocation::Location(loc) => {
+                        let kind = match body.stmt_at(loc) {
+                            crate::Either::Right(term) => {
+                                if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
+                                    InstructionKind::FunctionCall(FunctionCallInfo {
+                                        id,
+                                        is_inlined: id.is_local(),
+                                    })
+                                } else {
+                                    InstructionKind::Terminator
+                                }
                             }
-                        }
-                        _ => InstructionInfo::Statement,
-                    },
+                            crate::Either::Left(_) => InstructionKind::Statement,
+                        };
+
+                        kind
+                    }
                 };
-                (i, info)
+                let rust_span = match i.location {
+                    RichLocation::Location(loc) => {
+                        let expanded_span = match body.stmt_at(loc) {
+                            crate::Either::Right(term) => term.source_info.span,
+                            crate::Either::Left(stmt) => stmt.source_info.span,
+                        };
+                        self.tcx
+                            .sess
+                            .source_map()
+                            .stmt_span(expanded_span, body.span)
+                    }
+                    RichLocation::Start | RichLocation::End => self.tcx.def_span(i.function),
+                };
+                (
+                    i,
+                    InstructionInfo {
+                        kind,
+                        span: src_loc_for_span(rust_span, self.tcx),
+                    },
+                )
             })
             .collect()
     }
@@ -211,6 +237,38 @@ impl<'tcx, 'st> SPDGGenerator<'tcx, 'st> {
                     desc
                 },
             )
+    }
+}
+
+fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
+    let (source_file, start_line, start_col, end_line, end_col) =
+        tcx.sess.source_map().span_to_location_info(span);
+    let file_path = source_file
+        .expect("could not find source file")
+        .name
+        .display(FileNameDisplayPreference::Local)
+        .to_string();
+    let abs_file_path = if !file_path.starts_with('/') {
+        std::env::current_dir()
+            .expect("failed to obtain current working directory")
+            .join(&file_path)
+    } else {
+        std::path::PathBuf::from(&file_path)
+    };
+    let src_info = SourceFileInfo {
+        file_path,
+        abs_file_path,
+    };
+    Span {
+        source_file: src_info.intern(),
+        start: SpanCoord {
+            line: start_line as u32,
+            col: start_col as u32,
+        },
+        end: SpanCoord {
+            line: end_line as u32,
+            col: end_col as u32,
+        },
     }
 }
 
@@ -565,16 +623,22 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         use petgraph::prelude::*;
         let g_ref = self.dep_graph.clone();
         let input = &g_ref.graph;
+        let tcx = self.tcx();
         let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
 
         for (i, weight) in input.node_references() {
             let (kind, is_external_call_source, node_markers) = self.determine_node_kind(weight);
+            let at = weight.at.leaf();
+            let body = &tcx.body_for_def_id(at.function).unwrap().body;
+
+            let node_span = body.local_decls[weight.place.local].source_info.span;
             let new_idx = self.register_node(
                 i,
                 NodeInfo {
                     at: weight.at,
                     description: format!("{:?}", weight.place),
                     kind,
+                    span: src_loc_for_span(node_span, tcx),
                 },
             );
 
@@ -749,7 +813,12 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
             }
         }))
         .collect();
-    DefInfo { name, path, kind }
+    DefInfo {
+        name,
+        path,
+        kind,
+        src_info: src_loc_for_span(tcx.def_span(id), tcx),
+    }
 }
 
 /// A higher order function that increases the logging level if the `target`

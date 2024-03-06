@@ -40,8 +40,8 @@ num-derive = "0.4"
 num-traits = "0.2"
 petgraph = { workspace = true }
 humantime = "2"
-strum = { version = "0.25", features = ["derive"] }
 enum-map = "2.7"
+strum = { workspace = true }
 
 
 #dot = "0.1"

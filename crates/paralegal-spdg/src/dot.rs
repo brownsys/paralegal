@@ -1,6 +1,6 @@
 //! Display SPDGs as dot graphs
 
-use crate::{GlobalEdge, InstructionInfo, Node, ProgramDescription};
+use crate::{GlobalEdge, InstructionKind, Node, ProgramDescription};
 use dot::{CompassPoint, Edges, Id, LabelText, Nodes};
 use flowistry_pdg::rustc_portable::LocalDefId;
 use flowistry_pdg::{CallString, RichLocation};
@@ -108,7 +108,7 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
     fn node_label(&'a self, n: &CallString) -> LabelText<'a> {
         let (ctrl_id, nodes) = &self.call_sites[n];
         let ctrl = &self.spdg.controllers[ctrl_id];
-        let instruction = self.spdg.instruction_info[&n.leaf()];
+        let instruction = &self.spdg.instruction_info[&n.leaf()];
 
         let write_label = || {
             use std::fmt::Write;
@@ -116,17 +116,17 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
 
             write!(s, "{}|", self.format_call_string(*n))?;
 
-            match instruction {
-                InstructionInfo::Statement => s.push('S'),
-                InstructionInfo::FunctionCall(function) => {
+            match instruction.kind {
+                InstructionKind::Statement => s.push('S'),
+                InstructionKind::FunctionCall(function) => {
                     let info = &self.spdg.def_info[&function.id];
                     write!(s, "{}", info.name)?
                 }
-                InstructionInfo::Terminator => s.push('T'),
-                InstructionInfo::Start => {
+                InstructionKind::Terminator => s.push('T'),
+                InstructionKind::Start => {
                     s.push('*');
                 }
-                InstructionInfo::Return => s.push_str("end"),
+                InstructionKind::Return => s.push_str("end"),
             };
 
             for &n in nodes {
