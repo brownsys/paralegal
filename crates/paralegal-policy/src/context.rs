@@ -1,24 +1,24 @@
-use std::{io::Write, process::exit, sync::Arc};
+use std::{collections::HashSet, io::Write, process::exit, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
     CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, InstructionInfo,
     IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo, ProgramDescription, SPDGImpl,
-    TypeId, SPDG,
+    Span, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, ensure, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
-use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, Walker};
+use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, GraphBase, NodeIndexable, Walker};
 use petgraph::Incoming;
 
 use super::flows_to::CtrlFlowsTo;
 
 use crate::Diagnostics;
 use crate::{
-    assert_error, assert_warning,
+    assert_warning,
     diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
 };
 
@@ -84,9 +84,11 @@ fn bfs_iter<
 ///
 /// To communicate the results of your policies with the user you can emit
 /// diagnostic messages. To communicate a policy failure use
-/// [`error`](crate::Diagnostics::error) or the [`assert_error`] macro. To
+/// [`error`](crate::Diagnostics::error) or the [`crate::assert_error`] macro. To
 /// communicate suspicious circumstances that are not outright cause for failure
-/// use [`warning`](crate::Diagnostics::error) or [`assert_warning`].
+/// use [`warning`](crate::Diagnostics::warning) or [`assert_warning`]. For all
+/// types of errors, including those with span information for a particular
+/// node, see the [`crate::Diagnostics`] trait.
 ///
 /// Note that these methods just queue the diagnostics messages. To emit them
 /// (and potentially terminate the program if the policy does not hold) use
@@ -483,26 +485,36 @@ impl Context {
         mut is_checkpoint: impl FnMut(GlobalNode) -> bool,
         mut is_terminal: impl FnMut(GlobalNode) -> bool,
     ) -> Result<AlwaysHappensBefore> {
-        let mut num_reached = 0;
-        let mut num_checkpointed = 0;
+        let mut reached = HashMap::new();
+        let mut checkpointed = HashSet::new();
 
         let start_map = starting_points
             .into_iter()
             .map(|i| (i.controller_id(), i.local_node()))
             .into_group_map();
-        let started_with = start_map.values().map(Vec::len).sum();
 
-        for (ctrl_id, starts) in start_map {
+        for (ctrl_id, starts) in &start_map {
             let spdg = &self.desc.controllers[&ctrl_id];
             let g = &spdg.graph;
-            petgraph::visit::depth_first_search(g, starts, |event| match event {
+            let mut origin_map = vec![<SPDGImpl as GraphBase>::NodeId::end(); g.node_bound()];
+            for s in starts {
+                origin_map[s.index()] = *s;
+            }
+            petgraph::visit::depth_first_search(g, starts.iter().copied(), |event| match event {
+                DfsEvent::TreeEdge(from, to) => {
+                    origin_map[to.index()] = origin_map[from.index()];
+                    Control::<()>::Continue
+                }
                 DfsEvent::Discover(inner, _) => {
-                    let as_node = GlobalNode::from_local_node(ctrl_id, inner);
+                    let as_node = GlobalNode::from_local_node(*ctrl_id, inner);
                     if is_checkpoint(as_node) {
-                        num_checkpointed += 1;
+                        checkpointed.insert(as_node);
                         Control::<()>::Prune
                     } else if is_terminal(as_node) {
-                        num_reached += 1;
+                        reached.insert(
+                            as_node,
+                            GlobalNode::from_local_node(*ctrl_id, origin_map[inner.index()]),
+                        );
                         Control::Prune
                     } else {
                         Control::Continue
@@ -513,9 +525,9 @@ impl Context {
         }
 
         Ok(AlwaysHappensBefore {
-            num_reached,
-            num_checkpointed,
-            started_with,
+            reached: reached.into_iter().collect(),
+            checkpointed: checkpointed.into_iter().collect(),
+            started_with: start_map.values().map(Vec::len).sum(),
         })
     }
 
@@ -629,6 +641,11 @@ impl Context {
         }
         NodeCluster::new(src.controller_id(), start)
     }
+
+    /// Get the span of a node
+    pub fn get_location(&self, node: GlobalNode) -> &Span {
+        &self.node_info(node).span
+    }
 }
 
 /// Provide display trait for DefId in a Context.
@@ -670,11 +687,12 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
 /// [`Self::is_vacuous`]. Otherwise the information in this struct and its
 /// printed representations should be considered unstable and
 /// for-human-eyes-only.
+#[must_use = "call `report` or similar evaluations function to ensure the property is checked"]
 pub struct AlwaysHappensBefore {
     /// How many paths terminated at the end?
-    num_reached: i32,
+    reached: Vec<(GlobalNode, GlobalNode)>,
     /// How many paths lead to the checkpoints?
-    num_checkpointed: i32,
+    checkpointed: Vec<GlobalNode>,
     /// How large was the set of initial nodes this traversal started with.
     started_with: usize,
 }
@@ -683,16 +701,14 @@ impl std::fmt::Display for AlwaysHappensBefore {
     /// Format the results of this combinator, using the `def_info` to print
     /// readable names instead of ids
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self {
-            num_reached,
-            num_checkpointed,
-            started_with,
-        } = self;
         write!(
             f,
-            "{num_reached} paths reached the terminal, \
-            {num_checkpointed} paths reached the checkpoints, \
-            started with {started_with} nodes"
+            "{} paths reached the terminal, \
+            {} paths reached the checkpoints, \
+            started with {} nodes",
+            self.reached.len(),
+            self.checkpointed.len(),
+            self.started_with,
         )
     }
 }
@@ -710,12 +726,18 @@ impl AlwaysHappensBefore {
         let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
         assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
         assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
-        assert_error!(ctx, self.holds(), format!("Violation detected: {}", self));
+        if !self.holds() {
+            for &(reached, from) in &self.reached {
+                let mut err = ctx.struct_node_error(reached, "Reached this terminal");
+                err.with_node_note(from, "Started from this node");
+                err.emit();
+            }
+        }
     }
 
     /// Returns `true` if the property that created these statistics holds.
     pub fn holds(&self) -> bool {
-        self.num_reached == 0
+        self.reached.is_empty()
     }
 
     /// Fails if [`Self::holds`] is false.
@@ -723,7 +745,7 @@ impl AlwaysHappensBefore {
         ensure!(
             self.holds(),
             "AlwaysHappensBefore failed: found {} violating paths",
-            self.num_reached
+            self.reached.len()
         );
         Ok(())
     }
@@ -732,7 +754,7 @@ impl AlwaysHappensBefore {
     /// or no path from them can reach the terminal or the checkpoints (the
     /// graphs are disjoined).
     pub fn is_vacuous(&self) -> bool {
-        self.num_checkpointed + self.num_reached == 0
+        self.checkpointed.is_empty() && self.reached.is_empty()
     }
 }
 
@@ -741,8 +763,6 @@ fn overlaps<T: Eq + std::hash::Hash>(
     one: impl IntoIterator<Item = T>,
     other: impl IntoIterator<Item = T>,
 ) -> bool {
-    use paralegal_spdg::HashSet;
-
     let target = one.into_iter().collect::<HashSet<_>>();
     other.into_iter().any(|n| target.contains(&n))
 }

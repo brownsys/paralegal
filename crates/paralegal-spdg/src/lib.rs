@@ -32,7 +32,7 @@ use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};
-use std::{fmt, hash::Hash};
+use std::{fmt, hash::Hash, path::PathBuf};
 
 use utils::serde_map_via_vec;
 
@@ -125,6 +125,8 @@ pub struct DefInfo {
     pub path: Vec<Identifier>,
     /// Kind of object
     pub kind: DefKind,
+    /// Information about the span
+    pub src_info: Span,
 }
 
 /// Similar to `DefKind` in rustc but *not the same*!
@@ -142,6 +144,64 @@ pub enum DefKind {
     Type,
 }
 
+/// An interned [`SourceFileInfo`]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+pub struct SourceFile(Intern<SourceFileInfo>);
+
+impl std::ops::Deref for SourceFile {
+    type Target = SourceFileInfo;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Information about a source file
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+pub struct SourceFileInfo {
+    /// Printable location of the source code file - either an absolute path to library source code
+    /// or a path relative to within the compiled crate (e.g. `src/...`)
+    pub file_path: String,
+    /// Absolute path to source code file
+    pub abs_file_path: PathBuf,
+}
+
+impl SourceFileInfo {
+    /// Intern the source file
+    pub fn intern(self) -> SourceFile {
+        SourceFile(Intern::new(self))
+    }
+}
+
+/// A "point" within a source file. Used to compose and compare spans.
+///
+/// NOTE: The ordering of this type must be such that if point "a" is earlier in
+/// the file than "b", then "a" < "b".
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord)]
+pub struct SpanCoord {
+    /// Line in the source file
+    pub line: u32,
+    /// Column of the line
+    pub col: u32,
+}
+
+/// Encodes a source code location
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct Span {
+    /// Which file this comes from
+    pub source_file: SourceFile,
+    /// Starting coordinates of the span
+    pub start: SpanCoord,
+    /// Ending coordinates of the span,
+    pub end: SpanCoord,
+}
+
+impl Span {
+    /// Is `other` completely contained within `self`
+    pub fn contains(&self, other: &Self) -> bool {
+        self.source_file == other.source_file && self.start <= other.start && self.end >= other.end
+    }
+}
+
 /// Metadata on a function call.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]
 pub struct FunctionCallInfo {
@@ -156,7 +216,7 @@ pub struct FunctionCallInfo {
 #[derive(
     Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq, strum::EnumIs,
 )]
-pub enum InstructionInfo {
+pub enum InstructionKind {
     /// Some type of statement
     Statement,
     /// A function call
@@ -169,14 +229,23 @@ pub enum InstructionInfo {
     Return,
 }
 
-impl InstructionInfo {
+impl InstructionKind {
     /// If this identifies a function call, return the information inside.
     pub fn as_function_call(self) -> Option<FunctionCallInfo> {
         match self {
-            InstructionInfo::FunctionCall(d) => Some(d),
+            InstructionKind::FunctionCall(d) => Some(d),
             _ => None,
         }
     }
+}
+
+/// Information about an instruction represented in the PDG
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InstructionInfo {
+    /// Classification of the instruction
+    pub kind: InstructionKind,
+    /// The source code span
+    pub span: Span,
 }
 
 /// information about each encountered type.
@@ -543,6 +612,8 @@ pub struct NodeInfo {
     pub description: String,
     /// Additional information of how this node is used in the source.
     pub kind: NodeKind,
+    /// Span information for this node
+    pub span: Span,
 }
 
 impl Display for NodeInfo {
