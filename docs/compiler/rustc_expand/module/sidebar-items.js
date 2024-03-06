@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DirOwnership","ModError"],"fn":["default_submod_path","mod_dir_path","mod_file_path","mod_file_path_from_attr","parse_external_mod"],"struct":["ModulePathSuccess","ParsedExternalMod"]};

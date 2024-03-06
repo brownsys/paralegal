@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["config_path","get_toml_path","load_config"],"mod":["config_type","file_lines","lists","macro_names","options"],"struct":["Config","ConfigSetter","ConfigWasSet","PartialConfig","ToTomlError"]};

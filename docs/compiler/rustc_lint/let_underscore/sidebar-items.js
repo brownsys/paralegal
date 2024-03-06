@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SYNC_GUARD_SYMBOLS"],"static":["LET_UNDERSCORE_DROP","LET_UNDERSCORE_LOCK"],"struct":["LetUnderscore"]};

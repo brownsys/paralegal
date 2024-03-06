@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["ident","ident_shallow"],"struct":["GitSource"]};

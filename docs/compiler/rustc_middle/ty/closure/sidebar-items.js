@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CAPTURE_STRUCT_LOCAL"],"enum":["BorrowKind","ClosureKind","UpvarCapture"],"fn":["closure_typeinfo","is_ancestor_or_same_capture","place_to_string_for_capture","provide"],"struct":["CaptureInfo","CapturedPlace","ClosureTypeInfo","UpvarId","UpvarPath"],"type":["MinCaptureInformationMap","MinCaptureList","RootVariableMinCaptureList"]};

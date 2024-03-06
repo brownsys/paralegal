@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ParentStackItem"],"fn":["clean_impl_generics"],"struct":["Cache","CacheBuilder","OrphanImplItem"]};

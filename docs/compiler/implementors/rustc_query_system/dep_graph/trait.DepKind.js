@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"rustc_middle":[["impl <a class=\"trait\" href=\"rustc_query_system/dep_graph/trait.DepKind.html\" title=\"trait rustc_query_system::dep_graph::DepKind\">DepKind</a> for <a class=\"enum\" href=\"rustc_middle/dep_graph/dep_node/enum.DepKind.html\" title=\"enum rustc_middle::dep_graph::dep_node::DepKind\">DepKind</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Constructor","IntBorder","SliceKind"],"fn":["expand_or_pat"],"struct":["DeconstructedPat","Fields","IntRange","Slice","SplitIntRange","SplitVarLenSlice","SplitWildcard"]};

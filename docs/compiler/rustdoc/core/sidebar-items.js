@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ImplTraitParam","Input"],"fn":["create_config","new_handler","run_global_ctxt"],"struct":["DocContext","EmitIgnoredResolutionErrors","Options","UnstableOptions"]};

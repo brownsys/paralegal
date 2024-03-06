@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["load_call_locations","run"],"struct":["CallData","CallLocation","FindCalls","ScrapeExamplesOptions","SyntaxRange"],"type":["AllCallLocations","FnCallLocations"]};

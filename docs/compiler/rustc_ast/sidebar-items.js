@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["walk_list"],"mod":["ast","ast_traits","attr","entry","expand","format","mut_visit","node_id","ptr","token","tokenstream","util","visit"],"trait":["HashStableContext"]};

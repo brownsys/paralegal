@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["are_equal_lockfiles","emit_package","load_pkg_lockfile","lock_root","resolve_to_string","resolve_to_string_orig","serialize_resolve","write_pkg_lockfile"]};

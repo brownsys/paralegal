@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["MaybeRequiresStorage","MaybeStorageDead","MaybeStorageLive","MoveVisitor"],"type":["BorrowedLocalsResults"]};

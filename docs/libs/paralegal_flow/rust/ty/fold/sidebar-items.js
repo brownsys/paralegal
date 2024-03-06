@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["shift_region","shift_vars"],"struct":["BottomUpFolder","FnMutDelegate","RegionFolder"],"trait":["BoundVarReplacerDelegate","FallibleTypeFolder","TypeFoldable","TypeFolder","TypeSuperFoldable"]};

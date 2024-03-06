@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["resolve_external_markers"],"struct":["MarkerCtx","MarkerDatabase"],"type":["ExternalMarkers","RawExternalMarkers"]};

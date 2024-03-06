@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VendorSource"],"fn":["copy_and_checksum","cp_sources","sync","vendor"],"struct":["VendorConfig","VendorOptions"]};

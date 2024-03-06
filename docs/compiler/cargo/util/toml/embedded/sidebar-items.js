@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["AUTO_FIELDS","DEFAULT_EDITION","DEFAULT_PUBLISH","DEFAULT_VERSION"],"enum":["CommentKind"],"fn":["add_doc_fragment","beautify_doc_string","expand_manifest","expand_manifest_","extract_comment","extract_manifest","sanitize_name","unindent_doc_fragments"],"struct":["DocFragment"]};

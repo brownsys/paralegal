@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["implement_spanned","span_with_attrs","span_with_attrs_lo_hi"],"trait":["Spanned"]};

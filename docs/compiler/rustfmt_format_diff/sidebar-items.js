@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_PATTERN"],"enum":["FormatDiffError"],"fn":["main","run","run_rustfmt","scan_diff"],"struct":["Opts","Range"]};

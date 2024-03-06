@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["inferred_outlives_crate","inferred_outlives_of","provide"],"mod":["explicit","implicit_infer","test","utils"]};

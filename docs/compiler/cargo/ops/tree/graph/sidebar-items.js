@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EdgeKind","Node"],"fn":["add_cli_features","add_feature","add_feature_rec","add_internal_features","add_pkg","build"],"struct":["Edges","Graph"]};

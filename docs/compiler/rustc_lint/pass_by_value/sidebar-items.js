@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["gen_args","path_for_pass_by_value"],"static":["PASS_BY_VALUE"],"struct":["PassByValue"]};

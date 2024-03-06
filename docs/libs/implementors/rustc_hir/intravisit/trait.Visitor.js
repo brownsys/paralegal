@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"paralegal_flow":[["impl&lt;'tcx&gt; Visitor&lt;'tcx&gt; for <a class=\"struct\" href=\"paralegal_flow/discover/struct.CollectingVisitor.html\" title=\"struct paralegal_flow::discover::CollectingVisitor\">CollectingVisitor</a>&lt;'tcx&gt;"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

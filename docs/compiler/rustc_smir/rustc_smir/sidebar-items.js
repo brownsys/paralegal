@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["smir_crate"],"struct":["Tables"],"trait":["Stable"]};

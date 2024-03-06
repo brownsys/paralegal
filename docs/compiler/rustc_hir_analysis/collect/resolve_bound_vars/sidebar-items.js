@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BinderScopeType","NonLifetimeBinderAllowed","Scope"],"fn":["deny_non_region_late_bound","is_late_bound_map","late_arg_as_bound_arg","object_lifetime_default","provide","resolve_bound_vars"],"struct":["BoundVarContext","NamedVarMap","TruncatedScopeDebug"],"trait":["RegionExt"],"type":["ScopeRef"]};

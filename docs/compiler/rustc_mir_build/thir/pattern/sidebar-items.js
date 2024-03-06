@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["compare_const_vals","pat_from_hir"],"macro":["ClonePatternFoldableImpls"],"mod":["check_match","const_to_pat","deconstruct_pat","usefulness"],"struct":["PatCtxt"],"trait":["PatternFoldable","PatternFolder"]};

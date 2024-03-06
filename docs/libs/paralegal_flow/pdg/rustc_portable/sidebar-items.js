@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"type":["BasicBlock","BodyId","DefId","DefIndex","HirId","ItemLocalId","LocalDefId","Location","OwnerId","Place"]};

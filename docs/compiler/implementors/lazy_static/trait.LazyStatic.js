@@ -1,0 +1,5 @@
+(function() {var implementors = {
+"cargo_test_support":[["impl <a class=\"trait\" href=\"https://docs.rs/lazy_static/1.4.0/lazy_static/trait.LazyStatic.html\" title=\"trait lazy_static::LazyStatic\">LazyStatic</a> for <a class=\"struct\" href=\"cargo_test_support/struct.RUSTC_INFO.html\" title=\"struct cargo_test_support::RUSTC_INFO\">RUSTC_INFO</a>"]],
+"rustfmt_nightly":[["impl <a class=\"trait\" href=\"https://docs.rs/lazy_static/1.4.0/lazy_static/trait.LazyStatic.html\" title=\"trait lazy_static::LazyStatic\">LazyStatic</a> for <a class=\"struct\" href=\"rustfmt_nightly/comment/struct.REFERENCE_LINK_URL.html\" title=\"struct rustfmt_nightly::comment::REFERENCE_LINK_URL\">REFERENCE_LINK_URL</a>"]],
+"tidy":[["impl <a class=\"trait\" href=\"https://docs.rs/lazy_static/1.4.0/lazy_static/trait.LazyStatic.html\" title=\"trait lazy_static::LazyStatic\">LazyStatic</a> for <a class=\"struct\" href=\"tidy/fluent_alphabetical/struct.MESSAGE.html\" title=\"struct tidy::fluent_alphabetical::MESSAGE\">MESSAGE</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

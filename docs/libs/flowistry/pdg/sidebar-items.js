@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FakeEffectKind","FnResolution","SkipCall"],"fn":["compute_pdg"],"mod":["graph"],"struct":["CallChanges","CallInfo","FakeEffect","PdgParams"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["KleeneOp","TokenTree"],"mod":["diagnostics","macro_check","macro_parser","macro_rules","metavar_expr","quoted","transcribe"],"struct":["Delimited","KleeneToken","SequenceRepetition"]};

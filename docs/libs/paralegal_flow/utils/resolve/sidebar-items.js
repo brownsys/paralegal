@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Res","ResolutionError","SearchSpace"],"fn":["def_path_res","expect_resolve_string_to_def_id","find_primitive_impls"]};

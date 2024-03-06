@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InitOnceStatus"],"struct":["InitOnce","InitOnceId","InitOnceWaiter"],"trait":["EvalContextExt","EvalContextExtPriv"]};

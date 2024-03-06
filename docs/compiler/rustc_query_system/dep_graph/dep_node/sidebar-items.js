@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["DepKindStruct","DepNode","WorkProductId"],"trait":["DepNodeParams"]};

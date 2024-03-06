@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BuildDoc","Doc"],"macro":["docs"],"struct":["Arena","BoxAllocator","BoxDoc","DocBuilder","FmtWrite","IoWrite","PrettyFmt","RcAllocator","RcDoc","RefDoc"],"trait":["DocAllocator","DocPtr","Pretty","Render","RenderAnnotated","StaticDoc"],"type":["SmallText"]};

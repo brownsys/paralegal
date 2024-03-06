@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Annotation","MarkerRefinementKind"],"fn":["const_false"],"mod":["db","parse"],"struct":["ExceptionAnnotation","MarkerAnnotation","MarkerRefinement"],"type":["VerificationHash"]};

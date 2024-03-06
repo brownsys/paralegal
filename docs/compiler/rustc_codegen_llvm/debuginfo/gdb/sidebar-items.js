@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["get_or_insert_gdb_debug_scripts_section_global","insert_reference_to_gdb_debug_scripts_section_global","needs_gdb_debug_scripts_section"]};

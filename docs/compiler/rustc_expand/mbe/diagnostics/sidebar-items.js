@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["_DERIVE_rustc_errors_AddToDiagnostic_FOR_ExplainDocComment"],"enum":["ExplainDocComment"],"fn":["annotate_doc_comment","annotate_err_with_kind","emit_frag_parse_err","failed_to_match_macro","parse_failure_msg"],"struct":["BestFailure","CollectTrackerAndEmitter","FailureForwarder"]};

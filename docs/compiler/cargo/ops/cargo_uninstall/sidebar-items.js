@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["uninstall","uninstall_cwd","uninstall_one","uninstall_pkgid"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["fixed_size_enum"],"struct":["TableBuilder"],"trait":["FixedSizeEncoding","IsDefault"]};

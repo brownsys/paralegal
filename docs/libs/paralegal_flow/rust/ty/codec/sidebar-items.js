@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SHORTHAND_OFFSET"],"fn":["encode_with_shorthand"],"trait":["EncodableWithShorthand","RefDecodable","TyDecoder","TyEncoder"]};

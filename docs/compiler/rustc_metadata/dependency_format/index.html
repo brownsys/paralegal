@@ -1,0 +1,49 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Resolution of mixing rlibs and dylibs"><title>rustc_metadata::dependency_format - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_metadata" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../../rustc_metadata/index.html"><img class="rust-logo" src="../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../../rustc_metadata/index.html"><img class="rust-logo" src="../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">Module dependency_format</a></h2><div class="sidebar-elems"><section><ul class="block"><li><a href="#functions">Functions</a></li></ul></section></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Module <a href="../index.html">rustc_metadata</a>::<wbr><a class="mod" href="#">dependency_format</a><button id="copy-path" title="Copy item path to clipboard"><img src="../../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../../src/rustc_metadata/dependency_format.rs.html#1-416">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Resolution of mixing rlibs and dylibs</p>
+<p>When producing a final artifact, such as a dynamic library, the compiler has
+a choice between linking an rlib or linking a dylib of all upstream
+dependencies. The linking phase must guarantee, however, that a library only
+show up once in the object file. For example, it is illegal for library A to
+be statically linked to B and C in separate dylibs, and then link B and C
+into a crate D (because library A appears twice).</p>
+<p>The job of this module is to calculate what format each upstream crate
+should be used when linking each output type requested in this session. This
+generally follows this set of rules:</p>
+<ol>
+<li>Each library must appear exactly once in the output.</li>
+<li>Each rlib contains only one library (it’s just an object file)</li>
+<li>Each dylib can contain more than one library (due to static linking),
+and can also bring in many dynamic dependencies.</li>
+</ol>
+<p>With these constraints in mind, it’s generally a very difficult problem to
+find a solution that’s not “all rlibs” or “all dylibs”. I have suspicions
+that NP-ness may come into the picture here…</p>
+<p>The current selection algorithm below looks mostly similar to:</p>
+<ol>
+<li>If static linking is required, then require all upstream dependencies
+to be available as rlibs. If not, generate an error.</li>
+<li>If static linking is requested (generating an executable), then
+attempt to use all upstream dependencies as rlibs. If any are not
+found, bail out and continue to step 3.</li>
+<li>Static linking has failed, at least one library must be dynamically
+linked. Apply a heuristic by greedily maximizing the number of
+dynamically linked libraries.</li>
+<li>Each upstream dependency available as a dynamic library is
+registered. The dependencies all propagate, adding to a map. It is
+possible for a dylib to add a static library as a dependency, but it
+is illegal for two dylibs to add the same static library as a
+dependency. The same dylib can be added twice. Additionally, it is
+illegal to add a static dependency when it was previously found as a
+dylib (and vice versa)</li>
+<li>After all dynamic dependencies have been traversed, re-traverse the
+remaining dependencies and add them statically (if they haven’t been
+added already).</li>
+</ol>
+<p>While not perfect, this algorithm should help support use-cases such as leaf
+dependencies being static while the larger tree of inner dependencies are
+all dynamic. This isn’t currently very well battle tested, so it will likely
+fall short in some use cases.</p>
+<p>Currently, there is no way to specify the preference of linkage with a
+particular library (other than a global dynamic/static switch).
+Additionally, the algorithm is geared towards finding <em>any</em> solution rather
+than finding a number of solutions (there are normally quite a few).</p>
+</div></details><h2 id="functions" class="small-section-header"><a href="#functions">Functions</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.activate_injected_dep.html" title="fn rustc_metadata::dependency_format::activate_injected_dep">activate_injected_dep</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.add_library.html" title="fn rustc_metadata::dependency_format::add_library">add_library</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.attempt_static.html" title="fn rustc_metadata::dependency_format::attempt_static">attempt_static</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.calculate.html" title="fn rustc_metadata::dependency_format::calculate">calculate</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.calculate_type.html" title="fn rustc_metadata::dependency_format::calculate_type">calculate_type</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.verify_ok.html" title="fn rustc_metadata::dependency_format::verify_ok">verify_ok</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

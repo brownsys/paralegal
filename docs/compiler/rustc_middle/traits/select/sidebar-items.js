@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EvaluationResult","OverflowError","SelectionCandidate"],"type":["EvaluationCache","SelectionCache"]};

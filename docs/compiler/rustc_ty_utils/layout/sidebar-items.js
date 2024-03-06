@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SavedLocalEligibility"],"fn":["error","generator_layout","generator_saved_local_eligibility","layout_of","layout_of_uncached","provide","record_layout_for_printing","record_layout_for_printing_outlined","univariant_uninterned","variant_info_for_adt","variant_info_for_generator"]};

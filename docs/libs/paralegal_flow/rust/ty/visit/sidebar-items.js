@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["MaxUniverse","ValidateBoundVars"],"trait":["TypeSuperVisitable","TypeVisitable","TypeVisitableExt","TypeVisitor"]};

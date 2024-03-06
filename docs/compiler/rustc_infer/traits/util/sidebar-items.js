@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["anonymize_predicate","elaborate","supertraits","transitive_bounds","transitive_bounds_that_define_assoc_item"],"struct":["Elaborator","FilterToTraits","PredicateSet"],"trait":["Elaboratable"]};

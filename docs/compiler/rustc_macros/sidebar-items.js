@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"derive":["Decodable","Diagnostic","Encodable","HashStable","HashStable_Generic","Lift","LintDiagnostic","MetadataDecodable","MetadataEncodable","Subdiagnostic","TyDecodable","TyEncodable","TypeFoldable","TypeVisitable"],"macro":["newtype_index","rustc_queries","symbols"]};

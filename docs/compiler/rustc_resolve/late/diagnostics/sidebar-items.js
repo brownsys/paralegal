@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AssocSuggestion","LifetimeElisionCandidate","MissingLifetimeKind","TypoCandidate"],"fn":["import_candidate_to_enum_paths","is_self_type","is_self_value","mk_where_bound_predicate","signal_label_shadowing","signal_lifetime_shadowing"],"struct":["BaseError","ElisionFnParameter","MissingLifetime"],"type":["Res"]};

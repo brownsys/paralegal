@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_unused_functions","finalize","save_function_record"],"struct":["CoverageMapGenerator"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ADD_ATTR","ADD_ATTR_TO_TY","INTO_CORE","INTO_DEFINING_CRATE"],"fn":["crate_incoherent_impls","crate_inherent_impls","inherent_impls"],"struct":["InherentCollect"]};

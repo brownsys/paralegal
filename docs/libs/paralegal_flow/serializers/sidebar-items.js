@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["iter_stmts"],"struct":["Bodies","BodyIdProxy2","BodyProxy","InstructionProxy"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CastError","PointerKind"],"fn":["make_invalid_casting_error"],"struct":["CastCheck"]};

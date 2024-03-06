@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InternKind","InternMode"],"fn":["intern_const_alloc_recursive","intern_shallow"],"struct":["InternVisitor","IsStaticOrFn"],"traitalias":["CompileTimeMachine"]};

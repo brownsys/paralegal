@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["END_COMMENT","START_COMMENT"],"fn":["check","check_section","indentation","is_close_bracket"]};

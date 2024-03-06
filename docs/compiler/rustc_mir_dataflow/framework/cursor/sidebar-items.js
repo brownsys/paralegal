@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["CursorPosition","ResultsCursor"],"trait":["AnalysisResults"],"type":["ResultsClonedCursor","ResultsRefCursor"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EitherManifest","TargetKind","TargetSourcePath"],"struct":["DelayedWarning","Manifest","ManifestMetadata","SerializedTarget","Target","TargetInner","VirtualManifest","Warnings"]};

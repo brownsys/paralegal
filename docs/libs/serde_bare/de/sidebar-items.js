@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["from_reader","from_slice"],"struct":["Deserializer","IoRead","SliceRead"],"trait":["Read"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_move_for_packed_drop","add_moves_for_packed_drops","add_moves_for_packed_drops_patch"],"struct":["AddMovesForPackedDrops"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RichLocation"],"mod":["rustc_portable","rustc_proxies"],"struct":["CallString","GlobalLocation"]};
