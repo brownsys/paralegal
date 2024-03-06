@@ -233,11 +233,10 @@ pub struct GraphConstructor<'tcx> {
     async_info: Rc<AsyncInfo>,
 }
 
-macro_rules! trylet {
+macro_rules! let_assert {
   ($p:pat = $e:expr, $($arg:tt)*) => {
     let $p = $e else {
-      trace!($($arg)*);
-      return None;
+      panic!($($arg)*);
     };
   }
 }
@@ -535,30 +534,26 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn find_async_args<'a>(
         &'a self,
         args: &'a [Operand<'tcx>],
-    ) -> Option<(
-        FnResolution<'tcx>,
-        Location,
-        AsyncCallingConvention<'tcx, 'a>,
-    )> {
-        let get_def_for_op = |op: &Operand<'tcx>| -> Option<Location> {
-            trylet!(Some(place) = op.place(), "Arg is not a place");
-            trylet!(Some(local) = place.as_local(), "Place is not a local");
-            trylet!(
+    ) -> Option<(Location, AsyncCallingConvention<'tcx, 'a>)> {
+        let get_def_for_op = |op: &Operand<'tcx>| -> Location {
+            let_assert!(Some(place) = op.place(), "Arg is not a place");
+            let_assert!(Some(local) = place.as_local(), "Place is not a local");
+            let_assert!(
                 Some(locs) = &self.body_assignments.get(&local),
                 "Local has no assignments"
             );
-            debug_assert!(locs.len() == 1);
-            Some(locs[0])
+            assert!(locs.len() == 1);
+            locs[0]
         };
 
-        trylet!(
+        let_assert!(
             Either::Right(Terminator {
                 kind: TerminatorKind::Call {
                     args: new_pin_args,
                     ..
                 },
                 ..
-            }) = &self.body.stmt_at(get_def_for_op(&args[0])?),
+            }) = &self.body.stmt_at(get_def_for_op(&args[0])),
             "Pinned assignment is not a call"
         );
         debug_assert!(new_pin_args.len() == 1);
@@ -569,75 +564,54 @@ impl<'tcx> GraphConstructor<'tcx> {
         debug_assert!(future_aliases.len() == 1);
         let future = *future_aliases.first().unwrap();
 
-        trylet!(
+        let_assert!(
           Either::Left(Statement {
             kind: StatementKind::Assign(box (_, Rvalue::Use(future2))),
             ..
-          }) = &self.body.stmt_at(get_def_for_op(&Operand::Move(future))?),
+          }) = &self.body.stmt_at(get_def_for_op(&Operand::Move(future))),
           "Assignment to pin::new input is not a statement"
         );
 
-        trylet!(
+        let_assert!(
             Either::Right(Terminator {
                 kind: TerminatorKind::Call {
                     args: into_future_args,
                     ..
                 },
                 ..
-            }) = &self.body.stmt_at(get_def_for_op(future2)?),
+            }) = &self.body.stmt_at(get_def_for_op(future2)),
             "Assignment to alias of pin::new input is not a call"
         );
 
         let mut chase_target = Err(&into_future_args[0]);
 
         while let Err(target) = chase_target {
-            let async_fn_call_loc = get_def_for_op(target)?;
+            let async_fn_call_loc = get_def_for_op(target);
             let stmt = &self.body.stmt_at(async_fn_call_loc);
             chase_target = match stmt {
                 Either::Right(Terminator {
-                    kind: TerminatorKind::Call { args, func, .. },
+                    kind: TerminatorKind::Call { args, .. },
                     ..
-                }) => {
-                    let (op, generics) = self.operand_to_def_id(func)?;
-                    Ok((
-                        op,
-                        generics,
-                        AsyncCallingConvention::Fn(args),
-                        async_fn_call_loc,
-                    ))
-                }
+                }) => Ok((AsyncCallingConvention::Fn(args), async_fn_call_loc)),
                 Either::Left(Statement { kind, .. }) => match kind {
                     StatementKind::Assign(box (
                         _,
-                        Rvalue::Aggregate(
-                            box AggregateKind::Generator(def_id, generic_args, _),
-                            args,
-                        ),
-                    )) => Ok((
-                        *def_id,
-                        *generic_args,
-                        AsyncCallingConvention::Block(args),
-                        async_fn_call_loc,
-                    )),
+                        Rvalue::Aggregate(box AggregateKind::Generator(..), args),
+                    )) => Ok((AsyncCallingConvention::Block(args), async_fn_call_loc)),
                     StatementKind::Assign(box (_, Rvalue::Use(target))) => Err(target),
                     _ => {
-                        trace!("Assignment to into_future input is not a call: {stmt:?}");
-                        return None;
+                        panic!("Assignment to into_future input is not a call: {stmt:?}");
                     }
                 },
                 _ => {
-                    trace!("Assignment to into_future input is not a call: {stmt:?}");
-                    return None;
+                    panic!("Assignment to into_future input is not a call: {stmt:?}");
                 }
             };
         }
 
-        let (op, generics, calling_convention, async_fn_call_loc) = chase_target.ok()?;
+        let (calling_convention, async_fn_call_loc) = chase_target.ok()?;
 
-        let resolution =
-            utils::try_resolve_function(self.tcx, op, self.tcx.param_env(self.def_id), generics);
-
-        Some((resolution, async_fn_call_loc, calling_convention))
+        Some((async_fn_call_loc, calling_convention))
     }
 
     /// Resolve a function [`Operand`] to a specific [`DefId`] and generic arguments if possible.
@@ -700,19 +674,15 @@ impl<'tcx> GraphConstructor<'tcx> {
             }
         }
 
-        let call_kind = self.classify_call_kind(called_def_id, args);
-
-        let actual_call_target = match &call_kind {
-            CallKind::AsyncPoll(resolution, ..) => resolution.def_id(),
-            _ => resolved_def_id,
-        };
-        if !actual_call_target.is_local() {
+        if !resolved_def_id.is_local() {
             trace!(
                 "  Bailing because func is non-local: `{}`",
-                tcx.def_path_str(actual_call_target)
+                tcx.def_path_str(resolved_def_id)
             );
             return None;
         };
+
+        let call_kind = self.classify_call_kind(called_def_id, args);
 
         let calling_convention = CallingConvention::from_call_kind(&call_kind, args);
 
@@ -768,7 +738,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         };
 
         let call_changes = self.params.call_change_callback.as_ref().map(|callback| {
-            let info = if let CallKind::AsyncPoll(resolution, loc, _) = call_kind {
+            let info = if let CallKind::AsyncPoll(loc, _) = call_kind {
                 // Special case for async. We ask for skipping not on the closure, but
                 // on the "async" function that created it. This is needed for
                 // consistency in skipping. Normally, when "poll" is inlined, mutations
@@ -778,7 +748,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                 // "CallChanges" on the creator so that both creator and closure have
                 // the same view of whether they are inlined or "Skip"ped.
                 CallInfo {
-                    callee: resolution,
+                    callee: resolved_fn,
                     call_string: self.make_call_string(loc),
                 }
             } else {
@@ -791,7 +761,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         });
 
         // Handle async functions at the time of polling, not when the future is created.
-        if tcx.asyncness(actual_call_target).is_async() {
+        if tcx.asyncness(resolved_def_id).is_async() {
             trace!("  Bailing because func is async");
             // If a skip was requested then "poll" will not be inlined later so we
             // bail with "None" here and perform the mutations. Otherwise we bail with
@@ -1115,8 +1085,8 @@ impl<'tcx> GraphConstructor<'tcx> {
     ) -> Option<CallKind<'tcx, 'a>> {
         let lang_items = self.tcx.lang_items();
         if lang_items.future_poll_fn() == Some(def_id) {
-            let (fun, loc, args) = self.find_async_args(original_args)?;
-            Some(CallKind::AsyncPoll(fun, loc, args))
+            let (loc, args) = self.find_async_args(original_args)?;
+            Some(CallKind::AsyncPoll(loc, args))
         } else {
             None
         }
@@ -1214,11 +1184,7 @@ enum CallKind<'tcx, 'a> {
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
     Indirect,
     /// A poll to an async function, like `f.await`.
-    AsyncPoll(
-        FnResolution<'tcx>,
-        Location,
-        AsyncCallingConvention<'tcx, 'a>,
-    ),
+    AsyncPoll(Location, AsyncCallingConvention<'tcx, 'a>),
 }
 
 enum CallingConvention<'tcx, 'a> {
@@ -1236,7 +1202,7 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
         args: &'a [Operand<'tcx>],
     ) -> CallingConvention<'tcx, 'a> {
         match kind {
-            CallKind::AsyncPoll(_, _, args) => CallingConvention::Async(*args),
+            CallKind::AsyncPoll(_, args) => CallingConvention::Async(*args),
             CallKind::Direct => CallingConvention::Direct(args),
             CallKind::Indirect => CallingConvention::Indirect {
                 closure_arg: &args[0],

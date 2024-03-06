@@ -163,7 +163,7 @@ impl Display for Stats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (s, dur) in self.iter() {
             if let Some(dur) = dur {
-                write!(f, "{}: {}", s.as_ref(), TruncatedHumanTime::from(dur))?;
+                write!(f, "{}: {} ", s.as_ref(), TruncatedHumanTime::from(dur))?;
             }
         }
         Ok(())
