@@ -1,0 +1,15 @@
+[package]
+name = "compiler"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1"
+lazy_static = "1"
+handlebars = "4.5.0"
+serde = "1.0.192"
+paralegal-policy = { path = "../../../paralegal/paralegal/crates/paralegal-policy" }
+paralegal = { path = "../../../paralegal/paralegal/crates/paralegal" }
+parsers = {path = "../parsers"}

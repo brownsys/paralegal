@@ -1,0 +1,9 @@
+Definitions:
+1. "stored view" is each "pageview" marked pageview_data where:
+	a. There is a "store" marked store where:
+		i. "pageview" goes to "store"
+
+Always:
+1. For each "stored view":
+	a. There is a "date" where: 
+    	i. "date" goes to "stored view"

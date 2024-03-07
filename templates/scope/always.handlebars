@@ -1,0 +1,7 @@
+for c_id in ctx.desc().controllers.keys() {
+    {{nodes}}
+    let is_compliant = 
+    {{obligation}};
+
+    assert_error!(ctx, is_compliant, format!("Controller {} is not compliant with the policy", c_id));
+}

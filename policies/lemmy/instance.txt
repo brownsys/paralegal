@@ -1,0 +1,18 @@
+Definitions:
+1. "protected read" is each "read" marked db_read where:
+	a. "read" is not marked db_user_read
+
+Always:
+1. For each "db_write" marked db_write:
+    a. There is a "dc" marked instance_delete_check where:
+        i. "dc" affects whether "db_write" happens
+    and
+    b. There is a "bc" marked instance_ban_check where:
+        i. "bc" affects whether "db_write" happens
+and
+2. For each "protected read":
+   a. There is a "dc" marked instance_delete_check where:
+        i. "dc" affects whether "protected read" happens
+    and
+    b. There is a "bc" marked instance_ban_check where:
+        i. "bc" affects whether "protected read" happens

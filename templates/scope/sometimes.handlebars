@@ -1,0 +1,13 @@
+let mut success : boolean = false;
+for c_id in ctx.desc().controllers.keys() {
+    {{nodes}}
+    let is_compliant = 
+    {{obligation}};
+
+    if is_compliant {
+        success = true;
+        break;
+    }
+}
+
+assert_error!(ctx, success, format!("Application is not compliant with the policy."));

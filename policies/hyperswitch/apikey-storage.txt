@@ -1,0 +1,4 @@
+Always:
+1. Each "apikey" marked apikey goes to a "expose" marked expose only via a "hash" marked hash
+or
+2. Each "apikey" marked apikey goes to a "expose" marked expose only via a "apikey response" marked apikey_response

@@ -1,0 +1,8 @@
+// TODO how is this going to play with variable bindings?
+may not actually mean "always happens before", quantifier being some could imply "sometimes happens before"
+
+ctx.always_happens_before(
+    {{src}}_nodes, 
+    |checkpoint| {{checkpoint}}_nodes.contains(checkpoint), 
+    |terminal| {{dest}}_nodes.contains(terminal)
+);

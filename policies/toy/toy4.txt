@@ -1,0 +1,5 @@
+Always:
+1. For each "data" marked community_data:
+    a. For each "write" marked db_write:
+        i. If "data" goes to "write" then:
+            1. "data" goes to "dc"

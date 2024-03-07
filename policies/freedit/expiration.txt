@@ -1,0 +1,12 @@
+Definitions:
+1. "stored view" is each "pageview" marked pageview_data where:
+	a. There is a "store" marked store where:
+		i. "pageview" goes to "store"
+
+In expiration_check:
+2. For each "stored view":
+	a. There is a "date check" marked check_date where:
+		i. "stored view" goes to "date check"
+		and
+		ii. There is a "deleter" marked deletes where:
+			1. "date check" affects whether "deleter" happens

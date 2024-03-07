@@ -1,0 +1,17 @@
+Definitions:
+1. "blessed" is each "safe with bless" marked safe_source_with_bless where:
+	a. There is a "blesser" marked bless_safe_source where:
+		i. "blesser" influences "safe with bless"
+
+2. "sensitive sink" is each "sink" marked sink where:
+	a. There is a "sensitive" marked sensitive where:
+		i. "sensitive" goes to "sink"
+
+3. "sensitive scope" is each "scope" marked scope where:
+	a. There is a "sensitive sink" where:
+		i. "scope" goes to the operation associated with "sensitive sink"
+
+Always:
+1. Each input goes to a "sensitive scope" only via a "blessed"
+or
+2. Each input goes to a "sensitive scope" only via a "safe" marked safe
