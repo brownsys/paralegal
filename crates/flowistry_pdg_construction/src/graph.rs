@@ -38,7 +38,8 @@ impl<'tcx> DepNode<'tcx> {
         DepNode {
             place,
             at,
-            place_pretty: place.to_string(tcx, body).map(Intern::new),
+            //place_pretty: place.to_string(tcx, body).map(Intern::new),
+            place_pretty: Some(Intern::new(format!("{place:?}"))),
         }
     }
 }
