@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use paralegal_policy::{
-    assert_error,
+    assert_error, loc,
     paralegal_spdg::{traverse::EdgeSelection, GlobalNode, Identifier},
-    Context, Marker, PolicyContext,
+    Context, Diagnostics, Marker, PolicyContext,
 };
 
 macro_rules! marker {
@@ -34,48 +34,21 @@ impl CommunityProp {
     }
 
     pub fn check(&mut self) -> Result<()> {
-        let mut community_struct_nodes = self.cx.marked_nodes(marker!(community));
-        let mut delete_check_nodes = self.cx.marked_nodes(marker!(community_delete_check));
-        let mut ban_check_nodes = self.cx.marked_nodes(marker!(community_ban_check));
+        let mut community_writes = self.cx.marked_nodes(marker!(db_community_write));
+        let mut delete_checks = self.cx.marked_nodes(marker!(community_delete_check));
+        let mut ban_checks = self.cx.marked_nodes(marker!(community_ban_check));
 
-        // if some community_struct
-        community_struct_nodes.all(|community_struct| {
-            // flows to some write
-            let community_writes: Vec<GlobalNode> = self
-                .cx
-                .influencees(community_struct, EdgeSelection::Data)
-                .filter(|n| self.cx.has_marker(marker!(db_write), *n))
-                .collect();
-            // then
-            for write in community_writes {
-                let has_delete_check = delete_check_nodes.any(|delete_check| {
-                    // community struct flows to delete check and
-                    self.cx.flows_to(community_struct, delete_check, EdgeSelection::Data) &&
-                    // delete check has ctrl flow influence on the write
-                    self.cx.has_ctrl_influence(delete_check, write)
-                });
-
-                assert_error!(
-                    self.cx,
-                    has_delete_check,
-                    "Unauthorized community write: no delete check"
-                );
-
-                let has_ban_check = ban_check_nodes.any(|ban_check| {
-                    // community struct flows to ban check and
-                    self.cx.flows_to(community_struct, ban_check, EdgeSelection::Data) &&
-                    // ban check has ctrl flow influence on the write
-                    self.cx.has_ctrl_influence(ban_check, write)
-                });
-
-                assert_error!(
-                    self.cx,
-                    has_ban_check,
-                    "Unauthorized community write: no ban check"
-                );
-            }
-            true
-        });
+        let ok = community_writes.all(|write|
+            delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, write))
+            &&
+            ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, write))
+        );
+            
+        assert_error!(
+            self.cx,
+            ok,
+            "Unauthorized community write"
+        );
 
         Ok(())
     }
@@ -87,39 +60,22 @@ impl InstanceProp {
     }
 
     pub fn check(&mut self) -> Result<()> {
-        let mut writes = self.cx.marked_nodes(marker!(db_write));
-        let mut reads = self.cx.marked_nodes(marker!(db_read));
+        let mut accesses = self.cx.marked_nodes(marker!(db_access)).filter(|n| !self.cx.has_marker(marker!(db_user_read), *n));
         let mut delete_checks = self.cx.marked_nodes(marker!(instance_delete_check));
         let mut ban_checks = self.cx.marked_nodes(marker!(instance_ban_check));
 
-        // all db writes must be authorized by a ban & delete check
-        let has_delete_check = writes.all(|write| {
-            delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, write))
-                && ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, write))
+        let ok = accesses.all(|access| {
+            // let err = self.cx.struct_node_error(access, format!("{}", self.cx.describe_node(access)));
+            // err.emit();
+            delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, access))
+            && 
+            ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, access))
         });
 
         assert_error!(
             self.cx,
-            has_delete_check,
-            "Missing delete check for instance authorization"
-        );
-
-        // all db reads (that are not reading the active user) must be authorized by a ban & delete check
-        let has_ban_check = reads.all(|read| {
-            // you could also implement this by adding .filter(|n| !self.cx.has_marker(marker!(db_user_read), *n)).collect()
-            // to line 80 and iterating over those nodes
-            if !self.cx.has_marker(marker!(db_user_read), read) {
-                delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, read))
-                    && ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, read))
-            } else {
-                true
-            }
-        });
-
-        assert_error!(
-            self.cx,
-            has_ban_check,
-            "Missing ban check for instance authorization"
+            ok,
+            "Unauthorized instance db access"
         );
 
         Ok(())
