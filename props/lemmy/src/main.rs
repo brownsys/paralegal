@@ -1,7 +1,7 @@
 extern crate anyhow;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::io::stdout;
 use std::iter::Filter;
 use std::path::PathBuf;
@@ -126,11 +126,33 @@ impl InstanceProp {
     }
 }
 
+#[derive(ValueEnum, Copy, Clone, Debug)]
+enum Prop {
+    Community,
+    Instance,
+}
+
+impl Prop {
+    fn run(self, cx: Arc<Context>) -> anyhow::Result<()> {
+        match self {
+            Self::Community => cx.named_policy(Identifier::new_intern("Community Policy"), |cx| {
+                CommunityProp::new(cx.clone()).check()
+            }),
+            Self::Instance => cx.named_policy(Identifier::new_intern("Instance Policy"), |cx| {
+                InstanceProp::new(cx.clone()).check()
+            }),
+        }
+    }
+}
+
 #[derive(Parser)]
 struct Arguments {
     path: PathBuf,
     #[clap(long)]
     skip_compile: bool,
+    /// Property selection. If none are selected all are run
+    #[clap(long)]
+    prop: Vec<Prop>,
     #[clap(last = true)]
     extra_args: Vec<String>,
 }
@@ -170,17 +192,20 @@ fn main() -> anyhow::Result<()> {
                 );
             }
         }
-        cx.clone()
-            .named_policy(Identifier::new_intern("Community Policy"), |cx| {
-                CommunityProp::new(cx.clone()).check()
-            })?;
-        cx.clone()
-            .named_policy(Identifier::new_intern("Instance Policy"), |cx| {
-                InstanceProp::new(cx.clone()).check()
-            })?;
+        for p in if args.prop.is_empty() {
+            Prop::value_variants()
+        } else {
+            args.prop.as_slice()
+        } {
+            p.run(cx.clone())?;
+        }
+
         anyhow::Ok(())
     })?;
 
     println!("Policy finished. Stats {}", res.stats);
+    if !res.success {
+        std::process::exit(1);
+    }
     anyhow::Ok(())
 }
