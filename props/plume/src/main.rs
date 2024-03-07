@@ -64,7 +64,14 @@ fn main() -> Result<()> {
         "postgres",
     ]);
     cmd.get_command().args(args.cargo_args);
-    cmd.run(args.plume_dir)?.with_context(check)?;
-    println!("Successfully finished");
+    let result = cmd.run(args.plume_dir)?.with_context(check)?;
+    println!(
+        "Finished {}successfully with {}",
+        if result.success { "" } else { "un" },
+        result.stats
+    );
+    if !result.success {
+        std::process::exit(1);
+    }
     Ok(())
 }
