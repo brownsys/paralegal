@@ -400,7 +400,7 @@ dependencies = [
  "itertools 0.12.0",
  "log",
  "petgraph",
- "rustc_utils",
+ "rustc_utils 0.7.4-nightly-2023-08-25 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
 ]
 
@@ -437,7 +437,7 @@ dependencies = [
  "itertools 0.12.0",
  "log",
  "petgraph",
- "rustc_utils",
+ "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=7fb7a86b643b981825ab93ed6bf656c568cffdb5)",
 ]
 
 [[package]]
@@ -866,7 +866,7 @@ dependencies = [
  "petgraph",
  "pretty",
  "rustc_plugin",
- "rustc_utils",
+ "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=7fb7a86b643b981825ab93ed6bf656c568cffdb5)",
  "serde",
  "serde_bare",
  "serde_json",
@@ -1021,8 +1021,7 @@ checksum = "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76"
 [[package]]
 name = "rustc_plugin"
 version = "0.7.4-nightly-2023-08-25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1348edfa020dbe4807a4d99272332dadcbbedff6b587accb95faefe20d2c7129"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=7fb7a86b643b981825ab93ed6bf656c568cffdb5#7fb7a86b643b981825ab93ed6bf656c568cffdb5"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1043,6 +1042,18 @@ name = "rustc_utils"
 version = "0.7.4-nightly-2023-08-25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09428c7086894369685cca54a516acc0f0ab6d0e5a628c094ba83bfddaf1aedf"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "indexical",
+ "intervaltree",
+ "log",
+]
+
+[[package]]
+name = "rustc_utils"
+version = "0.7.4-nightly-2023-08-25"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=7fb7a86b643b981825ab93ed6bf656c568cffdb5#7fb7a86b643b981825ab93ed6bf656c568cffdb5"
 dependencies = [
  "anyhow",
  "cfg-if",
