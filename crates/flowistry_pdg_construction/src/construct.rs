@@ -410,10 +410,25 @@ impl<'tcx> GraphConstructor<'tcx> {
                             // TODO: this is not field-sensitive!
                             place.local == alias.local
                         } else {
+                            let mut place = **place;
+                            if let Some((PlaceElem::Deref, rest)) = place.projection.split_last() {
+                                let mut new_place = place;
+                                new_place.projection = self.tcx.mk_place_elems(rest);
+                                if new_place.ty(self.body.as_ref(), self.tcx).ty.is_box() {
+                                    if new_place.is_indirect() {
+                                        // TODO might be unsound: We assume that if
+                                        // there are other indirections in here,
+                                        // there is an alias that does not have
+                                        // indirections in it.
+                                        return false;
+                                    }
+                                    place = new_place;
+                                }
+                            }
                             places_conflict(
                                 self.tcx,
                                 &self.body,
-                                **place,
+                                place,
                                 alias,
                                 PlaceConflictBias::Overlap,
                             )
