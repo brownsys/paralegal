@@ -389,17 +389,14 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 [[package]]
 name = "flowistry"
 version = "0.5.41"
-source = "git+https://github.com/brownsys/flowistry?rev=46f732a6bd81b065a0ab2d8976f4b82b9bfaf637#46f732a6bd81b065a0ab2d8976f4b82b9bfaf637"
+source = "git+https://github.com/brownsys/flowistry?rev=c4831e002c26a6253c692892bda21da80c91ca42#c4831e002c26a6253c692892bda21da80c91ca42"
 dependencies = [
  "anyhow",
  "cfg-if",
- "flowistry_pdg 0.1.0 (git+https://github.com/brownsys/flowistry?rev=46f732a6bd81b065a0ab2d8976f4b82b9bfaf637)",
  "fluid-let",
  "indexical",
- "internment",
  "itertools 0.12.0",
  "log",
- "petgraph",
  "rustc_utils 0.7.4-nightly-2023-08-25 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
 ]
@@ -414,30 +411,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "flowistry_pdg"
-version = "0.1.0"
-source = "git+https://github.com/brownsys/flowistry?rev=46f732a6bd81b065a0ab2d8976f4b82b9bfaf637#46f732a6bd81b065a0ab2d8976f4b82b9bfaf637"
-dependencies = [
- "cfg-if",
- "internment",
- "serde",
-]
-
-[[package]]
 name = "flowistry_pdg_construction"
 version = "0.5.41"
 dependencies = [
  "anyhow",
  "cfg-if",
  "flowistry",
- "flowistry_pdg 0.1.0",
+ "flowistry_pdg",
  "fluid-let",
  "indexical",
  "internment",
  "itertools 0.12.0",
  "log",
  "petgraph",
- "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=7fb7a86b643b981825ab93ed6bf656c568cffdb5)",
+ "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46)",
+ "simple_logger 4.3.3",
 ]
 
 [[package]]
@@ -850,7 +838,7 @@ dependencies = [
  "clap",
  "dot",
  "enum-map",
- "flowistry_pdg 0.1.0",
+ "flowistry_pdg",
  "flowistry_pdg_construction",
  "humantime",
  "indexical",
@@ -866,12 +854,12 @@ dependencies = [
  "petgraph",
  "pretty",
  "rustc_plugin",
- "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=7fb7a86b643b981825ab93ed6bf656c568cffdb5)",
+ "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46)",
  "serde",
  "serde_bare",
  "serde_json",
  "serial_test",
- "simple_logger",
+ "simple_logger 2.3.0",
  "strum",
  "thiserror",
  "toml",
@@ -893,7 +881,7 @@ dependencies = [
  "paralegal-spdg",
  "petgraph",
  "serde_json",
- "simple_logger",
+ "simple_logger 2.3.0",
  "strum",
 ]
 
@@ -903,7 +891,7 @@ version = "0.1.0"
 dependencies = [
  "cfg-if",
  "dot",
- "flowistry_pdg 0.1.0",
+ "flowistry_pdg",
  "indexical",
  "internment",
  "itertools 0.11.0",
@@ -1021,7 +1009,7 @@ checksum = "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76"
 [[package]]
 name = "rustc_plugin"
 version = "0.7.4-nightly-2023-08-25"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=7fb7a86b643b981825ab93ed6bf656c568cffdb5#7fb7a86b643b981825ab93ed6bf656c568cffdb5"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46#a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1053,13 +1041,14 @@ dependencies = [
 [[package]]
 name = "rustc_utils"
 version = "0.7.4-nightly-2023-08-25"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=7fb7a86b643b981825ab93ed6bf656c568cffdb5#7fb7a86b643b981825ab93ed6bf656c568cffdb5"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46#a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46"
 dependencies = [
  "anyhow",
  "cfg-if",
  "indexical",
  "intervaltree",
  "log",
+ "textwrap",
 ]
 
 [[package]]
@@ -1190,6 +1179,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple_logger"
+version = "4.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e7e46c8c90251d47d08b28b8a419ffb4aede0f87c2eea95e17d1d5bacbf3ef1"
+dependencies = [
+ "colored 2.0.4",
+ "log",
+ "time",
+ "windows-sys",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1203,6 +1204,12 @@ name = "smallvec"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "942b4a808e05215192e39f4ab80813e599068285906cc91aa64f923db842bd5a"
+
+[[package]]
+name = "smawk"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7c388c1b5e93756d0c740965c41e8822f866621d41acbdf6336a6a168f8840c"
 
 [[package]]
 name = "splitmut"
@@ -1266,6 +1273,17 @@ name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
+
+[[package]]
+name = "textwrap"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23d434d3f8967a09480fb04132ebe0a3e088c173e6d0ee7897abbdf4eab0f8b9"
+dependencies = [
+ "smawk",
+ "unicode-linebreak",
+ "unicode-width",
+]
 
 [[package]]
 name = "thiserror"
@@ -1371,10 +1389,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
 
 [[package]]
+name = "unicode-linebreak"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
+
+[[package]]
 name = "unicode-segmentation"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1dd624098567895118886609431a7c3b8f516e41d30e0643f03d94592a147e36"
+
+[[package]]
+name = "unicode-width"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e51733f11c9c4f72aa0c160008246859e340b00807569a0da0e7a1079b27ba85"
 
 [[package]]
 name = "utf8parse"
