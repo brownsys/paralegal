@@ -39,9 +39,9 @@ impl CommunityProp {
         let mut ban_checks = self.cx.marked_nodes(marker!(community_ban_check));
 
         let ok = community_writes.all(|write|
-            delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, write))
+            delete_checks.any(|dc| self.cx.flows_to(dc, write, EdgeSelection::Both))
             &&
-            ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, write))
+            ban_checks.any(|bc| self.cx.flows_to(bc, write, EdgeSelection::Both))
         );
             
         assert_error!(
@@ -65,12 +65,48 @@ impl InstanceProp {
         let mut ban_checks = self.cx.marked_nodes(marker!(instance_ban_check));
 
         let ok = accesses.all(|access| {
-            // let err = self.cx.struct_node_error(access, format!("{}", self.cx.describe_node(access)));
-            // err.emit();
-            delete_checks.any(|dc| self.cx.has_ctrl_influence(dc, access))
+            delete_checks.any(|dc| self.cx.flows_to(dc, access, EdgeSelection::Both))
             && 
-            ban_checks.any(|bc| self.cx.has_ctrl_influence(bc, access))
+            ban_checks.any(|bc| self.cx.flows_to(bc, access, EdgeSelection::Both))
         });
+
+        if !ok {
+            let mut err = self.cx.struct_help(loc!("No auth check authorizing sink"));
+
+            let accesses = self.cx.marked_nodes(marker!(db_access)).filter(|n| !self.cx.has_marker(marker!(db_user_read), *n));
+            let delete_checks = self.cx.marked_nodes(marker!(instance_delete_check));
+            let ban_checks = self.cx.marked_nodes(marker!(instance_ban_check));
+
+            for access in accesses {
+                err.with_node_note(access, "This is a sink");
+            }
+
+            for check in delete_checks {
+                err.with_node_note(check, "This is a delete check");
+
+                let influencees : Vec<GlobalNode> = self.cx.influencees(check, EdgeSelection::Both).collect();
+                dbg!("There are {} influencees\n", influencees.len());
+                for influencee in influencees {
+                    // NOTE: problem is that every influencee of check_user_valid is just itself
+                    // so it doesn't influence the database access
+                    if influencee.controller_id() == check.controller_id() { continue };
+                    err.with_node_note(check, "This is an influencee of the delete check");
+                }
+            }
+
+            for check in ban_checks {
+                err.with_node_note(check, "This is a ban check");
+
+                let influencees : Vec<GlobalNode> = self.cx.influencees(check, EdgeSelection::Both).collect();
+                dbg!("There are {} influencees\n", influencees.len());
+                for influencee in influencees {
+                    if influencee.controller_id() == check.controller_id() { continue };
+                    err.with_node_note(check, "This is an influencee of the ban check");
+                }
+            }
+
+            err.emit();
+        }
 
         assert_error!(
             self.cx,
