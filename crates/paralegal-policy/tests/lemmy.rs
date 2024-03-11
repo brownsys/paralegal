@@ -1,81 +1,69 @@
 mod helpers;
 
+use std::sync::Arc;
+
 use helpers::{Result, Test};
+use paralegal_policy::{assert_error, Context, EdgeSelection};
+use paralegal_spdg::Identifier;
 
+const ASYNC_TRAIT_CODE: &str = stringify!(
+    pub struct SaveComment {
+        pub save: bool,
+    }
+    #[async_trait::async_trait(?Send)]
+    pub trait Perform {
+        type Response;
+
+        async fn perform(&self) -> Result<Self::Response, String>;
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl Perform for SaveComment {
+        type Response = ();
+        #[paralegal::analyze]
+        async fn perform(&self) -> Result<(), String> {
+            save(create().await).await;
+            Ok(())
+        }
+    }
+
+    #[paralegal::marker(source, return)]
+    async fn create() -> usize {
+        0
+    }
+
+    #[paralegal::marker(sink, arguments = [0])]
+    async fn save(u: usize) {}
+);
+
+fn async_trait_policy(ctx: Arc<Context>) -> Result<()> {
+    assert_error!(
+        ctx,
+        ctx.any_flows(
+            &ctx.marked_nodes(Identifier::new_intern("source"))
+                .collect::<Vec<_>>(),
+            &ctx.marked_nodes(Identifier::new_intern("sink"))
+                .collect::<Vec<_>>(),
+            EdgeSelection::Data
+        )
+        .is_some()
+    );
+    Ok(())
+}
+
+/// Tests we can handle `async_trait` version 0.1.53
 #[test]
-fn async_trait() -> Result<()> {
-    let mut test = Test::new(stringify!(
-        pub struct SaveComment {
-            pub comment_id: CommentId,
-            pub save: bool,
-            pub auth: Sensitive<String>,
-        }
-        #[async_trait::async_trait(?Send)]
-        pub trait Perform {
-            type Response: serde::ser::Serialize + Send;
+fn async_trait_1_53() -> Result<()> {
+    let mut test = Test::new(ASYNC_TRAIT_CODE)?;
+    test.with_dep(["async-trait@=0.1.53"]);
+    test.run(async_trait_policy)
+}
 
-            async fn perform(
-                &self,
-                context: &Data<LemmyContext>,
-            ) -> Result<Self::Response, LemmyError>;
-        }
-
-        #[async_trait::async_trait(?Send)]
-        impl Perform for SaveComment {
-            #[cfg_attr(feature = "comment-save", paralegal::analyze)]
-            async fn perform(
-                &self,
-                context: &Data<LemmyContext>,
-            ) -> Result<CommentResponse, LemmyError> {
-                let data: &SaveComment = self;
-                let local_user_view =
-                    get_local_user_view_from_jwt(&data.auth, context.pool(), context.secret())
-                        .await?;
-
-                let comment_saved_form = CommentSavedForm {
-                    comment_id: data.comment_id,
-                    person_id: local_user_view.person.id,
-                };
-
-                if data.save {
-                    let save_comment =
-                        move |conn: &'_ _| CommentSaved::save(conn, &comment_saved_form);
-                    apply_label_community_write(
-                        blocking(context.pool(), save_comment).await?.map_err(|e| {
-                            LemmyError::from_error_message(e, "couldnt_save_comment")
-                        })?,
-                    );
-                } else {
-                    let unsave_comment =
-                        move |conn: &'_ _| CommentSaved::unsave(conn, &comment_saved_form);
-                    apply_label_community_write(
-                        blocking(context.pool(), unsave_comment)
-                            .await?
-                            .map_err(|e| {
-                                LemmyError::from_error_message(e, "couldnt_save_comment")
-                            })?,
-                    );
-                }
-
-                let comment_id = data.comment_id;
-                let person_id = local_user_view.person.id;
-                let comment_view = apply_label_read(
-                    blocking(context.pool(), move |conn| {
-                        CommentView::read(conn, comment_id, Some(person_id))
-                    })
-                    .await??,
-                );
-
-                Ok(CommentResponse {
-                    comment_view,
-                    recipient_ids: Vec::new(),
-                    form_id: None,
-                })
-            }
-        }
-    ))?;
-
-    test.with_dep(["async-trait@0.1"]);
-
-    test.run(|ctx| Ok(()))
+/// Tests we can handle whichever latest `async_trait` version cargo pulls for
+/// us
+#[test]
+fn async_trait_latest() -> Result<()> {
+    let mut test = Test::new(ASYNC_TRAIT_CODE)?;
+    test.with_dep(["async-trait"]);
+    test.run(async_trait_policy)
 }
