@@ -38,8 +38,7 @@ impl<'tcx> DepNode<'tcx> {
         DepNode {
             place,
             at,
-            //place_pretty: place.to_string(tcx, body).map(Intern::new),
-            place_pretty: Some(Intern::new(format!("{place:?}"))),
+            place_pretty: place.to_string(tcx, body).map(Intern::new),
         }
     }
 }
@@ -110,10 +109,22 @@ impl fmt::Display for DepEdge {
 }
 
 /// The top-level PDG.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct DepGraph<'tcx> {
     /// The petgraph representation of the PDG.
     pub graph: DiGraph<DepNode<'tcx>, DepEdge>,
+}
+
+impl Clone for DepGraph<'_> {
+    fn clone(&self) -> Self {
+        DepGraph {
+            graph: self.graph.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.graph.clone_from(&source.graph);
+    }
 }
 
 impl<'tcx> DepGraph<'tcx> {

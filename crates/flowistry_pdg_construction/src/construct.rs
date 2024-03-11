@@ -20,6 +20,7 @@ use rustc_middle::{
     ty::{GenericArg, GenericArgsRef, List, ParamEnv, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df};
+use rustc_utils::cache::Cache;
 use rustc_utils::{
     mir::{borrowck_facts, control_dependencies::ControlDependencies},
     BodyExt, PlaceExt,
@@ -33,6 +34,7 @@ use flowistry::{
 };
 
 /// Whether or not to skip recursing into a function call during PDG construction.
+#[derive(Debug)]
 pub enum SkipCall {
     /// Skip the function, and perform a modular approxmation of its effects.
     Skip,
@@ -42,6 +44,7 @@ pub enum SkipCall {
 }
 
 /// A fake effect to insert into the PDG upon a function call.
+#[derive(Debug)]
 pub struct FakeEffect<'tcx> {
     /// The place (in the *callee*!) subject to a fake effect.
     pub place: Place<'tcx>,
@@ -51,6 +54,7 @@ pub struct FakeEffect<'tcx> {
 }
 
 /// The kind of fake effect to insert into the PDG.
+#[derive(Debug)]
 pub enum FakeEffectKind {
     /// A fake read to an argument of a function call.
     ///
@@ -68,6 +72,7 @@ pub enum FakeEffectKind {
 /// User-provided changes to the default PDG construction behavior for function calls.
 ///
 /// Construct [`CallChanges`] via [`CallChanges::default`].
+#[derive(Debug)]
 pub struct CallChanges<'tcx> {
     skip: SkipCall,
     fake_effects: Vec<FakeEffect<'tcx>>,
@@ -147,7 +152,7 @@ impl<'tcx> PdgParams<'tcx> {
     /// ```
     /// # #![feature(rustc_private)]
     /// # extern crate rustc_middle;
-    /// # use flowistry::pdg::{PdgParams, SkipCall, CallChanges};
+    /// # use flowistry_pdg_construction::{PdgParams, SkipCall, CallChanges};
     /// # use rustc_middle::ty::TyCtxt;
     /// # const THRESHOLD: usize = 5;
     /// # fn f<'tcx>(tcx: TyCtxt<'tcx>, params: PdgParams<'tcx>) -> PdgParams<'tcx> {
@@ -219,6 +224,8 @@ impl AsyncInfo {
     }
 }
 
+type PdgCache<'tcx> = Rc<Cache<CallString, Rc<PartialGraph<'tcx>>>>;
+
 pub struct GraphConstructor<'tcx> {
     tcx: TyCtxt<'tcx>,
     params: PdgParams<'tcx>,
@@ -231,6 +238,7 @@ pub struct GraphConstructor<'tcx> {
     calling_context: Option<CallingContext<'tcx>>,
     start_loc: FxHashSet<RichLocation>,
     async_info: Rc<AsyncInfo>,
+    pdg_cache: PdgCache<'tcx>,
 }
 
 macro_rules! let_assert {
@@ -249,6 +257,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             params,
             None,
             AsyncInfo::make(tcx).expect("async functions are not defined"),
+            &PdgCache::default(),
         )
     }
 
@@ -257,6 +266,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         params: PdgParams<'tcx>,
         calling_context: Option<CallingContext<'tcx>>,
         async_info: Rc<AsyncInfo>,
+        pdg_cache: &PdgCache<'tcx>,
     ) -> Self {
         let tcx = params.tcx;
         let def_id = params.root.def_id().expect_local();
@@ -282,6 +292,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         start_loc.insert(RichLocation::Start);
 
         let body_assignments = utils::find_body_assignments(&body);
+        let pdg_cache = Rc::clone(pdg_cache);
 
         GraphConstructor {
             tcx,
@@ -295,6 +306,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             calling_context,
             body_assignments,
             async_info,
+            pdg_cache,
         }
     }
 
@@ -825,8 +837,12 @@ impl<'tcx> GraphConstructor<'tcx> {
             return None;
         }
 
-        let child_constructor =
-            GraphConstructor::new(params, Some(calling_context), self.async_info.clone());
+        let child_constructor = GraphConstructor::new(
+            params,
+            Some(calling_context),
+            self.async_info.clone(),
+            &self.pdg_cache,
+        );
 
         if let Some(changes) = call_changes {
             for FakeEffect {
@@ -857,7 +873,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             }
         }
 
-        let child_graph = child_constructor.construct_partial();
+        let child_graph = child_constructor.construct_partial_cached();
 
         // Find every reference to a parent-able node in the child's graph.
         let is_arg = |node: &DepNode<'tcx>| {
@@ -906,8 +922,8 @@ impl<'tcx> GraphConstructor<'tcx> {
             }
         }
 
-        state.nodes.extend(child_graph.nodes);
-        state.edges.extend(child_graph.edges);
+        state.nodes.extend(&child_graph.nodes);
+        state.edges.extend(&child_graph.edges);
 
         trace!("  Inlined {}", self.fmt_fn(resolved_def_id));
 
@@ -1001,6 +1017,14 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
     }
 
+    fn construct_partial_cached(&self) -> Rc<PartialGraph<'tcx>> {
+        let key = self.make_call_string(RichLocation::Start);
+        let pdg = self
+            .pdg_cache
+            .get(key, move |_| Rc::new(self.construct_partial()));
+        Rc::clone(pdg)
+    }
+
     fn construct_partial(&self) -> PartialGraph<'tcx> {
         if let Some((generator_def_id, generic_args, location)) = self.determine_async() {
             let param_env = self.tcx.param_env(self.def_id);
@@ -1024,8 +1048,13 @@ impl<'tcx> GraphConstructor<'tcx> {
                 call_string,
                 call_stack,
             };
-            return GraphConstructor::new(params, Some(calling_context), self.async_info.clone())
-                .construct_partial();
+            return GraphConstructor::new(
+                params,
+                Some(calling_context),
+                self.async_info.clone(),
+                &self.pdg_cache,
+            )
+            .construct_partial();
         }
 
         let mut analysis = DfAnalysis(self)
@@ -1068,7 +1097,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         final_state
     }
 
-    fn domain_to_petgraph(self, domain: PartialGraph<'tcx>) -> DepGraph<'tcx> {
+    fn domain_to_petgraph(self, domain: &PartialGraph<'tcx>) -> DepGraph<'tcx> {
         let mut graph: DiGraph<DepNode<'tcx>, DepEdge> = DiGraph::new();
         let mut nodes = FxHashMap::default();
         macro_rules! add_node {
@@ -1077,22 +1106,22 @@ impl<'tcx> GraphConstructor<'tcx> {
             };
         }
 
-        for node in domain.nodes {
-            let _ = add_node!(node);
+        for node in &domain.nodes {
+            let _ = add_node!(*node);
         }
 
-        for (src, dst, kind) in domain.edges {
-            let src_idx = add_node!(src);
-            let dst_idx = add_node!(dst);
-            graph.add_edge(src_idx, dst_idx, kind);
+        for (src, dst, kind) in &domain.edges {
+            let src_idx = add_node!(*src);
+            let dst_idx = add_node!(*dst);
+            graph.add_edge(src_idx, dst_idx, *kind);
         }
 
         DepGraph::new(graph)
     }
 
     pub fn construct(self) -> DepGraph<'tcx> {
-        let partial = self.construct_partial();
-        self.domain_to_petgraph(partial)
+        let partial = self.construct_partial_cached();
+        self.domain_to_petgraph(&partial)
     }
 
     /// Determine the type of call-site.
