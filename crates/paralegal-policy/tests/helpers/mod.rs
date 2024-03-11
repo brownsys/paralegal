@@ -1,7 +1,7 @@
 use std::{
     collections::hash_map::DefaultHasher,
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{self, File},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -50,6 +50,7 @@ pub struct Test {
     paralegal_args: Vec<String>,
     context_config: paralegal_policy::Config,
     external_annotations: Option<String>,
+    deps: Vec<Vec<OsString>>,
     tool_path: &'static Path,
     external_ann_file_name: PathBuf,
 }
@@ -72,6 +73,7 @@ impl Test {
             context_config: Default::default(),
             external_annotations: None,
             tool_path: &*TOOL_BUILT,
+            deps: Default::default(),
         })
     }
 
@@ -90,6 +92,15 @@ impl Test {
         if let Some(anns) = res {
             panic!("Duplicate setting of external annotations. Found prior:\n{anns}");
         }
+        self
+    }
+
+    /// Add additional dependencies. The argument to this function are command
+    /// line arguments as would be given to `cargo add`. You may call this
+    /// function multiple times fo add more dependencies.
+    #[allow(dead_code)]
+    pub fn with_dep(&mut self, it: impl IntoIterator<Item = impl Into<OsString>>) -> &mut Self {
+        self.deps.push(it.into_iter().map(Into::into).collect());
         self
     }
 
@@ -132,6 +143,9 @@ impl Test {
             paralegal_lib_path.display()
         );
         self.add_cargo_dep([OsStr::new("--path"), paralegal_lib_path.as_os_str()])?;
+        for dep in &self.deps {
+            self.add_cargo_dep(dep)?;
+        }
         if let Some(external_anns) = self.external_annotations.as_ref() {
             let mut f = File::create(&self.external_ann_file_name)?;
             writeln!(f, "{external_anns}")?;
