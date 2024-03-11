@@ -53,6 +53,7 @@ pub struct Test {
     deps: Vec<Vec<OsString>>,
     tool_path: &'static Path,
     external_ann_file_name: PathBuf,
+    cleanup: bool,
 }
 
 fn ensure_run_success(cmd: &mut Command) -> Result<()> {
@@ -74,7 +75,14 @@ impl Test {
             external_annotations: None,
             tool_path: &*TOOL_BUILT,
             deps: Default::default(),
+            cleanup: true,
         })
+    }
+
+    #[allow(dead_code)]
+    pub fn with_cleanup(&mut self, cleanup: bool) -> &mut Self {
+        self.cleanup = cleanup;
+        self
     }
 
     #[allow(dead_code)]
@@ -182,6 +190,9 @@ impl Test {
             ret.stats
         );
         ensure!(ret.success);
+        if self.cleanup {
+            fs::remove_dir_all(self.tempdir)?;
+        }
         Ok(())
     }
 }
