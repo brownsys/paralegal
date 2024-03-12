@@ -39,7 +39,7 @@ use utils::serde_map_via_vec;
 
 pub use crate::tiny_bitset::pretty as tiny_bitset_pretty;
 pub use crate::tiny_bitset::TinyBitSet;
-use flowistry_pdg::{rustc_portable::LocalDefId, SourceUse, TargetUse};
+use flowistry_pdg::rustc_portable::LocalDefId;
 use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::IntoNodeIdentifiers;

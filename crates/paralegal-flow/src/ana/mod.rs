@@ -27,7 +27,7 @@ use flowistry_pdg_construction::{
 };
 use itertools::Itertools;
 use petgraph::{
-    visit::{EdgeRef, GraphBase, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef},
+    visit::{EdgeRef, GraphBase, IntoNodeReferences, NodeIndexable, NodeRef},
     Direction,
 };
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -305,7 +305,7 @@ struct GraphConverter<'tcx, 'a, 'st, C> {
     index_map: Box<[Node]>,
     /// The converted graph we are creating
     spdg: SPDGImpl,
-    marker_assignments: HashMap<Node, Vec<Identifier>>,
+    marker_assignments: HashMap<Node, HashSet<Identifier>>,
 }
 
 impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
@@ -580,8 +580,9 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         {
             assert!(
                 weight.place.projection.is_empty(),
-                "{:?} has projection",
-                weight.place
+                "{:?} at {} has projection",
+                weight.place,
+                weight.at
             );
         } else if !is_controller_argument {
             return;
@@ -664,7 +665,11 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
             id: self.local_def_id,
             name: Identifier::new(self.target.name()),
             arguments,
-            markers: self.marker_assignments,
+            markers: self
+                .marker_assignments
+                .into_iter()
+                .map(|(k, v)| (k, v.into_iter().collect()))
+                .collect(),
             return_,
             type_assigns: self.types,
         }
@@ -767,13 +772,13 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         // In async functions
         let mut return_candidates = self
             .spdg
-            .edge_references()
+            .node_references()
             .filter(|n| {
                 let weight = n.weight();
                 let at = weight.at;
                 matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::End)
             })
-            .map(|n| n.target())
+            .map(|n| n.id())
             .collect::<Vec<_>>();
         if return_candidates.len() != 1 {
             warn!("Found too many candidates for the return: {return_candidates:?}.");

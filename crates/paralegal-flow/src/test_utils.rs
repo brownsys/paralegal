@@ -21,9 +21,9 @@ use paralegal_spdg::{
 use flowistry_pdg::rustc_portable::LocalDefId;
 use flowistry_pdg::CallString;
 use itertools::Itertools;
-use petgraph::visit::IntoNeighbors;
-use petgraph::visit::Visitable;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
+use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
+use petgraph::visit::{NodeRef as _, Visitable};
 use petgraph::Direction;
 use std::path::Path;
 
@@ -427,10 +427,7 @@ impl<'g> CallStringRef<'g> {
         // Alternative??
         let mut nodes: Vec<_> = graph
             .edge_references()
-            .filter(|e| {
-                e.weight().at == self.call_site
-                    && graph.node_weight(e.source()).unwrap().at != self.call_site
-            })
+            .filter(|e| e.weight().at == self.call_site)
             .map(|e| (e.weight().source_use, e.source()))
             .collect();
         nodes.sort();
@@ -445,12 +442,14 @@ impl<'g> CallStringRef<'g> {
         let graph = &self.ctrl.ctrl.graph;
         let mut nodes: Vec<_> = graph
             .edge_references()
-            .filter(|e| {
-                e.weight().at != self.call_site
-                    && e.weight().is_data()
-                    && graph.node_weight(e.source()).unwrap().at == self.call_site
-            })
-            .map(|e| e.source())
+            .filter(|e| e.weight().at == self.call_site)
+            .map(|e| e.target())
+            .chain(
+                graph
+                    .node_references()
+                    .filter(|n| n.weight().at == self.call_site)
+                    .map(|n| n.id()),
+            )
             .collect();
         nodes.sort();
         nodes.dedup();

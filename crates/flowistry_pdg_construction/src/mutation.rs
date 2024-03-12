@@ -206,6 +206,114 @@ where
             _ => false,
         }
     }
+
+    #[allow(dead_code)]
+    fn handle_call_with_combine_on_return(
+        &mut self,
+        arg_places: Vec<(usize, Place<'tcx>)>,
+        location: Location,
+        destination: Place<'tcx>,
+    ) {
+        // Make sure we combine all inputs in the arguments.
+        let inputs = arg_places
+            .iter()
+            .copied()
+            .flat_map(|(num, arg)| {
+                self.place_info
+                    .reachable_values(arg, Mutability::Not)
+                    .into_iter()
+                    .map(move |v| (*v, Some(num as u8)))
+            })
+            .collect::<Vec<_>>();
+
+        for (num, arg) in arg_places.iter().copied() {
+            for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
+                if *arg_mut != arg {
+                    (self.f)(
+                        location,
+                        Mutation {
+                            mutated: *arg_mut,
+                            mutation_reason: MutationReason::MutArgument(num as u8),
+                            inputs: inputs.clone(),
+                            status: MutationStatus::Possibly,
+                        },
+                    )
+                }
+            }
+        }
+
+        (self.f)(
+            location,
+            Mutation {
+                mutated: destination,
+                inputs,
+                mutation_reason: MutationReason::AssignTarget,
+                status: MutationStatus::Definitely,
+            },
+        );
+    }
+
+    #[allow(dead_code)]
+    fn handle_call_with_combine_on_args(
+        &mut self,
+        arg_places: Vec<(usize, Place<'tcx>)>,
+        location: Location,
+        ret_is_unit: bool,
+        destination: Place<'tcx>,
+    ) {
+        let arg_place_inputs = arg_places
+            .iter()
+            .copied()
+            .map(|(_, arg)| (arg, None))
+            .collect::<Vec<_>>();
+        // Make sure we combine all inputs in the arguments.
+        for (num, arg) in arg_places.iter().copied() {
+            let inputs = self
+                .place_info
+                .reachable_values(arg, Mutability::Not)
+                .into_iter()
+                .map(|v| (*v, Some(num as u8)))
+                .collect();
+            (self.f)(
+                location,
+                Mutation {
+                    mutated: arg,
+                    mutation_reason: MutationReason::AssignTarget,
+                    inputs,
+                    status: MutationStatus::Definitely,
+                },
+            );
+        }
+
+        (self.f)(
+            location,
+            Mutation {
+                mutated: destination,
+                inputs: if ret_is_unit {
+                    vec![]
+                } else {
+                    arg_places.iter().map(|(_, arg)| (*arg, None)).collect()
+                },
+                mutation_reason: MutationReason::AssignTarget,
+                status: MutationStatus::Definitely,
+            },
+        );
+        for (num, arg) in arg_places.iter().copied() {
+            for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
+                if *arg_mut != arg {
+                    (self.f)(
+                        location,
+                        Mutation {
+                            mutated: *arg_mut,
+                            mutation_reason: MutationReason::MutArgument(num as u8),
+                            inputs: arg_place_inputs.clone(),
+                            status: MutationStatus::Possibly,
+                        },
+                    )
+                }
+            }
+        }
+    }
 }
 
 impl<'tcx, F> Visitor<'tcx> for ModularMutationVisitor<'_, 'tcx, F>
@@ -249,62 +357,17 @@ where
                 let mut arg_places = utils::arg_places(args);
                 arg_places.retain(|(_, place)| !async_hack.ignore_place(*place));
 
-                let ret_is_unit = destination
-                    .ty(self.place_info.body.local_decls(), tcx)
-                    .ty
-                    .is_unit();
+                // let ret_is_unit = destination
+                //     .ty(self.place_info.body.local_decls(), tcx)
+                //     .ty
+                //     .is_unit();
 
-                let arg_place_inputs = arg_places
-                    .iter()
-                    .copied()
-                    .map(|(_, arg)| (arg, None))
-                    .collect::<Vec<_>>();
-                (self.f)(
-                    location,
-                    Mutation {
-                        mutated: *destination,
-                        inputs: if ret_is_unit {
-                            vec![]
-                        } else {
-                            arg_places
-                                .iter()
-                                .map(|(num, arg)| (*arg, Some(*num as u8)))
-                                .collect()
-                        },
-                        mutation_reason: MutationReason::AssignTarget,
-                        status: MutationStatus::Definitely,
-                    },
-                );
-                for (num, arg) in arg_places.iter().copied() {
-                    let inputs = self
-                        .place_info
-                        .reachable_values(arg, Mutability::Not)
-                        .into_iter()
-                        .map(|v| (*v, Some(num as u8)))
-                        .collect();
-                    (self.f)(
-                        location,
-                        Mutation {
-                            mutated: arg,
-                            mutation_reason: MutationReason::AssignTarget,
-                            inputs,
-                            status: MutationStatus::Definitely,
-                        },
-                    );
-                    for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
-                        if *arg_mut != arg {
-                            (self.f)(
-                                location,
-                                Mutation {
-                                    mutated: *arg_mut,
-                                    mutation_reason: MutationReason::MutArgument(num as u8),
-                                    inputs: arg_place_inputs.clone(),
-                                    status: MutationStatus::Possibly,
-                                },
-                            )
-                        }
-                    }
-                }
+                // The PDG construction relies on the fact that mutations are
+                // executed "in-order". This means we must first mutate the
+                // argument places and then the return and mutable arguments.
+                //
+                // TODO: What happens if these argument places overlap?
+                self.handle_call_with_combine_on_return(arg_places, location, *destination)
             }
 
             _ => {}
