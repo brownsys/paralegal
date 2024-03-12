@@ -514,8 +514,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         state: &mut PartialGraph<'tcx>,
         location: Location,
         mutated: Either<Place<'tcx>, DepNode<'tcx>>,
-        inputs: Either<Vec<Place<'tcx>>, DepNode<'tcx>>,
-        source_use: SourceUse,
+        inputs: Either<Vec<(Place<'tcx>, Option<u8>)>, (DepNode<'tcx>, SourceUse)>,
         target_use: TargetUse,
     ) {
         trace!("Applying mutation to {mutated:?} with inputs {inputs:?}");
@@ -525,7 +524,16 @@ impl<'tcx> GraphConstructor<'tcx> {
         let data_inputs = match inputs {
             Either::Left(places) => places
                 .into_iter()
-                .flat_map(|input| self.find_data_inputs(state, input))
+                .flat_map(|(input, input_use)| {
+                    self.find_data_inputs(state, input)
+                        .into_iter()
+                        .map(move |input| {
+                            (
+                                input,
+                                input_use.map_or(SourceUse::Operand, SourceUse::Argument),
+                            )
+                        })
+                })
                 .collect::<Vec<_>>(),
             Either::Right(node) => vec![node],
         };
@@ -543,8 +551,8 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
 
         // Add data dependencies: data_input -> output
-        let data_edge = DepEdge::data(self.make_call_string(location), source_use, target_use);
-        for data_input in data_inputs {
+        for (data_input, source_use) in data_inputs {
+            let data_edge = DepEdge::data(self.make_call_string(location), source_use, target_use);
             for output in &outputs {
                 trace!("Adding edge {data_input:?} -> {output:?}");
                 state.edges.insert((data_input, *output, data_edge));
@@ -734,9 +742,9 @@ impl<'tcx> GraphConstructor<'tcx> {
                     Some(place) => place,
                     None => continue,
                 };
-                let source_use = SourceUse::Argument(callee_place.local.as_u32() as u8);
+                let source_use = Some(callee_place.local.as_u32() as u8);
                 let target_use = TargetUse::Assign;
-                let inputs = Either::Left(vec![caller_place]);
+                let inputs = Either::Left(vec![(caller_place, source_use)]);
                 match cause {
                     FakeEffectKind::Read => self.apply_mutation(
                         state,
@@ -745,7 +753,6 @@ impl<'tcx> GraphConstructor<'tcx> {
                             child_constructor.make_dep_node(callee_place, RichLocation::Start),
                         ),
                         inputs,
-                        source_use,
                         target_use,
                     ),
                     FakeEffectKind::Write => self.apply_mutation(
@@ -753,7 +760,6 @@ impl<'tcx> GraphConstructor<'tcx> {
                         location,
                         Either::Left(caller_place),
                         inputs,
-                        source_use,
                         target_use,
                     ),
                 };
@@ -790,15 +796,14 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
-        for (child_src, kind) in parentable_srcs {
+        for (child_src, _kind) in parentable_srcs {
             if let Some(parent_place) = translate_to_parent(child_src.place) {
                 self.apply_mutation(
                     state,
                     location,
                     Either::Right(child_src),
-                    Either::Left(vec![parent_place]),
-                    SourceUse::Operand,
-                    kind.map(TargetUse::MutArg).unwrap_or(TargetUse::Return),
+                    Either::Left(vec![(parent_place, None)]),
+                    TargetUse::Assign,
                 );
             }
         }
@@ -810,16 +815,12 @@ impl<'tcx> GraphConstructor<'tcx> {
         // the *last* nodes in the child function to the parent, not *all* of them.
         for (child_dst, kind) in parentable_dsts {
             if let Some(parent_place) = translate_to_parent(child_dst.place) {
-                let idx = kind.unwrap_or_else(|| {
-                    panic!("Return place cannot be forward-translated into parent")
-                });
                 self.apply_mutation(
                     state,
                     location,
                     Either::Left(parent_place),
-                    Either::Right(child_dst),
-                    SourceUse::Argument(idx),
-                    TargetUse::Assign,
+                    Either::Right((child_dst, SourceUse::Operand)),
+                    kind.map_or(TargetUse::Return, TargetUse::MutArg),
                 );
             }
         }
@@ -843,10 +844,6 @@ impl<'tcx> GraphConstructor<'tcx> {
                 location,
                 Either::Left(mutation.mutated),
                 Either::Left(mutation.inputs),
-                mutation
-                    .operand_index
-                    .map(SourceUse::Argument)
-                    .unwrap_or(SourceUse::Operand),
                 match mutation.mutation_reason {
                     MutationReason::AssignTarget => {
                         if is_fn_call {
@@ -877,8 +874,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                         state,
                         location,
                         Either::Left(place),
-                        Either::Left(vec![place]),
-                        SourceUse::Operand,
+                        Either::Left(vec![(place, None)]),
                         TargetUse::Assign,
                     );
                 }

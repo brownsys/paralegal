@@ -177,14 +177,16 @@ impl fmt::Display for CallString {
 /// Additional information about the source of data.
 ///
 /// If the operation is a function call this contains the argument index
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs,
+)]
 pub enum SourceUse {
     Operand,
     Argument(u8),
 }
 
 /// Additional information about this mutation.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs)]
 pub enum TargetUse {
     /// A function returned, assigning to it's return destination
     Return,

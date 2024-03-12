@@ -15,7 +15,7 @@ use std::process::Command;
 use paralegal_spdg::{
     rustc_portable::DefId,
     traverse::{generic_flows_to, EdgeSelection},
-    DefInfo, EdgeInfo, Node, NodeKind, SPDG,
+    DefInfo, EdgeInfo, Node, SPDG,
 };
 
 use flowistry_pdg::rustc_portable::LocalDefId;
@@ -23,9 +23,7 @@ use flowistry_pdg::CallString;
 use itertools::Itertools;
 use petgraph::visit::IntoNeighbors;
 use petgraph::visit::Visitable;
-use petgraph::visit::{
-    Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges, IntoNodeReferences,
-};
+use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
 use petgraph::Direction;
 use std::path::Path;
 
@@ -429,23 +427,16 @@ impl<'g> CallStringRef<'g> {
         // Alternative??
         let mut nodes: Vec<_> = graph
             .edge_references()
-            .filter(|e| e.weight().at == self.call_site && e.weight().is_data())
-            .map(|e| e.source())
+            .filter(|e| {
+                e.weight().at == self.call_site
+                    && graph.node_weight(e.source()).unwrap().at != self.call_site
+            })
+            .map(|e| (e.weight().source_use, e.source()))
             .collect();
-        // let mut nodes: Vec<_> = graph
-        //     .node_references()
-        //     .filter(|(_n, weight)| weight.at == self.call_site)
-        //     .filter_map(|(n, weight)| match weight.kind {
-        //         NodeKind::ActualParameter(p) => Some((n, p)),
-        //         _ => None,
-        //     })
-        //     .flat_map(move |(src, idxes)| idxes.into_iter_set_in_domain().map(move |i| (src, i)))
-        //     .collect();
-        // nodes.sort_by_key(|s| s.1);
         nodes.sort();
         nodes.dedup();
         NodeRefs {
-            nodes, //.into_iter().map(|t| t.0).collect(),
+            nodes: nodes.into_iter().map(|t| t.1).collect(),
             graph: self.ctrl,
         }
     }
@@ -454,14 +445,12 @@ impl<'g> CallStringRef<'g> {
         let graph = &self.ctrl.ctrl.graph;
         let mut nodes: Vec<_> = graph
             .edge_references()
-            .filter(|e| e.weight().at == self.call_site && e.weight().is_data())
-            .map(|e| e.target())
-            .chain(
-                graph
-                    .node_references()
-                    .filter(|(_n, weight)| weight.at == self.call_site)
-                    .filter_map(|(n, weight)| weight.kind.is_target().then_some(n)),
-            )
+            .filter(|e| {
+                e.weight().at != self.call_site
+                    && e.weight().is_data()
+                    && graph.node_weight(e.source()).unwrap().at == self.call_site
+            })
+            .map(|e| e.source())
             .collect();
         nodes.sort();
         nodes.dedup();
@@ -499,10 +488,7 @@ impl Debug for NodeRefs<'_> {
         let mut list = f.debug_list();
         for &n in &self.nodes {
             let weight = self.graph.ctrl.graph.node_weight(n).unwrap();
-            list.entry(&format!(
-                "{n:?} {} @ {} ({:?})",
-                weight.description, weight.at, weight.kind
-            ));
+            list.entry(&format!("{n:?} {} @ {} ", weight.description, weight.at));
         }
         list.finish()
     }

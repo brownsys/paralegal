@@ -12,6 +12,7 @@ use crate::{
     utils::*,
     DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Stat, Symbol,
 };
+use flowistry_pdg::SourceUse;
 use paralegal_spdg::Node;
 
 use std::rc::Rc;
@@ -20,12 +21,15 @@ use std::{borrow::Cow, time::Instant};
 use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
-    graph::{DepEdgeKind, DepGraph, DepNode},
+    graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, CallChanges, PdgParams,
     SkipCall::Skip,
 };
 use itertools::Itertools;
-use petgraph::visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef};
+use petgraph::{
+    visit::{EdgeRef, GraphBase, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef},
+    Direction,
+};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
 
 mod inline_judge;
@@ -301,6 +305,7 @@ struct GraphConverter<'tcx, 'a, 'st, C> {
     index_map: Box<[Node]>,
     /// The converted graph we are creating
     spdg: SPDGImpl,
+    marker_assignments: HashMap<Node, Vec<Identifier>>,
 }
 
 impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
@@ -333,6 +338,7 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
             local_def_id,
             types: Default::default(),
             spdg: Default::default(),
+            marker_assignments: Default::default(),
         })
     }
 
@@ -384,44 +390,47 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         res
     }
 
-    /// Try to discern if this node is a special [`NodeKind`]. Also returns if
-    /// the location corresponds to a function call for an external function and
-    /// any marker annotations on this node.
-    fn node_annotations(&mut self, weight: &DepNode<'tcx>) -> Vec<Identifier> {
+    fn register_markers(&mut self, node: Node, markers: impl IntoIterator<Item = Identifier>) {
+        let mut markers = markers.into_iter().peekable();
+
+        if !markers.peek().is_none() {
+            self.marker_assignments
+                .entry(node)
+                .or_default()
+                .extend(markers);
+        }
+    }
+
+    /// Find direct annotations on this node and register them in the marker map.
+    fn node_annotations(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
         let leaf_loc = weight.at.leaf();
+        let node = self.new_node_for(old_node);
 
         let body = &self.tcx().body_for_def_id(leaf_loc.function).unwrap().body;
+
+        let graph = self.dep_graph.clone();
 
         match leaf_loc.location {
             RichLocation::Start
                 if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
             {
                 let function_id = leaf_loc.function.to_def_id();
-                let NodeKind::FormalParameter(arg_num) = weight.kind else {
-                    panic!(
-                        "Unexpected node kind {} at functions start of {function_id:?}",
-                        weight.kind
-                    )
-                };
+                let arg_num = weight.place.local.as_u32() - 1;
                 self.known_def_ids.extend(Some(function_id));
 
-                let (annotations, parent) = self.annotations_for_function(function_id, |ann| {
+                self.register_annotations_for_function(node, function_id, |ann| {
                     ann.refinement
                         .on_argument()
                         .contains(arg_num as u32)
                         .unwrap()
                 });
-
-                self.known_def_ids.extend(parent);
-                annotations
             }
             RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
                 let function_id = leaf_loc.function.to_def_id();
                 self.known_def_ids.extend(Some(function_id));
-                let (annotations, parent) =
-                    self.annotations_for_function(function_id, |ann| ann.refinement.on_return());
-                self.known_def_ids.extend(parent);
-                annotations
+                self.register_annotations_for_function(node, function_id, |ann| {
+                    ann.refinement.on_return()
+                });
             }
             RichLocation::Location(loc) => {
                 let stmt_at_loc = body.stmt_at(loc);
@@ -435,37 +444,27 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                     let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
                     self.known_def_ids.extend(Some(fun));
 
-                    // TODO implement matching the unspecified node type. OR we
-                    // could make sure that there are no unspecified nodes here
-                    let annotations = match weight.kind {
-                        NodeKind::Target => {
-                            self.annotations_for_function(fun, |ann| ann.refinement.on_return())
-                                .0
+                    for e in graph.graph.edges_directed(old_node, Direction::Incoming) {
+                        if e.weight().target_use.is_return() {
+                            self.register_annotations_for_function(node, fun, |ann| {
+                                ann.refinement.on_return()
+                            })
                         }
-                        NodeKind::ActualParameter(index) => {
-                            self.annotations_for_function(fun, |ann| {
-                                if !ann.refinement.on_argument().contains(index as u32).unwrap() {
-                                    trace!(
-                                        "{ann:?} did not match {:?} ({})",
-                                        weight.place,
-                                        weight.kind
-                                    );
+                        if let SourceUse::Argument(arg) = e.weight().source_use {
+                            self.register_annotations_for_function(node, fun, |ann| {
+                                if !ann.refinement.on_argument().contains(arg as u32).unwrap() {
                                     false
                                 } else {
                                     true
                                 }
                             })
-                            .0
                         }
-                        _ => unreachable!(),
-                    };
-                    annotations
+                    }
                 } else {
                     // TODO attach annotations if the return value is a marked type
-                    vec![]
                 }
             }
-            _ => vec![],
+            _ => (),
         }
     }
 
@@ -543,39 +542,47 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
     /// whether they are looking for annotations on an argument or return of a
     /// function identified by this `id` or on a type and the callback should be
     /// used to enforce this.
-    fn annotations_for_function(
-        &self,
+    fn register_annotations_for_function(
+        &mut self,
+        node: Node,
         function: DefId,
         mut filter: impl FnMut(&MarkerAnnotation) -> bool,
-    ) -> (Vec<Identifier>, Option<DefId>) {
+    ) {
         let parent = get_parent(self.tcx(), function);
-        let annotations = self
-            .marker_ctx()
-            .combined_markers(function)
-            .chain(
-                parent
-                    .into_iter()
-                    .flat_map(|parent| self.marker_ctx().combined_markers(parent)),
-            )
-            .filter(|ann| filter(ann))
-            .map(|ann| ann.marker)
-            .collect::<Vec<_>>();
-        (annotations, parent)
+        let marker_ctx = self.marker_ctx().clone();
+        self.register_markers(
+            node,
+            marker_ctx
+                .combined_markers(function)
+                .chain(
+                    parent
+                        .into_iter()
+                        .flat_map(|parent| marker_ctx.combined_markers(parent)),
+                )
+                .filter(|ann| filter(ann))
+                .map(|ann| ann.marker),
+        );
+        self.known_def_ids.extend(parent);
     }
 
     /// Check if this node is of a marked type and register that type.
-    fn handle_node_types(
-        &mut self,
-        i: Node,
-        weight: &DepNode<'tcx>,
-        kind: NodeKind,
-        is_fn_call: bool,
-    ) {
-        let is_controller_argument = kind.is_formal_parameter()
-            && matches!(self.try_as_root(weight.at), Some(l) if l.location == RichLocation::Start);
+    fn handle_node_types(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
+        let i = self.new_node_for(old_node);
 
-        if is_fn_call && kind.is_target() {
-            assert!(weight.place.projection.is_empty());
+        let is_controller_argument =
+            matches!(self.try_as_root(weight.at), Some(l) if l.location == RichLocation::Start);
+
+        if self
+            .dep_graph
+            .graph
+            .edges_directed(old_node, Direction::Incoming)
+            .any(|e| e.weight().target_use.is_return())
+        {
+            assert!(
+                weight.place.projection.is_empty(),
+                "{:?} has projection",
+                weight.place
+            );
         } else if !is_controller_argument {
             return;
         }
@@ -645,7 +652,7 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
     /// Consume the generator and compile the [`SPDG`].
     fn make_spdg(mut self) -> SPDG {
         let start = Instant::now();
-        let markers = self.make_spdg_impl();
+        self.make_spdg_impl();
         let arguments = self.determine_arguments();
         let return_ = self.determine_return();
         self.generator
@@ -657,23 +664,20 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
             id: self.local_def_id,
             name: Identifier::new(self.target.name()),
             arguments,
-            markers,
+            markers: self.marker_assignments,
             return_,
             type_assigns: self.types,
         }
     }
 
     /// This initializes the fields `spdg` and `index_map` and should be called first
-    fn make_spdg_impl(&mut self) -> HashMap<Node, Vec<Identifier>> {
+    fn make_spdg_impl(&mut self) {
         use petgraph::prelude::*;
         let g_ref = self.dep_graph.clone();
         let input = &g_ref.graph;
         let tcx = self.tcx();
-        let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
 
         for (i, weight) in input.node_references() {
-            let node_markers = self.node_annotations(weight);
-            let kind = weight.kind;
             let at = weight.at.leaf();
             let body = &tcx.body_for_def_id(at.function).unwrap().body;
 
@@ -683,42 +687,49 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                 NodeInfo {
                     at: weight.at,
                     description: format!("{:?}", weight.place),
-                    kind,
                     span: src_loc_for_span(node_span, tcx),
                 },
             );
-            trace!("Node {new_idx:?}\n  description: {:?}\n  at: {at}\n  stmt: {}\n  kind {kind}\n  markers: {node_markers:?}", weight.place, match at.location {
-                RichLocation::Location(loc) => {
-                    match body.stmt_at(loc) {
-                        Either::Left(s) => format!("{:?}", s.kind),
-                        Either::Right(s) => format!("{:?}", s.kind),
+            trace!(
+                "Node {new_idx:?}\n  description: {:?}\n  at: {at}\n  stmt: {}",
+                weight.place,
+                match at.location {
+                    RichLocation::Location(loc) => {
+                        match body.stmt_at(loc) {
+                            Either::Left(s) => format!("{:?}", s.kind),
+                            Either::Right(s) => format!("{:?}", s.kind),
+                        }
                     }
+                    RichLocation::End => "end".to_string(),
+                    RichLocation::Start => "start".to_string(),
                 }
-                RichLocation::End => "end".to_string(),
-                RichLocation::Start => "start".to_string(),
-            });
+            );
+            self.node_annotations(i, weight);
 
-            if !node_markers.is_empty() {
-                markers.entry(new_idx).or_default().extend(node_markers);
-            }
-            self.handle_node_types(new_idx, weight, kind, matches!(at.location, RichLocation::Location(l) if matches!(body.stmt_at(l), Either::Right(mir::Terminator { kind: mir::TerminatorKind::Call {..}, ..}))));
+            self.handle_node_types(i, weight);
         }
 
         for e in input.edge_references() {
+            let DepEdge {
+                kind,
+                at,
+                source_use,
+                target_use,
+            } = *e.weight();
             self.spdg.add_edge(
                 self.new_node_for(e.source()),
                 self.new_node_for(e.target()),
                 EdgeInfo {
-                    at: e.weight().at,
-                    kind: match e.weight().kind {
+                    at,
+                    kind: match kind {
                         DepEdgeKind::Control => EdgeKind::Control,
                         DepEdgeKind::Data => EdgeKind::Data,
                     },
+                    source_use,
+                    target_use,
                 },
             );
         }
-
-        markers
     }
 
     /// Return the (sub)types of this type that are marked.
@@ -756,14 +767,13 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         // In async functions
         let mut return_candidates = self
             .spdg
-            .node_references()
+            .edge_references()
             .filter(|n| {
                 let weight = n.weight();
                 let at = weight.at;
-                weight.kind.is_formal_return()
-                    && matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::End)
+                matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::End)
             })
-            .map(|n| n.id())
+            .map(|n| n.target())
             .collect::<Vec<_>>();
         if return_candidates.len() != 1 {
             warn!("Found too many candidates for the return: {return_candidates:?}.");

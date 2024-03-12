@@ -650,7 +650,9 @@ pub struct EdgeInfo {
     /// Where in the program this edge arises from
     pub at: CallString,
 
+    /// Why the source of this edge is read
     pub source_use: SourceUse,
+    /// Why the target of this edge is written
     pub target_use: TargetUse,
 }
 

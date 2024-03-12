@@ -221,11 +221,8 @@ impl Trace {
                     let mut err = ctx.struct_node_error(
                         reached,
                         format!(
-                            "Reached this terminal {} ({}) -> {} ({})",
-                            from_info.description,
-                            from_info.kind,
-                            reached_info.description,
-                            reached_info.kind,
+                            "Reached this terminal {} -> {} ",
+                            from_info.description, reached_info.description,
                         ),
                     );
                     err.with_node_note(from, "Started from this node");
@@ -241,19 +238,13 @@ impl Trace {
                     let reached_info = context.node_info(*reached);
                     let mut err = ctx.struct_node_error(
                         *reached,
-                        format!(
-                            "Reached this terminal {} ({})",
-                            reached_info.description, reached_info.kind,
-                        ),
+                        format!("Reached this terminal {}", reached_info.description,),
                     );
                     for &from in rest {
                         let from_info = context.node_info(from);
                         err.with_node_note(
                             from,
-                            format!(
-                                "Reached from this node {} ({})",
-                                from_info.description, from_info.kind
-                            ),
+                            format!("Reached from this node {} ", from_info.description,),
                         );
                     }
                     err.emit();

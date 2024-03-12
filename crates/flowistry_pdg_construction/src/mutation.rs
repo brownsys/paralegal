@@ -1,5 +1,6 @@
 //! Identifies the mutated places in a MIR instruction via modular approximation based on types.
 
+use flowistry_pdg::rustc_portable::Place;
 use log::debug;
 use rustc_middle::{
     mir::{visit::Visitor, *},
@@ -42,11 +43,8 @@ pub struct Mutation<'tcx> {
     /// Simplified reason why this mutation occurred.
     pub mutation_reason: MutationReason,
 
-    /// For function calls contains the argument index this dependency came from
-    pub operand_index: Option<u8>,
-
     /// The set of inputs to the mutating operation.
-    pub inputs: Vec<Place<'tcx>>,
+    pub inputs: Vec<(Place<'tcx>, Option<u8>)>,
 
     /// The certainty of whether the mutation is happening.
     pub status: MutationStatus,
@@ -127,16 +125,14 @@ where
                             let input_place = input_op.as_place();
                             (mutated.project_deeper(&[field], tcx), input_place)
                         });
-
                 for (mutated, input) in fields {
                     (self.f)(
                         location,
                         Mutation {
                             mutated,
                             mutation_reason: MutationReason::AssignTarget,
-                            inputs: input.into_iter().collect::<Vec<_>>(),
+                            inputs: input.map(|i| (i, None)).into_iter().collect::<Vec<_>>(),
                             status: MutationStatus::Definitely,
-                            operand_index: None,
                         },
                     )
                 }
@@ -167,9 +163,8 @@ where
                         Mutation {
                             mutated: *mutated,
                             mutation_reason: MutationReason::AssignTarget,
-                            inputs: vec![*place],
+                            inputs: vec![(*place, None)],
                             status: MutationStatus::Definitely,
-                            operand_index: None,
                         },
                     )
                 }
@@ -181,13 +176,11 @@ where
                         Mutation {
                             mutated: mutated_field,
                             mutation_reason: MutationReason::AssignTarget,
-                            inputs: vec![input_field],
+                            inputs: vec![(input_field, None)],
                             status: MutationStatus::Definitely,
-                            operand_index: None,
                         },
                     )
                 }
-
                 true
             }
 
@@ -196,7 +189,7 @@ where
             Rvalue::Ref(_, _, place) => {
                 let inputs = place
                     .refs_in_projection()
-                    .map(|(place_ref, _)| Place::from_ref(place_ref, tcx))
+                    .map(|(place_ref, _)| (Place::from_ref(place_ref, tcx), None))
                     .collect::<Vec<_>>();
                 (self.f)(
                     location,
@@ -204,7 +197,6 @@ where
                         mutated: *mutated,
                         mutation_reason: MutationReason::AssignTarget,
                         inputs,
-                        operand_index: None,
                         status: MutationStatus::Definitely,
                     },
                 );
@@ -231,11 +223,10 @@ where
                 Mutation {
                     mutated: *mutated,
                     mutation_reason: MutationReason::AssignTarget,
-                    inputs: collector.0,
-                    operand_index: None,
+                    inputs: collector.0.into_iter().map(|p| (p, None)).collect(),
                     status: MutationStatus::Definitely,
                 },
-            );
+            )
         }
     }
 
@@ -262,31 +253,34 @@ where
                     .ty(self.place_info.body.local_decls(), tcx)
                     .ty
                     .is_unit();
-                let dest_inputs = if ret_is_unit {
-                    Vec::new()
-                } else {
-                    arg_places.clone()
-                };
 
-                for (num, place) in arg_places.iter() {
-                    (self.f)(
-                        location,
-                        Mutation {
-                            mutated: *destination,
-                            inputs: vec![*place],
-                            operand_index: Some(*num as u8),
-                            mutation_reason: MutationReason::AssignTarget,
-                            status: MutationStatus::Definitely,
+                let arg_place_inputs = arg_places
+                    .iter()
+                    .copied()
+                    .map(|(_, arg)| (arg, None))
+                    .collect::<Vec<_>>();
+                (self.f)(
+                    location,
+                    Mutation {
+                        mutated: *destination,
+                        inputs: if ret_is_unit {
+                            vec![]
+                        } else {
+                            arg_places
+                                .iter()
+                                .map(|(num, arg)| (*arg, Some(*num as u8)))
+                                .collect()
                         },
-                    );
-                }
-
+                        mutation_reason: MutationReason::AssignTarget,
+                        status: MutationStatus::Definitely,
+                    },
+                );
                 for (num, arg) in arg_places.iter().copied() {
                     let inputs = self
                         .place_info
                         .reachable_values(arg, Mutability::Not)
                         .into_iter()
-                        .copied()
+                        .map(|v| (*v, Some(num as u8)))
                         .collect();
                     (self.f)(
                         location,
@@ -294,24 +288,21 @@ where
                             mutated: arg,
                             mutation_reason: MutationReason::AssignTarget,
                             inputs,
-                            operand_index: Some(num as u8),
                             status: MutationStatus::Definitely,
                         },
                     );
                     for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
-                        if *arg_mut == arg {
-                            continue;
+                        if *arg_mut != arg {
+                            (self.f)(
+                                location,
+                                Mutation {
+                                    mutated: *arg_mut,
+                                    mutation_reason: MutationReason::MutArgument(num as u8),
+                                    inputs: arg_place_inputs.clone(),
+                                    status: MutationStatus::Possibly,
+                                },
+                            )
                         }
-                        (self.f)(
-                            location,
-                            Mutation {
-                                mutated: *arg_mut,
-                                mutation_reason: MutationReason::MutArgument(num as u8),
-                                operand_index: None,
-                                inputs: arg_places.iter().copied().map(|(_, arg)| arg).collect(),
-                                status: MutationStatus::Possibly,
-                            },
-                        );
                     }
                 }
             }
