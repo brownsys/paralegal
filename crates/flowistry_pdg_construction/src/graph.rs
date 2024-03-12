@@ -43,7 +43,12 @@ impl PartialEq for DepNode<'_> {
             kind: _,
         } = *self;
         let eq = (place, at).eq(&(other.place, other.at));
-        debug_assert!(!eq || self.kind != other.kind);
+        debug_assert!(
+            !eq || self.kind == other.kind,
+            "{} != {}",
+            self.kind,
+            other.kind
+        );
         eq
     }
 }
