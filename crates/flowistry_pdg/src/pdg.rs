@@ -173,3 +173,35 @@ impl fmt::Display for CallString {
         Ok(())
     }
 }
+
+/// Additional information about what a given node may represent
+#[derive(Clone, Debug, Copy, strum::EnumIs, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NodeKind {
+    /// The node is (part of) a formal parameter of a function (0-indexed). e.g.
+    /// in `fn foo(x: usize)` `x` would be a `FormalParameter(0)`.
+    FormalParameter(u8),
+    /// The target of an operation, i.e. the left-hand side of an assignment
+    Target,
+    /// Parameter given to a function at the call site, e.g. `x` in `foo(x)`.
+    ActualParameter(u8),
+    /// `_0` or a sub-place of it
+    FormalReturn,
+    /// Operand to a primitive operation like `switchInt` or assignment
+    Operand,
+}
+
+impl std::fmt::Display for NodeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeKind::FormalParameter(i) => {
+                write!(f, "Formal Parameter [{i}]")
+            }
+            NodeKind::FormalReturn => f.write_str("Formal Return"),
+            NodeKind::ActualParameter(p) => {
+                write!(f, "Actual Parameters {p}")
+            }
+            NodeKind::Target => f.write_str("Actual Return"),
+            NodeKind::Operand => f.write_str("Operand"),
+        }
+    }
+}

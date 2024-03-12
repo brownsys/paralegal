@@ -14,11 +14,12 @@ extern crate rustc_type_ir;
 pub use utils::FnResolution;
 
 use self::graph::DepGraph;
+pub use async_support::is_async_trait_fn;
 use construct::GraphConstructor;
-pub use construct::{
-    is_async_trait_fn, CallChanges, CallInfo, FakeEffect, FakeEffectKind, PdgParams, SkipCall,
-};
+pub use construct::{CallChanges, CallInfo, FakeEffect, FakeEffectKind, PdgParams, SkipCall};
 
+mod async_support;
+mod calling_convention;
 mod construct;
 pub mod graph;
 mod utils;

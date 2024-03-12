@@ -109,6 +109,7 @@ impl Context {
     ///
     /// This also precomputes some data structures like an index over markers.
     pub fn new(desc: ProgramDescription, config: super::Config) -> Self {
+        // Must bind this first because we want to time how long it takes to build the indices.
         let start = Instant::now();
         let name_map = desc
             .def_info
@@ -243,13 +244,13 @@ impl Context {
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
         desc.controllers
-            .iter()
-            .flat_map(|(&ctrl_id, spdg)| {
+            .values()
+            .flat_map(|spdg| {
                 spdg.markers.iter().flat_map(move |(&inner, anns)| {
                     anns.iter().map(move |marker| {
                         (
                             *marker,
-                            Either::Left(GlobalNode::from_local_node(ctrl_id, inner)),
+                            Either::Left(GlobalNode::from_local_node(spdg.id, inner)),
                         )
                     })
                 })

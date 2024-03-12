@@ -2,22 +2,19 @@ use std::{borrow::Cow, iter, rc::Rc};
 
 use df::{fmt::DebugWithContext, Analysis, JoinSemiLattice};
 use either::Either;
-use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
+use flowistry_pdg::{CallString, GlobalLocation, NodeKind, RichLocation};
 use itertools::Itertools;
 use log::{debug, trace};
 use petgraph::graph::DiGraph;
-use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceConflictBias};
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
-use rustc_index::IndexSlice;
 use rustc_middle::{
     mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
-        PlaceElem, Rvalue, Statement, StatementKind, Terminator, TerminatorEdges, TerminatorKind,
-        RETURN_PLACE,
+        visit::Visitor, BasicBlock, Body, Location, Operand, Place, PlaceElem, Statement,
+        Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArg, GenericArgsRef, List, ParamEnv, TyCtxt, TyKind},
+    ty::{GenericArg, List, ParamEnv, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df};
 use rustc_utils::cache::Cache;
@@ -26,10 +23,12 @@ use rustc_utils::{
     BodyExt, PlaceExt,
 };
 
+use super::async_support::*;
+use super::calling_convention::*;
 use super::graph::{DepEdge, DepGraph, DepNode};
 use super::utils::{self, FnResolution};
 use flowistry::{
-    infoflow::mutation::{ModularMutationVisitor, Mutation},
+    infoflow::mutation::{ModularMutationVisitor, Mutation, Reason},
     mir::placeinfo::PlaceInfo,
 };
 
@@ -181,7 +180,7 @@ impl<'tcx> PdgParams<'tcx> {
 pub struct PartialGraph<'tcx> {
     nodes: FxHashSet<DepNode<'tcx>>,
     edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
-    last_mutation: FxHashMap<Place<'tcx>, FxHashSet<RichLocation>>,
+    last_mutation: FxHashMap<Place<'tcx>, (NodeKind, FxHashSet<RichLocation>)>,
 }
 
 impl<C> DebugWithContext<C> for PartialGraph<'_> {}
@@ -190,63 +189,39 @@ impl<'tcx> df::JoinSemiLattice for PartialGraph<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         let b1 = utils::hashset_join(&mut self.edges, &other.edges);
         let b2 = utils::hashset_join(&mut self.nodes, &other.nodes);
-        let b3 = utils::hashmap_join(
-            &mut self.last_mutation,
-            &other.last_mutation,
-            utils::hashset_join,
-        );
+        let b3 = utils::hashmap_join(&mut self.last_mutation, &other.last_mutation, |v1, v2| {
+            debug_assert_eq!(v1.0, v2.0);
+            utils::hashset_join(&mut v1.1, &v2.1)
+        });
         b1 || b2 || b3
     }
 }
 
-struct CallingContext<'tcx> {
+pub(crate) struct CallingContext<'tcx> {
     call_string: CallString,
     param_env: ParamEnv<'tcx>,
     call_stack: Vec<DefId>,
 }
 
-/// Stores ids that are needed to construct projections around async functions.
-struct AsyncInfo {
-    poll_ready_variant_idx: VariantIdx,
-    poll_ready_field_idx: FieldIdx,
-}
-
-impl AsyncInfo {
-    fn make(tcx: TyCtxt) -> Option<Rc<Self>> {
-        let lang_items = tcx.lang_items();
-        let poll_def = tcx.adt_def(lang_items.poll()?);
-        let ready_vid = lang_items.poll_ready_variant()?;
-        assert_eq!(poll_def.variant_with_id(ready_vid).fields.len(), 1);
-        Some(Rc::new(Self {
-            poll_ready_variant_idx: poll_def.variant_index_with_id(ready_vid),
-            poll_ready_field_idx: 0_u32.into(),
-        }))
-    }
-}
-
 type PdgCache<'tcx> = Rc<Cache<CallString, Rc<PartialGraph<'tcx>>>>;
 
 pub struct GraphConstructor<'tcx> {
-    tcx: TyCtxt<'tcx>,
-    params: PdgParams<'tcx>,
+    pub(crate) tcx: TyCtxt<'tcx>,
+    pub(crate) params: PdgParams<'tcx>,
     body_with_facts: &'tcx BodyWithBorrowckFacts<'tcx>,
-    body: Cow<'tcx, Body<'tcx>>,
-    def_id: LocalDefId,
+    pub(crate) body: Cow<'tcx, Body<'tcx>>,
+    pub(crate) def_id: LocalDefId,
     place_info: PlaceInfo<'tcx>,
     control_dependencies: ControlDependencies<BasicBlock>,
-    body_assignments: utils::BodyAssignments,
-    calling_context: Option<CallingContext<'tcx>>,
+    pub(crate) body_assignments: utils::BodyAssignments,
+    pub(crate) calling_context: Option<CallingContext<'tcx>>,
     start_loc: FxHashSet<RichLocation>,
-    async_info: Rc<AsyncInfo>,
-    pdg_cache: PdgCache<'tcx>,
+    pub(crate) async_info: Rc<AsyncInfo>,
+    pub(crate) pdg_cache: PdgCache<'tcx>,
 }
-
-macro_rules! let_assert {
-  ($p:pat = $e:expr, $($arg:tt)*) => {
-    let $p = $e else {
-      panic!($($arg)*);
-    };
-  }
+fn as_arg<'tcx>(place: Place<'tcx>, body: &Body<'tcx>) -> Option<u8> {
+    (body.local_kind(place.local) == rustc_middle::mir::LocalKind::Arg)
+        .then(|| place.local.as_u32() as u8 - 1)
 }
 
 impl<'tcx> GraphConstructor<'tcx> {
@@ -262,7 +237,7 @@ impl<'tcx> GraphConstructor<'tcx> {
     }
 
     /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution` in a given `calling_context`.
-    fn new(
+    pub(crate) fn new(
         params: PdgParams<'tcx>,
         calling_context: Option<CallingContext<'tcx>>,
         async_info: Rc<AsyncInfo>,
@@ -318,6 +293,32 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
     }
 
+    pub(crate) fn calling_context_for(
+        &self,
+        call_stack_extension: DefId,
+        location: Location,
+    ) -> CallingContext<'tcx> {
+        CallingContext {
+            call_string: self.make_call_string(location),
+            param_env: self.tcx.param_env(self.def_id),
+            call_stack: match &self.calling_context {
+                Some(cx) => {
+                    let mut cx = cx.call_stack.clone();
+                    cx.push(call_stack_extension);
+                    cx
+                }
+                None => vec![],
+            },
+        }
+    }
+
+    pub(crate) fn pdg_params_for_call(&self, root: FnResolution<'tcx>) -> PdgParams<'tcx> {
+        PdgParams {
+            root,
+            ..self.params.clone()
+        }
+    }
+
     /// Creates a [`CallString`] with the current function at the root,
     /// with the rest of the string provided by the [`CallingContext`].
     fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
@@ -331,9 +332,16 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn make_dep_node(
         &self,
         place: Place<'tcx>,
+        kind: NodeKind,
         location: impl Into<RichLocation>,
     ) -> DepNode<'tcx> {
-        DepNode::new(place, self.make_call_string(location), self.tcx, &self.body)
+        DepNode::new(
+            place,
+            self.make_call_string(location),
+            kind,
+            self.tcx,
+            &self.body,
+        )
     }
 
     /// Returns all pairs of `(src, edge)`` such that the given `location` is control-dependent on `edge`
@@ -353,7 +361,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                     };
                     let ctrl_place = discr.place()?;
                     let at = self.make_call_string(ctrl_loc);
-                    let src = DepNode::new(ctrl_place, at, self.tcx, &self.body);
+                    let src = DepNode::new(ctrl_place, at, NodeKind::Operand, self.tcx, &self.body);
                     let edge = DepEdge::control(at);
                     Some((src, edge))
                 })
@@ -363,7 +371,7 @@ impl<'tcx> GraphConstructor<'tcx> {
     }
 
     /// Returns the aliases of `place`. See [`PlaceInfo::aliases`] for details.
-    fn aliases(&self, place: Place<'tcx>) -> impl Iterator<Item = Place<'tcx>> + '_ {
+    pub(crate) fn aliases(&self, place: Place<'tcx>) -> impl Iterator<Item = Place<'tcx>> + '_ {
         // MASSIVE HACK ALERT:
         // The issue is that monomorphization erases regions, due to how it's implemented in rustc.
         // However, Flowistry's alias analysis uses regions to figure out aliases.
@@ -412,8 +420,9 @@ impl<'tcx> GraphConstructor<'tcx> {
                 // Find all places that have been mutated which conflict with `alias.`
                 let conflicts = state
                     .last_mutation
-                    .keys()
-                    .filter(move |place| {
+                    .iter()
+                    .map(|(k, (kind, locs))| (*k, (*kind, locs)))
+                    .filter(move |(place, _)| {
                         if place.is_indirect() && place.is_arg(&self.body) {
                             // HACK: `places_conflict` seems to consider it a bug is `borrow_place`
                             // includes a dereference, which should only happen if `borrow_place`
@@ -422,7 +431,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                             // TODO: this is not field-sensitive!
                             place.local == alias.local
                         } else {
-                            let mut place = **place;
+                            let mut place = *place;
                             if let Some((PlaceElem::Deref, rest)) = place.projection.split_last() {
                                 let mut new_place = place;
                                 new_place.projection = self.tcx.mk_place_elems(rest);
@@ -445,13 +454,12 @@ impl<'tcx> GraphConstructor<'tcx> {
                                 PlaceConflictBias::Overlap,
                             )
                         }
-                    })
-                    .map(|place| (*place, &state.last_mutation[place]));
+                    });
 
                 // Special case: if the `alias` is an un-mutated argument, then include it as a conflict
                 // coming from the special start location.
-                let alias_last_mut = if alias.is_arg(&self.body) {
-                    Some((alias, &self.start_loc))
+                let alias_last_mut = if let Some(n) = as_arg(alias, &self.body) {
+                    Some((alias, (NodeKind::FormalParameter(n), &self.start_loc)))
                 } else {
                     None
                 };
@@ -459,12 +467,12 @@ impl<'tcx> GraphConstructor<'tcx> {
                 // For each `conflict`` last mutated at the locations `last_mut`:
                 conflicts
                     .chain(alias_last_mut)
-                    .flat_map(|(conflict, last_mut_locs)| {
+                    .flat_map(|(conflict, (kind, last_mut_locs))| {
                         // For each last mutated location:
                         last_mut_locs.iter().map(move |last_mut_loc| {
                             // Return <CONFLICT> @ <LAST_MUT_LOC> as an input node.
                             let at = self.make_call_string(*last_mut_loc);
-                            DepNode::new(conflict, at, self.tcx, &self.body)
+                            DepNode::new(conflict, at, kind, self.tcx, &self.body)
                         })
                     })
             })
@@ -478,6 +486,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         &self,
         state: &mut PartialGraph<'tcx>,
         mutated: Place<'tcx>,
+        kind: NodeKind,
         location: Location,
     ) -> Vec<DepNode<'tcx>> {
         // **POINTER-SENSITIVITY:**
@@ -492,15 +501,25 @@ impl<'tcx> GraphConstructor<'tcx> {
             .iter()
             .map(|dst| {
                 // Create a destination node for (DST @ CURRENT_LOC).
-                let dst_node =
-                    DepNode::new(*dst, self.make_call_string(location), self.tcx, &self.body);
+                let dst_node = DepNode::new(
+                    *dst,
+                    self.make_call_string(location),
+                    kind,
+                    self.tcx,
+                    &self.body,
+                );
 
                 // Clear all previous mutations.
-                let dst_mutations = state.last_mutation.entry(*dst).or_default();
-                dst_mutations.clear();
+                let dst_mutations = state
+                    .last_mutation
+                    .entry(*dst)
+                    .or_insert_with(|| (kind, Default::default()));
+                dst_mutations.1.clear();
+
+                dst_mutations.0 = kind;
 
                 // Register that `dst` is mutated at the current location.
-                dst_mutations.insert(RichLocation::Location(location));
+                dst_mutations.1.insert(RichLocation::Location(location));
 
                 dst_node
             })
@@ -512,7 +531,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         &self,
         state: &mut PartialGraph<'tcx>,
         location: Location,
-        mutated: Either<Place<'tcx>, DepNode<'tcx>>,
+        mutated: Either<(Place<'tcx>, NodeKind), DepNode<'tcx>>,
         inputs: Either<Vec<Place<'tcx>>, DepNode<'tcx>>,
     ) {
         trace!("Applying mutation to {mutated:?} with inputs {inputs:?}");
@@ -529,7 +548,9 @@ impl<'tcx> GraphConstructor<'tcx> {
         trace!("  Data inputs: {data_inputs:?}");
 
         let outputs = match mutated {
-            Either::Left(place) => self.find_and_update_outputs(state, place, location),
+            Either::Left((place, kind)) => {
+                self.find_and_update_outputs(state, place, kind, location)
+            }
             Either::Right(node) => vec![node],
         };
         trace!("  Outputs: {outputs:?}");
@@ -556,116 +577,8 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
     }
 
-    /// Given the arguments to a `Future::poll` call, walk back through the
-    /// body to find the original future being polled, and get the arguments to the future.
-    fn find_async_args<'a>(
-        &'a self,
-        args: &'a [Operand<'tcx>],
-    ) -> (
-        FnResolution<'tcx>,
-        Location,
-        AsyncCallingConvention<'tcx, 'a>,
-    ) {
-        let get_def_for_op = |op: &Operand<'tcx>| -> Location {
-            let_assert!(Some(place) = op.place(), "Arg is not a place");
-            let_assert!(Some(local) = place.as_local(), "Place is not a local");
-            let_assert!(
-                Some(locs) = &self.body_assignments.get(&local),
-                "Local has no assignments"
-            );
-            assert!(locs.len() == 1);
-            locs[0]
-        };
-
-        let_assert!(
-            Either::Right(Terminator {
-                kind: TerminatorKind::Call {
-                    args: new_pin_args,
-                    ..
-                },
-                ..
-            }) = &self.body.stmt_at(get_def_for_op(&args[0])),
-            "Pinned assignment is not a call"
-        );
-        debug_assert!(new_pin_args.len() == 1);
-
-        let future_aliases = self
-            .aliases(self.tcx.mk_place_deref(new_pin_args[0].place().unwrap()))
-            .collect_vec();
-        debug_assert!(future_aliases.len() == 1);
-        let future = *future_aliases.first().unwrap();
-
-        let_assert!(
-          Either::Left(Statement {
-            kind: StatementKind::Assign(box (_, Rvalue::Use(future2))),
-            ..
-          }) = &self.body.stmt_at(get_def_for_op(&Operand::Move(future))),
-          "Assignment to pin::new input is not a statement"
-        );
-
-        let_assert!(
-            Either::Right(Terminator {
-                kind: TerminatorKind::Call {
-                    args: into_future_args,
-                    ..
-                },
-                ..
-            }) = &self.body.stmt_at(get_def_for_op(future2)),
-            "Assignment to alias of pin::new input is not a call"
-        );
-
-        let mut chase_target = Err(&into_future_args[0]);
-
-        while let Err(target) = chase_target {
-            let async_fn_call_loc = get_def_for_op(target);
-            let stmt = &self.body.stmt_at(async_fn_call_loc);
-            chase_target = match stmt {
-                Either::Right(Terminator {
-                    kind: TerminatorKind::Call { args, func, .. },
-                    ..
-                }) => {
-                    let (op, generics) = self.operand_to_def_id(func).unwrap();
-                    Ok((
-                        op,
-                        generics,
-                        AsyncCallingConvention::Fn(args),
-                        async_fn_call_loc,
-                    ))
-                }
-                Either::Left(Statement { kind, .. }) => match kind {
-                    StatementKind::Assign(box (
-                        _,
-                        Rvalue::Aggregate(
-                            box AggregateKind::Generator(def_id, generic_args, _),
-                            args,
-                        ),
-                    )) => Ok((
-                        *def_id,
-                        *generic_args,
-                        AsyncCallingConvention::Block(args),
-                        async_fn_call_loc,
-                    )),
-                    StatementKind::Assign(box (_, Rvalue::Use(target))) => Err(target),
-                    _ => {
-                        panic!("Assignment to into_future input is not a call: {stmt:?}");
-                    }
-                },
-                _ => {
-                    panic!("Assignment to into_future input is not a call: {stmt:?}");
-                }
-            };
-        }
-
-        let (op, generics, calling_convention, async_fn_call_loc) = chase_target.unwrap();
-
-        let resolution =
-            utils::try_resolve_function(self.tcx, op, self.tcx.param_env(self.def_id), generics);
-
-        (resolution, async_fn_call_loc, calling_convention)
-    }
-
     /// Resolve a function [`Operand`] to a specific [`DefId`] and generic arguments if possible.
-    fn operand_to_def_id(
+    pub(crate) fn operand_to_def_id(
         &self,
         func: &Operand<'tcx>,
     ) -> Option<(DefId, &'tcx List<GenericArg<'tcx>>)> {
@@ -769,23 +682,8 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         let call_string = self.make_call_string(location);
         // Recursively generate the PDG for the child function.
-        let params = PdgParams {
-            root: resolved_fn,
-            ..self.params.clone()
-        };
-        let call_stack = match &self.calling_context {
-            Some(cx) => {
-                let mut stack = cx.call_stack.clone();
-                stack.push(resolved_def_id);
-                stack
-            }
-            None => vec![resolved_def_id],
-        };
-        let calling_context = CallingContext {
-            call_string,
-            param_env,
-            call_stack,
-        };
+        let params = self.pdg_params_for_call(resolved_fn);
+        let calling_context = self.calling_context_for(resolved_def_id, location);
 
         let call_changes = self.params.call_change_callback.as_ref().map(|callback| {
             let info = if let CallKind::AsyncPoll(resolution, loc, _) = call_kind {
@@ -854,19 +752,22 @@ impl<'tcx> GraphConstructor<'tcx> {
                     Some(place) => place,
                     None => continue,
                 };
+                let kind = NodeKind::ActualParameter(callee_place.local.as_u32() as u8);
                 match cause {
                     FakeEffectKind::Read => self.apply_mutation(
                         state,
                         location,
-                        Either::Right(
-                            child_constructor.make_dep_node(callee_place, RichLocation::Start),
-                        ),
+                        Either::Right(child_constructor.make_dep_node(
+                            callee_place,
+                            kind,
+                            RichLocation::Start,
+                        )),
                         Either::Left(vec![caller_place]),
                     ),
                     FakeEffectKind::Write => self.apply_mutation(
                         state,
                         location,
-                        Either::Left(caller_place),
+                        Either::Left((caller_place, kind)),
                         Either::Left(vec![caller_place]),
                     ),
                 };
@@ -876,22 +777,32 @@ impl<'tcx> GraphConstructor<'tcx> {
         let child_graph = child_constructor.construct_partial_cached();
 
         // Find every reference to a parent-able node in the child's graph.
-        let is_arg = |node: &DepNode<'tcx>| {
-            node.at.leaf().function == child_constructor.def_id
-                && (node.place.local == RETURN_PLACE || node.place.is_arg(&child_constructor.body))
+        let as_arg = |node: &DepNode<'tcx>| {
+            if node.at.leaf().function != child_constructor.def_id {
+                return None;
+            }
+            if node.place.local == RETURN_PLACE {
+                Some(NodeKind::Target)
+            } else if node.place.is_arg(&child_constructor.body) {
+                Some(NodeKind::FormalParameter(
+                    node.place.local.as_u32() as u8 - 1,
+                ))
+            } else {
+                None
+            }
         };
         let parentable_srcs = child_graph
             .edges
             .iter()
             .map(|(src, _, _)| *src)
-            .filter(is_arg)
+            .filter(|a| as_arg(a).is_some())
             .filter(|node| node.at.leaf().location.is_start());
         let parentable_dsts = child_graph
             .edges
             .iter()
             .map(|(_, dst, _)| *dst)
-            .filter(is_arg)
-            .filter(|node| node.at.leaf().location.is_end());
+            .filter_map(|a| Some((a, as_arg(&a)?)))
+            .filter(|node| node.0.at.leaf().location.is_end());
 
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
@@ -911,12 +822,19 @@ impl<'tcx> GraphConstructor<'tcx> {
         //
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
-        for child_dst in parentable_dsts {
+        for (child_dst, kind) in parentable_dsts {
             if let Some(parent_place) = translate_to_parent(child_dst.place) {
+                let new_kind = match kind {
+                    NodeKind::FormalParameter(p) => NodeKind::ActualParameter(p),
+                    _ => panic!(
+                        "Unexpected node kind {kind} for {:?} in {:?}",
+                        child_dst.place, child_constructor.def_id
+                    ),
+                };
                 self.apply_mutation(
                     state,
                     location,
-                    Either::Left(parent_place),
+                    Either::Left((parent_place, new_kind)),
                     Either::Right(child_dst),
                 );
             }
@@ -930,25 +848,6 @@ impl<'tcx> GraphConstructor<'tcx> {
         Some(())
     }
 
-    fn async_generator(body: &Body<'tcx>) -> (LocalDefId, GenericArgsRef<'tcx>, Location) {
-        let block = BasicBlock::from_usize(0);
-        let location = Location {
-            block,
-            statement_index: body.basic_blocks[block].statements.len() - 1,
-        };
-        let stmt = body
-            .stmt_at(location)
-            .expect_left("Async fn should have a statement");
-        let StatementKind::Assign(box (
-            _,
-            Rvalue::Aggregate(box AggregateKind::Generator(def_id, generic_args, _), _args),
-        )) = &stmt.kind
-        else {
-            panic!("Async fn should assign to a generator")
-        };
-        (def_id.expect_local(), generic_args, location)
-    }
-
     fn modular_mutation_visitor<'a>(
         &'a self,
         state: &'a mut PartialGraph<'tcx>,
@@ -958,7 +857,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                 self.apply_mutation(
                     state,
                     location,
-                    Either::Left(mutation.mutated),
+                    Either::Left((mutation.mutated, node_kind_from_reason(mutation.reason))),
                     Either::Left(mutation.inputs),
                 );
             }
@@ -980,7 +879,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                     self.apply_mutation(
                         state,
                         location,
-                        Either::Left(place),
+                        Either::Left((place, NodeKind::Target)),
                         Either::Left(vec![place]),
                     );
                 }
@@ -1009,14 +908,6 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
     }
 
-    fn determine_async(&self) -> Option<(LocalDefId, GenericArgsRef<'tcx>, Location)> {
-        if self.tcx.asyncness(self.def_id).is_async() {
-            Some(Self::async_generator(&self.body))
-        } else {
-            try_as_async_trait_function(self.tcx, self.def_id.to_def_id(), self.body.as_ref())
-        }
-    }
-
     fn construct_partial_cached(&self) -> Rc<PartialGraph<'tcx>> {
         let key = self.make_call_string(RichLocation::Start);
         let pdg = self
@@ -1025,36 +916,9 @@ impl<'tcx> GraphConstructor<'tcx> {
         Rc::clone(pdg)
     }
 
-    fn construct_partial(&self) -> PartialGraph<'tcx> {
-        if let Some((generator_def_id, generic_args, location)) = self.determine_async() {
-            let param_env = self.tcx.param_env(self.def_id);
-            let generator_fn = utils::try_resolve_function(
-                self.tcx,
-                generator_def_id.to_def_id(),
-                param_env,
-                generic_args,
-            );
-            let params = PdgParams {
-                root: generator_fn,
-                ..self.params.clone()
-            };
-            let call_string = self.make_call_string(location);
-            let call_stack = match &self.calling_context {
-                Some(cx) => cx.call_stack.clone(),
-                None => vec![],
-            };
-            let calling_context = CallingContext {
-                param_env,
-                call_string,
-                call_stack,
-            };
-            return GraphConstructor::new(
-                params,
-                Some(calling_context),
-                self.async_info.clone(),
-                &self.pdg_cache,
-            )
-            .construct_partial();
+    pub(crate) fn construct_partial(&self) -> PartialGraph<'tcx> {
+        if let Some(g) = self.try_handle_as_async() {
+            return g;
         }
 
         let mut analysis = DfAnalysis(self)
@@ -1079,11 +943,18 @@ impl<'tcx> GraphConstructor<'tcx> {
             for block in all_returns {
                 analysis.seek_to_block_end(block);
                 let return_state = analysis.get();
-                for (place, locations) in &return_state.last_mutation {
-                    if place.local == RETURN_PLACE || place.is_arg(&self.body) {
+                for (place, (src_kind, locations)) in &return_state.last_mutation {
+                    let ret_kind = if place.local == RETURN_PLACE {
+                        Some(NodeKind::FormalReturn)
+                    } else if let Some(num) = as_arg(*place, &self.body) {
+                        Some(NodeKind::FormalParameter(num))
+                    } else {
+                        None
+                    };
+                    if let Some(dest_kind) = ret_kind {
                         for location in locations {
-                            let src = self.make_dep_node(*place, *location);
-                            let dst = self.make_dep_node(*place, RichLocation::End);
+                            let src = self.make_dep_node(*place, *src_kind, *location);
+                            let dst = self.make_dep_node(*place, dest_kind, RichLocation::End);
                             let edge = DepEdge::data(
                                 self.make_call_string(self.body.terminator_loc(block)),
                             );
@@ -1144,108 +1015,16 @@ impl<'tcx> GraphConstructor<'tcx> {
             || Some(my_trait) == lang_items.fn_once_trait())
         .then_some(CallKind::Indirect)
     }
+}
 
-    fn try_poll_call_kind<'a>(
-        &'a self,
-        def_id: DefId,
-        original_args: &'a [Operand<'tcx>],
-    ) -> Option<CallKind<'tcx, 'a>> {
-        let lang_items = self.tcx.lang_items();
-        if lang_items.future_poll_fn() == Some(def_id) {
-            let (fun, loc, args) = self.find_async_args(original_args);
-            Some(CallKind::AsyncPoll(fun, loc, args))
-        } else {
-            None
-        }
+fn node_kind_from_reason(reason: Reason) -> NodeKind {
+    match reason {
+        Reason::AssignTarget => NodeKind::Target,
+        Reason::Argument(a) => NodeKind::ActualParameter(a),
     }
 }
 
-fn has_async_trait_signature(tcx: TyCtxt, def_id: DefId) -> bool {
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        let sig = tcx.fn_sig(def_id).skip_binder();
-        assoc_item.container == ty::AssocItemContainer::ImplContainer
-            && assoc_item.trait_item_def_id.is_some()
-            && match_pin_box_dyn_ty(tcx.lang_items(), sig.output().skip_binder())
-    } else {
-        false
-    }
-}
-
-fn try_as_async_trait_function<'tcx>(
-    tcx: TyCtxt,
-    def_id: DefId,
-    body: &Body<'tcx>,
-) -> Option<(LocalDefId, GenericArgsRef<'tcx>, Location)> {
-    if !has_async_trait_signature(tcx, def_id) {
-        return None;
-    }
-    let mut matching_statements =
-        body.basic_blocks
-            .iter_enumerated()
-            .flat_map(|(block, bbdat)| {
-                bbdat.statements.iter().enumerate().filter_map(
-                    move |(statement_index, statement)| {
-                        let StatementKind::Assign(box (
-                            _,
-                            Rvalue::Aggregate(
-                                box AggregateKind::Generator(def_id, generic_args, _),
-                                _args,
-                            ),
-                        )) = &statement.kind
-                        else {
-                            return None;
-                        };
-                        Some((
-                            def_id.as_local()?,
-                            *generic_args,
-                            Location {
-                                block,
-                                statement_index,
-                            },
-                        ))
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-    assert_eq!(matching_statements.len(), 1);
-    matching_statements.pop()
-}
-
-/// Does this fucntion have a structure as created by the `#[async_trait]` macro
-pub fn is_async_trait_fn(tcx: TyCtxt, def_id: DefId, body: &Body<'_>) -> bool {
-    try_as_async_trait_function(tcx, def_id, body).is_some()
-}
-
-use rustc_middle::ty;
-fn match_pin_box_dyn_ty(lang_items: &rustc_hir::LanguageItems, t: ty::Ty) -> bool {
-    let ty::TyKind::Adt(pin_ty, args) = t.kind() else {
-        return false;
-    };
-    if Some(pin_ty.did()) != lang_items.pin_type() {
-        return false;
-    };
-    let [arg] = args.as_slice() else { return false };
-    let Some(t_a) = arg.as_type() else {
-        return false;
-    };
-    if !t_a.is_box() {
-        return false;
-    };
-    let ty::TyKind::Dynamic(pred, _, ty::DynKind::Dyn) = t_a.boxed_ty().kind() else {
-        return false;
-    };
-    if pred.len() != 2 {
-        return false;
-    }
-    pred.iter().any(|p| {
-        let ty::ExistentialPredicate::Trait(t) = p.skip_binder() else {
-            return false;
-        };
-        Some(t.def_id) == lang_items.future_trait()
-    })
-}
-
-enum CallKind<'tcx, 'a> {
+pub enum CallKind<'tcx, 'a> {
     /// A standard function call like `f(x)`.
     Direct,
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
@@ -1256,108 +1035,6 @@ enum CallKind<'tcx, 'a> {
         Location,
         AsyncCallingConvention<'tcx, 'a>,
     ),
-}
-
-enum CallingConvention<'tcx, 'a> {
-    Direct(&'a [Operand<'tcx>]),
-    Indirect {
-        closure_arg: &'a Operand<'tcx>,
-        tupled_arguments: &'a Operand<'tcx>,
-    },
-    Async(AsyncCallingConvention<'tcx, 'a>),
-}
-
-impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
-    fn from_call_kind(
-        kind: &CallKind<'tcx, 'a>,
-        args: &'a [Operand<'tcx>],
-    ) -> CallingConvention<'tcx, 'a> {
-        match kind {
-            CallKind::AsyncPoll(_, _, args) => CallingConvention::Async(*args),
-            CallKind::Direct => CallingConvention::Direct(args),
-            CallKind::Indirect => CallingConvention::Indirect {
-                closure_arg: &args[0],
-                tupled_arguments: &args[1],
-            },
-        }
-    }
-
-    fn handle_translate(
-        &self,
-        async_info: &AsyncInfo,
-        tcx: TyCtxt<'tcx>,
-        child: Place<'tcx>,
-        destination: Place<'tcx>,
-        parent_body: &Body<'tcx>,
-    ) -> Option<(Place<'tcx>, &[PlaceElem<'tcx>])> {
-        let result = match self {
-            // Async return must be handled special, because it gets wrapped in `Poll::Ready`
-            Self::Async { .. } if child.local == RETURN_PLACE => {
-                let in_poll = destination.project_deeper(
-                    &[PlaceElem::Downcast(None, async_info.poll_ready_variant_idx)],
-                    tcx,
-                );
-                let field_idx = async_info.poll_ready_field_idx;
-                let child_inner_return_type = in_poll
-                    .ty(parent_body.local_decls(), tcx)
-                    .field_ty(tcx, field_idx);
-                (
-                    in_poll.project_deeper(
-                        &[PlaceElem::Field(field_idx, child_inner_return_type)],
-                        tcx,
-                    ),
-                    &child.projection[..],
-                )
-            }
-            _ if child.local == RETURN_PLACE => (destination, &child.projection[..]),
-            // Map arguments to the argument array
-            Self::Direct(args) => (
-                args[child.local.as_usize() - 1].place()?,
-                &child.projection[..],
-            ),
-            // Map arguments to projections of the future, the poll's first argument
-            Self::Async(cc) => {
-                if child.local.as_usize() == 1 {
-                    let PlaceElem::Field(idx, _) = child.projection[0] else {
-                        panic!("Unexpected non-projection of async context")
-                    };
-                    let op = match cc {
-                        AsyncCallingConvention::Fn(args) => &args[idx.as_usize()],
-                        AsyncCallingConvention::Block(args) => &args[idx],
-                    };
-                    (op.place()?, &child.projection[1..])
-                } else {
-                    return None;
-                }
-            }
-            // Map closure captures to the first argument.
-            // Map formal parameters to the second argument.
-            Self::Indirect {
-                closure_arg,
-                tupled_arguments,
-            } => {
-                if child.local.as_usize() == 1 {
-                    (closure_arg.place()?, &child.projection[..])
-                } else {
-                    let tuple_arg = tupled_arguments.place()?;
-                    let _projection = child.projection.to_vec();
-                    let field = FieldIdx::from_usize(child.local.as_usize() - 2);
-                    let field_ty = tuple_arg.ty(parent_body, tcx).field_ty(tcx, field);
-                    (
-                        tuple_arg.project_deeper(&[PlaceElem::Field(field, field_ty)], tcx),
-                        &child.projection[..],
-                    )
-                }
-            }
-        };
-        Some(result)
-    }
-}
-
-#[derive(Clone, Copy)]
-enum AsyncCallingConvention<'tcx, 'a> {
-    Fn(&'a [Operand<'tcx>]),
-    Block(&'a IndexSlice<FieldIdx, Operand<'tcx>>),
 }
 
 struct DfAnalysis<'a, 'tcx>(&'a GraphConstructor<'tcx>);

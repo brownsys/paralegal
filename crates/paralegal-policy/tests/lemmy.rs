@@ -3,7 +3,7 @@ mod helpers;
 use std::sync::Arc;
 
 use helpers::{Result, Test};
-use paralegal_policy::{assert_error, Context, EdgeSelection};
+use paralegal_policy::{assert_error, assert_warning, Context, Diagnostics, EdgeSelection};
 use paralegal_spdg::Identifier;
 
 const ASYNC_TRAIT_CODE: &str = stringify!(
@@ -37,13 +37,19 @@ const ASYNC_TRAIT_CODE: &str = stringify!(
 );
 
 fn async_trait_policy(ctx: Arc<Context>) -> Result<()> {
+    let sinks = ctx
+        .marked_nodes(Identifier::new_intern("sink"))
+        .collect::<Vec<_>>();
+    for s in &sinks {
+        ctx.node_note(*s, "Found this match for the sink marker");
+    }
+    assert_warning!(ctx, !sinks.is_empty(), "No sinks found");
     assert_error!(
         ctx,
         ctx.any_flows(
             &ctx.marked_nodes(Identifier::new_intern("source"))
                 .collect::<Vec<_>>(),
-            &ctx.marked_nodes(Identifier::new_intern("sink"))
-                .collect::<Vec<_>>(),
+            &sinks,
             EdgeSelection::Data
         )
         .is_some()

@@ -387,7 +387,7 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
     /// Try to discern if this node is a special [`NodeKind`]. Also returns if
     /// the location corresponds to a function call for an external function and
     /// any marker annotations on this node.
-    fn determine_node_kind(&mut self, weight: &DepNode<'tcx>) -> (NodeKind, Vec<Identifier>) {
+    fn node_annotations(&mut self, weight: &DepNode<'tcx>) -> Vec<Identifier> {
         let leaf_loc = weight.at.leaf();
 
         let body = &self.tcx().body_for_def_id(leaf_loc.function).unwrap().body;
@@ -397,15 +397,23 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                 if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
             {
                 let function_id = leaf_loc.function.to_def_id();
-                let arg_num = weight.place.local.as_u32() - 1;
+                let NodeKind::FormalParameter(arg_num) = weight.kind else {
+                    panic!(
+                        "Unexpected node kind {} at functions start of {function_id:?}",
+                        weight.kind
+                    )
+                };
                 self.known_def_ids.extend(Some(function_id));
 
                 let (annotations, parent) = self.annotations_for_function(function_id, |ann| {
-                    ann.refinement.on_argument().contains(arg_num).unwrap()
+                    ann.refinement
+                        .on_argument()
+                        .contains(arg_num as u32)
+                        .unwrap()
                 });
 
                 self.known_def_ids.extend(parent);
-                (NodeKind::FormalParameter(arg_num as u8), annotations)
+                annotations
             }
             RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
                 let function_id = leaf_loc.function.to_def_id();
@@ -413,58 +421,51 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                 let (annotations, parent) =
                     self.annotations_for_function(function_id, |ann| ann.refinement.on_return());
                 self.known_def_ids.extend(parent);
-                (NodeKind::FormalReturn, annotations)
+                annotations
             }
             RichLocation::Location(loc) => {
                 let stmt_at_loc = body.stmt_at(loc);
-                let matches_place = |place| weight.place.simple_overlaps(place).contains_other();
                 if let crate::Either::Right(
                     term @ mir::Terminator {
-                        kind:
-                            mir::TerminatorKind::Call {
-                                args, destination, ..
-                            },
+                        kind: mir::TerminatorKind::Call { .. },
                         ..
                     },
                 ) = stmt_at_loc
                 {
-                    let indices: TinyBitSet = args
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, op)| matches_place(op.place()?).then_some(i as u32))
-                        .collect::<TinyBitSet>();
                     let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
                     self.known_def_ids.extend(Some(fun));
-                    let kind = if !indices.is_empty() {
-                        NodeKind::ActualParameter(indices)
-                    } else if matches_place(*destination) {
-                        NodeKind::ActualReturn
-                    } else {
-                        NodeKind::Unspecified
-                    };
+
                     // TODO implement matching the unspecified node type. OR we
                     // could make sure that there are no unspecified nodes here
-                    let annotations = match kind {
-                        NodeKind::ActualReturn => {
+                    let annotations = match weight.kind {
+                        NodeKind::Target => {
                             self.annotations_for_function(fun, |ann| ann.refinement.on_return())
                                 .0
                         }
                         NodeKind::ActualParameter(index) => {
                             self.annotations_for_function(fun, |ann| {
-                                !ann.refinement.on_argument().intersection(index).is_empty()
+                                if !ann.refinement.on_argument().contains(index as u32).unwrap() {
+                                    trace!(
+                                        "{ann:?} did not match {:?} ({})",
+                                        weight.place,
+                                        weight.kind
+                                    );
+                                    false
+                                } else {
+                                    true
+                                }
                             })
                             .0
                         }
-                        NodeKind::Unspecified => vec![],
                         _ => unreachable!(),
                     };
-                    (kind, annotations)
+                    annotations
                 } else {
                     // TODO attach annotations if the return value is a marked type
-                    (NodeKind::Unspecified, vec![])
+                    vec![]
                 }
             }
-            _ => (NodeKind::Unspecified, vec![]),
+            _ => vec![],
         }
     }
 
@@ -563,11 +564,17 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
     }
 
     /// Check if this node is of a marked type and register that type.
-    fn handle_node_types(&mut self, i: Node, weight: &DepNode<'tcx>, kind: NodeKind) {
+    fn handle_node_types(
+        &mut self,
+        i: Node,
+        weight: &DepNode<'tcx>,
+        kind: NodeKind,
+        is_fn_call: bool,
+    ) {
         let is_controller_argument = kind.is_formal_parameter()
             && matches!(self.try_as_root(weight.at), Some(l) if l.location == RichLocation::Start);
 
-        if kind.is_actual_return() {
+        if is_fn_call && kind.is_target() {
             assert!(weight.place.projection.is_empty());
         } else if !is_controller_argument {
             return;
@@ -665,7 +672,8 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         let mut markers: HashMap<NodeIndex, Vec<Identifier>> = HashMap::new();
 
         for (i, weight) in input.node_references() {
-            let (kind, node_markers) = self.determine_node_kind(weight);
+            let node_markers = self.node_annotations(weight);
+            let kind = weight.kind;
             let at = weight.at.leaf();
             let body = &tcx.body_for_def_id(at.function).unwrap().body;
 
@@ -679,12 +687,21 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                     span: src_loc_for_span(node_span, tcx),
                 },
             );
+            trace!("Node {new_idx:?}\n  description: {:?}\n  at: {at}\n  stmt: {}\n  kind {kind}\n  markers: {node_markers:?}", weight.place, match at.location {
+                RichLocation::Location(loc) => {
+                    match body.stmt_at(loc) {
+                        Either::Left(s) => format!("{:?}", s.kind),
+                        Either::Right(s) => format!("{:?}", s.kind),
+                    }
+                }
+                RichLocation::End => "end".to_string(),
+                RichLocation::Start => "start".to_string(),
+            });
 
             if !node_markers.is_empty() {
                 markers.entry(new_idx).or_default().extend(node_markers);
             }
-
-            self.handle_node_types(new_idx, weight, kind);
+            self.handle_node_types(new_idx, weight, kind, matches!(at.location, RichLocation::Location(l) if matches!(body.stmt_at(l), Either::Right(mir::Terminator { kind: mir::TerminatorKind::Call {..}, ..}))));
         }
 
         for e in input.edge_references() {

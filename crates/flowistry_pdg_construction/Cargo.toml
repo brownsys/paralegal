@@ -21,7 +21,8 @@ internment = { version = "0.7.4" }
 flowistry_pdg = { version = "0.1.0", path = "../flowistry_pdg", features = [
     "rustc",
 ] }
-flowistry = { git = "https://github.com/brownsys/flowistry", rev = "c4831e002c26a6253c692892bda21da80c91ca42", default-features = false }
+#flowistry = { path = "../../../flowistry/crates/flowistry", default-features = false }
+flowistry = { git = "https://github.com/brownsys/flowistry", rev = "e5d63edcfc8326cd8d9f196b48ad02a362f0b2e5", default-features = false }
 
 [dev-dependencies]
 rustc_utils = { workspace = true, features = ["indexical", "test"] }

@@ -644,38 +644,6 @@ impl Display for NodeInfo {
     }
 }
 
-/// Additional information about what a given node may represent
-#[derive(Clone, Debug, Serialize, Deserialize, Copy, strum::EnumIs)]
-pub enum NodeKind {
-    /// The node is (part of) a formal parameter of a function (0-indexed). e.g.
-    /// in `fn foo(x: usize)` `x` would be a `FormalParameter(0)`.
-    FormalParameter(u8),
-    /// Formal return of a function, e.g. `x` in `return x`;
-    FormalReturn,
-    /// Parameter given to a function at the call site, e.g. `x` in `foo(x)`.
-    ActualParameter(TinyBitSet),
-    /// Return value received from a call, e.g. `x` in `let x = foo(...);`
-    ActualReturn,
-    /// Any other kind of node
-    Unspecified,
-}
-
-impl Display for NodeKind {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            NodeKind::FormalParameter(i) => {
-                write!(f, "Formal Parameter [{i}]")
-            }
-            NodeKind::FormalReturn => f.write_str("Formal Return"),
-            NodeKind::ActualParameter(p) => {
-                write!(f, "Actual Parameters {}", p.display_pretty())
-            }
-            NodeKind::ActualReturn => f.write_str("Actual Return"),
-            NodeKind::Unspecified => f.write_str("Unspecified"),
-        }
-    }
-}
-
 /// Metadata for an edge in the [`SPDGImpl`]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EdgeInfo {

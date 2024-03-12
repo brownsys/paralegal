@@ -460,9 +460,7 @@ impl<'g> CallStringRef<'g> {
                 graph
                     .node_references()
                     .filter(|(_n, weight)| weight.at == self.call_site)
-                    .filter_map(|(n, weight)| {
-                        matches!(weight.kind, NodeKind::ActualReturn).then_some(n)
-                    }),
+                    .filter_map(|(n, weight)| weight.kind.is_target().then_some(n)),
             )
             .collect();
         nodes.sort();

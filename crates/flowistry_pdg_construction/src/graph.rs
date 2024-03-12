@@ -1,8 +1,8 @@
 //! The representation of the PDG.
 
-use std::{fmt, path::Path};
+use std::{fmt, hash::Hash, path::Path};
 
-use flowistry_pdg::CallString;
+use flowistry_pdg::{CallString, NodeKind};
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 use rustc_middle::{
@@ -15,7 +15,7 @@ use rustc_utils::PlaceExt;
 ///
 /// Represents a place at a particular call-string.
 /// The place is in the body of the root of the call-string.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct DepNode<'tcx> {
     /// A place in memory in a particular body.
     pub place: Place<'tcx>,
@@ -27,6 +27,42 @@ pub struct DepNode<'tcx> {
     /// This is cached as an interned string on [`DepNode`] because to compute it later,
     /// we would have to regenerate the entire monomorphized body for a given place.
     place_pretty: Option<Intern<String>>,
+
+    pub kind: NodeKind,
+}
+
+impl PartialEq for DepNode<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        // Using an explicit match here with all fields, so that should new
+        // fields be added we remember to check whether they need to be included
+        // here.
+        let Self {
+            place,
+            at,
+            place_pretty: _,
+            kind: _,
+        } = *self;
+        let eq = (place, at).eq(&(other.place, other.at));
+        debug_assert!(!eq || self.kind != other.kind);
+        eq
+    }
+}
+
+impl Eq for DepNode<'_> {}
+
+impl Hash for DepNode<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Using an explicit match here with all fields, so that should new
+        // fields be added we remember to check whether they need to be included
+        // here.
+        let Self {
+            place,
+            at,
+            place_pretty: _,
+            kind: _,
+        } = self;
+        (place, at).hash(state)
+    }
 }
 
 impl<'tcx> DepNode<'tcx> {
@@ -34,11 +70,18 @@ impl<'tcx> DepNode<'tcx> {
     ///
     /// The `tcx` and `body` arguments are used to precompute a pretty string
     /// representation of the [`DepNode`].
-    pub fn new(place: Place<'tcx>, at: CallString, tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> Self {
+    pub fn new(
+        place: Place<'tcx>,
+        at: CallString,
+        kind: NodeKind,
+        tcx: TyCtxt<'tcx>,
+        body: &Body<'tcx>,
+    ) -> Self {
         DepNode {
             place,
             at,
             place_pretty: place.to_string(tcx, body).map(Intern::new),
+            kind,
         }
     }
 }
