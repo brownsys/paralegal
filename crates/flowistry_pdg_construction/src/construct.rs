@@ -2,7 +2,8 @@ use std::{borrow::Cow, iter, rc::Rc};
 
 use df::{fmt::DebugWithContext, Analysis, JoinSemiLattice};
 use either::Either;
-use flowistry_pdg::{CallString, GlobalLocation, NodeKind, RichLocation};
+use flowistry::mir::placeinfo::PlaceInfo;
+use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
 use log::{debug, trace};
 use petgraph::graph::DiGraph;
@@ -27,10 +28,8 @@ use super::async_support::*;
 use super::calling_convention::*;
 use super::graph::{DepEdge, DepGraph, DepNode};
 use super::utils::{self, FnResolution};
-use flowistry::{
-    infoflow::mutation::{ModularMutationVisitor, Mutation, Reason},
-    mir::placeinfo::PlaceInfo,
-};
+use crate::graph::{SourceUse, TargetUse};
+use crate::mutation::{ModularMutationVisitor, Mutation, MutationReason};
 
 /// Whether or not to skip recursing into a function call during PDG construction.
 #[derive(Debug)]
@@ -180,7 +179,7 @@ impl<'tcx> PdgParams<'tcx> {
 pub struct PartialGraph<'tcx> {
     nodes: FxHashSet<DepNode<'tcx>>,
     edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
-    last_mutation: FxHashMap<Place<'tcx>, (NodeKind, FxHashSet<RichLocation>)>,
+    last_mutation: FxHashMap<Place<'tcx>, FxHashSet<RichLocation>>,
 }
 
 impl<C> DebugWithContext<C> for PartialGraph<'_> {}
@@ -189,10 +188,11 @@ impl<'tcx> df::JoinSemiLattice for PartialGraph<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         let b1 = utils::hashset_join(&mut self.edges, &other.edges);
         let b2 = utils::hashset_join(&mut self.nodes, &other.nodes);
-        let b3 = utils::hashmap_join(&mut self.last_mutation, &other.last_mutation, |v1, v2| {
-            debug_assert_eq!(v1.0, v2.0);
-            utils::hashset_join(&mut v1.1, &v2.1)
-        });
+        let b3 = utils::hashmap_join(
+            &mut self.last_mutation,
+            &other.last_mutation,
+            utils::hashset_join,
+        );
         b1 || b2 || b3
     }
 }
@@ -332,16 +332,9 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn make_dep_node(
         &self,
         place: Place<'tcx>,
-        kind: NodeKind,
         location: impl Into<RichLocation>,
     ) -> DepNode<'tcx> {
-        DepNode::new(
-            place,
-            self.make_call_string(location),
-            kind,
-            self.tcx,
-            &self.body,
-        )
+        DepNode::new(place, self.make_call_string(location), self.tcx, &self.body)
     }
 
     /// Returns all pairs of `(src, edge)`` such that the given `location` is control-dependent on `edge`
@@ -361,8 +354,8 @@ impl<'tcx> GraphConstructor<'tcx> {
                     };
                     let ctrl_place = discr.place()?;
                     let at = self.make_call_string(ctrl_loc);
-                    let src = DepNode::new(ctrl_place, at, NodeKind::Operand, self.tcx, &self.body);
-                    let edge = DepEdge::control(at);
+                    let src = DepNode::new(ctrl_place, at, self.tcx, &self.body);
+                    let edge = DepEdge::control(at, SourceUse::Operand, TargetUse::Assign);
                     Some((src, edge))
                 })
                 .collect_vec(),
@@ -421,7 +414,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                 let conflicts = state
                     .last_mutation
                     .iter()
-                    .map(|(k, (kind, locs))| (*k, (*kind, locs)))
+                    .map(|(k, locs)| (*k, locs))
                     .filter(move |(place, _)| {
                         if place.is_indirect() && place.is_arg(&self.body) {
                             // HACK: `places_conflict` seems to consider it a bug is `borrow_place`
@@ -458,8 +451,8 @@ impl<'tcx> GraphConstructor<'tcx> {
 
                 // Special case: if the `alias` is an un-mutated argument, then include it as a conflict
                 // coming from the special start location.
-                let alias_last_mut = if let Some(n) = as_arg(alias, &self.body) {
-                    Some((alias, (NodeKind::FormalParameter(n), &self.start_loc)))
+                let alias_last_mut = if alias.is_arg(&self.body) {
+                    Some((alias, &self.start_loc))
                 } else {
                     None
                 };
@@ -467,12 +460,12 @@ impl<'tcx> GraphConstructor<'tcx> {
                 // For each `conflict`` last mutated at the locations `last_mut`:
                 conflicts
                     .chain(alias_last_mut)
-                    .flat_map(|(conflict, (kind, last_mut_locs))| {
+                    .flat_map(|(conflict, last_mut_locs)| {
                         // For each last mutated location:
                         last_mut_locs.iter().map(move |last_mut_loc| {
                             // Return <CONFLICT> @ <LAST_MUT_LOC> as an input node.
                             let at = self.make_call_string(*last_mut_loc);
-                            DepNode::new(conflict, at, kind, self.tcx, &self.body)
+                            DepNode::new(conflict, at, self.tcx, &self.body)
                         })
                     })
             })
@@ -486,7 +479,6 @@ impl<'tcx> GraphConstructor<'tcx> {
         &self,
         state: &mut PartialGraph<'tcx>,
         mutated: Place<'tcx>,
-        kind: NodeKind,
         location: Location,
     ) -> Vec<DepNode<'tcx>> {
         // **POINTER-SENSITIVITY:**
@@ -501,25 +493,15 @@ impl<'tcx> GraphConstructor<'tcx> {
             .iter()
             .map(|dst| {
                 // Create a destination node for (DST @ CURRENT_LOC).
-                let dst_node = DepNode::new(
-                    *dst,
-                    self.make_call_string(location),
-                    kind,
-                    self.tcx,
-                    &self.body,
-                );
+                let dst_node =
+                    DepNode::new(*dst, self.make_call_string(location), self.tcx, &self.body);
 
                 // Clear all previous mutations.
-                let dst_mutations = state
-                    .last_mutation
-                    .entry(*dst)
-                    .or_insert_with(|| (kind, Default::default()));
-                dst_mutations.1.clear();
-
-                dst_mutations.0 = kind;
+                let dst_mutations = state.last_mutation.entry(*dst).or_default();
+                dst_mutations.clear();
 
                 // Register that `dst` is mutated at the current location.
-                dst_mutations.1.insert(RichLocation::Location(location));
+                dst_mutations.insert(RichLocation::Location(location));
 
                 dst_node
             })
@@ -531,8 +513,10 @@ impl<'tcx> GraphConstructor<'tcx> {
         &self,
         state: &mut PartialGraph<'tcx>,
         location: Location,
-        mutated: Either<(Place<'tcx>, NodeKind), DepNode<'tcx>>,
+        mutated: Either<Place<'tcx>, DepNode<'tcx>>,
         inputs: Either<Vec<Place<'tcx>>, DepNode<'tcx>>,
+        source_use: SourceUse,
+        target_use: TargetUse,
     ) {
         trace!("Applying mutation to {mutated:?} with inputs {inputs:?}");
 
@@ -548,9 +532,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         trace!("  Data inputs: {data_inputs:?}");
 
         let outputs = match mutated {
-            Either::Left((place, kind)) => {
-                self.find_and_update_outputs(state, place, kind, location)
-            }
+            Either::Left(place) => self.find_and_update_outputs(state, place, location),
             Either::Right(node) => vec![node],
         };
         trace!("  Outputs: {outputs:?}");
@@ -561,7 +543,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
 
         // Add data dependencies: data_input -> output
-        let data_edge = DepEdge::data(self.make_call_string(location));
+        let data_edge = DepEdge::data(self.make_call_string(location), source_use, target_use);
         for data_input in data_inputs {
             for output in &outputs {
                 trace!("Adding edge {data_input:?} -> {output:?}");
@@ -752,23 +734,27 @@ impl<'tcx> GraphConstructor<'tcx> {
                     Some(place) => place,
                     None => continue,
                 };
-                let kind = NodeKind::ActualParameter(callee_place.local.as_u32() as u8);
+                let source_use = SourceUse::Argument(callee_place.local.as_u32() as u8);
+                let target_use = TargetUse::Assign;
+                let inputs = Either::Left(vec![caller_place]);
                 match cause {
                     FakeEffectKind::Read => self.apply_mutation(
                         state,
                         location,
-                        Either::Right(child_constructor.make_dep_node(
-                            callee_place,
-                            kind,
-                            RichLocation::Start,
-                        )),
-                        Either::Left(vec![caller_place]),
+                        Either::Right(
+                            child_constructor.make_dep_node(callee_place, RichLocation::Start),
+                        ),
+                        inputs,
+                        source_use,
+                        target_use,
                     ),
                     FakeEffectKind::Write => self.apply_mutation(
                         state,
                         location,
-                        Either::Left((caller_place, kind)),
-                        Either::Left(vec![caller_place]),
+                        Either::Left(caller_place),
+                        inputs,
+                        source_use,
+                        target_use,
                     ),
                 };
             }
@@ -782,11 +768,9 @@ impl<'tcx> GraphConstructor<'tcx> {
                 return None;
             }
             if node.place.local == RETURN_PLACE {
-                Some(NodeKind::Target)
+                Some(None)
             } else if node.place.is_arg(&child_constructor.body) {
-                Some(NodeKind::FormalParameter(
-                    node.place.local.as_u32() as u8 - 1,
-                ))
+                Some(Some(node.place.local.as_u32() as u8 - 1))
             } else {
                 None
             }
@@ -795,8 +779,8 @@ impl<'tcx> GraphConstructor<'tcx> {
             .edges
             .iter()
             .map(|(src, _, _)| *src)
-            .filter(|a| as_arg(a).is_some())
-            .filter(|node| node.at.leaf().location.is_start());
+            .filter_map(|a| Some((a, as_arg(&a)?)))
+            .filter(|(node, _)| node.at.leaf().location.is_start());
         let parentable_dsts = child_graph
             .edges
             .iter()
@@ -806,13 +790,15 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
-        for child_src in parentable_srcs {
+        for (child_src, kind) in parentable_srcs {
             if let Some(parent_place) = translate_to_parent(child_src.place) {
                 self.apply_mutation(
                     state,
                     location,
                     Either::Right(child_src),
                     Either::Left(vec![parent_place]),
+                    SourceUse::Operand,
+                    kind.map(TargetUse::MutArg).unwrap_or(TargetUse::Return),
                 );
             }
         }
@@ -824,18 +810,16 @@ impl<'tcx> GraphConstructor<'tcx> {
         // the *last* nodes in the child function to the parent, not *all* of them.
         for (child_dst, kind) in parentable_dsts {
             if let Some(parent_place) = translate_to_parent(child_dst.place) {
-                let new_kind = match kind {
-                    NodeKind::FormalParameter(p) => NodeKind::ActualParameter(p),
-                    _ => panic!(
-                        "Unexpected node kind {kind} for {:?} in {:?}",
-                        child_dst.place, child_constructor.def_id
-                    ),
-                };
+                let idx = kind.unwrap_or_else(|| {
+                    panic!("Return place cannot be forward-translated into parent")
+                });
                 self.apply_mutation(
                     state,
                     location,
-                    Either::Left((parent_place, new_kind)),
+                    Either::Left(parent_place),
                     Either::Right(child_dst),
+                    SourceUse::Argument(idx),
+                    TargetUse::Assign,
                 );
             }
         }
@@ -851,16 +835,29 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn modular_mutation_visitor<'a>(
         &'a self,
         state: &'a mut PartialGraph<'tcx>,
-    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Vec<Mutation<'tcx>>) + 'a> {
-        ModularMutationVisitor::new(&self.place_info, |location, mutations| {
-            for mutation in mutations {
-                self.apply_mutation(
-                    state,
-                    location,
-                    Either::Left((mutation.mutated, node_kind_from_reason(mutation.reason))),
-                    Either::Left(mutation.inputs),
-                );
-            }
+        is_fn_call: bool,
+    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
+        ModularMutationVisitor::new(&self.place_info, move |location, mutation| {
+            self.apply_mutation(
+                state,
+                location,
+                Either::Left(mutation.mutated),
+                Either::Left(mutation.inputs),
+                mutation
+                    .operand_index
+                    .map(SourceUse::Argument)
+                    .unwrap_or(SourceUse::Operand),
+                match mutation.mutation_reason {
+                    MutationReason::AssignTarget => {
+                        if is_fn_call {
+                            TargetUse::Return
+                        } else {
+                            TargetUse::Assign
+                        }
+                    }
+                    MutationReason::MutArgument(arg) => TargetUse::MutArg(arg),
+                },
+            )
         })
     }
 
@@ -879,8 +876,10 @@ impl<'tcx> GraphConstructor<'tcx> {
                     self.apply_mutation(
                         state,
                         location,
-                        Either::Left((place, NodeKind::Target)),
+                        Either::Left(place),
                         Either::Left(vec![place]),
+                        SourceUse::Operand,
+                        TargetUse::Assign,
                     );
                 }
             }
@@ -896,14 +895,14 @@ impl<'tcx> GraphConstructor<'tcx> {
                     .handle_call(state, location, func, args, *destination)
                     .is_none()
                 {
-                    self.modular_mutation_visitor(state)
+                    self.modular_mutation_visitor(state, true)
                         .visit_terminator(terminator, location)
                 }
             }
 
             // Fallback: call the visitor
             _ => self
-                .modular_mutation_visitor(state)
+                .modular_mutation_visitor(state, false)
                 .visit_terminator(terminator, location),
         }
     }
@@ -943,23 +942,23 @@ impl<'tcx> GraphConstructor<'tcx> {
             for block in all_returns {
                 analysis.seek_to_block_end(block);
                 let return_state = analysis.get();
-                for (place, (src_kind, locations)) in &return_state.last_mutation {
+                for (place, locations) in &return_state.last_mutation {
                     let ret_kind = if place.local == RETURN_PLACE {
-                        Some(NodeKind::FormalReturn)
+                        TargetUse::Return
                     } else if let Some(num) = as_arg(*place, &self.body) {
-                        Some(NodeKind::FormalParameter(num))
+                        TargetUse::MutArg(num)
                     } else {
-                        None
+                        continue;
                     };
-                    if let Some(dest_kind) = ret_kind {
-                        for location in locations {
-                            let src = self.make_dep_node(*place, *src_kind, *location);
-                            let dst = self.make_dep_node(*place, dest_kind, RichLocation::End);
-                            let edge = DepEdge::data(
-                                self.make_call_string(self.body.terminator_loc(block)),
-                            );
-                            final_state.edges.insert((src, dst, edge));
-                        }
+                    for location in locations {
+                        let src = self.make_dep_node(*place, *location);
+                        let dst = self.make_dep_node(*place, RichLocation::End);
+                        let edge = DepEdge::data(
+                            self.make_call_string(self.body.terminator_loc(block)),
+                            SourceUse::Operand,
+                            ret_kind,
+                        );
+                        final_state.edges.insert((src, dst, edge));
                     }
                 }
             }
@@ -1017,13 +1016,6 @@ impl<'tcx> GraphConstructor<'tcx> {
     }
 }
 
-fn node_kind_from_reason(reason: Reason) -> NodeKind {
-    match reason {
-        Reason::AssignTarget => NodeKind::Target,
-        Reason::Argument(a) => NodeKind::ActualParameter(a),
-    }
-}
-
 pub enum CallKind<'tcx, 'a> {
     /// A standard function call like `f(x)`.
     Direct,
@@ -1059,7 +1051,7 @@ impl<'tcx> df::Analysis<'tcx> for DfAnalysis<'_, 'tcx> {
         location: Location,
     ) {
         self.0
-            .modular_mutation_visitor(state)
+            .modular_mutation_visitor(state, false)
             .visit_statement(statement, location)
     }
 

@@ -9,6 +9,7 @@ extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
+extern crate rustc_target;
 extern crate rustc_type_ir;
 
 pub use utils::FnResolution;
@@ -22,6 +23,7 @@ mod async_support;
 mod calling_convention;
 mod construct;
 pub mod graph;
+mod mutation;
 mod utils;
 
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.

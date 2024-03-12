@@ -2,7 +2,7 @@
 
 use std::{fmt, hash::Hash, path::Path};
 
-use flowistry_pdg::{CallString, NodeKind};
+use flowistry_pdg::CallString;
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 use rustc_middle::{
@@ -10,6 +10,8 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 use rustc_utils::PlaceExt;
+
+pub use flowistry_pdg::{SourceUse, TargetUse};
 
 /// A node in the program dependency graph.
 ///
@@ -27,8 +29,6 @@ pub struct DepNode<'tcx> {
     /// This is cached as an interned string on [`DepNode`] because to compute it later,
     /// we would have to regenerate the entire monomorphized body for a given place.
     place_pretty: Option<Intern<String>>,
-
-    pub kind: NodeKind,
 }
 
 impl PartialEq for DepNode<'_> {
@@ -40,16 +40,8 @@ impl PartialEq for DepNode<'_> {
             place,
             at,
             place_pretty: _,
-            kind: _,
         } = *self;
-        let eq = (place, at).eq(&(other.place, other.at));
-        debug_assert!(
-            !eq || self.kind == other.kind,
-            "{} != {}",
-            self.kind,
-            other.kind
-        );
-        eq
+        (place, at).eq(&(other.place, other.at))
     }
 }
 
@@ -64,7 +56,6 @@ impl Hash for DepNode<'_> {
             place,
             at,
             place_pretty: _,
-            kind: _,
         } = self;
         (place, at).hash(state)
     }
@@ -75,18 +66,11 @@ impl<'tcx> DepNode<'tcx> {
     ///
     /// The `tcx` and `body` arguments are used to precompute a pretty string
     /// representation of the [`DepNode`].
-    pub fn new(
-        place: Place<'tcx>,
-        at: CallString,
-        kind: NodeKind,
-        tcx: TyCtxt<'tcx>,
-        body: &Body<'tcx>,
-    ) -> Self {
+    pub fn new(place: Place<'tcx>, at: CallString, tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> Self {
         DepNode {
             place,
             at,
             place_pretty: place.to_string(tcx, body).map(Intern::new),
-            kind,
         }
     }
 }
@@ -123,29 +107,71 @@ pub enum DepEdgeKind {
 /// An edge in the program dependence graph.
 ///
 /// Represents an operation that induces a dependency between places.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct DepEdge {
     /// Either data or control.
     pub kind: DepEdgeKind,
 
     /// The location of the operation.
     pub at: CallString,
+
+    pub source_use: SourceUse,
+
+    pub target_use: TargetUse,
+}
+
+impl PartialEq for DepEdge {
+    fn eq(&self, other: &Self) -> bool {
+        // Using an explicit match here with all fields, so that should new
+        // fields be added we remember to check whether they need to be included
+        // here.
+        let Self {
+            kind,
+            at,
+            source_use,
+            target_use,
+        } = *self;
+        let eq = (kind, at) == (other.kind, other.at);
+        debug_assert!(!eq || (source_use == other.source_use && target_use == other.target_use));
+        eq
+    }
+}
+
+impl Eq for DepEdge {}
+
+impl Hash for DepEdge {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Using an explicit match here with all fields, so that should new
+        // fields be added we remember to check whether they need to be included
+        // here.
+        let Self {
+            kind,
+            at,
+            source_use: _,
+            target_use: _,
+        } = self;
+        (kind, at).hash(state)
+    }
 }
 
 impl DepEdge {
     /// Constructs a data edge.
-    pub fn data(at: CallString) -> Self {
+    pub fn data(at: CallString, source_use: SourceUse, target_use: TargetUse) -> Self {
         DepEdge {
             kind: DepEdgeKind::Data,
             at,
+            source_use,
+            target_use,
         }
     }
 
     /// Constructs a control edge.
-    pub fn control(at: CallString) -> Self {
+    pub fn control(at: CallString, source_use: SourceUse, target_use: TargetUse) -> Self {
         DepEdge {
             kind: DepEdgeKind::Control,
             at,
+            source_use,
+            target_use,
         }
     }
 }

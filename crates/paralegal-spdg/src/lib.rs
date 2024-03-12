@@ -39,7 +39,7 @@ use utils::serde_map_via_vec;
 
 pub use crate::tiny_bitset::pretty as tiny_bitset_pretty;
 pub use crate::tiny_bitset::TinyBitSet;
-use flowistry_pdg::rustc_portable::LocalDefId;
+use flowistry_pdg::{rustc_portable::LocalDefId, SourceUse, TargetUse};
 use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::IntoNodeIdentifiers;
@@ -632,15 +632,13 @@ pub struct NodeInfo {
     pub at: CallString,
     /// The debug print of the `mir::Place` that this node represents
     pub description: String,
-    /// Additional information of how this node is used in the source.
-    pub kind: NodeKind,
     /// Span information for this node
     pub span: Span,
 }
 
 impl Display for NodeInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} @ {} ({})", self.description, self.at, self.kind)
+        write!(f, "{} @ {}", self.description, self.at)
     }
 }
 
@@ -651,6 +649,9 @@ pub struct EdgeInfo {
     pub kind: EdgeKind,
     /// Where in the program this edge arises from
     pub at: CallString,
+
+    pub source_use: SourceUse,
+    pub target_use: TargetUse,
 }
 
 impl Display for EdgeInfo {
@@ -795,9 +796,8 @@ impl<'a> Display for DisplayNode<'a> {
         if self.detailed {
             write!(
                 f,
-                "{{{}}} ({}) {} @ {}",
+                "{{{}}} {} @ {}",
                 self.node.index(),
-                weight.kind,
                 weight.description,
                 weight.at
             )
