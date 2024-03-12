@@ -43,6 +43,7 @@ fn temporary_directory() -> Result<PathBuf> {
     Ok(path)
 }
 
+#[must_use]
 /// A builder for integration tests
 pub struct Test {
     code: String,
