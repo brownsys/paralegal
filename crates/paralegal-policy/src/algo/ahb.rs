@@ -324,13 +324,9 @@ fn test_happens_before() -> Result<()> {
     let f = File::create("graph.gv")?;
     ctrl.dump_dot(f)?;
 
-    let Some(ret) = ctrl.return_ else {
-        unreachable!("No return found")
-    };
-
     let is_terminal = |end: GlobalNode| -> bool {
         assert_eq!(end.controller_id(), ctrl_name);
-        ret == end.local_node()
+        ctrl.return_.contains(&end.local_node())
     };
     let start = ctx
         .all_nodes_for_ctrl(ctrl_name)
