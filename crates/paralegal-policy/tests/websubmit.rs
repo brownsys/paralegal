@@ -1,8 +1,8 @@
 mod helpers;
 
 use helpers::{Result, Test};
-use paralegal_policy::{loc, paralegal_spdg, Diagnostics, Marker};
-use paralegal_spdg::traverse::EdgeSelection;
+use paralegal_policy::{algo::ahb, assert_error, loc, paralegal_spdg, Diagnostics, Marker};
+use paralegal_spdg::{traverse::EdgeSelection, Identifier, IntoIterGlobalNodes};
 macro_rules! marker {
     ($id:ident) => {
         Marker::new_intern(stringify!($id))
@@ -11,11 +11,12 @@ macro_rules! marker {
 
 #[test]
 fn email_send_overtaint() -> Result<()> {
-    let test = Test::new(stringify!(
+    let mut test = Test::new(stringify!(
         struct ApiKey {
             user: String,
         }
 
+        #[paralegal::marker(safe_source)]
         struct Config {
             a: usize,
             b: usize,
@@ -45,6 +46,7 @@ fn email_send_overtaint() -> Result<()> {
         }
 
         #[paralegal::analyze]
+        #[paralegal::marker(bless_safe_source, arguments = [2])]
         fn main(apikey: ApiKey, config: &Config, num: u8, bg: Backend, data: &Data) {
             let mut recipients: Vec<String> = vec![];
             let recipients = if num < 90 {
@@ -82,6 +84,8 @@ fn email_send_overtaint() -> Result<()> {
             Ok(())
         }
     ))?;
+    test.context_config().always_happens_before_tracing = ahb::TraceLevel::Full;
+
     test.run(|cx| {
         for c_id in cx.desc().controllers.keys() {
             // All srcs that have no influencers
@@ -115,7 +119,20 @@ fn email_send_overtaint() -> Result<()> {
                         return false;
                     }
 
-                    let sink_callsite = cx.inputs_of(cx.associated_call_site(*sink));
+                    let call_sites = cx.consuming_call_sites(*sink).collect::<Box<[_]>>();
+                    let [cs] = call_sites.as_ref() else {
+                        cx.node_error(
+                            *sink,
+                            format!(
+                                "Unexpected number of call sites {} for this node",
+                                call_sites.len()
+                            ),
+                        );
+                        return false;
+                    };
+                    let sink_callsite = cx.inputs_of(*cs);
+
+                    println!("{cs}");
 
                     // scopes for the store
                     let store_scopes = cx

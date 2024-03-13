@@ -27,7 +27,7 @@ use flowistry_pdg_construction::{
 };
 use itertools::Itertools;
 use petgraph::{
-    visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef},
+    visit::{GraphBase, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef},
     Direction,
 };
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -451,25 +451,64 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                 {
                     let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
                     self.known_def_ids.extend(Some(fun));
+                }
 
-                    for e in graph.graph.edges_directed(old_node, Direction::Incoming) {
-                        if e.weight().target_use.is_return() {
-                            self.register_annotations_for_function(node, fun, |ann| {
-                                ann.refinement.on_return()
-                            })
-                        }
-                        if let SourceUse::Argument(arg) = e.weight().source_use {
-                            self.register_annotations_for_function(node, fun, |ann| {
-                                if !ann.refinement.on_argument().contains(arg as u32).unwrap() {
-                                    false
-                                } else {
-                                    true
-                                }
-                            })
-                        }
+                // This should probably just be one global loop over the edges
+                for e in graph.graph.edges_directed(old_node, Direction::Incoming) {
+                    let leaf = e.weight().at.leaf();
+                    let RichLocation::Location(loc) = leaf.location else {
+                        continue;
+                    };
+                    let stmt_at_loc = &self
+                        .tcx()
+                        .body_for_def_id(leaf.function)
+                        .unwrap()
+                        .body
+                        .stmt_at(loc);
+                    let crate::Either::Right(
+                        term @ mir::Terminator {
+                            kind: mir::TerminatorKind::Call { .. },
+                            ..
+                        },
+                    ) = stmt_at_loc
+                    else {
+                        continue;
+                    };
+                    let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
+                    self.known_def_ids.extend(Some(fun));
+                    if e.weight().target_use.is_return() {
+                        self.register_annotations_for_function(node, fun, |ann| {
+                            ann.refinement.on_return()
+                        })
                     }
-                } else {
-                    // TODO attach annotations if the return value is a marked type
+                }
+
+                for e in graph.graph.edges_directed(old_node, Direction::Outgoing) {
+                    let leaf = e.weight().at.leaf();
+                    let RichLocation::Location(loc) = leaf.location else {
+                        continue;
+                    };
+                    let stmt_at_loc = &self
+                        .tcx()
+                        .body_for_def_id(leaf.function)
+                        .unwrap()
+                        .body
+                        .stmt_at(loc);
+                    let crate::Either::Right(
+                        term @ mir::Terminator {
+                            kind: mir::TerminatorKind::Call { .. },
+                            ..
+                        },
+                    ) = stmt_at_loc
+                    else {
+                        continue;
+                    };
+                    let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
+                    if let SourceUse::Argument(arg) = e.weight().source_use {
+                        self.register_annotations_for_function(node, fun, |ann| {
+                            ann.refinement.on_argument().contains(arg as u32).unwrap()
+                        })
+                    }
                 }
             }
             _ => (),

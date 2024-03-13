@@ -13,7 +13,7 @@ use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
 use petgraph::visit::{EdgeFiltered, EdgeRef, Walker};
-use petgraph::Incoming;
+use petgraph::{Direction, Incoming};
 
 use crate::algo::flows_to::CtrlFlowsTo;
 
@@ -131,12 +131,19 @@ impl Context {
         }
     }
 
-    /// Find the call string that identifies the call site or statement at which
-    /// this node is captured.
+    /// Find the call string for the statement or function that produced this node.
     pub fn associated_call_site(&self, node: GlobalNode) -> CallString {
         self.desc.controllers[&node.controller_id()]
             .node_info(node.local_node())
             .at
+    }
+
+    /// Call sites that consume this node directly. E.g. the outgoing edges.
+    pub fn consuming_call_sites(&self, node: GlobalNode) -> impl Iterator<Item = CallString> + '_ {
+        self.desc.controllers[&node.controller_id()]
+            .graph
+            .edges_directed(node.local_node(), Direction::Outgoing)
+            .map(|e| e.weight().at)
     }
 
     /// Find all controllers that bare this name.
