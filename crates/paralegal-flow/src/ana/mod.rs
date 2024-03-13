@@ -451,43 +451,46 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                 {
                     let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
                     self.known_def_ids.extend(Some(fun));
-                }
 
-                // This should probably just be one global loop over the edges
-                for e in graph.graph.edges_directed(old_node, Direction::Incoming) {
-                    let leaf = e.weight().at.leaf();
-                    let RichLocation::Location(loc) = leaf.location else {
-                        continue;
-                    };
-                    let stmt_at_loc = &self
-                        .tcx()
-                        .body_for_def_id(leaf.function)
-                        .unwrap()
-                        .body
-                        .stmt_at(loc);
-                    let crate::Either::Right(
-                        term @ mir::Terminator {
-                            kind: mir::TerminatorKind::Call { .. },
-                            ..
-                        },
-                    ) = stmt_at_loc
-                    else {
-                        continue;
-                    };
-                    let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
-                    self.known_def_ids.extend(Some(fun));
-                    if e.weight().target_use.is_return() {
-                        self.register_annotations_for_function(node, fun, |ann| {
-                            ann.refinement.on_return()
-                        })
+                    for e in graph.graph.edges_directed(old_node, Direction::Incoming) {
+                        if weight.at != e.weight().at {
+                            // Incoming edges are either from our operation or from control flow
+                            let at = e.weight().at;
+                            debug_assert!(
+                                at.leaf().function == leaf_loc.function
+                                    && if let RichLocation::Location(loc) = at.leaf().location {
+                                        matches!(
+                                            body.stmt_at(loc),
+                                            Either::Right(mir::Terminator {
+                                                kind: mir::TerminatorKind::SwitchInt { .. },
+                                                ..
+                                            })
+                                        )
+                                    } else {
+                                        false
+                                    }
+                            );
+                            continue;
+                        };
+                        if e.weight().target_use.is_return() {
+                            self.register_annotations_for_function(node, fun, |ann| {
+                                ann.refinement.on_return()
+                            })
+                        }
                     }
                 }
 
+                // This is not ideal. We have to do extra work here and fetch
+                // the `at` location for each outgoing edge, because their
+                // operations happen on a different function.
                 for e in graph.graph.edges_directed(old_node, Direction::Outgoing) {
                     let leaf = e.weight().at.leaf();
                     let RichLocation::Location(loc) = leaf.location else {
                         continue;
                     };
+                    let SourceUse::Argument(arg) = e.weight().source_use else {
+                        continue;
+                    };
                     let stmt_at_loc = &self
                         .tcx()
                         .body_for_def_id(leaf.function)
@@ -504,11 +507,9 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                         continue;
                     };
                     let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
-                    if let SourceUse::Argument(arg) = e.weight().source_use {
-                        self.register_annotations_for_function(node, fun, |ann| {
-                            ann.refinement.on_argument().contains(arg as u32).unwrap()
-                        })
-                    }
+                    self.register_annotations_for_function(node, fun, |ann| {
+                        ann.refinement.on_argument().contains(arg as u32).unwrap()
+                    })
                 }
             }
             _ => (),
