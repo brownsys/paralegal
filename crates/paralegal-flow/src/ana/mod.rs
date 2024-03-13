@@ -22,7 +22,7 @@ use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
-    is_async_trait_fn, CallChanges, PdgParams,
+    is_async_trait_fn, match_async_trait_assign, try_resolve_function, CallChanges, PdgParams,
     SkipCall::Skip,
 };
 use itertools::Itertools;
@@ -509,25 +509,48 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         } else {
             place.local.into()
         };
+
+        fn normalize<'a, 'tcx, I: ty::TypeFoldable<TyCtxt<'tcx>> + Clone>(
+            resolution: FnResolution<'tcx>,
+            tcx: TyCtxt<'tcx>,
+            f: &'a I,
+        ) -> Cow<'a, I> {
+            match resolution {
+                FnResolution::Final(instance) => {
+                    Cow::Owned(instance.subst_mir_and_normalize_erasing_regions(
+                        tcx,
+                        tcx.param_env(resolution.def_id()),
+                        ty::EarlyBinder::bind(tcx.erase_regions(f.clone())),
+                    ))
+                }
+                FnResolution::Partial(_) => Cow::Borrowed(f),
+            }
+        }
+
         let resolution = rest.iter().fold(
             FnResolution::Partial(self.local_def_id.to_def_id()),
             |resolution, caller| {
-                let terminator = match self.expect_stmt_at(*caller) {
-                    Either::Right(t) => t,
-                    Either::Left(stmt) => unreachable!("{stmt:?}\nat {caller} in {}", at),
-                };
-                let term = match resolution {
-                    FnResolution::Final(instance) => {
-                        Cow::Owned(instance.subst_mir_and_normalize_erasing_regions(
-                            tcx,
-                            tcx.param_env(resolution.def_id()),
-                            ty::EarlyBinder::bind(tcx.erase_regions(terminator.clone())),
-                        ))
+                let base_stmt = self.expect_stmt_at(*caller);
+                let normalized = map_either(
+                    base_stmt,
+                    |stmt| normalize(resolution, tcx, stmt),
+                    |term| normalize(resolution, tcx, term),
+                );
+                match normalized {
+                    Either::Right(term) => term.as_ref().as_instance_and_args(tcx).unwrap().0,
+                    Either::Left(stmt) => {
+                        if let Some((def_id, generics)) = match_async_trait_assign(stmt.as_ref()) {
+                            try_resolve_function(
+                                tcx,
+                                def_id,
+                                tcx.param_env(resolution.def_id()),
+                                generics,
+                            )
+                        } else {
+                            unreachable!("{stmt:?}\nat {caller} in {}", at)
+                        }
                     }
-                    FnResolution::Partial(_) => Cow::Borrowed(terminator),
-                };
-                let (instance, ..) = term.as_instance_and_args(tcx).unwrap();
-                instance
+                }
             },
         );
         // Thread through each caller to recover generic arguments
@@ -819,6 +842,17 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
             .into_iter()
             .map(|n| self.new_node_for(n.id()))
             .collect()
+    }
+}
+
+fn map_either<A, B, C, D>(
+    either: Either<A, B>,
+    f: impl FnOnce(A) -> C,
+    g: impl FnOnce(B) -> D,
+) -> Either<C, D> {
+    match either {
+        Either::Left(l) => Either::Left(f(l)),
+        Either::Right(r) => Either::Right(g(r)),
     }
 }
 

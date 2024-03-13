@@ -59,19 +59,10 @@ pub fn try_as_async_trait_function<'tcx>(
             .flat_map(|(block, bbdat)| {
                 bbdat.statements.iter().enumerate().filter_map(
                     move |(statement_index, statement)| {
-                        let StatementKind::Assign(box (
-                            _,
-                            Rvalue::Aggregate(
-                                box AggregateKind::Generator(def_id, generic_args, _),
-                                _args,
-                            ),
-                        )) = &statement.kind
-                        else {
-                            return None;
-                        };
+                        let (def_id, generics) = match_async_trait_assign(statement)?;
                         Some((
                             def_id.as_local()?,
-                            *generic_args,
+                            generics,
                             Location {
                                 block,
                                 statement_index,
@@ -83,6 +74,18 @@ pub fn try_as_async_trait_function<'tcx>(
             .collect::<Vec<_>>();
     assert_eq!(matching_statements.len(), 1);
     matching_statements.pop()
+}
+
+pub fn match_async_trait_assign<'tcx>(
+    statement: &Statement<'tcx>,
+) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+    match &statement.kind {
+        StatementKind::Assign(box (
+            _,
+            Rvalue::Aggregate(box AggregateKind::Generator(def_id, generic_args, _), _args),
+        )) => Some((*def_id, *generic_args)),
+        _ => None,
+    }
 }
 
 /// Does this function have a structure as created by the `#[async_trait]` macro
