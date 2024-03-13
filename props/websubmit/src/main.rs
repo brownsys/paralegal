@@ -272,7 +272,18 @@ impl AuthDisclosureProp {
                         return false;
                     }
 
-                    let sink_callsite = self.cx.inputs_of(self.cx.associated_call_site(*sink));
+                    let call_sites = self.cx.consuming_call_sites(*sink).collect::<Box<[_]>>();
+                    let [cs] = call_sites.as_ref() else {
+                        self.cx.node_error(
+                            *sink,
+                            format!(
+                                "Unexpected number of call sites {} for this node",
+                                call_sites.len()
+                            ),
+                        );
+                        return false;
+                    };
+                    let sink_callsite = self.cx.inputs_of(*cs);
 
                     // scopes for the store
                     let store_scopes = self

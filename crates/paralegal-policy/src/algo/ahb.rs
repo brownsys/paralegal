@@ -9,7 +9,9 @@ use paralegal_spdg::{GlobalNode, Identifier, Node, SPDGImpl};
 use anyhow::{ensure, Result};
 use itertools::Itertools;
 
-use petgraph::visit::{Control, DfsEvent, GraphBase, NodeIndexable};
+use petgraph::visit::{
+    Control, DfsEvent, EdgeFiltered, GraphBase, IntoEdgeReferences, NodeIndexable,
+};
 
 use crate::Diagnostics;
 use crate::{
@@ -127,12 +129,14 @@ impl crate::Context {
 
         let mut trace = Trace::new(self.config.always_happens_before_tracing);
 
+        let select_data = |e: <&SPDGImpl as IntoEdgeReferences>::EdgeRef| e.weight().is_data();
+
         for (ctrl_id, starts) in &start_map {
             let spdg = &self.desc().controllers[&ctrl_id];
-            let g = &spdg.graph;
+            let g = EdgeFiltered::from_fn(&spdg.graph, select_data);
             let mut tracer =
                 Tracer::new(&mut trace, g.node_bound(), starts.iter().copied(), *ctrl_id);
-            petgraph::visit::depth_first_search(g, starts.iter().copied(), |event| match event {
+            petgraph::visit::depth_first_search(&g, starts.iter().copied(), |event| match event {
                 DfsEvent::TreeEdge(from, to) => {
                     tracer.edge(from, to);
                     Control::<()>::Continue
