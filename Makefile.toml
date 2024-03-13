@@ -29,6 +29,7 @@ dependencies = [
     "policy-framework-tests",
     "test-policies",
     "guide-project",
+    "integration-tests",
 ]
 
 [tasks.check-all]
@@ -69,12 +70,17 @@ args = [
     "new_alias_analysis_tests",
     "--test",
     "async_tests",
+    "--no-fail-fast",
 ]
 
 [tasks.policy-framework-tests]
 description = "Tests related to the correctness of the policy framework."
 command = "cargo"
 args = ["test", "-p", "paralegal-policy", "--lib"]
+
+[tasks.integration-tests]
+command = "cargo"
+args = ["test", "--test", "lemmy", "--test", "websubmit", "--no-fail-fast"]
 
 [tasks.test-policies]
 description = "Attempts to build the test policies to ensure their API is still served."
