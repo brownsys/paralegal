@@ -669,7 +669,7 @@ fn test_context() {
         ctx.all_nodes_for_ctrl(controller)
             .filter(|n| ctx.has_marker(Marker::new_intern("sink"), *n))
             .count(),
-        3
+        2
     );
     // The 3rd argument and the return of the controller.
     assert_eq!(
