@@ -306,14 +306,14 @@ pub struct TypeDescription {
     /// How rustc would debug print this type
     pub rendering: String,
     /// Aliases
-    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))]
-    pub otypes: Vec<TypeId>,
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_seq"))]
+    pub otypes: Box<[TypeId]>,
     /// Attached markers. Guaranteed not to be empty.
     pub markers: Vec<Identifier>,
 }
 
 #[cfg(feature = "rustc")]
-mod ser_defid_vec {
+mod ser_defid_seq {
     use flowistry_pdg::rustc_proxies;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -322,17 +322,17 @@ mod ser_defid_vec {
     struct DefIdWrap(#[serde(with = "rustc_proxies::DefId")] crate::DefId);
 
     pub fn serialize<S: Serializer>(
-        v: &Vec<crate::DefId>,
+        v: &Box<[crate::DefId]>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        unsafe { Vec::<DefIdWrap>::serialize(std::mem::transmute(v), serializer) }
+        unsafe { Box::<[DefIdWrap]>::serialize(std::mem::transmute(v), serializer) }
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
-    ) -> Result<Vec<crate::DefId>, D::Error> {
+    ) -> Result<Box<[crate::DefId]>, D::Error> {
         unsafe {
-            Ok(std::mem::transmute(Vec::<DefIdWrap>::deserialize(
+            Ok(std::mem::transmute(Box::<[DefIdWrap]>::deserialize(
                 deserializer,
             )?))
         }
@@ -701,11 +701,11 @@ pub struct SPDG {
     /// The PDG
     pub graph: SPDGImpl,
     /// Nodes to which markers are assigned.
-    pub markers: HashMap<Node, Vec<Identifier>>,
+    pub markers: HashMap<Node, Box<[Identifier]>>,
     /// The nodes that represent arguments to the entrypoint
-    pub arguments: Vec<Node>,
+    pub arguments: Box<[Node]>,
     /// If the return is `()` or `!` then this is `None`
-    pub return_: Option<Node>,
+    pub return_: Box<[Node]>,
     /// Stores the assignment of relevant (e.g. marked) types to nodes. Node
     /// that this contains multiple types for a single node, because it hold
     /// top-level types and subtypes that may be marked.
@@ -714,7 +714,7 @@ pub struct SPDG {
 
 /// Holds [`TypeId`]s that were assigned to a node.
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))] pub Vec<TypeId>);
+pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_seq"))] pub Box<[TypeId]>);
 
 impl SPDG {
     /// Retrieve metadata for this node

@@ -107,7 +107,7 @@ pub enum DepEdgeKind {
 /// An edge in the program dependence graph.
 ///
 /// Represents an operation that induces a dependency between places.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DepEdge {
     /// Either data or control.
     pub kind: DepEdgeKind,
@@ -118,40 +118,6 @@ pub struct DepEdge {
     pub source_use: SourceUse,
 
     pub target_use: TargetUse,
-}
-
-impl PartialEq for DepEdge {
-    fn eq(&self, other: &Self) -> bool {
-        // Using an explicit match here with all fields, so that should new
-        // fields be added we remember to check whether they need to be included
-        // here.
-        let Self {
-            kind,
-            at,
-            source_use,
-            target_use,
-        } = *self;
-        let eq = (kind, at) == (other.kind, other.at);
-        debug_assert!(!eq || (source_use == other.source_use && target_use == other.target_use));
-        eq
-    }
-}
-
-impl Eq for DepEdge {}
-
-impl Hash for DepEdge {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Using an explicit match here with all fields, so that should new
-        // fields be added we remember to check whether they need to be included
-        // here.
-        let Self {
-            kind,
-            at,
-            source_use: _,
-            target_use: _,
-        } = self;
-        (kind, at).hash(state)
-    }
 }
 
 impl DepEdge {

@@ -410,7 +410,7 @@ impl Context {
         self.desc.controllers[&node.controller_id()]
             .type_assigns
             .get(&node.local_node())
-            .map_or(&[], |v| v.0.as_slice())
+            .map_or(&[], |v| v.0.as_ref())
     }
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
@@ -481,7 +481,7 @@ impl Context {
         self.desc()
             .type_info
             .get(&id)
-            .map_or(&[], |info| info.otypes.as_slice())
+            .map_or(&[], |info| info.otypes.as_ref())
     }
 
     /// Return all types that are marked with `marker`

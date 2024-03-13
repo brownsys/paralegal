@@ -340,7 +340,6 @@ where
 
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         debug!("Checking {location:?}: {:?}", terminator.kind);
-        let tcx = self.place_info.tcx;
 
         match &terminator.kind {
             TerminatorKind::Call {

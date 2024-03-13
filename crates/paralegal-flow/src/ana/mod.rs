@@ -27,7 +27,7 @@ use flowistry_pdg_construction::{
 };
 use itertools::Itertools;
 use petgraph::{
-    visit::{EdgeRef, GraphBase, IntoNodeReferences, NodeIndexable, NodeRef},
+    visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef},
     Direction,
 };
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -219,11 +219,7 @@ impl<'tcx, 'st> SPDGGenerator<'tcx, 'st> {
             .filter(|(id, _)| def_kind_for_item(*id, self.tcx).is_type())
             .into_grouping_map()
             .fold_with(
-                |id, _| TypeDescription {
-                    rendering: format!("{id:?}"),
-                    otypes: vec![],
-                    markers: vec![],
-                },
+                |id, _| (format!("{id:?}"), vec![], vec![]),
                 |mut desc, _, ann| {
                     match ann {
                         Either::Right(MarkerAnnotation { refinement, marker })
@@ -232,14 +228,26 @@ impl<'tcx, 'st> SPDGGenerator<'tcx, 'st> {
                             marker,
                         })) => {
                             assert!(refinement.on_self());
-                            desc.markers.push(*marker)
+                            desc.2.push(*marker)
                         }
-                        Either::Left(Annotation::OType(id)) => desc.otypes.push(*id),
+                        Either::Left(Annotation::OType(id)) => desc.1.push(*id),
                         _ => panic!("Unexpected type of annotation {ann:?}"),
                     }
                     desc
                 },
             )
+            .into_iter()
+            .map(|(k, (rendering, otypes, markers))| {
+                (
+                    k,
+                    TypeDescription {
+                        rendering: rendering.into(),
+                        otypes: otypes.into(),
+                        markers: markers.into(),
+                    },
+                )
+            })
+            .collect()
     }
 }
 
@@ -299,7 +307,7 @@ struct GraphConverter<'tcx, 'a, 'st, C> {
     known_def_ids: &'a mut C,
     /// A map of which nodes are of which (marked) type. We build this up during
     /// conversion.
-    types: HashMap<Node, Types>,
+    types: HashMap<Node, Vec<DefId>>,
     /// Mapping from old node indices to new node indices. Use
     /// [`Self::register_node`] to insert and [`Self::new_node_for`] to query.
     index_map: Box<[Node]>,
@@ -576,7 +584,7 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
             .dep_graph
             .graph
             .edges_directed(old_node, Direction::Incoming)
-            .any(|e| e.weight().target_use.is_return())
+            .any(|e| e.weight().target_use.is_return() && e.weight().source_use.is_argument())
         {
             assert!(
                 weight.place.projection.is_empty(),
@@ -599,7 +607,6 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
             self.types
                 .entry(i)
                 .or_default()
-                .0
                 .extend(node_types.iter().filter(|t| match tcx.def_kind(*t) {
                     def::DefKind::Generator => false,
                     kind => !kind.is_fn_like(),
@@ -671,7 +678,11 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                 .map(|(k, v)| (k, v.into_iter().collect()))
                 .collect(),
             return_,
-            type_assigns: self.types,
+            type_assigns: self
+                .types
+                .into_iter()
+                .map(|(k, v)| (k, Types(v.into())))
+                .collect(),
         }
     }
 
@@ -768,9 +779,9 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
     /// controller.
     ///
     /// TODO: Include mutable inputs
-    fn determine_return(&self) -> Option<Node> {
+    fn determine_return(&self) -> Box<[Node]> {
         // In async functions
-        let mut return_candidates = self
+        let return_candidates = self
             .spdg
             .node_references()
             .filter(|n| {
@@ -779,17 +790,17 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
                 matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::End)
             })
             .map(|n| n.id())
-            .collect::<Vec<_>>();
+            .collect::<Box<[_]>>();
         if return_candidates.len() != 1 {
-            warn!("Found too many candidates for the return: {return_candidates:?}.");
+            warn!("Found many candidates for the return: {return_candidates:?}.");
         }
-        return_candidates.pop()
+        return_candidates
     }
 
     /// Determine the set if nodes corresponding to the inputs to the
     /// entrypoint. The order is guaranteed to be the same as the source-level
     /// function declaration.
-    fn determine_arguments(&self) -> Vec<Node> {
+    fn determine_arguments(&self) -> Box<[Node]> {
         let mut g_nodes: Vec<_> = self
             .dep_graph
             .graph
@@ -821,7 +832,7 @@ fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
     controllers
         .values()
         .flat_map(|spdg| spdg.type_assigns.values())
-        .flat_map(|types| &types.0)
+        .flat_map(|types| types.0.iter())
         .for_each(|t| {
             assert!(
                 types.contains_key(t),

@@ -304,12 +304,7 @@ impl<'g> HasGraph<'g> for &CtrlRef<'g> {
 impl<'g> CtrlRef<'g> {
     pub fn return_value(&self) -> NodeRefs {
         // TODO only include mutable formal parameters?
-        let nodes = self
-            .ctrl
-            .return_
-            .as_ref()
-            .map_or(&[] as &[_], std::slice::from_ref)
-            .to_vec();
+        let nodes = self.ctrl.return_.to_vec();
         NodeRefs { nodes, graph: self }
     }
 
@@ -375,7 +370,7 @@ impl<'g> CtrlRef<'g> {
         self.ctrl
             .type_assigns
             .get(&target)
-            .map_or(&[], |t| t.0.as_slice())
+            .map_or(&[], |t| t.0.as_ref())
     }
 }
 
