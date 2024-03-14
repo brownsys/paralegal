@@ -3,7 +3,9 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
-use crate::{ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, rust::*, utils::*};
+use crate::{
+    ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, rust::*, stats::Stats, utils::*,
+};
 
 use hir::{
     def_id::DefId,
@@ -34,7 +36,7 @@ pub struct CollectingVisitor<'tcx> {
     /// later perform the analysis
     pub functions_to_analyze: Vec<FnToAnalyze>,
 
-    stats: crate::Stats,
+    stats: Stats,
 
     pub marker_ctx: MarkerDatabase<'tcx>,
 }
@@ -54,7 +56,7 @@ impl FnToAnalyze {
 }
 
 impl<'tcx> CollectingVisitor<'tcx> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args, stats: crate::Stats) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args, stats: Stats) -> Self {
         let functions_to_analyze = opts
             .anactrl()
             .selected_targets()

@@ -4,19 +4,19 @@
 //! [`CollectingVisitor`](crate::discover::CollectingVisitor) and then calling
 //! [`analyze`](SPDGGenerator::analyze).
 
-use super::discover::FnToAnalyze;
 use crate::{
     ann::{Annotation, MarkerAnnotation},
     desc::*,
+    discover::FnToAnalyze,
     rust::{hir::def, *},
+    stats::{Stats, TimedStat},
     utils::*,
-    CountedStat, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol, TimedStat,
+    DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 use flowistry_pdg::SourceUse;
 use paralegal_spdg::Node;
 
-use std::rc::Rc;
-use std::{borrow::Cow, time::Instant};
+use std::{borrow::Cow, rc::Rc, time::Instant};
 
 use anyhow::{anyhow, Result};
 use either::Either;
@@ -41,7 +41,7 @@ pub struct SPDGGenerator<'tcx> {
     pub marker_ctx: MarkerCtx<'tcx>,
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
-    stats: crate::Stats,
+    stats: Stats,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
@@ -49,7 +49,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         marker_ctx: MarkerCtx<'tcx>,
         opts: &'static crate::Args,
         tcx: TyCtxt<'tcx>,
-        stats: crate::Stats,
+        stats: Stats,
     ) -> Self {
         Self {
             marker_ctx,
@@ -329,7 +329,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let dep_graph = Rc::new(Self::create_flowistry_graph(generator, local_def_id)?);
         generator
             .stats
-            .record_timed(crate::TimedStat::Flowistry, start.elapsed());
+            .record_timed(TimedStat::Flowistry, start.elapsed());
 
         if generator.opts.dbg().dump_flowistry_pdg() {
             dep_graph.generate_graphviz(format!(
@@ -689,7 +689,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let judge =
             inline_judge::InlineJudge::new(generator.marker_ctx.clone(), tcx, opts.anactrl());
         let stat_wrap = generator.stats.clone();
-        let src_map = tcx.sess.source_map();
         let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(move |info| {
             let mut changes = CallChanges::default();
 
@@ -707,15 +706,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             if skip {
                 changes = changes.with_skip(Skip);
             } else {
-                stat_wrap.incr_counted(CountedStat::InliningsPerformed);
-                if !info.is_cached {
-                    stat_wrap.incr_counted(CountedStat::UniqueFunctions);
-                    let span = tcx.def_span(info.callee.def_id());
-                    let (_, start_line, _, end_line, _) = src_map.span_to_location_info(span);
-
-                    stat_wrap
-                        .record_counted(CountedStat::UniqueLoCs, (end_line - start_line) as u32);
-                }
+                stat_wrap.record_inlining(tcx, info.callee.def_id().expect_local(), info.is_cached)
             }
             changes
         });

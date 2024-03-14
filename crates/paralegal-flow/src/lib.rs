@@ -63,17 +63,13 @@ pub mod rust {
 }
 
 use args::{ClapArgs, LogLevelConfig};
-use desc::utils::{write_sep, TruncatedHumanTime};
+use desc::utils::write_sep;
 use rust::*;
 
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
-use std::{
-    fmt::Display,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::{fmt::Display, time::Instant};
 
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
@@ -87,6 +83,7 @@ pub mod ann;
 mod args;
 pub mod dbg;
 mod discover;
+mod stats;
 //mod sah;
 pub mod serializers;
 #[macro_use]
@@ -97,11 +94,13 @@ pub mod test_utils;
 
 pub use paralegal_spdg as desc;
 
+pub use crate::ann::db::MarkerCtx;
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
-use crate::utils::Print;
-
-pub use crate::ann::db::MarkerCtx;
+use crate::{
+    stats::{Stats, TimedStat},
+    utils::Print,
+};
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -132,83 +131,6 @@ struct Callbacks {
     opts: &'static Args,
     stats: Stats,
     start: Instant,
-}
-
-// LoC are analyzed, number of unique functions analyzed and number of functions inlined
-
-#[derive(Debug, Clone, Copy, strum::AsRefStr, PartialEq, Eq, enum_map::Enum)]
-pub enum TimedStat {
-    Rustc,
-    Flowistry,
-    Conversion,
-    Serialization,
-}
-
-#[derive(Debug, Clone, Copy, strum::AsRefStr, PartialEq, Eq, enum_map::Enum)]
-pub enum CountedStat {
-    UniqueLoCs,
-    UniqueFunctions,
-    InliningsPerformed,
-}
-
-struct StatsInner {
-    timed: enum_map::EnumMap<TimedStat, Option<Duration>>,
-    counted: enum_map::EnumMap<CountedStat, Option<u32>>,
-}
-
-#[derive(Clone)]
-pub struct Stats(Arc<Mutex<StatsInner>>);
-
-impl Stats {
-    pub fn record_timed(&self, stat: TimedStat, duration: Duration) {
-        *self.0.as_ref().lock().unwrap().timed[stat].get_or_insert(Duration::ZERO) += duration
-    }
-
-    pub fn record_counted(&self, stat: CountedStat, increase: u32) {
-        let mut borrow = self.0.as_ref().lock().unwrap();
-        let target = borrow.counted[stat].get_or_insert(0);
-        if let Some(new) = target.checked_add(increase) {
-            *target = new;
-        } else {
-            panic!("A u32 was not enough for {}", stat.as_ref());
-        }
-    }
-
-    pub fn incr_counted(&self, stat: CountedStat) {
-        self.record_counted(stat, 1)
-    }
-}
-
-impl Default for Stats {
-    fn default() -> Self {
-        Self(Arc::new(Mutex::new(Default::default())))
-    }
-}
-
-impl Default for StatsInner {
-    fn default() -> Self {
-        StatsInner {
-            timed: Default::default(),
-            counted: Default::default(),
-        }
-    }
-}
-
-impl Display for Stats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let borrow = self.0.as_ref().lock().unwrap();
-        for (s, dur) in borrow.timed {
-            if let Some(dur) = dur {
-                write!(f, "{}: {} ", s.as_ref(), TruncatedHumanTime::from(dur))?;
-            }
-        }
-        for (c, count) in borrow.counted {
-            if let Some(count) = count {
-                write!(f, "{}: {} ", c.as_ref(), count)?;
-            }
-        }
-        Ok(())
-    }
 }
 
 struct NoopCallbacks {}
