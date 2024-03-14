@@ -17,10 +17,12 @@ strum = { version = "0.25", features = ["derive"] }
 #     "indexical",
 # ] }
 # rustc_plugin = "=0.7.4-nightly-2023-08-25"
-rustc_utils = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46", features = [
+rustc_utils = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "89bc7b4979c8513a097068626b90b5b0e57f4917", features = [
     "indexical",
 ] }
-rustc_plugin = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46" }
+rustc_plugin = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "89bc7b4979c8513a097068626b90b5b0e57f4917" }
+# rustc_plugin = { path = "../rustc_plugin/crates/rustc_plugin" }
+# rustc_utils = { path = "../rustc_plugin/crates/rustc_utils" }
 
 [profile.release]
 debug = true

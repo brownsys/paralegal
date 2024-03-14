@@ -10,7 +10,7 @@ use crate::{
     desc::*,
     rust::{hir::def, *},
     utils::*,
-    DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Stat, Symbol,
+    CountedStat, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol, TimedStat,
 };
 use flowistry_pdg::SourceUse;
 use paralegal_spdg::Node;
@@ -27,7 +27,7 @@ use flowistry_pdg_construction::{
 };
 use itertools::Itertools;
 use petgraph::{
-    visit::{GraphBase, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef},
+    visit::{GraphBase, IntoNodeReferences, NodeIndexable, NodeRef},
     Direction,
 };
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -37,19 +37,19 @@ mod inline_judge;
 /// Read-only database of information the analysis needs.
 ///
 /// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
-pub struct SPDGGenerator<'tcx, 'st> {
+pub struct SPDGGenerator<'tcx> {
     pub marker_ctx: MarkerCtx<'tcx>,
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
-    stats: &'st mut crate::Stats,
+    stats: crate::Stats,
 }
 
-impl<'tcx, 'st> SPDGGenerator<'tcx, 'st> {
+impl<'tcx> SPDGGenerator<'tcx> {
     pub fn new(
         marker_ctx: MarkerCtx<'tcx>,
         opts: &'static crate::Args,
         tcx: TyCtxt<'tcx>,
-        stats: &'st mut crate::Stats,
+        stats: crate::Stats,
     ) -> Self {
         Self {
             marker_ctx,
@@ -114,7 +114,8 @@ impl<'tcx, 'st> SPDGGenerator<'tcx, 'st> {
             .map(|controllers| {
                 let start = Instant::now();
                 let desc = self.make_program_description(controllers, &known_def_ids);
-                self.stats.record(Stat::Conversion, start.elapsed());
+                self.stats
+                    .record_timed(TimedStat::Conversion, start.elapsed());
                 desc
             })
     }
@@ -291,10 +292,10 @@ fn default_index() -> <SPDGImpl as GraphBase>::NodeId {
 ///
 /// Intended usage is to call [`Self::new_with_flowistry`] to initialize, then
 /// [`Self::make_spdg`] to convert.
-struct GraphConverter<'tcx, 'a, 'st, C> {
+struct GraphConverter<'tcx, 'a, C> {
     // Immutable information
     /// The parent generator
-    generator: &'a mut SPDGGenerator<'tcx, 'st>,
+    generator: &'a SPDGGenerator<'tcx>,
     /// Information about the function this PDG belongs to
     target: FnToAnalyze,
     /// The flowistry graph we are converting
@@ -316,10 +317,10 @@ struct GraphConverter<'tcx, 'a, 'st, C> {
     marker_assignments: HashMap<Node, HashSet<Identifier>>,
 }
 
-impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
+impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// Initialize a new converter by creating an initial PDG using flowistry.
     fn new_with_flowistry(
-        generator: &'a mut SPDGGenerator<'tcx, 'st>,
+        generator: &'a SPDGGenerator<'tcx>,
         known_def_ids: &'a mut C,
         target: FnToAnalyze,
     ) -> Result<Self> {
@@ -328,7 +329,7 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         let dep_graph = Rc::new(Self::create_flowistry_graph(generator, local_def_id)?);
         generator
             .stats
-            .record(crate::Stat::Flowistry, start.elapsed());
+            .record_timed(crate::TimedStat::Flowistry, start.elapsed());
 
         if generator.opts.dbg().dump_flowistry_pdg() {
             dep_graph.generate_graphviz(format!(
@@ -680,27 +681,43 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
     /// Create an initial flowistry graph for the function identified by
     /// `local_def_id`.
     fn create_flowistry_graph(
-        generator: &SPDGGenerator<'tcx, '_>,
+        generator: &SPDGGenerator<'tcx>,
         local_def_id: LocalDefId,
     ) -> Result<DepGraph<'tcx>> {
         let tcx = generator.tcx;
         let opts = generator.opts;
         let judge =
             inline_judge::InlineJudge::new(generator.marker_ctx.clone(), tcx, opts.anactrl());
+        let stat_wrap = generator.stats.clone();
+        let src_map = tcx.sess.source_map();
         let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(move |info| {
-            let changes = CallChanges::default();
+            let mut changes = CallChanges::default();
+
+            let mut skip = true;
 
             if is_non_default_trait_method(tcx, info.callee.def_id()).is_some() {
                 tcx.sess.span_warn(
                     tcx.def_span(info.callee.def_id()),
                     "Skipping analysis of unresolvable trait method.",
                 );
-                changes.with_skip(Skip)
             } else if judge.should_inline(info.callee) {
-                changes
+                skip = false;
+            };
+
+            if skip {
+                changes = changes.with_skip(Skip);
             } else {
-                changes.with_skip(Skip)
+                stat_wrap.incr_counted(CountedStat::InliningsPerformed);
+                if !info.is_cached {
+                    stat_wrap.incr_counted(CountedStat::UniqueFunctions);
+                    let span = tcx.def_span(info.callee.def_id());
+                    let (_, start_line, _, end_line, _) = src_map.span_to_location_info(span);
+
+                    stat_wrap
+                        .record_counted(CountedStat::UniqueLoCs, (end_line - start_line) as u32);
+                }
             }
+            changes
         });
         if opts.dbg().dump_mir() {
             let mut file = std::fs::File::create(format!(
@@ -728,7 +745,7 @@ impl<'a, 'st, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, 'st, C> {
         let return_ = self.determine_return();
         self.generator
             .stats
-            .record(Stat::Conversion, start.elapsed());
+            .record_timed(TimedStat::Conversion, start.elapsed());
         SPDG {
             path: path_for_item(self.local_def_id.to_def_id(), self.tcx()),
             graph: self.spdg,

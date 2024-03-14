@@ -107,6 +107,9 @@ pub struct CallInfo<'tcx> {
 
     /// The call-stack up to the current call site.
     pub call_string: CallString,
+
+    /// Would the PDG for this function be served from the cache.
+    pub is_cached: bool,
 }
 
 type CallChangeCallback<'tcx> = Box<dyn Fn(CallInfo<'tcx>) -> CallChanges<'tcx> + 'tcx>;
@@ -670,10 +673,17 @@ impl<'tcx> GraphConstructor<'tcx> {
             ))
         };
 
-        let call_string = self.make_call_string(location);
         // Recursively generate the PDG for the child function.
         let params = self.pdg_params_for_call(resolved_fn);
         let calling_context = self.calling_context_for(resolved_def_id, location);
+        let call_string = calling_context.call_string;
+
+        let cache_key = call_string.push(GlobalLocation {
+            function: resolved_fn.def_id().expect_local(),
+            location: RichLocation::Start,
+        });
+
+        let is_cached = self.pdg_cache.is_in_cache(&cache_key);
 
         let call_changes = self.params.call_change_callback.as_ref().map(|callback| {
             let info = if let CallKind::AsyncPoll(resolution, loc, _) = call_kind {
@@ -688,11 +698,13 @@ impl<'tcx> GraphConstructor<'tcx> {
                 CallInfo {
                     callee: resolution,
                     call_string: self.make_call_string(loc),
+                    is_cached,
                 }
             } else {
                 CallInfo {
                     callee: resolved_fn,
                     call_string,
+                    is_cached,
                 }
             };
             callback(info)

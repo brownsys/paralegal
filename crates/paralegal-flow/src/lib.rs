@@ -71,6 +71,7 @@ use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
 use std::{
     fmt::Display,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -133,37 +134,77 @@ struct Callbacks {
     start: Instant,
 }
 
+// LoC are analyzed, number of unique functions analyzed and number of functions inlined
+
 #[derive(Debug, Clone, Copy, strum::AsRefStr, PartialEq, Eq, enum_map::Enum)]
-pub enum Stat {
+pub enum TimedStat {
     Rustc,
     Flowistry,
     Conversion,
     Serialization,
 }
 
-pub struct Stats(enum_map::EnumMap<Stat, Option<Duration>>);
+#[derive(Debug, Clone, Copy, strum::AsRefStr, PartialEq, Eq, enum_map::Enum)]
+pub enum CountedStat {
+    UniqueLoCs,
+    UniqueFunctions,
+    InliningsPerformed,
+}
+
+struct StatsInner {
+    timed: enum_map::EnumMap<TimedStat, Option<Duration>>,
+    counted: enum_map::EnumMap<CountedStat, Option<u32>>,
+}
+
+#[derive(Clone)]
+pub struct Stats(Arc<Mutex<StatsInner>>);
 
 impl Stats {
-    pub fn record(&mut self, stat: Stat, duration: Duration) {
-        *self.0[stat].get_or_insert(Duration::ZERO) += duration
+    pub fn record_timed(&self, stat: TimedStat, duration: Duration) {
+        *self.0.as_ref().lock().unwrap().timed[stat].get_or_insert(Duration::ZERO) += duration
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (Stat, Option<Duration>)> + '_ {
-        self.0.iter().map(|(k, v)| (k, *v))
+    pub fn record_counted(&self, stat: CountedStat, increase: u32) {
+        let mut borrow = self.0.as_ref().lock().unwrap();
+        let target = borrow.counted[stat].get_or_insert(0);
+        if let Some(new) = target.checked_add(increase) {
+            *target = new;
+        } else {
+            panic!("A u32 was not enough for {}", stat.as_ref());
+        }
+    }
+
+    pub fn incr_counted(&self, stat: CountedStat) {
+        self.record_counted(stat, 1)
     }
 }
 
 impl Default for Stats {
     fn default() -> Self {
-        Self(enum_map::enum_map! { _ => None })
+        Self(Arc::new(Mutex::new(Default::default())))
+    }
+}
+
+impl Default for StatsInner {
+    fn default() -> Self {
+        StatsInner {
+            timed: Default::default(),
+            counted: Default::default(),
+        }
     }
 }
 
 impl Display for Stats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (s, dur) in self.iter() {
+        let borrow = self.0.as_ref().lock().unwrap();
+        for (s, dur) in borrow.timed {
             if let Some(dur) = dur {
                 write!(f, "{}: {} ", s.as_ref(), TruncatedHumanTime::from(dur))?;
+            }
+        }
+        for (c, count) in borrow.counted {
+            if let Some(count) = count {
+                write!(f, "{}: {} ", c.as_ref(), count)?;
             }
         }
         Ok(())
@@ -189,14 +230,15 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        self.stats.record(Stat::Rustc, self.start.elapsed());
+        self.stats
+            .record_timed(TimedStat::Rustc, self.start.elapsed());
         queries
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
                 tcx.sess.abort_if_errors();
                 let desc =
-                    discover::CollectingVisitor::new(tcx, self.opts, &mut self.stats).run()?;
+                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
 
@@ -216,7 +258,8 @@ impl rustc_driver::Callbacks for Callbacks {
                     &desc,
                 )
                 .unwrap();
-                self.stats.record(Stat::Serialization, ser.elapsed());
+                self.stats
+                    .record_timed(TimedStat::Serialization, ser.elapsed());
 
                 println!("Analysis finished with timing: {}", self.stats);
 
