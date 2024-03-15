@@ -369,9 +369,7 @@ fn main() -> Result<()> {
     command.abort_after_analysis();
 
     if let Some(edit) = args.edit_type.as_ref() {
-        command
-            .get_command()
-            .args(["--", "--lib", "--features", &edit]);
+        command.get_command().args(["--", "--features", &edit]);
     }
     let mut cfg = paralegal_policy::Config::default();
     cfg.always_happens_before_tracing = paralegal_policy::algo::ahb::TraceLevel::Full;
