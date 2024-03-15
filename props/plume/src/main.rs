@@ -12,15 +12,33 @@ macro_rules! marker {
 fn check(ctx: Arc<Context>) -> Result<()> {
     let user_data_types = ctx.marked_type(marker!(user_data));
 
-    let found = ctx.all_controllers().find(|(deleter_id, _)| {
+    let found = ctx.all_controllers().find(|(deleter_id, ctrl)| {
         let delete_sinks = ctx
             .all_nodes_for_ctrl(*deleter_id)
             .filter(|n| ctx.has_marker(marker!(to_delete), *n))
             .collect::<Vec<_>>();
         user_data_types.iter().all(|&t| {
             let sources = ctx.srcs_with_type(*deleter_id, t).collect::<Vec<_>>();
-            ctx.any_flows(&sources, &delete_sinks, EdgeSelection::Data)
-                .is_some()
+            if ctx
+                .any_flows(&sources, &delete_sinks, EdgeSelection::Data)
+                .is_none()
+            {
+                let mut note = ctx.struct_note(format!(
+                    "The type {} is not being deleted in {}",
+                    ctx.desc().def_info[&t].name,
+                    ctrl.name
+                ));
+                for src in sources {
+                    note.with_node_note(src, "This is a source for that type");
+                }
+                for snk in &delete_sinks {
+                    note.with_node_note(*snk, "This is a potential delete sink");
+                }
+                note.emit();
+                false
+            } else {
+                true
+            }
         })
     });
     if found.is_none() {
