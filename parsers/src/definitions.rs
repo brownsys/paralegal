@@ -1,5 +1,4 @@
 use nom::{
-    branch::alt,
     bytes::complete::tag,
     character::complete::{space1, multispace0},
     error::context,
@@ -9,16 +8,16 @@ use nom::{
 
 use crate::{
     Definition, Res, common::*, 
-    variable_intro::variable_intro, policy_body::exprs, variable_clause::body,
+    variable_intro::variable_intro, variable_clause::l2_clauses,
 };
 
 fn definition<'a>(s: &'a str) -> Res<&str, Definition<'a>> {
     let mut combinator = context(
         "definition",
         tuple((
-            preceded(bullet, variable),
+            preceded(l1_bullet, variable),
             preceded(tuple((tag("is each"), space1)), variable_intro),
-            preceded(tuple((tag("where"), colon)), alt((exprs, body)))
+            preceded(tuple((tag("where"), colon)), l2_clauses)
         ))
     );
 

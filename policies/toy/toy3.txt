@@ -1,5 +1,5 @@
 Sometimes:
 1. There is a "dc" marked community_delete_check where:
-    a. "data" goes to "dc"
+    A. "data" goes to "dc"
     and
-    b. "dc" affects whether "write" happens
+    B. "dc" affects whether "write" happens

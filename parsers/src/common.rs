@@ -1,15 +1,15 @@
 use nom::{
     branch::alt,
-    bytes::complete::tag,
-    character::complete::{alpha1, alphanumeric1, space0, space1, multispace0, multispace1},
+    bytes::complete::{tag, take_while1},
+    character::complete::{alpha1, space0, space1, multispace0, multispace1, digit1},
     combinator::{opt, recognize},
     error::context,
     multi::many1,
-    sequence::{delimited, terminated, tuple, preceded, separated_pair},
+    sequence::{delimited, terminated, tuple, preceded},
 };
 
 use crate::{
-    Marker, Operator, Variable, Res, VariableIntro
+    Marker, Operator, Variable, Res, ASTNode, TwoNodeObligation
 };
 
 pub fn colon(s: &str) -> Res<&str, &str> {
@@ -30,12 +30,63 @@ pub fn operator<'a>(s: &'a str) -> Res<&str, Operator> {
     Ok((remainder, operator_str.into()))
 }
 
-pub fn bullet(s: &str) -> Res<&str, &str> {
-    context("bullet", 
+pub fn l1_bullet(s: &str) -> Res<&str, &str> {
+    context(
+        "l1 bullet",
         delimited(
             multispace0,
-            alphanumeric1, 
+            digit1, 
             tuple((tag("."), space1))
+        )
+    )(s)
+}
+
+pub fn l2_bullet(s: &str) -> Res<&str, &str> {
+    let uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    context(
+        "l2 bullet",
+        delimited(
+            multispace0,
+            take_while1(|c| uppercase.contains(c)),
+            tuple((tag("."), space1))
+        )
+    )(s)
+}
+
+pub fn l3_bullet(s: &str) -> Res<&str, &str> {
+    let lowercase = "abcdefghijklmnopqrstuvwxyz";
+    context(
+        "l3 bullet",
+        delimited(
+            multispace0,
+            take_while1(|c| lowercase.contains(c)),
+            tuple((tag("."), space1))
+        )
+    )(s)
+}
+
+pub fn l4_bullet(s: &str) -> Res<&str, &str> {
+    // todo: this is lazy, write a real roman numeral parser later
+    let roman = "ixv";
+    context(
+        "l4 bullet",
+        delimited(
+            multispace0,
+            take_while1(|c| roman.contains(c)),
+            // terminate with ) to avoid ambiguity with l3 bullet lowercase i
+            tuple((tag(")"), space1))
+        )
+    )(s)
+}
+
+pub fn l5_bullet(s: &str) -> Res<&str, &str> {
+    let uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    context(
+        "l5 bullet",
+        delimited(
+            multispace0,
+            take_while1(|c| uppercase.contains(c)),
+            tuple((tag(")"), space1))
         )
     )(s)
 }
@@ -75,12 +126,27 @@ pub fn variable<'a>(s: &'a str) -> Res<&str, Variable<'a>> {
             ),
             delimited(
                 tuple((space0, tag("\""))),
-                recognize(
-                        many1(tuple((alpha1, opt(space1))))
-                    ),
+                recognize(many1(tuple((alpha1, opt(space1))))),
                 tuple((tag("\""), space0)), 
             )
-        ))
-        
+        ))   
     )(s)
+}
+
+// Given an initial node and a vector of (operator, node) pairs, construct an ASTNode::{Operator}
+// joining each of the nodes
+// TODO add assertion that each operator in the vector is the same (can't mix ands & ors)
+pub fn join_nodes<'a>(tup: (ASTNode<'a>, Vec<(Operator, ASTNode<'a>)>)) -> ASTNode<'a> {
+    tup.1
+    .into_iter()
+    .fold(tup.0, |acc, (op, clause)| {
+        let ob = TwoNodeObligation {
+            src: acc,
+            dest: clause
+        };
+        match op {
+            Operator::And => ASTNode::And(Box::new(ob)),
+            Operator::Or => ASTNode::Or(Box::new(ob)),
+        }
+    })
 }

@@ -2,7 +2,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     error::context,
-    sequence::{separated_pair, terminated, tuple, delimited, preceded}, character::complete::{space0, space1}, combinator::opt,
+    sequence::{separated_pair, terminated, tuple, delimited, preceded, pair}, character::complete::{space0, space1}, combinator::map, multi::many0,
 };
 
 use crate::{
@@ -201,7 +201,57 @@ pub fn relation<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
+pub fn l2_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    context(
+        "l2 relations",
+        map(
+            pair(
+                preceded(l2_bullet, relation), 
+                many0(tuple((operator, (preceded(l2_bullet, relation)))))
+            ),
+            join_nodes
+        )
+    )(s)
+}
 
+pub fn l3_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    context(
+        "l3 relations",
+        map(
+            pair(
+                preceded(l3_bullet, relation), 
+                many0(tuple((operator, (preceded(l3_bullet, relation)))))
+            ),
+            join_nodes
+        )
+    )(s)
+}
+
+pub fn l4_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    context(
+        "l4 relations",
+        map(
+            pair(
+                preceded(l4_bullet, relation), 
+                many0(tuple((operator, (preceded(l4_bullet, relation)))))
+            ),
+            join_nodes
+        )
+    )(s)
+}
+
+pub fn l5_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    context(
+        "l5 relations",
+        map(
+            pair(
+                preceded(l5_bullet, relation), 
+                many0(tuple((operator, (preceded(l5_bullet, relation)))))
+            ),
+            join_nodes
+        )
+    )(s)
+}
 
 
 /*

@@ -11,7 +11,6 @@ pub struct Policy<'a> {
     body: PolicyBody<'a>,
 }
 
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum PolicyScope<'a> {
     Always,
@@ -32,7 +31,6 @@ pub struct Definition<'a> {
     declaration: VariableIntro<'a>,
     filter: ASTNode<'a>
 }
-
 
 // AST data
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -69,21 +67,6 @@ impl From<&str> for Operator {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Quantifier {
-    Some,
-    All,
-}
-
-impl From<&Quantifier> for &str {
-    fn from(q: &Quantifier) -> Self {
-        match q {
-            &Quantifier::Some => "some",
-            &Quantifier::All => "all",
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct TwoNodeObligation<'a> {
     src: ASTNode<'a>,
@@ -98,8 +81,14 @@ pub struct OnlyViaRelation<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
+pub enum ClauseType {
+    ForEach,
+    ThereIs
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct VariableClause<'a> {
-    quantifier: Quantifier,
+    typ: ClauseType,
     intro: VariableIntro<'a>,
     body: ASTNode<'a>
 }
@@ -134,9 +123,11 @@ pub fn parse<'a>(s: &'a str) -> Res<&str, Policy<'a>> {
     Ok((remainder, Policy {definitions: option_defs.unwrap_or_default(), body}))
 }
 
+pub mod conditional;
 pub mod common;
 pub mod definitions;
-pub mod policy_body;
 pub mod relations;
+pub mod policy_body;
 pub mod variable_intro;
 pub mod variable_clause;
+pub mod scope;

@@ -2,147 +2,186 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     error::context,
-    sequence::{terminated, tuple, delimited, preceded}, character::complete::space1,
+    sequence::{terminated, tuple, delimited, preceded, pair}, character::complete::space1, multi::many0, combinator::map,
 };
 
 use crate::{
-    ASTNode, Operator, TwoNodeObligation, Res, common::*, relations::*,
-    variable_intro::variable_intro, VariableIntro, Quantifier, VariableClause,
+    ASTNode, Res, common::*, relations::*,
+    variable_intro::variable_intro, VariableIntro, ClauseType, VariableClause, conditional::{l2_conditional, l3_conditional, l4_conditional},
 };
 
-fn conditional<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+fn l4_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     let mut combinator = context(
-        "conditional",
+        "l4 clause",
         tuple((
-            delimited(tuple((bullet, tag("if"))), relation, tuple((tag("then"), colon))),
-            variable_clause_body
+            preceded(l4_bullet, clause_intro),
+            l5_relations,
         ))
     );
-    let (remainder, (src, dest)) = combinator(s)?;
-    Ok((remainder, 
-        ASTNode::Conditional(
-            Box::new(TwoNodeObligation { src, dest })
-        )
+    let (remainder, ((typ, intro), body)) = combinator(s)?;
+    Ok((
+        remainder,
+        ASTNode::VarClause(Box::new(VariableClause {
+            typ,
+            intro,
+            body
+        }))
     ))
 }
 
-pub fn body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+pub fn l4_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
     context(
-        "body",
-        alt((
-            multiple_bodies,
-            conditional,
-            preceded(bullet, relation)
-        ))
-    )(s)
-}
-
-fn multiple_bodies<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    let mut combinator = context(
-        "multiple bodies",
-        preceded(
-            bullet,
-            tuple((
-                relation,
-                operator, 
-                body
-            ))
+        "multiple l4 clauses",
+        map(
+            pair(l4_clause, 
+                alt((
+                    many0(tuple((operator, l4_clause))),
+                    many0(tuple((operator, preceded(l4_bullet, relation))))
+                ))
+            ),
+            join_nodes
         )
-    );
-    let (remainder, (src, operator, dest)) = combinator(s)?;
-    let body = Box::new(TwoNodeObligation {src, dest});
-
-    let node = match operator {
-        Operator::And => ASTNode::And(body),
-        Operator::Or => ASTNode::Or(body),
-    };
-
-    Ok((remainder, node))
-}
-
-fn variable_clause_body<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    context(
-        "variable clause body",
-        alt((
-            inner_multiple_variable_clauses,
-            variable_clause,
-            body
-        ))
     )(s)
 }
 
-fn inner_multiple_variable_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+fn l3_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     let mut combinator = context(
-        "multiple clauses",
+        "l3 clause",
         tuple((
-            alt((variable_clause, body)),
-            operator,
-            variable_clause_body,
-        )),
+            preceded(l3_bullet, clause_intro),
+            alt((
+                l4_relations,
+                l4_clauses
+            ))
+        ))
     );
-    let (remainder, (src, operator, dest)) = combinator(s)?;
-    let body = Box::new(TwoNodeObligation {src, dest});
-
-    let node = match operator {
-        Operator::And => ASTNode::And(body),
-        Operator::Or => ASTNode::Or(body),
-    };
-
-    Ok((remainder, node))
+    let (remainder, ((typ, intro), body)) = combinator(s)?;
+    Ok((
+        remainder,
+        ASTNode::VarClause(Box::new(VariableClause {
+            typ,
+            intro,
+            body
+        }))
+    ))
 }
 
-fn for_each<'a>(s: &'a str) ->  Res<&str, (Quantifier, VariableIntro<'a>)> {
+pub fn l3_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
+    context(
+        "multiple l3 clauses",
+        map(
+            pair(l3_clause, 
+                alt((
+                    many0(tuple((operator, l3_clause))),
+                    many0(tuple((operator, preceded(l3_bullet, relation))))
+                ))
+            ),
+            join_nodes
+        )
+    )(s)
+}
+
+fn l2_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "l2 clause",
+        tuple((
+            preceded(l2_bullet, clause_intro),
+            alt((
+                l3_relations,
+                l3_clauses,
+            ))
+        ))
+    );
+    let (remainder, ((typ, intro), body)) = combinator(s)?;
+    Ok((
+        remainder,
+        ASTNode::VarClause(Box::new(VariableClause {
+            typ,
+            intro,
+            body
+        }))
+    ))
+}
+
+pub fn l2_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
+    context(
+        "multiple l2 clauses",
+        map(
+            pair(l2_clause, 
+                alt((
+                    many0(tuple((operator, l2_clause))),
+                    many0(tuple((operator, preceded(l2_bullet, relation))))
+                ))
+            ),
+            join_nodes
+        )
+    )(s)
+}
+
+fn l1_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+    let mut combinator = context(
+        "l1 clause",
+        tuple((
+            preceded(l1_bullet, clause_intro),
+            alt((
+                l2_relations,
+                l2_clauses,
+            ))
+        ))
+    );
+    let (remainder, ((typ, intro), body)) = combinator(s)?;
+    Ok((
+        remainder,
+        ASTNode::VarClause(Box::new(VariableClause {
+            typ,
+            intro,
+            body
+        }))
+    ))
+}
+
+pub fn l1_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
+    context(
+        "multiple l1 clauses",
+        map(
+            pair(l1_clause, many0(tuple((operator, l1_clause)))),
+            join_nodes
+        )
+    )(s)
+}
+
+
+fn for_each<'a>(s: &'a str) ->  Res<&str, (ClauseType, VariableIntro<'a>)> {
     let mut combinator = context(
         "for each",
         delimited(
-            tuple((tag("for each"), space1)),
+            tuple((tag("For each"), space1)),
             variable_intro,
             colon
         )
     );
     let (remainder, var_intro) = combinator(s)?;
-    Ok((remainder, (Quantifier::All, var_intro)))
+    Ok((remainder, (ClauseType::ForEach, var_intro)))
 }
 
-fn there_is<'a>(s: &'a str) ->  Res<&str, (Quantifier, VariableIntro<'a>)> {
+fn there_is<'a>(s: &'a str) ->  Res<&str, (ClauseType, VariableIntro<'a>)> {
     let mut combinator = context(
         "there is",
         preceded(
-            tag("there is a"), 
+            tag("There is a"), 
             variable_intro
         )
     );
     let (remainder, var_intro) = combinator(s)?;
-    Ok((remainder, (Quantifier::Some, var_intro)))
+    Ok((remainder, (ClauseType::ThereIs, var_intro)))
 }
 
-fn clause_intro<'a>(s: &'a str) ->  Res<&str, (Quantifier, VariableIntro<'a>)> {
+pub fn clause_intro<'a>(s: &'a str) ->  Res<&str, (ClauseType, VariableIntro<'a>)> {
     context(
         "clause intro",
-        preceded(
-            bullet,
-            alt((
-                for_each,
-                terminated(there_is, tag("where:"))
-            ))
-        )
-    )(s)
-}
-
-pub fn variable_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
-    let mut combinator = context(
-        "variable clause", 
-        tuple((
-            clause_intro, 
-            variable_clause_body
+        alt((
+            for_each,
+            terminated(there_is, tag("where:"))
         ))
-    );
-    let (remainder, ((quantifier, intro), body)) = combinator(s)?;
-    Ok((
-        remainder,
-        ASTNode::VarClause(
-            Box::new(VariableClause {quantifier, intro, body})
-        )
-    ))
-
+    )(s)
 }
