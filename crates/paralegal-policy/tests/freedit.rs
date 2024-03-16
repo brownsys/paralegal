@@ -18,7 +18,8 @@ fn return_markers_on_no_arg_functions() -> Result<()> {
 
         #[paralegal::analyze]
         fn main() {
-            target(source())
+            let x = source();
+            target(x)
         }
     ))?;
 

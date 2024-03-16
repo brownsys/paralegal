@@ -445,7 +445,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 let stmt_at_loc = body.stmt_at(loc);
                 if let crate::Either::Right(
                     term @ mir::Terminator {
-                        kind: mir::TerminatorKind::Call { .. },
+                        kind: mir::TerminatorKind::Call { destination, .. },
                         ..
                     },
                 ) = stmt_at_loc
@@ -453,31 +453,46 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
                     self.known_def_ids.extend(Some(fun));
 
-                    for e in graph.graph.edges_directed(old_node, Direction::Incoming) {
-                        if weight.at != e.weight().at {
-                            // Incoming edges are either from our operation or from control flow
-                            let at = e.weight().at;
-                            debug_assert!(
-                                at.leaf().function == leaf_loc.function
-                                    && if let RichLocation::Location(loc) = at.leaf().location {
-                                        matches!(
-                                            body.stmt_at(loc),
-                                            Either::Right(mir::Terminator {
-                                                kind: mir::TerminatorKind::SwitchInt { .. },
-                                                ..
-                                            })
-                                        )
-                                    } else {
-                                        false
-                                    }
-                            );
-                            continue;
-                        };
-                        if e.weight().target_use.is_return() {
-                            self.register_annotations_for_function(node, fun, |ann| {
-                                ann.refinement.on_return()
-                            })
-                        }
+                    // Question: Could a function with no input produce an
+                    // output that has aliases? E.g. could some place, where the
+                    // local portion isn't the local from the destination of
+                    // this function call be affected/modified by this call? If
+                    // so, that location would also need to have this marker
+                    // attached
+                    let needs_return_marker_registration = weight.place.local == destination.local
+                        || graph
+                            .graph
+                            .edges_directed(old_node, Direction::Incoming)
+                            .any(|e| {
+                                if weight.at != e.weight().at {
+                                    // Incoming edges are either from our operation or from control flow
+                                    let at = e.weight().at;
+                                    debug_assert!(
+                                        at.leaf().function == leaf_loc.function
+                                            && if let RichLocation::Location(loc) =
+                                                at.leaf().location
+                                            {
+                                                matches!(
+                                                    body.stmt_at(loc),
+                                                    Either::Right(mir::Terminator {
+                                                        kind: mir::TerminatorKind::SwitchInt { .. },
+                                                        ..
+                                                    })
+                                                )
+                                            } else {
+                                                false
+                                            }
+                                    );
+                                    false
+                                } else {
+                                    e.weight().target_use.is_return()
+                                }
+                            });
+
+                    if needs_return_marker_registration {
+                        self.register_annotations_for_function(node, fun, |ann| {
+                            ann.refinement.on_return()
+                        });
                     }
                 }
 
