@@ -107,23 +107,15 @@ fn not_influenced_by_commit() -> Result<()> {
     ))?;
 
     test.run(|ctx| {
-        let mut commits = ctx.marked_nodes(marker!(commit));
+        let commits = ctx.marked_nodes(marker!(commit));
         let mut any_sink_reached = false;
-        let works = commits.find_map(|commit| {
+        let results = commits.filter_map(|commit| {
             let check_rights = marker!(check_rights);
             // If commit is stored
             let stores = ctx.influencees(commit, EdgeSelection::Both)
                 .filter(|s| ctx.has_marker(marker!(sink), *s))
-                .peekable();
-
-            let mut stores = ctx
-                // .all_nodes_for_ctrl(commit.controller_id())
-                // .filter(|n| ctx.has_marker(marker!(sink), *n))
-                .marked_nodes(marker!(sink))
-                .filter(|s| ctx.flows_to(commit, *s, EdgeSelection::Both))
-                .peekable();
-
-            if stores.peek().is_none() {
+                .collect::<Box<[_]>>();
+            if stores.is_empty() {
                 return None;
             }
             any_sink_reached = true;
@@ -136,32 +128,27 @@ fn not_influenced_by_commit() -> Result<()> {
             let valid_checks = ctx.influencees(commit, EdgeSelection::Data)
                 .filter(|check|
                     ctx.has_marker(check_rights, *check)
-                    && new_resources.iter().all(|r| !ctx.flows_to(*r, *check, EdgeSelection::Data))
-                ).peekable();
-
-
-            let mut valid_checks = ctx.marked_nodes(check_rights)
-                .filter(|n| ctx.flows_to(commit, *n, EdgeSelection::Data))
-                .filter(|n| ctx.any_flows(&new_resources, &[*n], EdgeSelection::Data).is_none())
+                    && new_resources.iter().all(|r| !ctx.flows_to(*r, *check, EdgeSelection::Data)))
                 .collect::<Box<[_]>>();
 
-            (!valid_checks.is_empty()).then_some((commit, valid_checks))
-
-            // BELOW IS VALID POLICY CODE BUT DOESN'T WORK BC OF PARALEGAL BUG ------
-            // for store in stores {
-            //     // A valid check determines the store
-            //     let mut check_store = valid_checks.iter().filter(|c| ctx.determines_ctrl(**c, store));
-            //     assert_error!(ctx, check_store.next().is_some(), "No valid checks have control-flow influence on store {}", ctx.describe_node(store));
-            // }
+            Some(stores.iter().copied().map(|store| {
+                (store, valid_checks.iter().copied().find(|check| ctx.successors(store).any(|cs| ctx.has_ctrl_influence(*check, cs))))
+            }).collect::<Box<[_]>>())
         });
-        if let Some((commit, checks)) = works {
-            let mut msg = ctx.struct_node_note(commit, "this commit was found to be protected");
-            for &check in checks.iter() {
-                msg.with_node_note(check, "this is one of the checks");
+        
+        let likely_result = results.max_by_key(|checks| checks.iter().filter(|(_, v)| v.is_some()).count());
+
+        if let Some(checks) = likely_result {
+            for (store, check) in checks.iter().copied() {
+                if let Some(check) = check {
+                    let mut msg = ctx.struct_node_note(store, "This store is properly checked");
+                    msg.with_node_note(check, "With this check");
+                } else {
+                    ctx.node_error(store, "This store is not protected");
+                }
             }
-            msg.emit();
         } else {
-            ctx.error("No protected commit found");
+            ctx.error("No results at all. No controllers?")
         }
         assert_error!(
             ctx,
