@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::{
     collections::hash_map::DefaultHasher,
     env,
@@ -65,7 +66,6 @@ fn ensure_run_success(cmd: &mut Command) -> Result<()> {
 }
 
 impl Test {
-    #[allow(dead_code)]
     pub fn new(code: impl Into<String>) -> Result<Self> {
         let tempdir = temporary_directory()?;
         Ok(Self {
