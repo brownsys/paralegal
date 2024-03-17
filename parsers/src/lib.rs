@@ -42,14 +42,21 @@ pub enum VariableIntro<'a> {
     VariableSourceof((Variable<'a>, Variable<'a>))
 }
 
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum Relation<'a> {
+    Influences((Variable<'a>, Variable<'a>)),
+    FlowsTo((Variable<'a>, Variable<'a>)),
+    NoFlowsTo((Variable<'a>, Variable<'a>)),
+    ControlFlow((Variable<'a>, Variable<'a>)),
+    NoControlFlow((Variable<'a>, Variable<'a>)),
+    AssociatedCallSite((Variable<'a>, Variable<'a>)),
+    IsMarked((Variable<'a>, Marker<'a>)),
+    IsNotMarked((Variable<'a>, Marker<'a>)),
+    OnlyVia((VariableIntro<'a>, VariableIntro<'a>, VariableIntro<'a>))
+}
+
 pub type Variable<'a> = &'a str;
 pub type Marker<'a> = &'a str;
-
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct TwoVarRelation<'a> {
-    src: Variable<'a>,
-    dest: Variable<'a>,
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operator {
@@ -74,40 +81,25 @@ pub struct TwoNodeObligation<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
-pub struct OnlyViaRelation<'a> {
-    src: VariableIntro<'a>,
-    dest: VariableIntro<'a>,
-    checkpoint: VariableIntro<'a>,
+pub enum ClauseIntro<'a> {
+    ForEach(VariableIntro<'a>),
+    ThereIs(VariableIntro<'a>),
+    Conditional(Relation<'a>)
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
-pub enum ClauseType {
-    ForEach,
-    ThereIs
-}
-
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct VariableClause<'a> {
-    typ: ClauseType,
-    intro: VariableIntro<'a>,
+pub struct Clause<'a> {
+    intro: ClauseIntro<'a>,
     body: ASTNode<'a>
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum ASTNode<'a> {
-    Influences(TwoVarRelation<'a>),
-    FlowsTo(TwoVarRelation<'a>),
-    NoFlowsTo(TwoVarRelation<'a>),
-    ControlFlow(TwoVarRelation<'a>),
-    NoControlFlow(TwoVarRelation<'a>),
-    AssociatedCallSite(TwoVarRelation<'a>),
-    IsMarked((Variable<'a>, Marker<'a>)),
-    IsNotMarked((Variable<'a>, Marker<'a>)),
-    OnlyVia(OnlyViaRelation<'a>),
+    Relation(Relation<'a>),
     And(Box<TwoNodeObligation<'a>>),
     Or(Box<TwoNodeObligation<'a>>),
     Conditional(Box<TwoNodeObligation<'a>>),
-    VarClause(Box<VariableClause<'a>>)
+    Clause(Box<Clause<'a>>)
 }
 
 pub fn parse<'a>(s: &'a str) -> Res<&str, Policy<'a>> {
@@ -115,19 +107,19 @@ pub fn parse<'a>(s: &'a str) -> Res<&str, Policy<'a>> {
         "parse policy", 
         all_consuming(
             tuple((opt(parse_definitions), parse_policy_body))
+            // tuple((parse_definitions, parse_policy_body))
         )
     );
 
     let (remainder, (option_defs, body)) = combinator(s)?;
-
+    // Ok((remainder, Policy {definitions: option_defs, body}))
     Ok((remainder, Policy {definitions: option_defs.unwrap_or_default(), body}))
 }
 
-pub mod conditional;
 pub mod common;
+pub mod clause;
 pub mod definitions;
-pub mod relations;
 pub mod policy_body;
-pub mod variable_intro;
-pub mod variable_clause;
+pub mod relations;
 pub mod scope;
+pub mod variable_intro;

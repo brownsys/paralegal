@@ -1,6 +1,6 @@
 Always:
 1. For each "card" marked credit_card:
-	a. For each "sink" marked sink:
-		i. If "card" goes to "sink" then:
-	    	1. There is a "consent" marked consent where:
-				a. "consent" affects whether "sink" happens
+	A. For each "sink" marked sink:
+		a. If "card" goes to "sink" then:
+	    	i) There is a "consent" marked consent where:
+				A) "consent" affects whether "sink" happens

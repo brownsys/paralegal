@@ -1,10 +1,8 @@
 Sometimes:
 1. There is a "dc" marked community_delete_check where:
-    a. "data" goes to "dc"
-    and
-    b. "dc" affects whether "write" happens
-and
-2. There is a "bc" marked community_ban_check where:
-    a. "data" goes to "bc"
-    and
-    b. "bc" affects whether "write" happens
+    A. For each "earl grey" marked tea:
+        a. For each "hello" marked world:
+            i) "data" influences "hello"
+or
+2. For each "test" marked this_is_a_test:
+    A. "test" goes to "flowers"

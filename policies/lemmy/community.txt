@@ -1,13 +1,13 @@
 Always:
 1. For each "data" marked community_data:
-	a. For each "write" marked db_write:
-        i. If "data" goes to "write" then:
-			1. There is a "dc" marked community_delete_check where:
-				a. "data" goes to "dc"
+	A. For each "write" marked db_write:
+        a. If "data" goes to "write" then:
+			i) There is a "dc" marked community_delete_check where:
+				A) "data" goes to "dc"
 				and
-				b. "dc" affects whether "write" happens
+				B) "dc" affects whether "write" happens
 			and
-			2. There is a "bc" marked community_ban_check where:
-				a. "data" goes to "bc"
+			ii) There is a "bc" marked community_ban_check where:
+				A) "data" goes to "bc"
 				and
-				b. "bc" affects whether "write" happens
+				B) "bc" affects whether "write" happens

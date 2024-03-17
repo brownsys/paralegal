@@ -3,12 +3,12 @@ use nom::{
     character::complete::{space1, multispace0},
     error::context,
     multi::many1,
-    sequence::{preceded, tuple},
+    sequence::{preceded, tuple}, branch::alt,
 };
 
 use crate::{
     Definition, Res, common::*, 
-    variable_intro::variable_intro, variable_clause::l2_clauses,
+    variable_intro::variable_intro, clause::l2_clauses, relations::l2_relations,
 };
 
 fn definition<'a>(s: &'a str) -> Res<&str, Definition<'a>> {
@@ -17,7 +17,7 @@ fn definition<'a>(s: &'a str) -> Res<&str, Definition<'a>> {
         tuple((
             preceded(l1_bullet, variable),
             preceded(tuple((tag("is each"), space1)), variable_intro),
-            preceded(tuple((tag("where"), colon)), l2_clauses)
+            preceded(tuple((tag("where"), colon)), alt((l2_relations, l2_clauses)))
         ))
     );
 
@@ -33,19 +33,12 @@ fn definition<'a>(s: &'a str) -> Res<&str, Definition<'a>> {
     ))
 }
 
-fn multiple_definitions<'a>(s: &'a str) -> Res<&str, Vec<Definition<'a>>> {
-    context(
-        "multiple definitions",
-        many1(definition)
-    )(s)
-}
-
 pub fn parse_definitions<'a>(s: &'a str) -> Res<&str, Vec<Definition<'a>>> {
     context(
         "definitions",
         preceded(
-            tuple((multispace0, tag("definitions"), colon)),
-            multiple_definitions
+            tuple((multispace0, tag("Definitions"), colon)),
+            many1(definition)
         )
     )(s)
 }

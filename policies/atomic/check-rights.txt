@@ -1,18 +1,18 @@
 Definitions:
 1. "stored commit" is each "commit" marked commit where:
-    a. There is a "store" marked store where:
-        i. "commit" goes to "store"
+    A. There is a "store" marked store where:
+        a. "commit" goes to "store"
 
 2. "new resource" is each "resource" marked new_resource where:
-    a. There is a "stored commit" where:
-        i. "new resource" goes to "stored commit" 
+    A. There is a "stored commit" where:
+        a. "new resource" goes to "stored commit" 
 
 Always:
 1. For each "stored commit":
-    a. There is a "auth check" marked auth_check where:
-        i. "commit" goes to "auth check"
+    A. There is a "auth check" marked auth_check where:
+        a. For each "new resource":
+            i) "new resource" does not go to "auth check"
         and
-        ii. For each "new resource":
-            1. "new resource" does not go to "auth check"
+        b. "commit" goes to "auth check"
         and
-        iii. "auth check" affects whether "store" happens
+        c. "auth check" affects whether "store" happens

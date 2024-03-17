@@ -1,12 +1,12 @@
 Definitions:
 1. "sensitive store" is each "store" marked store where:
-	a. There is a "sensitive" marked sensitive where:
-		i. "sensitive" goes to "store"
+	A. There is a "sensitive" marked sensitive where:
+		a. "sensitive" goes to "store"
 
 Always:
 1. For each "sensitive store":
-    a. There is a "scope" where:
-        i. "scope" goes to the operation associated with "sensitive store"
+    A. There is a "scope" marked scopes_store where:
+        a. There is a "authorization" marked auth_witness where:
+			i) "authorization" goes to "scope"
         and
-        ii. There is a "auth witness" where:
-			1. "auth witness" goes to "scope"
+        b. "scope" goes to the operation associated with "sensitive store"

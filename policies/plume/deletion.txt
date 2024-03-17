@@ -1,5 +1,5 @@
 In gdpr_deletes:
 1. For each "stored data" type marked user_data:
-    a. There is a "retrieval" that is a source of "stored data" where:
-       i. There is a "deletes" marked deletes where:
-	       1. "retrieval" goes to "deletes"
+    A. There is a "retrieval" that is a source of "stored data" where:
+       a. There is a "deletes" marked deletes where:
+	       i) "retrieval" goes to "deletes"

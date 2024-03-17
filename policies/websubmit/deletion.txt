@@ -1,11 +1,11 @@
 Definitions:
 1. "sensitive types that are stored" is each "sensitive" type marked sensitive where:
-	a. There is a "source" that is a source of "sensitive" where:
-		i. There is a "store" marked store where:
-			1. "source" goes to "store"
+	A. There is a "source" that is a source of "sensitive" where:
+		a. There is a "store" marked store where:
+			i) "source" goes to "store"
 
 In gdpr_deletes:
 1. For each "sensitive types that are stored":
-	a. There is a "source" that is a source of "sensitive types that are stored" where:
-		i. There is a "deleter" marked deletes where:
-			1. "source" goes to "deleter"
+	A. There is a "source" that is a source of "sensitive types that are stored" where:
+		a. There is a "deleter" marked deletes where:
+			i) "source" goes to "deleter"
