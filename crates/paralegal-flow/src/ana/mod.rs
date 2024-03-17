@@ -902,9 +902,6 @@ fn map_either<A, B, C, D>(
 /// Checks the invariant that [`SPDGGenerator::collect_type_info`] should
 /// produce a map that is a superset of the types found in all the `types` maps
 /// on [`SPDG`].
-///
-/// Additionally this also inserts missing types into the map *only* for
-/// generators created by async functions.
 fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
     controllers
         .values()
