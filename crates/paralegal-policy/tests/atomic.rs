@@ -6,7 +6,7 @@ use helpers::Test;
 
 use anyhow::Result;
 use paralegal_policy::{assert_error, Context, Diagnostics as _, EdgeSelection};
-use paralegal_spdg::Identifier;
+use paralegal_spdg::{Identifier, NodeCluster};
 
 macro_rules! marker {
     ($name:ident) => {{
@@ -122,28 +122,34 @@ fn not_influenced_by_commit() -> Result<()> {
 }
 
 fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
-    let commits = ctx.marked_nodes(marker!(commit));
     let mut any_sink_reached = false;
-    let results = commits.filter_map(|commit| {
-        let check_rights = marker!(check_rights);
+    let check_rights = marker!(check_rights);
+    for ctx in ctx.controller_contexts() {
+        let commit = NodeCluster::new(
+            ctx.id(),
+            ctx.marked_nodes(marker!(commit))
+                .filter(|n| n.controller_id() == ctx.id())
+                .map(|n| n.local_node()),
+        );
+
         // If commit is stored
         let stores = ctx
-            .influencees(commit, EdgeSelection::Both)
+            .influencees(&commit, EdgeSelection::Both)
             .filter(|s| ctx.has_marker(marker!(sink), *s))
             .collect::<Box<[_]>>();
         if stores.is_empty() {
-            return None;
+            continue;
         }
         any_sink_reached = true;
 
         let new_resources = ctx
-            .influencees(commit, EdgeSelection::Data)
+            .influencees(&commit, EdgeSelection::Data)
             .filter(|n| ctx.has_marker(marker!(new_resource), *n))
             .collect::<Box<[_]>>();
 
         for r in new_resources.iter() {
             let rs_info = ctx.node_info(*r);
-            let mut msg = ctx.struct_node_help(
+            let msg = ctx.struct_node_help(
                 *r,
                 format!(
                     "This is a 'new_resource' {} @ {}",
@@ -155,7 +161,7 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
 
         // All checks that flow from the commit but not from a new_resource
         let valid_checks = ctx
-            .influencees(commit, EdgeSelection::Data)
+            .influencees(&commit, EdgeSelection::Data)
             .filter(|check| {
                 ctx.has_marker(check_rights, *check)
                     && ctx
@@ -165,7 +171,7 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
             .collect::<Box<[_]>>();
 
         for check in ctx
-            .influencees(commit, EdgeSelection::Data)
+            .influencees(&commit, EdgeSelection::Data)
             .filter(|n| ctx.has_marker(check_rights, *n))
         {
             let check_info = ctx.node_info(check);
@@ -193,29 +199,22 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
             ctx.warning("No valid checks");
         }
 
-        Some(
-            stores
-                .iter()
-                .copied()
-                .map(|store| {
-                    (
-                        store,
-                        valid_checks.iter().copied().find_map(|check| {
-                            let store_cs = ctx
-                                .successors(store)
-                                .find(|cs| ctx.has_ctrl_influence(check, *cs))?;
-                            Some((check, store_cs))
-                        }),
-                    )
-                })
-                .collect::<Box<[_]>>(),
-        )
-    });
+        let checks = stores
+            .iter()
+            .copied()
+            .map(|store| {
+                (
+                    store,
+                    valid_checks.iter().copied().find_map(|check| {
+                        let store_cs = ctx
+                            .successors(store)
+                            .find(|cs| ctx.has_ctrl_influence(check, *cs))?;
+                        Some((check, store_cs))
+                    }),
+                )
+            })
+            .collect::<Box<[_]>>();
 
-    let likely_result =
-        results.max_by_key(|checks| checks.iter().filter(|(_, v)| v.is_some()).count());
-
-    if let Some(checks) = likely_result {
         for (store, check) in checks.iter() {
             if let Some((check, store_cs)) = check {
                 let mut msg =
@@ -235,8 +234,6 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
                 ctx.node_error(*store, "This store is not protected");
             }
         }
-    } else {
-        ctx.error("No results at all. No controllers?")
     }
     assert_error!(
         ctx,
@@ -277,6 +274,42 @@ fn policy_fail() -> Result<()> {
                     if !check_write(store, &resource, self.signer.clone())? {
                         return Err("".to_string());
                     }
+                }
+                store.add_resource(&commit_resource)?;
+                //store.add_resource(&resource)?;
+                Ok(commit_resource)
+            }
+        }
+    ));
+    let mut test = Test::new(code)?;
+
+    test.expect_fail();
+
+    test.run(atomic_policy)
+}
+
+#[test]
+fn isolation_3() -> Result<()> {
+    let mut code = ATOMIC_CODE_SHARED.to_owned();
+    code.push_str(stringify!(
+        impl Commit {
+            #[paralegal::analyze]
+            #[paralegal::marker(commit, arguments = [0])]
+            pub fn apply_opts(
+                &self,
+                store: &impl Storelike,
+            ) -> AtomicResult<Resource> {
+                let commit_resource: Resource = self.clone().into_resource(store)?;
+                let mut resource =
+                    Resource::new(self.subject.clone());
+                if let Some(set) = self.set.clone() {
+                    for (prop, val) in set.iter() {
+                        resource.set_propval(prop.into(), val.to_owned(), store)?;
+                    }
+                }
+                self.modify_parent(&mut resource, store);
+                if !check_write(store, &resource, self.signer.clone())? {
+                    return Err("".to_string());
                 }
                 store.add_resource(&commit_resource)?;
                 //store.add_resource(&resource)?;
