@@ -88,15 +88,15 @@ fn not_influenced_by_commit() -> Result<()> {
                     Ok(rs) => rs,
                     Err(_) => Resource::new(self.subject.clone()),
                 };
-                if let Some(set) = self.set.clone() {
-                    for (prop, val) in set.iter() {
-                        resource.set_propval(prop.into(), val.to_owned(), store)?;
-                    }
-                }
                 if validate_rights {
                     self.modify_parent(&mut resource, store);
                     if !check_write(store, &resource, self.signer.clone())? {
                         return Err("".to_string());
+                    }
+                }
+                if let Some(set) = self.set.clone() {
+                    for (prop, val) in set.iter() {
+                        resource.set_propval(prop.into(), val.to_owned(), store)?;
                     }
                 }
                 store.add_resource(&commit_resource)?;
@@ -107,12 +107,12 @@ fn not_influenced_by_commit() -> Result<()> {
     ))?;
 
     test.run(|ctx| {
-        let commits = ctx.marked_nodes(marker!(commit));
+        let mut commits = ctx.marked_nodes(marker!(commit));
         let mut any_sink_reached = false;
-        for commit in commits {
+        let works = commits.find_map(|commit| {
             let check_rights = marker!(check_rights);
             // If commit is stored
-            let mut stores = ctx.influencees(commit, EdgeSelection::Both)
+            let stores = ctx.influencees(commit, EdgeSelection::Both)
                 .filter(|s| ctx.has_marker(marker!(sink), *s))
                 .peekable();
 
@@ -124,7 +124,7 @@ fn not_influenced_by_commit() -> Result<()> {
                 .peekable();
 
             if stores.peek().is_none() {
-                continue;
+                return None;
             }
             any_sink_reached = true;
 
@@ -143,23 +143,9 @@ fn not_influenced_by_commit() -> Result<()> {
             let mut valid_checks = ctx.marked_nodes(check_rights)
                 .filter(|n| ctx.flows_to(commit, *n, EdgeSelection::Data))
                 .filter(|n| ctx.any_flows(&new_resources, &[*n], EdgeSelection::Data).is_none())
-                .peekable();
+                .collect::<Box<[_]>>();
 
-            if valid_checks.peek().is_none() {
-                let mut err = ctx.struct_node_error(commit, "No valid checks found for this commit");
-                for store in stores {
-                    err.with_node_warning(store, "Commit reaches this store");
-                }
-
-                for check in ctx.marked_nodes(check_rights) {
-                    if ctx.any_flows(&new_resources, &[check], EdgeSelection::Data).is_some() {
-                        err.with_node_note(check, "This would be a valid check, but it is influenced by `new_resource`");
-                    } else {
-                        err.with_node_note(check, "This would be a valid check but it is not influenced by the commit");
-                    }
-                }
-                err.emit();
-            }
+            (!valid_checks.is_empty()).then_some((commit, valid_checks))
 
             // BELOW IS VALID POLICY CODE BUT DOESN'T WORK BC OF PARALEGAL BUG ------
             // for store in stores {
@@ -167,6 +153,15 @@ fn not_influenced_by_commit() -> Result<()> {
             //     let mut check_store = valid_checks.iter().filter(|c| ctx.determines_ctrl(**c, store));
             //     assert_error!(ctx, check_store.next().is_some(), "No valid checks have control-flow influence on store {}", ctx.describe_node(store));
             // }
+        });
+        if let Some((commit, checks)) = works {
+            let mut msg = ctx.struct_node_note(commit, "this commit was found to be protected");
+            for &check in checks.iter() {
+                msg.with_node_note(check, "this is one of the checks");
+            }
+            msg.emit();
+        } else {
+            ctx.error("No protected commit found");
         }
         assert_error!(
             ctx,
