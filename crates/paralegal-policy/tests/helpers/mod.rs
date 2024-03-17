@@ -55,6 +55,7 @@ pub struct Test {
     tool_path: &'static Path,
     external_ann_file_name: PathBuf,
     cleanup: bool,
+    expect_fail: bool,
 }
 
 fn ensure_run_success(cmd: &mut Command) -> Result<()> {
@@ -77,7 +78,12 @@ impl Test {
             tool_path: &*TOOL_BUILT,
             deps: Default::default(),
             cleanup: true,
+            expect_fail: false,
         })
+    }
+
+    pub fn expect_fail(&mut self) {
+        self.expect_fail = true;
     }
 
     #[allow(dead_code)]
@@ -190,7 +196,7 @@ impl Test {
             self.tempdir.display(),
             ret.stats
         );
-        ensure!(ret.success);
+        ensure!(self.expect_fail ^ ret.success);
         if self.cleanup {
             fs::remove_dir_all(self.tempdir)?;
         }
