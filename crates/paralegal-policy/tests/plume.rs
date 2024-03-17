@@ -17,7 +17,7 @@ macro_rules! marker {
 fn notification_deletion() -> Result<()> {
     let test = Test::new(stringify!(
         type Result<A> = std::result::Result<A, String>;
-        #[paralegal::marker(deletes, arguments = [0])]
+        #[paralegal::marker(to_delete, arguments = [0])]
         fn diesel_delete<T>(t: T) -> Result<()> {
             unimplemented!()
         }
@@ -74,7 +74,13 @@ fn notification_deletion() -> Result<()> {
                         ctrl.name
                     ));
                     for src in sources {
-                        note.with_node_note(src, "This is a source for that type");
+                        note.with_node_note(
+                            src,
+                            format!(
+                                "This is a source for that type {}",
+                                ctx.node_info(src).description
+                            ),
+                        );
                     }
                     for snk in &delete_sinks {
                         note.with_node_note(*snk, "This is a potential delete sink");
