@@ -258,21 +258,20 @@ where
         &mut self,
         arg_places: Vec<(usize, Place<'tcx>)>,
         location: Location,
-        ret_is_unit: bool,
         destination: Place<'tcx>,
     ) {
         let arg_place_inputs = arg_places
             .iter()
             .copied()
-            .map(|(_, arg)| (arg, None))
+            .map(|(i, arg)| (arg, Some(i as u8)))
             .collect::<Vec<_>>();
         // Make sure we combine all inputs in the arguments.
-        for (num, arg) in arg_places.iter().copied() {
+        for (_, arg) in arg_places.iter().copied() {
             let inputs = self
                 .place_info
                 .reachable_values(arg, Mutability::Not)
                 .into_iter()
-                .map(|v| (*v, Some(num as u8)))
+                .map(|v| (*v, None))
                 .collect();
             (self.f)(
                 location,
@@ -285,19 +284,6 @@ where
             );
         }
 
-        (self.f)(
-            location,
-            Mutation {
-                mutated: destination,
-                inputs: if ret_is_unit {
-                    vec![]
-                } else {
-                    arg_places.iter().map(|(_, arg)| (*arg, None)).collect()
-                },
-                mutation_reason: MutationReason::AssignTarget,
-                status: MutationStatus::Definitely,
-            },
-        );
         for (num, arg) in arg_places.iter().copied() {
             for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
                 if *arg_mut != arg {
@@ -313,6 +299,15 @@ where
                 }
             }
         }
+        (self.f)(
+            location,
+            Mutation {
+                mutated: destination,
+                inputs: arg_place_inputs,
+                mutation_reason: MutationReason::AssignTarget,
+                status: MutationStatus::Definitely,
+            },
+        );
     }
 }
 
@@ -366,7 +361,7 @@ where
                 // argument places and then the return and mutable arguments.
                 //
                 // TODO: What happens if these argument places overlap?
-                self.handle_call_with_combine_on_return(arg_places, location, *destination)
+                self.handle_call_with_combine_on_args(arg_places, location, *destination)
             }
 
             _ => {}
