@@ -107,12 +107,10 @@ pub fn parse<'a>(s: &'a str) -> Res<&str, Policy<'a>> {
         "parse policy", 
         all_consuming(
             tuple((opt(parse_definitions), parse_policy_body))
-            // tuple((parse_definitions, parse_policy_body))
         )
     );
 
     let (remainder, (option_defs, body)) = combinator(s)?;
-    // Ok((remainder, Policy {definitions: option_defs, body}))
     Ok((remainder, Policy {definitions: option_defs.unwrap_or_default(), body}))
 }
 

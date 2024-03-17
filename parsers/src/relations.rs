@@ -2,7 +2,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     error::context,
-    sequence::{separated_pair, terminated, tuple, delimited, preceded, pair}, character::complete::{space0, space1}, combinator::map, multi::many0,
+    sequence::{separated_pair, terminated, tuple, delimited, preceded, pair}, character::complete::space1, combinator::map, multi::many0,
 };
 
 use crate::{
@@ -149,7 +149,8 @@ pub fn only_via_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     let mut combinator = context(
         "only via relation",
         tuple((
-            delimited(tuple((space0, tag("each"), space1)), variable_intro, tag("goes to a")),
+            // these are only allowed to be present at the top level, hence the L1 bullet restriction
+            delimited(tuple((l1_bullet, tag("Each"), space1)), variable_intro, tag("goes to a")),
             alt((variable_marked, variable_def)),
             preceded(
                 tag("only via a"),

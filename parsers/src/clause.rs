@@ -1,8 +1,8 @@
 use nom::{
-    branch::{alt, permutation},
+    branch::alt,
     bytes::complete::tag,
     error::context,
-    sequence::{tuple, delimited, preceded, pair}, character::complete::space1, multi::many0, combinator::{map, eof},
+    sequence::{tuple, delimited, preceded, pair}, character::complete::space1, multi::many0, combinator::map,
 };
 
 use crate::{
@@ -135,7 +135,10 @@ pub fn l1_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     context(
         "multiple l1 clauses",
         map(
-            pair(l1_clause, many0(tuple((operator, l1_clause)))),
+            pair(
+                alt((l1_clause, map(only_via_relation, |rel| ASTNode::Relation(rel)))),
+                many0(tuple((operator, alt((l1_clause, map(only_via_relation, |rel| ASTNode::Relation(rel)))))))
+            ),
             join_nodes
         )
     )(s)

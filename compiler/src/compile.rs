@@ -17,39 +17,6 @@ const AND_TEMPLATE: &str = "and";
 const OR_TEMPLATE: &str = "or";
 const NODES_TEMPLATE: &str = "nodes";
 
-/* TODOs
-    (Functionality)
-    - For "a flows to b", instead of getting every node marked b, then filtering
-      for the ones that a flows to, call influencees to start from what a flows to
-      and filter to the ones marked b.
-    - conditionals: have multiples? perhaps only allowed after periods.
-    - parentheses to change order that obligations are enforced (e.g., A and (B or C)))
-    - add "In <controller name>" in addition to Always/Sometimes, meaning Paralegal should apply
-      the policy to the controller with that name
-    - unbound variable errors (variables referenced in bodies that weren't declared)
-    - “is authorized by” primitive as syntactic sugar
-    - possible syntactic sugar for flows to / control flow influence
-    - negation : "no quantifier" / "does not flow to"
-    - "one" quantifier
-    - figure out which edge type "flows to" compiles to or if the grammar should let you specify
-
-    (Good Practice / User Experience / Nits)
-    - better error handling
-    - pass template file paths as arguments instead of string literals
-    - escaping {{}} in Rust code w/o overwriting no-escape for HTML characters
-    - better leveraging of handlebars functionality (partials)
-    - cargo new for the policy and write a template a Cargo.toml for it as well
-    - better separate concerns in this repository (break up parsers into multiple files, etc.)
-*/
-
-// fn func_call(q: &Quantifier) -> &str {
-//     match q {
-//         Quantifier::Some => "any",
-//         Quantifier::All => "all",
-//         // Quantifier::No => todo!(),
-//     }
-// }
-
 fn node_to_template<'a>(node: &'a ASTNode<'a>) -> &'a str {
     match node {
         ASTNode::FlowsTo(_) => FLOWS_TO_TEMPLATE,
