@@ -1,6 +1,6 @@
 mod helpers;
 
-use std::sync::Arc;
+use std::{collections::hash_map::RandomState, sync::Arc};
 
 use helpers::{Result, Test};
 use paralegal_policy::{assert_error, assert_warning, Context, Diagnostics, EdgeSelection};
@@ -281,7 +281,9 @@ fn transitive_control_flow() -> Result<()> {
     test.run(|ctx| {
         let accesses = ctx
             .marked_nodes(Identifier::new_intern("db_access"))
-            .filter(|n| !ctx.has_marker(Identifier::new_intern("db_user_read"), *n));
+            .filter(|n| !ctx.has_marker(Identifier::new_intern("db_user_read"), *n))
+            .collect::<Vec<_>>();
+        println!("{} accesses total", accesses.len());
         let mut delete_checks = ctx.marked_nodes(instance_delete);
         let mut ban_checks = ctx.marked_nodes(instance_ban);
 
@@ -289,11 +291,28 @@ fn transitive_control_flow() -> Result<()> {
         let mut ban_checks_found = true;
 
         for access in accesses {
-            if !delete_checks.any(|dc| ctx.flows_to(dc, access, EdgeSelection::Both)) {
+            if !ctx
+                .influencers(access, EdgeSelection::Both)
+                .any(|n| ctx.has_marker(instance_delete, n))
+            {
+                //if !delete_checks.any(|dc| ctx.flows_to(dc, access, EdgeSelection::Both)) {
                 ctx.node_error(access, "No delete check found for this access");
                 del_checks_found = false;
+                for i in std::collections::HashSet::<_, RandomState>::from_iter(
+                    ctx.influencers(access, EdgeSelection::Both),
+                ) {
+                    let info = ctx.node_info(i);
+                    ctx.node_note(
+                        i,
+                        format!("This is an influencer {} @ {}", info.description, info.at),
+                    );
+                }
             }
-            if !ban_checks.any(|bc| ctx.flows_to(bc, access, EdgeSelection::Both)) {
+            if !ctx
+                .influencers(access, EdgeSelection::Both)
+                .any(|n| ctx.has_marker(instance_ban, n))
+            {
+                //if !ban_checks.any(|bc| ctx.flows_to(bc, access, EdgeSelection::Both)) {
                 ctx.node_error(access, "No ban check found for this access");
                 ban_checks_found = false;
             }
@@ -307,7 +326,14 @@ fn transitive_control_flow() -> Result<()> {
             }
 
             for check in delete_checks {
-                let mut help = ctx.struct_node_help(check, "This is an elibigle delete check");
+                let info = ctx.node_info(check);
+                let mut help = ctx.struct_node_help(
+                    check,
+                    format!(
+                        "This is an elibigle delete check {} @ {}",
+                        info.description, info.at
+                    ),
+                );
 
                 let influencees: Vec<GlobalNode> =
                     ctx.influencees(check, EdgeSelection::Both).collect();
@@ -324,28 +350,28 @@ fn transitive_control_flow() -> Result<()> {
             }
         }
 
-        if !ban_checks_found {
-            let mut ban_checks = ctx.marked_nodes(instance_ban).peekable();
+        // if !ban_checks_found {
+        //     let mut ban_checks = ctx.marked_nodes(instance_ban).peekable();
 
-            if ban_checks.peek().is_none() {
-                ctx.warning("No ban checks were found");
-            }
+        //     if ban_checks.peek().is_none() {
+        //         ctx.warning("No ban checks were found");
+        //     }
 
-            for check in ban_checks {
-                let mut help = ctx.struct_node_help(check, "This is an eligible ban check");
+        //     for check in ban_checks {
+        //         let mut help = ctx.struct_node_help(check, "This is an eligible ban check");
 
-                let influencees: Vec<GlobalNode> =
-                    ctx.influencees(check, EdgeSelection::Both).collect();
-                dbg!("There are {} influencees\n", influencees.len());
-                for influencee in influencees {
-                    if influencee.controller_id() == check.controller_id() {
-                        continue;
-                    };
-                    help.with_node_note(check, "This is an influencee of the ban check");
-                }
-                help.emit();
-            }
-        }
+        //         let influencees: Vec<GlobalNode> =
+        //             ctx.influencees(check, EdgeSelection::Both).collect();
+        //         dbg!("There are {} influencees\n", influencees.len());
+        //         for influencee in influencees {
+        //             if influencee.controller_id() == check.controller_id() {
+        //                 continue;
+        //             };
+        //             help.with_node_note(check, "This is an influencee of the ban check");
+        //         }
+        //         help.emit();
+        //     }
+        // }
         Ok(())
     })
 }
