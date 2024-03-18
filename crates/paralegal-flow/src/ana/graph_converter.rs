@@ -430,7 +430,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     tcx.def_span(info.callee.def_id()),
                     "Skipping analysis of unresolvable trait method.",
                 );
-            } else if judge.should_inline(info.callee) {
+            } else if judge.should_inline(&info) {
                 skip = false;
             };
 
