@@ -445,7 +445,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 let stmt_at_loc = body.stmt_at(loc);
                 if let crate::Either::Right(
                     term @ mir::Terminator {
-                        kind: mir::TerminatorKind::Call { .. },
+                        kind: mir::TerminatorKind::Call { destination, .. },
                         ..
                     },
                 ) = stmt_at_loc
@@ -453,64 +453,59 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
                     self.known_def_ids.extend(Some(fun));
 
-                    for e in graph.graph.edges_directed(old_node, Direction::Incoming) {
-                        if weight.at != e.weight().at {
-                            // Incoming edges are either from our operation or from control flow
-                            let at = e.weight().at;
-                            debug_assert!(
-                                at.leaf().function == leaf_loc.function
-                                    && if let RichLocation::Location(loc) = at.leaf().location {
-                                        matches!(
-                                            body.stmt_at(loc),
-                                            Either::Right(mir::Terminator {
-                                                kind: mir::TerminatorKind::SwitchInt { .. },
-                                                ..
-                                            })
-                                        )
-                                    } else {
-                                        false
-                                    }
-                            );
+                    // Question: Could a function with no input produce an
+                    // output that has aliases? E.g. could some place, where the
+                    // local portion isn't the local from the destination of
+                    // this function call be affected/modified by this call? If
+                    // so, that location would also need to have this marker
+                    // attached
+                    let needs_return_marker_registration = weight.place.local == destination.local
+                        || graph
+                            .graph
+                            .edges_directed(old_node, Direction::Incoming)
+                            .any(|e| {
+                                if weight.at != e.weight().at {
+                                    // Incoming edges are either from our operation or from control flow
+                                    let at = e.weight().at;
+                                    debug_assert!(
+                                        at.leaf().function == leaf_loc.function
+                                            && if let RichLocation::Location(loc) =
+                                                at.leaf().location
+                                            {
+                                                matches!(
+                                                    body.stmt_at(loc),
+                                                    Either::Right(mir::Terminator {
+                                                        kind: mir::TerminatorKind::SwitchInt { .. },
+                                                        ..
+                                                    })
+                                                )
+                                            } else {
+                                                false
+                                            }
+                                    );
+                                    false
+                                } else {
+                                    e.weight().target_use.is_return()
+                                }
+                            });
+
+                    if needs_return_marker_registration {
+                        self.register_annotations_for_function(node, fun, |ann| {
+                            ann.refinement.on_return()
+                        });
+                    }
+
+                    // This is not ideal. We have to do extra work here and fetch
+                    // the `at` location for each outgoing edge, because their
+                    // operations happen on a different function.
+                    for e in graph.graph.edges_directed(old_node, Direction::Outgoing) {
+                        let SourceUse::Argument(arg) = e.weight().source_use else {
                             continue;
                         };
-                        if e.weight().target_use.is_return() {
-                            self.register_annotations_for_function(node, fun, |ann| {
-                                ann.refinement.on_return()
-                            })
-                        }
+                        self.register_annotations_for_function(node, fun, |ann| {
+                            ann.refinement.on_argument().contains(arg as u32).unwrap()
+                        })
                     }
-                }
-
-                // This is not ideal. We have to do extra work here and fetch
-                // the `at` location for each outgoing edge, because their
-                // operations happen on a different function.
-                for e in graph.graph.edges_directed(old_node, Direction::Outgoing) {
-                    let leaf = e.weight().at.leaf();
-                    let RichLocation::Location(loc) = leaf.location else {
-                        continue;
-                    };
-                    let SourceUse::Argument(arg) = e.weight().source_use else {
-                        continue;
-                    };
-                    let stmt_at_loc = &self
-                        .tcx()
-                        .body_for_def_id(leaf.function)
-                        .unwrap()
-                        .body
-                        .stmt_at(loc);
-                    let crate::Either::Right(
-                        term @ mir::Terminator {
-                            kind: mir::TerminatorKind::Call { .. },
-                            ..
-                        },
-                    ) = stmt_at_loc
-                    else {
-                        continue;
-                    };
-                    let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
-                    self.register_annotations_for_function(node, fun, |ann| {
-                        ann.refinement.on_argument().contains(arg as u32).unwrap()
-                    })
                 }
             }
             _ => (),
@@ -907,9 +902,6 @@ fn map_either<A, B, C, D>(
 /// Checks the invariant that [`SPDGGenerator::collect_type_info`] should
 /// produce a map that is a superset of the types found in all the `types` maps
 /// on [`SPDG`].
-///
-/// Additionally this also inserts missing types into the map *only* for
-/// generators created by async functions.
 fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
     controllers
         .values()
