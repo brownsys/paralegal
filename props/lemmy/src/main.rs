@@ -57,81 +57,26 @@ impl InstanceProp {
     }
 
     fn check(&mut self) -> Result<()> {
-        let accesses = self
-            .cx
-            .marked_nodes(marker!(db_access))
-            .filter(|n| !self.cx.has_marker(marker!(db_user_read), *n));
-        let mut delete_checks = self.cx.marked_nodes(marker!(instance_delete_check));
-        let mut ban_checks = self.cx.marked_nodes(marker!(instance_ban_check));
-
-        let mut del_checks_found = true;
-        let mut ban_checks_found = true;
+        let ctx = &self.cx;
+        let instance_delete = Identifier::new_intern("instance_delete_check");
+        let instance_ban = Identifier::new_intern("instance_ban_check");
+        let accesses = ctx
+            .marked_nodes(Identifier::new_intern("db_access"))
+            .filter(|n| !ctx.has_marker(Identifier::new_intern("db_user_read"), *n))
+            .collect::<Vec<_>>();
 
         for access in accesses {
-            if !delete_checks.any(|dc| self.cx.flows_to(dc, access, EdgeSelection::Both)) {
-                self.cx
-                    .node_error(access, "No delete check found for this access");
-                del_checks_found = false;
+            if !ctx
+                .influencers(access, EdgeSelection::Both)
+                .any(|n| ctx.has_marker(instance_delete, n))
+            {
+                ctx.node_error(access, "No delete check found for this access");
             }
-            if !ban_checks.any(|bc| self.cx.flows_to(bc, access, EdgeSelection::Both)) {
-                self.cx
-                    .node_error(access, "No ban check found for this access");
-                ban_checks_found = false;
-            }
-        }
-
-        if !del_checks_found && !self.args.quiet {
-            let mut delete_checks = self
-                .cx
-                .marked_nodes(marker!(instance_delete_check))
-                .peekable();
-
-            if delete_checks.peek().is_none() {
-                self.cx.warning("No delete checks were found");
-            }
-
-            for check in delete_checks {
-                let mut help = self
-                    .cx
-                    .struct_node_help(check, "This is an elibigle delete check");
-
-                let influencees: Vec<GlobalNode> =
-                    self.cx.influencees(check, EdgeSelection::Both).collect();
-                dbg!("There are {} influencees\n", influencees.len());
-                for influencee in influencees {
-                    // NOTE: problem is that every influencee of check_user_valid is just itself
-                    // so it doesn't influence the database access
-                    if influencee.controller_id() == check.controller_id() {
-                        continue;
-                    };
-                    help.with_node_note(check, "This is an influencee of the delete check");
-                }
-                help.emit();
-            }
-        }
-
-        if !ban_checks_found && !self.args.quiet {
-            let mut ban_checks = self.cx.marked_nodes(marker!(instance_ban_check)).peekable();
-
-            if ban_checks.peek().is_none() {
-                self.cx.warning("No ban checks were found");
-            }
-
-            for check in ban_checks {
-                let mut help = self
-                    .cx
-                    .struct_node_help(check, "This is an eligible ban check");
-
-                let influencees: Vec<GlobalNode> =
-                    self.cx.influencees(check, EdgeSelection::Both).collect();
-                dbg!("There are {} influencees\n", influencees.len());
-                for influencee in influencees {
-                    if influencee.controller_id() == check.controller_id() {
-                        continue;
-                    };
-                    help.with_node_note(check, "This is an influencee of the ban check");
-                }
-                help.emit();
+            if !ctx
+                .influencers(access, EdgeSelection::Both)
+                .any(|n| ctx.has_marker(instance_ban, n))
+            {
+                ctx.node_error(access, "No ban check found for this access");
             }
         }
 
