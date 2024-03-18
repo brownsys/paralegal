@@ -97,7 +97,7 @@ fn bfs_iter<
 pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
-    flows_to: FlowsTo,
+    flows_to: Option<FlowsTo>,
     pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
     pub(crate) config: Arc<super::Config>,
@@ -117,7 +117,9 @@ impl Context {
             .map(|(k, v)| (v.name, *k))
             .into_group_map();
         let marker_to_ids = Self::build_index_on_markers(&desc);
-        let flows_to = Self::build_flows_to(&desc);
+        let flows_to = config
+            .use_flows_to_index
+            .then(|| Self::build_flows_to(&desc));
         // Make sure no expensive computation happens in the constructor call
         // below, otherwise the measurement of construction time will be off.
         Self {
@@ -298,20 +300,21 @@ impl Context {
             return false;
         }
 
-        if edge_type.is_data() {
-            let flows_to = &self.flows_to[&cf_id];
-            src.iter_nodes().any(|src| {
-                sink.iter_nodes()
-                    .any(|sink| flows_to.data_flows_to[src.index()][sink.index()])
-            })
-        } else {
-            generic_flows_to(
-                src.iter_nodes(),
-                edge_type,
-                &self.desc.controllers[&cf_id],
-                sink.iter_nodes(),
-            )
+        if let Some(index) = self.flows_to.as_ref() {
+            if edge_type.is_data() {
+                let flows_to = &index[&cf_id];
+                return src.iter_nodes().any(|src| {
+                    sink.iter_nodes()
+                        .any(|sink| flows_to.data_flows_to[src.index()][sink.index()])
+                });
+            }
         }
+        generic_flows_to(
+            src.iter_nodes(),
+            edge_type,
+            &self.desc.controllers[&cf_id],
+            sink.iter_nodes(),
+        )
     }
 
     /// Find the node that represents the `index`th argument of the controller
@@ -384,15 +387,25 @@ impl Context {
 
         let graph = &self.desc.controllers[&cf_id].graph;
 
+        if let Some(index) = self.flows_to.as_ref() {
+            if edge_type == EdgeSelection::Data {
+                return src
+                    .iter_nodes()
+                    .flat_map(|src| {
+                        index[&cf_id].data_flows_to[src.index()]
+                            .iter_ones()
+                            .map(move |i| GlobalNode::unsafe_new(cf_id, i))
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter();
+            }
+        }
+
         match edge_type {
-            EdgeSelection::Data => src
-                .iter_nodes()
-                .flat_map(|src| {
-                    self.flows_to[&cf_id].data_flows_to[src.index()]
-                        .iter_ones()
-                        .map(move |i| GlobalNode::unsafe_new(cf_id, i))
-                })
-                .collect::<Vec<_>>(),
+            EdgeSelection::Data => {
+                let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_data());
+                bfs_iter(&edges_filtered, cf_id, src.iter_nodes()).collect::<Vec<_>>()
+            }
             EdgeSelection::Both => bfs_iter(graph, cf_id, src.iter_nodes()).collect::<Vec<_>>(),
             EdgeSelection::Control => {
                 let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_control());
