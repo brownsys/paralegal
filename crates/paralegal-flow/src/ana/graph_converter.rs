@@ -10,14 +10,16 @@ use crate::{
 use flowistry_pdg::SourceUse;
 use paralegal_spdg::Node;
 
-use std::{borrow::Cow, rc::Rc, time::Instant};
+use std::{rc::Rc, time::Instant};
+
+use self::call_string_resolver::CallStringResolver;
 
 use super::{default_index, inline_judge, path_for_item, src_loc_for_span, SPDGGenerator};
 use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
-    is_async_trait_fn, match_async_trait_assign, try_resolve_function, CallChanges, PdgParams,
+    is_async_trait_fn, match_async_trait_assign, CallChanges, PdgParams,
     SkipCall::Skip,
 };
 use petgraph::{
@@ -52,6 +54,7 @@ pub struct GraphConverter<'tcx, 'a, C> {
     /// The converted graph we are creating
     spdg: SPDGImpl,
     marker_assignments: HashMap<Node, HashSet<Identifier>>,
+    call_string_resolver: call_string_resolver::CallStringResolver<'tcx>,
 }
 impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// Initialize a new converter by creating an initial PDG using flowistry.
@@ -84,6 +87,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             types: Default::default(),
             spdg: Default::default(),
             marker_assignments: Default::default(),
+            call_string_resolver: CallStringResolver::new(generator.tcx, local_def_id),
         })
     }
 
@@ -97,24 +101,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
 
     /// Is the top-level function (entrypoint) an `async fn`
     fn entrypoint_is_async(&self) -> bool {
-        self.tcx().asyncness(self.local_def_id).is_async()
-            || is_async_trait_fn(
-                self.tcx(),
-                self.local_def_id.to_def_id(),
-                &self.tcx().body_for_def_id(self.local_def_id).unwrap().body,
-            )
-    }
-
-    /// Find the statement at this location or fail.
-    fn expect_stmt_at(
-        &self,
-        loc: GlobalLocation,
-    ) -> Either<&'tcx mir::Statement<'tcx>, &'tcx mir::Terminator<'tcx>> {
-        let body = &self.tcx().body_for_def_id(loc.function).unwrap().body;
-        let RichLocation::Location(loc) = loc.location else {
-            unreachable!();
-        };
-        body.stmt_at(loc)
+        entrypoint_is_async(self.tcx(), self.local_def_id)
     }
 
     /// Insert this node into the converted graph, return it's auto-assigned id
@@ -228,16 +215,23 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         });
                     }
 
-                    // This is not ideal. We have to do extra work here and fetch
-                    // the `at` location for each outgoing edge, because their
-                    // operations happen on a different function.
+                    let mut is_marked = needs_return_markers;
+
                     for e in graph.graph.edges_directed(old_node, Direction::Outgoing) {
                         let SourceUse::Argument(arg) = e.weight().source_use else {
                             continue;
                         };
                         self.register_annotations_for_function(node, fun, |ann| {
                             ann.refinement.on_argument().contains(arg as u32).unwrap()
-                        })
+                        });
+                        is_marked = true;
+                    }
+
+                    if fun.is_local() && !is_marked {
+                        let res = self.call_string_resolver.resolve(weight.at);
+                        let mctx = self.marker_ctx().clone();
+                        let markers = mctx.get_reachable_markers(res);
+                        self.register_markers(node, markers.iter().copied())
                     }
                 }
             }
@@ -260,7 +254,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             // The body of a top-level `async` function binds a closure to the
             // return place `_0`. Here we expect are looking at the statement
             // that does this binding.
-            assert!(self.expect_stmt_at(*first).is_left());
+            assert!(expect_stmt_at(self.tcx(), *first).is_left());
             rest = tail;
         }
 
@@ -279,36 +273,8 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             place.local.into()
         };
 
-        let resolution = rest.iter().fold(
-            FnResolution::Partial(self.local_def_id.to_def_id()),
-            |resolution, caller| {
-                let base_stmt = self.expect_stmt_at(*caller);
-                let normalized = map_either(
-                    base_stmt,
-                    |stmt| {
-                        resolution.try_monomorphize(tcx, tcx.param_env(resolution.def_id()), stmt)
-                    },
-                    |term| {
-                        resolution.try_monomorphize(tcx, tcx.param_env(resolution.def_id()), term)
-                    },
-                );
-                match normalized {
-                    Either::Right(term) => term.as_ref().as_instance_and_args(tcx).unwrap().0,
-                    Either::Left(stmt) => {
-                        if let Some((def_id, generics)) = match_async_trait_assign(stmt.as_ref()) {
-                            try_resolve_function(
-                                tcx,
-                                def_id,
-                                tcx.param_env(resolution.def_id()),
-                                generics,
-                            )
-                        } else {
-                            unreachable!("{stmt:?}\nat {caller} in {}", at)
-                        }
-                    }
-                }
-            },
-        );
+        let resolution = self.call_string_resolver.resolve(at);
+
         // Thread through each caller to recover generic arguments
         let body = tcx.body_for_def_id(last.function).unwrap();
         let raw_ty = place.ty(&body.body, tcx);
@@ -601,6 +567,18 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 }
 
+/// Find the statement at this location or fail.
+fn expect_stmt_at<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    loc: GlobalLocation,
+) -> Either<&'tcx mir::Statement<'tcx>, &'tcx mir::Terminator<'tcx>> {
+    let body = &tcx.body_for_def_id(loc.function).unwrap().body;
+    let RichLocation::Location(loc) = loc.location else {
+        unreachable!();
+    };
+    body.stmt_at(loc)
+}
+
 /// If `did` is a method of an `impl` of a trait, then return the `DefId` that
 /// refers to the method on the trait definition.
 fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
@@ -617,4 +595,98 @@ fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
         .find_by_name_and_kind(tcx, ident, kind, r#trait)?
         .def_id;
     Some(id)
+}
+
+fn entrypoint_is_async(tcx: TyCtxt, local_def_id: LocalDefId) -> bool {
+    tcx.asyncness(local_def_id).is_async()
+        || is_async_trait_fn(
+            tcx,
+            local_def_id.to_def_id(),
+            &tcx.body_for_def_id(local_def_id).unwrap().body,
+        )
+}
+
+mod call_string_resolver {
+    //! Resolution of [`CallString`]s to [`FnResolution`]s.
+    //!
+    //! This is a separate mod so that we can use encapsulation to preserve the
+    //! internal invariants of the resolver.
+
+    use flowistry_pdg::{rustc_portable::LocalDefId, CallString};
+    use flowistry_pdg_construction::{try_resolve_function, FnResolution};
+    use rustc_utils::cache::Cache;
+
+    use crate::{Either, TyCtxt};
+
+    use super::{map_either, match_async_trait_assign, AsFnAndArgs};
+
+    /// Cached resolution of [`CallString`]s to [`FnResolution`]s.
+    ///
+    /// Only valid for a single controller. Each controller should initialize a
+    /// new resolver.
+    pub struct CallStringResolver<'tcx> {
+        cache: Cache<CallString, FnResolution<'tcx>>,
+        tcx: TyCtxt<'tcx>,
+        entrypoint_is_async: bool,
+    }
+
+    impl<'tcx> CallStringResolver<'tcx> {
+        /// Tries to resolve to the monomophized function in which this call
+        /// site exists. That is to say that `return.def_id() ==
+        /// cs.leaf().function`.
+        ///
+        /// Unlike `Self::resolve_internal` this can be called on any valid
+        /// [`CallString`].
+        pub fn resolve(&self, cs: CallString) -> FnResolution<'tcx> {
+            let (this, opt_prior_loc) = cs.pop();
+            if let Some(prior_loc) = opt_prior_loc {
+                if prior_loc.len() == 1 && self.entrypoint_is_async {
+                    FnResolution::Partial(this.function.to_def_id())
+                } else {
+                    self.resolve_internal(prior_loc)
+                }
+            } else {
+                FnResolution::Partial(this.function.to_def_id())
+            }
+        }
+
+        pub fn new(tcx: TyCtxt<'tcx>, entrypoint: LocalDefId) -> Self {
+            Self {
+                cache: Default::default(),
+                tcx,
+                entrypoint_is_async: super::entrypoint_is_async(tcx, entrypoint),
+            }
+        }
+
+        /// This resolves the monomorphized function *being called at* this call
+        /// site.
+        ///
+        /// This function is internal because it panics if `cs.leaf().location`
+        /// is not either a function call or a statement where an async closure
+        /// is created and assigned.
+        fn resolve_internal(&self, cs: CallString) -> FnResolution<'tcx> {
+            *self.cache.get(cs, |_| {
+                let this = cs.leaf();
+                let prior = self.resolve(cs);
+
+                let tcx = self.tcx;
+
+                let base_stmt = super::expect_stmt_at(tcx, this);
+                let param_env = tcx.param_env(prior.def_id());
+                let normalized = map_either(
+                    base_stmt,
+                    |stmt| prior.try_monomorphize(tcx, param_env, stmt),
+                    |term| prior.try_monomorphize(tcx, param_env, term),
+                );
+                let res = match normalized {
+                    Either::Right(term) => term.as_ref().as_instance_and_args(tcx).unwrap().0,
+                    Either::Left(stmt) => {
+                        let (def_id, generics) = match_async_trait_assign(stmt.as_ref()).unwrap();
+                        try_resolve_function(tcx, def_id, param_env, generics)
+                    }
+                };
+                res
+            })
+        }
+    }
 }

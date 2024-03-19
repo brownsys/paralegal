@@ -101,17 +101,31 @@ impl fmt::Display for GlobalLocation {
 ///
 /// Note: This type is copyable due to interning.
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug, Serialize, Deserialize)]
-pub struct CallString(Intern<Vec<GlobalLocation>>);
+pub struct CallString(Intern<CallStringInner>);
+
+type CallStringInner = Box<[GlobalLocation]>;
 
 impl CallString {
     /// Create a new call string from a list of global locations.
-    fn new(locs: Vec<GlobalLocation>) -> Self {
+    fn new(locs: CallStringInner) -> Self {
         CallString(Intern::new(locs))
+    }
+
+    pub fn pop(self) -> (GlobalLocation, Option<CallString>) {
+        let (last, rest) = self
+            .0
+            .split_last()
+            .expect("Invariant broken, call strings must have at least length 1");
+
+        (
+            *last,
+            (!rest.is_empty()).then(|| CallString::new(rest.into())),
+        )
     }
 
     /// Create an initial call string for the single location `loc`.
     pub fn single(loc: GlobalLocation) -> Self {
-        Self::new(vec![loc])
+        Self::new(Box::new([loc]))
     }
 
     /// Returns the leaf of the call string (the currently-called function).
@@ -121,7 +135,7 @@ impl CallString {
 
     /// Returns the call string minus the root.
     pub fn caller(self) -> Self {
-        CallString::new(self.0[..self.0.len() - 1].to_vec())
+        CallString::new(self.0[..self.0.len() - 1].into())
     }
 
     /// Returns an iterator over the locations in the call string, starting at the leaf and going to the root.
@@ -131,8 +145,7 @@ impl CallString {
 
     /// Adds a new call site to the end of the call string.
     pub fn push(self, loc: GlobalLocation) -> Self {
-        let mut string = self.0.to_vec();
-        string.push(loc);
+        let string = self.0.iter().copied().chain(Some(loc)).collect();
         CallString::new(string)
     }
 
@@ -145,8 +158,8 @@ impl CallString {
     }
 
     pub fn stable_id(self) -> usize {
-        let r: &'static Vec<GlobalLocation> = self.0.as_ref();
-        r as *const Vec<GlobalLocation> as usize
+        let r: &'static CallStringInner = self.0.as_ref();
+        r as *const CallStringInner as usize
     }
 
     pub fn iter_from_root(&self) -> impl DoubleEndedIterator<Item = GlobalLocation> + '_ {

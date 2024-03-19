@@ -22,7 +22,8 @@ use crate::{
     },
     DefId, Either, HashMap, LocalDefId, TyCtxt,
 };
-use rustc_utils::cache::CopyCache;
+use paralegal_spdg::Identifier;
+use rustc_utils::cache::Cache;
 
 use std::rc::Rc;
 
@@ -157,52 +158,72 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     /// Queries the transitive marker cache.
     pub fn has_transitive_reachable_markers(&self, res: FnResolution<'tcx>) -> bool {
+        !self.get_reachable_markers(res).is_empty()
+    }
+
+    pub fn get_reachable_markers(&self, res: FnResolution<'tcx>) -> &[Identifier] {
         self.db()
-            .marker_reachable_cache
-            .get_maybe_recursive(res, |_| self.compute_marker_reachable(res))
-            .unwrap_or(false)
+            .reachable_markers
+            .get_maybe_recursive(res, |_| self.compute_reachable_markers(res))
+            .map_or(&[], Box::as_ref)
     }
 
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
-    fn compute_marker_reachable(&self, res: FnResolution<'tcx>) -> bool {
-        let Some(body) = self
-            .tcx()
-            .body_for_def_id_default_policy(res.def_id().expect_local())
-        else {
-            return false;
+    fn compute_reachable_markers(&self, res: FnResolution<'tcx>) -> Box<[Identifier]> {
+        let mut self_markers = self
+            .all_function_markers(res)
+            .map(|m| m.0.marker)
+            .peekable();
+        if self_markers.peek().is_some() {
+            return self_markers.collect();
+        }
+        let Some(local) = res.def_id().as_local() else {
+            return self_markers.collect();
+        };
+        let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
+            return self_markers.collect();
         };
         let body = &body.body;
-        body.basic_blocks.iter().any(|bbdat| {
-            let term =
-                res.try_monomorphize(self.tcx(), ty::ParamEnv::reveal_all(), bbdat.terminator());
-            self.terminator_carries_marker(&body.local_decls, term.as_ref())
-        })
+        body.basic_blocks
+            .iter()
+            .flat_map(|bbdat| {
+                let term = res.try_monomorphize(
+                    self.tcx(),
+                    ty::ParamEnv::reveal_all(),
+                    bbdat.terminator(),
+                );
+                self.terminator_reachable_markers(&body.local_decls, term.as_ref())
+            })
+            .chain(self_markers)
+            .collect()
     }
 
     /// Does this terminator carry a marker?
-    fn terminator_carries_marker(
+    fn terminator_reachable_markers(
         &self,
         local_decls: &mir::LocalDecls,
         terminator: &mir::Terminator<'tcx>,
-    ) -> bool {
+    ) -> impl Iterator<Item = Identifier> + '_ {
         if let Ok((res, _args, _)) = terminator.as_instance_and_args(self.tcx()) {
             debug!(
                 "Checking function {} for markers",
                 self.tcx().def_path_debug_str(res.def_id())
             );
-            if self.marker_is_reachable(res) {
-                return true;
-            }
-            if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
+            let transitive_reachable = self.get_reachable_markers(res);
+            let others = if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
                     local_decls[mir::RETURN_PLACE].ty.kind()
                 && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
-                return self.marker_is_reachable(
+                self.get_reachable_markers(
                     FnResolution::Final(ty::Instance::expect_resolve(self.tcx(), ty::ParamEnv::reveal_all(), *closure_fn, substs))
-                );
-            }
-        }
-        false
+                )
+            } else {
+                &[]
+            };
+            Either::Right(transitive_reachable.iter().chain(others).copied())
+        } else {
+            Either::Left(std::iter::empty())
+        }.into_iter()
     }
 
     /// All the markers applied to this type and its subtypes.
@@ -295,7 +316,7 @@ pub struct MarkerDatabase<'tcx> {
     local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
-    marker_reachable_cache: CopyCache<FnResolution<'tcx>, bool>,
+    reachable_markers: Cache<FnResolution<'tcx>, Box<[Identifier]>>,
     /// Configuration options
     config: &'static MarkerControl,
 }
@@ -307,7 +328,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             tcx,
             local_annotations: HashMap::default(),
             external_annotations: resolve_external_markers(args, tcx),
-            marker_reachable_cache: Default::default(),
+            reachable_markers: Default::default(),
             config: args.marker_control(),
         }
     }
