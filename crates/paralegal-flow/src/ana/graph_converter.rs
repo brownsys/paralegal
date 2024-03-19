@@ -192,36 +192,37 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     // this function call be affected/modified by this call? If
                     // so, that location would also need to have this marker
                     // attached
-                    let has_the_right_local = weight.place.local == destination.local;
-                    let is_return_target_use = graph
-                        .graph
-                        .edges_directed(old_node, Direction::Incoming)
-                        .any(|e| {
-                            if weight.at != e.weight().at {
-                                // Incoming edges are either from our operation or from control flow
-                                let at = e.weight().at;
-                                debug_assert!(
-                                    at.leaf().function == leaf_loc.function
-                                        && if let RichLocation::Location(loc) = at.leaf().location {
-                                            matches!(
-                                                body.stmt_at(loc),
-                                                Either::Right(mir::Terminator {
-                                                    kind: mir::TerminatorKind::SwitchInt { .. },
-                                                    ..
-                                                })
-                                            )
-                                        } else {
-                                            false
-                                        }
-                                );
-                                false
-                            } else {
-                                e.weight().target_use.is_return()
-                            }
-                        });
+                    let needs_return_markers = weight.place.local == destination.local
+                        || graph
+                            .graph
+                            .edges_directed(old_node, Direction::Incoming)
+                            .any(|e| {
+                                if weight.at != e.weight().at {
+                                    // Incoming edges are either from our operation or from control flow
+                                    let at = e.weight().at;
+                                    debug_assert!(
+                                        at.leaf().function == leaf_loc.function
+                                            && if let RichLocation::Location(loc) =
+                                                at.leaf().location
+                                            {
+                                                matches!(
+                                                    body.stmt_at(loc),
+                                                    Either::Right(mir::Terminator {
+                                                        kind: mir::TerminatorKind::SwitchInt { .. },
+                                                        ..
+                                                    })
+                                                )
+                                            } else {
+                                                false
+                                            }
+                                    );
+                                    false
+                                } else {
+                                    e.weight().target_use.is_return()
+                                }
+                            });
 
-                    if has_the_right_local || is_return_target_use {
-                        trace!("Decided to add return markers to {:?} because has_the_right_local: {has_the_right_local} is_return_target: {is_return_target_use}", weight.place);
+                    if needs_return_markers {
                         self.register_annotations_for_function(node, fun, |ann| {
                             ann.refinement.on_return()
                         });
@@ -278,31 +279,18 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             place.local.into()
         };
 
-        fn normalize<'a, 'tcx, I: ty::TypeFoldable<TyCtxt<'tcx>> + Clone>(
-            resolution: FnResolution<'tcx>,
-            tcx: TyCtxt<'tcx>,
-            f: &'a I,
-        ) -> Cow<'a, I> {
-            match resolution {
-                FnResolution::Final(instance) => {
-                    Cow::Owned(instance.subst_mir_and_normalize_erasing_regions(
-                        tcx,
-                        tcx.param_env(resolution.def_id()),
-                        ty::EarlyBinder::bind(tcx.erase_regions(f.clone())),
-                    ))
-                }
-                FnResolution::Partial(_) => Cow::Borrowed(f),
-            }
-        }
-
         let resolution = rest.iter().fold(
             FnResolution::Partial(self.local_def_id.to_def_id()),
             |resolution, caller| {
                 let base_stmt = self.expect_stmt_at(*caller);
                 let normalized = map_either(
                     base_stmt,
-                    |stmt| normalize(resolution, tcx, stmt),
-                    |term| normalize(resolution, tcx, term),
+                    |stmt| {
+                        resolution.try_monomorphize(tcx, tcx.param_env(resolution.def_id()), stmt)
+                    },
+                    |term| {
+                        resolution.try_monomorphize(tcx, tcx.param_env(resolution.def_id()), term)
+                    },
                 );
                 match normalized {
                     Either::Right(term) => term.as_ref().as_instance_and_args(tcx).unwrap().0,
@@ -324,14 +312,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // Thread through each caller to recover generic arguments
         let body = tcx.body_for_def_id(last.function).unwrap();
         let raw_ty = place.ty(&body.body, tcx);
-        match resolution {
-            FnResolution::Partial(_) => raw_ty,
-            FnResolution::Final(instance) => instance.subst_mir_and_normalize_erasing_regions(
-                tcx,
-                ty::ParamEnv::reveal_all(),
-                ty::EarlyBinder::bind(tcx.erase_regions(raw_ty)),
-            ),
-        }
+        *resolution.try_monomorphize(tcx, ty::ParamEnv::reveal_all(), &raw_ty)
     }
 
     /// Fetch annotations item identified by this `id`.

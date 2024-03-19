@@ -24,7 +24,7 @@ use crate::{
 };
 use rustc_utils::cache::CopyCache;
 
-use std::{borrow::Cow, rc::Rc};
+use std::rc::Rc;
 
 type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 
@@ -174,16 +174,8 @@ impl<'tcx> MarkerCtx<'tcx> {
         };
         let body = &body.body;
         body.basic_blocks.iter().any(|bbdat| {
-            let term = match res {
-                FnResolution::Final(inst) => {
-                    Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
-                        self.tcx(),
-                        ty::ParamEnv::reveal_all(),
-                        ty::EarlyBinder::bind(bbdat.terminator().clone()),
-                    ))
-                }
-                FnResolution::Partial(_) => Cow::Borrowed(bbdat.terminator()),
-            };
+            let term =
+                res.try_monomorphize(self.tcx(), ty::ParamEnv::reveal_all(), bbdat.terminator());
             self.terminator_carries_marker(&body.local_decls, term.as_ref())
         })
     }

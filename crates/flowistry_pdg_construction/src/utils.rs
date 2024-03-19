@@ -98,25 +98,23 @@ pub fn try_resolve_function<'tcx>(
     }
 }
 
-pub fn try_monomorphize<'a, 'tcx, T>(
-    tcx: TyCtxt<'tcx>,
-    fn_resolution: FnResolution<'tcx>,
-    param_env: ParamEnv<'tcx>,
-    t: &'a T,
-) -> Cow<'a, T>
-where
-    T: TypeFoldable<TyCtxt<'tcx>> + Clone,
-{
-    match fn_resolution {
-        FnResolution::Partial(_) => Cow::Borrowed(t),
-        FnResolution::Final(inst) => {
-            // let (t, _) = tcx.replace_late_bound_regions(Binder::dummy(t.clone()), |r| todo!());
-            // Cow::Owned(EarlyBinder::bind(t).instantiate(tcx, inst.args))
-            Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
+impl<'tcx> FnResolution<'tcx> {
+    pub fn try_monomorphize<'a, T>(
+        self,
+        tcx: TyCtxt<'tcx>,
+        param_env: ParamEnv<'tcx>,
+        t: &'a T,
+    ) -> Cow<'a, T>
+    where
+        T: TypeFoldable<TyCtxt<'tcx>> + Clone,
+    {
+        match self {
+            FnResolution::Partial(_) => Cow::Borrowed(t),
+            FnResolution::Final(inst) => Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
                 tcx,
                 param_env,
                 EarlyBinder::bind(tcx.erase_regions(t.clone())),
-            ))
+            )),
         }
     }
 }

@@ -2,11 +2,8 @@ use flowistry_pdg_construction::CallInfo;
 use paralegal_spdg::Identifier;
 use rustc_utils::cache::Cache;
 
-use std::borrow::Cow;
-
 use crate::{
     args::InliningDepth,
-    ty,
     utils::FnResolution,
     utils::{AsFnAndArgs, TyCtxtExt},
     AnalysisCtrl, Either, MarkerCtx, TyCtxt,
@@ -64,16 +61,11 @@ impl<'tcx> InlineJudge<'tcx> {
                     .iter()
                     .flat_map(|bb| {
                         let term = bb.terminator();
-                        let mono_term = match function {
-                            FnResolution::Final(instance) => {
-                                Cow::Owned(instance.subst_mir_and_normalize_erasing_regions(
-                                    self.tcx,
-                                    self.tcx.param_env(instance.def_id()),
-                                    ty::EarlyBinder::bind(self.tcx.erase_regions(term.clone())),
-                                ))
-                            }
-                            FnResolution::Partial(_) => Cow::Borrowed(term),
-                        };
+                        let mono_term = function.try_monomorphize(
+                            self.tcx,
+                            self.tcx.param_env(function.def_id()),
+                            term,
+                        );
                         let Ok((fun, ..)) = mono_term.as_instance_and_args(self.tcx) else {
                             return Either::Left(std::iter::empty());
                         };

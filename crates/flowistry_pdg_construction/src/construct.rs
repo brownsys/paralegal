@@ -265,7 +265,9 @@ impl<'tcx> GraphConstructor<'tcx> {
             Some(cx) => cx.param_env,
             None => ParamEnv::reveal_all(),
         };
-        let body = utils::try_monomorphize(tcx, params.root, param_env, &body_with_facts.body);
+        let body = params
+            .root
+            .try_monomorphize(tcx, param_env, &body_with_facts.body);
 
         if log::log_enabled!(log::Level::Debug) {
             use std::io::Write;
