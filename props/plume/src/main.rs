@@ -73,6 +73,12 @@ enum PlumeVersion {
 #[derive(clap::Parser)]
 struct Args {
     plume_dir: std::path::PathBuf,
+    /// Which plume version to run.
+    ///
+    /// - `v0` is the original version that deletes no comments
+    /// - `v1` deletes the comments
+    /// - `v2` includes the requirement to delete media
+    /// - `v3` also ensures the media is deleted
     #[clap(long, short = 'p', default_value_t = PlumeVersion::V0, value_enum)]
     plume_version: PlumeVersion,
     /// Additional arguments to pass to cargo, this is intended to be used to
