@@ -36,16 +36,25 @@ impl CommunityProp {
     }
 
     fn check(&mut self) -> Result<()> {
+        let ctx = &self.cx;
         let mut community_writes = self.cx.marked_nodes(marker!(db_community_write));
-        let mut delete_checks = self.cx.marked_nodes(marker!(community_delete_check));
-        let mut ban_checks = self.cx.marked_nodes(marker!(community_ban_check));
+        let mut delete_check = marker!(community_delete_check);
+        let mut ban_check = marker!(community_ban_check);
 
-        let ok = community_writes.all(|write| {
-            delete_checks.any(|dc| self.cx.flows_to(dc, write, EdgeSelection::Both))
-                && ban_checks.any(|bc| self.cx.flows_to(bc, write, EdgeSelection::Both))
-        });
-
-        assert_error!(self.cx, ok, "Unauthorized community write");
+        for write in community_writes {
+            if !ctx
+                .influencers(write, EdgeSelection::Both)
+                .any(|i| ctx.has_marker(ban_check, i))
+            {
+                ctx.node_error(write, "This write has no ban check")
+            }
+            if !ctx
+                .influencers(write, EdgeSelection::Both)
+                .any(|i| ctx.has_marker(delete_check, i))
+            {
+                ctx.node_error(write, "This write has no delete check")
+            }
+        }
 
         Ok(())
     }
