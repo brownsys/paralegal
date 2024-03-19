@@ -449,16 +449,6 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             InliningDepth::Unconstrained
         };
 
-        if !matches!(
-            inlining_depth,
-            InliningDepth::Unconstrained | InliningDepth::Fixed(0)
-        ) {
-            bail!(
-                "Inlining depth type {} is not implemented",
-                inlining_depth.as_ref()
-            );
-        }
-
         Ok(Self {
             analyze,
             inlining_depth,
