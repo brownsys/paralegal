@@ -111,6 +111,8 @@ impl CallString {
         CallString(Intern::new(locs))
     }
 
+    /// Split the leaf (the current instruction) from the caller for the
+    /// function (if any) and return both. Same as `(self.leaf(), self.caller())`.
     pub fn pop(self) -> (GlobalLocation, Option<CallString>) {
         let (last, rest) = self
             .0
@@ -133,12 +135,14 @@ impl CallString {
         *self.0.last().unwrap()
     }
 
-    /// Returns the call string minus the root.
-    pub fn caller(self) -> Self {
-        CallString::new(self.0[..self.0.len() - 1].into())
+    /// Returns the call string minus the leaf. Returns `None` if this location
+    /// is at the root.
+    pub fn caller(self) -> Option<Self> {
+        self.pop().1
     }
 
-    /// Returns an iterator over the locations in the call string, starting at the leaf and going to the root.
+    /// Returns an iterator over the locations in the call string, starting at
+    /// the leaf and going to the root.
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = GlobalLocation> + '_ {
         self.0.iter().rev().copied()
     }
@@ -162,6 +166,8 @@ impl CallString {
         r as *const CallStringInner as usize
     }
 
+    /// Returns an iterator over the locations in the call string, starting at
+    /// the root and going to the leaf.
     pub fn iter_from_root(&self) -> impl DoubleEndedIterator<Item = GlobalLocation> + '_ {
         self.0.iter().copied()
     }
