@@ -284,11 +284,10 @@ fn transitive_control_flow() -> Result<()> {
             .filter(|n| !ctx.has_marker(Identifier::new_intern("db_user_read"), *n))
             .collect::<Vec<_>>();
         println!("{} accesses total", accesses.len());
-        let mut delete_checks = ctx.marked_nodes(instance_delete);
-        let mut ban_checks = ctx.marked_nodes(instance_ban);
+        let _delete_checks = ctx.marked_nodes(instance_delete);
+        let _ban_checks = ctx.marked_nodes(instance_ban);
 
         let mut del_checks_found = true;
-        let mut ban_checks_found = true;
 
         for access in accesses {
             if !ctx
@@ -314,7 +313,6 @@ fn transitive_control_flow() -> Result<()> {
             {
                 //if !ban_checks.any(|bc| ctx.flows_to(bc, access, EdgeSelection::Both)) {
                 ctx.node_error(access, "No ban check found for this access");
-                ban_checks_found = false;
             }
         }
 

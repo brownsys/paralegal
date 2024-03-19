@@ -1,8 +1,8 @@
 mod helpers;
 
 use helpers::{Result, Test};
-use paralegal_policy::{algo::ahb, assert_error, loc, paralegal_spdg, Diagnostics, Marker};
-use paralegal_spdg::{traverse::EdgeSelection, Identifier, IntoIterGlobalNodes};
+use paralegal_policy::{algo::ahb, loc, paralegal_spdg, Diagnostics, Marker};
+use paralegal_spdg::traverse::EdgeSelection;
 macro_rules! marker {
     ($id:ident) => {
         Marker::new_intern(stringify!($id))

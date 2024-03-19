@@ -222,9 +222,21 @@ pub struct GraphConstructor<'tcx> {
     pub(crate) async_info: Rc<AsyncInfo>,
     pub(crate) pdg_cache: PdgCache<'tcx>,
 }
+
 fn as_arg<'tcx>(place: Place<'tcx>, body: &Body<'tcx>) -> Option<u8> {
     (body.local_kind(place.local) == rustc_middle::mir::LocalKind::Arg)
         .then(|| place.local.as_u32() as u8 - 1)
+}
+
+#[derive(Debug)]
+enum Inputs<'tcx> {
+    Unresolved {
+        places: Vec<(Place<'tcx>, Option<u8>)>,
+    },
+    Resolved {
+        node: DepNode<'tcx>,
+        node_use: SourceUse,
+    },
 }
 
 impl<'tcx> GraphConstructor<'tcx> {
@@ -517,7 +529,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         state: &mut PartialGraph<'tcx>,
         location: Location,
         mutated: Either<Place<'tcx>, DepNode<'tcx>>,
-        inputs: Either<Vec<(Place<'tcx>, Option<u8>)>, (DepNode<'tcx>, SourceUse)>,
+        inputs: Inputs<'tcx>,
         target_use: TargetUse,
     ) {
         trace!("Applying mutation to {mutated:?} with inputs {inputs:?}");
@@ -525,7 +537,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         let ctrl_inputs = self.find_control_inputs(location);
 
         let data_inputs = match inputs {
-            Either::Left(places) => places
+            Inputs::Unresolved { places } => places
                 .into_iter()
                 .flat_map(|(input, input_use)| {
                     self.find_data_inputs(state, input)
@@ -538,7 +550,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                         })
                 })
                 .collect::<Vec<_>>(),
-            Either::Right(node) => vec![node],
+            Inputs::Resolved { node_use, node } => vec![(node, node_use)],
         };
         trace!("  Data inputs: {data_inputs:?}");
 
@@ -756,7 +768,9 @@ impl<'tcx> GraphConstructor<'tcx> {
                 };
                 let source_use = Some(callee_place.local.as_u32() as u8);
                 let target_use = TargetUse::Assign;
-                let inputs = Either::Left(vec![(caller_place, source_use)]);
+                let inputs = Inputs::Unresolved {
+                    places: vec![(caller_place, source_use)],
+                };
                 match cause {
                     FakeEffectKind::Read => self.apply_mutation(
                         state,
@@ -814,7 +828,9 @@ impl<'tcx> GraphConstructor<'tcx> {
                     state,
                     location,
                     Either::Right(child_src),
-                    Either::Left(vec![(parent_place, None)]),
+                    Inputs::Unresolved {
+                        places: vec![(parent_place, None)],
+                    },
                     TargetUse::Assign,
                 );
             }
@@ -831,7 +847,10 @@ impl<'tcx> GraphConstructor<'tcx> {
                     state,
                     location,
                     Either::Left(parent_place),
-                    Either::Right((child_dst, SourceUse::Operand)),
+                    Inputs::Resolved {
+                        node: child_dst,
+                        node_use: SourceUse::Operand,
+                    },
                     kind.map_or(TargetUse::Return, TargetUse::MutArg),
                 );
             }
@@ -854,7 +873,9 @@ impl<'tcx> GraphConstructor<'tcx> {
                 state,
                 location,
                 Either::Left(mutation.mutated),
-                Either::Left(mutation.inputs),
+                Inputs::Unresolved {
+                    places: mutation.inputs,
+                },
                 mutation.mutation_reason,
             )
         })
@@ -876,7 +897,9 @@ impl<'tcx> GraphConstructor<'tcx> {
                         state,
                         location,
                         Either::Left(place),
-                        Either::Left(vec![(place, None)]),
+                        Inputs::Unresolved {
+                            places: vec![(place, None)],
+                        },
                         TargetUse::Assign,
                     );
                 }

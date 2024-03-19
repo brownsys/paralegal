@@ -235,9 +235,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 (
                     k,
                     TypeDescription {
-                        rendering: rendering.into(),
+                        rendering,
                         otypes: otypes.into(),
-                        markers: markers.into(),
+                        markers,
                     },
                 )
             })

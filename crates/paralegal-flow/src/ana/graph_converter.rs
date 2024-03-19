@@ -138,7 +138,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn register_markers(&mut self, node: Node, markers: impl IntoIterator<Item = Identifier>) {
         let mut markers = markers.into_iter().peekable();
 
-        if !markers.peek().is_none() {
+        if markers.peek().is_some() {
             self.marker_assignments
                 .entry(node)
                 .or_default()
@@ -164,10 +164,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 self.known_def_ids.extend(Some(function_id));
 
                 self.register_annotations_for_function(node, function_id, |ann| {
-                    ann.refinement
-                        .on_argument()
-                        .contains(arg_num as u32)
-                        .unwrap()
+                    ann.refinement.on_argument().contains(arg_num).unwrap()
                 });
             }
             RichLocation::End if weight.place.local == mir::RETURN_PLACE => {

@@ -1,8 +1,8 @@
 mod helpers;
 
 use helpers::{Result, Test};
-use paralegal_policy::{loc, paralegal_spdg, Diagnostics, Marker};
-use paralegal_spdg::traverse::EdgeSelection;
+use paralegal_policy::{loc, Diagnostics, Marker};
+
 macro_rules! marker {
     ($id:ident) => {
         Marker::new_intern(stringify!($id))
@@ -39,7 +39,13 @@ fn has_ctrl_flow_influence() -> Result<()> {
         }
 
         #[paralegal::analyze]
-        async fn main(apikey: ApiKey, config: &Config, num: u8, bg: Backend, data: &Data) -> Result<Vec<String>, String> {
+        async fn main(
+            apikey: ApiKey,
+            config: &Config,
+            num: u8,
+            bg: Backend,
+            data: &Data,
+        ) -> Result<Vec<String>, String> {
             let mut recipients: Vec<String> = vec![];
             // NOTE: this line causes a "too many candidates for the return" warning
             // but the policy does pass/fail with/without this line, as expected
@@ -61,7 +67,7 @@ fn has_ctrl_flow_influence() -> Result<()> {
             )
             .await
             .unwrap();
-            
+
             Ok(vec![])
         }
 
@@ -77,15 +83,11 @@ fn has_ctrl_flow_influence() -> Result<()> {
         }
     ))?;
     test.run(|cx| {
-        for c_id in cx.desc().controllers.keys() {
+        for _c_id in cx.desc().controllers.keys() {
             let mut auth_checks = cx.marked_nodes(marker!(auth_check));
             let mut sinks = cx.marked_nodes(marker!(sink));
 
-            let ok = sinks.all(|sink| {
-                auth_checks.any(|check| {
-                    cx.has_ctrl_influence(check, sink)
-                })
-            });
+            let ok = sinks.all(|sink| auth_checks.any(|check| cx.has_ctrl_influence(check, sink)));
 
             if !ok {
                 let mut err = cx.struct_help(loc!("No auth check authorizing sink"));

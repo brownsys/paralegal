@@ -47,6 +47,7 @@ pub enum CountedStat {
     InliningsPerformed,
 }
 
+#[derive(Default)]
 struct StatsInner {
     timed: enum_map::EnumMap<TimedStat, Option<Duration>>,
     counted: enum_map::EnumMap<CountedStat, Option<u32>>,
@@ -116,16 +117,6 @@ impl Stats {
 impl Default for Stats {
     fn default() -> Self {
         Self(Arc::new(Mutex::new(Default::default())))
-    }
-}
-
-impl Default for StatsInner {
-    fn default() -> Self {
-        StatsInner {
-            timed: Default::default(),
-            counted: Default::default(),
-            unique_loc_set: Default::default(),
-        }
     }
 }
 

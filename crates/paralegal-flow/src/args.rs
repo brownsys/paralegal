@@ -436,7 +436,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             no_cross_function_analysis,
             adaptive_depth,
             fixed_depth,
-            unconstrained_depth,
+            unconstrained_depth: _,
         } = value;
 
         let inlining_depth = if adaptive_depth {
@@ -445,8 +445,6 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             InliningDepth::Fixed(n)
         } else if no_cross_function_analysis {
             InliningDepth::Fixed(0)
-        } else if unconstrained_depth {
-            InliningDepth::Unconstrained
         } else {
             InliningDepth::Unconstrained
         };

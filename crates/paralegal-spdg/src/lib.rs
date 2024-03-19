@@ -321,11 +321,8 @@ mod ser_defid_seq {
     #[repr(transparent)]
     struct DefIdWrap(#[serde(with = "rustc_proxies::DefId")] crate::DefId);
 
-    pub fn serialize<S: Serializer>(
-        v: &Box<[crate::DefId]>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        unsafe { Box::<[DefIdWrap]>::serialize(std::mem::transmute(v), serializer) }
+    pub fn serialize<S: Serializer>(v: &[crate::DefId], serializer: S) -> Result<S::Ok, S::Error> {
+        unsafe { <[DefIdWrap]>::serialize(std::mem::transmute(v), serializer) }
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
@@ -753,7 +750,7 @@ impl SPDG {
     pub fn arguments(&self) -> NodeCluster {
         NodeCluster {
             controller_id: self.id,
-            nodes: self.arguments.clone().into(),
+            nodes: self.arguments.clone(),
         }
     }
 

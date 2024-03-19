@@ -96,7 +96,7 @@ impl<'tcx> InlineJudge<'tcx> {
             _ if self.function_has_markers(info.callee) => false,
             InliningDepth::Adaptive => self.marker_is_reachable(info.callee),
             InliningDepth::Fixed(limit) => {
-                debug_assert!(info.call_string.len() > 0);
+                debug_assert!(!info.call_string.is_empty());
                 info.call_string.len() <= *limit as usize
             }
             InliningDepth::Unconstrained => true,

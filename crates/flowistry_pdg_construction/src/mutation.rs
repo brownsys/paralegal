@@ -212,7 +212,7 @@ where
             .flat_map(|(num, arg)| {
                 self.place_info
                     .reachable_values(arg, Mutability::Not)
-                    .into_iter()
+                    .iter()
                     .map(move |v| (*v, Some(num as u8)))
             })
             .collect::<Vec<_>>();
@@ -261,7 +261,7 @@ where
             let inputs = self
                 .place_info
                 .reachable_values(arg, Mutability::Not)
-                .into_iter()
+                .iter()
                 .map(|v| (*v, None))
                 .collect();
             (self.f)(
@@ -327,35 +327,32 @@ where
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         debug!("Checking {location:?}: {:?}", terminator.kind);
 
-        match &terminator.kind {
-            TerminatorKind::Call {
-                /*func,*/ // TODO: deal with func
-                args,
-                destination,
-                ..
-            } => {
-                let async_hack = AsyncHack::new(
-                    self.place_info.tcx,
-                    self.place_info.body,
-                    self.place_info.def_id,
-                );
-                let mut arg_places = utils::arg_places(args);
-                arg_places.retain(|(_, place)| !async_hack.ignore_place(*place));
+        if let TerminatorKind::Call {
+            /*func,*/ // TODO: deal with func
+            args,
+            destination,
+            ..
+        } = &terminator.kind
+        {
+            let async_hack = AsyncHack::new(
+                self.place_info.tcx,
+                self.place_info.body,
+                self.place_info.def_id,
+            );
+            let mut arg_places = utils::arg_places(args);
+            arg_places.retain(|(_, place)| !async_hack.ignore_place(*place));
 
-                // let ret_is_unit = destination
-                //     .ty(self.place_info.body.local_decls(), tcx)
-                //     .ty
-                //     .is_unit();
+            // let ret_is_unit = destination
+            //     .ty(self.place_info.body.local_decls(), tcx)
+            //     .ty
+            //     .is_unit();
 
-                // The PDG construction relies on the fact that mutations are
-                // executed "in-order". This means we must first mutate the
-                // argument places and then the return and mutable arguments.
-                //
-                // TODO: What happens if these argument places overlap?
-                self.handle_call_with_combine_on_args(arg_places, location, *destination)
-            }
-
-            _ => {}
+            // The PDG construction relies on the fact that mutations are
+            // executed "in-order". This means we must first mutate the
+            // argument places and then the return and mutable arguments.
+            //
+            // TODO: What happens if these argument places overlap?
+            self.handle_call_with_combine_on_args(arg_places, location, *destination)
         }
     }
 }

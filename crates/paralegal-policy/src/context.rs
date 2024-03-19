@@ -1,4 +1,3 @@
-use std::io::{stderr, stdout};
 use std::time::{Duration, Instant};
 use std::{io::Write, process::exit, sync::Arc};
 
