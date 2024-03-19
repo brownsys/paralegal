@@ -276,7 +276,7 @@ fn policy_fail() -> Result<()> {
                     }
                 }
                 store.add_resource(&commit_resource)?;
-                //store.add_resource(&resource)?;
+                store.add_resource(&resource)?;
                 Ok(commit_resource)
             }
         }
