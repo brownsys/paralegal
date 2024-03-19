@@ -27,11 +27,13 @@ mod inline_judge;
 
 use graph_converter::GraphConverter;
 
+use self::inline_judge::InlineJudge;
+
 /// Read-only database of information the analysis needs.
 ///
 /// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
 pub struct SPDGGenerator<'tcx> {
-    pub marker_ctx: MarkerCtx<'tcx>,
+    pub inline_judge: InlineJudge<'tcx>,
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
     stats: Stats,
@@ -45,11 +47,15 @@ impl<'tcx> SPDGGenerator<'tcx> {
         stats: Stats,
     ) -> Self {
         Self {
-            marker_ctx,
+            inline_judge: InlineJudge::new(marker_ctx, tcx, opts.anactrl()),
             opts,
             tcx,
             stats,
         }
+    }
+
+    pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
+        self.inline_judge.marker_ctx()
     }
 
     /// Perform the analysis for one `#[paralegal_flow::analyze]` annotated function and
@@ -208,7 +214,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// Create a [`TypeDescription`] record for each marked type that as
     /// mentioned in the PDG.
     fn collect_type_info(&self) -> TypeInfoMap {
-        self.marker_ctx
+        self.marker_ctx()
             .all_annotations()
             .filter(|(id, _)| def_kind_for_item(*id, self.tcx).is_type())
             .into_grouping_map()

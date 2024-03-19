@@ -1,14 +1,8 @@
 use flowistry_pdg_construction::CallInfo;
-use paralegal_spdg::Identifier;
-use rustc_utils::cache::Cache;
 
-use crate::{
-    args::InliningDepth,
-    utils::FnResolution,
-    utils::{AsFnAndArgs, TyCtxtExt},
-    AnalysisCtrl, Either, MarkerCtx, TyCtxt,
-};
+use crate::{args::InliningDepth, utils::FnResolution, AnalysisCtrl, MarkerCtx, TyCtxt};
 
+#[derive(Clone)]
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.
 ///
@@ -46,7 +40,9 @@ impl<'tcx> InlineJudge<'tcx> {
     /// Should we perform inlining on this function?
     pub fn should_inline(&self, info: &CallInfo<'tcx>) -> bool {
         match self.analysis_control.inlining_depth() {
-            _ if self.function_has_markers(info.callee) => false,
+            _ if self.function_has_markers(info.callee) || !info.callee.def_id().is_local() => {
+                false
+            }
             InliningDepth::Adaptive => self.marker_ctx.marker_is_reachable(info.callee),
             InliningDepth::Fixed(limit) => {
                 debug_assert!(!info.call_string.is_empty());
@@ -54,5 +50,9 @@ impl<'tcx> InlineJudge<'tcx> {
             }
             InliningDepth::Unconstrained => true,
         }
+    }
+
+    pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
+        &self.marker_ctx
     }
 }

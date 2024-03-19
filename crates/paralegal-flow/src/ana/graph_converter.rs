@@ -1,5 +1,6 @@
 use crate::{
     ann::MarkerAnnotation,
+    args::InliningDepth,
     desc::*,
     discover::FnToAnalyze,
     rust::{hir::def, *},
@@ -14,12 +15,12 @@ use std::{rc::Rc, time::Instant};
 
 use self::call_string_resolver::CallStringResolver;
 
-use super::{default_index, inline_judge, path_for_item, src_loc_for_span, SPDGGenerator};
+use super::{default_index, path_for_item, src_loc_for_span, SPDGGenerator};
 use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
-    is_async_trait_fn, match_async_trait_assign, CallChanges, PdgParams,
+    is_async_trait_fn, match_async_trait_assign, CallChanges, CallInfo, PdgParams,
     SkipCall::Skip,
 };
 use petgraph::{
@@ -96,7 +97,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
-        &self.generator.marker_ctx
+        &self.generator.marker_ctx()
     }
 
     /// Is the top-level function (entrypoint) an `async fn`
@@ -170,8 +171,12 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     },
                 ) = stmt_at_loc
                 {
-                    let (fun, ..) = term.as_fn_and_args(self.tcx()).unwrap();
-                    self.known_def_ids.extend(Some(fun));
+                    let res = self.call_string_resolver.resolve(weight.at);
+                    let (fun, ..) = res
+                        .try_monomorphize(self.tcx(), self.tcx().param_env(res.def_id()), term)
+                        .as_instance_and_args(self.tcx())
+                        .unwrap();
+                    self.known_def_ids.extend(Some(fun.def_id()));
 
                     // Question: Could a function with no input produce an
                     // output that has aliases? E.g. could some place, where the
@@ -210,27 +215,47 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                             });
 
                     if needs_return_markers {
-                        self.register_annotations_for_function(node, fun, |ann| {
+                        self.register_annotations_for_function(node, fun.def_id(), |ann| {
                             ann.refinement.on_return()
                         });
                     }
-
-                    let mut is_marked = needs_return_markers;
 
                     for e in graph.graph.edges_directed(old_node, Direction::Outgoing) {
                         let SourceUse::Argument(arg) = e.weight().source_use else {
                             continue;
                         };
-                        self.register_annotations_for_function(node, fun, |ann| {
+                        self.register_annotations_for_function(node, fun.def_id(), |ann| {
                             ann.refinement.on_argument().contains(arg as u32).unwrap()
                         });
-                        is_marked = true;
                     }
 
-                    if fun.is_local() && !is_marked {
-                        let res = self.call_string_resolver.resolve(weight.at);
+                    // Overapproximation of markers for fixed inlining depths.
+                    // If the skipped inlining a function because of the
+                    // inlining depth restriction we overapproximate how the
+                    // reachable markers may have affected each argument and
+                    // return by attaching each reachable marker to each
+                    // argument and the return.
+                    //
+                    // Explanation of each `&&`ed part of this condition in
+                    // order:
+                    //
+                    // - Optimization. If the inlining depth is not fixed, none
+                    //   of the following conditions will be true and this one
+                    //   is cheap to check.
+                    // - If the function is marked we currently don't propagate
+                    //   other reachable markers outside
+                    // - If the function was inlined, the PDG will cover the
+                    //   markers so we don't have to.
+                    if self.generator.opts.anactrl().inlining_depth().is_fixed()
+                        && !self.marker_ctx().is_marked(fun.def_id())
+                        && !self.generator.inline_judge.should_inline(&CallInfo {
+                            call_string: weight.at,
+                            callee: fun,
+                            is_cached: true,
+                        })
+                    {
                         let mctx = self.marker_ctx().clone();
-                        let markers = mctx.get_reachable_markers(res);
+                        let markers = mctx.get_reachable_markers(fun);
                         self.register_markers(node, markers.iter().copied())
                     }
                 }
@@ -360,9 +385,8 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) -> Result<DepGraph<'tcx>> {
         let tcx = generator.tcx;
         let opts = generator.opts;
-        let judge =
-            inline_judge::InlineJudge::new(generator.marker_ctx.clone(), tcx, opts.anactrl());
         let stat_wrap = generator.stats.clone();
+        let judge = generator.inline_judge.clone();
         let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(move |info| {
             let mut changes = CallChanges::default();
 
