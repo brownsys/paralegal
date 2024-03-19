@@ -29,7 +29,7 @@ use super::calling_convention::*;
 use super::graph::{DepEdge, DepGraph, DepNode};
 use super::utils::{self, FnResolution};
 use crate::graph::{SourceUse, TargetUse};
-use crate::mutation::{ModularMutationVisitor, Mutation, MutationReason};
+use crate::mutation::{ModularMutationVisitor, Mutation};
 
 /// Whether or not to skip recursing into a function call during PDG construction.
 #[derive(Debug)]
@@ -848,7 +848,6 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn modular_mutation_visitor<'a>(
         &'a self,
         state: &'a mut PartialGraph<'tcx>,
-        is_fn_call: bool,
     ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
         ModularMutationVisitor::new(&self.place_info, move |location, mutation| {
             self.apply_mutation(
@@ -856,16 +855,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                 location,
                 Either::Left(mutation.mutated),
                 Either::Left(mutation.inputs),
-                match mutation.mutation_reason {
-                    MutationReason::AssignTarget => {
-                        if is_fn_call {
-                            TargetUse::Return
-                        } else {
-                            TargetUse::Assign
-                        }
-                    }
-                    MutationReason::MutArgument(arg) => TargetUse::MutArg(arg),
-                },
+                mutation.mutation_reason,
             )
         })
     }
@@ -903,14 +893,14 @@ impl<'tcx> GraphConstructor<'tcx> {
                     .handle_call(state, location, func, args, *destination)
                     .is_none()
                 {
-                    self.modular_mutation_visitor(state, true)
+                    self.modular_mutation_visitor(state)
                         .visit_terminator(terminator, location)
                 }
             }
 
             // Fallback: call the visitor
             _ => self
-                .modular_mutation_visitor(state, false)
+                .modular_mutation_visitor(state)
                 .visit_terminator(terminator, location),
         }
     }
@@ -1059,7 +1049,7 @@ impl<'tcx> df::Analysis<'tcx> for DfAnalysis<'_, 'tcx> {
         location: Location,
     ) {
         self.0
-            .modular_mutation_visitor(state, false)
+            .modular_mutation_visitor(state)
             .visit_statement(statement, location)
     }
 

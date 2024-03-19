@@ -195,37 +195,36 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     // this function call be affected/modified by this call? If
                     // so, that location would also need to have this marker
                     // attached
-                    let needs_return_marker_registration = weight.place.local == destination.local
-                        || graph
-                            .graph
-                            .edges_directed(old_node, Direction::Incoming)
-                            .any(|e| {
-                                if weight.at != e.weight().at {
-                                    // Incoming edges are either from our operation or from control flow
-                                    let at = e.weight().at;
-                                    debug_assert!(
-                                        at.leaf().function == leaf_loc.function
-                                            && if let RichLocation::Location(loc) =
-                                                at.leaf().location
-                                            {
-                                                matches!(
-                                                    body.stmt_at(loc),
-                                                    Either::Right(mir::Terminator {
-                                                        kind: mir::TerminatorKind::SwitchInt { .. },
-                                                        ..
-                                                    })
-                                                )
-                                            } else {
-                                                false
-                                            }
-                                    );
-                                    false
-                                } else {
-                                    e.weight().target_use.is_return()
-                                }
-                            });
+                    let has_the_right_local = weight.place.local == destination.local;
+                    let is_return_target_use = graph
+                        .graph
+                        .edges_directed(old_node, Direction::Incoming)
+                        .any(|e| {
+                            if weight.at != e.weight().at {
+                                // Incoming edges are either from our operation or from control flow
+                                let at = e.weight().at;
+                                debug_assert!(
+                                    at.leaf().function == leaf_loc.function
+                                        && if let RichLocation::Location(loc) = at.leaf().location {
+                                            matches!(
+                                                body.stmt_at(loc),
+                                                Either::Right(mir::Terminator {
+                                                    kind: mir::TerminatorKind::SwitchInt { .. },
+                                                    ..
+                                                })
+                                            )
+                                        } else {
+                                            false
+                                        }
+                                );
+                                false
+                            } else {
+                                e.weight().target_use.is_return()
+                            }
+                        });
 
-                    if needs_return_marker_registration {
+                    if has_the_right_local || is_return_target_use {
+                        trace!("Decided to add return markers to {:?} because has_the_right_local: {has_the_right_local} is_return_target: {is_return_target_use}", weight.place);
                         self.register_annotations_for_function(node, fun, |ann| {
                             ann.refinement.on_return()
                         });

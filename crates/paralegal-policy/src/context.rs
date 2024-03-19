@@ -1,3 +1,4 @@
+use std::io::{stderr, stdout};
 use std::time::{Duration, Instant};
 use std::{io::Write, process::exit, sync::Arc};
 
@@ -677,19 +678,18 @@ fn test_context() {
             .count(),
         3
     );
+    let src_markers = ctx
+        .all_nodes_for_ctrl(controller)
+        .filter(|n| ctx.has_marker(Marker::new_intern("src"), *n))
+        .collect::<Vec<_>>();
     // Return of identity marked as src
-    assert_eq!(
-        ctx.all_nodes_for_ctrl(controller)
-            .filter(|n| ctx.has_marker(Marker::new_intern("src"), *n))
-            .count(),
-        1
-    );
+    assert_eq!(src_markers.len(), 1);
     // The sinks are marked via arguments
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
             .filter(|n| ctx.has_marker(Marker::new_intern("sink"), *n))
             .count(),
-        2
+        3
     );
     // The 3rd argument and the return of the controller.
     assert_eq!(

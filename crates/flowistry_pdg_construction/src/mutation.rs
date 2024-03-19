@@ -1,6 +1,6 @@
 //! Identifies the mutated places in a MIR instruction via modular approximation based on types.
 
-use flowistry_pdg::rustc_portable::Place;
+use flowistry_pdg::{rustc_portable::Place, TargetUse};
 use log::debug;
 use rustc_middle::{
     mir::{visit::Visitor, *},
@@ -25,15 +25,6 @@ pub enum MutationStatus {
     Possibly,
 }
 
-/// Why did this mutation occur
-#[derive(Debug)]
-pub enum MutationReason {
-    /// It was a function argument
-    MutArgument(u8),
-    /// It was target of an assign (via return or regular assign)
-    AssignTarget,
-}
-
 /// Information about a particular mutation.
 #[derive(Debug)]
 pub struct Mutation<'tcx> {
@@ -41,7 +32,7 @@ pub struct Mutation<'tcx> {
     pub mutated: Place<'tcx>,
 
     /// Simplified reason why this mutation occurred.
-    pub mutation_reason: MutationReason,
+    pub mutation_reason: TargetUse,
 
     /// The set of inputs to the mutating operation.
     pub inputs: Vec<(Place<'tcx>, Option<u8>)>,
@@ -130,7 +121,7 @@ where
                         location,
                         Mutation {
                             mutated,
-                            mutation_reason: MutationReason::AssignTarget,
+                            mutation_reason: TargetUse::Assign,
                             inputs: input.map(|i| (i, None)).into_iter().collect::<Vec<_>>(),
                             status: MutationStatus::Definitely,
                         },
@@ -162,7 +153,7 @@ where
                         location,
                         Mutation {
                             mutated: *mutated,
-                            mutation_reason: MutationReason::AssignTarget,
+                            mutation_reason: TargetUse::Assign,
                             inputs: vec![(*place, None)],
                             status: MutationStatus::Definitely,
                         },
@@ -175,7 +166,7 @@ where
                         location,
                         Mutation {
                             mutated: mutated_field,
-                            mutation_reason: MutationReason::AssignTarget,
+                            mutation_reason: TargetUse::Assign,
                             inputs: vec![(input_field, None)],
                             status: MutationStatus::Definitely,
                         },
@@ -195,7 +186,7 @@ where
                     location,
                     Mutation {
                         mutated: *mutated,
-                        mutation_reason: MutationReason::AssignTarget,
+                        mutation_reason: TargetUse::Assign,
                         inputs,
                         status: MutationStatus::Definitely,
                     },
@@ -233,7 +224,7 @@ where
                         location,
                         Mutation {
                             mutated: *arg_mut,
-                            mutation_reason: MutationReason::MutArgument(num as u8),
+                            mutation_reason: TargetUse::MutArg(num as u8),
                             inputs: inputs.clone(),
                             status: MutationStatus::Possibly,
                         },
@@ -247,7 +238,7 @@ where
             Mutation {
                 mutated: destination,
                 inputs,
-                mutation_reason: MutationReason::AssignTarget,
+                mutation_reason: TargetUse::Return,
                 status: MutationStatus::Definitely,
             },
         );
@@ -277,7 +268,7 @@ where
                 location,
                 Mutation {
                     mutated: arg,
-                    mutation_reason: MutationReason::AssignTarget,
+                    mutation_reason: TargetUse::Assign,
                     inputs,
                     status: MutationStatus::Definitely,
                 },
@@ -291,7 +282,7 @@ where
                         location,
                         Mutation {
                             mutated: *arg_mut,
-                            mutation_reason: MutationReason::MutArgument(num as u8),
+                            mutation_reason: TargetUse::MutArg(num as u8),
                             inputs: arg_place_inputs.clone(),
                             status: MutationStatus::Possibly,
                         },
@@ -304,7 +295,7 @@ where
             Mutation {
                 mutated: destination,
                 inputs: arg_place_inputs,
-                mutation_reason: MutationReason::AssignTarget,
+                mutation_reason: TargetUse::Return,
                 status: MutationStatus::Definitely,
             },
         );
@@ -325,7 +316,7 @@ where
                 location,
                 Mutation {
                     mutated: *mutated,
-                    mutation_reason: MutationReason::AssignTarget,
+                    mutation_reason: TargetUse::Assign,
                     inputs: collector.0.into_iter().map(|p| (p, None)).collect(),
                     status: MutationStatus::Definitely,
                 },
