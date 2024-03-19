@@ -171,18 +171,18 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
     fn compute_reachable_markers(&self, res: FnResolution<'tcx>) -> Box<[Identifier]> {
-        let mut self_markers = self
-            .all_function_markers(res)
-            .map(|m| m.0.marker)
-            .peekable();
-        if self_markers.peek().is_some() {
-            return self_markers.collect();
-        }
         let Some(local) = res.def_id().as_local() else {
-            return self_markers.collect();
+            return self.all_function_markers(res).map(|m| m.0.marker).collect();
         };
+        let mut direct_markers = self
+            .combined_markers(res.def_id())
+            .map(|m| m.marker)
+            .peekable();
+        if direct_markers.peek().is_some() {
+            return direct_markers.collect();
+        }
         let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
-            return self_markers.collect();
+            return direct_markers.collect();
         };
         let body = &body.body;
         body.basic_blocks
@@ -195,7 +195,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                 );
                 self.terminator_reachable_markers(&body.local_decls, term.as_ref())
             })
-            .chain(self_markers)
+            .chain(direct_markers)
             .collect()
     }
 
