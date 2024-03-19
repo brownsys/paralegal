@@ -168,21 +168,39 @@ impl<'tcx> MarkerCtx<'tcx> {
             .map_or(&[], Box::as_ref)
     }
 
+    fn get_reachable_and_self_markers(
+        &self,
+        res: FnResolution<'tcx>,
+    ) -> impl Iterator<Item = Identifier> + '_ {
+        if res.def_id().is_local() {
+            let mut direct_markers = self
+                .combined_markers(res.def_id())
+                .map(|m| m.marker)
+                .peekable();
+            let non_direct = direct_markers
+                .peek()
+                .is_none()
+                .then(|| self.get_reachable_markers(res));
+
+            Either::Right(direct_markers.chain(non_direct.into_iter().flatten().copied()))
+        } else {
+            Either::Left(
+                self.all_function_markers(res)
+                    .map(|m| m.0.marker)
+                    .collect::<Vec<_>>(),
+            )
+        }
+        .into_iter()
+    }
+
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
     fn compute_reachable_markers(&self, res: FnResolution<'tcx>) -> Box<[Identifier]> {
         let Some(local) = res.def_id().as_local() else {
-            return self.all_function_markers(res).map(|m| m.0.marker).collect();
+            return Box::new([]);
         };
-        let mut direct_markers = self
-            .combined_markers(res.def_id())
-            .map(|m| m.marker)
-            .peekable();
-        if direct_markers.peek().is_some() {
-            return direct_markers.collect();
-        }
         let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
-            return direct_markers.collect();
+            return Box::new([]);
         };
         let body = &body.body;
         body.basic_blocks
@@ -195,7 +213,6 @@ impl<'tcx> MarkerCtx<'tcx> {
                 );
                 self.terminator_reachable_markers(&body.local_decls, term.as_ref())
             })
-            .chain(direct_markers)
             .collect()
     }
 
@@ -210,17 +227,17 @@ impl<'tcx> MarkerCtx<'tcx> {
                 "Checking function {} for markers",
                 self.tcx().def_path_debug_str(res.def_id())
             );
-            let transitive_reachable = self.get_reachable_markers(res);
+            let transitive_reachable = self.get_reachable_and_self_markers(res);
             let others = if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
                     local_decls[mir::RETURN_PLACE].ty.kind()
                 && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
-                self.get_reachable_markers(
+                Either::Left(self.get_reachable_and_self_markers(
                     FnResolution::Final(ty::Instance::expect_resolve(self.tcx(), ty::ParamEnv::reveal_all(), *closure_fn, substs))
-                )
+                ))
             } else {
-                &[]
+                Either::Right(std::iter::empty())
             };
-            Either::Right(transitive_reachable.iter().chain(others).copied())
+            Either::Right(transitive_reachable.chain(others))
         } else {
             Either::Left(std::iter::empty())
         }.into_iter()
