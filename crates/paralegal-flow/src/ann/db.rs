@@ -22,6 +22,7 @@ use crate::{
     },
     DefId, Either, HashMap, LocalDefId, TyCtxt,
 };
+use flowistry_pdg_construction::determine_async;
 use paralegal_spdg::Identifier;
 use rustc_utils::cache::Cache;
 
@@ -202,6 +203,9 @@ impl<'tcx> MarkerCtx<'tcx> {
         let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
             return Box::new([]);
         };
+        if let Some((async_fn, _)) = determine_async(self.tcx(), local, &body.body) {
+            return self.compute_reachable_markers(async_fn);
+        }
         let body = &body.body;
         body.basic_blocks
             .iter()

@@ -15,7 +15,7 @@ extern crate rustc_type_ir;
 pub use utils::FnResolution;
 
 use self::graph::DepGraph;
-pub use async_support::{is_async_trait_fn, match_async_trait_assign};
+pub use async_support::{determine_async, is_async_trait_fn, match_async_trait_assign};
 use construct::GraphConstructor;
 pub use construct::{CallChanges, CallInfo, FakeEffect, FakeEffectKind, PdgParams, SkipCall};
 pub use utils::try_resolve_function;

@@ -1,6 +1,5 @@
 use crate::{
     ann::MarkerAnnotation,
-    args::InliningDepth,
     desc::*,
     discover::FnToAnalyze,
     rust::{hir::def, *},

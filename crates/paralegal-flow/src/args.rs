@@ -9,7 +9,7 @@
 //! allow us to change the name and default value of the argument without having
 //! to migrate the code using that argument.
 
-use anyhow::{bail, Error};
+use anyhow::Error;
 use clap::ValueEnum;
 use std::ffi::{OsStr, OsString};
 

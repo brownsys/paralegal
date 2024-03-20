@@ -133,17 +133,46 @@ fn match_pin_box_dyn_ty(lang_items: &rustc_hir::LanguageItems, t: ty::Ty) -> boo
     })
 }
 
+fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (LocalDefId, GenericArgsRef<'tcx>, Location) {
+    let block = BasicBlock::from_usize(0);
+    let location = Location {
+        block,
+        statement_index: body.basic_blocks[block].statements.len() - 1,
+    };
+    let stmt = body
+        .stmt_at(location)
+        .expect_left("Async fn should have a statement");
+    let StatementKind::Assign(box (
+        _,
+        Rvalue::Aggregate(box AggregateKind::Generator(def_id, generic_args, _), _args),
+    )) = &stmt.kind
+    else {
+        panic!("Async fn should assign to a generator")
+    };
+    (def_id.expect_local(), generic_args, location)
+}
+
+pub fn determine_async<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: LocalDefId,
+    body: &Body<'tcx>,
+) -> Option<(FnResolution<'tcx>, Location)> {
+    let (generator_def_id, args, loc) = if tcx.asyncness(def_id).is_async() {
+        get_async_generator(body)
+    } else {
+        try_as_async_trait_function(tcx, def_id.to_def_id(), body)?
+    };
+    let param_env = tcx.param_env(def_id);
+    let generator_fn =
+        utils::try_resolve_function(tcx, generator_def_id.to_def_id(), param_env, args);
+    Some((generator_fn, loc))
+}
+
 impl<'tcx> GraphConstructor<'tcx> {
     pub(crate) fn try_handle_as_async(&self) -> Option<PartialGraph<'tcx>> {
-        let (generator_def_id, generic_args, location) = self.determine_async()?;
-        let param_env = self.tcx.param_env(self.def_id);
-        let generator_fn = utils::try_resolve_function(
-            self.tcx,
-            generator_def_id.to_def_id(),
-            param_env,
-            generic_args,
-        );
-        let calling_context = self.calling_context_for(generator_def_id.to_def_id(), location);
+        let (generator_fn, location) = determine_async(self.tcx, self.def_id, &self.body)?;
+
+        let calling_context = self.calling_context_for(generator_fn.def_id(), location);
         let params = self.pdg_params_for_call(generator_fn);
         Some(
             GraphConstructor::new(
@@ -154,33 +183,6 @@ impl<'tcx> GraphConstructor<'tcx> {
             )
             .construct_partial(),
         )
-    }
-
-    fn determine_async(&self) -> Option<(LocalDefId, GenericArgsRef<'tcx>, Location)> {
-        if self.tcx.asyncness(self.def_id).is_async() {
-            Some(Self::async_generator(&self.body))
-        } else {
-            try_as_async_trait_function(self.tcx, self.def_id.to_def_id(), self.body.as_ref())
-        }
-    }
-
-    fn async_generator(body: &Body<'tcx>) -> (LocalDefId, GenericArgsRef<'tcx>, Location) {
-        let block = BasicBlock::from_usize(0);
-        let location = Location {
-            block,
-            statement_index: body.basic_blocks[block].statements.len() - 1,
-        };
-        let stmt = body
-            .stmt_at(location)
-            .expect_left("Async fn should have a statement");
-        let StatementKind::Assign(box (
-            _,
-            Rvalue::Aggregate(box AggregateKind::Generator(def_id, generic_args, _), _args),
-        )) = &stmt.kind
-        else {
-            panic!("Async fn should assign to a generator")
-        };
-        (def_id.expect_local(), generic_args, location)
     }
 
     pub(crate) fn try_poll_call_kind<'a>(

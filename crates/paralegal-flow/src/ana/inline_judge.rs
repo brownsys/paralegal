@@ -1,6 +1,6 @@
 use flowistry_pdg_construction::CallInfo;
 
-use crate::{args::InliningDepth, utils::FnResolution, AnalysisCtrl, MarkerCtx, TyCtxt};
+use crate::{args::InliningDepth, AnalysisCtrl, MarkerCtx, TyCtxt};
 
 #[derive(Clone)]
 /// The interpretation of marker placement as it pertains to inlining and inline
@@ -17,14 +17,6 @@ pub struct InlineJudge<'tcx> {
 }
 
 impl<'tcx> InlineJudge<'tcx> {
-    /// Are there any markers on this function (direct or output type)?
-    fn function_has_markers(&self, function: FnResolution<'tcx>) -> bool {
-        self.marker_ctx
-            .all_function_markers(function)
-            .next()
-            .is_some()
-    }
-
     pub fn new(
         marker_ctx: MarkerCtx<'tcx>,
         tcx: TyCtxt<'tcx>,
@@ -40,10 +32,14 @@ impl<'tcx> InlineJudge<'tcx> {
     /// Should we perform inlining on this function?
     pub fn should_inline(&self, info: &CallInfo<'tcx>) -> bool {
         match self.analysis_control.inlining_depth() {
-            _ if self.function_has_markers(info.callee) || !info.callee.def_id().is_local() => {
+            _ if self.marker_ctx.is_marked(info.callee.def_id())
+                || !info.callee.def_id().is_local() =>
+            {
                 false
             }
-            InliningDepth::Adaptive => self.marker_ctx.marker_is_reachable(info.callee),
+            InliningDepth::Adaptive => self
+                .marker_ctx
+                .has_transitive_reachable_markers(info.callee),
             InliningDepth::Fixed(limit) => {
                 debug_assert!(!info.call_string.is_empty());
                 info.call_string.len() <= *limit as usize
