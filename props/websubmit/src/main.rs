@@ -373,9 +373,12 @@ fn main() -> Result<()> {
     }
     let mut cfg = paralegal_policy::Config::default();
     cfg.always_happens_before_tracing = paralegal_policy::algo::ahb::TraceLevel::Full;
-    command
+    let res = command
         .run(args.ws_dir)?
         .with_context_configured(cfg, prop)?;
+
+    println!("Statistics for policy run {}", res.stats);
+    assert!(res.success);
 
     Ok(())
 }
