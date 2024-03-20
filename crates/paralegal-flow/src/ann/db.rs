@@ -200,22 +200,21 @@ impl<'tcx> MarkerCtx<'tcx> {
         let Some(local) = res.def_id().as_local() else {
             return Box::new([]);
         };
+        if self.is_marked(res.def_id()) {
+            return Box::new([]);
+        }
         let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
             return Box::new([]);
         };
-        if let Some((async_fn, _)) = determine_async(self.tcx(), local, &body.body) {
-            return self.compute_reachable_markers(async_fn);
+        let mono_body = res.try_monomorphize(self.tcx(), ty::ParamEnv::reveal_all(), &body.body);
+        if let Some((async_fn, _)) = determine_async(self.tcx(), local, &mono_body) {
+            return self.get_reachable_markers(async_fn).into();
         }
         let body = &body.body;
         body.basic_blocks
             .iter()
             .flat_map(|bbdat| {
-                let term = res.try_monomorphize(
-                    self.tcx(),
-                    ty::ParamEnv::reveal_all(),
-                    bbdat.terminator(),
-                );
-                self.terminator_reachable_markers(&body.local_decls, term.as_ref())
+                self.terminator_reachable_markers(&body.local_decls, bbdat.terminator())
             })
             .collect()
     }
