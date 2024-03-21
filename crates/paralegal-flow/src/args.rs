@@ -504,8 +504,9 @@ impl DumpArgs {
 /// Dependency specific configuration
 #[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
 pub struct DepConfig {
+    #[serde(default)]
     /// Additional rust features to enable
-    pub rust_features: Vec<String>,
+    pub rust_features: Box<[String]>,
 }
 
 /// Additional configuration for the build process/rustc
