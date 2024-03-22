@@ -707,6 +707,29 @@ pub struct SPDG {
     /// that this contains multiple types for a single node, because it hold
     /// top-level types and subtypes that may be marked.
     pub type_assigns: HashMap<Node, Types>,
+    /// Statistics
+    pub statistics: SPDGStats,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+/// Statistics about the code that produced an SPDG
+pub struct SPDGStats {
+    /// The number of unique lines of code we analyzed. This means MIR bodies
+    /// without considering monomorphization
+    pub unique_locs: u32,
+    /// The number of unique functions we analyzed. Corresponds to
+    /// [`Self::UniqueLoCs`].
+    pub unique_functions: u32,
+    /// The number of lines we ran through the PDG construction. This is higher
+    /// than unique LoCs, because we need to analyze some functions multiple
+    /// times, due to monomorphization and calls tring differences.
+    pub analyzed_locs: u32,
+    /// Number of functions analyzed. Corresponds to [`Self::AnalyzedLoCs`].
+    pub analyzed_functions: u32,
+    /// How many times we inlined functions. This will be higher than
+    /// [`Self::AnalyzedFunction`] because sometimes the callee PDG is served
+    /// from the cache.
+    pub inlinings_performed: u32,
 }
 
 /// Holds [`TypeId`]s that were assigned to a node.

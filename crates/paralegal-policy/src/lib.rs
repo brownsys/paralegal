@@ -88,6 +88,8 @@ pub struct Stats {
     pub context_contruction: Duration,
     /// How long the policy runs
     pub policy: Duration,
+    /// How long it took to read in the graph description
+    pub deserialization: Duration,
 }
 
 impl std::fmt::Display for Stats {
@@ -243,8 +245,9 @@ impl GraphLocation {
             success,
             result,
             stats: Stats {
-                analysis: ctx.stats.0,
-                context_contruction: ctx.stats.1,
+                analysis: ctx.stats.pdg_construction,
+                context_contruction: ctx.stats.precomputation,
+                deserialization: ctx.stats.deserialization.unwrap(),
                 policy: start.elapsed(),
             },
         })
@@ -258,6 +261,7 @@ impl GraphLocation {
     pub fn build_context(&self, config: Config) -> Result<Context> {
         let _ = simple_logger::init_with_env();
 
+        let deser_started = Instant::now();
         let desc = {
             let mut f = File::open(&self.path)?;
             anyhow::Context::with_context(
@@ -266,7 +270,8 @@ impl GraphLocation {
             )?
         };
         let mut ctx = Context::new(desc, config);
-        ctx.stats.0 = self.construction_time;
+        ctx.stats.pdg_construction = self.construction_time;
+        ctx.stats.deserialization = Some(deser_started.elapsed());
         Ok(ctx)
     }
 }

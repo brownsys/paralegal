@@ -101,7 +101,15 @@ pub struct Context {
     pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
     pub(crate) config: Arc<super::Config>,
-    pub(crate) stats: (Option<Duration>, Duration),
+    pub(crate) stats: ContextStats,
+}
+
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ContextStats {
+    pub pdg_construction: Option<Duration>,
+    pub deserialization: Option<Duration>,
+    pub precomputation: Duration,
 }
 
 impl Context {
@@ -129,8 +137,17 @@ impl Context {
             diagnostics: Default::default(),
             name_map,
             config: Arc::new(config),
-            stats: (None, start.elapsed()),
+            stats: ContextStats {
+                pdg_construction: None,
+                precomputation: start.elapsed(),
+                deserialization: None,
+            },
         }
+    }
+
+    #[doc(hidden)]
+    pub fn context_stats(&self) -> &ContextStats {
+        &self.stats
     }
 
     /// Find the call string for the statement or function that produced this node.
