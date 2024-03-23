@@ -32,6 +32,7 @@ use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use std::{fmt, hash::Hash, path::PathBuf};
 use utils::write_sep;
 
@@ -300,6 +301,8 @@ pub struct ProgramDescription {
     pub def_info: HashMap<DefId, DefInfo>,
     /// How many marker annotations were found
     pub marker_annotation_count: u32,
+    /// How long rustc ran before out plugin executed
+    pub rustc_time: Duration,
 }
 
 /// Metadata about a type
@@ -732,6 +735,10 @@ pub struct SPDGStats {
     /// [`Self::AnalyzedFunction`] because sometimes the callee PDG is served
     /// from the cache.
     pub inlinings_performed: u32,
+    /// How long it took to create this PDG
+    pub construction_time: Duration,
+    /// How long it took to calculate markers and otherwise set up the pdg
+    pub conversion_time: Duration,
 }
 
 /// Holds [`TypeId`]s that were assigned to a node.

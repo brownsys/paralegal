@@ -148,6 +148,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 .all_annotations()
                 .filter_map(|m| m.1.either(Annotation::as_marker, Some))
                 .count() as u32,
+            rustc_time: self.stats.get_timed(TimedStat::Rustc),
         }
     }
 

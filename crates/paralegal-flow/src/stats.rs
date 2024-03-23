@@ -1,15 +1,12 @@
 use std::{
-    borrow::BorrowMut,
+    borrow::Borrow,
     fmt::Display,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-use crate::{utils::TyCtxtExt as _, TyCtxt};
 use paralegal_spdg::utils::TruncatedHumanTime;
 use trait_enum::DerefMut;
-
-use crate::{rustc_data_structures::fx::FxHashSet as HashSet, LocalDefId};
 
 /// Statsistics that are counted as durations
 #[derive(Debug, Clone, Copy, strum::AsRefStr, PartialEq, Eq, enum_map::Enum)]
@@ -47,6 +44,10 @@ impl Stats {
 
     pub fn record_timed(&self, stat: TimedStat, duration: Duration) {
         self.inner_mut().record_timed(stat, duration)
+    }
+
+    pub fn get_timed(&self, stat: TimedStat) -> Duration {
+        self.0.lock().unwrap().timed[stat].unwrap_or(Duration::ZERO)
     }
 }
 

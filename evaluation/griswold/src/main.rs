@@ -25,11 +25,8 @@ struct RunStat {
     result: Option<bool>,
     pdg_time: Duration,
     rustc_time: Option<Duration>,
-    flowistry_time: Option<Duration>,
-    conversion_time: Option<Duration>,
-    serialization_time: Option<Duration>,
     policy_time: Option<Duration>,
-    derialization_time: Option<Duration>,
+    deserialization_time: Option<Duration>,
     precomputation_time: Option<Duration>,
     traversal_time: Option<Duration>,
     num_controllers: Option<u16>,
@@ -59,11 +56,8 @@ impl RunStat {
             result: None,
             pdg_time: pdg_stat.elapsed,
             rustc_time: None,
-            flowistry_time: None,
-            conversion_time: None,
-            serialization_time: None,
             policy_time: None,
-            derialization_time: None,
+            deserialization_time: None,
             precomputation_time: None,
             traversal_time: None,
             num_controllers: None,
@@ -95,28 +89,22 @@ impl RunStat {
         success: bool,
         traversal_time: Duration,
     ) {
-        assert!(self
-            .avg_cpu_usage_policy
-            .replace(cmd_stat.avg_cpu)
-            .is_none());
-        assert!(self
-            .peak_mem_usage_policy
-            .replace(cmd_stat.peak_mem)
-            .is_none());
-        assert!(self
-            .precomputation_time
-            .replace(ctx.context_stats().precomputation)
-            .is_none());
-        assert!(self.result.replace(success).is_none());
-        assert!(self
-            .derialization_time
-            .replace(ctx.context_stats().deserialization.unwrap())
-            .is_none());
-        assert!(self.traversal_time.replace(traversal_time).is_none());
-        assert!(self
-            .num_controllers
-            .replace(ctx.desc().controllers.len() as u16)
-            .is_none());
+        macro_rules! set {
+            ($field:ident, $target:expr) => {
+                assert!(self.$field.replace($target).is_none());
+            };
+        }
+        set!(avg_cpu_usage_policy, cmd_stat.avg_cpu);
+        set!(peak_mem_usage_policy, cmd_stat.peak_mem);
+        set!(precomputation_time, ctx.context_stats().precomputation);
+        set!(result, success);
+        set!(
+            deserialization_time,
+            ctx.context_stats().deserialization.unwrap()
+        );
+        set!(traversal_time, traversal_time);
+        set!(num_controllers, ctx.desc().controllers.len() as u16);
+        set!(rustc_time, ctx.desc().rustc_time);
     }
 }
 

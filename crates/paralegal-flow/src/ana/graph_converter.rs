@@ -10,7 +10,11 @@ use crate::{
 use flowistry_pdg::SourceUse;
 use paralegal_spdg::{Node, SPDGStats};
 
-use std::{cell::RefCell, rc::Rc, time::Instant};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use self::call_string_resolver::CallStringResolver;
 
@@ -394,6 +398,8 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 analyzed_functions: 0,
                 analyzed_locs: 0,
                 inlinings_performed: 0,
+                construction_time: Duration::ZERO,
+                conversion_time: Duration::ZERO,
             },
             Default::default(),
         )));
@@ -439,9 +445,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 &mut file,
             )?
         }
-
+        let flowistry_time = Instant::now();
         let pdg = flowistry_pdg_construction::compute_pdg(params);
-        let (stats, _) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
+        let (mut stats, _) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
+        stats.construction_time = flowistry_time.elapsed();
 
         Ok((pdg, stats))
     }
@@ -455,6 +462,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         self.generator
             .stats
             .record_timed(TimedStat::Conversion, start.elapsed());
+        self.stats.conversion_time = start.elapsed();
         SPDG {
             path: path_for_item(self.local_def_id.to_def_id(), self.tcx()),
             graph: self.spdg,
