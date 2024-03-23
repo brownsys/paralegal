@@ -27,7 +27,6 @@ description = "The suite of synthetic tests for the PDG and the policy framweork
 dependencies = [
     "analyzer-tests",
     "policy-framework-tests",
-    "test-policies",
     "guide-project",
     "integration-tests",
 ]
@@ -81,12 +80,6 @@ args = ["test", "-p", "paralegal-policy", "--lib"]
 [tasks.integration-tests]
 command = "cargo"
 args = ["test", "--test", "lemmy", "--test", "websubmit", "--no-fail-fast"]
-
-[tasks.test-policies]
-description = "Attempts to build the test policies to ensure their API is still served."
-cwd = "props"
-command = "cargo"
-args = ["build"]
 
 [tasks.guide-project]
 description = "Build and run the policy from the guide."
