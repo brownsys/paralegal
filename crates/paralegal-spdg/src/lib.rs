@@ -298,6 +298,8 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
+    /// How many marker annotations were found
+    pub marker_annotation_count: u32,
 }
 
 /// Metadata about a type
@@ -730,8 +732,6 @@ pub struct SPDGStats {
     /// [`Self::AnalyzedFunction`] because sometimes the callee PDG is served
     /// from the cache.
     pub inlinings_performed: u32,
-    /// Howe many marker annotations were found
-    pub marker_annotation_count: u32,
 }
 
 /// Holds [`TypeId`]s that were assigned to a node.

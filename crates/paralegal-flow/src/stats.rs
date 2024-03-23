@@ -26,66 +26,14 @@ pub enum TimedStat {
     Serialization,
 }
 
-/// Statistics that are counted without a unit
-#[derive(Debug, Clone, Copy, strum::AsRefStr, PartialEq, Eq, enum_map::Enum)]
-pub enum CountedStat {
-    /// The number of unique lines of code we analyzed. This means MIR bodies
-    /// without considering monomorphization
-    UniqueLoCs,
-    /// The number of unique functions we analyzed. Corresponds to
-    /// [`Self::UniqueLoCs`].
-    UniqueFunctions,
-    /// The number of lines we ran through the PDG construction. This is higher
-    /// than unique LoCs, because we need to analyze some functions multiple
-    /// times, due to monomorphization and calls tring differences.
-    AnalyzedLoCs,
-    /// Number of functions analyzed. Corresponds to [`Self::AnalyzedLoCs`].
-    AnalyzedFunctions,
-    /// How many times we inlined functions. This will be higher than
-    /// [`Self::AnalyzedFunction`] because sometimes the callee PDG is served
-    /// from the cache.
-    InliningsPerformed,
-}
-
 #[derive(Default)]
 struct StatsInner {
     timed: enum_map::EnumMap<TimedStat, Option<Duration>>,
-    counted: enum_map::EnumMap<CountedStat, Option<u32>>,
-    unique_loc_set: HashSet<LocalDefId>,
 }
 
 impl StatsInner {
     fn record_timed(&mut self, stat: TimedStat, duration: Duration) {
         *self.timed[stat].get_or_insert(Duration::ZERO) += duration
-    }
-
-    fn record_counted(&mut self, stat: CountedStat, increase: u32) {
-        let target = self.counted[stat].get_or_insert(0);
-        if let Some(new) = target.checked_add(increase) {
-            *target = new;
-        } else {
-            panic!("A u32 was not enough for {}", stat.as_ref());
-        }
-    }
-
-    fn incr_counted(&mut self, stat: CountedStat) {
-        self.record_counted(stat, 1)
-    }
-
-    fn record_inlining(&mut self, tcx: TyCtxt<'_>, def_id: LocalDefId, is_in_cache: bool) {
-        let src_map = tcx.sess.source_map();
-        let span = tcx.body_for_def_id(def_id).unwrap().body.span;
-        let (_, start_line, _, end_line, _) = src_map.span_to_location_info(span);
-        let body_lines = (end_line - start_line) as u32;
-        self.incr_counted(CountedStat::InliningsPerformed);
-        if self.unique_loc_set.borrow_mut().insert(def_id) {
-            self.incr_counted(CountedStat::UniqueFunctions);
-            self.record_counted(CountedStat::UniqueLoCs, body_lines);
-        }
-        if !is_in_cache {
-            self.incr_counted(CountedStat::AnalyzedFunctions);
-            self.record_counted(CountedStat::AnalyzedLoCs, body_lines);
-        }
     }
 }
 
@@ -99,18 +47,6 @@ impl Stats {
 
     pub fn record_timed(&self, stat: TimedStat, duration: Duration) {
         self.inner_mut().record_timed(stat, duration)
-    }
-
-    pub fn record_counted(&self, stat: CountedStat, increase: u32) {
-        self.inner_mut().record_counted(stat, increase)
-    }
-
-    pub fn incr_counted(&self, stat: CountedStat) {
-        self.inner_mut().incr_counted(stat)
-    }
-
-    pub fn record_inlining(&self, tcx: TyCtxt<'_>, def_id: LocalDefId, is_in_cache: bool) {
-        self.inner_mut().record_inlining(tcx, def_id, is_in_cache)
     }
 }
 
@@ -126,11 +62,6 @@ impl Display for Stats {
         for (s, dur) in borrow.timed {
             if let Some(dur) = dur {
                 write!(f, "{}: {} ", s.as_ref(), TruncatedHumanTime::from(dur))?;
-            }
-        }
-        for (c, count) in borrow.counted {
-            if let Some(count) = count {
-                write!(f, "{}: {} ", c.as_ref(), count)?;
             }
         }
         Ok(())

@@ -8,9 +8,9 @@ use crate::{
     DefId, HashMap, HashSet, MarkerCtx,
 };
 use flowistry_pdg::SourceUse;
-use paralegal_spdg::Node;
+use paralegal_spdg::{Node, SPDGStats};
 
-use std::{rc::Rc, time::Instant};
+use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use self::call_string_resolver::CallStringResolver;
 
@@ -55,7 +55,9 @@ pub struct GraphConverter<'tcx, 'a, C> {
     spdg: SPDGImpl,
     marker_assignments: HashMap<Node, HashSet<Identifier>>,
     call_string_resolver: call_string_resolver::CallStringResolver<'tcx>,
+    stats: SPDGStats,
 }
+
 impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// Initialize a new converter by creating an initial PDG using flowistry.
     pub fn new_with_flowistry(
@@ -65,7 +67,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) -> Result<Self> {
         let local_def_id = target.def_id.expect_local();
         let start = Instant::now();
-        let dep_graph = Rc::new(Self::create_flowistry_graph(generator, local_def_id)?);
+        let (dep_graph, stats) = Self::create_flowistry_graph(generator, local_def_id)?;
         generator
             .stats
             .record_timed(TimedStat::Flowistry, start.elapsed());
@@ -81,13 +83,14 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             generator,
             known_def_ids,
             target,
-            index_map: vec![default_index(); dep_graph.as_ref().graph.node_bound()].into(),
-            dep_graph,
+            index_map: vec![default_index(); dep_graph.graph.node_bound()].into(),
+            dep_graph: dep_graph.into(),
             local_def_id,
             types: Default::default(),
             spdg: Default::default(),
             marker_assignments: Default::default(),
             call_string_resolver: CallStringResolver::new(generator.tcx, local_def_id),
+            stats,
         })
     }
 
@@ -381,10 +384,20 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn create_flowistry_graph(
         generator: &SPDGGenerator<'tcx>,
         local_def_id: LocalDefId,
-    ) -> Result<DepGraph<'tcx>> {
+    ) -> Result<(DepGraph<'tcx>, SPDGStats)> {
         let tcx = generator.tcx;
         let opts = generator.opts;
-        let stat_wrap = generator.stats.clone();
+        let stat_wrap = Rc::new(RefCell::new((
+            SPDGStats {
+                unique_functions: 0,
+                unique_locs: 0,
+                analyzed_functions: 0,
+                analyzed_locs: 0,
+                inlinings_performed: 0,
+            },
+            Default::default(),
+        )));
+        let stat_wrap_copy = stat_wrap.clone();
         let judge = generator.inline_judge.clone();
         let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(move |info| {
             let mut changes = CallChanges::default();
@@ -403,7 +416,12 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             if skip {
                 changes = changes.with_skip(Skip);
             } else {
-                stat_wrap.record_inlining(tcx, info.callee.def_id().expect_local(), info.is_cached)
+                record_inlining(
+                    &stat_wrap,
+                    tcx,
+                    info.callee.def_id().expect_local(),
+                    info.is_cached,
+                )
             }
             changes
         });
@@ -422,7 +440,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             )?
         }
 
-        Ok(flowistry_pdg_construction::compute_pdg(params))
+        let pdg = flowistry_pdg_construction::compute_pdg(params);
+        let (stats, _) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
+
+        Ok((pdg, stats))
     }
 
     /// Consume the generator and compile the [`SPDG`].
@@ -451,6 +472,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 .into_iter()
                 .map(|(k, v)| (k, Types(v.into())))
                 .collect(),
+            statistics: self.stats,
         }
     }
 
@@ -587,6 +609,29 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             .into_iter()
             .map(|n| self.new_node_for(n.id()))
             .collect()
+    }
+}
+
+fn record_inlining(
+    tracker: &Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>,
+    tcx: TyCtxt<'_>,
+    def_id: LocalDefId,
+    is_in_cache: bool,
+) {
+    let mut borrow = tracker.borrow_mut();
+    let (stats, loc_set) = &mut *borrow;
+    let src_map = tcx.sess.source_map();
+    let span = tcx.body_for_def_id(def_id).unwrap().body.span;
+    let (_, start_line, _, end_line, _) = src_map.span_to_location_info(span);
+    let body_lines = (end_line - start_line) as u32;
+    stats.inlinings_performed += 1;
+    if loc_set.insert(def_id) {
+        stats.unique_functions += 1;
+        stats.unique_locs += body_lines;
+    }
+    if !is_in_cache {
+        stats.analyzed_functions += 1;
+        stats.analyzed_locs += body_lines;
     }
 }
 

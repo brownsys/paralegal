@@ -143,6 +143,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
             instruction_info: self.collect_instruction_info(&controllers),
             controllers,
             def_info,
+            marker_annotation_count: self
+                .marker_ctx()
+                .all_annotations()
+                .filter_map(|m| m.1.either(Annotation::as_marker, Some))
+                .count() as u32,
         }
     }
 
