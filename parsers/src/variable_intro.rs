@@ -53,7 +53,7 @@ fn variable_source_of<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
     let (remainder, (source_of_var, var)) = combinator(s)?;
     Ok((
         remainder,
-        VariableIntro::VariableSourceof((source_of_var, var))
+        VariableIntro::VariableSourceOf((source_of_var, var))
     ))
 }
 

@@ -27,6 +27,23 @@ fn influences_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     ))
 }
 
+fn does_not_influence_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+    let mut combinator = context(
+        "influences relation",
+        separated_pair(
+            variable, 
+            tuple((tag("does not influence"), space1)),
+            variable
+        )
+    );
+    let (remainder, (var1, var2)) = combinator(s)?;
+
+    Ok((
+        remainder,
+        Relation::DoesNotInfluence((var1, var2))
+    ))
+}
+
 // this is flows_to(EdgeSelection::Data)
 fn goes_to_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     let mut combinator = context(
@@ -179,6 +196,7 @@ pub fn relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
             is_marked_relation,
             is_not_marked_relation,
             influences_relation,
+            does_not_influence_relation,
             operation_associated_with_relation,
         ))
     )(s)
@@ -358,7 +376,7 @@ mod tests {
         });
 
         let joined1 = "a flows to b and a flows to b only via c";
-        let joined1_ans = ASTNode::And(
+        let joined1_ans = ASTNode::TwoClauses(
             Box::new(
                 TwoNodeObligation {
                     src: ASTNode::FlowsTo(TwoVarRelation {
@@ -375,14 +393,14 @@ mod tests {
         );
 
         let joined2 = "a flows to b and a flows to b only via c or a has control flow influence on b";
-        let joined2_ans = ASTNode::And(
+        let joined2_ans = ASTNode::TwoClauses(
             Box::new(
                 TwoNodeObligation {
                     src: ASTNode::FlowsTo(TwoVarRelation {
                         src: "a", 
                         dest: "b" 
                     }),
-                    dest: ASTNode::Or(
+                    dest: ASTNode::TwoClauses(
                         Box::new(
                             TwoNodeObligation {
                                 src: ASTNode::OnlyVia(
@@ -408,7 +426,7 @@ mod tests {
                 src: "a",
                 dest: "b",
             }),
-            dest: ASTNode::And(
+            dest: ASTNode::TwoClauses(
                 Box::new(
                     TwoNodeObligation {
                         src: ASTNode::FlowsTo(TwoVarRelation {
@@ -459,10 +477,10 @@ mod tests {
         let joined_body_ans =
             ASTNode::VarIntroduction(Box::new (VariableClause {
                 binding: VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
-                body: ASTNode::Or(
+                body: ASTNode::TwoClauses(
                     Box::new(TwoNodeObligation {
                         src: ASTNode::FlowsTo(TwoVarRelation{src: "dc", dest: "sink"}),
-                        dest: ASTNode::And(Box::new(TwoNodeObligation {
+                        dest: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                             src: ASTNode::FlowsTo(TwoVarRelation{src: "dc", dest: "encrypts"}),
                             dest: ASTNode::FlowsTo(TwoVarRelation{src: "dc", dest: "source"}),
                         }))
@@ -513,17 +531,17 @@ mod tests {
                 binding: VariableBinding { quantifier: Quantifier::All, variable: "write", marker: "db_write" }, 
                 body: ASTNode::Implies(Box::new(TwoNodeObligation { 
                     src: ASTNode::FlowsTo(TwoVarRelation { src: "comm_data", dest: "write" }), 
-                    dest: ASTNode::And(Box::new(TwoNodeObligation{
+                    dest: ASTNode::TwoClauses(Box::new(TwoNodeObligation{
                         src: ASTNode::VarIntroduction(Box::new(VariableClause { 
                             binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_dc", marker: "community_delete_check" }, 
-                            body: ASTNode::And(Box::new(TwoNodeObligation { 
+                            body: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                                 src: ASTNode::FlowsTo(TwoVarRelation { src: "comm_data", dest: "comm_dc" }), 
                                 dest: ASTNode::ControlFlow(TwoVarRelation { src: "comm_dc", dest: "write" })
                             })) 
                         })),
                         dest: ASTNode::VarIntroduction(Box::new(VariableClause { 
                             binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_bc", marker: "community_ban_check" }, 
-                            body: ASTNode::And(Box::new(TwoNodeObligation { 
+                            body: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                                 src: ASTNode::FlowsTo(TwoVarRelation { src: "comm_data", dest: "comm_bc" }), 
                                 dest: ASTNode::ControlFlow(TwoVarRelation { src: "comm_bc", dest: "write" })
                             })) 
@@ -555,7 +573,7 @@ mod tests {
         )";
         let lemmy_inst_partial = ASTNode::VarIntroduction(Box::new(VariableClause {
                 binding: VariableBinding { quantifier: Quantifier::Some, variable: "dc", marker: "instance_delete_check" },
-                body: ASTNode::And(Box::new(TwoNodeObligation {
+                body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                     src: ASTNode::VarIntroduction(Box::new(VariableClause {
                         binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
                         body: ASTNode::ControlFlow(TwoVarRelation { src: "dc", dest: "write"})
@@ -591,9 +609,9 @@ mod tests {
         let clause_with_joined_body_ans = 
             ASTNode::Implies(
                 Box::new(TwoNodeObligation {
-                    src: ASTNode::Or(Box::new(TwoNodeObligation {
+                    src: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                         src: ASTNode::FlowsTo(TwoVarRelation {src: "dc", dest: "sink"}),
-                        dest: ASTNode::And(
+                        dest: ASTNode::TwoClauses(
                             Box::new(TwoNodeObligation {
                                 src: ASTNode::OnlyVia(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
                                 dest: ASTNode::ControlFlow(TwoVarRelation {src: "dc", dest: "source"})
@@ -602,9 +620,9 @@ mod tests {
                     dest: ASTNode::VarIntroduction(
                         Box::new(VariableClause {
                             binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
-                            body: ASTNode::Or(Box::new(TwoNodeObligation {
+                            body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                                 src: ASTNode::FlowsTo(TwoVarRelation {src: "dc", dest: "sink"}),
-                                dest: ASTNode::And(
+                                dest: ASTNode::TwoClauses(
                                     Box::new(TwoNodeObligation {
                                         src: ASTNode::OnlyVia(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
                                         dest: ASTNode::ControlFlow(TwoVarRelation {src: "dc", dest: "source"})
@@ -644,21 +662,21 @@ mod tests {
                 )
             )";
         let clause_with_simple_body_w_joined_variable_clauses_ans = 
-            ASTNode::Or(
+            ASTNode::TwoClauses(
                 Box::new(TwoNodeObligation {
                     src: ASTNode::VarIntroduction(
                         Box::new(VariableClause {
                             binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
-                            body: ASTNode::Or(Box::new(TwoNodeObligation {
+                            body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                                 src: ASTNode::FlowsTo(TwoVarRelation {src: "dc", dest: "sink"}),
-                                dest: ASTNode::And(
+                                dest: ASTNode::TwoClauses(
                                     Box::new(TwoNodeObligation {
                                         src: ASTNode::OnlyVia(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
                                         dest: ASTNode::ControlFlow(TwoVarRelation {src: "dc", dest: "source"})
                                     }))
                             }))
                     })),
-                    dest: ASTNode::And(Box::new(TwoNodeObligation {
+                    dest: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                         src: ASTNode::VarIntroduction(
                             Box::new(VariableClause {
                                 binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
@@ -685,7 +703,7 @@ mod tests {
             )";
         
         let clause_with_simple_body_w_variable_clause_ans = 
-            ASTNode::Or(
+            ASTNode::TwoClauses(
                 Box::new(TwoNodeObligation {
                     src: ASTNode::VarIntroduction(
                         Box::new(VariableClause {
@@ -709,9 +727,9 @@ mod tests {
         let clause_with_joined_body_ans = 
             ASTNode::Implies(
                 Box::new(TwoNodeObligation {
-                    src: ASTNode::Or(Box::new(TwoNodeObligation {
+                    src: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                         src: ASTNode::FlowsTo(TwoVarRelation {src: "dc", dest: "sink"}),
-                        dest: ASTNode::And(
+                        dest: ASTNode::TwoClauses(
                             Box::new(TwoNodeObligation {
                                 src: ASTNode::OnlyVia(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
                                 dest: ASTNode::ControlFlow(TwoVarRelation {src: "dc", dest: "source"})
@@ -720,9 +738,9 @@ mod tests {
                     dest: ASTNode::VarIntroduction(
                         Box::new(VariableClause {
                             binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
-                            body: ASTNode::Or(Box::new(TwoNodeObligation {
+                            body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                                 src: ASTNode::FlowsTo(TwoVarRelation {src: "dc", dest: "sink"}),
-                                dest: ASTNode::And(
+                                dest: ASTNode::TwoClauses(
                                     Box::new(TwoNodeObligation {
                                         src: ASTNode::OnlyVia(ThreeVarObligation {src: "dc", dest: "encrypts", checkpoint: "bc"}),
                                         dest: ASTNode::ControlFlow(TwoVarRelation {src: "dc", dest: "source"})
@@ -744,20 +762,20 @@ mod tests {
         let multiple_bodies_ans = ASTNode::Implies(
             Box::new(TwoNodeObligation { 
             // the four statements in the body
-            src: ASTNode::Or(Box::new(TwoNodeObligation { 
+            src: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                 src: ASTNode::FlowsTo(TwoVarRelation { src: "dc", dest: "sink" }), 
-                dest: ASTNode::And(Box::new(TwoNodeObligation { 
+                dest: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                     src: ASTNode::OnlyVia(ThreeVarObligation { src: "dc", dest: "encrypts", checkpoint: "bc" }), 
-                    dest: ASTNode::And(Box::new(TwoNodeObligation { 
+                    dest: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                         src: ASTNode::ControlFlow(TwoVarRelation { src: "dc", dest: "source" }), 
                         dest: ASTNode::FlowsTo(TwoVarRelation { src: "bc", dest: "encrypts" })}))}))})), 
             // "implies" the rest
-            dest: ASTNode::Or(Box::new(TwoNodeObligation { 
+            dest: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                 src: ASTNode::VarIntroduction(Box::new(VariableClause { 
                     binding: VariableBinding { quantifier: Quantifier::All, variable: "dc", marker: "delete_check" }, 
-                    body: ASTNode::Or(Box::new(TwoNodeObligation { 
+                    body: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                         src: ASTNode::FlowsTo(TwoVarRelation { src: "dc", dest: "sink" }), 
-                        dest: ASTNode::And(Box::new(TwoNodeObligation { 
+                        dest: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                             src: ASTNode::OnlyVia(ThreeVarObligation { src: "dc", dest: "encrypts", checkpoint: "bc" }), 
                             dest: ASTNode::ControlFlow(TwoVarRelation { src: "dc", dest: "source" }) }))}))})), 
                 dest: ASTNode::FlowsTo(TwoVarRelation { src: "dc", dest: "encrypts" }) })) }));
@@ -794,10 +812,10 @@ mod tests {
                 bc has control flow influence on read
             )
         )";
-        let lemmy_inst_ans = ASTNode::And(Box::new(TwoNodeObligation {
+        let lemmy_inst_ans = ASTNode::TwoClauses(Box::new(TwoNodeObligation {
             src: ASTNode::VarIntroduction(Box::new(VariableClause {
                 binding: VariableBinding { quantifier: Quantifier::Some, variable: "dc", marker: "instance_delete_check" },
-                body: ASTNode::And(Box::new(TwoNodeObligation {
+                body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                     src: ASTNode::VarIntroduction(Box::new(VariableClause {
                         binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
                         body: ASTNode::ControlFlow(TwoVarRelation { src: "dc", dest: "write"})
@@ -810,7 +828,7 @@ mod tests {
                 })),
             dest: ASTNode::VarIntroduction(Box::new(VariableClause {
                 binding: VariableBinding { quantifier: Quantifier::Some, variable: "bc", marker: "instance_ban_check" },
-                body: ASTNode::And(Box::new(TwoNodeObligation {
+                body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                     src: ASTNode::VarIntroduction(Box::new(VariableClause {
                         binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
                         body: ASTNode::ControlFlow(TwoVarRelation { src: "bc", dest: "write"})
@@ -835,14 +853,14 @@ mod tests {
         )";
         
         let triple_clauses_ans =
-            ASTNode::Or(
+            ASTNode::TwoClauses(
                 Box::new(TwoNodeObligation {
                     src: ASTNode::VarIntroduction(
                         Box::new(VariableClause {
                             binding : VariableBinding {quantifier: Quantifier::All, variable: "dc", marker: "delete_check"},
                             body: ASTNode::FlowsTo(TwoVarRelation {src: "dc", dest: "sink"}),
                         })),
-                    dest: ASTNode::And(Box::new(TwoNodeObligation { 
+                    dest: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                         src: ASTNode::VarIntroduction(
                             Box::new(VariableClause {
                                 binding : VariableBinding {quantifier: Quantifier::All, variable: "bc", marker: "ban_check"},
@@ -905,10 +923,10 @@ mod tests {
         )";
         let lemmy_inst_ans = Policy {
             scope : PolicyScope::Always, 
-            body: ASTNode::And(Box::new(TwoNodeObligation {
+            body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                 src: ASTNode::VarIntroduction(Box::new(VariableClause {
                     binding: VariableBinding { quantifier: Quantifier::Some, variable: "dc", marker: "instance_delete_check" },
-                    body: ASTNode::And(Box::new(TwoNodeObligation {
+                    body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                         src: ASTNode::VarIntroduction(Box::new(VariableClause {
                             binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
                             body: ASTNode::ControlFlow(TwoVarRelation { src: "dc", dest: "write"})
@@ -921,7 +939,7 @@ mod tests {
                     })),
                 dest: ASTNode::VarIntroduction(Box::new(VariableClause {
                     binding: VariableBinding { quantifier: Quantifier::Some, variable: "bc", marker: "instance_ban_check" },
-                    body: ASTNode::And(Box::new(TwoNodeObligation {
+                    body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                         src: ASTNode::VarIntroduction(Box::new(VariableClause {
                             binding: VariableBinding {quantifier: Quantifier::All, variable: "write", marker: "db_write"},
                             body: ASTNode::ControlFlow(TwoVarRelation { src: "bc", dest: "write"})
@@ -961,17 +979,17 @@ mod tests {
                     binding: VariableBinding { quantifier: Quantifier::All, variable: "write", marker: "db_write" }, 
                     body: ASTNode::Implies(Box::new(TwoNodeObligation { 
                         src: ASTNode::FlowsTo(TwoVarRelation { src: "comm_data", dest: "write" }), 
-                        dest: ASTNode::And(Box::new(TwoNodeObligation{
+                        dest: ASTNode::TwoClauses(Box::new(TwoNodeObligation{
                             src: ASTNode::VarIntroduction(Box::new(VariableClause { 
                                 binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_dc", marker: "community_delete_check" }, 
-                                body: ASTNode::And(Box::new(TwoNodeObligation { 
+                                body: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                                     src: ASTNode::FlowsTo(TwoVarRelation { src: "comm_data", dest: "comm_dc" }), 
                                     dest: ASTNode::ControlFlow(TwoVarRelation { src: "comm_dc", dest: "write" })
                                 })) 
                             })),
                             dest: ASTNode::VarIntroduction(Box::new(VariableClause { 
                                 binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_bc", marker: "community_ban_check" }, 
-                                body: ASTNode::And(Box::new(TwoNodeObligation { 
+                                body: ASTNode::TwoClauses(Box::new(TwoNodeObligation { 
                                     src: ASTNode::FlowsTo(TwoVarRelation { src: "comm_data", dest: "comm_bc" }), 
                                     dest: ASTNode::ControlFlow(TwoVarRelation { src: "comm_bc", dest: "write" })
                                 })) 

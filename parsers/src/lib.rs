@@ -33,18 +33,19 @@ pub struct Definition<'a> {
 }
 
 // AST data
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum VariableIntro<'a> {
     Roots,
     Variable(Variable<'a>),
     VariableMarked((Variable<'a>, Marker<'a>)),
     VariableOfTypeMarked((Variable<'a>, Marker<'a>)),
-    VariableSourceof((Variable<'a>, Variable<'a>))
+    VariableSourceOf((Variable<'a>, Variable<'a>))
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Relation<'a> {
     Influences((Variable<'a>, Variable<'a>)),
+    DoesNotInfluence((Variable<'a>, Variable<'a>)),
     FlowsTo((Variable<'a>, Variable<'a>)),
     NoFlowsTo((Variable<'a>, Variable<'a>)),
     ControlFlow((Variable<'a>, Variable<'a>)),
@@ -64,42 +65,100 @@ pub enum Operator {
     Or,
 }
 
-impl From<&str> for Operator {
-    fn from(s: &str) -> Self {
-        match s {
-            "and" => Operator::And,
-            "or" => Operator::Or,
-            &_ => unimplemented!("no other operators supported"),
+// map templates to their handlebars template file names
+impl<'a> From<VariableIntro<'a>> for &str {
+    fn from(value: VariableIntro<'a>) -> Self {
+        match value {
+            VariableIntro::Roots => "roots",
+            VariableIntro::Variable(_) => "variable",
+            VariableIntro::VariableMarked(_) => "variable-marked",
+            VariableIntro::VariableOfTypeMarked(_) => "variable-of-type-marked",
+            VariableIntro::VariableSourceOf(_) =>  "variable-source-of",
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct TwoNodeObligation<'a> {
-    src: ASTNode<'a>,
-    dest: ASTNode<'a>,
+impl<'a> From<Relation<'a>> for &str {
+    fn from(value: Relation<'a>) -> Self {
+        match value {
+            Relation::FlowsTo(_) => "flows-to",
+            Relation::NoFlowsTo(_) => "no-flows-to",
+            Relation::ControlFlow(_) => "control-flow",
+            Relation::NoControlFlow(_) => "no-control-flow",
+            Relation::OnlyVia(_) => "only-via",
+            Relation::AssociatedCallSite(_) => "associated-call-site",
+            Relation::IsMarked(_) => "is-marked",
+            Relation::IsNotMarked(_) => "is-not-marked",
+            Relation::Influences(_) => "influences",
+            Relation::DoesNotInfluence(_) => "does-not-influence",
+        }
+    }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+impl From<Operator> for &str {
+    fn from(value: Operator) -> Self {
+        match value {
+            Operator::And => "and",
+            Operator::Or => "or",
+        }
+    }
+}
+
+impl From<&str> for Operator {
+    fn from(value: &str) -> Self {
+        match value {
+            "and" => Operator::And,
+            "or" => Operator::Or,
+            _ => unimplemented!("invalid operator: valid options are 1) and 2) or")
+        }
+    }
+}
+
+impl<'a> From<PolicyScope<'a>> for &str {
+    fn from(value: PolicyScope<'a>) -> Self {
+        match value {
+            PolicyScope::Always => "always",
+            PolicyScope::Sometimes => "sometimes",
+            PolicyScope::InCtrler(_) => "in-ctrler",
+        }
+    }
+}
+
+impl<'a> From<ClauseIntro<'a>> for &str {
+    fn from(value: ClauseIntro<'a>) -> Self {
+        match value {
+            ClauseIntro::ForEach(_) => "for-each",
+            ClauseIntro::ThereIs(_) => "there-is",
+            ClauseIntro::Conditional(_) => "conditional",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct TwoNodeObligation<'a> {
+    pub op: Operator,
+    pub src: ASTNode<'a>,
+    pub dest: ASTNode<'a>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum ClauseIntro<'a> {
     ForEach(VariableIntro<'a>),
     ThereIs(VariableIntro<'a>),
     Conditional(Relation<'a>)
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Clause<'a> {
-    intro: ClauseIntro<'a>,
-    body: ASTNode<'a>
+    pub intro: ClauseIntro<'a>,
+    pub body: ASTNode<'a>
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ASTNode<'a> {
     Relation(Relation<'a>),
-    And(Box<TwoNodeObligation<'a>>),
-    Or(Box<TwoNodeObligation<'a>>),
-    Conditional(Box<TwoNodeObligation<'a>>),
-    Clause(Box<Clause<'a>>)
+    Clause(Box<Clause<'a>>),
+    JoinedNodes(Box<TwoNodeObligation<'a>>)
 }
 
 pub fn parse<'a>(s: &'a str) -> Res<&str, Policy<'a>> {

@@ -141,12 +141,10 @@ pub fn join_nodes<'a>(tup: (ASTNode<'a>, Vec<(Operator, ASTNode<'a>)>)) -> ASTNo
     .into_iter()
     .fold(tup.0, |acc, (op, clause)| {
         let ob = TwoNodeObligation {
+            op,
             src: acc,
             dest: clause
         };
-        match op {
-            Operator::And => ASTNode::And(Box::new(ob)),
-            Operator::Or => ASTNode::Or(Box::new(ob)),
-        }
+        ASTNode::JoinedNodes(Box::new(ob))
     })
 }
