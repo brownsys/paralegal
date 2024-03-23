@@ -171,16 +171,21 @@ struct ControllerStat {
     #[serde(flatten)]
     statistics: SPDGStats,
     max_inlining_depth: u16,
+    avg_inlining_depth: f32,
+    num_edges: u32,
 }
 
 impl ControllerStat {
     fn from_spdg(run_id: u32, spdg: &SPDG) -> Self {
+        let inlining_sum = spdg.graph.node_weights().map(|w| w.at.len()).sum::<usize>();
         Self {
             run_id,
             name: spdg.name,
             num_nodes: spdg.graph.node_count() as u32,
             statistics: spdg.statistics.clone(),
             max_inlining_depth: spdg.graph.node_weights().map(|w| w.at.len()).max().unwrap() as u16,
+            avg_inlining_depth: inlining_sum as f32 / spdg.graph.node_count() as f32,
+            num_edges: spdg.graph.edge_count() as u32,
         }
     }
 }

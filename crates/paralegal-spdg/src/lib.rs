@@ -730,6 +730,8 @@ pub struct SPDGStats {
     /// [`Self::AnalyzedFunction`] because sometimes the callee PDG is served
     /// from the cache.
     pub inlinings_performed: u32,
+    /// Howe many marker annotations were found
+    pub marker_annotation_count: u32,
 }
 
 /// Holds [`TypeId`]s that were assigned to a node.
