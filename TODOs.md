@@ -12,5 +12,6 @@
 
 (Good Practice / User Experience / Nits)
 - better error handling
+- consider further where to use &str vs String
 - pass template file paths as arguments instead of string literals
 - cargo new for the policy and write a template Cargo.toml for it as well

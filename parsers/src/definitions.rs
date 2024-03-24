@@ -11,7 +11,7 @@ use crate::{
     variable_intro::variable_intro, clause::l2_clauses, relations::l2_relations,
 };
 
-fn definition<'a>(s: &'a str) -> Res<&str, Definition<'a>> {
+fn definition(s: &str) -> Res<&str, Definition> {
     let mut combinator = context(
         "definition",
         tuple((
@@ -33,7 +33,7 @@ fn definition<'a>(s: &'a str) -> Res<&str, Definition<'a>> {
     ))
 }
 
-pub fn parse_definitions<'a>(s: &'a str) -> Res<&str, Vec<Definition<'a>>> {
+pub fn parse_definitions(s: &str) -> Res<&str, Vec<Definition>> {
     context(
         "definitions",
         preceded(

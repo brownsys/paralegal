@@ -10,7 +10,7 @@ use crate::{
 };
 
 // this is flows_to(EdgeSelection::DataAndControl)
-fn influences_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+fn influences_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "influences relation",
         separated_pair(
@@ -27,7 +27,7 @@ fn influences_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     ))
 }
 
-fn does_not_influence_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+fn does_not_influence_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "influences relation",
         separated_pair(
@@ -45,7 +45,7 @@ fn does_not_influence_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
 }
 
 // this is flows_to(EdgeSelection::Data)
-fn goes_to_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+fn goes_to_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "goes to relation", 
         separated_pair(
@@ -62,7 +62,7 @@ fn goes_to_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     ))
 }
 
-fn does_not_go_to_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+fn does_not_go_to_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "does not go to relation", 
         separated_pair(
@@ -79,7 +79,7 @@ fn does_not_go_to_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     ))
 }
 
-fn operation_associated_with_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+fn operation_associated_with_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "operation associated with relation",
         separated_pair(
@@ -96,7 +96,7 @@ fn operation_associated_with_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>>
     ))
 }
 
-fn affects_whether_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+fn affects_whether_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "affects whether relation",
         tuple((
@@ -112,7 +112,7 @@ fn affects_whether_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     ))
 }
 
-fn does_not_affects_whether_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+fn does_not_affects_whether_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "does not affects whether relation",
         tuple((
@@ -128,7 +128,7 @@ fn does_not_affects_whether_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> 
     ))
 }
 
-fn is_marked_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+fn is_marked_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "is marked relation",
         separated_pair(
@@ -145,7 +145,7 @@ fn is_marked_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     ))
 }
 
-fn is_not_marked_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+fn is_not_marked_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "is marked relation",
         separated_pair(
@@ -162,7 +162,7 @@ fn is_not_marked_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     ))
 }
 
-pub fn only_via_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+pub fn only_via_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "only via relation",
         tuple((
@@ -183,7 +183,7 @@ pub fn only_via_relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     ))
 }
 
-pub fn relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
+pub fn relation(s: &str) -> Res<&str, Relation> {
     context(
         "relation",
         alt((
@@ -202,7 +202,7 @@ pub fn relation<'a>(s: &'a str) -> Res<&str, Relation<'a>> {
     )(s)
 }
 
-pub fn l2_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+pub fn l2_relations(s: &str) -> Res<&str, ASTNode> {
     context(
         "l2 relations",
         map(
@@ -215,7 +215,7 @@ pub fn l2_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-pub fn l3_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+pub fn l3_relations(s: &str) -> Res<&str, ASTNode> {
     context(
         "l3 relations",
         map(
@@ -228,7 +228,7 @@ pub fn l3_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-pub fn l4_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+pub fn l4_relations(s: &str) -> Res<&str, ASTNode> {
     context(
         "l4 relations",
         map(
@@ -241,7 +241,7 @@ pub fn l4_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-pub fn l5_relations<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+pub fn l5_relations(s: &str) -> Res<&str, ASTNode> {
     context(
         "l5 relations",
         map(

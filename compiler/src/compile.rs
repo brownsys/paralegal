@@ -10,57 +10,58 @@ use templates::{register_templates, render_template};
 // used for error-checking -- if policy tries to reference a source of a variable but it wasn't
 // introduced as a type, throw an error
 // TODO may be useful to add more context here, but for now this binary type/not type distinction is all I need
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq)]
 enum VarContext {
     AsType,
     AsSourceOf,
     AsVarMarked,
 }
 
-impl From<VarContext> for &str {
-    fn from(value: VarContext) -> Self {
+impl From<&mut VarContext> for &str {
+    fn from(value: &mut VarContext) -> Self {
         match value {
-            VarContext::AsType => "as type",
-            VarContext::AsSourceOf => "as source of",
-            VarContext::AsVarMarked => "as a variable marked",
+            &mut VarContext::AsType => "as type",
+            &mut VarContext::AsSourceOf => "as source of",
+            &mut VarContext::AsVarMarked => "as a variable marked",
         }
     }
 }
 
-fn verify_var_in_scope<'a>(var : &Variable<'a>, env : &Vec<(Variable<'a>, VarContext)>) {
-    let present = env.iter().any(|(existing_var, context)| var == existing_var);
+fn verify_var_in_scope(var : Variable, env : &Vec<(Variable, VarContext)>) {
+    let present = env.iter().any(|(existing_var, _)| &var == existing_var);
     if !present {
         panic!("Must introduce variable {} before using it.\n", var);
     }
 }
 
-fn verify_variable_intro_scope<'a>(
-    intro: &VariableIntro<'a>,
-    env: &mut Vec<(Variable<'a>, VarContext)>,
+fn verify_variable_intro_scope(
+    intro: &VariableIntro,
+    env: &mut Vec<(Variable, VarContext)>,
 ) { 
     // TODO verify that you're not introducing a variable that's already been introduced
     match intro {
         VariableIntro::Roots => {},
         VariableIntro::Variable(var) => {
             // if referring to a variable by itself, must already be in the environment
-            verify_var_in_scope(var, env);
+            verify_var_in_scope(var.into(), env);
         },
         VariableIntro::VariableMarked((var, _)) => {
-            env.push((var, VarContext::AsVarMarked));
+            env.push((var.into(), VarContext::AsVarMarked));
         }
         VariableIntro::VariableOfTypeMarked((var, _)) => {
-            env.push((var, VarContext::AsType));   
+            env.push((var.into(), VarContext::AsType));   
         },
         VariableIntro::VariableSourceOf((var, type_var)) => {
             let mut present = false;
             // TODO this &mut *env is weird... is this really the best way of doing it?
             // just need to be able to push var at the end w/o moving the value here
+            // I also do not need mutable references to existing_var or context
             for (existing_var, context) in &mut *env {
                 if existing_var == type_var {
                     present = true;
                     if *context != VarContext::AsType {
                         // TODO I suspect there is a more idiomatic way of handling this context --> string transformation
-                        let context_str : &str = (*context).into();
+                        let context_str : &str = context.into();
                         panic!("To reference sources of {}, must previously introduce it as a type; was previously introduced as {}", type_var, context_str);
                     }
                 }
@@ -69,14 +70,14 @@ fn verify_variable_intro_scope<'a>(
                 panic!("Tried to introduce {} as a source of {}, but {} was not previously introduced as a type", type_var, var, type_var);
             }
 
-            env.push((var, VarContext::AsSourceOf));
+            env.push((var.into(), VarContext::AsSourceOf));
         }
     };
 }
 
-fn verify_relation_scope<'a>(
-    relation: &Relation<'a>, 
-    env: &mut Vec<(Variable<'a>, VarContext)>,
+fn verify_relation_scope(
+    relation: &Relation, 
+    env: &mut Vec<(Variable, VarContext)>,
 ) { 
     match relation {
         Relation::Influences((var_source, var_dest)) | 
@@ -86,11 +87,11 @@ fn verify_relation_scope<'a>(
         Relation::ControlFlow((var_source, var_dest)) |
         Relation::NoControlFlow((var_source, var_dest)) | 
         Relation::AssociatedCallSite((var_source, var_dest))  => {
-            verify_var_in_scope(var_source, env);
-            verify_var_in_scope(var_dest, env);
+            verify_var_in_scope(var_source.into(), env);
+            verify_var_in_scope(var_dest.into(), env);
         },
-        Relation::IsMarked((var, marker)) | Relation::IsNotMarked((var, marker)) => {
-            verify_var_in_scope(var, env);
+        Relation::IsMarked((var, _)) | Relation::IsNotMarked((var, _)) => {
+            verify_var_in_scope(var.into(), env);
         },
         Relation::OnlyVia((src_intro, dest_intro, checkpoint_intro)) => {
             verify_variable_intro_scope(src_intro, env);
@@ -101,11 +102,10 @@ fn verify_relation_scope<'a>(
 }
 
 // Verify that the policy is structured properly, i.e., that every variable is in scope (introduced in a clause) before being referenced in a relation.
-fn verify_scope<'a>(
-    node: &ASTNode<'a>,
-    env: &mut Vec<(Variable<'a>, VarContext)>,
+fn verify_scope(
+    node: &ASTNode,
+    env: &mut Vec<(Variable, VarContext)>,
 ) {
-    let mut map: HashMap<&str, &str> = HashMap::new();
     match node {
         ASTNode::Relation(relation) => {
             verify_relation_scope(relation, env);
@@ -130,36 +130,36 @@ fn verify_scope<'a>(
     }
 }
 
-fn compile_variable_intro<'a>(
+fn compile_variable_intro(
     handlebars: &mut Handlebars,
-    intro: &VariableIntro<'a>,
-    map: &mut HashMap<&str, &str>,
+    intro: &VariableIntro,
+    map: &mut HashMap<&str, String>,
 ) -> String { 
     match intro {
         VariableIntro::Roots => {},
         VariableIntro::Variable(var) => {
-            map.insert("var", var);
+            map.insert("var", var.into());
         },
         VariableIntro::VariableMarked((var, marker)) => {
-            map.insert("var", var);
-            map.insert("marker", marker);
+            map.insert("var", var.into());
+            map.insert("marker", marker.into());
         }
         VariableIntro::VariableOfTypeMarked((var, marker)) => {
-            map.insert("var", var);
-            map.insert("marker", marker);  
+            map.insert("var", var.into());
+            map.insert("marker", marker.into());  
         },
         VariableIntro::VariableSourceOf((var, type_var)) => {
-            map.insert("var", var);
-            map.insert("type-var", type_var);
+            map.insert("var", var.into());
+            map.insert("type-var", type_var.into());
         }
     };
-    render_template(handlebars, &map, (*intro).into())
+    render_template(handlebars, &map, intro.into())
 }
 
-fn compile_relation<'a>(
+fn compile_relation(
     handlebars: &mut Handlebars,
-    relation: &Relation<'a>, 
-    map: &mut HashMap<&str, &str>,
+    relation: &Relation, 
+    map: &mut HashMap<&str, String>,
 ) -> String { 
     match relation {
         Relation::Influences((var_source, var_dest)) | 
@@ -169,65 +169,65 @@ fn compile_relation<'a>(
         Relation::ControlFlow((var_source, var_dest)) |
         Relation::NoControlFlow((var_source, var_dest)) | 
         Relation::AssociatedCallSite((var_source, var_dest))  => {
-            map.insert("src", *var_source);
-            map.insert("dest", *var_dest);
+            map.insert("src", var_source.into());
+            map.insert("dest", var_dest.into());
         },
         Relation::IsMarked((var, marker)) | Relation::IsNotMarked((var, marker)) => {
-            map.insert("src", *var);
-            map.insert("marker", *marker);
+            map.insert("src", var.into());
+            map.insert("marker", marker.into());
         },
         Relation::OnlyVia((src_intro, dest_intro, checkpoint_intro)) => {
             compile_variable_intro(handlebars, src_intro, map);
-            let src = render_template(handlebars, &map, (*src_intro).into());
+            let src = render_template(handlebars, &map, src_intro.into());
             compile_variable_intro(handlebars, dest_intro, map);
-            let dest = render_template(handlebars, &map, (*dest_intro).into());
+            let dest = render_template(handlebars, &map, dest_intro.into());
             compile_variable_intro(handlebars, checkpoint_intro, map);
-            let checkpoint = render_template(handlebars, &map, (*checkpoint_intro).into());
-            map.insert("src", &src);
-            map.insert("dest", &dest);
-            map.insert("checkpoint", &checkpoint);
+            let checkpoint = render_template(handlebars, &map, checkpoint_intro.into());
+            map.insert("src", src);
+            map.insert("dest", dest);
+            map.insert("checkpoint", checkpoint);
         }
     };
-    render_template(handlebars, &map, (*relation).into())
+    render_template(handlebars, &map, relation.into())
 }
 
-fn generate<'a>(
+fn generate(
     handlebars: &mut Handlebars,
-    node: &ASTNode<'a>,
+    node: &ASTNode,
 ) -> String {
-    let mut map: HashMap<&str, &str> = HashMap::new();
+    let mut map: HashMap<&str, String> = HashMap::new();
     match node {
         ASTNode::Relation(relation) => {
             compile_relation(handlebars, relation, &mut map);
-            render_template(handlebars, &map, (*relation).into())
+            render_template(handlebars, &map, relation.into())
         },
         ASTNode::JoinedNodes(obligation) => {
-            let src_res = &generate(handlebars, &obligation.src);
+            let src_res = generate(handlebars, &obligation.src);
             map.insert("src", src_res);
-            let dest_res = &generate(handlebars, &obligation.dest);
+            let dest_res = generate(handlebars, &obligation.dest);
             map.insert("dest", dest_res);
-            render_template(handlebars, &map, obligation.op.into())
+            render_template(handlebars, &map, (&obligation.op).into())
         }
         ASTNode::Clause(clause) => {
             let body = generate(handlebars, &clause.body);
-            map.insert("body", &body);
+            map.insert("body", body);
 
-            let variable_intro = match clause.intro {
+            let variable_intro = match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => compile_variable_intro(handlebars, &intro, &mut map),
                 ClauseIntro::Conditional(relation) => compile_relation(handlebars, &relation, &mut map)
             };
-            map.insert("intro", &variable_intro);
+            map.insert("intro", variable_intro);
 
-            render_template(handlebars, &map, clause.intro.into())
+            render_template(handlebars, &map, (&clause.intro).into())
         },
     }
 }
 
-fn compile_policy<'a>(
+fn compile_policy(
     handlebars: &mut Handlebars,
-    policy: Policy<'a>,
+    policy: Policy,
 ) -> Result<()> {
-    let mut env: Vec<(Variable<'a>, VarContext)> = Vec::new();
+    let mut env: Vec<(Variable, VarContext)> = Vec::new();
     // TODO add definitions to the environment
     verify_scope(&policy.body, &mut env);
     // TODO render_template definitions
@@ -248,7 +248,7 @@ fn compile_policy<'a>(
     Ok(())
 }
 
-pub fn compile<'a>(policy: Policy<'a>) -> Result<()> {
+pub fn compile(policy: Policy) -> Result<()> {
     let mut handlebars = Handlebars::new();
     register_templates(&mut handlebars);
     compile_policy(&mut handlebars, policy)

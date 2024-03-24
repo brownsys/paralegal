@@ -4,6 +4,7 @@ use std::env;
 use std::fs;
 
 use parsers::parse;
+use compile::compile;
 use std::io::Result;
 
 fn run(args: &Vec<String>) -> Result<()> {
@@ -16,11 +17,10 @@ fn run(args: &Vec<String>) -> Result<()> {
 
     let res = parse(&policy);
     dbg!(&res);
-    // match res {
-    //     Ok((_, ast)) => compile(ast),
-    //     Err(e) => panic!("{}", e),
-    // }
-    todo!()
+    match res {
+        Ok((_, policy)) => compile(policy),
+        Err(e) => panic!("{}", e),
+    }
 }
 
 fn main() -> Result<()> {

@@ -20,11 +20,11 @@ macro_rules! policy {
 }
 
 trait ContextExt {
-    fn marked_nodes<'a>(&'a self, marker: Marker) -> Box<dyn Iterator<Item = Node<'a>> + 'a>;
+    fn marked_nodes(self, marker: Marker) -> Box<dyn Iterator<Item = Node> + 'a>;
 }
 
 impl ContextExt for Context {
-    fn marked_nodes<'a>(&'a self, marker: Marker) -> Box<dyn Iterator<Item = Node<'a>> + 'a> {
+    fn marked_nodes(self, marker: Marker) -> Box<dyn Iterator<Item = Node> + 'a> {
         Box::new(
             self.desc()
                 .controllers

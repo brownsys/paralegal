@@ -81,9 +81,9 @@ pub fn register_templates(handlebars: &mut Handlebars) {
     }
 }
 
-pub fn render_template<'a>(
+pub fn render_template(
     handlebars: &mut Handlebars,
-    map: &HashMap<&str, &str>,
+    map: &HashMap<&str, String>,
     template: Template,
 ) -> String { 
     let name : &str = template.into();

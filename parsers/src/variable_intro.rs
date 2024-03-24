@@ -9,7 +9,7 @@ use crate::{
     VariableIntro, Res, common::*,
 };
 
-pub fn variable_def<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
+pub fn variable_def(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "variable (introduction)",
         variable
@@ -21,7 +21,7 @@ pub fn variable_def<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
     ))
 }
 
-pub fn variable_marked<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
+pub fn variable_marked(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "variable marked",
         separated_pair(variable, tag("marked"), marker)
@@ -33,7 +33,7 @@ pub fn variable_marked<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
     ))
 } 
 
-fn variable_type_marked<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
+fn variable_type_marked(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "variable type marked",
         separated_pair(variable, tag("type marked"), marker),
@@ -45,7 +45,7 @@ fn variable_type_marked<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
     ))
 }
 
-fn variable_source_of<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
+fn variable_source_of(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "variable source of",
         separated_pair(variable, tag("that is a source of"), variable)
@@ -57,7 +57,7 @@ fn variable_source_of<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
     ))
 }
 
-fn roots<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
+fn roots(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "roots",
         tag("input")
@@ -69,7 +69,7 @@ fn roots<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
     ))
 }
 
-pub fn variable_intro<'a>(s: &'a str) -> Res<&str, VariableIntro<'a>> {
+pub fn variable_intro(s: &str) -> Res<&str, VariableIntro> {
     context(
         "variable intro",
         delimited(

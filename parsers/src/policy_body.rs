@@ -1,7 +1,7 @@
 use nom::{error::context, branch::alt, sequence::{tuple, pair, preceded, terminated}, multi::many0, combinator::map, character::complete::multispace0};
 use crate::{Res, scope::scope, clause::l1_clauses, common::*, relations::only_via_relation, ASTNode, PolicyScope};
 
-fn only_vias<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
+fn only_vias(s: &str) -> Res<&str, ASTNode> { 
     context(
         "multiple only via",
         map(
@@ -14,7 +14,7 @@ fn only_vias<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-pub fn parse_policy_body<'a>(s: &'a str) -> Res<&str, (PolicyScope<'a>, ASTNode<'a>)> {
+pub fn parse_policy_body(s: &str) -> Res<&str, (PolicyScope, ASTNode)> {
     context(
         "policy body", 
         terminated(tuple((scope, alt((only_vias, l1_clauses)))), multispace0)

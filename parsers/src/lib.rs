@@ -7,53 +7,53 @@ pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
 
 // Top-level policy / definition data
 #[derive(Debug, PartialEq, Eq)]
-pub struct Policy<'a> {
-    pub definitions: Vec<Definition<'a>>,
-    pub scope: PolicyScope<'a>,
-    pub body: ASTNode<'a>,
+pub struct Policy {
+    pub definitions: Vec<Definition>,
+    pub scope: PolicyScope,
+    pub body: ASTNode,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum PolicyScope<'a> {
+pub enum PolicyScope {
     Always,
     Sometimes,
-    InCtrler(&'a str)
+    InCtrler(String)
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Definition<'a> {
+pub struct Definition {
     // quantifier is always "all" bc definitions are over *each* var that satisifes condition
-    variable: Variable<'a>,
-    declaration: VariableIntro<'a>,
-    filter: ASTNode<'a>
+    variable: Variable,
+    declaration: VariableIntro,
+    filter: ASTNode
 }
 
 // AST data
 #[derive(Debug, PartialEq, Eq)]
-pub enum VariableIntro<'a> {
+pub enum VariableIntro {
     Roots,
-    Variable(Variable<'a>),
-    VariableMarked((Variable<'a>, Marker<'a>)),
-    VariableOfTypeMarked((Variable<'a>, Marker<'a>)),
-    VariableSourceOf((Variable<'a>, Variable<'a>))
+    Variable(Variable),
+    VariableMarked((Variable, Marker)),
+    VariableOfTypeMarked((Variable, Marker)),
+    VariableSourceOf((Variable, Variable))
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Relation<'a> {
-    Influences((Variable<'a>, Variable<'a>)),
-    DoesNotInfluence((Variable<'a>, Variable<'a>)),
-    FlowsTo((Variable<'a>, Variable<'a>)),
-    NoFlowsTo((Variable<'a>, Variable<'a>)),
-    ControlFlow((Variable<'a>, Variable<'a>)),
-    NoControlFlow((Variable<'a>, Variable<'a>)),
-    AssociatedCallSite((Variable<'a>, Variable<'a>)),
-    IsMarked((Variable<'a>, Marker<'a>)),
-    IsNotMarked((Variable<'a>, Marker<'a>)),
-    OnlyVia((VariableIntro<'a>, VariableIntro<'a>, VariableIntro<'a>))
+pub enum Relation {
+    Influences((Variable, Variable)),
+    DoesNotInfluence((Variable, Variable)),
+    FlowsTo((Variable, Variable)),
+    NoFlowsTo((Variable, Variable)),
+    ControlFlow((Variable, Variable)),
+    NoControlFlow((Variable, Variable)),
+    AssociatedCallSite((Variable, Variable)),
+    IsMarked((Variable, Marker)),
+    IsNotMarked((Variable, Marker)),
+    OnlyVia((VariableIntro, VariableIntro, VariableIntro))
 }
 
-pub type Variable<'a> = &'a str;
-pub type Marker<'a> = &'a str;
+pub type Variable = String;
+pub type Marker = String;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Operator {
@@ -62,40 +62,40 @@ pub enum Operator {
 }
 
 // map templates to their handlebars template file names
-impl<'a> From<VariableIntro<'a>> for Template {
-    fn from(value: VariableIntro<'a>) -> Self {
+impl From<&VariableIntro> for Template {
+    fn from(value: &VariableIntro) -> Self {
         match value {
-            VariableIntro::Roots => Template::Roots,
-            VariableIntro::Variable(_) => Template::Variable,
-            VariableIntro::VariableMarked(_) => Template::VariableMarked,
-            VariableIntro::VariableOfTypeMarked(_) => Template::VariableOfTypeMarked,
-            VariableIntro::VariableSourceOf(_) =>  Template::VariableSourceOf,
+            &VariableIntro::Roots => Template::Roots,
+            &VariableIntro::Variable(_) => Template::Variable,
+            &VariableIntro::VariableMarked(_) => Template::VariableMarked,
+            &VariableIntro::VariableOfTypeMarked(_) => Template::VariableOfTypeMarked,
+            &VariableIntro::VariableSourceOf(_) =>  Template::VariableSourceOf,
         }
     }
 }
 
-impl<'a> From<Relation<'a>> for Template {
-    fn from(value: Relation<'a>) -> Self {
+impl From<&Relation> for Template {
+    fn from(value: &Relation) -> Self {
         match value {
-            Relation::FlowsTo(_) => Template::FlowsTo,
-            Relation::NoFlowsTo(_) => Template::NoFlowsTo,
-            Relation::ControlFlow(_) => Template::ControlFlow,
-            Relation::NoControlFlow(_) => Template::NoControlFlow,
-            Relation::OnlyVia(_) => Template::OnlyVia,
-            Relation::AssociatedCallSite(_) => Template::AssociatedCallSite,
-            Relation::IsMarked(_) => Template::IsMarked,
-            Relation::IsNotMarked(_) => Template::IsNotMarked,
-            Relation::Influences(_) => Template::Influences,
-            Relation::DoesNotInfluence(_) => Template::DoesNotInfluence,
+            &Relation::FlowsTo(_) => Template::FlowsTo,
+            &Relation::NoFlowsTo(_) => Template::NoFlowsTo,
+            &Relation::ControlFlow(_) => Template::ControlFlow,
+            &Relation::NoControlFlow(_) => Template::NoControlFlow,
+            &Relation::OnlyVia(_) => Template::OnlyVia,
+            &Relation::AssociatedCallSite(_) => Template::AssociatedCallSite,
+            &Relation::IsMarked(_) => Template::IsMarked,
+            &Relation::IsNotMarked(_) => Template::IsNotMarked,
+            &Relation::Influences(_) => Template::Influences,
+            &Relation::DoesNotInfluence(_) => Template::DoesNotInfluence,
         }
     }
 }
 
-impl From<Operator> for Template {
-    fn from(value: Operator) -> Self {
+impl From<&Operator> for Template {
+    fn from(value: &Operator) -> Self {
         match value {
-            Operator::And => Template::And,
-            Operator::Or => Template::Or,
+            &Operator::And => Template::And,
+            &Operator::Or => Template::Or,
         }
     }
 }
@@ -110,54 +110,54 @@ impl From<&str> for Operator {
     }
 }
 
-impl<'a> From<PolicyScope<'a>> for Template {
-    fn from(value: PolicyScope<'a>) -> Self {
+impl From<&PolicyScope> for Template {
+    fn from(value: &PolicyScope) -> Self {
         match value {
-            PolicyScope::Always => Template::Always,
-            PolicyScope::Sometimes => Template::Sometimes,
-            PolicyScope::InCtrler(_) => Template::InCtrler,
+            &PolicyScope::Always => Template::Always,
+            &PolicyScope::Sometimes => Template::Sometimes,
+            &PolicyScope::InCtrler(_) => Template::InCtrler,
         }
     }
 }
 
-impl<'a> From<ClauseIntro<'a>> for Template {
-    fn from(value: ClauseIntro<'a>) -> Self {
+impl From<&ClauseIntro> for Template {
+    fn from(value: &ClauseIntro) -> Self {
         match value {
-            ClauseIntro::ForEach(_) => Template::ForEach,
-            ClauseIntro::ThereIs(_) => Template::ForEach,
-            ClauseIntro::Conditional(_) => Template::Conditional,
+            &ClauseIntro::ForEach(_) => Template::ForEach,
+            &ClauseIntro::ThereIs(_) => Template::ForEach,
+            &ClauseIntro::Conditional(_) => Template::Conditional,
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct TwoNodeObligation<'a> {
+pub struct TwoNodeObligation {
     pub op: Operator,
-    pub src: ASTNode<'a>,
-    pub dest: ASTNode<'a>,
+    pub src: ASTNode,
+    pub dest: ASTNode,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ClauseIntro<'a> {
-    ForEach(VariableIntro<'a>),
-    ThereIs(VariableIntro<'a>),
-    Conditional(Relation<'a>)
+pub enum ClauseIntro {
+    ForEach(VariableIntro),
+    ThereIs(VariableIntro),
+    Conditional(Relation)
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Clause<'a> {
-    pub intro: ClauseIntro<'a>,
-    pub body: ASTNode<'a>
+pub struct Clause {
+    pub intro: ClauseIntro,
+    pub body: ASTNode
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ASTNode<'a> {
-    Relation(Relation<'a>),
-    Clause(Box<Clause<'a>>),
-    JoinedNodes(Box<TwoNodeObligation<'a>>)
+pub enum ASTNode {
+    Relation(Relation),
+    Clause(Box<Clause>),
+    JoinedNodes(Box<TwoNodeObligation>)
 }
 
-pub fn parse<'a>(s: &'a str) -> Res<&str, Policy<'a>> {
+pub fn parse(s: &str) -> Res<&str, Policy> {
     let mut combinator = context(
         "parse policy", 
         all_consuming(

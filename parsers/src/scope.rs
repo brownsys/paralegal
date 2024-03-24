@@ -27,7 +27,7 @@ fn sometimes(s: &str) -> Res<&str, PolicyScope> {
     Ok((remainder, PolicyScope::Sometimes))
 }
 
-fn in_ctrler<'a>(s: &'a str) -> Res<&str, PolicyScope<'a>> {
+fn in_ctrler(s: &str) -> Res<&str, PolicyScope> {
     let mut combinator = context(
         "in ctrler",
         delimited(

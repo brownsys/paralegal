@@ -10,7 +10,7 @@ use crate::{
     variable_intro::variable_intro, Clause, ClauseIntro,
 };
 
-fn l4_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+fn l4_clause(s: &str) -> Res<&str, ASTNode> {
     let mut combinator = context(
         "l4 clause",
         tuple((
@@ -28,7 +28,7 @@ fn l4_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     ))
 }
 
-pub fn l4_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
+pub fn l4_clauses(s: &str) -> Res<&str, ASTNode> { 
     context(
         "multiple l4 clauses",
         map(
@@ -41,7 +41,7 @@ pub fn l4_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-fn l3_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+fn l3_clause(s: &str) -> Res<&str, ASTNode> {
     let mut combinator = context(
         "l3 clause",
         tuple((
@@ -62,7 +62,7 @@ fn l3_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     ))
 }
 
-pub fn l3_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
+pub fn l3_clauses(s: &str) -> Res<&str, ASTNode> { 
     context(
         "multiple l3 clauses",
         map(
@@ -75,7 +75,7 @@ pub fn l3_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-fn l2_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+fn l2_clause(s: &str) -> Res<&str, ASTNode> {
     let mut combinator = context(
         "l2 clause",
         tuple((
@@ -97,7 +97,7 @@ fn l2_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     ))
 }
 
-pub fn l2_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
+pub fn l2_clauses(s: &str) -> Res<&str, ASTNode> { 
     context(
         "multiple l2 clauses",
         map(
@@ -110,7 +110,7 @@ pub fn l2_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-fn l1_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
+fn l1_clause(s: &str) -> Res<&str, ASTNode> {
     let mut combinator = context(
         "l1 clause",
         tuple((
@@ -131,7 +131,7 @@ fn l1_clause<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     ))
 }
 
-pub fn l1_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
+pub fn l1_clauses(s: &str) -> Res<&str, ASTNode> { 
     context(
         "multiple l1 clauses",
         map(
@@ -144,7 +144,7 @@ pub fn l1_clauses<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-fn conditional<'a>(s: &'a str) -> Res<&str, ClauseIntro<'a>> {
+fn conditional(s: &str) -> Res<&str, ClauseIntro> {
     let mut combinator = context(
         "conditional",
         delimited(tag("If"), relation, tuple((tag("then"), colon)))
@@ -153,7 +153,7 @@ fn conditional<'a>(s: &'a str) -> Res<&str, ClauseIntro<'a>> {
     Ok((remainder, ClauseIntro::Conditional(relation)))
 }
 
-fn for_each<'a>(s: &'a str) ->  Res<&str, ClauseIntro<'a>> {
+fn for_each(s: &str) ->  Res<&str, ClauseIntro> {
     let mut combinator = context(
         "for each",
         delimited(
@@ -166,7 +166,7 @@ fn for_each<'a>(s: &'a str) ->  Res<&str, ClauseIntro<'a>> {
     Ok((remainder, ClauseIntro::ForEach(var_intro)))
 }
 
-fn there_is<'a>(s: &'a str) ->  Res<&str, ClauseIntro<'a>> {
+fn there_is(s: &str) ->  Res<&str, ClauseIntro> {
     let mut combinator = context(
         "there is",
         delimited(
