@@ -1,5 +1,5 @@
 use nom::{error::context, branch::alt, sequence::{tuple, pair, preceded, terminated}, multi::many0, combinator::map, character::complete::multispace0};
-use crate::{Res, scope::scope, PolicyBody, clause::l1_clauses, common::*, relations::only_via_relation, ASTNode};
+use crate::{Res, scope::scope, clause::l1_clauses, common::*, relations::only_via_relation, ASTNode, PolicyScope};
 
 fn only_vias<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> { 
     context(
@@ -14,17 +14,9 @@ fn only_vias<'a>(s: &'a str) -> Res<&str, ASTNode<'a>> {
     )(s)
 }
 
-pub fn parse_policy_body<'a>(s: &'a str) -> Res<&str, PolicyBody<'a>> {
-    let mut combinator = context(
+pub fn parse_policy_body<'a>(s: &'a str) -> Res<&str, (PolicyScope<'a>, ASTNode<'a>)> {
+    context(
         "policy body", 
         terminated(tuple((scope, alt((only_vias, l1_clauses)))), multispace0)
-    );
-    let (remainder, (scope, body)) = combinator(s)?;
-    Ok((
-        remainder,
-        PolicyBody {
-            scope,
-            body
-        }
-    ))
+    )(s)
 }

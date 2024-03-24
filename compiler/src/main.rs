@@ -1,5 +1,4 @@
 mod compile;
-pub mod templates;
 
 use std::env;
 use std::fs;

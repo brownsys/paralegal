@@ -1,14 +1,16 @@
 use definitions::parse_definitions;
 use nom::{IResult, error::{VerboseError, context}, combinator::{all_consuming, opt}, sequence::tuple};
 use policy_body::parse_policy_body;
+use templates::Template;
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
 
 // Top-level policy / definition data
 #[derive(Debug, PartialEq, Eq)]
 pub struct Policy<'a> {
-    definitions: Vec<Definition<'a>>,
-    body: PolicyBody<'a>,
+    pub definitions: Vec<Definition<'a>>,
+    pub scope: PolicyScope<'a>,
+    pub body: ASTNode<'a>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -16,12 +18,6 @@ pub enum PolicyScope<'a> {
     Always,
     Sometimes,
     InCtrler(&'a str)
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct PolicyBody<'a> {
-    scope: PolicyScope<'a>,
-    body: ASTNode<'a>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -66,40 +62,40 @@ pub enum Operator {
 }
 
 // map templates to their handlebars template file names
-impl<'a> From<VariableIntro<'a>> for &str {
+impl<'a> From<VariableIntro<'a>> for Template {
     fn from(value: VariableIntro<'a>) -> Self {
         match value {
-            VariableIntro::Roots => "roots",
-            VariableIntro::Variable(_) => "variable",
-            VariableIntro::VariableMarked(_) => "variable-marked",
-            VariableIntro::VariableOfTypeMarked(_) => "variable-of-type-marked",
-            VariableIntro::VariableSourceOf(_) =>  "variable-source-of",
+            VariableIntro::Roots => Template::Roots,
+            VariableIntro::Variable(_) => Template::Variable,
+            VariableIntro::VariableMarked(_) => Template::VariableMarked,
+            VariableIntro::VariableOfTypeMarked(_) => Template::VariableOfTypeMarked,
+            VariableIntro::VariableSourceOf(_) =>  Template::VariableSourceOf,
         }
     }
 }
 
-impl<'a> From<Relation<'a>> for &str {
+impl<'a> From<Relation<'a>> for Template {
     fn from(value: Relation<'a>) -> Self {
         match value {
-            Relation::FlowsTo(_) => "flows-to",
-            Relation::NoFlowsTo(_) => "no-flows-to",
-            Relation::ControlFlow(_) => "control-flow",
-            Relation::NoControlFlow(_) => "no-control-flow",
-            Relation::OnlyVia(_) => "only-via",
-            Relation::AssociatedCallSite(_) => "associated-call-site",
-            Relation::IsMarked(_) => "is-marked",
-            Relation::IsNotMarked(_) => "is-not-marked",
-            Relation::Influences(_) => "influences",
-            Relation::DoesNotInfluence(_) => "does-not-influence",
+            Relation::FlowsTo(_) => Template::FlowsTo,
+            Relation::NoFlowsTo(_) => Template::NoFlowsTo,
+            Relation::ControlFlow(_) => Template::ControlFlow,
+            Relation::NoControlFlow(_) => Template::NoControlFlow,
+            Relation::OnlyVia(_) => Template::OnlyVia,
+            Relation::AssociatedCallSite(_) => Template::AssociatedCallSite,
+            Relation::IsMarked(_) => Template::IsMarked,
+            Relation::IsNotMarked(_) => Template::IsNotMarked,
+            Relation::Influences(_) => Template::Influences,
+            Relation::DoesNotInfluence(_) => Template::DoesNotInfluence,
         }
     }
 }
 
-impl From<Operator> for &str {
+impl From<Operator> for Template {
     fn from(value: Operator) -> Self {
         match value {
-            Operator::And => "and",
-            Operator::Or => "or",
+            Operator::And => Template::And,
+            Operator::Or => Template::Or,
         }
     }
 }
@@ -114,22 +110,22 @@ impl From<&str> for Operator {
     }
 }
 
-impl<'a> From<PolicyScope<'a>> for &str {
+impl<'a> From<PolicyScope<'a>> for Template {
     fn from(value: PolicyScope<'a>) -> Self {
         match value {
-            PolicyScope::Always => "always",
-            PolicyScope::Sometimes => "sometimes",
-            PolicyScope::InCtrler(_) => "in-ctrler",
+            PolicyScope::Always => Template::Always,
+            PolicyScope::Sometimes => Template::Sometimes,
+            PolicyScope::InCtrler(_) => Template::InCtrler,
         }
     }
 }
 
-impl<'a> From<ClauseIntro<'a>> for &str {
+impl<'a> From<ClauseIntro<'a>> for Template {
     fn from(value: ClauseIntro<'a>) -> Self {
         match value {
-            ClauseIntro::ForEach(_) => "for-each",
-            ClauseIntro::ThereIs(_) => "there-is",
-            ClauseIntro::Conditional(_) => "conditional",
+            ClauseIntro::ForEach(_) => Template::ForEach,
+            ClauseIntro::ThereIs(_) => Template::ForEach,
+            ClauseIntro::Conditional(_) => Template::Conditional,
         }
     }
 }
@@ -169,8 +165,8 @@ pub fn parse<'a>(s: &'a str) -> Res<&str, Policy<'a>> {
         )
     );
 
-    let (remainder, (option_defs, body)) = combinator(s)?;
-    Ok((remainder, Policy {definitions: option_defs.unwrap_or_default(), body}))
+    let (remainder, (option_defs, (scope, body))) = combinator(s)?;
+    Ok((remainder, Policy {definitions: option_defs.unwrap_or_default(), scope, body}))
 }
 
 pub mod common;

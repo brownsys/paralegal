@@ -1,2 +1,2 @@
 [workspace]
-members = ["parsers/", "compiler/"]
+members = ["parsers/", "compiler/", "templates/"]
