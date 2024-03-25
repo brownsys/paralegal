@@ -1,5 +1,4 @@
 use std::{
-    borrow::Borrow,
     fmt::Display,
     sync::{Arc, Mutex},
     time::Duration,
