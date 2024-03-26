@@ -241,7 +241,8 @@ define_test!(return_from_async: graph -> {
 define_test!(async_return_from_async: graph -> {
     let input_fn = graph.function("some_input");
     let input = graph.call_site(&input_fn);
-    assert!(graph.returns(&input.output()))
+    dbg!(graph.return_value());
+    assert!(graph.returns(&dbg!(input.output())))
 });
 
 define_test!(markers: graph -> {

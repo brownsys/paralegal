@@ -1,4 +1,5 @@
-use std::{collections::HashSet, io::Write, process::exit, sync::Arc};
+use std::time::{Duration, Instant};
+use std::{io::Write, process::exit, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
@@ -8,19 +9,16 @@ use paralegal_spdg::{
     Span, TypeId, SPDG,
 };
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
-use petgraph::visit::{Control, DfsEvent, EdgeFiltered, EdgeRef, GraphBase, NodeIndexable, Walker};
-use petgraph::Incoming;
+use petgraph::visit::{EdgeFiltered, EdgeRef, Walker};
+use petgraph::{Direction, Incoming};
 
-use super::flows_to::CtrlFlowsTo;
+use crate::algo::flows_to::CtrlFlowsTo;
 
 use crate::Diagnostics;
-use crate::{
-    assert_warning,
-    diagnostics::{CombinatorContext, DiagnosticsRecorder, HasDiagnosticsBase},
-};
+use crate::{assert_warning, diagnostics::DiagnosticsRecorder};
 
 /// User-defined PDG markers.
 pub type Marker = Identifier;
@@ -99,36 +97,72 @@ fn bfs_iter<
 pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
-    flows_to: FlowsTo,
+    flows_to: Option<FlowsTo>,
     pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
+    pub(crate) config: Arc<super::Config>,
+    pub(crate) stats: ContextStats,
+}
+
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct ContextStats {
+    pub pdg_construction: Option<Duration>,
+    pub deserialization: Option<Duration>,
+    pub precomputation: Duration,
 }
 
 impl Context {
     /// Construct a [`Context`] from a [`ProgramDescription`].
     ///
     /// This also precomputes some data structures like an index over markers.
-    pub fn new(desc: ProgramDescription) -> Self {
+    pub fn new(desc: ProgramDescription, config: super::Config) -> Self {
+        // Must bind this first because we want to time how long it takes to build the indices.
+        let start = Instant::now();
         let name_map = desc
             .def_info
             .iter()
             .map(|(k, v)| (v.name, *k))
             .into_group_map();
-        Context {
-            marker_to_ids: Self::build_index_on_markers(&desc),
-            flows_to: Self::build_flows_to(&desc),
+        let marker_to_ids = Self::build_index_on_markers(&desc);
+        let flows_to = config
+            .use_flows_to_index
+            .then(|| Self::build_flows_to(&desc));
+        // Make sure no expensive computation happens in the constructor call
+        // below, otherwise the measurement of construction time will be off.
+        Self {
+            marker_to_ids,
             desc,
+            flows_to,
             diagnostics: Default::default(),
             name_map,
+            config: Arc::new(config),
+            stats: ContextStats {
+                pdg_construction: None,
+                precomputation: start.elapsed(),
+                deserialization: None,
+            },
         }
     }
 
-    /// Find the call string that identifies the call site or statement at which
-    /// this node is captured.
+    #[doc(hidden)]
+    pub fn context_stats(&self) -> &ContextStats {
+        &self.stats
+    }
+
+    /// Find the call string for the statement or function that produced this node.
     pub fn associated_call_site(&self, node: GlobalNode) -> CallString {
         self.desc.controllers[&node.controller_id()]
             .node_info(node.local_node())
             .at
+    }
+
+    /// Call sites that consume this node directly. E.g. the outgoing edges.
+    pub fn consuming_call_sites(&self, node: GlobalNode) -> impl Iterator<Item = CallString> + '_ {
+        self.desc.controllers[&node.controller_id()]
+            .graph
+            .edges_directed(node.local_node(), Direction::Outgoing)
+            .map(|e| e.weight().at)
     }
 
     /// Find all controllers that bare this name.
@@ -202,6 +236,7 @@ impl Context {
                 .get(candidate)
                 .ok_or_else(|| anyhow!("Impossible"))?
                 .path
+                .as_ref()
                 == path
             {
                 return Ok(*candidate);
@@ -235,13 +270,13 @@ impl Context {
 
     fn build_index_on_markers(desc: &ProgramDescription) -> MarkerIndex {
         desc.controllers
-            .iter()
-            .flat_map(|(&ctrl_id, spdg)| {
+            .values()
+            .flat_map(|spdg| {
                 spdg.markers.iter().flat_map(move |(&inner, anns)| {
                     anns.iter().map(move |marker| {
                         (
                             *marker,
-                            Either::Left(GlobalNode::from_local_node(ctrl_id, inner)),
+                            Either::Left(GlobalNode::from_local_node(spdg.id, inner)),
                         )
                     })
                 })
@@ -282,20 +317,21 @@ impl Context {
             return false;
         }
 
-        if edge_type.is_data() {
-            let flows_to = &self.flows_to[&cf_id];
-            src.iter_nodes().any(|src| {
-                sink.iter_nodes()
-                    .any(|sink| flows_to.data_flows_to[src.index()][sink.index()])
-            })
-        } else {
-            generic_flows_to(
-                src.iter_nodes(),
-                edge_type,
-                &self.desc.controllers[&cf_id],
-                sink.iter_nodes(),
-            )
+        if let Some(index) = self.flows_to.as_ref() {
+            if edge_type.is_data() {
+                let flows_to = &index[&cf_id];
+                return src.iter_nodes().any(|src| {
+                    sink.iter_nodes()
+                        .any(|sink| flows_to.data_flows_to[src.index()][sink.index()])
+                });
+            }
         }
+        generic_flows_to(
+            src.iter_nodes(),
+            edge_type,
+            &self.desc.controllers[&cf_id],
+            sink.iter_nodes(),
+        )
     }
 
     /// Find the node that represents the `index`th argument of the controller
@@ -368,15 +404,25 @@ impl Context {
 
         let graph = &self.desc.controllers[&cf_id].graph;
 
+        if let Some(index) = self.flows_to.as_ref() {
+            if edge_type == EdgeSelection::Data {
+                return src
+                    .iter_nodes()
+                    .flat_map(|src| {
+                        index[&cf_id].data_flows_to[src.index()]
+                            .iter_ones()
+                            .map(move |i| GlobalNode::unsafe_new(cf_id, i))
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter();
+            }
+        }
+
         match edge_type {
-            EdgeSelection::Data => src
-                .iter_nodes()
-                .flat_map(|src| {
-                    self.flows_to[&cf_id].data_flows_to[src.index()]
-                        .iter_ones()
-                        .map(move |i| GlobalNode::unsafe_new(cf_id, i))
-                })
-                .collect::<Vec<_>>(),
+            EdgeSelection::Data => {
+                let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_data());
+                bfs_iter(&edges_filtered, cf_id, src.iter_nodes()).collect::<Vec<_>>()
+            }
             EdgeSelection::Both => bfs_iter(graph, cf_id, src.iter_nodes()).collect::<Vec<_>>(),
             EdgeSelection::Control => {
                 let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_control());
@@ -401,7 +447,7 @@ impl Context {
         self.desc.controllers[&node.controller_id()]
             .type_assigns
             .get(&node.local_node())
-            .map_or(&[], |v| v.0.as_slice())
+            .map_or(&[], |v| v.0.as_ref())
     }
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
@@ -452,6 +498,13 @@ impl Context {
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         let g = &self.desc.controllers[&ctrl_id].graph;
         g.externals(Incoming)
+            .filter(|n| {
+                let w = g.node_weight(*n).unwrap();
+                w.at.leaf().location.is_start()
+                    || self.desc.instruction_info[&w.at.leaf()]
+                        .kind
+                        .is_function_call()
+            })
             .map(move |inner| GlobalNode::from_local_node(ctrl_id, inner))
     }
 
@@ -465,70 +518,7 @@ impl Context {
         self.desc()
             .type_info
             .get(&id)
-            .map_or(&[], |info| info.otypes.as_slice())
-    }
-
-    /// Enforce that on every data flow path from the `starting_points` to `is_terminal` a
-    /// node satisfying `is_checkpoint` is passed.
-    ///
-    /// Fails if `ctrl_id` on a provided starting point is not found.
-    ///
-    /// The return value contains some statistics information about the
-    /// traversal. The property holds if [`AlwaysHappensBefore::holds`] is true.
-    ///
-    /// Note that `is_checkpoint` and `is_terminal` will be called many times
-    /// and should thus be efficient computations. In addition they should
-    /// always return the same result for the same input.
-    pub fn always_happens_before(
-        &self,
-        starting_points: impl IntoIterator<Item = GlobalNode>,
-        mut is_checkpoint: impl FnMut(GlobalNode) -> bool,
-        mut is_terminal: impl FnMut(GlobalNode) -> bool,
-    ) -> Result<AlwaysHappensBefore> {
-        let mut reached = HashMap::new();
-        let mut checkpointed = HashSet::new();
-
-        let start_map = starting_points
-            .into_iter()
-            .map(|i| (i.controller_id(), i.local_node()))
-            .into_group_map();
-
-        for (ctrl_id, starts) in &start_map {
-            let spdg = &self.desc.controllers[&ctrl_id];
-            let g = &spdg.graph;
-            let mut origin_map = vec![<SPDGImpl as GraphBase>::NodeId::end(); g.node_bound()];
-            for s in starts {
-                origin_map[s.index()] = *s;
-            }
-            petgraph::visit::depth_first_search(g, starts.iter().copied(), |event| match event {
-                DfsEvent::TreeEdge(from, to) => {
-                    origin_map[to.index()] = origin_map[from.index()];
-                    Control::<()>::Continue
-                }
-                DfsEvent::Discover(inner, _) => {
-                    let as_node = GlobalNode::from_local_node(*ctrl_id, inner);
-                    if is_checkpoint(as_node) {
-                        checkpointed.insert(as_node);
-                        Control::<()>::Prune
-                    } else if is_terminal(as_node) {
-                        reached.insert(
-                            as_node,
-                            GlobalNode::from_local_node(*ctrl_id, origin_map[inner.index()]),
-                        );
-                        Control::Prune
-                    } else {
-                        Control::Continue
-                    }
-                }
-                _ => Control::Continue,
-            });
-        }
-
-        Ok(AlwaysHappensBefore {
-            reached: reached.into_iter().collect(),
-            checkpointed: checkpointed.into_iter().collect(),
-            started_with: start_map.values().map(Vec::len).sum(),
-        })
+            .map_or(&[], |info| info.otypes.as_ref())
     }
 
     /// Return all types that are marked with `marker`
@@ -662,7 +652,7 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
         let info = &self.ctx.desc().def_info[&self.def_id];
         f.write_str(info.kind.as_ref())?;
         f.write_str(" `")?;
-        for segment in &info.path {
+        for segment in info.path.as_ref() {
             f.write_str(segment.as_str())?;
             f.write_str("::")?;
         }
@@ -671,98 +661,12 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
     }
 }
 
-/// Statistics about the result of running [`Context::always_happens_before`]
-/// that are useful to understand how the property failed.
-///
-/// The [`std::fmt::Display`] implementation presents the information in human
-/// readable form.
-///
-/// Note: Both the number of seen paths and the number of violation paths are
-/// approximations. This is because the traversal terminates when it reaches a
-/// node that was already seen. However it is guaranteed that if there
-/// are any violating paths, then the number of reaching paths reported in this
-/// struct is at least one (e.g. [`Self::holds`] is sound).
-///
-/// The stable API of this struct is [`Self::holds`], [`Self::assert_holds`] and
-/// [`Self::is_vacuous`]. Otherwise the information in this struct and its
-/// printed representations should be considered unstable and
-/// for-human-eyes-only.
-#[must_use = "call `report` or similar evaluations function to ensure the property is checked"]
-pub struct AlwaysHappensBefore {
-    /// How many paths terminated at the end?
-    reached: Vec<(GlobalNode, GlobalNode)>,
-    /// How many paths lead to the checkpoints?
-    checkpointed: Vec<GlobalNode>,
-    /// How large was the set of initial nodes this traversal started with.
-    started_with: usize,
-}
-
-impl std::fmt::Display for AlwaysHappensBefore {
-    /// Format the results of this combinator, using the `def_info` to print
-    /// readable names instead of ids
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} paths reached the terminal, \
-            {} paths reached the checkpoints, \
-            started with {} nodes",
-            self.reached.len(),
-            self.checkpointed.len(),
-            self.started_with,
-        )
-    }
-}
-
-lazy_static::lazy_static! {
-    static ref ALWAYS_HAPPENS_BEFORE_NAME: Identifier = Identifier::new_intern("always_happens_before");
-}
-
-impl AlwaysHappensBefore {
-    /// Check this property holds and report it as diagnostics in the context.
-    ///
-    /// Additionally reports if the property was vacuous or had no starting
-    /// nodes.
-    pub fn report(&self, ctx: Arc<dyn HasDiagnosticsBase>) {
-        let ctx = CombinatorContext::new(*ALWAYS_HAPPENS_BEFORE_NAME, ctx);
-        assert_warning!(ctx, self.started_with != 0, "Started with 0 nodes.");
-        assert_warning!(ctx, !self.is_vacuous(), "Is vacuously true.");
-        if !self.holds() {
-            for &(reached, from) in &self.reached {
-                let mut err = ctx.struct_node_error(reached, "Reached this terminal");
-                err.with_node_note(from, "Started from this node");
-                err.emit();
-            }
-        }
-    }
-
-    /// Returns `true` if the property that created these statistics holds.
-    pub fn holds(&self) -> bool {
-        self.reached.is_empty()
-    }
-
-    /// Fails if [`Self::holds`] is false.
-    pub fn assert_holds(&self) -> Result<()> {
-        ensure!(
-            self.holds(),
-            "AlwaysHappensBefore failed: found {} violating paths",
-            self.reached.len()
-        );
-        Ok(())
-    }
-
-    /// `true` if this policy applied to no paths. E.g. either no starting nodes
-    /// or no path from them can reach the terminal or the checkpoints (the
-    /// graphs are disjoined).
-    pub fn is_vacuous(&self) -> bool {
-        self.checkpointed.is_empty() && self.reached.is_empty()
-    }
-}
-
 #[cfg(test)]
 fn overlaps<T: Eq + std::hash::Hash>(
     one: impl IntoIterator<Item = T>,
     other: impl IntoIterator<Item = T>,
 ) -> bool {
+    use std::collections::HashSet;
     let target = one.into_iter().collect::<HashSet<_>>();
     other.into_iter().any(|n| target.contains(&n))
 }
@@ -790,13 +694,12 @@ fn test_context() {
             .count(),
         3
     );
+    let src_markers = ctx
+        .all_nodes_for_ctrl(controller)
+        .filter(|n| ctx.has_marker(Marker::new_intern("src"), *n))
+        .collect::<Vec<_>>();
     // Return of identity marked as src
-    assert_eq!(
-        ctx.all_nodes_for_ctrl(controller)
-            .filter(|n| ctx.has_marker(Marker::new_intern("src"), *n))
-            .count(),
-        1
-    );
+    assert_eq!(src_markers.len(), 1);
     // The sinks are marked via arguments
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
@@ -811,58 +714,6 @@ fn test_context() {
             .count(),
         2
     );
-}
-
-#[test]
-#[ignore = "Something is weird with the PDG construction here.
-    See https://github.com/willcrichton/flowistry/issues/95"]
-fn test_happens_before() -> Result<()> {
-    use std::fs::File;
-    let ctx = crate::test_utils::test_ctx();
-
-    let start_marker = Identifier::new_intern("start");
-    let bless_marker = Identifier::new_intern("bless");
-
-    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_pass"))?;
-    let ctrl = &ctx.desc.controllers[&ctrl_name];
-    let f = File::create("graph.gv")?;
-    ctrl.dump_dot(f)?;
-
-    let Some(ret) = ctrl.return_ else {
-        unreachable!("No return found")
-    };
-
-    let is_terminal = |end: GlobalNode| -> bool {
-        assert_eq!(end.controller_id(), ctrl_name);
-        ret == end.local_node()
-    };
-    let start = ctx
-        .all_nodes_for_ctrl(ctrl_name)
-        .filter(|n| ctx.has_marker(start_marker, *n))
-        .collect::<Vec<_>>();
-
-    let pass = ctx.always_happens_before(
-        start,
-        |checkpoint| ctx.has_marker(bless_marker, checkpoint),
-        is_terminal,
-    )?;
-
-    ensure!(pass.holds(), "{pass}");
-    ensure!(!pass.is_vacuous(), "{pass}");
-
-    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_fail"))?;
-
-    let fail = ctx.always_happens_before(
-        ctx.all_nodes_for_ctrl(ctrl_name)
-            .filter(|n| ctx.has_marker(start_marker, *n)),
-        |check| ctx.has_marker(bless_marker, check),
-        is_terminal,
-    )?;
-
-    ensure!(!fail.holds());
-    ensure!(!fail.is_vacuous());
-
-    Ok(())
 }
 
 #[test]

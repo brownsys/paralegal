@@ -131,7 +131,7 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
 
             for &n in nodes {
                 let weight = ctrl.graph.node_weight(n).unwrap();
-                let markers = ctrl.markers.get(&n).into_iter().flatten();
+                let markers = ctrl.markers.get(&n).into_iter().flat_map(|a| a.iter());
                 let type_markers = ctrl
                     .type_assigns
                     .get(&n)

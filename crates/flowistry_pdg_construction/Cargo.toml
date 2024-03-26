@@ -1,0 +1,29 @@
+[package]
+name = "flowistry_pdg_construction"
+version = "0.5.41"
+edition = "2021"
+authors = ["Will Crichton <wcrichto@cs.stanford.edu>"]
+license = "MIT"
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[dependencies]
+anyhow = "1"
+log = "0.4"
+fluid-let = "1.0"
+cfg-if = "1.0"
+rustc_utils = { workspace = true, features = ["indexical"] }
+indexical = { workspace = true }
+itertools = "0.12.0"
+petgraph = { version = "0.6.4" }
+internment = { version = "0.7.4" }
+flowistry_pdg = { version = "0.1.0", path = "../flowistry_pdg", features = [
+    "rustc",
+] }
+#flowistry = { path = "../../../flowistry/crates/flowistry", default-features = false }
+flowistry = { git = "https://github.com/brownsys/flowistry", rev = "a2ccfca2e6b5668ffd246eddc6abaf4d6e440a35", default-features = false }
+
+[dev-dependencies]
+rustc_utils = { workspace = true, features = ["indexical", "test"] }
+simple_logger = "4.3.3"

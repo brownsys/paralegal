@@ -65,4 +65,14 @@ fn main() {
 
     let toolchain_path = rustup_toolchain_path();
     println!("cargo:rustc-env=SYSROOT_PATH={}", toolchain_path.display());
+
+    let rustc_path = std::env::var("RUSTC").unwrap();
+    let rustc_version = std::process::Command::new(rustc_path)
+        .arg("--version")
+        .output()
+        .unwrap();
+    println!(
+        "cargo:rustc-env=RUSTC_VERSION=\"{}\"",
+        String::from_utf8(rustc_version.stdout).unwrap()
+    );
 }

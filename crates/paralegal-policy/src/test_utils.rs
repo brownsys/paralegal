@@ -14,7 +14,7 @@ pub fn test_ctx() -> Arc<Context> {
         .get_or_init(|| {
             paralegal_flow::test_utils::run_paralegal_flow_with_flow_graph_dump("tests/test-crate");
             let desc = PreFrg::from_file_at("tests/test-crate").desc;
-            Arc::new(Context::new(desc))
+            Arc::new(Context::new(desc, Default::default()))
         })
         .clone()
 }

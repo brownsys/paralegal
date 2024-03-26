@@ -97,3 +97,59 @@ pub mod serde_map_via_vec {
         Ok(Vec::deserialize(deserializer)?.into_iter().collect())
     }
 }
+
+/// A struct with a [`Display`] implementation taht renders a
+/// [`std::time::Duration`] in human readable form, similar to the `humantime`
+/// crate, but instead of rendering with arbitrary precision it only renders two
+/// "significant sections", e.g. "2h 5min" or "2d 20h". The sections are days
+/// (d), hours (h), minutes (min), seconds (s), miliseconds (ms), microseconds
+/// (μs) and nanoseconds (ns).
+pub struct TruncatedHumanTime(std::time::Duration);
+
+impl From<std::time::Duration> for TruncatedHumanTime {
+    fn from(value: std::time::Duration) -> Self {
+        Self(value)
+    }
+}
+
+impl std::fmt::Display for TruncatedHumanTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const SECS_PER_MIN: u64 = 60;
+        const MINS_PER_H: u64 = 60;
+        const H_PER_D: u64 = 24;
+        const MILLIS_PER_SEC: u128 = 1000;
+        const MICROS_PER_MILLIS: u128 = 1000;
+        const NANOS_PER_MICRO: u128 = 1000;
+        let secs = self.0.as_secs();
+        let mins = secs / SECS_PER_MIN;
+        let hs = mins / MINS_PER_H;
+        let days = hs / H_PER_D;
+        macro_rules! try_two {
+            ($larger:expr, $letter1:expr, $smaller:expr, $letter2:expr, $multiplier:expr $(,)?) => {
+                if $larger != 0 {
+                    let small = $smaller - ($larger * $multiplier);
+                    return write!(f, "{}{} {small}{}", $larger, $letter1, $letter2);
+                }
+            };
+        }
+        try_two!(days, 'd', hs, 'h', H_PER_D);
+        try_two!(hs, 'h', mins, "min", MINS_PER_H);
+        try_two!(mins, "min", secs, 's', SECS_PER_MIN);
+        try_two!(secs as u128, 's', self.0.as_millis(), "ms", MILLIS_PER_SEC);
+        try_two!(
+            self.0.as_millis(),
+            "ms",
+            self.0.as_micros(),
+            "μs",
+            MICROS_PER_MILLIS,
+        );
+        try_two!(
+            self.0.as_micros(),
+            "μs",
+            self.0.as_nanos(),
+            "ns",
+            NANOS_PER_MICRO,
+        );
+        write!(f, "{}ns", self.0.as_nanos())
+    }
+}

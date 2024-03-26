@@ -1,3 +1,5 @@
+//! Precomputed reachability queries
+
 use paralegal_spdg::{Node as SPDGNode, SPDGImpl, SPDG};
 
 use bitvec::vec::BitVec;
@@ -42,6 +44,11 @@ impl CtrlFlowsTo {
         }
 
         let mut data_flows_to = vec![BitVec::repeat(false, domain_size); domain_size];
+
+        // Nodes are considered to be flowing to themselves
+        for node in spdg.graph.node_indices() {
+            data_flows_to[node.index()].set(node.index(), true);
+        }
 
         // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
         for edge in spdg

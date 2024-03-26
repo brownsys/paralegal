@@ -32,7 +32,9 @@ use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use std::{fmt, hash::Hash, path::PathBuf};
+use utils::write_sep;
 
 use utils::serde_map_via_vec;
 
@@ -122,11 +124,32 @@ pub struct DefInfo {
     /// generated in the case of closures and generators
     pub name: Identifier,
     /// Def path to the object
-    pub path: Vec<Identifier>,
+    pub path: Box<[Identifier]>,
     /// Kind of object
     pub kind: DefKind,
     /// Information about the span
     pub src_info: Span,
+}
+
+/// Provides a way to format rust paths
+pub struct DisplayPath<'a>(&'a [Identifier]);
+
+impl Display for DisplayPath<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_sep(f, "::", self.0, Display::fmt)
+    }
+}
+
+impl<'a> From<&'a [Identifier]> for DisplayPath<'a> {
+    fn from(value: &'a [Identifier]) -> Self {
+        Self(value)
+    }
+}
+
+impl<'a> From<&'a Box<[Identifier]>> for DisplayPath<'a> {
+    fn from(value: &'a Box<[Identifier]>) -> Self {
+        value.as_ref().into()
+    }
 }
 
 /// Similar to `DefKind` in rustc but *not the same*!
@@ -276,6 +299,10 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
+    /// How many marker annotations were found
+    pub marker_annotation_count: u32,
+    /// How long rustc ran before out plugin executed
+    pub rustc_time: Duration,
 }
 
 /// Metadata about a type
@@ -284,14 +311,14 @@ pub struct TypeDescription {
     /// How rustc would debug print this type
     pub rendering: String,
     /// Aliases
-    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))]
-    pub otypes: Vec<TypeId>,
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_seq"))]
+    pub otypes: Box<[TypeId]>,
     /// Attached markers. Guaranteed not to be empty.
     pub markers: Vec<Identifier>,
 }
 
 #[cfg(feature = "rustc")]
-mod ser_defid_vec {
+mod ser_defid_seq {
     use flowistry_pdg::rustc_proxies;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -299,18 +326,15 @@ mod ser_defid_vec {
     #[repr(transparent)]
     struct DefIdWrap(#[serde(with = "rustc_proxies::DefId")] crate::DefId);
 
-    pub fn serialize<S: Serializer>(
-        v: &Vec<crate::DefId>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        unsafe { Vec::<DefIdWrap>::serialize(std::mem::transmute(v), serializer) }
+    pub fn serialize<S: Serializer>(v: &[crate::DefId], serializer: S) -> Result<S::Ok, S::Error> {
+        unsafe { <[DefIdWrap]>::serialize(std::mem::transmute(v), serializer) }
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
-    ) -> Result<Vec<crate::DefId>, D::Error> {
+    ) -> Result<Box<[crate::DefId]>, D::Error> {
         unsafe {
-            Ok(std::mem::transmute(Vec::<DefIdWrap>::deserialize(
+            Ok(std::mem::transmute(Box::<[DefIdWrap]>::deserialize(
                 deserializer,
             )?))
         }
@@ -610,47 +634,13 @@ pub struct NodeInfo {
     pub at: CallString,
     /// The debug print of the `mir::Place` that this node represents
     pub description: String,
-    /// Additional information of how this node is used in the source.
-    pub kind: NodeKind,
     /// Span information for this node
     pub span: Span,
 }
 
 impl Display for NodeInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} @ {} ({})", self.description, self.at, self.kind)
-    }
-}
-
-/// Additional information about what a given node may represent
-#[derive(Clone, Debug, Serialize, Deserialize, Copy, strum::EnumIs)]
-pub enum NodeKind {
-    /// The node is (part of) a formal parameter of a function (0-indexed). e.g.
-    /// in `fn foo(x: usize)` `x` would be a `FormalParameter(0)`.
-    FormalParameter(u8),
-    /// Formal return of a function, e.g. `x` in `return x`;
-    FormalReturn,
-    /// Parameter given to a function at the call site, e.g. `x` in `foo(x)`.
-    ActualParameter(TinyBitSet),
-    /// Return value received from a call, e.g. `x` in `let x = foo(...);`
-    ActualReturn,
-    /// Any other kind of node
-    Unspecified,
-}
-
-impl Display for NodeKind {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            NodeKind::FormalParameter(i) => {
-                write!(f, "Formal Parameter [{i}]")
-            }
-            NodeKind::FormalReturn => f.write_str("Formal Return"),
-            NodeKind::ActualParameter(p) => {
-                write!(f, "Actual Parameters {}", p.display_pretty())
-            }
-            NodeKind::ActualReturn => f.write_str("Actual Return"),
-            NodeKind::Unspecified => f.write_str("Unspecified"),
-        }
+        write!(f, "{} @ {}", self.description, self.at)
     }
 }
 
@@ -661,6 +651,11 @@ pub struct EdgeInfo {
     pub kind: EdgeKind,
     /// Where in the program this edge arises from
     pub at: CallString,
+
+    /// Why the source of this edge is read
+    pub source_use: SourceUse,
+    /// Why the target of this edge is written
+    pub target_use: TargetUse,
 }
 
 impl Display for EdgeInfo {
@@ -700,23 +695,55 @@ pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
 pub struct SPDG {
     /// The identifier of the entry point to this computation
     pub name: Identifier,
+    /// The module path to this controller function
+    pub path: Box<[Identifier]>,
+    /// The id
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::LocalDefId"))]
+    pub id: LocalDefId,
     /// The PDG
     pub graph: SPDGImpl,
     /// Nodes to which markers are assigned.
-    pub markers: HashMap<Node, Vec<Identifier>>,
+    pub markers: HashMap<Node, Box<[Identifier]>>,
     /// The nodes that represent arguments to the entrypoint
-    pub arguments: Vec<Node>,
+    pub arguments: Box<[Node]>,
     /// If the return is `()` or `!` then this is `None`
-    pub return_: Option<Node>,
+    pub return_: Box<[Node]>,
     /// Stores the assignment of relevant (e.g. marked) types to nodes. Node
     /// that this contains multiple types for a single node, because it hold
     /// top-level types and subtypes that may be marked.
     pub type_assigns: HashMap<Node, Types>,
+    /// Statistics
+    pub statistics: SPDGStats,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+/// Statistics about the code that produced an SPDG
+pub struct SPDGStats {
+    /// The number of unique lines of code we analyzed. This means MIR bodies
+    /// without considering monomorphization
+    pub unique_locs: u32,
+    /// The number of unique functions we analyzed. Corresponds to
+    /// [`Self::UniqueLoCs`].
+    pub unique_functions: u32,
+    /// The number of lines we ran through the PDG construction. This is higher
+    /// than unique LoCs, because we need to analyze some functions multiple
+    /// times, due to monomorphization and calls tring differences.
+    pub analyzed_locs: u32,
+    /// Number of functions analyzed. Corresponds to [`Self::AnalyzedLoCs`].
+    pub analyzed_functions: u32,
+    /// How many times we inlined functions. This will be higher than
+    /// [`Self::AnalyzedFunction`] because sometimes the callee PDG is served
+    /// from the cache.
+    pub inlinings_performed: u32,
+    /// How long it took to create this PDG
+    pub construction_time: Duration,
+    /// How long it took to calculate markers and otherwise set up the pdg
+    pub conversion_time: Duration,
 }
 
 /// Holds [`TypeId`]s that were assigned to a node.
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))] pub Vec<TypeId>);
+pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_seq"))] pub Box<[TypeId]>);
 
 impl SPDG {
     /// Retrieve metadata for this node
@@ -748,6 +775,20 @@ impl SPDG {
         use petgraph::dot::Dot;
         let dot = Dot::with_config(&self.graph, &[]);
         write!(out, "{dot}")
+    }
+
+    /// The arguments of this spdg. The same as the `arguments` field, but
+    /// conveniently paired with the controller id
+    pub fn arguments(&self) -> NodeCluster {
+        NodeCluster {
+            controller_id: self.id,
+            nodes: self.arguments.clone(),
+        }
+    }
+
+    /// All types (if any) assigned to this node
+    pub fn node_types(&self, node: Node) -> &[TypeId] {
+        self.type_assigns.get(&node).map_or(&[], |r| &r.0)
     }
 }
 
@@ -786,9 +827,8 @@ impl<'a> Display for DisplayNode<'a> {
         if self.detailed {
             write!(
                 f,
-                "{{{}}} ({}) {} @ {}",
+                "{{{}}} {} @ {}",
                 self.node.index(),
-                weight.kind,
                 weight.description,
                 weight.at
             )

@@ -125,7 +125,7 @@ define_test!(loop_retains_dependency : graph -> {
     assert!(get_other.output().flows_to_data(&dp.input()));
     assert!(modify_other.output().flows_to_data(&dp.input()));
     assert!(dp.output().flows_to_data(&send.input()));
-    assert!(modify_other.output().flows_to_data(&send.input()));
+    assert!(dbg!(modify_other.output()).flows_to_data(&dbg!(send.input())));
     assert!(get.output().flows_to_data(&send.input()));
 });
 
@@ -147,8 +147,8 @@ define_test!(modify_pointer : graph -> {
     let send_fn = graph.function("send_user_data");
     let send = graph.call_site(&send_fn);
 
-    assert!(get.output().flows_to_data(&create.input()));
-    assert!(create.output().flows_to_data(&send.input()));
+    assert!(dbg!(get.output()).flows_to_data(&create.input()));
+    assert!(create.output().flows_to_data(&dbg!(send.input())));
     assert!(get.output().flows_to_data(&send.input()));
 });
 
