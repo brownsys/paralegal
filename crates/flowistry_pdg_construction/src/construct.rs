@@ -1,4 +1,4 @@
-use std::{borrow::Cow, iter, rc::Rc};
+use std::{borrow::Cow, collections::HashSet, iter, rc::Rc};
 
 use df::{fmt::DebugWithContext, Analysis, JoinSemiLattice};
 use either::Either;
@@ -357,27 +357,34 @@ impl<'tcx> GraphConstructor<'tcx> {
     /// Returns all pairs of `(src, edge)`` such that the given `location` is control-dependent on `edge`
     /// with input `src`.
     fn find_control_inputs(&self, location: Location) -> Vec<(DepNode<'tcx>, DepEdge)> {
-        match self.control_dependencies.dependent_on(location.block) {
-            Some(ctrl_deps) => ctrl_deps
-                .iter()
-                .filter_map(|block| {
-                    let ctrl_loc = self.body.terminator_loc(block);
+        let mut blocks_seen = HashSet::<BasicBlock>::from_iter(Some(location.block));
+        let mut block_queue = vec![location.block];
+        let mut out = vec![];
+        while let Some(block) = block_queue.pop() {
+            if let Some(ctrl_deps) = self.control_dependencies.dependent_on(block) {
+                for dep in ctrl_deps.iter() {
+                    let ctrl_loc = self.body.terminator_loc(dep);
                     let Terminator {
                         kind: TerminatorKind::SwitchInt { discr, .. },
                         ..
-                    } = self.body.stmt_at(ctrl_loc).unwrap_right()
+                    } = self.body.basic_blocks[dep].terminator()
                     else {
-                        return None;
+                        if blocks_seen.insert(dep) {
+                            block_queue.push(dep);
+                        }
+                        continue;
                     };
-                    let ctrl_place = discr.place()?;
+                    let Some(ctrl_place) = discr.place() else {
+                        continue;
+                    };
                     let at = self.make_call_string(ctrl_loc);
                     let src = DepNode::new(ctrl_place, at, self.tcx, &self.body);
                     let edge = DepEdge::control(at, SourceUse::Operand, TargetUse::Assign);
-                    Some((src, edge))
-                })
-                .collect_vec(),
-            None => Vec::new(),
+                    out.push((src, edge));
+                }
+            }
         }
+        out
     }
 
     /// Returns the aliases of `place`. See [`PlaceInfo::aliases`] for details.
@@ -537,6 +544,8 @@ impl<'tcx> GraphConstructor<'tcx> {
         trace!("Applying mutation to {mutated:?} with inputs {inputs:?}");
 
         let ctrl_inputs = self.find_control_inputs(location);
+
+        trace!("Found control inputs {ctrl_inputs:?}");
 
         let data_inputs = match inputs {
             Inputs::Unresolved { places } => places
