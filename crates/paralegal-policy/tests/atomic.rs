@@ -1,12 +1,13 @@
 mod helpers;
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use helpers::Test;
 
 use anyhow::Result;
 use paralegal_policy::{assert_error, Context, Diagnostics as _, EdgeSelection};
-use paralegal_spdg::{Identifier, NodeCluster};
+use paralegal_spdg::{GlobalNode, Identifier, NodeCluster, SourceUse};
+use petgraph::Outgoing;
 
 macro_rules! marker {
     ($name:ident) => {{
@@ -15,6 +16,32 @@ macro_rules! marker {
         }
         *MARKER
     }};
+}
+
+trait NodeExt: Sized {
+    fn siblings(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
+
+    fn is_argument(self, ctx: &Context, num: u8) -> bool;
+}
+impl NodeExt for GlobalNode {
+    fn siblings(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
+        let self_at = ctx.node_info(self).at;
+        let mut set: HashSet<_> = ctx
+            .predecessors(self)
+            .flat_map(|n| ctx.successors(n))
+            .chain(ctx.successors(self).flat_map(|n| ctx.predecessors(n)))
+            .filter(|n| ctx.node_info(*n).at == self_at)
+            .collect();
+        set.remove(&self);
+        Box::new(set.into_iter())
+    }
+
+    fn is_argument(self, ctx: &Context, num: u8) -> bool {
+        ctx.desc().controllers[&self.controller_id()]
+            .graph
+            .edges_directed(self.local_node(), Outgoing)
+            .any(|e| matches!(e.weight().source_use, SourceUse::Argument(n) if n == num))
+    }
 }
 
 const ATOMIC_CODE_SHARED: &str = stringify!(
@@ -453,6 +480,424 @@ fn isolation_2() -> Result<()> {
                 );
             }
         }
+        Ok(())
+    })
+}
+
+#[test]
+fn commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
+    let mut test = Test::new(stringify!(
+
+        #![allow(warnings, unused)]
+
+        mod urls {
+            pub const PARENT: &str = "";
+        }
+
+        type AtomicResult<A> = Result<A, String>;
+        type Value = String;
+
+        #[derive(Clone)]
+        struct Commit {
+            subject: String,
+            set: Option<std::collections::HashMap<String, Value>>,
+            signer: String,
+            destroy: Option<bool>,
+        }
+
+        trait Storelike {
+            #[paralegal::marker(sink, arguments = [1])]
+            fn add_resource_opts(
+                &self,
+                resource: &Resource,
+                check_required_props: bool,
+                update_index: bool,
+                overwrite_existing: bool,
+            ) -> AtomicResult<()>;
+
+            #[paralegal::marker(resource, return)]
+            fn get_resource(&self, subject: &str) -> AtomicResult<Resource>;
+            fn add_atom_to_index(&self, _atom: &Atom) -> AtomicResult<()> {
+                Ok(())
+            }
+            fn remove_atom_from_index(&self, _atom: &Atom) -> AtomicResult<()> {
+                Ok(())
+            }
+            fn get_self_url(&self) -> Option<String> {
+                None
+            }
+        }
+
+        #[derive(Clone)]
+        struct Resource {
+            subject: String
+        }
+
+        #[paralegal::marker(check_rights, arguments = [1])]
+        fn check_write(
+            store: &impl Storelike,
+            resource: &Resource,
+            agent: String,
+        ) -> AtomicResult<bool> {
+            Ok(true)
+        }
+
+        impl Resource {
+            #[paralegal::marker(new_resource, arguments = [0])]
+            fn set_propval(
+                &mut self,
+                property: String,
+                value: Value,
+                store: &impl Storelike
+            ) -> AtomicResult<()> {
+                Ok(())
+            }
+
+            fn new(subject: String) -> Self {
+                Self { subject }
+            }
+            #[paralegal::marker(noinline)]
+            pub fn get(&self, property_url: &str) -> AtomicResult<&Value> {
+                unimplemented!()
+            }
+            pub fn get_subject(&self) -> &String {
+                &self.subject
+            }
+        }
+        pub struct Atom {
+            /// The URL where the resource is located
+            pub subject: String,
+            pub property: String,
+            pub value: Value,
+        }
+
+        impl Atom {
+            pub fn new(subject: String, property: String, value: Value) -> Self {
+                Atom {
+                    subject,
+                    property,
+                    value,
+                }
+            }
+        }
+
+        impl Commit {
+            #[paralegal::marker(resource, return)]
+            fn into_resource(self, s: &impl Storelike) -> AtomicResult<Resource> {
+                Ok(Resource { subject: self.subject })
+            }
+
+            #[paralegal::analyze]
+            #[paralegal::marker(commit, arguments = [0])]
+            fn apply_opts(
+                &self,
+                store: &impl Storelike,
+                //validate_schema: bool,
+                // validate_signature: bool,
+                // validate_timestamp: bool,
+                validate_rights: bool,
+                update_index: bool,
+            ) -> AtomicResult<()> {
+                // let subject_url =
+                //     url::Url::parse(&self.subject).map_err(|e| format!("Subject is not a URL. {}", e))?;
+                // if subject_url.query().is_some() {
+                //     return Err("Subject URL cannot have query parameters".into());
+                // }
+
+                // if validate_signature {
+                //     let signature = match self.signature.as_ref() {
+                //         Some(sig) => sig,
+                //         None => return Err("No signature set".into()),
+                //     };
+                //     // TODO: Check if commit.agent has the rights to update the resource
+                //     let pubkey_b64 = store
+                //         .get_resource(&self.signer)?
+                //         .get(urls::PUBLIC_KEY)?
+                //         .to_string();
+                //     let agent_pubkey = base64::decode(pubkey_b64)?;
+                //     let stringified_commit = self.serialize_deterministically_json_ad(store)?;
+                //     let peer_public_key =
+                //         ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, agent_pubkey);
+                //     let signature_bytes = base64::decode(signature.clone())?;
+                //     peer_public_key
+                //         .verify(stringified_commit.as_bytes(), &signature_bytes)
+                //         .map_err(|_e| {
+                //             format!(
+                //                 "Incorrect signature for Commit. This could be due to an error during signing or serialization of the commit. Compare this to the serialized commit in the client: {}",
+                //                 stringified_commit,
+                //             )
+                //         })?;
+                // }
+                // Check if the created_at lies in the past
+                // if validate_timestamp {
+                //     check_timestamp(self.created_at)?;
+                // }
+                let commit_resource: Resource = Resource { subject: self.subject.clone() };
+                // Create a new resource if it doens't exist yet
+                // let mut resource_old = match store.get_resource(&self.subject) {
+                //     Ok(rs) => rs,
+                //     Err(_) => {
+                //         is_new = true;
+                //         Resource::new(self.subject.clone())
+                //     }
+                // };
+
+                let mut resource_old = Resource::new(self.subject.clone());
+                let is_new = true;
+
+                let resource_new = self.apply_changes(resource_old.clone(), store /* , false */)?;
+
+                if validate_rights {
+                    // if is_new {
+                    //     if !check_write(store, &resource_new, self.signer.clone())? {
+                    //         return Err("".to_string());
+                    //     }
+                    // } else {
+                        // Set a parent only if the rights checks are to be validated.
+                        // If there is no explicit parent set on the previous resource, use a default.
+                        // Unless it's a Drive!
+                        // This should use the _old_ resource, no the new one, as the new one might maliciously give itself write rights.
+                        if !check_write(store, &resource_old, self.signer.clone())? {
+                            return Err("".to_string());
+                        }
+                    // }
+                };
+                // Check if all required props are there
+                // if validate_schema {
+                //     resource_new.check_required_props(store)?;
+                // }
+                // If a Destroy field is found, remove the resource and return early
+                // TODO: Should we remove the existing commits too? Probably.
+                if let Some(destroy) = self.destroy {
+                    if destroy {
+                        // Note: the value index is updated before this action, in resource.apply_changes()
+                        //store.remove_resource(&self.subject)?;
+                        store.add_resource_opts(&commit_resource, false, update_index, false )?;
+                        return Ok(());
+                    }
+                }
+                //self.apply_changes(resource_old.clone(), store, update_index)?;
+
+                //store.add_resource_opts(&commit_resource, false, update_index, false )?;
+                Ok(())
+            }
+            pub fn apply_changes(
+                &self,
+                mut resource: Resource,
+                store: &impl Storelike,
+                //update_index: bool,
+            ) -> AtomicResult<Resource> {
+                if let Some(set) = self.set.clone() {
+                    for (prop, val) in set.iter() {
+                        // if update_index {
+                        //     let atom = Atom::new(resource.get_subject().clone(), prop.into(), val.clone());
+                        //     if let Ok(_v) = resource.get(prop) {
+                        //         store.remove_atom_from_index(&atom)?;
+                        //     }
+                        //     store.add_atom_to_index(&atom)?;
+                        // }
+                        resource.set_propval(prop.into(), val.to_owned(), store)?;
+                    }
+                }
+                // if let Some(remove) = self.remove.clone() {
+                //     for prop in remove.iter() {
+                //         if update_index {
+                //             let val = resource.get(prop)?;
+                //             let atom = Atom::new(resource.get_subject().clone(), prop.into(), val.clone());
+                //             store.remove_atom_from_index(&atom)?;
+                //         }
+                //         resource.remove_propval(prop);
+                //     }
+                // }
+                // Remove all atoms from index if destroy
+                // if let Some(destroy) = self.destroy {
+                //     if destroy {
+                //         for atom in resource.to_atoms()?.iter() {
+                //             store.remove_atom_from_index(atom)?;
+                //         }
+                //     }
+                // }
+                Ok(resource)
+            }
+        }
+    ))?;
+
+    test.run(|ctx| {
+        let mut any_sink_reached = false;
+        let check_rights = marker!(check_rights);
+        for ctx in ctx.controller_contexts() {
+            let commit = NodeCluster::new(
+                ctx.id(),
+                ctx.marked_nodes(marker!(commit))
+                    .filter(|n| n.controller_id() == ctx.id())
+                    .map(|n| n.local_node()),
+            );
+
+            // If commit is stored
+            let stores = ctx
+                .influencees(&commit, EdgeSelection::Both)
+                .filter(|s| ctx.has_marker(marker!(sink), *s))
+                .collect::<Box<[_]>>();
+            if stores.is_empty() {
+                continue;
+            }
+            any_sink_reached = true;
+
+            let commit_influencees = ctx.influencees(&commit, EdgeSelection::Data).collect::<HashSet<_>>();
+
+            let new_resources = commit_influencees
+                .iter()
+                .copied()
+                .filter(|n| ctx.has_marker(marker!(new_resource), *n))
+                .filter(|n| {
+                    // Hackery
+                    //
+                    // On one hand this is hacky beacuse we're selecting a specific
+                    // argument. This shold probably be done cleanly via markers. On
+                    // the other hand we're just checking that the first argument is
+                    // not form the commit (e.g. user-specified), which is not bad,
+                    // but really I think this should be a whitelisted source, such
+                    // as `urls::PARENT`, *but* we can't annotate constants so this
+                    // has to do.
+                    let argument_siblings = n.siblings(&ctx)
+                        .filter(|n| n.is_argument(&ctx, 1))
+                        .collect::<Box<[_]>>();
+
+                    let valid = argument_siblings.iter().copied().any(|n| {
+                            commit_influencees.contains(&n)
+                        });
+                    // let mut msg = ctx.struct_node_help(*n, format!("This is a new resource, it has {} argument 1 siblings. It is {}problematic", argument_siblings.len(), if valid { "" } else {"un"}));
+                    // for sibling in argument_siblings.iter().copied() {
+                    //     msg.with_node_note(sibling, "This is an argument 1 sibling");
+                    // }
+                    // msg.emit();
+                    valid
+
+                })
+                .collect::<Box<[_]>>();
+
+            // All checks that flow from the commit but not from a new_resource
+            let valid_checks = commit_influencees.iter().copied()
+                .filter(|check| {
+                    ctx.has_marker(check_rights, *check)
+                })
+                .collect::<Box<[_]>>();
+
+            if valid_checks.is_empty() {
+                ctx.warning("No valid checks");
+            }
+
+            let checks = stores
+                .iter()
+                .copied()
+                .map(|store| {
+                    (
+                        store,
+                        valid_checks.iter().copied().find_map(|check| {
+                            let store_cs = ctx
+                                .successors(store)
+                                .find(|cs| ctx.has_ctrl_influence(check, *cs))?;
+                            Some((check, store_cs))
+                        }),
+                    )
+                })
+                .collect::<Box<[_]>>();
+
+            for (store, check) in checks.iter() {
+                if check.is_none() {
+                    let store_influencing = ctx.influencers(*store, EdgeSelection::Control).chain(
+                        ctx.influencers(*store, EdgeSelection::Control).flat_map(|i| ctx.influencers(i, EdgeSelection::Data))
+                    ).collect::<HashSet<_>>();
+
+                    ctx.node_error(*store, "This store is not protected");
+
+                    let mut msg = ctx.struct_node_help(*store, "This store");
+                    for influencer in store_influencing.iter().copied() {
+                        msg.with_node_note(influencer, "Is ctrl-influenced by this");
+                    }
+                    msg.emit();
+                    for c in valid_checks.iter().copied() {
+                        let mut msg = ctx.struct_node_help(c, "This is a valid check");
+
+                        let check_influenced =
+                            ctx.influencees(c, EdgeSelection::Control).chain(
+                                ctx.influencees(c, EdgeSelection::Data).flat_map(|i| ctx.influencees(i, EdgeSelection::Control))
+                            ).collect::<HashSet<_>>();
+                        for i in check_influenced.iter().copied() {
+                            msg.with_node_note(i, "that ctrl-influences this node");
+                        }
+                        msg.emit();
+
+                        for i in store_influencing.intersection(&check_influenced) {
+                            ctx.node_help(*i, "This is where influence intersects");
+                        }
+
+                        for i in store_influencing.iter().copied() {
+                            let mut msg = ctx.struct_node_help(i, "This store influence intersects");
+                            let mut emit = false;
+                            for intersection in ctx.influencers(i, EdgeSelection::Data) {
+                                if check_influenced.contains(&intersection) {
+                                    msg.with_node_note(intersection, "via this intermediary");
+                                    emit = true;
+                                }
+                            }
+                            if emit {
+                                msg.emit();
+                            }
+                        }
+
+                        if ctx.influencees(c, EdgeSelection::Both).any(|i| i == *store) {
+                            ctx.help("It reaches somehow");
+                        } else {
+                            ctx.warning("It never reaches.");
+                        }
+
+                    }
+                }
+            }
+        }
+        assert_error!(
+            ctx,
+            any_sink_reached,
+            "No sink was reached across controllers, the policy may be vacuous or the markers not correctly assigned/unreachable."
+        );
+
+        Ok(())
+    })
+}
+
+#[test]
+fn tiny_commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
+    Test::new(stringify!(
+        #[paralegal::marker(a, return)]
+        fn source() -> bool {
+            true
+        }
+
+        #[paralegal::marker(b, arguments = [0])]
+        fn target(i: usize) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let deter = Some(false);
+            let src = 0;
+            if source() {
+                return;
+            }
+            if let Some(b) = deter {
+                if b {
+                    target(src);
+                }
+            }
+        }
+    ))?
+    .run(|ctx| {
+        assert_error!(
+            ctx,
+            ctx.marked_nodes(Identifier::new_intern("a"))
+                .flat_map(|n| ctx.influencees(n, EdgeSelection::Both))
+                .any(|n| ctx.has_marker(Identifier::new_intern("b"), n))
+        );
         Ok(())
     })
 }
