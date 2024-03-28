@@ -4,7 +4,7 @@ use std::{io::Write, process::exit, sync::Arc};
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
-    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, Identifier, InstructionInfo,
+    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, HashSet, Identifier, InstructionInfo,
     IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo, ProgramDescription, SPDGImpl,
     Span, TypeId, SPDG,
 };
@@ -12,7 +12,10 @@ use paralegal_spdg::{
 use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
-use petgraph::visit::{EdgeFiltered, EdgeRef, Walker};
+use petgraph::visit::{
+    depth_first_search, Control, DfsEvent, EdgeFiltered, EdgeRef, GraphBase, IntoEdgesDirected,
+    IntoNeighborsDirected, Topo, Walker,
+};
 use petgraph::{Direction, Incoming};
 
 use crate::algo::flows_to::CtrlFlowsTo;
@@ -494,18 +497,36 @@ impl Context {
     pub fn roots(
         &self,
         ctrl_id: ControllerId,
-        _edge_type: EdgeSelection,
+        edge_type: EdgeSelection,
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         let g = &self.desc.controllers[&ctrl_id].graph;
-        g.externals(Incoming)
-            .filter(|n| {
-                let w = g.node_weight(*n).unwrap();
-                w.at.leaf().location.is_start()
-                    || self.desc.instruction_info[&w.at.leaf()]
-                        .kind
-                        .is_function_call()
-            })
-            .map(move |inner| GlobalNode::from_local_node(ctrl_id, inner))
+        let ref filtered = edge_type.filter_graph(g);
+
+        let mut roots = vec![];
+        let mut root_like = HashSet::new();
+
+        // This could be more efficient. We don't have to continue traversing
+        // from non-root-nodes
+        for n in Topo::new(filtered).iter(filtered) {
+            if filtered
+                .neighbors_directed(n, Incoming)
+                .any(|n| !root_like.contains(&n))
+            {
+                continue;
+            }
+            let w = g.node_weight(n).unwrap();
+            if self.desc.instruction_info[&w.at.leaf()]
+                .kind
+                .is_function_call()
+                || w.at.leaf().location.is_start()
+            {
+                roots.push(GlobalNode::from_local_node(ctrl_id, n));
+            } else {
+                root_like.insert(n);
+            }
+        }
+
+        roots.into_iter()
     }
 
     /// Returns the input [`ProgramDescription`].
@@ -635,6 +656,32 @@ impl Context {
     /// Get the span of a node
     pub fn get_location(&self, node: GlobalNode) -> &Span {
         &self.node_info(node).span
+    }
+}
+
+/// Context queries conveniently accessible on nodes
+pub trait NodeQueries {
+    /// Get other nodes at the same instruction
+    fn siblings(self, ctx: &Context) -> NodeCluster;
+}
+
+impl<T: IntoIterGlobalNodes> NodeQueries for T {
+    fn siblings(self, ctx: &Context) -> NodeCluster {
+        NodeCluster::new(
+            self.controller_id(),
+            self.iter_global_nodes()
+                .flat_map(|node| {
+                    let self_at = ctx.node_info(node).at;
+                    ctx.predecessors(node)
+                        .flat_map(|n| ctx.successors(n))
+                        .chain(ctx.successors(node).flat_map(|n| ctx.predecessors(n)))
+                        .filter(move |n| ctx.node_info(*n).at == self_at)
+                        .filter(move |n| *n != node)
+                        .map(|n| n.local_node())
+                })
+                .collect::<HashSet<_>>()
+                .into_iter(),
+        )
     }
 }
 
