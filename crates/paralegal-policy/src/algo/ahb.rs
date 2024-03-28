@@ -1,5 +1,6 @@
 //! Checking always-happens-before relationships
 
+use std::borrow::Cow;
 use std::{collections::HashSet, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
@@ -99,6 +100,21 @@ impl AlwaysHappensBefore {
     /// graphs are disjoined).
     pub fn is_vacuous(&self) -> bool {
         self.checkpointed.is_empty() && self.reached.is_empty()
+    }
+
+    /// If the trace level is sufficient, return the pairing of start and end nodes that were found.
+    pub fn reached(&self) -> Result<Cow<'_, [(GlobalNode, GlobalNode)]>> {
+        match &self.reached {
+            Trace::None(_) => Err(anyhow::anyhow!(
+                "Trace level too low to report reached node"
+            )),
+            Trace::StartAndEnd(st) => Ok(st.as_slice().into()),
+            Trace::Full(all) => Ok(all
+                .iter()
+                .map(|v| (*v.first().unwrap(), *v.last().unwrap()))
+                .collect::<Vec<_>>()
+                .into()),
+        }
     }
 }
 
