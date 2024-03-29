@@ -112,7 +112,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
             .map(|controllers| {
                 let start = Instant::now();
-                let desc = self.make_program_description(controllers, &known_def_ids);
+                let desc = self.make_program_description(controllers, known_def_ids);
                 self.stats
                     .record_timed(TimedStat::Conversion, start.elapsed());
                 desc
@@ -125,12 +125,14 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn make_program_description(
         &self,
         controllers: HashMap<Endpoint, SPDG>,
-        known_def_ids: &HashSet<DefId>,
+        mut known_def_ids: HashSet<DefId>,
     ) -> ProgramDescription {
         let tcx = self.tcx;
 
-        // And now, for every mentioned method in an impl, add the markers on
-        // the corresponding trait method also to the impl method.
+        let instruction_info = self.collect_instruction_info(&controllers);
+
+        known_def_ids.extend(instruction_info.keys().map(|l| l.function.to_def_id()));
+
         let def_info = known_def_ids
             .iter()
             .map(|id| (*id, def_info_for_item(*id, tcx)))
@@ -140,7 +142,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
             type_info,
-            instruction_info: self.collect_instruction_info(&controllers),
+            instruction_info,
             controllers,
             def_info,
             marker_annotation_count: self
