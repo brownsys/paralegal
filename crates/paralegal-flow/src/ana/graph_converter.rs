@@ -406,6 +406,8 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             },
             Default::default(),
         )));
+        // Make sure we count outselves
+        record_inlining(&stat_wrap, tcx, local_def_id, false);
         let stat_wrap_copy = stat_wrap.clone();
         let judge = generator.inline_judge.clone();
         let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(move |info| {
