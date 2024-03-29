@@ -60,6 +60,7 @@ pub struct GraphConverter<'tcx, 'a, C> {
     marker_assignments: HashMap<Node, HashSet<Identifier>>,
     call_string_resolver: call_string_resolver::CallStringResolver<'tcx>,
     stats: SPDGStats,
+    analyzed_functions: HashSet<LocalDefId>,
 }
 
 impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
@@ -71,7 +72,8 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) -> Result<Self> {
         let local_def_id = target.def_id.expect_local();
         let start = Instant::now();
-        let (dep_graph, stats) = Self::create_flowistry_graph(generator, local_def_id)?;
+        let (dep_graph, stats, analyzed_functions) =
+            Self::create_flowistry_graph(generator, local_def_id)?;
         generator
             .stats
             .record_timed(TimedStat::Flowistry, start.elapsed());
@@ -95,6 +97,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             marker_assignments: Default::default(),
             call_string_resolver: CallStringResolver::new(generator.tcx, local_def_id),
             stats,
+            analyzed_functions,
         })
     }
 
@@ -388,7 +391,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn create_flowistry_graph(
         generator: &SPDGGenerator<'tcx>,
         local_def_id: LocalDefId,
-    ) -> Result<(DepGraph<'tcx>, SPDGStats)> {
+    ) -> Result<(DepGraph<'tcx>, SPDGStats, HashSet<LocalDefId>)> {
         let tcx = generator.tcx;
         let opts = generator.opts;
         let stat_wrap = Rc::new(RefCell::new((
@@ -447,10 +450,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
         let flowistry_time = Instant::now();
         let pdg = flowistry_pdg_construction::compute_pdg(params);
-        let (mut stats, _) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
+        let (mut stats, ana_fnset) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
         stats.construction_time = flowistry_time.elapsed();
 
-        Ok((pdg, stats))
+        Ok((pdg, stats, ana_fnset))
     }
 
     /// Consume the generator and compile the [`SPDG`].
@@ -463,6 +466,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             .stats
             .record_timed(TimedStat::Conversion, start.elapsed());
         self.stats.conversion_time = start.elapsed();
+        let tcx = self.tcx();
         SPDG {
             path: path_for_item(self.local_def_id.to_def_id(), self.tcx()),
             graph: self.spdg,
@@ -481,6 +485,14 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 .map(|(k, v)| (k, Types(v.into())))
                 .collect(),
             statistics: self.stats,
+            analyzed_spans: self
+                .analyzed_functions
+                .into_iter()
+                .map(|f| {
+                    let span = tcx.body_for_def_id(f).unwrap().body.span;
+                    (f, src_loc_for_span(span, tcx))
+                })
+                .collect(),
         }
     }
 

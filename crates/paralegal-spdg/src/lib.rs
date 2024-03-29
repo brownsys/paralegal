@@ -714,6 +714,9 @@ pub struct SPDG {
     pub type_assigns: HashMap<Node, Types>,
     /// Statistics
     pub statistics: SPDGStats,
+    #[doc(hidden)]
+    #[serde(with = "ser_localdefid_map")]
+    pub analyzed_spans: HashMap<LocalDefId, Span>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
