@@ -18,6 +18,7 @@ use rustc_middle::{
     ty::{GenericArg, List, ParamEnv, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df};
+use rustc_span::Span;
 use rustc_utils::cache::Cache;
 use rustc_utils::{
     mir::{borrowck_facts, control_dependencies::ControlDependencies},
@@ -634,6 +635,10 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         let (called_def_id, generic_args) = self.operand_to_def_id(func)?;
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
+        let span = self
+            .body
+            .stmt_at(location)
+            .either(|s| s.source_info.span, |t| t.source_info.span);
 
         // Monomorphize the called function with the known generic_args.
         let param_env = tcx.param_env(self.def_id);
@@ -661,7 +666,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             return None;
         };
 
-        let call_kind = self.classify_call_kind(called_def_id, args);
+        let call_kind = self.classify_call_kind(called_def_id, args, span);
 
         let calling_convention = CallingConvention::from_call_kind(&call_kind, args);
 
@@ -1031,8 +1036,9 @@ impl<'tcx> GraphConstructor<'tcx> {
         &'a self,
         def_id: DefId,
         original_args: &'a [Operand<'tcx>],
+        span: Span,
     ) -> CallKind<'tcx, 'a> {
-        self.try_poll_call_kind(def_id, original_args)
+        self.try_poll_call_kind(def_id, original_args, span)
             .or_else(|| self.try_indirect_call_kind(def_id))
             .unwrap_or(CallKind::Direct)
     }

@@ -11,6 +11,7 @@ use rustc_middle::{
     },
     ty::{GenericArgsRef, TyCtxt},
 };
+use rustc_span::Span;
 
 use crate::construct::{CallKind, PartialGraph};
 
@@ -22,14 +23,6 @@ use super::utils::{self, FnResolution};
 pub(crate) struct AsyncInfo {
     pub poll_ready_variant_idx: VariantIdx,
     pub poll_ready_field_idx: FieldIdx,
-}
-
-macro_rules! let_assert {
-  ($p:pat = $e:expr, $($arg:tt)*) => {
-    let $p = $e else {
-      panic!($($arg)*);
-    };
-  }
 }
 
 impl AsyncInfo {
@@ -189,11 +182,17 @@ impl<'tcx> GraphConstructor<'tcx> {
         &'a self,
         def_id: DefId,
         original_args: &'a [Operand<'tcx>],
+        span: Span,
     ) -> Option<CallKind<'tcx, 'a>> {
         let lang_items = self.tcx.lang_items();
         if lang_items.future_poll_fn() == Some(def_id) {
-            let (fun, loc, args) = self.find_async_args(original_args);
-            Some(CallKind::AsyncPoll(fun, loc, args))
+            match self.find_async_args(original_args) {
+                Ok((fun, loc, args)) => Some(CallKind::AsyncPoll(fun, loc, args)),
+                Err(str) => {
+                    self.tcx.sess.span_warn(span, str);
+                    None
+                }
+            }
         } else {
             None
         }
@@ -203,20 +202,34 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn find_async_args<'a>(
         &'a self,
         args: &'a [Operand<'tcx>],
-    ) -> (
-        FnResolution<'tcx>,
-        Location,
-        AsyncCallingConvention<'tcx, 'a>,
-    ) {
-        let get_def_for_op = |op: &Operand<'tcx>| -> Location {
+    ) -> Result<
+        (
+            FnResolution<'tcx>,
+            Location,
+            AsyncCallingConvention<'tcx, 'a>,
+        ),
+        String,
+    > {
+        macro_rules! let_assert {
+            ($p:pat = $e:expr, $($arg:tt)*) => {
+                let $p = $e else {
+                    let msg = format!($($arg)*);
+                    return Err(format!("Abandoning attempt to handle async because pattern {} could not be matched to {:?}: {}", stringify!($p), $e, msg));
+                };
+            }
+        }
+        let get_def_for_op = |op: &Operand<'tcx>| -> Result<Location, String> {
             let_assert!(Some(place) = op.place(), "Arg is not a place");
-            let_assert!(Some(local) = place.as_local(), "Place is not a local");
+            let_assert!(
+                Some(local) = place.as_local(),
+                "Place {place:?} is not a local"
+            );
             let_assert!(
                 Some(locs) = &self.body_assignments.get(&local),
                 "Local has no assignments"
             );
             assert!(locs.len() == 1);
-            locs[0]
+            Ok(locs[0])
         };
 
         let_assert!(
@@ -226,7 +239,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                     ..
                 },
                 ..
-            }) = &self.body.stmt_at(get_def_for_op(&args[0])),
+            }) = &self.body.stmt_at(get_def_for_op(&args[0])?),
             "Pinned assignment is not a call"
         );
         debug_assert!(new_pin_args.len() == 1);
@@ -241,7 +254,7 @@ impl<'tcx> GraphConstructor<'tcx> {
           Either::Left(Statement {
             kind: StatementKind::Assign(box (_, Rvalue::Use(future2))),
             ..
-          }) = &self.body.stmt_at(get_def_for_op(&Operand::Move(future))),
+          }) = &self.body.stmt_at(get_def_for_op(&Operand::Move(future))?),
           "Assignment to pin::new input is not a statement"
         );
 
@@ -252,14 +265,14 @@ impl<'tcx> GraphConstructor<'tcx> {
                     ..
                 },
                 ..
-            }) = &self.body.stmt_at(get_def_for_op(future2)),
+            }) = &self.body.stmt_at(get_def_for_op(future2)?),
             "Assignment to alias of pin::new input is not a call"
         );
 
         let mut chase_target = Err(&into_future_args[0]);
 
         while let Err(target) = chase_target {
-            let async_fn_call_loc = get_def_for_op(target);
+            let async_fn_call_loc = get_def_for_op(target)?;
             let stmt = &self.body.stmt_at(async_fn_call_loc);
             chase_target = match stmt {
                 Either::Right(Terminator {
@@ -303,6 +316,6 @@ impl<'tcx> GraphConstructor<'tcx> {
         let resolution =
             utils::try_resolve_function(self.tcx, op, self.tcx.param_env(self.def_id), generics);
 
-        (resolution, async_fn_call_loc, calling_convention)
+        Ok((resolution, async_fn_call_loc, calling_convention))
     }
 }
