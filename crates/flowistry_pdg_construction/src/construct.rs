@@ -126,8 +126,9 @@ pub trait CallChangeCallback<'tcx> {
     fn on_inline_miss(
         &self,
         _resolution: FnResolution<'tcx>,
-        _: Location,
-        _parent: FnResolution<'tcx>,
+        _loc: Location,
+        _under_analysis: FnResolution<'tcx>,
+        _call_string: Option<CallString>,
         _reason: InlineMissReason,
     ) {
     }
@@ -698,6 +699,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                         resolved_fn,
                         location,
                         self.params.root,
+                        self.calling_context.as_ref().map(|s| s.call_string),
                         InlineMissReason::Async(async_err),
                     )
                 }

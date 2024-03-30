@@ -452,6 +452,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 resolution: FnResolution<'tcx>,
                 loc: Location,
                 parent: FnResolution<'tcx>,
+                call_string: Option<CallString>,
                 reason: InlineMissReason,
             ) {
                 let body = self
@@ -463,10 +464,12 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     .stmt_at(loc)
                     .either(|s| s.source_info.span, |t| t.source_info.span);
                 let markers_reachable = self.judge.marker_ctx().get_reachable_markers(resolution);
-                self.tcx.sess.span_warn(
+                self.tcx.sess.span_err(
                     span,
                     format!(
-                        "Could not inline this function call because {reason:?}. {}",
+                        "Could not inline this function call in {:?}, at {} because {reason:?}. {}",
+                        parent.def_id(),
+                        call_string.map_or("root".to_owned(), |c| c.to_string()),
                         Print(|f| if markers_reachable.is_empty() {
                             f.write_str("No markers are reachable")
                         } else {
