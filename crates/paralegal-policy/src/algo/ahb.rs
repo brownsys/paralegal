@@ -14,11 +14,11 @@ use petgraph::visit::{
     Control, DfsEvent, EdgeFiltered, GraphBase, IntoEdgeReferences, NodeIndexable,
 };
 
-use crate::Diagnostics;
 use crate::{
     assert_warning,
     diagnostics::{CombinatorContext, HasDiagnosticsBase},
 };
+use crate::{Diagnostics, NodeExt};
 
 /// Statistics about the result of running [`Context::always_happens_before`]
 /// that are useful to understand how the property failed.
@@ -236,8 +236,8 @@ impl Trace {
             Self::StartAndEnd(reached) => {
                 let context = ctx.as_ctx();
                 for &(reached, from) in reached {
-                    let from_info = context.node_info(from);
-                    let reached_info = context.node_info(reached);
+                    let from_info = from.info(context);
+                    let reached_info = reached.info(context);
                     let mut err = ctx.struct_node_error(
                         reached,
                         format!(
@@ -255,13 +255,13 @@ impl Trace {
                     let (reached, rest) = path
                         .split_first()
                         .expect("Invaraint broken, path must have a start");
-                    let reached_info = context.node_info(*reached);
+                    let reached_info = reached.info(context);
                     let mut err = ctx.struct_node_error(
                         *reached,
                         format!("Reached this terminal {}", reached_info.description,),
                     );
                     for &from in rest {
-                        let from_info = context.node_info(from);
+                        let from_info = from.info(context);
                         err.with_node_note(
                             from,
                             format!("Reached from this node {} ", from_info.description,),
