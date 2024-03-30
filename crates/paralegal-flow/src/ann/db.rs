@@ -20,7 +20,7 @@ use crate::{
         resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, FnResolutionExt,
         IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt, TyExt,
     },
-    DefId, Either, HashMap, LocalDefId, TyCtxt,
+    DefId, Either, HashMap, HashSet, LocalDefId, TyCtxt,
 };
 use flowistry_pdg_construction::determine_async;
 use paralegal_spdg::Identifier;
@@ -216,6 +216,8 @@ impl<'tcx> MarkerCtx<'tcx> {
             .flat_map(|bbdat| {
                 self.terminator_reachable_markers(&body.local_decls, bbdat.terminator())
             })
+            .collect::<HashSet<_>>()
+            .into_iter()
             .collect()
     }
 
