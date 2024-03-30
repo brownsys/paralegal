@@ -1,4 +1,5 @@
 use crate::{
+    ana::inline_judge::InlineJudge,
     ann::MarkerAnnotation,
     desc::*,
     discover::FnToAnalyze,
@@ -12,6 +13,7 @@ use paralegal_spdg::{Node, SPDGStats};
 
 use std::{
     cell::RefCell,
+    fmt::Display,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -23,7 +25,8 @@ use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
-    is_async_trait_fn, match_async_trait_assign, CallChanges, CallInfo, PdgParams,
+    is_async_trait_fn, match_async_trait_assign, CallChangeCallback, CallChanges, CallInfo,
+    InlineMissReason, PdgParams,
     SkipCall::Skip,
 };
 use petgraph::{
@@ -410,32 +413,77 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         record_inlining(&stat_wrap, tcx, local_def_id, false);
         let stat_wrap_copy = stat_wrap.clone();
         let judge = generator.inline_judge.clone();
-        let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(move |info| {
-            let mut changes = CallChanges::default();
+        struct MyCallback<'tcx> {
+            judge: InlineJudge<'tcx>,
+            stat_wrap: Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>,
+            tcx: TyCtxt<'tcx>,
+        }
 
-            let mut skip = true;
+        impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
+            fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx> {
+                let mut changes = CallChanges::default();
 
-            if is_non_default_trait_method(tcx, info.callee.def_id()).is_some() {
-                tcx.sess.span_warn(
-                    tcx.def_span(info.callee.def_id()),
-                    "Skipping analysis of unresolvable trait method.",
-                );
-            } else if judge.should_inline(&info) {
-                skip = false;
-            };
+                let mut skip = true;
 
-            if skip {
-                changes = changes.with_skip(Skip);
-            } else {
-                record_inlining(
-                    &stat_wrap,
-                    tcx,
-                    info.callee.def_id().expect_local(),
-                    info.is_cached,
-                )
+                if is_non_default_trait_method(self.tcx, info.callee.def_id()).is_some() {
+                    self.tcx.sess.span_warn(
+                        self.tcx.def_span(info.callee.def_id()),
+                        "Skipping analysis of unresolvable trait method.",
+                    );
+                } else if self.judge.should_inline(&info) {
+                    skip = false;
+                };
+
+                if skip {
+                    changes = changes.with_skip(Skip);
+                } else {
+                    record_inlining(
+                        &self.stat_wrap,
+                        self.tcx,
+                        info.callee.def_id().expect_local(),
+                        info.is_cached,
+                    )
+                }
+                changes
             }
-            changes
+
+            fn on_inline_miss(
+                &self,
+                resolution: FnResolution<'tcx>,
+                loc: Location,
+                parent: FnResolution<'tcx>,
+                reason: InlineMissReason,
+            ) {
+                let body = self
+                    .tcx
+                    .body_for_def_id(parent.def_id().expect_local())
+                    .unwrap();
+                let span = body
+                    .body
+                    .stmt_at(loc)
+                    .either(|s| s.source_info.span, |t| t.source_info.span);
+                let markers_reachable = self.judge.marker_ctx().get_reachable_markers(resolution);
+                self.tcx.sess.span_warn(
+                    span,
+                    format!(
+                        "Could not inline this function call because {reason:?}. {}",
+                        Print(|f| if markers_reachable.is_empty() {
+                            f.write_str("No markers are reachable")
+                        } else {
+                            f.write_str("Markers ")?;
+                            write_sep(f, ", ", markers_reachable.iter(), Display::fmt)?;
+                            f.write_str(" are reachable")
+                        })
+                    ),
+                );
+            }
+        }
+        let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(MyCallback {
+            judge,
+            stat_wrap,
+            tcx,
         });
+
         if opts.dbg().dump_mir() {
             let mut file = std::fs::File::create(format!(
                 "{}.mir",

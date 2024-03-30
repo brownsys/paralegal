@@ -18,7 +18,6 @@ use rustc_middle::{
     ty::{GenericArg, List, ParamEnv, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df};
-use rustc_span::Span;
 use rustc_utils::cache::Cache;
 use rustc_utils::{
     mir::{borrowck_facts, control_dependencies::ControlDependencies},
@@ -113,14 +112,46 @@ pub struct CallInfo<'tcx> {
     pub is_cached: bool,
 }
 
-type CallChangeCallback<'tcx> = Box<dyn Fn(CallInfo<'tcx>) -> CallChanges<'tcx> + 'tcx>;
-
 /// Top-level parameters to PDG construction.
 #[derive(Clone)]
 pub struct PdgParams<'tcx> {
     tcx: TyCtxt<'tcx>,
     root: FnResolution<'tcx>,
-    call_change_callback: Option<Rc<CallChangeCallback<'tcx>>>,
+    call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
+}
+
+pub trait CallChangeCallback<'tcx> {
+    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx>;
+
+    fn on_inline_miss(
+        &self,
+        _resolution: FnResolution<'tcx>,
+        _: Location,
+        _parent: FnResolution<'tcx>,
+        _reason: InlineMissReason,
+    ) {
+    }
+}
+
+pub struct CallChangeCallbackFn<'tcx> {
+    f: Box<dyn Fn(CallInfo<'tcx>) -> CallChanges<'tcx> + 'tcx>,
+}
+
+impl<'tcx> CallChangeCallbackFn<'tcx> {
+    pub fn new(f: impl Fn(CallInfo<'tcx>) -> CallChanges<'tcx> + 'tcx) -> Self {
+        Self { f: Box::new(f) }
+    }
+}
+
+impl<'tcx> CallChangeCallback<'tcx> for CallChangeCallbackFn<'tcx> {
+    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx> {
+        (self.f)(info)
+    }
+}
+
+#[derive(Debug)]
+pub enum InlineMissReason {
+    Async(String),
 }
 
 impl<'tcx> PdgParams<'tcx> {
@@ -168,12 +199,9 @@ impl<'tcx> PdgParams<'tcx> {
     /// })
     /// # }
     /// ```
-    pub fn with_call_change_callback(
-        self,
-        f: impl Fn(CallInfo<'tcx>) -> CallChanges<'tcx> + 'tcx,
-    ) -> Self {
+    pub fn with_call_change_callback(self, f: impl CallChangeCallback<'tcx> + 'tcx) -> Self {
         PdgParams {
-            call_change_callback: Some(Rc::new(Box::new(f))),
+            call_change_callback: Some(Rc::new(f)),
             ..self
         }
     }
@@ -635,10 +663,6 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         let (called_def_id, generic_args) = self.operand_to_def_id(func)?;
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
-        let span = self
-            .body
-            .stmt_at(location)
-            .either(|s| s.source_info.span, |t| t.source_info.span);
 
         // Monomorphize the called function with the known generic_args.
         let param_env = tcx.param_env(self.def_id);
@@ -666,7 +690,20 @@ impl<'tcx> GraphConstructor<'tcx> {
             return None;
         };
 
-        let call_kind = self.classify_call_kind(called_def_id, args, span);
+        let call_kind = match self.classify_call_kind(called_def_id, args) {
+            Ok(cc) => cc,
+            Err(async_err) => {
+                if let Some(cb) = self.params.call_change_callback.as_ref() {
+                    cb.on_inline_miss(
+                        resolved_fn,
+                        location,
+                        self.params.root,
+                        InlineMissReason::Async(async_err),
+                    )
+                }
+                return None;
+            }
+        };
 
         let calling_convention = CallingConvention::from_call_kind(&call_kind, args);
 
@@ -735,7 +772,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                     is_cached,
                 }
             };
-            callback(info)
+            callback.on_inline(info)
         });
 
         // Handle async functions at the time of polling, not when the future is created.
@@ -1032,15 +1069,22 @@ impl<'tcx> GraphConstructor<'tcx> {
     }
 
     /// Determine the type of call-site.
+    ///
+    /// The error case is if we tried to resolve this as async and failed. We
+    /// know it *is* async but we couldn't determine the information needed to
+    /// analyze the function, therefore we will have to approximate it.
     fn classify_call_kind<'a>(
         &'a self,
         def_id: DefId,
         original_args: &'a [Operand<'tcx>],
-        span: Span,
-    ) -> CallKind<'tcx, 'a> {
-        self.try_poll_call_kind(def_id, original_args, span)
-            .or_else(|| self.try_indirect_call_kind(def_id))
-            .unwrap_or(CallKind::Direct)
+    ) -> Result<CallKind<'tcx, 'a>, String> {
+        match self.try_poll_call_kind(def_id, original_args) {
+            AsyncDeterminationResult::Resolved(r) => Ok(r),
+            AsyncDeterminationResult::NotAsync => Ok(self
+                .try_indirect_call_kind(def_id)
+                .unwrap_or(CallKind::Direct)),
+            AsyncDeterminationResult::Unresolvable(reason) => Err(reason),
+        }
     }
 
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx, '_>> {

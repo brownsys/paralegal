@@ -11,7 +11,6 @@ use rustc_middle::{
     },
     ty::{GenericArgsRef, TyCtxt},
 };
-use rustc_span::Span;
 
 use crate::construct::{CallKind, PartialGraph};
 
@@ -161,6 +160,13 @@ pub fn determine_async<'tcx>(
     Some((generator_fn, loc))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AsyncDeterminationResult<T> {
+    Resolved(T),
+    Unresolvable(String),
+    NotAsync,
+}
+
 impl<'tcx> GraphConstructor<'tcx> {
     pub(crate) fn try_handle_as_async(&self) -> Option<PartialGraph<'tcx>> {
         let (generator_fn, location) = determine_async(self.tcx, self.def_id, &self.body)?;
@@ -182,19 +188,17 @@ impl<'tcx> GraphConstructor<'tcx> {
         &'a self,
         def_id: DefId,
         original_args: &'a [Operand<'tcx>],
-        span: Span,
-    ) -> Option<CallKind<'tcx, 'a>> {
+    ) -> AsyncDeterminationResult<CallKind<'tcx, 'a>> {
         let lang_items = self.tcx.lang_items();
         if lang_items.future_poll_fn() == Some(def_id) {
             match self.find_async_args(original_args) {
-                Ok((fun, loc, args)) => Some(CallKind::AsyncPoll(fun, loc, args)),
-                Err(str) => {
-                    self.tcx.sess.span_warn(span, str);
-                    None
+                Ok((fun, loc, args)) => {
+                    AsyncDeterminationResult::Resolved(CallKind::AsyncPoll(fun, loc, args))
                 }
+                Err(str) => AsyncDeterminationResult::Unresolvable(str),
             }
         } else {
-            None
+            AsyncDeterminationResult::NotAsync
         }
     }
     /// Given the arguments to a `Future::poll` call, walk back through the

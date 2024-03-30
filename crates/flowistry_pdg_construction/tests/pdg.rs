@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepGraph},
-    CallChanges, FakeEffect, FakeEffectKind, PdgParams, SkipCall,
+    CallChangeCallbackFn, CallChanges, FakeEffect, FakeEffectKind, PdgParams, SkipCall,
 };
 use itertools::Itertools;
 use rustc_hir::def_id::LocalDefId;
@@ -532,9 +532,9 @@ pdg_test! {
         }
     },
     |_, params| {
-        params.with_call_change_callback(move |_| {
+        params.with_call_change_callback(CallChangeCallbackFn::new( move |_| {
             CallChanges::default().with_skip(SkipCall::Skip)
-        })
+        }))
     },
     (recipients -/> sender)
 }
@@ -560,7 +560,7 @@ pdg_test! {
       nested_layer_one(&mut w, z);
     }
   },
-  |tcx, params| params.with_call_change_callback(move |info| {
+  |tcx, params| params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
       let name = tcx.opt_item_name(info.callee.def_id());
       let skip = if !matches!(name.as_ref().map(|sym| sym.as_str()), Some("no_inline"))
           && info.call_string.len() < 2
@@ -570,7 +570,7 @@ pdg_test! {
           SkipCall::Skip
       };
       CallChanges::default().with_skip(skip)
-  }),
+  })),
   (y -> x),
   (z -> w)
 }
@@ -603,23 +603,25 @@ pdg_test! {
     }
   },
   |tcx, params| params.with_call_change_callback(
-    move |info| {
-        let name = tcx.opt_item_name(info.callee.def_id());
-        if matches!(name.as_ref().map(|sym| sym.as_str()), Some("fake")) {
-            let fake_write = FakeEffect {
-                place: Place::make(Local::from_usize(1), &[ProjectionElem::Deref], tcx),
-                kind: FakeEffectKind::Write,
-            };
-            let fake_read = FakeEffect {
-                place: Place::make(Local::from_usize(2), &[ProjectionElem::Deref], tcx),
-                kind: FakeEffectKind::Read,
-            };
-            let fake_effects = vec![fake_write, fake_read];
-            CallChanges::default().with_fake_effects(fake_effects)
-        } else {
-            CallChanges::default()
-        }
-    },
+    CallChangeCallbackFn::new(
+      move |info| {
+          let name = tcx.opt_item_name(info.callee.def_id());
+          if matches!(name.as_ref().map(|sym| sym.as_str()), Some("fake")) {
+              let fake_write = FakeEffect {
+                  place: Place::make(Local::from_usize(1), &[ProjectionElem::Deref], tcx),
+                  kind: FakeEffectKind::Write,
+              };
+              let fake_read = FakeEffect {
+                  place: Place::make(Local::from_usize(2), &[ProjectionElem::Deref], tcx),
+                  kind: FakeEffectKind::Read,
+              };
+              let fake_effects = vec![fake_write, fake_read];
+              CallChanges::default().with_fake_effects(fake_effects)
+          } else {
+              CallChanges::default()
+          }
+      },
+    )
   ),
   (x -fake> z),
   (y -fake> *b)
