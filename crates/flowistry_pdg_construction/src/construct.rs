@@ -1099,7 +1099,7 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx, '_>> {
         let lang_items = self.tcx.lang_items();
         let my_impl = self.tcx.impl_of_method(def_id)?;
-        let my_trait = self.tcx.trait_id_of_impl(my_impl)?;
+        let my_trait = self.tcx.trait_of_item(def_id)?;
         (Some(my_trait) == lang_items.fn_trait()
             || Some(my_trait) == lang_items.fn_mut_trait()
             || Some(my_trait) == lang_items.fn_once_trait())
