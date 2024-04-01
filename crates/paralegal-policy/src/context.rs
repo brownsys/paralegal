@@ -396,13 +396,10 @@ impl Context {
         node.types(self)
     }
 
+    #[deprecated = "Use NodeExt::has_marker instead"]
     /// Returns whether the given Node has the marker applied to it directly or via its type.
     pub fn has_marker(&self, marker: Marker, node: GlobalNode) -> bool {
-        let Some(marked) = self.marker_to_ids.get(&marker) else {
-            self.warning(format!("No marker named '{marker}' known"));
-            return false;
-        };
-        marked.nodes.contains(&node) || node.types(self).iter().any(|t| marked.types.contains(t))
+        node.has_marker(self, marker)
     }
 
     /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
