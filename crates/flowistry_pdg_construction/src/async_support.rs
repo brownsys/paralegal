@@ -169,6 +169,9 @@ pub enum AsyncDeterminationResult<T> {
 
 impl<'tcx> GraphConstructor<'tcx> {
     pub(crate) fn try_handle_as_async(&self) -> Option<PartialGraph<'tcx>> {
+        if self.calling_context.is_some() {
+            return None;
+        }
         let (generator_fn, location) = determine_async(self.tcx, self.def_id, &self.body)?;
 
         let calling_context = self.calling_context_for(generator_fn.def_id(), location);
@@ -188,138 +191,12 @@ impl<'tcx> GraphConstructor<'tcx> {
         &'a self,
         def_id: DefId,
         original_args: &'a [Operand<'tcx>],
-    ) -> AsyncDeterminationResult<CallKind<'tcx, 'a>> {
+    ) -> AsyncDeterminationResult<CallKind> {
         let lang_items = self.tcx.lang_items();
         if lang_items.future_poll_fn() == Some(def_id) {
-            match self.find_async_args(original_args) {
-                Ok((fun, loc, args)) => {
-                    AsyncDeterminationResult::Resolved(CallKind::AsyncPoll(fun, loc, args))
-                }
-                Err(str) => AsyncDeterminationResult::Unresolvable(str),
-            }
+            AsyncDeterminationResult::Resolved(CallKind::AsyncPoll)
         } else {
             AsyncDeterminationResult::NotAsync
         }
-    }
-    /// Given the arguments to a `Future::poll` call, walk back through the
-    /// body to find the original future being polled, and get the arguments to the future.
-    fn find_async_args<'a>(
-        &'a self,
-        args: &'a [Operand<'tcx>],
-    ) -> Result<
-        (
-            FnResolution<'tcx>,
-            Location,
-            AsyncCallingConvention<'tcx, 'a>,
-        ),
-        String,
-    > {
-        macro_rules! let_assert {
-            ($p:pat = $e:expr, $($arg:tt)*) => {
-                let $p = $e else {
-                    let msg = format!($($arg)*);
-                    return Err(format!("Abandoning attempt to handle async because pattern {} could not be matched to {:?}: {}", stringify!($p), $e, msg));
-                };
-            }
-        }
-        let get_def_for_op = |op: &Operand<'tcx>| -> Result<Location, String> {
-            let_assert!(Some(place) = op.place(), "Arg is not a place");
-            let_assert!(
-                Some(local) = place.as_local(),
-                "Place {place:?} is not a local"
-            );
-            let_assert!(
-                Some(locs) = &self.body_assignments.get(&local),
-                "Local has no assignments"
-            );
-            assert!(locs.len() == 1);
-            Ok(locs[0])
-        };
-
-        let_assert!(
-            Either::Right(Terminator {
-                kind: TerminatorKind::Call {
-                    args: new_pin_args,
-                    ..
-                },
-                ..
-            }) = &self.body.stmt_at(get_def_for_op(&args[0])?),
-            "Pinned assignment is not a call"
-        );
-        debug_assert!(new_pin_args.len() == 1);
-
-        let future_aliases = self
-            .aliases(self.tcx.mk_place_deref(new_pin_args[0].place().unwrap()))
-            .collect_vec();
-        debug_assert!(future_aliases.len() == 1);
-        let future = *future_aliases.first().unwrap();
-
-        let_assert!(
-          Either::Left(Statement {
-            kind: StatementKind::Assign(box (_, Rvalue::Use(future2))),
-            ..
-          }) = &self.body.stmt_at(get_def_for_op(&Operand::Move(future))?),
-          "Assignment to pin::new input is not a statement"
-        );
-
-        let_assert!(
-            Either::Right(Terminator {
-                kind: TerminatorKind::Call {
-                    args: into_future_args,
-                    ..
-                },
-                ..
-            }) = &self.body.stmt_at(get_def_for_op(future2)?),
-            "Assignment to alias of pin::new input is not a call"
-        );
-
-        let mut chase_target = Err(&into_future_args[0]);
-
-        while let Err(target) = chase_target {
-            let async_fn_call_loc = get_def_for_op(target)?;
-            let stmt = &self.body.stmt_at(async_fn_call_loc);
-            chase_target = match stmt {
-                Either::Right(Terminator {
-                    kind: TerminatorKind::Call { args, func, .. },
-                    ..
-                }) => {
-                    let (op, generics) = self.operand_to_def_id(func).unwrap();
-                    Ok((
-                        op,
-                        generics,
-                        AsyncCallingConvention::Fn(args),
-                        async_fn_call_loc,
-                    ))
-                }
-                Either::Left(Statement { kind, .. }) => match kind {
-                    StatementKind::Assign(box (
-                        _,
-                        Rvalue::Aggregate(
-                            box AggregateKind::Generator(def_id, generic_args, _),
-                            args,
-                        ),
-                    )) => Ok((
-                        *def_id,
-                        *generic_args,
-                        AsyncCallingConvention::Block(args),
-                        async_fn_call_loc,
-                    )),
-                    StatementKind::Assign(box (_, Rvalue::Use(target))) => Err(target),
-                    _ => {
-                        panic!("Assignment to into_future input is not a call: {stmt:?}");
-                    }
-                },
-                _ => {
-                    panic!("Assignment to into_future input is not a call: {stmt:?}");
-                }
-            };
-        }
-
-        let (op, generics, calling_convention, async_fn_call_loc) = chase_target.unwrap();
-
-        let resolution =
-            utils::try_resolve_function(self.tcx, op, self.tcx.param_env(self.def_id), generics);
-
-        Ok((resolution, async_fn_call_loc, calling_convention))
     }
 }

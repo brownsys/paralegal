@@ -101,6 +101,10 @@ where
                         let ty = args.as_closure().upvar_tys();
                         (*mutated, ty.to_vec())
                     }
+                    AggregateKind::Generator(_, args, _) => {
+                        let ty = args.as_generator().upvar_tys();
+                        (*mutated, ty.to_vec())
+                    }
                     _ => return false,
                 };
 
@@ -135,20 +139,37 @@ where
             // _1.x = _2.x, _1.y = _2.y, and so on.
             Rvalue::Use(Operand::Move(place) | Operand::Copy(place)) => {
                 let place_ty = place.ty(&body.local_decls, tcx).ty;
-                let TyKind::Adt(adt_def, substs) = place_ty.kind() else {
-                    return false;
+                log::trace!("Type of place {place:?} is {place_ty:?}");
+                let fields = match place_ty.kind() {
+                    TyKind::Adt(adt_def, substs) => {
+                        if !adt_def.is_struct() {
+                            return false;
+                        };
+                        adt_def
+                            .all_visible_fields(self.place_info.def_id, self.place_info.tcx)
+                            .enumerate()
+                            .map(|(i, field_def)| {
+                                PlaceElem::Field(FieldIdx::from_usize(i), field_def.ty(tcx, substs))
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                    TyKind::Closure(_, generics) => generics
+                        .as_closure()
+                        .upvar_tys()
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, ty)| PlaceElem::Field(FieldIdx::from_usize(idx), ty))
+                        .collect(),
+                    TyKind::Generator(_, generics, _) => generics
+                        .as_generator()
+                        .upvar_tys()
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, ty)| PlaceElem::Field(FieldIdx::from_usize(idx), ty))
+                        .collect(),
+                    _ => return false,
                 };
-                if !adt_def.is_struct() {
-                    return false;
-                };
-                let mut fields = adt_def
-                    .all_visible_fields(self.place_info.def_id, self.place_info.tcx)
-                    .enumerate()
-                    .map(|(i, field_def)| {
-                        PlaceElem::Field(FieldIdx::from_usize(i), field_def.ty(tcx, substs))
-                    })
-                    .peekable();
-                if fields.peek().is_none() {
+                if fields.is_empty() {
                     (self.f)(
                         location,
                         Mutation {

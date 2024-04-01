@@ -4,7 +4,7 @@ use either::Either;
 use itertools::Itertools;
 use log::{debug, trace};
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::DefId;
+use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{
         tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,
@@ -234,4 +234,11 @@ pub fn find_body_assignments(body: &Body<'_>) -> BodyAssignments {
         .into_group_map()
         .into_iter()
         .collect()
+}
+
+pub fn async_parent(tcx: TyCtxt<'_>, def_id: DefId) -> Option<DefId> {
+    let parent = tcx.parent(def_id);
+    (matches!(tcx.def_kind(parent), DefKind::AssocFn | DefKind::Fn)
+        && tcx.asyncness(parent).is_async())
+    .then_some(parent)
 }

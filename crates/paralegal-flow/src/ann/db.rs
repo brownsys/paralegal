@@ -22,7 +22,7 @@ use crate::{
     },
     DefId, Either, HashMap, HashSet, LocalDefId, TyCtxt,
 };
-use flowistry_pdg_construction::determine_async;
+use flowistry_pdg_construction::{async_parent, determine_async};
 use paralegal_spdg::Identifier;
 use rustc_utils::cache::Cache;
 
@@ -99,12 +99,8 @@ impl<'tcx> MarkerCtx<'tcx> {
     fn defid_rewrite(&self, def_id: DefId) -> DefId {
         let def_kind = self.tcx().def_kind(def_id);
         if matches!(def_kind, DefKind::Generator) {
-            if let Some(parent) = self.tcx().opt_parent(def_id) {
-                if matches!(self.tcx().def_kind(parent), DefKind::AssocFn | DefKind::Fn)
-                    && self.tcx().asyncness(parent).is_async()
-                {
-                    return parent;
-                }
+            if let Some(parent) = async_parent(self.tcx(), def_id) {
+                return parent;
             };
         }
         def_id

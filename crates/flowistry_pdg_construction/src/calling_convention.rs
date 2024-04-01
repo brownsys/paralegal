@@ -1,29 +1,31 @@
+extern crate rustc_ast;
+
 use rustc_abi::FieldIdx;
-use rustc_index::IndexSlice;
 use rustc_middle::{
     mir::{Body, HasLocalDecls, Operand, Place, PlaceElem, RETURN_PLACE},
-    ty::TyCtxt,
+    ty::{Region, RegionKind, Ty, TyCtxt, TypeAndMut},
 };
 
 use crate::async_support::AsyncInfo;
 use crate::construct::CallKind;
 
+#[derive(Debug)]
 pub enum CallingConvention<'tcx, 'a> {
     Direct(&'a [Operand<'tcx>]),
     Indirect {
         closure_arg: &'a Operand<'tcx>,
         tupled_arguments: &'a Operand<'tcx>,
     },
-    Async(AsyncCallingConvention<'tcx, 'a>),
+    Async(&'a [Operand<'tcx>]),
 }
 
 impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
     pub fn from_call_kind(
-        kind: &CallKind<'tcx, 'a>,
+        kind: &CallKind,
         args: &'a [Operand<'tcx>],
     ) -> CallingConvention<'tcx, 'a> {
         match kind {
-            CallKind::AsyncPoll(_, _, args) => CallingConvention::Async(*args),
+            CallKind::AsyncPoll => CallingConvention::Async(args),
             CallKind::Direct => CallingConvention::Direct(args),
             CallKind::Indirect => CallingConvention::Indirect {
                 closure_arg: &args[0],
@@ -39,6 +41,7 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
         child: Place<'tcx>,
         destination: Place<'tcx>,
         parent_body: &Body<'tcx>,
+        child_body: &Body<'tcx>,
     ) -> Option<(Place<'tcx>, &[PlaceElem<'tcx>])> {
         let result = match self {
             // Async return must be handled special, because it gets wrapped in `Poll::Ready`
@@ -66,16 +69,38 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
                 &child.projection[..],
             ),
             // Map arguments to projections of the future, the poll's first argument
-            Self::Async(cc) => {
+            Self::Async(args) => {
                 if child.local.as_usize() == 1 {
-                    let PlaceElem::Field(idx, _) = child.projection[0] else {
-                        panic!("Unexpected non-projection of async context")
-                    };
-                    let op = match cc {
-                        AsyncCallingConvention::Fn(args) => &args[idx.as_usize()],
-                        AsyncCallingConvention::Block(args) => &args[idx],
-                    };
-                    (op.place()?, &child.projection[1..])
+                    log::trace!(
+                        "Parent is of type {:?}",
+                        args[0].place()?.ty(parent_body, tcx).ty
+                    );
+                    // In this rustc version the actual argument to an async
+                    // closure is Pin<&mut GENERATOR>, but the actual closure
+                    // function pretends to receive GENERATOR. So we must
+                    // project out the Pin's first field and dereference the
+                    // &mut.
+                    let closure_ty = Place::from(child.local).ty(child_body, tcx).ty;
+                    (
+                        args[0].place()?.project_deeper(
+                            &[
+                                PlaceElem::Field(
+                                    FieldIdx::from_u32(0),
+                                    Ty::new_ref(
+                                        tcx,
+                                        Region::new_from_kind(tcx, RegionKind::ReErased),
+                                        TypeAndMut {
+                                            ty: closure_ty,
+                                            mutbl: rustc_ast::Mutability::Mut,
+                                        },
+                                    ),
+                                ),
+                                PlaceElem::Deref,
+                            ],
+                            tcx,
+                        ),
+                        &child.projection[..],
+                    )
                 } else {
                     return None;
                 }
@@ -90,7 +115,6 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
                     (closure_arg.place()?, &child.projection[..])
                 } else {
                     let tuple_arg = tupled_arguments.place()?;
-                    let _projection = child.projection.to_vec();
                     let field = FieldIdx::from_usize(child.local.as_usize() - 2);
                     let field_ty = tuple_arg.ty(parent_body, tcx).field_ty(tcx, field);
                     (
@@ -102,10 +126,4 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
         };
         Some(result)
     }
-}
-
-#[derive(Clone, Copy)]
-pub enum AsyncCallingConvention<'tcx, 'a> {
-    Fn(&'a [Operand<'tcx>]),
-    Block(&'a IndexSlice<FieldIdx, Operand<'tcx>>),
 }

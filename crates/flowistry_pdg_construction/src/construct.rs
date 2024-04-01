@@ -7,13 +7,15 @@ use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
 use log::{debug, trace};
 use petgraph::graph::DiGraph;
+use rustc_abi::VariantIdx;
 use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceConflictBias};
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        visit::Visitor, BasicBlock, Body, Location, Operand, Place, PlaceElem, Statement,
-        Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
+        Rvalue, SourceInfo, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
     ty::{GenericArg, List, ParamEnv, TyCtxt, TyKind},
 };
@@ -306,7 +308,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             .root
             .try_monomorphize(tcx, param_env, &body_with_facts.body);
 
-        if params.dump_mir {
+        if params.dump_mir || log::log_enabled!(log::Level::Trace) {
             use std::io::Write;
             let path = tcx.def_path_str(def_id) + ".mir";
             let mut f = std::fs::File::create(path.as_str()).unwrap();
@@ -663,13 +665,15 @@ impl<'tcx> GraphConstructor<'tcx> {
         func: &Operand<'tcx>,
         args: &[Operand<'tcx>],
         destination: Place<'tcx>,
-    ) -> Option<()> {
+    ) -> CallHandlingResult {
         // Note: my comments here will use "child" to refer to the callee and
         // "parent" to refer to the caller, since the words are most visually distinct.
 
         let tcx = self.tcx;
 
-        let (called_def_id, generic_args) = self.operand_to_def_id(func)?;
+        let Some((called_def_id, generic_args)) = self.operand_to_def_id(func) else {
+            return CallHandlingResult::Bailed;
+        };
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
 
         // Monomorphize the called function with the known generic_args.
@@ -686,8 +690,16 @@ impl<'tcx> GraphConstructor<'tcx> {
         if let Some(cx) = &self.calling_context {
             if cx.call_stack.contains(&resolved_def_id) {
                 trace!("  Bailing due to recursive call");
-                return None;
+                return CallHandlingResult::Bailed;
             }
+        }
+
+        if self.handle_via_flow_model(state, resolved_fn, args, destination, location) {
+            trace!(
+                "  Bailing because func has flow model: {}",
+                tcx.def_path_str(resolved_def_id)
+            );
+            return CallHandlingResult::Bailed;
         }
 
         if !resolved_def_id.is_local() {
@@ -695,7 +707,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                 "  Bailing because func is non-local: `{}`",
                 tcx.def_path_str(resolved_def_id)
             );
-            return None;
+            return CallHandlingResult::Bailed;
         };
 
         let call_kind = match self.classify_call_kind(called_def_id, args) {
@@ -710,7 +722,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                         InlineMissReason::Async(async_err),
                     )
                 }
-                return None;
+                return CallHandlingResult::Bailed;
             }
         };
 
@@ -725,28 +737,6 @@ impl<'tcx> GraphConstructor<'tcx> {
             }
         );
 
-        // A helper to translate an argument (or return) in the child into a place in the parent.
-        let parent_body = &self.body;
-        let translate_to_parent = |child: Place<'tcx>| -> Option<Place<'tcx>> {
-            trace!("  Translating child place: {child:?}");
-            let (parent_place, child_projection) = calling_convention.handle_translate(
-                &self.async_info,
-                self.tcx,
-                child,
-                destination,
-                &self.body,
-            )?;
-
-            let parent_place_projected = parent_place.project_deeper(child_projection, tcx);
-            trace!("    Translated to: {parent_place_projected:?}");
-            Some(utils::retype_place(
-                parent_place_projected,
-                self.tcx,
-                parent_body,
-                self.def_id.to_def_id(),
-            ))
-        };
-
         // Recursively generate the PDG for the child function.
         let params = self.pdg_params_for_call(resolved_fn);
         let calling_context = self.calling_context_for(resolved_def_id, location);
@@ -760,45 +750,36 @@ impl<'tcx> GraphConstructor<'tcx> {
         let is_cached = self.pdg_cache.is_in_cache(&cache_key);
 
         let call_changes = self.params.call_change_callback.as_ref().map(|callback| {
-            let info = if let CallKind::AsyncPoll(resolution, loc, _) = call_kind {
-                // Special case for async. We ask for skipping not on the closure, but
-                // on the "async" function that created it. This is needed for
-                // consistency in skipping. Normally, when "poll" is inlined, mutations
-                // introduced by the creator of the future are not recorded and instead
-                // handled here, on the closure. But if the closure is skipped we need
-                // those mutations to occur. To ensure this we always ask for the
-                // "CallChanges" on the creator so that both creator and closure have
-                // the same view of whether they are inlined or "Skip"ped.
-                CallInfo {
-                    callee: resolution,
-                    call_string: self.make_call_string(loc),
-                    is_cached,
-                }
-            } else {
-                CallInfo {
-                    callee: resolved_fn,
-                    call_string,
-                    is_cached,
-                }
+            let callee = matches!(call_kind, CallKind::AsyncPoll)
+                .then(|| utils::async_parent(self.tcx, resolved_fn.def_id()))
+                .flatten()
+                .map(|parent_def_id| {
+                    // Special case for async. We ask for skipping not on the closure, but
+                    // on the "async" function that created it. This is needed for
+                    // consistency in skipping. Normally, when "poll" is inlined, mutations
+                    // introduced by the creator of the future are not recorded and instead
+                    // handled here, on the closure. But if the closure is skipped we need
+                    // those mutations to occur. To ensure this we always ask for the
+                    // "CallChanges" on the creator so that both creator and closure have
+                    // the same view of whether they are inlined or "Skip"ped.
+                    match resolved_fn {
+                        FnResolution::Final(instance) => utils::try_resolve_function(
+                            self.tcx,
+                            parent_def_id,
+                            ParamEnv::reveal_all(),
+                            instance.args,
+                        ),
+                        FnResolution::Partial(_) => FnResolution::Partial(parent_def_id),
+                    }
+                })
+                .unwrap_or(resolved_fn);
+            let info = CallInfo {
+                callee,
+                call_string,
+                is_cached,
             };
             callback.on_inline(info)
         });
-
-        // Handle async functions at the time of polling, not when the future is created.
-        if tcx.asyncness(resolved_def_id).is_async() {
-            trace!("  Bailing because func is async");
-            // If a skip was requested then "poll" will not be inlined later so we
-            // bail with "None" here and perform the mutations. Otherwise we bail with
-            // "Some", knowing that handling "poll" later will handle the mutations.
-            return (!matches!(
-                &call_changes,
-                Some(CallChanges {
-                    skip: SkipCall::Skip,
-                    ..
-                })
-            ))
-            .then_some(());
-        }
 
         if matches!(
             call_changes,
@@ -808,7 +789,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             })
         ) {
             trace!("  Bailing because user callback said to bail");
-            return None;
+            return CallHandlingResult::Skipped;
         }
 
         let child_constructor = GraphConstructor::new(
@@ -817,6 +798,38 @@ impl<'tcx> GraphConstructor<'tcx> {
             self.async_info.clone(),
             &self.pdg_cache,
         );
+
+        let child_body = child_constructor.body.as_ref();
+        // A helper to translate an argument (or return) in the child into a place in the parent.
+        let parent_body = &self.body;
+        let translate_to_parent = |child: Place<'tcx>| -> Option<Place<'tcx>> {
+            trace!("  Translating child place: {child:?}");
+            let (parent_place, child_projection) = calling_convention.handle_translate(
+                &self.async_info,
+                self.tcx,
+                child,
+                destination,
+                &self.body,
+                child_body,
+            )?;
+
+            let parent_place_projected = parent_place.project_deeper(child_projection, tcx);
+            trace!("    Translated to: {parent_place_projected:?}");
+            let new_place = utils::retype_place(
+                parent_place_projected,
+                self.tcx,
+                parent_body,
+                self.def_id.to_def_id(),
+            );
+            debug_assert_eq!(
+                self.tcx.erase_regions(child.ty(child_body, self.tcx).ty),
+                self.tcx
+                    .erase_regions(parent_place_projected.ty(parent_body.as_ref(), self.tcx).ty),
+                "child: {child:?} parent ty: {:?} calling convention: {calling_convention:?}",
+                parent_place.ty(parent_body.as_ref(), self.tcx)
+            );
+            Some(new_place)
+        };
 
         if let Some(changes) = call_changes {
             for FakeEffect {
@@ -923,7 +936,7 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         trace!("  Inlined {}", self.fmt_fn(resolved_def_id));
 
-        Some(())
+        CallHandlingResult::Handled
     }
 
     fn modular_mutation_visitor<'a>(
@@ -974,9 +987,8 @@ impl<'tcx> GraphConstructor<'tcx> {
                 destination,
                 ..
             } => {
-                if self
-                    .handle_call(state, location, func, args, *destination)
-                    .is_none()
+                if self.handle_call(state, location, func, args, *destination)
+                    != CallHandlingResult::Handled
                 {
                     self.modular_mutation_visitor(state)
                         .visit_terminator(terminator, location)
@@ -1086,7 +1098,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         &'a self,
         def_id: DefId,
         original_args: &'a [Operand<'tcx>],
-    ) -> Result<CallKind<'tcx, 'a>, String> {
+    ) -> Result<CallKind, String> {
         match self.try_poll_call_kind(def_id, original_args) {
             AsyncDeterminationResult::Resolved(r) => Ok(r),
             AsyncDeterminationResult::NotAsync => Ok(self
@@ -1096,28 +1108,73 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
     }
 
-    fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx, '_>> {
+    fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind> {
         let lang_items = self.tcx.lang_items();
-        let my_impl = self.tcx.impl_of_method(def_id)?;
+        //let my_impl = self.tcx.impl_of_method(def_id)?;
         let my_trait = self.tcx.trait_of_item(def_id)?;
         (Some(my_trait) == lang_items.fn_trait()
             || Some(my_trait) == lang_items.fn_mut_trait()
             || Some(my_trait) == lang_items.fn_once_trait())
         .then_some(CallKind::Indirect)
     }
+
+    fn handle_via_flow_model(
+        &self,
+        state: &mut PartialGraph<'tcx>,
+        resolved_fn: FnResolution<'tcx>,
+        args: &[Operand<'tcx>],
+        destination: Place<'tcx>,
+        location: Location,
+    ) -> bool {
+        let lang_items = self.tcx.lang_items();
+        if Some(resolved_fn.def_id()) == lang_items.new_unchecked_fn() {
+            let [op] = args else {
+                unreachable!();
+            };
+            let mut operands = IndexVec::new();
+            operands.push(op.clone());
+            let TyKind::Adt(adt_id, generics) =
+                destination.ty(self.body.as_ref(), self.tcx).ty.kind()
+            else {
+                unreachable!()
+            };
+            assert_eq!(adt_id.did(), lang_items.pin_type().unwrap());
+            let aggregate_kind =
+                AggregateKind::Adt(adt_id.did(), VariantIdx::from_u32(0), generics, None, None);
+            let rvalue = Rvalue::Aggregate(Box::new(aggregate_kind), operands);
+            trace!("Handling new_unchecked as assign for {destination:?}");
+            self.modular_mutation_visitor(state)
+                .visit_assign(&destination, &rvalue, location);
+            return true;
+        } else if Some(resolved_fn.def_id()) == lang_items.into_future_fn() {
+            trace!("Handling into_future as assign for {destination:?}");
+            let [op] = args else {
+                unreachable!();
+            };
+            self.modular_mutation_visitor(state).visit_assign(
+                &destination,
+                &Rvalue::Use(op.clone()),
+                location,
+            );
+        }
+        false
+    }
 }
 
-pub enum CallKind<'tcx, 'a> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CallHandlingResult {
+    Handled,
+    Bailed,
+    Skipped,
+}
+
+pub enum CallKind {
     /// A standard function call like `f(x)`.
     Direct,
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
     Indirect,
     /// A poll to an async function, like `f.await`.
-    AsyncPoll(
-        FnResolution<'tcx>,
-        Location,
-        AsyncCallingConvention<'tcx, 'a>,
-    ),
+    AsyncPoll,
 }
 
 struct DfAnalysis<'a, 'tcx>(&'a GraphConstructor<'tcx>);
