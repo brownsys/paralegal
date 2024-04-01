@@ -1,13 +1,17 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::time::{Duration, Instant};
 use std::vec;
 use std::{io::Write, process::exit, sync::Arc};
 
+use paralegal_spdg::rustc_portable::defid_as_local;
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
-    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, HashSet, Identifier, InstructionInfo,
-    IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo, ProgramDescription, SPDGImpl,
-    Span, TypeId, SPDG,
+    CallString, DefKind, DisplayNode, Endpoint, GlobalNode, HashMap, HashSet, Identifier,
+    InstructionInfo, IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo,
+    ProgramDescription, SPDGImpl, Span, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, Result};
@@ -587,6 +591,57 @@ impl Context {
     /// Get the span of a node
     pub fn get_location(&self, node: GlobalNode) -> &Span {
         node.get_location(self)
+    }
+
+    #[doc(hidden)]
+    pub fn write_analyzed_code(
+        &self,
+        mut out: impl Write,
+        include_signatures: bool,
+    ) -> std::io::Result<()> {
+        let ordered_span_set = self
+            .desc
+            .controllers
+            .values()
+            .flat_map(|c| c.analyzed_spans.values())
+            .zip(std::iter::repeat(true))
+            .chain(
+                include_signatures
+                    .then(|| {
+                        self.desc
+                            .def_info
+                            .iter()
+                            .filter(|(did, _)|
+                                !matches!(defid_as_local(**did), Some(local)
+                                    if self.desc.controllers.values().any(|c| c.analyzed_spans.contains_key(&local))
+                                )
+                            )
+                            .map(|(_, i)| (&i.src_info, matches!(i.kind, DefKind::Type)))
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
+            .collect::<BTreeMap<_, _>>();
+        let mut current_file = None;
+        for (s, is_complete) in ordered_span_set {
+            if Some(&s.source_file.file_path) != current_file {
+                writeln!(out, "// {}", s.source_file.file_path)?;
+                current_file = Some(&s.source_file.file_path);
+            }
+            let file = BufReader::new(File::open(&s.source_file.abs_file_path).unwrap());
+            for l in file
+                .lines()
+                .skip(s.start.line as usize - 1)
+                .take((s.end.line - s.start.line + 1) as usize)
+            {
+                writeln!(out, "{}", l.unwrap()).unwrap()
+            }
+            if !is_complete {
+                writeln!(out, "unreachable!() }}")?;
+            }
+        }
+
+        Ok(())
     }
 }
 

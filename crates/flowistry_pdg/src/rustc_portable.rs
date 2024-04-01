@@ -14,6 +14,8 @@
 //! }
 //! ```
 
+use crate::rustc_proxies;
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "rustc")] {
         use crate::rustc::{hir, mir, def_id};
@@ -33,4 +35,13 @@ cfg_if::cfg_if! {
     } else {
         pub use crate::rustc_proxies::*;
     }
+}
+
+pub fn defid_as_local(did: DefId) -> Option<LocalDefId> {
+    #[cfg(not(feature = "rustc"))]
+    return (did.krate == rustc_proxies::LOCAL_CRATE).then_some(LocalDefId {
+        local_def_index: did.index,
+    });
+    #[cfg(feature = "rustc")]
+    return did.as_local();
 }

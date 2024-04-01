@@ -137,12 +137,15 @@ impl PartialOrd for HirId {
     }
 }
 
+#[cfg(not(feature = "rustc"))]
+pub(crate) const LOCAL_CRATE: CrateNum = CrateNum { private: 0 };
+
 impl LocalDefId {
     #[cfg(not(feature = "rustc"))]
     pub fn to_def_id(self) -> DefId {
         DefId {
             index: self.local_def_index,
-            krate: CrateNum { private: 0 },
+            krate: LOCAL_CRATE,
         }
     }
 }
