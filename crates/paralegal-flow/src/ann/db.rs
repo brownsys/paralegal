@@ -100,7 +100,9 @@ impl<'tcx> MarkerCtx<'tcx> {
         let def_kind = self.tcx().def_kind(def_id);
         if matches!(def_kind, DefKind::Generator) {
             if let Some(parent) = self.tcx().opt_parent(def_id) {
-                if self.tcx().asyncness(parent).is_async() {
+                if matches!(self.tcx().def_kind(parent), DefKind::AssocFn | DefKind::Fn)
+                    && self.tcx().asyncness(parent).is_async()
+                {
                     return parent;
                 }
             };
