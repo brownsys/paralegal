@@ -481,11 +481,13 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 );
             }
         }
-        let params = PdgParams::new(tcx, local_def_id).with_call_change_callback(MyCallback {
-            judge,
-            stat_wrap,
-            tcx,
-        });
+        let params = PdgParams::new(tcx, local_def_id)
+            .with_call_change_callback(MyCallback {
+                judge,
+                stat_wrap,
+                tcx,
+            })
+            .with_dump_mir(generator.opts.dbg().dump_mir());
 
         if opts.dbg().dump_mir() {
             let mut file = std::fs::File::create(format!(

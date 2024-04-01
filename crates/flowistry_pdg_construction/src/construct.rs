@@ -118,6 +118,7 @@ pub struct PdgParams<'tcx> {
     tcx: TyCtxt<'tcx>,
     root: FnResolution<'tcx>,
     call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
+    dump_mir: bool,
 }
 
 pub trait CallChangeCallback<'tcx> {
@@ -162,7 +163,13 @@ impl<'tcx> PdgParams<'tcx> {
             tcx,
             root: FnResolution::Partial(root.to_def_id()),
             call_change_callback: None,
+            dump_mir: false,
         }
+    }
+
+    pub fn with_dump_mir(mut self, dump_mir: bool) -> Self {
+        self.dump_mir = dump_mir;
+        self
     }
 
     /// Provide a callback for changing the behavior of how the PDG generator manages function calls.
@@ -299,7 +306,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             .root
             .try_monomorphize(tcx, param_env, &body_with_facts.body);
 
-        if log::log_enabled!(log::Level::Debug) {
+        if params.dump_mir {
             use std::io::Write;
             let path = tcx.def_path_str(def_id) + ".mir";
             let mut f = std::fs::File::create(path.as_str()).unwrap();
