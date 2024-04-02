@@ -8,6 +8,14 @@ use paralegal_spdg::Identifier;
 mod helpers;
 
 const CODE: &str = stringify!(
+    use actix_web::{HttpResponse, HttpRequest, web, http::header::HeaderMap};
+    use std::time::{Duration, Instant};
+    use std::collections::HashMap;
+    use actix_web::http::header::USER_AGENT;
+    use actix_web::dev::RequestHead;
+    use cadence::{StatsdClient};
+    use std::sync::Arc;
+
     #[derive(Default, Clone, Debug)]
     pub struct AdmFilter {
         /// Filter settings by Advertiser name
@@ -25,10 +33,82 @@ const CODE: &str = stringify!(
         // pub defaults: AdmDefaults,
         // pub excluded_countries_200: bool,
     }
+    /// The payload provided by ADM
+    #[derive(Debug)]
+    pub struct AdmTileResponse {
+        pub tiles: Vec<AdmTile>,
+    }
+
+    pub struct AdmTile {}
+
+    pub struct AdvertiserUrlFilter {}
+
+impl Tile {
+    pub fn from_adm_tile(tile: AdmTile) -> Self {
+        Self {}
+    }
+}
 
     #[derive(Debug, Default, Clone)]
     pub struct AdmAdvertiserSettings {
         pub adm_advertisers: HashMap<String, HashMap<String, Vec<AdvertiserUrlFilter>>>,
+    }
+    pub type HandlerResult<T> = Result<T, HandlerError>;
+    struct HandlerError {
+        kind: HandlerErrorKind
+    }
+
+    impl HandlerError {
+        pun fn kind() -> &HandlerErrorKind {
+            &self.kind
+        }
+    }
+
+    pub enum HandlerErrorKind {
+        Reqwest(reqwest::Error),
+        UnexpectedAdvertiser()
+    }
+
+    impl From<HandlerErrorKind> for HandlerError {
+        fn from(kind: HandlerErrorKind) -> HandlerError {
+            HandlerError { kind }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct TileResponse {
+        pub tiles: Vec<Tile>,
+    }
+
+    #[paralegal::marker(sensitive, arguments = [0])]
+    fn mark_sensitive<T>(t: &mut T){}
+    #[derive(Debug, Clone)]
+    pub struct MetricTimer {
+        pub label: String,
+        pub start: Instant,
+        pub tags: Tags,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Tile {
+        // pub id: u64,
+        // pub name: String,
+        // pub url: String,
+        // pub click_url: String,
+        // // The UA only expects image_url and the image's height/width specified as
+        // // `image_size`. The height and width should be equal.
+        // pub image_url: String,
+        // pub image_size: Option<u32>,
+        // pub impression_url: String,
+    }
+
+    pub struct ServerState {
+        image_store: Option<String>,
+        settings: Settings,
+    }
+    #[paralegal::marker(noinline)]
+    pub fn sentry_report(err: &HandlerError, tags: &Tags) {
+        unreachable!()
     }
 
     impl AdmFilter {
@@ -36,8 +116,8 @@ const CODE: &str = stringify!(
         pub fn filter_and_process(
             &self,
             mut tile: AdmTile,
-            location: &Location,
-            device_info: &DeviceInfo,
+            //location: &Location,
+            //device_info: &DeviceInfo,
             tags: &mut Tags,
             metrics: &Metrics,
         ) -> HandlerResult<Option<Tile>> {
@@ -78,7 +158,7 @@ const CODE: &str = stringify!(
                     //     return Ok(None);
                     // }
                     if let Err(e) = self.check_click(&self.defaults, &mut tile, tags) {
-                        trace!("Rejecting tile: bad click");
+                        // trace!("Rejecting tile: bad click");
                         metrics.incr_with_tags("filter.adm.err.invalid_click", Some(tags));
                         self.report(&e, tags);
                         return Ok(None);
@@ -121,16 +201,16 @@ const CODE: &str = stringify!(
         }
     }
         // src/adm/tiles.rs
-        pub async fn get_tiles(
+        pub async fn adm_get_tiles(
             state: &ServerState,
-            location: &Location,
-            device_info: DeviceInfo,
+            // location: &Location,
+            // device_info: DeviceInfo,
             tags: &mut Tags,
             metrics: &Metrics,
             headers: Option<&HeaderMap>,
         ) -> HandlerResult<TileResponse> {
-            // let settings = &state.settings;
-            // let image_store = &state.img_store;
+            let settings = &state.settings;
+            let image_store = &state.img_store;
             // let pse = AdmPse::appropriate_from_settings(&device_info, settings);
             // let country_code = location
             //     .country
@@ -275,7 +355,7 @@ const CODE: &str = stringify!(
                         }
                         Err(e) => {
                             // quietly report the error, and drop the tile.
-                            l_sentry::report(&e, tags);
+                            sentry_report(&e, tags);
                             continue;
                         }
                     }
@@ -322,9 +402,9 @@ const CODE: &str = stringify!(
                 match tagged.try_send() {
                     Err(e) => {
                         // eat the metric, but log the error
-                        warn!("⚠️ Metric {} error: {:?} ", label, e; mtags);
+                        //warn!("⚠️ Metric {} error: {:?} ", label, e; mtags);
                     }
-                    Ok(v) => trace!("☑️ {:?}", v.as_metric_str()),
+                    Ok(v) =>  () //trace!("☑️ {:?}", v.as_metric_str()),
                 }
             }
         }
@@ -342,10 +422,20 @@ const CODE: &str = stringify!(
         // metric only supplemental tags.
         pub metric: HashMap<String, String>,
     }
+
+    impl Tags {
+    pub fn extend(&mut self, tags: Self) {
+        self.tags.extend(tags.tags);
+        self.extra.extend(tags.extra);
+        self.metric.extend(tags.metric);
+    }
+    }
+
+
     #[derive(Clone, Debug)]
 pub struct Tiles {
     //pub content: TilesContent,
-    /// When this is in need of a refresh (the `Cache-Control` `max-age`)
+    // When this is in need of a refresh (the `Cache-Control` `max-age`)
     // expiry: SystemTime,
     // /// After expiry we'll continue serving the stale version of these Tiles
     // /// until they're successfully refreshed (acting as a fallback during
@@ -378,13 +468,13 @@ impl Tiles {
             mark_sensitive(&mut extra);
             if let Some(ua) = req_head.headers().get(USER_AGENT) {
                 if let Ok(uas) = ua.to_str() {
-                    if let Ok(device_info) = get_device_info(uas) {
-                        tags.insert("ua.os.family".to_owned(), device_info.os_family.to_string());
-                        tags.insert(
-                            "ua.form_factor".to_owned(),
-                            device_info.form_factor.to_string(),
-                        );
-                    }
+                    // if let Ok(device_info) = get_device_info(uas) {
+                    //     tags.insert("ua.os.family".to_owned(), device_info.os_family.to_string());
+                    //     tags.insert(
+                    //         "ua.form_factor".to_owned(),
+                    //         device_info.form_factor.to_string(),
+                    //     );
+                    // }
                     extra.insert("ua".to_owned(), uas.to_string());
                 }
             }
@@ -409,20 +499,34 @@ impl Tiles {
         }
     }
     struct AudienceKey {}
+    pub struct Settings {
+        pub trace_header: Option<String>,
+        pub excluded_countries_200: bool,
+    }
+    pub enum TilesState {
+        /// A task is currently populating this entry (via [crate::adm::get_tiles])
+        Populating,
+        /// Tiles that haven't expired (or been identified as expired) yet
+        Fresh { tiles: Tiles },
+        /// A task is currently refreshing this expired entry (via
+        /// [crate::adm::get_tiles])
+        Refreshing { tiles: Tiles },
+    }
+
     // src/web/handlers.rs
     pub async fn get_tiles(
-        location: Location,
-        device_info: DeviceInfo,
+        // location: Location,
+        // device_info: DeviceInfo,
         metrics: Metrics,
         state: web::Data<ServerState>,
         request: HttpRequest,
     ) -> HandlerResult<HttpResponse> {
-        trace!("get_tiles");
+        //trace!("get_tiles");
         metrics.incr("tiles.get");
 
-        if let Some(response) = maybe_early_respond(&state, &location, &device_info).await {
-            return Ok(response);
-        }
+        // if let Some(response) = maybe_early_respond(&state, &location, &device_info).await {
+        //     return Ok(response);
+        // }
         let audience_key = AudienceKey {
             // country_code: location.country(),
             // region_code: if location.region() != "" {
@@ -446,7 +550,7 @@ impl Tiles {
 
         let mut expired = false;
 
-        if settings.test_mode != crate::settings::TestModes::TestFakeResponse {
+        if true /*settings.test_mode != crate::settings::TestModes::TestFakeResponse */ {
             // First make a cheap read from the cache
             if let Some(tiles_state) = state.tiles_cache.get(&audience_key) {
                 match &*tiles_state {
@@ -454,14 +558,14 @@ impl Tiles {
                         // Another task is currently populating this entry and will
                         // complete shortly. 304 until then instead of queueing
                         // more redundant requests
-                        trace!("get_tiles: Another task Populating");
+                        //trace!("get_tiles: Another task Populating");
                         metrics.incr("tiles_cache.miss.populating");
                         return Ok(HttpResponse::NotModified().finish());
                     }
                     TilesState::Fresh { tiles } => {
                         expired = tiles.expired();
                         if !expired {
-                            trace!("get_tiles: cache hit: {:?}", audience_key);
+                            //trace!("get_tiles: cache hit: {:?}", audience_key);
                             metrics.incr("tiles_cache.hit");
                             return Ok(tiles.to_response(settings.cache_control_header));
                         }
@@ -470,10 +574,10 @@ impl Tiles {
                     TilesState::Refreshing { tiles } => {
                         // Another task is currently refreshing this entry, just
                         // return the stale Tiles until it's completed
-                        trace!(
-                            "get_tiles: cache hit (expired, Refreshing): {:?}",
-                            audience_key
-                        );
+                        // trace!(
+                        //     "get_tiles: cache hit (expired, Refreshing): {:?}",
+                        //     audience_key
+                        // );
                         metrics.incr("tiles_cache.hit.refreshing");
                         // expired() and maybe fallback_expired()
                         return Ok(fallback_response(settings, tiles));
@@ -492,34 +596,34 @@ impl Tiles {
         // temporary state if no write occurs (due to errors/panics)
         let handle = state.tiles_cache.prepare_write(&audience_key, expired);
 
-        let result = adm::get_tiles(
+        let result = adm_get_tiles(
             &state,
-            &location,
-            device_info,
+            // &location,
+            // device_info,
             &mut tags,
             &metrics,
             // be aggressive about not passing headers unless we absolutely need to
-            if settings.test_mode != crate::settings::TestModes::NoTest {
-                Some(request.head().headers())
-            } else {
-                None
-            },
+            // if settings.test_mode != crate::settings::TestModes::NoTest {
+            //     Some(request.head().headers())
+            // } else {
+                 None
+            // },
         )
         .await;
 
         match result {
             Ok(response) => {
-                let tiles = cache::Tiles::new(
+                let tiles = Tiles::new(
                     response,
                     settings.tiles_ttl_with_jitter(),
                     settings.tiles_fallback_ttl_with_jitter(),
                     settings.excluded_countries_200,
                 )?;
-                trace!(
-                    "get_tiles: cache miss{}: {:?}",
-                    if expired { " (expired)" } else { "" },
-                    &audience_key
-                );
+                // trace!(
+                //     "get_tiles: cache miss{}: {:?}",
+                //     if expired { " (expired)" } else { "" },
+                //     &audience_key
+                // );
                 metrics.incr("tiles_cache.miss");
                 handle.insert(TilesState::Fresh {
                     tiles: tiles.clone(),
@@ -531,11 +635,11 @@ impl Tiles {
                     // Handle a bad response from ADM specially.
                     // Report it to metrics and sentry, but also store an empty record
                     // into the cache so that we don't stampede the ADM servers.
-                    warn!("Bad response from ADM: {:?}", e);
+                    // warn!("Bad response from ADM: {:?}", e);
                     // Merge in the error tags, which should already include the
                     // error string as `error`
                     tags.extend(e.tags.clone());
-                    tags.add_tag("level", "warning");
+                    // tags.add_tag("level", "warning");
                     metrics.incr_with_tags("tiles.invalid", Some(&tags));
                     // write an empty tile set into the cache for this result.
                     handle.insert(TilesState::Fresh {
@@ -546,21 +650,21 @@ impl Tiles {
                         ),
                     });
                     // Report the error directly to sentry
-                    l_sentry::report(&e, &tags);
-                    warn!("ADM Server error: {:?}", e);
+                    // l_sentry::report(&e, &tags);
+                    //warn!("ADM Server error: {:?}", e);
                     // Return a 204 to the client.
                     return Ok(HttpResponse::NoContent().finish());
                 }
 
-                match e.kind() {
-                    HandlerErrorKind::Reqwest(e) if e.is_timeout() => {
-                        tags.add_tag("reason", "timeout")
-                    }
-                    HandlerErrorKind::Reqwest(e) if e.is_connect() => {
-                        tags.add_tag("reason", "connect")
-                    }
-                    _ => (),
-                }
+                // match e.kind() {
+                //     HandlerErrorKind::Reqwest(e) if e.is_timeout() => {
+                //         tags.add_tag("reason", "timeout")
+                //     }
+                //     HandlerErrorKind::Reqwest(e) if e.is_connect() => {
+                //         tags.add_tag("reason", "connect")
+                //     }
+                //     _ => (),
+                // }
                 if handle.fallback_tiles.is_some() {
                     tags.add_tag("fallback", "true");
                 }
@@ -574,6 +678,21 @@ impl Tiles {
             }
         }
     }
+    impl Settings {
+        #[paralegal::marker(noinline)]
+        pub fn tiles_ttl_with_jitter(&self) -> Duration {
+            unreachable!()
+        }
+
+        #[paralegal::marker(noinline)]
+        pub fn tiles_fallback_ttl_with_jitter(&self) -> Duration {
+            unreachable!()
+        }
+    }
+    #[paralegal::marker(noinline)]
+fn fallback_response(settings: &Settings, tiles: &Tiles) -> HttpResponse {
+    unreachable!()
+}
 );
 
 fn policy(ctx: Arc<Context>) -> Result<()> {
@@ -621,7 +740,7 @@ fn policy(ctx: Arc<Context>) -> Result<()> {
 #[test]
 fn overtaint() -> Result<()> {
     let mut test = Test::new(CODE)?;
-    test.with_dep(["chrono@0.4"]);
+    // test.with_dep(["chrono@0.4"]);
     test.with_dep(["reqwest@0.11", "--features", "json"]);
     test.with_dep([
         "actix-web@4",
@@ -629,11 +748,12 @@ fn overtaint() -> Result<()> {
         "--features",
         "macros",
     ]);
+    test.with_dep(["cadence@0.29"]);
 
-    test.with_dep([
-        "actix-web-location@0.7",
-        "--features",
-        "actix-web-v4,maxmind,cadence",
-    ]);
+    // test.with_dep([
+    //     "actix-web-location@0.7",
+    //     "--features",
+    //     "actix-web-v4,maxmind,cadence",
+    // ]);
     test.run(policy)
 }
