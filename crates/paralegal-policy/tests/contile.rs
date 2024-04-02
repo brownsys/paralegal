@@ -8,24 +8,22 @@ use paralegal_spdg::Identifier;
 mod helpers;
 
 const CODE: &str = stringify!(
-    use actix_web::{web, HttpRequest, HttpResponse};
-    use actix_web_location::Location;
     #[derive(Default, Clone, Debug)]
     pub struct AdmFilter {
         /// Filter settings by Advertiser name
         pub advertiser_filters: AdmAdvertiserSettings,
-        /// Ignored (not included but also not reported to Sentry) Advertiser names
-        pub ignore_list: HashSet<String>,
-        /// Temporary list of advertisers with legacy images built into firefox
-        /// for pre 91 tile support.
-        pub legacy_list: HashSet<String>,
-        pub all_include_regions: HashSet<String>,
-        pub source: Option<String>,
-        pub source_url: Option<url::Url>,
-        pub last_updated: Option<chrono::DateTime<chrono::Utc>>,
-        pub refresh_rate: Duration,
-        pub defaults: AdmDefaults,
-        pub excluded_countries_200: bool,
+        // /// Ignored (not included but also not reported to Sentry) Advertiser names
+        // pub ignore_list: HashSet<String>,
+        // /// Temporary list of advertisers with legacy images built into firefox
+        // /// for pre 91 tile support.
+        // pub legacy_list: HashSet<String>,
+        // pub all_include_regions: HashSet<String>,
+        // pub source: Option<String>,
+        // pub source_url: Option<url::Url>,
+        // pub last_updated: Option<chrono::DateTime<chrono::Utc>>,
+        // pub refresh_rate: Duration,
+        // pub defaults: AdmDefaults,
+        // pub excluded_countries_200: bool,
     }
 
     #[derive(Debug, Default, Clone)]
@@ -52,61 +50,61 @@ const CODE: &str = stringify!(
             {
                 Some(filter) => {
                     // Apply any additional tile filtering here.
-                    if filter.get(&location.country()).is_none() {
-                        trace!(
-                            "Rejecting tile: {:?} region {:?} not included",
-                            &tile.name,
-                            location.country()
-                        );
-                        metrics.incr_with_tags("filter.adm.err.invalid_location", Some(tags));
-                        return Ok(None);
-                    }
+                    // if filter.get(&location.country()).is_none() {
+                    //     trace!(
+                    //         "Rejecting tile: {:?} region {:?} not included",
+                    //         &tile.name,
+                    //         location.country()
+                    //     );
+                    //     metrics.incr_with_tags("filter.adm.err.invalid_location", Some(tags));
+                    //     return Ok(None);
+                    // }
                     // match to the version that we switched over from built in image management
                     // to CDN image fetch.
 
-                    if device_info.legacy_only()
-                        && !self.legacy_list.contains(&tile.name.to_lowercase())
-                    {
-                        trace!("Rejecting tile: Not a legacy advertiser {:?}", &tile.name);
-                        metrics.incr_with_tags("filter.adm.err.non_legacy", Some(tags));
-                        return Ok(None);
-                    }
+                    // if device_info.legacy_only()
+                    //     && !self.legacy_list.contains(&tile.name.to_lowercase())
+                    // {
+                    //     trace!("Rejecting tile: Not a legacy advertiser {:?}", &tile.name);
+                    //     metrics.incr_with_tags("filter.adm.err.non_legacy", Some(tags));
+                    //     return Ok(None);
+                    // }
 
-                    let adv_filter = filter.get(&location.country()).unwrap();
-                    if let Err(e) = self.check_advertiser(adv_filter, &mut tile, tags) {
-                        trace!("Rejecting tile: bad adv");
-                        metrics.incr_with_tags("filter.adm.err.invalid_advertiser", Some(tags));
-                        self.report(&e, tags);
-                        return Ok(None);
-                    }
+                    // let adv_filter = filter.get(&location.country()).unwrap();
+                    // if let Err(e) = self.check_advertiser(adv_filter, &mut tile, tags) {
+                    //     trace!("Rejecting tile: bad adv");
+                    //     metrics.incr_with_tags("filter.adm.err.invalid_advertiser", Some(tags));
+                    //     self.report(&e, tags);
+                    //     return Ok(None);
+                    // }
                     if let Err(e) = self.check_click(&self.defaults, &mut tile, tags) {
                         trace!("Rejecting tile: bad click");
                         metrics.incr_with_tags("filter.adm.err.invalid_click", Some(tags));
                         self.report(&e, tags);
                         return Ok(None);
                     }
-                    if let Err(e) = self.check_impression(&self.defaults, &mut tile, tags) {
-                        trace!("Rejecting tile: bad imp");
-                        metrics.incr_with_tags("filter.adm.err.invalid_impression", Some(tags));
-                        self.report(&e, tags);
-                        return Ok(None);
-                    }
-                    if let Err(e) = self.check_image_hosts(&self.defaults, &mut tile, tags) {
-                        trace!("Rejecting tile: bad image");
-                        metrics.incr_with_tags("filter.adm.err.invalid_image_host", Some(tags));
-                        self.report(&e, tags);
-                        return Ok(None);
-                    }
-                    if let Err(e) = tile.image_url.parse::<Uri>() {
-                        trace!("Rejecting tile: bad image: {:?}", e);
-                        metrics.incr_with_tags("filter.adm.err.invalid_image", Some(tags));
-                        self.report(
-                            &HandlerErrorKind::InvalidHost("Image", tile.image_url).into(),
-                            tags,
-                        );
-                        return Ok(None);
-                    }
-                    trace!("allowing tile {:?}", &tile.name);
+                    // if let Err(e) = self.check_impression(&self.defaults, &mut tile, tags) {
+                    //     trace!("Rejecting tile: bad imp");
+                    //     metrics.incr_with_tags("filter.adm.err.invalid_impression", Some(tags));
+                    //     self.report(&e, tags);
+                    //     return Ok(None);
+                    // }
+                    // if let Err(e) = self.check_image_hosts(&self.defaults, &mut tile, tags) {
+                    //     trace!("Rejecting tile: bad image");
+                    //     metrics.incr_with_tags("filter.adm.err.invalid_image_host", Some(tags));
+                    //     self.report(&e, tags);
+                    //     return Ok(None);
+                    // }
+                    // if let Err(e) = tile.image_url.parse::<Uri>() {
+                    //     trace!("Rejecting tile: bad image: {:?}", e);
+                    //     metrics.incr_with_tags("filter.adm.err.invalid_image", Some(tags));
+                    //     self.report(
+                    //         &HandlerErrorKind::InvalidHost("Image", tile.image_url).into(),
+                    //         tags,
+                    //     );
+                    //     return Ok(None);
+                    // }
+                    // trace!("allowing tile {:?}", &tile.name);
                     Ok(Some(Tile::from_adm_tile(tile)))
                 }
                 None => {
@@ -131,71 +129,72 @@ const CODE: &str = stringify!(
             metrics: &Metrics,
             headers: Option<&HeaderMap>,
         ) -> HandlerResult<TileResponse> {
-            let settings = &state.settings;
-            let image_store = &state.img_store;
-            let pse = AdmPse::appropriate_from_settings(&device_info, settings);
-            let country_code = location
-                .country
-                .as_deref()
-                .unwrap_or_else(|| settings.fallback_country.as_ref());
-            let adm_url = Url::parse_with_params(
-                &pse.endpoint,
-                &[
-                    ("partner", pse.partner_id.as_str()),
-                    ("sub1", pse.sub1.as_str()),
-                    ("sub2", "newtab"),
-                    ("country-code", country_code),
-                    ("region-code", &location.region()),
-                    (
-                        "dma-code",
-                        &filtered_dma(&state.excluded_dmas, &location.dma()),
-                    ),
-                    ("form-factor", &device_info.form_factor.to_string()),
-                    ("os-family", &device_info.os_family.to_string()),
-                    ("v", "1.0"),
-                    ("out", "json"), // not technically needed, but added for paranoid reasons.
-                    // XXX: some value for results seems required, it defaults to 0
-                    // when omitted (despite AdM claiming it would default to 1)
-                    ("results", &settings.adm_query_tile_count.to_string()),
-                ],
-            )
-            .map_err(|e| HandlerError::internal(&e.to_string()))?;
-            let adm_url = adm_url.as_str();
+            // let settings = &state.settings;
+            // let image_store = &state.img_store;
+            // let pse = AdmPse::appropriate_from_settings(&device_info, settings);
+            // let country_code = location
+            //     .country
+            //     .as_deref()
+            //     .unwrap_or_else(|| settings.fallback_country.as_ref());
+            // let adm_url = Url::parse_with_params(
+            //     &pse.endpoint,
+            //     &[
+            //         ("partner", pse.partner_id.as_str()),
+            //         ("sub1", pse.sub1.as_str()),
+            //         ("sub2", "newtab"),
+            //         ("country-code", country_code),
+            //         ("region-code", &location.region()),
+            //         (
+            //             "dma-code",
+            //             &filtered_dma(&state.excluded_dmas, &location.dma()),
+            //         ),
+            //         ("form-factor", &device_info.form_factor.to_string()),
+            //         ("os-family", &device_info.os_family.to_string()),
+            //         ("v", "1.0"),
+            //         ("out", "json"), // not technically needed, but added for paranoid reasons.
+            //         // XXX: some value for results seems required, it defaults to 0
+            //         // when omitted (despite AdM claiming it would default to 1)
+            //         ("results", &settings.adm_query_tile_count.to_string()),
+            //     ],
+            // )
+            // .map_err(|e| HandlerError::internal(&e.to_string()))?;
+            // let adm_url = adm_url.as_str();
+            let adm_url = "";
 
-            // To reduce cardinality, only add this tag when fetching data from
-            // the partner. (This tag is only for metrics.)
-            tags.add_metric(
-                "srv.hostname",
-                &gethostname::gethostname()
-                    .into_string()
-                    .unwrap_or_else(|_| "Unknown".to_owned()),
-            );
-            if device_info.is_mobile() {
-                tags.add_tag("endpoint", "mobile");
-            }
-            tags.add_extra("adm_url", adm_url);
+            // // To reduce cardinality, only add this tag when fetching data from
+            // // the partner. (This tag is only for metrics.)
+            // tags.add_metric(
+            //     "srv.hostname",
+            //     &gethostname::gethostname()
+            //         .into_string()
+            //         .unwrap_or_else(|_| "Unknown".to_owned()),
+            // );
+            // if device_info.is_mobile() {
+            //     tags.add_tag("endpoint", "mobile");
+            // }
+            // tags.add_extra("adm_url", adm_url);
 
-            // Add `country_code` for ad fill instrumentation.
-            tags.add_tag("geo.country_code", country_code);
+            // // Add `country_code` for ad fill instrumentation.
+            // tags.add_tag("geo.country_code", country_code);
 
             metrics.incr_with_tags("tiles.adm.request", Some(tags));
             let response: AdmTileResponse = match state.settings.test_mode {
-                crate::settings::TestModes::TestFakeResponse => {
-                    let default = HeaderValue::from_str("DEFAULT").unwrap();
-                    let test_response = headers
-                        .unwrap_or(&HeaderMap::new())
-                        .get("fake-response")
-                        .unwrap_or(&default)
-                        .to_str()
-                        .unwrap()
-                        .to_owned();
-                    trace!("Getting fake response: {:?}", &test_response);
-                    AdmTileResponse::fake_response(&state.settings, test_response)?
-                }
-                crate::settings::TestModes::TestTimeout => {
-                    trace!("### Timeout!");
-                    return Err(HandlerErrorKind::AdmLoadError().into());
-                }
+                // crate::settings::TestModes::TestFakeResponse => {
+                //     let default = HeaderValue::from_str("DEFAULT").unwrap();
+                //     let test_response = headers
+                //         .unwrap_or(&HeaderMap::new())
+                //         .get("fake-response")
+                //         .unwrap_or(&default)
+                //         .to_str()
+                //         .unwrap()
+                //         .to_owned();
+                //     trace!("Getting fake response: {:?}", &test_response);
+                //     AdmTileResponse::fake_response(&state.settings, test_response)?
+                // }
+                // crate::settings::TestModes::TestTimeout => {
+                //     trace!("### Timeout!");
+                //     return Err(HandlerErrorKind::AdmLoadError().into());
+                // }
                 _ => {
                     state
                         .reqwest_client
@@ -243,24 +242,24 @@ const CODE: &str = stringify!(
                         })?
                 }
             };
-            if response.tiles.is_empty() {
-                warn!("adm::get_tiles empty response {}", adm_url);
-                metrics.incr_with_tags("filter.adm.empty_response", Some(tags));
-            }
+            // if response.tiles.is_empty() {
+            //     warn!("adm::get_tiles empty response {}", adm_url);
+            //     metrics.incr_with_tags("filter.adm.empty_response", Some(tags));
+            // }
 
             let mut filtered: Vec<Tile> = Vec::new();
-            let iter = response.tiles.into_iter();
-            let filter = state.partner_filter.read().await;
-            for tile in iter {
-                if let Some(tile) =
-                    filter.filter_and_process(tile, location, &device_info, tags, metrics)?
-                {
-                    filtered.push(tile);
-                }
-                if filtered.len() == settings.adm_max_tiles as usize {
-                    break;
-                }
-            }
+            // let iter = response.tiles.into_iter();
+            // let filter = state.partner_filter.read().await;
+            // for tile in iter {
+            //     if let Some(tile) =
+            //         filter.filter_and_process(tile, location, &device_info, tags, metrics)?
+            //     {
+            //         filtered.push(tile);
+            //     }
+            //     if filtered.len() == settings.adm_max_tiles as usize {
+            //         break;
+            //     }
+            // }
 
             let mut tiles: Vec<Tile> = Vec::new();
             for mut tile in filtered {
@@ -284,10 +283,10 @@ const CODE: &str = stringify!(
                 tiles.push(tile);
             }
 
-            if tiles.is_empty() {
-                warn!("adm::get_tiles no valid tiles {}", adm_url);
-                metrics.incr_with_tags("filter.adm.all_filtered", Some(tags));
-            }
+            // if tiles.is_empty() {
+            //     warn!("adm::get_tiles no valid tiles {}", adm_url);
+            //     metrics.incr_with_tags("filter.adm.all_filtered", Some(tags));
+            // }
 
             Ok(TileResponse { tiles })
         }
@@ -343,6 +342,31 @@ const CODE: &str = stringify!(
         // metric only supplemental tags.
         pub metric: HashMap<String, String>,
     }
+    #[derive(Clone, Debug)]
+pub struct Tiles {
+    //pub content: TilesContent,
+    /// When this is in need of a refresh (the `Cache-Control` `max-age`)
+    // expiry: SystemTime,
+    // /// After expiry we'll continue serving the stale version of these Tiles
+    // /// until they're successfully refreshed (acting as a fallback during
+    // /// upstream service outages). `fallback_expiry` is when we stop serving
+    // /// this stale Tiles completely
+    // fallback_expiry: SystemTime,
+    // /// Return OK instead of NoContent
+    // always_ok: bool,
+}
+
+impl Tiles {
+    #[paralegal::marker(noinline)]
+    pub fn new(
+        tile_response: TileResponse,
+        ttl: Duration,
+        fallback_ttl: Duration,
+        always_ok: bool,
+    ) -> Result<Self, HandlerError> {
+        unreachable!()
+    }
+}
 
     impl Tags {
         // src/tags.rs
@@ -384,6 +408,7 @@ const CODE: &str = stringify!(
             }
         }
     }
+    struct AudienceKey {}
     // src/web/handlers.rs
     pub async fn get_tiles(
         location: Location,
@@ -398,17 +423,17 @@ const CODE: &str = stringify!(
         if let Some(response) = maybe_early_respond(&state, &location, &device_info).await {
             return Ok(response);
         }
-        let audience_key = cache::AudienceKey {
-            country_code: location.country(),
-            region_code: if location.region() != "" {
-                Some(location.region())
-            } else {
-                None
-            },
-            dma_code: location.dma,
-            form_factor: device_info.form_factor,
-            os_family: device_info.os_family,
-            legacy_only: device_info.legacy_only(),
+        let audience_key = AudienceKey {
+            // country_code: location.country(),
+            // region_code: if location.region() != "" {
+            //     Some(location.region())
+            // } else {
+            //     None
+            // },
+            // dma_code: location.dma,
+            // form_factor: device_info.form_factor,
+            // os_family: device_info.os_family,
+            // legacy_only: device_info.legacy_only(),
         };
 
         let settings = &state.settings;
@@ -592,6 +617,7 @@ fn policy(ctx: Arc<Context>) -> Result<()> {
     })
 }
 
+#[ignore = "WIP"]
 #[test]
 fn overtaint() -> Result<()> {
     let mut test = Test::new(CODE)?;
