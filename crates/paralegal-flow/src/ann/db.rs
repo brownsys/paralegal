@@ -13,6 +13,7 @@
 use crate::{
     ann::{Annotation, MarkerAnnotation},
     args::{Args, MarkerControl},
+    ast::Attribute,
     consts,
     hir::def::DefKind,
     mir, ty,
@@ -359,31 +360,47 @@ impl<'tcx> MarkerDatabase<'tcx> {
 
     /// Retrieve and parse the local annotations for this item.
     pub fn retrieve_local_annotations_for(&mut self, def_id: LocalDefId) {
-        use crate::ann::parse::{ann_match_fn, match_exception, otype_ann_match};
-
         let tcx = self.tcx;
         let hir = tcx.hir();
         let id = def_id.force_into_hir_id(tcx);
-        let mut sink_matches = vec![];
         for a in hir.attrs(id) {
-            if let Some(i) = a.match_get_ref(&consts::MARKER_MARKER) {
-                sink_matches.push(Annotation::Marker(ann_match_fn(i)));
-            } else if let Some(i) = a.match_get_ref(&consts::LABEL_MARKER) {
-                warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
-                sink_matches.push(Annotation::Marker(ann_match_fn(i)))
-            } else if let Some(i) = a.match_get_ref(&consts::OTYPE_MARKER) {
-                sink_matches.extend(otype_ann_match(i, tcx).into_iter().map(Annotation::OType));
-            } else if let Some(i) = a.match_get_ref(&consts::EXCEPTION_MARKER) {
-                sink_matches.push(Annotation::Exception(match_exception(i)));
+            match try_parse_annotation(tcx, a) {
+                Ok(anns) => {
+                    let mut anns = anns.peekable();
+                    if anns.peek().is_some() {
+                        self.local_annotations
+                            .entry(def_id)
+                            .or_default()
+                            .extend(anns)
+                    }
+                }
+                Err(e) => {
+                    tcx.sess.span_err(a.span, e);
+                }
             }
         }
-        if !sink_matches.is_empty() {
-            assert!(self
-                .local_annotations
-                .insert(def_id, sink_matches)
-                .is_none());
-        }
     }
+}
+
+fn try_parse_annotation(
+    tcx: TyCtxt,
+    a: &Attribute,
+) -> Result<impl Iterator<Item = Annotation>, String> {
+    use crate::ann::parse::{ann_match_fn, match_exception, otype_ann_match};
+    let one = |a| Either::Left(Some(a));
+    let ann = if let Some(i) = a.match_get_ref(&consts::MARKER_MARKER) {
+        one(Annotation::Marker(ann_match_fn(i)?))
+    } else if let Some(i) = a.match_get_ref(&consts::LABEL_MARKER) {
+        warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
+        one(Annotation::Marker(ann_match_fn(i)?))
+    } else if let Some(i) = a.match_get_ref(&consts::OTYPE_MARKER) {
+        Either::Right(otype_ann_match(i, tcx)?.into_iter().map(Annotation::OType))
+    } else if let Some(i) = a.match_get_ref(&consts::EXCEPTION_MARKER) {
+        one(Annotation::Exception(match_exception(i)?))
+    } else {
+        Either::Left(None)
+    };
+    Ok(ann.into_iter())
 }
 
 type RawExternalMarkers = HashMap<String, Vec<crate::ann::MarkerAnnotation>>;
