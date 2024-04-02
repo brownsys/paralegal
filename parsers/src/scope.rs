@@ -9,22 +9,22 @@ use crate::{
 };
 
 
-fn always(s: &str) -> Res<&str, PolicyScope> {
+fn everywhere(s: &str) -> Res<&str, PolicyScope> {
     let mut combinator = context(
-        "always",
-        tuple((multispace0, tag("Always"), colon)),
+        "everywhere",
+        tuple((multispace0, tag("Everywhere"), colon)),
     );
     let (remainder, _) = combinator(s)?;
-    Ok((remainder, PolicyScope::Always))
+    Ok((remainder, PolicyScope::Everywhere))
 }
 
-fn sometimes(s: &str) -> Res<&str, PolicyScope> {
+fn somewhere(s: &str) -> Res<&str, PolicyScope> {
     let mut combinator = context(
-        "sometimes",
-        tuple((multispace0, tag("Sometimes"), colon)),
+        "somewhere",
+        tuple((multispace0, tag("Somewhere"), colon)),
     );
     let (remainder, _) = combinator(s)?;
-    Ok((remainder, PolicyScope::Sometimes))
+    Ok((remainder, PolicyScope::Somewhere))
 }
 
 fn in_ctrler(s: &str) -> Res<&str, PolicyScope> {
@@ -42,6 +42,6 @@ fn in_ctrler(s: &str) -> Res<&str, PolicyScope> {
 
 pub fn scope(s: &str) -> Res<&str, PolicyScope> {
     context("scope", 
-        alt((always, sometimes, in_ctrler))
+        alt((everywhere, somewhere, in_ctrler))
     )(s)
 }

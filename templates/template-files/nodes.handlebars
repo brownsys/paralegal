@@ -1,3 +1,0 @@
-{{#each bindings as |b|}}
-    let mut {{@key}}_nodes = ctx.all_nodes_for_ctrl(*c_id).filter(|n| self.cx.has_marker(marker!({{this}}), *n));
-{{/each}}

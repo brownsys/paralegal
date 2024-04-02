@@ -1,11 +1,8 @@
-Definitions:
-1. "protected access" is each "db_access" marked db_read where:
-	A. "db_access" is not marked db_user_read
-
-Always:
-1. For each "protected access":
-    A. There is a "dc" marked instance_delete_check where:
-        a. "dc" influences "db_write"
-    and
-    B. There is a "bc" marked instance_ban_check where:
-        a. "bc" influences "db_write"
+Everywhere:
+1. For each "db_access" marked db_access:
+    A. If "db_access" is not marked db_user_read then:
+        a. There is a "dc" marked instance_delete_check where:
+            i) "dc" influences "db_access"
+        and
+        b. There is a "bc" marked instance_ban_check where:
+            i) "bc" influences "db_access"

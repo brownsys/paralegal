@@ -7,7 +7,7 @@ use nom::{
 
 use crate::{
     ASTNode, Res, common::*, relations::*,
-    variable_intro::variable_intro, Clause, ClauseIntro,
+    variable_intro::{variable_intro, variable_def, variable_marked}, Clause, ClauseIntro,
 };
 
 fn l4_clause(s: &str) -> Res<&str, ASTNode> {
@@ -136,12 +136,33 @@ pub fn l1_clauses(s: &str) -> Res<&str, ASTNode> {
         "multiple l1 clauses",
         map(
             pair(
-                alt((l1_clause, map(only_via_relation, |rel| ASTNode::Relation(rel)))),
-                many0(tuple((operator, alt((l1_clause, map(only_via_relation, |rel| ASTNode::Relation(rel)))))))
+                alt((l1_clause, only_via)),
+                many0(tuple((operator, alt((l1_clause, only_via)))))
             ),
             join_nodes
         )
     )(s)
+}
+
+fn only_via(s: &str) -> Res<&str, ASTNode> {
+    let mut combinator = context(
+        "only via relation",
+        tuple((
+            // these are only allowed to be present at the top level, hence the L1 bullet restriction
+            delimited(tuple((l1_bullet, tag("Each"), space1)), variable_intro, tag("goes to a")),
+            alt((variable_marked, variable_def)),
+            preceded(
+                tag("only via a"),
+                alt((variable_marked, variable_def)),
+            ) 
+        ))
+    );
+    let (remainder, (src, sink, checkpoint)) = combinator(s)?;
+
+    Ok((
+        remainder,
+        ASTNode::OnlyVia((src, sink, checkpoint))
+    ))
 }
 
 fn conditional(s: &str) -> Res<&str, ClauseIntro> {

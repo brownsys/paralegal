@@ -107,15 +107,6 @@ pub fn alphabetic_with_underscores(s: &str) -> Res<&str, String> {
     Ok((remainder, String::from(res)))
 }
 
-pub fn alphabetic_with_spaces(s: &str) -> Res<&str, String> {
-    let mut combinator = context(
-        "alphabetic with spaces",
-        recognize(many1(tuple((alpha1, opt(space1))))),
-    );
-    let (remainder, res) = combinator(s)?;
-    Ok((remainder, String::from(res)))
-}
-
 pub fn marker(s: &str) -> Res<&str, Marker> {
     context(
         "marker",
@@ -129,18 +120,11 @@ pub fn marker(s: &str) -> Res<&str, Marker> {
 pub fn variable(s: &str) -> Res<&str, Variable> {
     context(
         "variable",
-        alt((
-            delimited(
-                tuple((space0, tag("\""))),
-                alphabetic_with_underscores,
-                tuple((tag("\""), space0)), 
-            ),
-            delimited(
-                tuple((space0, tag("\""))),
-                alphabetic_with_spaces,
-                tuple((tag("\""), space0)), 
-            )
-        ))   
+        delimited(
+            tuple((space0, tag("\""))),
+            alphabetic_with_underscores,
+            tuple((tag("\""), space0)), 
+        ),  
     )(s)
 }
 
@@ -154,7 +138,7 @@ pub fn join_nodes(tup: (ASTNode, Vec<(Operator, ASTNode)>)) -> ASTNode {
         let ob = TwoNodeObligation {
             op,
             src: acc,
-            dest: clause
+            sink: clause
         };
         ASTNode::JoinedNodes(Box::new(ob))
     })

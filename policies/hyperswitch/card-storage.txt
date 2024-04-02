@@ -1,4 +1,4 @@
-Always:
+Everywhere:
 1. For each "card" marked credit_card:
 	A. For each "sink" marked sink:
 		a. If "card" goes to "sink" then:

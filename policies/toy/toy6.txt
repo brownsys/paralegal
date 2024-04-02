@@ -2,7 +2,7 @@ Definitions:
 1. "protected read" is each "read" marked db_read where:
 	A. "read" is not marked db_user_read
 
-Always:
+Everywhere:
 1. For each "db_write" marked db_write:
     A. There is a "dc" marked instance_delete_check where:
         a. "dc" affects whether "db_write" happens

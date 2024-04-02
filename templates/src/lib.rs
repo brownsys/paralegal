@@ -7,6 +7,7 @@ use strum_macros::EnumIter;
 pub enum Template {
     // all policies use base; has infrastructure to set up and run policy
     Base,
+    Definition,
     // variable intro
     Roots,
     Variable, // TODO not sure this needs one? but may be easier to just give it one bc everything else has one
@@ -32,38 +33,39 @@ pub enum Template {
     And,
     Or,
     // scope
-    Always,
-    Sometimes,
+    Everywhere,
+    Somewhere,
     InCtrler,
 }
 
 impl From<Template> for &str {
     fn from(value: Template) -> Self {
         match value {
-            Template::Base => "base",
-            Template::Roots => "roots",
-            Template::Variable => "variable",
-            Template::VariableMarked => "variable-marked",
-            Template::VariableOfTypeMarked => "variable-of-type-marked",
-            Template::VariableSourceOf =>  "variable-source-of",
-            Template::FlowsTo => "flows-to",
-            Template::NoFlowsTo => "no-flows-to",
-            Template::ControlFlow => "control-flow",
-            Template::NoControlFlow => "no-control-flow",
-            Template::OnlyVia => "only-via",
-            Template::AssociatedCallSite => "associated-call-site",
-            Template::IsMarked => "is-marked",
-            Template::IsNotMarked => "is-not-marked",
-            Template::Influences => "influences",
-            Template::DoesNotInfluence => "does-not-influence",
-            Template::ForEach => "for-each",
-            Template::ThereIs => "there-is",
-            Template::Conditional => "conditional",
-            Template::And => "and",
-            Template::Or => "or",
-            Template::Always => "always",
-            Template::Sometimes => "sometimes",
-            Template::InCtrler => "in-ctrler",
+            Template::Base => "misc/base",
+            Template::Definition => "misc/definition",
+            Template::Roots => "variable-intros/roots",
+            Template::Variable => "variable-intros/variable",
+            Template::VariableMarked => "variable-intros/variable-marked",
+            Template::VariableOfTypeMarked => "variable-intros/variable-of-type-marked",
+            Template::VariableSourceOf =>  "variable-intros/variable-source-of",
+            Template::FlowsTo => "relations/flows-to",
+            Template::NoFlowsTo => "relations/no-flows-to",
+            Template::ControlFlow => "relations/control-flow",
+            Template::NoControlFlow => "relations/no-control-flow",
+            Template::OnlyVia => "misc/only-via",
+            Template::AssociatedCallSite => "relations/associated-call-site",
+            Template::IsMarked => "relations/is-marked",
+            Template::IsNotMarked => "relations/is-not-marked",
+            Template::Influences => "relations/influences",
+            Template::DoesNotInfluence => "relations/no-influences",
+            Template::ForEach => "clause-intros/for-each",
+            Template::ThereIs => "clause-intros/there-is",
+            Template::Conditional => "clause-intros/conditional",
+            Template::And => "misc/and",
+            Template::Or => "misc/or",
+            Template::Everywhere => "scope/everywhere",
+            Template::Somewhere => "scope/somewhere",
+            Template::InCtrler => "scope/in-ctrler",
         }
     }
 }
@@ -72,11 +74,11 @@ pub fn register_templates(handlebars: &mut Handlebars) {
     handlebars.register_escape_fn(no_escape);
     for template in Template::iter() {
         let name : &str = template.into();
-        let path : &str = &format!("templates/{name}.handlebars");
+        let path : &str = &format!("templates/src/{name}.handlebars");
         handlebars
         .register_template_file(name, path)
         .expect(&format!(
-            "Could not register {name} template with handlebars"
+            "Could not register {name} template with handlebars from path {path}"
         ));
     }
 }

@@ -1,0 +1,6 @@
+let found = ctx.all_controllers().find(|(ct_id, _ctrl)| {
+    let c_id = *ct_id;
+    {{body}}
+});
+
+    assert_error!(ctx, found.is_some(), format!("No satisfying controller found"));

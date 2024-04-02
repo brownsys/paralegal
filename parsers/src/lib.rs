@@ -1,6 +1,7 @@
+use clause::l1_clauses;
 use definitions::parse_definitions;
-use nom::{IResult, error::{VerboseError, context}, combinator::{all_consuming, opt}, sequence::tuple};
-use policy_body::parse_policy_body;
+use scope::scope;
+use nom::{IResult, error::{VerboseError, context}, combinator::{all_consuming, opt}, sequence::{tuple, terminated}, character::complete::multispace0};
 use templates::Template;
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
@@ -15,17 +16,17 @@ pub struct Policy {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PolicyScope {
-    Always,
-    Sometimes,
+    Everywhere,
+    Somewhere,
     InCtrler(String)
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Definition {
-    // quantifier is always "all" bc definitions are over *each* var that satisifes condition
-    variable: Variable,
-    declaration: VariableIntro,
-    filter: ASTNode
+    // quantifier is everywhere "all" bc definitions are over *each* var that satisifes condition
+    pub variable: Variable,
+    pub declaration: VariableIntro,
+    pub filter: ASTNode
 }
 
 // AST data
@@ -35,7 +36,7 @@ pub enum VariableIntro {
     Variable(Variable),
     VariableMarked((Variable, Marker)),
     VariableOfTypeMarked((Variable, Marker)),
-    VariableSourceOf((Variable, Variable))
+    VariableSourceOf((Variable, Variable)),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -49,7 +50,6 @@ pub enum Relation {
     AssociatedCallSite((Variable, Variable)),
     IsMarked((Variable, Marker)),
     IsNotMarked((Variable, Marker)),
-    OnlyVia((VariableIntro, VariableIntro, VariableIntro))
 }
 
 pub type Variable = String;
@@ -81,7 +81,6 @@ impl From<&Relation> for Template {
             &Relation::NoFlowsTo(_) => Template::NoFlowsTo,
             &Relation::ControlFlow(_) => Template::ControlFlow,
             &Relation::NoControlFlow(_) => Template::NoControlFlow,
-            &Relation::OnlyVia(_) => Template::OnlyVia,
             &Relation::AssociatedCallSite(_) => Template::AssociatedCallSite,
             &Relation::IsMarked(_) => Template::IsMarked,
             &Relation::IsNotMarked(_) => Template::IsNotMarked,
@@ -110,12 +109,12 @@ impl From<&str> for Operator {
     }
 }
 
-impl From<&PolicyScope> for Template {
-    fn from(value: &PolicyScope) -> Self {
+impl From<PolicyScope> for Template {
+    fn from(value: PolicyScope) -> Self {
         match value {
-            &PolicyScope::Always => Template::Always,
-            &PolicyScope::Sometimes => Template::Sometimes,
-            &PolicyScope::InCtrler(_) => Template::InCtrler,
+            PolicyScope::Everywhere => Template::Everywhere,
+            PolicyScope::Somewhere => Template::Somewhere,
+            PolicyScope::InCtrler(_) => Template::InCtrler,
         }
     }
 }
@@ -124,8 +123,19 @@ impl From<&ClauseIntro> for Template {
     fn from(value: &ClauseIntro) -> Self {
         match value {
             &ClauseIntro::ForEach(_) => Template::ForEach,
-            &ClauseIntro::ThereIs(_) => Template::ForEach,
+            &ClauseIntro::ThereIs(_) => Template::ThereIs,
             &ClauseIntro::Conditional(_) => Template::Conditional,
+        }
+    }
+}
+
+impl From<&ASTNode> for Template {
+    fn from(value: &ASTNode) -> Self {
+        match value {
+            ASTNode::Relation(relation) => relation.into(),
+            ASTNode::OnlyVia(_) => Template::OnlyVia,
+            ASTNode::Clause(clause) => (&clause.intro).into(),
+            ASTNode::JoinedNodes(obligation) => (&obligation.op).into(),
         }
     }
 }
@@ -134,7 +144,7 @@ impl From<&ClauseIntro> for Template {
 pub struct TwoNodeObligation {
     pub op: Operator,
     pub src: ASTNode,
-    pub dest: ASTNode,
+    pub sink: ASTNode,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -153,15 +163,16 @@ pub struct Clause {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ASTNode {
     Relation(Relation),
+    OnlyVia((VariableIntro, VariableIntro, VariableIntro)),
     Clause(Box<Clause>),
-    JoinedNodes(Box<TwoNodeObligation>)
+    JoinedNodes(Box<TwoNodeObligation>),
 }
 
 pub fn parse(s: &str) -> Res<&str, Policy> {
     let mut combinator = context(
         "parse policy", 
         all_consuming(
-            tuple((opt(parse_definitions), parse_policy_body))
+            tuple((opt(parse_definitions), terminated(tuple((scope, l1_clauses)), multispace0)))
         )
     );
 
@@ -172,7 +183,6 @@ pub fn parse(s: &str) -> Res<&str, Policy> {
 pub mod common;
 pub mod clause;
 pub mod definitions;
-pub mod policy_body;
 pub mod relations;
 pub mod scope;
 pub mod variable_intro;

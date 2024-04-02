@@ -1,7 +1,7 @@
-Always:
+Everywhere:
 1. For each "comm_write" marked db_community_write:
 	A. There is a "dc" marked community_delete_check where:
-		a. "dc" influences "comm_write"
+		a. "dc" affects whether "comm_write" happens
 	and
 	B. There is a "bc" marked community_ban_check where:
-		a. "bc" influences "comm_write"
+		a. "bc" affects whether "comm_write" happens

@@ -1,4 +1,4 @@
-Sometimes:
+Somewhere:
 1. There is a "dc" marked community_delete_check where:
     A. "data" goes to "dc"
 and

@@ -2,11 +2,11 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     error::context,
-    sequence::{separated_pair, terminated, tuple, delimited, preceded, pair}, character::complete::space1, combinator::map, multi::many0,
+    sequence::{separated_pair, terminated, tuple, preceded, pair}, character::complete::space1, combinator::map, multi::many0,
 };
 
 use crate::{
-    ASTNode, Res, common::*, variable_intro::{variable_intro, variable_marked, variable_def}, Relation,
+    ASTNode, Res, common::*, Relation,
 };
 
 // this is flows_to(EdgeSelection::DataAndControl)
@@ -162,33 +162,10 @@ fn is_not_marked_relation(s: &str) -> Res<&str, Relation> {
     ))
 }
 
-pub fn only_via_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "only via relation",
-        tuple((
-            // these are only allowed to be present at the top level, hence the L1 bullet restriction
-            delimited(tuple((l1_bullet, tag("Each"), space1)), variable_intro, tag("goes to a")),
-            alt((variable_marked, variable_def)),
-            preceded(
-                tag("only via a"),
-                alt((variable_marked, variable_def)),
-            ) 
-        ))
-    );
-    let (remainder, (src, dest, checkpoint)) = combinator(s)?;
-
-    Ok((
-        remainder,
-        Relation::OnlyVia((src, dest, checkpoint))
-    ))
-}
-
 pub fn relation(s: &str) -> Res<&str, Relation> {
     context(
         "relation",
         alt((
-            // must try only via before goes to since goes to will partially consume an only via
-            only_via_relation,
             goes_to_relation,
             does_not_go_to_relation,
             affects_whether_relation,
@@ -263,15 +240,15 @@ mod tests {
 
     #[test]
     pub fn test_scope() {
-        let always = "always:";
-        let sometimes = "sometimes:";
-        let always_w_punc = "\nalways: \n";
-        let sometimes_w_punc = "\nsometimes: \n";
+        let everywhere = "everywhere:";
+        let somewhere = "somewhere:";
+        let everywhere_w_punc = "\neverywhere: \n";
+        let somewhere_w_punc = "\nsomewhere: \n";
 
-        assert_eq!(scope(always), Ok(("", PolicyScope::Always)));
-        assert_eq!(scope(always_w_punc), Ok(("", PolicyScope::Always)));
-        assert_eq!(scope(sometimes), Ok(("", PolicyScope::Sometimes)));
-        assert_eq!(scope(sometimes_w_punc), Ok(("", PolicyScope::Sometimes)));
+        assert_eq!(scope(everywhere), Ok(("", PolicyScope::Everywhere)));
+        assert_eq!(scope(everywhere_w_punc), Ok(("", PolicyScope::Everywhere)));
+        assert_eq!(scope(somewhere), Ok(("", PolicyScope::Somewhere)));
+        assert_eq!(scope(somewhere_w_punc), Ok(("", PolicyScope::Somewhere)));
     }
 
     #[test]
@@ -902,7 +879,7 @@ mod tests {
     #[test]
     pub fn test_parse() {
         let lemmy_inst = 
-        "always:
+        "everywhere:
         some dc: \"instance_delete_check\" (
             all write : \"db_write\" (
                 dc has control flow influence on write
@@ -922,7 +899,7 @@ mod tests {
             )
         )";
         let lemmy_inst_ans = Policy {
-            scope : PolicyScope::Always, 
+            scope : PolicyScope::Everywhere, 
             body: ASTNode::TwoClauses(Box::new(TwoNodeObligation {
                 src: ASTNode::VarIntroduction(Box::new(VariableClause {
                     binding: VariableBinding { quantifier: Quantifier::Some, variable: "dc", marker: "instance_delete_check" },
@@ -954,7 +931,7 @@ mod tests {
             };
 
         let lemmy_comm = "
-            always:
+            everywhere:
             some comm_data : \"community_data\" (
             all write : \"db_write\" (
                 comm_data flows to write
@@ -972,7 +949,7 @@ mod tests {
             )
         )";
         let lemmy_comm_ans = Policy {
-            scope: PolicyScope::Always,
+            scope: PolicyScope::Everywhere,
             body: ASTNode::VarIntroduction(Box::new(VariableClause {
                 binding: VariableBinding { quantifier: Quantifier::Some, variable: "comm_data", marker: "community_data" },
                 body: ASTNode::VarIntroduction(Box::new(VariableClause { 
