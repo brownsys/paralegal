@@ -902,24 +902,26 @@ impl NodeExt for GlobalNode {
         };
         let mut ancestors = HashMap::new();
         let fg = edge_selection.filter_graph(&g.graph);
+        let mut found = false;
         'outer: for this in petgraph::visit::Bfs::new(&fg, self.local_node()).iter(&fg) {
             for next in fg.neighbors_directed(this, Outgoing) {
                 if next != this {
                     ancestors.entry(next).or_insert(this);
                 }
                 if next == to.local_node() {
+                    found = true;
                     break 'outer;
                 }
             }
         }
-        Some(
+        found.then(|| {
             std::iter::successors(Some(to.local_node()), |elem| {
                 let n = ancestors.get(elem).copied()?;
                 (n != self.local_node()).then_some(n)
             })
             .map(|n| GlobalNode::from_local_node(self.controller_id(), n))
-            .collect(),
-        )
+            .collect()
+        })
     }
 }
 
