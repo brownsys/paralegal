@@ -700,22 +700,21 @@ pdg_test! {
       let y = 2;
       let a = Foo { x, y };
       let b = a.clone();
-      let z = b.x;      
+      let z = b.x;
     }
   },
   (x -> z),
   (y -/> z)
 }
 
-
 pdg_test! {
   async_mut_arg,
   {
     async fn foo(x: &mut i32) {}
     async fn main() {
-      let mut x = 1;      
-      foo(&mut x).await;      
+      let mut x = 1;
+      foo(&mut x).await;
     }
   },
-  (x -/> x) 
+  (x -/> x)
 }

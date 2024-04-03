@@ -5,9 +5,10 @@ use either::Either;
 use flowistry::mir::placeinfo::PlaceInfo;
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
-use log::{debug, trace};
+use log::{debug, log_enabled, trace, Level};
 use petgraph::graph::DiGraph;
 
+use rustc_abi::VariantIdx;
 use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceConflictBias};
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
@@ -667,6 +668,57 @@ impl<'tcx> GraphConstructor<'tcx> {
         self.tcx.def_path_str(def_id)
     }
 
+    /// Special case behavior for calls to functions used in desugaring async functions.
+    ///
+    /// Ensures that functions like `Pin::new_unchecked` are not modularly-approximated.
+    fn approximate_async_functions(
+        &self,
+        state: &mut PartialGraph<'tcx>,
+        def_id: DefId,
+        args: &[Operand<'tcx>],
+        destination: Place<'tcx>,
+        location: Location,
+    ) -> bool {
+        let lang_items = self.tcx.lang_items();
+        if Some(def_id) == lang_items.new_unchecked_fn() {
+            let [op] = args else {
+                unreachable!();
+            };
+            let mut operands = IndexVec::new();
+            operands.push(op.clone());
+            let TyKind::Adt(adt_id, generics) =
+                destination.ty(self.body.as_ref(), self.tcx).ty.kind()
+            else {
+                unreachable!()
+            };
+            assert_eq!(adt_id.did(), lang_items.pin_type().unwrap());
+            let aggregate_kind =
+                AggregateKind::Adt(adt_id.did(), VariantIdx::from_u32(0), generics, None, None);
+            let rvalue = Rvalue::Aggregate(Box::new(aggregate_kind), operands);
+            trace!("Handling new_unchecked as assign for {destination:?}");
+            self.modular_mutation_visitor(state)
+                .visit_assign(&destination, &rvalue, location);
+            true
+        } else if Some(def_id) == lang_items.into_future_fn()
+            // FIXME: better way to get retrieve this stdlib DefId?
+            || self.tcx.def_path_str(def_id) == "<F as std::future::IntoFuture>::into_future"
+        {
+            trace!("Handling into_future as assign for {destination:?}");
+            let [op] = args else {
+                unreachable!();
+            };
+            self.modular_mutation_visitor(state).visit_assign(
+                &destination,
+                &Rvalue::Use(op.clone()),
+                location,
+            );
+            true
+        } else {
+            dbg!(self.tcx.def_path_str(def_id));
+            false
+        }
+    }
+
     /// Attempt to inline a call to a function, returning None if call is not inline-able.
     fn handle_call(
         &self,
@@ -689,7 +741,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         let resolved_fn =
             utils::try_resolve_function(self.tcx, called_def_id, param_env, generic_args);
         let resolved_def_id = resolved_fn.def_id();
-        if called_def_id != resolved_def_id {
+        if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
             trace!("  `{called}` monomorphized to `{resolved}`",);
         }
@@ -702,16 +754,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             }
         }
 
-        // Don't do anything with `IntoFuture::into_future` or else
-        // the async context will get bulk-modified losing field-sensitivity.
-        //
-        // FIXME: this should not use string comparison. But this is a trait
-        // method so it's not in lang_items...
-        let def_name = tcx.def_path_str(resolved_def_id);
-        if matches!(
-            def_name.as_str(),
-            "<F as std::future::IntoFuture>::into_future" | "std::pin::Pin::<P>::new_unchecked"
-        ) {
+        if self.approximate_async_functions(state, resolved_def_id, args, destination, location) {
             return Some(());
         }
 
