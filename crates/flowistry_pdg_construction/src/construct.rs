@@ -707,11 +707,11 @@ impl<'tcx> GraphConstructor<'tcx> {
         //
         // FIXME: this should not use string comparison. But this is a trait
         // method so it's not in lang_items...
-        let def_name = tcx.opt_item_name(resolved_def_id);
-        if def_name
-            .map(|ident| ident.as_str() == "into_future")
-            .unwrap_or(false)
-        {
+        let def_name = tcx.def_path_str(resolved_def_id);
+        if matches!(
+            def_name.as_str(),
+            "<F as std::future::IntoFuture>::into_future" | "std::pin::Pin::<P>::new_unchecked"
+        ) {
             return Some(());
         }
 
