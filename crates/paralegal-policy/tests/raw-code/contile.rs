@@ -6,7 +6,9 @@ use cadence::{CountedExt, StatsdClient};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+
 use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 #[derive(Clone, Debug, Default)]
 struct AdmDefaults {
@@ -223,6 +225,7 @@ struct ServerState {
     tiles_cache: TilesCache,
     start_up: Instant,
     reqwest_client: reqwest::Client,
+    partner_filter: Arc<RwLock<AdmFilter>>,
 }
 
 /// Image storage container
@@ -358,15 +361,15 @@ impl AdmFilter {
                 //     self.report(&e, tags);
                 //     return Ok(None);
                 // }
-                // if let Err(e) = tile.image_url.parse::<Uri>() {
-                //     trace!("Rejecting tile: bad image: {:?}", e);
-                //     metrics.incr_with_tags("filter.adm.err.invalid_image", Some(tags));
-                //     self.report(
-                //         &HandlerErrorKind::InvalidHost("Image", tile.image_url).into(),
-                //         tags,
-                //     );
-                //     return Ok(None);
-                // }
+                if let Err(e) = tile.image_url.parse::<uri::Uri>() {
+                    //trace!("Rejecting tile: bad image: {:?}", e);
+                    metrics.incr_with_tags("filter.adm.err.invalid_image", Some(tags));
+                    // self.report(
+                    //     &HandlerErrorKind::InvalidHost("Image", tile.image_url).into(),
+                    //     tags,
+                    // );
+                    return Ok(None);
+                }
                 // trace!("allowing tile {:?}", &tile.name);
                 Ok(Some(Tile::from_adm_tile(tile)))
             }
@@ -432,7 +435,7 @@ async fn adm_get_tiles(
     // )
     // .map_err(|e| HandlerError::internal(&e.to_string()))?;
     // let adm_url = adm_url.as_str();
-    let adm_url = "";
+    let adm_url = format!("{:?}", state.start_up);
 
     // // To reduce cardinality, only add this tag when fetching data from
     // // the partner. (This tag is only for metrics.)
@@ -521,40 +524,40 @@ async fn adm_get_tiles(
     // }
 
     let mut filtered: Vec<Tile> = Vec::new();
-    // let iter = response.tiles.into_iter();
-    // let filter = state.partner_filter.read().await;
-    // for tile in iter {
-    //     if let Some(tile) =
-    //         filter.filter_and_process(tile, location, &device_info, tags, metrics)?
-    //     {
-    //         filtered.push(tile);
-    //     }
-    //     if filtered.len() == settings.adm_max_tiles as usize {
-    //         break;
-    //     }
-    // }
+    let iter = response.tiles.into_iter();
+    let filter = state.partner_filter.read().await;
+    for tile in iter {
+        if let Some(tile) =
+            filter.filter_and_process(tile, /*location, &device_info,*/ tags, metrics)?
+        {
+            filtered.push(tile);
+        }
+        // if filtered.len() == settings.adm_max_tiles as usize {
+        //     break;
+        // }
+    }
 
     let mut tiles: Vec<Tile> = Vec::new();
-    for mut tile in filtered {
-        if let Some(storage) = image_store {
-            // we should have already proven the image_url in `filter_and_process`
-            // we need to validate the image, store the image for eventual CDN retrieval,
-            // and get the metrics of the image.
-            match storage.store(&tile.image_url.parse().unwrap()).await {
-                Ok(result) => {
-                    //tile.image_url = result.url.to_string();
-                    // Since height should equal width, using either value here works.
-                    // tile.image_size = Some(result.image_metrics.width);
-                }
-                Err(e) => {
-                    // quietly report the error, and drop the tile.
-                    sentry_report(&e, tags);
-                    continue;
-                }
-            }
-        }
-        tiles.push(tile);
-    }
+    // for mut tile in filtered {
+    //     if let Some(storage) = image_store {
+    //         // we should have already proven the image_url in `filter_and_process`
+    //         // we need to validate the image, store the image for eventual CDN retrieval,
+    //         // and get the metrics of the image.
+    //         match storage.store(&tile.image_url.parse().unwrap()).await {
+    //             Ok(result) => {
+    //                 //tile.image_url = result.url.to_string();
+    //                 // Since height should equal width, using either value here works.
+    //                 // tile.image_size = Some(result.image_metrics.width);
+    //             }
+    //             Err(e) => {
+    //                 // quietly report the error, and drop the tile.
+    //                 sentry_report(&e, tags);
+    //                 continue;
+    //             }
+    //         }
+    //     }
+    //     tiles.push(tile);
+    // }
 
     // if tiles.is_empty() {
     //     warn!("adm::get_tiles no valid tiles {}", adm_url);
@@ -679,31 +682,31 @@ impl Tags {
         let mut tags = HashMap::new();
         let mut extra = HashMap::new();
         mark_sensitive(&mut extra);
-        if let Some(ua) = req_head.headers().get(USER_AGENT) {
-            if let Ok(uas) = ua.to_str() {
-                // if let Ok(device_info) = get_device_info(uas) {
-                //     tags.insert("ua.os.family".to_owned(), device_info.os_family.to_string());
-                //     tags.insert(
-                //         "ua.form_factor".to_owned(),
-                //         device_info.form_factor.to_string(),
-                //     );
-                // }
-                extra.insert("ua".to_owned(), uas.to_string());
-            }
-        }
-        if let Some(tracer) = settings.trace_header.clone() {
-            if let Some(header) = req_head.headers().get(tracer) {
-                if let Ok(val) = header.to_str() {
-                    if !val.is_empty() {
-                        extra.insert("header.trace".to_owned(), val.to_owned());
-                    }
-                }
-            }
-        }
-        tags.insert("uri.method".to_owned(), req_head.method.to_string());
-        // `uri.path` causes too much cardinality for influx but keep it in
-        // extra for sentry
-        extra.insert("uri.path".to_owned(), req_head.uri.to_string());
+        // if let Some(ua) = req_head.headers().get(USER_AGENT) {
+        //     if let Ok(uas) = ua.to_str() {
+        //         // if let Ok(device_info) = get_device_info(uas) {
+        //         //     tags.insert("ua.os.family".to_owned(), device_info.os_family.to_string());
+        //         //     tags.insert(
+        //         //         "ua.form_factor".to_owned(),
+        //         //         device_info.form_factor.to_string(),
+        //         //     );
+        //         // }
+        //         extra.insert("ua".to_owned(), uas.to_string());
+        //     }
+        // }
+        // if let Some(tracer) = settings.trace_header.clone() {
+        //     if let Some(header) = req_head.headers().get(tracer) {
+        //         if let Ok(val) = header.to_str() {
+        //             if !val.is_empty() {
+        //                 extra.insert("header.trace".to_owned(), val.to_owned());
+        //             }
+        //         }
+        //     }
+        // }
+        // tags.insert("uri.method".to_owned(), req_head.method.to_string());
+        // // `uri.path` causes too much cardinality for influx but keep it in
+        // // extra for sentry
+        // extra.insert("uri.path".to_owned(), req_head.uri.to_string());
         Tags {
             tags,
             extra,
