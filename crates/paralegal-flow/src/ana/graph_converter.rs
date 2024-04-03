@@ -815,7 +815,7 @@ mod call_string_resolver {
                 let tcx = self.tcx;
 
                 let base_stmt = super::expect_stmt_at(tcx, this);
-                let param_env = tcx.param_env(prior.def_id());
+                let param_env = tcx.param_env_reveal_all_normalized(prior.def_id());
                 let normalized = map_either(
                     base_stmt,
                     |stmt| prior.try_monomorphize(tcx, param_env, stmt),

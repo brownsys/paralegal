@@ -35,7 +35,7 @@ fn pdg(
     configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PdgParams<'tcx>) -> PdgParams<'tcx> + Send,
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, DepGraph<'tcx>) + Send,
 ) {
-    let _ = simple_logger::init_with_env();
+    let _ = env_logger::try_init();
     rustc_utils::test_utils::compile(input, move |tcx| {
         let def_id = get_main(tcx);
         let params = configure(tcx, PdgParams::new(tcx, def_id));
@@ -438,7 +438,7 @@ pdg_test! {
 }
 
 pdg_test! {
-  async_inline,
+  async_inline_basic,
   {
     async fn foo(x: i32, y: i32) -> i32 {
       x
@@ -448,6 +448,65 @@ pdg_test! {
       let a = 1;
       let b = 2;
       let c = foo(a, b).await;
+    }
+  },
+  (a -> c),
+  (b -/> c)
+}
+
+pdg_test! {
+  async_inline_rename,
+  {
+    async fn foo(x: i32, y: i32) -> i32 {
+      x
+    }
+
+    async fn main() {
+      let a = 1;
+      let b = 2;
+      let fut = foo(a, b);
+      let fut2 = fut;
+      let c = fut2.await;
+    }
+  },
+  (a -> c),
+  (b -/> c)
+}
+
+pdg_test! {
+  async_hof,
+  {
+    use std::future::Future;
+    async fn await_it<F: Future>(f: F) -> F::Output {
+      f.await
+    }
+
+    async fn foo(x: i32, y: i32) -> i32 {
+      x
+    }
+
+    async fn main() {
+      let a = 1;
+      let b = 2;
+      let c = await_it(foo(a, b)).await;
+    }
+  },
+  (a -> c),
+  (b -/> c)
+}
+
+pdg_test! {
+  async_block,
+  {
+    async fn foo(x: i32, y: i32) -> i32 {
+      x
+    }
+
+    async fn main() {
+      let a = 1;
+      let b = 2;
+      let fut = async { foo(a, b).await };
+      let c = fut.await;
     }
   },
   (a -> c),

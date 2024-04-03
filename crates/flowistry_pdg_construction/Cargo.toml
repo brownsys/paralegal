@@ -26,4 +26,4 @@ flowistry = { git = "https://github.com/brownsys/flowistry", rev = "a2ccfca2e6b5
 
 [dev-dependencies]
 rustc_utils = { workspace = true, features = ["indexical", "test"] }
-simple_logger = "4.3.3"
+env_logger = "0.11.3"
