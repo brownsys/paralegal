@@ -18,6 +18,7 @@ use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
 use petgraph::visit::{EdgeFiltered, EdgeRef, IntoNeighborsDirected, Topo, Walker};
+use petgraph::Direction::Outgoing;
 use petgraph::{Direction, Incoming};
 
 use crate::algo::flows_to::CtrlFlowsTo;
@@ -797,7 +798,7 @@ mod private {
 }
 
 /// Extension trait with queries for single nodes
-pub trait NodeExt: private::Sealed {
+pub trait NodeExt: private::Sealed + Sized {
     /// Find the call string for the statement or function that produced this node.
     fn associated_call_site(self, ctx: &Context) -> CallString;
     /// Get the type(s) of a Node.
@@ -809,13 +810,20 @@ pub trait NodeExt: private::Sealed {
     /// Retrieve metadata about the instruction executed by a specific node.
     fn instruction(self, ctx: &Context) -> &InstructionInfo;
     /// Return the immediate successors of this node
-    fn successors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
+    fn successors(self, ctx: &Context) -> Box<dyn Iterator<Item = Self> + '_>;
     /// Return the immediate predecessors of this node
-    fn predecessors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
+    fn predecessors(self, ctx: &Context) -> Box<dyn Iterator<Item = Self> + '_>;
     /// Get the span of a node
     fn get_location(self, ctx: &Context) -> &Span;
     /// Returns whether this Node has the marker applied to it directly or via its type.
     fn has_marker<C: HasDiagnosticsBase>(self, ctx: C, marker: Marker) -> bool;
+    /// The shortest path between this and a target node
+    fn shortest_path(
+        self,
+        to: Self,
+        ctx: &Context,
+        edge_selection: EdgeSelection,
+    ) -> Option<Box<[Self]>>;
 }
 
 impl NodeExt for GlobalNode {
@@ -879,6 +887,39 @@ impl NodeExt for GlobalNode {
                 .types(ctx.as_ctx())
                 .iter()
                 .any(|t| marked.types.contains(t))
+    }
+
+    fn shortest_path(
+        self,
+        to: Self,
+        ctx: &Context,
+        edge_selection: EdgeSelection,
+    ) -> Option<Box<[Self]>> {
+        let g = if self.controller_id() != to.controller_id() {
+            return None;
+        } else {
+            &ctx.desc.controllers[&self.controller_id()]
+        };
+        let mut ancestors = HashMap::new();
+        let fg = edge_selection.filter_graph(&g.graph);
+        'outer: for this in petgraph::visit::Bfs::new(&fg, self.local_node()).iter(&fg) {
+            for next in fg.neighbors_directed(this, Outgoing) {
+                if next != this {
+                    ancestors.entry(next).or_insert(this);
+                }
+                if next == to.local_node() {
+                    break 'outer;
+                }
+            }
+        }
+        Some(
+            std::iter::successors(Some(to.local_node()), |elem| {
+                let n = ancestors.get(elem).copied()?;
+                (n != self.local_node()).then_some(n)
+            })
+            .map(|n| GlobalNode::from_local_node(self.controller_id(), n))
+            .collect(),
+        )
     }
 }
 
