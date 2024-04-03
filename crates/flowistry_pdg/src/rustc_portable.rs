@@ -14,8 +14,6 @@
 //! }
 //! ```
 
-use crate::rustc_proxies;
-
 cfg_if::cfg_if! {
     if #[cfg(feature = "rustc")] {
         use crate::rustc::{hir, mir, def_id};

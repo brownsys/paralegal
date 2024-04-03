@@ -10,9 +10,9 @@ use rustc_middle::{
         tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::{self, EarlyBinder, GenericArgsRef, Instance, ParamEnv, TyCtxt, TyKind},
+    ty::{self, EarlyBinder, GenericArgsRef, Instance, ParamEnv, Ty, TyCtxt, TyKind},
 };
-use rustc_type_ir::fold::TypeFoldable;
+use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
@@ -129,7 +129,7 @@ pub fn retype_place<'tcx>(
 
     let mut new_projection = Vec::new();
     let mut ty = PlaceTy::from_ty(body.local_decls()[orig.local].ty);
-    let param_env = tcx.param_env(def_id);
+    let param_env = tcx.param_env_reveal_all_normalized(def_id);
     for elem in orig.projection.iter() {
         if matches!(
             ty.ty.kind(),
@@ -234,4 +234,11 @@ pub fn find_body_assignments(body: &Body<'_>) -> BodyAssignments {
         .into_group_map()
         .into_iter()
         .collect()
+}
+
+pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
+    match ty.kind() {
+        TyKind::Alias(AliasKind::Opaque, alias_ty) => tcx.type_of(alias_ty.def_id).skip_binder(),
+        _ => ty,
+    }
 }

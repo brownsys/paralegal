@@ -1,5 +1,5 @@
 use rustc_abi::FieldIdx;
-use rustc_index::IndexSlice;
+
 use rustc_middle::{
     mir::{Body, HasLocalDecls, Operand, Place, PlaceElem, RETURN_PLACE},
     ty::TyCtxt,
@@ -14,16 +14,16 @@ pub enum CallingConvention<'tcx, 'a> {
         closure_arg: &'a Operand<'tcx>,
         tupled_arguments: &'a Operand<'tcx>,
     },
-    Async(AsyncCallingConvention<'tcx, 'a>),
+    Async(Place<'tcx>),
 }
 
 impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
     pub fn from_call_kind(
-        kind: &CallKind<'tcx, 'a>,
+        kind: &CallKind<'tcx>,
         args: &'a [Operand<'tcx>],
     ) -> CallingConvention<'tcx, 'a> {
         match kind {
-            CallKind::AsyncPoll(_, _, args) => CallingConvention::Async(*args),
+            CallKind::AsyncPoll(_, _, ctx) => CallingConvention::Async(*ctx),
             CallKind::Direct => CallingConvention::Direct(args),
             CallKind::Indirect => CallingConvention::Indirect {
                 closure_arg: &args[0],
@@ -66,16 +66,9 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
                 &child.projection[..],
             ),
             // Map arguments to projections of the future, the poll's first argument
-            Self::Async(cc) => {
+            Self::Async(ctx) => {
                 if child.local.as_usize() == 1 {
-                    let PlaceElem::Field(idx, _) = child.projection[0] else {
-                        panic!("Unexpected non-projection of async context")
-                    };
-                    let op = match cc {
-                        AsyncCallingConvention::Fn(args) => &args[idx.as_usize()],
-                        AsyncCallingConvention::Block(args) => &args[idx],
-                    };
-                    (op.place()?, &child.projection[1..])
+                    (*ctx, &child.projection[..])
                 } else {
                     return None;
                 }
@@ -102,10 +95,4 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
         };
         Some(result)
     }
-}
-
-#[derive(Clone, Copy)]
-pub enum AsyncCallingConvention<'tcx, 'a> {
-    Fn(&'a [Operand<'tcx>]),
-    Block(&'a IndexSlice<FieldIdx, Operand<'tcx>>),
 }

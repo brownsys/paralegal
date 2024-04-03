@@ -6,15 +6,14 @@ use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, Body, Location, Operand, Rvalue, Statement, StatementKind,
-        Terminator, TerminatorKind,
+        AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
+        StatementKind, Terminator, TerminatorKind,
     },
     ty::{GenericArgsRef, TyCtxt},
 };
 
 use crate::construct::{CallKind, PartialGraph};
 
-use super::calling_convention::*;
 use super::construct::GraphConstructor;
 use super::utils::{self, FnResolution};
 
@@ -154,7 +153,7 @@ pub fn determine_async<'tcx>(
     } else {
         try_as_async_trait_function(tcx, def_id.to_def_id(), body)?
     };
-    let param_env = tcx.param_env(def_id);
+    let param_env = tcx.param_env_reveal_all_normalized(def_id);
     let generator_fn =
         utils::try_resolve_function(tcx, generator_def_id.to_def_id(), param_env, args);
     Some((generator_fn, loc))
@@ -188,7 +187,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         &'a self,
         def_id: DefId,
         original_args: &'a [Operand<'tcx>],
-    ) -> AsyncDeterminationResult<CallKind<'tcx, 'a>> {
+    ) -> AsyncDeterminationResult<CallKind<'tcx>> {
         let lang_items = self.tcx.lang_items();
         if lang_items.future_poll_fn() == Some(def_id) {
             match self.find_async_args(original_args) {
@@ -206,14 +205,7 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn find_async_args<'a>(
         &'a self,
         args: &'a [Operand<'tcx>],
-    ) -> Result<
-        (
-            FnResolution<'tcx>,
-            Location,
-            AsyncCallingConvention<'tcx, 'a>,
-        ),
-        String,
-    > {
+    ) -> Result<(FnResolution<'tcx>, Location, Place<'tcx>), String> {
         macro_rules! let_assert {
             ($p:pat = $e:expr, $($arg:tt)*) => {
                 let $p = $e else {
@@ -280,31 +272,29 @@ impl<'tcx> GraphConstructor<'tcx> {
             let stmt = &self.body.stmt_at(async_fn_call_loc);
             chase_target = match stmt {
                 Either::Right(Terminator {
-                    kind: TerminatorKind::Call { args, func, .. },
+                    kind:
+                        TerminatorKind::Call {
+                            func, destination, ..
+                        },
                     ..
                 }) => {
                     let (op, generics) = self.operand_to_def_id(func).unwrap();
-                    Ok((
-                        op,
-                        generics,
-                        AsyncCallingConvention::Fn(args),
-                        async_fn_call_loc,
-                    ))
+                    Ok((op, generics, *destination, async_fn_call_loc))
                 }
                 Either::Left(Statement { kind, .. }) => match kind {
                     StatementKind::Assign(box (
-                        _,
+                        lhs,
                         Rvalue::Aggregate(
                             box AggregateKind::Generator(def_id, generic_args, _),
-                            args,
+                            _args,
                         ),
-                    )) => Ok((
-                        *def_id,
-                        *generic_args,
-                        AsyncCallingConvention::Block(args),
-                        async_fn_call_loc,
-                    )),
-                    StatementKind::Assign(box (_, Rvalue::Use(target))) => Err(target),
+                    )) => Ok((*def_id, *generic_args, *lhs, async_fn_call_loc)),
+                    StatementKind::Assign(box (_, Rvalue::Use(target))) => {
+                        let (op, generics) = self
+                            .operand_to_def_id(target)
+                            .ok_or_else(|| "Nope".to_string())?;
+                        Ok((op, generics, target.place().unwrap(), async_fn_call_loc))
+                    }
                     _ => {
                         panic!("Assignment to into_future input is not a call: {stmt:?}");
                     }
@@ -317,8 +307,12 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         let (op, generics, calling_convention, async_fn_call_loc) = chase_target.unwrap();
 
-        let resolution =
-            utils::try_resolve_function(self.tcx, op, self.tcx.param_env(self.def_id), generics);
+        let resolution = utils::try_resolve_function(
+            self.tcx,
+            op,
+            self.tcx.param_env_reveal_all_normalized(self.def_id),
+            generics,
+        );
 
         Ok((resolution, async_fn_call_loc, calling_convention))
     }
