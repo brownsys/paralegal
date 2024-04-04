@@ -352,30 +352,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn handle_node_types(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
         let i = self.new_node_for(old_node);
 
-        let is_controller_argument =
-            matches!(self.try_as_root(weight.at), Some(l) if l.location == RichLocation::Start);
-
-        if self
-            .dep_graph
-            .graph
-            .edges_directed(old_node, Direction::Incoming)
-            .any(|e| e.weight().target_use.is_return() && e.weight().source_use.is_argument())
-        {
-            assert!(
-                weight.place.projection.is_empty(),
-                "{:?} at {} has projection",
-                weight.place,
-                weight.at
-            );
-        } else if !is_controller_argument {
-            return;
-        }
-
         let place_ty = self.determine_place_type(weight.at, weight.place);
 
-        let is_external_call_source = weight.at.leaf().location != RichLocation::End;
-
-        let node_types = self.type_is_marked(place_ty, is_external_call_source);
+        let node_types = self.type_is_marked(place_ty, true);
         self.known_def_ids.extend(node_types.iter().copied());
         let tcx = self.tcx();
         if !node_types.is_empty() {
