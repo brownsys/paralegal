@@ -1,4 +1,7 @@
-Somewhere:
+Scope:
+In delete
+
+Policy:
 1. For each "stored_data" type marked user_data:
     A. There is a "retrieval" that is a source of "stored_data" where:
        a. There is a "deletes" marked to_delete where:

@@ -1,9 +1,12 @@
+Scope:
+Everywhere
+
 Definitions:
 1. "stored_view" is each "pageview" marked pageview_data where:
 	A. There is a "store" marked store where:
 		a. "pageview" goes to "store"
 
-Everywhere:
+Policy:
 1. For each "stored_view":
 	A. There is a "date" marked date where: 
     	a. "date" goes to "stored_view"

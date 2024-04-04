@@ -1,9 +1,12 @@
+Scope:
+Everywhere
+
 Definitions:
 1. "sensitive_store" is each "store" marked store where:
 	A. There is a "sensitive" marked sensitive where:
 		a. "sensitive" goes to "store"
 
-Everywhere:
+Policy:
 1. For each "sensitive_store":
     A. There is a "scope" marked scopes_store where:
         a. There is a "authorization" marked auth_witness where:

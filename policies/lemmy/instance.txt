@@ -1,4 +1,7 @@
-Everywhere:
+Scope:
+Everywhere
+
+Policy:
 1. For each "db_access" marked db_access:
     A. If "db_access" is not marked db_user_read then:
         a. There is a "dc" marked instance_delete_check where:

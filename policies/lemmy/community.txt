@@ -1,4 +1,7 @@
-Everywhere:
+Scope:
+Everywhere
+
+Policy:
 1. For each "comm_write" marked db_community_write:
 	A. There is a "dc" marked community_delete_check where:
 		a. "dc" affects whether "comm_write" happens

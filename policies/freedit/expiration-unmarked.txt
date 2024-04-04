@@ -1,4 +1,7 @@
-In user_chron_job:
+Scope:
+In user_chron_job
+
+Policy:
 1. For each "pageview" marked pageviews:
 	A. There is a "expiration_check" item where:
 		a. There is a "current_time" marked time where:
