@@ -268,6 +268,98 @@ impl<'tcx> MarkerCtx<'tcx> {
         })
     }
 
+    pub fn type_markers<'a>(&'a self, key: ty::Ty<'tcx>) -> &'a TypeMarkers<'tcx> {
+        self.0
+            .type_markers
+            .get(key, |key| {
+                use ty::*;
+                let tcx = self.tcx();
+                let mut markers = Vec::new();
+                match key.kind() {
+                    Bool
+                    | Char
+                    | Int(_)
+                    | Uint(_)
+                    | Float(_)
+                    | Foreign(_)
+                    | Str
+                    | FnDef { .. }
+                    | FnPtr { .. }
+                    | Closure { .. }
+                    | Generator { .. }
+                    | GeneratorWitness { .. }
+                    | GeneratorWitnessMIR { .. }
+                    | Never
+                    | Bound { .. }
+                    | Error(_) => (),
+                    Adt(def, generics) => markers.extend(self.type_markers_for_adt(def, &generics)),
+                    Tuple(tys) => markers.extend(tys.iter().enumerate().flat_map(|(idx, ty)| {
+                        let project = Box::new([mir::PlaceElem::Field(idx.into(), ty)]);
+                        self.submarkers_projected(project, ty)
+                    })),
+                    Alias(_, inner) => return self.type_markers(inner.to_ty(tcx)).into(),
+                    // We can't track indices so we simply overtaint to the entire array
+                    Array(inner, _) | Slice(inner) => markers.extend(
+                        self.type_markers(*inner)
+                            .iter()
+                            .map(|(_, marker)| (ty::List::empty(), *marker)),
+                    ),
+                    RawPtr(ty::TypeAndMut { ty, .. }) | Ref(_, ty, _) => markers
+                        .extend(self.submarkers_projected(Box::new([mir::PlaceElem::Deref]), *ty)),
+                    Param(_) | Dynamic { .. } => self
+                        .tcx()
+                        .sess
+                        .warn(format!("Cannot determine markers for type {key:?}")),
+                    Placeholder(_) | Infer(_) => self
+                        .tcx()
+                        .sess
+                        .fatal(format!("Did not expect this type here {key:?}")),
+                }
+                markers.as_slice().into()
+            })
+            .as_ref()
+    }
+
+    fn submarkers_projected<'a>(
+        &'a self,
+        projection: Box<[mir::PlaceElem<'tcx>]>,
+        t: ty::Ty<'tcx>,
+    ) -> impl Iterator<Item = TypeMarkerElem<'tcx>> + 'a {
+        self.type_markers(t)
+            .iter()
+            .map(move |(inner_projection, marker)| {
+                (
+                    self.tcx().mk_place_elems_from_iter(
+                        projection.iter().copied().chain(inner_projection.iter()),
+                    ),
+                    *marker,
+                )
+            })
+    }
+
+    fn type_markers_for_adt<'a>(
+        &'a self,
+        adt: &'a ty::AdtDef<'tcx>,
+        generics: &'tcx ty::List<ty::GenericArg<'tcx>>,
+    ) -> impl Iterator<Item = TypeMarkerElem<'tcx>> + 'a {
+        let tcx = self.tcx();
+        adt.variants()
+            .iter_enumerated()
+            .flat_map(move |(vidx, vdef)| {
+                vdef.fields.iter_enumerated().flat_map(move |(fidx, fdef)| {
+                    let f_ty = fdef.ty(tcx, generics);
+                    let variant_project = adt
+                        .is_enum()
+                        .then_some(mir::PlaceElem::Downcast(Some(vdef.name), vidx));
+                    let outer_projection = variant_project
+                        .into_iter()
+                        .chain([mir::PlaceElem::Field(fidx, f_ty)])
+                        .collect::<Box<_>>();
+                    self.submarkers_projected(outer_projection, f_ty)
+                })
+            })
+    }
+
     pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
         let def_id = ty.defid()?;
         self.combined_markers(def_id)
@@ -333,6 +425,10 @@ impl<'tcx> MarkerCtx<'tcx> {
             )
     }
 }
+
+pub type TypeMarkerElem<'tcx> = (&'tcx ty::List<mir::PlaceElem<'tcx>>, Identifier);
+pub type TypeMarkers<'tcx> = [TypeMarkerElem<'tcx>];
+
 /// The structure inside of [`MarkerCtx`].
 pub struct MarkerDatabase<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -344,6 +440,7 @@ pub struct MarkerDatabase<'tcx> {
     reachable_markers: Cache<FnResolution<'tcx>, Box<[Identifier]>>,
     /// Configuration options
     config: &'static MarkerControl,
+    type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers<'tcx>>>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
@@ -355,6 +452,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
             config: args.marker_control(),
+            type_markers: Default::default(),
         }
     }
 
