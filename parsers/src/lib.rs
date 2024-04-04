@@ -32,8 +32,8 @@ pub struct Definition {
 // AST data
 #[derive(Debug, PartialEq, Eq)]
 pub enum VariableIntro {
-    Roots,
-    AllNodes,
+    Roots(Variable),
+    AllNodes(Variable),
     Variable(Variable),
     VariableMarked((Variable, Marker)),
     VariableOfTypeMarked((Variable, Marker)),
@@ -66,8 +66,8 @@ pub enum Operator {
 impl From<&VariableIntro> for Template {
     fn from(value: &VariableIntro) -> Self {
         match value {
-            &VariableIntro::Roots => Template::Roots,
-            &VariableIntro::AllNodes => Template::AllNodes,
+            &VariableIntro::Roots(_) => Template::Roots,
+            &VariableIntro::AllNodes(_) => Template::AllNodes,
             &VariableIntro::Variable(_) => Template::Variable,
             &VariableIntro::VariableMarked(_) => Template::VariableMarked,
             &VariableIntro::VariableOfTypeMarked(_) => Template::VariableOfTypeMarked,

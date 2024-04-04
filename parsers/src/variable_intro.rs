@@ -2,7 +2,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     error::context,
-    sequence::{separated_pair, delimited}, character::complete::space0,
+    sequence::{separated_pair, delimited, terminated}, character::complete::space0,
 };
 
 use crate::{
@@ -60,24 +60,24 @@ fn variable_source_of(s: &str) -> Res<&str, VariableIntro> {
 fn roots(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "roots",
-        tag("input")
+        terminated(variable, tag("input"))
     );
-    let (remainder, _) = combinator(s)?;
+    let (remainder, var) = combinator(s)?;
     Ok((
         remainder,
-        VariableIntro::Roots
+        VariableIntro::Roots(var)
     ))
 }
 
 fn nodes(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "nodes",
-        tag("item")
+        terminated(variable, tag("item"))
     );
-    let (remainder, _) = combinator(s)?;
+    let (remainder, var) = combinator(s)?;
     Ok((
         remainder,
-        VariableIntro::AllNodes
+        VariableIntro::AllNodes(var)
     ))
 }
 

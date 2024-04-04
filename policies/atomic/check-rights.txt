@@ -8,6 +8,31 @@ Definitions:
         a. "resource" goes to "stored_commit" 
 
 Everywhere:
+// TODO this isn't right -- this will make every controller take care of the stored commits in other controllers
+// I think fundamentally this global definitions idea is just bad :/
+1. For each "stored_commit":
+    A. There is a "auth_check" marked auth_check where:
+        a. For each "new_resource":
+            i) "new_resource" does not go to "auth_check"
+        and
+        b. "stored_commit" goes to "auth_check"
+        and
+        c. "auth_check" affects whether "stored_commit" happens
+
+// maybe controller-specific definitions are the answer after all
+// because the idea of collecting things up front is nice, so if it's correct then it's fine?
+Scope: Everywhere
+
+Definitions:
+1. "stored_commit" is each "commit" marked commit where:
+    A. There is a "store" marked store where:
+        a. "commit" goes to "store"
+
+2. "new_resource" is each "resource" marked new_resource where:
+    A. There is a "stored_commit" where:
+        a. "resource" goes to "stored_commit" 
+
+Policy:
 1. For each "stored_commit":
     A. There is a "auth_check" marked auth_check where:
         a. For each "new_resource":

@@ -1,7 +1,6 @@
 (in no particular order)
 - not allowed to mix operators within a given level
 - write robust parser tests
-- ``in ctrler'' Paralegal functionality
 - look through policy api again -- there are new primitives (e.g., more fine-grained everywhere happens before) we can support
 - error messages should include which line caused the problem; this would require AST to store bullet information. Would also need to do another pass over the tree to collect parent bullets (e.g., 1A).
 - Arbitrary filters on clause intros--instead of "For each a... if a flows to b," allow "For each a that flows to b"
@@ -11,3 +10,4 @@
 - better error messages in the outputted policies (should leverage Diagnostics library instead of just one assert error at the end)
 - cargo new for the policy and write a template Cargo.toml for it as well
 - rust format the outputted policies (or at least fix the heinous spacing)
+- stricter bullet parsing (can't have duplicates or out of order)

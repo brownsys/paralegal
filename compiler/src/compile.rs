@@ -44,8 +44,8 @@ impl From<&VarContext> for &str {
 impl From<&VariableIntro> for VarContext {
     fn from(value : &VariableIntro) -> Self {
         match value {
-            &VariableIntro::Roots => VarContext::AsRoot,
-            &VariableIntro::AllNodes => VarContext::AsItem,
+            &VariableIntro::Roots(_) => VarContext::AsRoot,
+            &VariableIntro::AllNodes(_) => VarContext::AsItem,
             &VariableIntro::VariableMarked(_) => VarContext::AsVarMarked,
             &VariableIntro::VariableOfTypeMarked(_) => VarContext::AsType,
             &VariableIntro::VariableSourceOf(_) => VarContext::AsSourceOf,
@@ -91,19 +91,11 @@ fn verify_variable_intro_scope(
     env: &mut Vec<(Variable, VarContext)>,
 ) { 
     match intro {
-        VariableIntro::Roots => {
-            verify_var_not_in_scope(&String::from("input"), env);
-            env.push(("input".into(), intro.into()));
-        },
-        VariableIntro::AllNodes => {
-            verify_var_not_in_scope(&String::from("item"), env);
-            env.push(("item".into(), intro.into()));
-        }
         VariableIntro::Variable(var) => {
             // if referring to a variable by itself, must already be in the environment
             verify_var_in_scope(var, env);
         },
-        VariableIntro::VariableMarked((var, _)) => {
+        VariableIntro::Roots(var) | VariableIntro::AllNodes(var) | VariableIntro::VariableMarked((var, _)) => {
             verify_var_not_in_scope(var, env);
             env.push((var.into(), intro.into()));
         }
@@ -196,8 +188,7 @@ fn compile_variable_intro(
     map: &mut HashMap<&str, String>,
 ) -> (String, String) {
     match intro {
-        VariableIntro::Roots | VariableIntro::AllNodes => {},
-        VariableIntro::Variable(var) => {
+         VariableIntro::Roots(var) | VariableIntro::AllNodes(var) | VariableIntro::Variable(var) => {
             map.insert("var", var.into());
         },
         VariableIntro::VariableMarked((var, marker)) | VariableIntro::VariableOfTypeMarked((var, marker)) => {
@@ -210,8 +201,8 @@ fn compile_variable_intro(
         }
     };
     let variable : String = match intro {
-        VariableIntro::Roots => String::from("input"),
-        VariableIntro::AllNodes => String::from("item"),
+        VariableIntro::Roots(var) |
+        VariableIntro::AllNodes(var) |
         VariableIntro::Variable(var) |
         VariableIntro::VariableMarked((var, _)) |
         VariableIntro::VariableOfTypeMarked((var, _)) |
