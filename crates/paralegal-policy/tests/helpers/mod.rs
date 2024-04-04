@@ -32,11 +32,12 @@ lazy_static::lazy_static! {
     };
 }
 
-fn temporary_directory() -> Result<PathBuf> {
+fn temporary_directory(to_hash: &impl Hash) -> Result<PathBuf> {
     let tmpdir = env::temp_dir();
     let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
     let mut hasher = DefaultHasher::new();
     secs.hash(&mut hasher);
+    to_hash.hash(&mut hasher);
     let hash = hasher.finish();
     let short_hash = hash % 0x1_000_000;
     let path = tmpdir.join(format!("test-crate-{short_hash:06x}"));
@@ -67,9 +68,10 @@ fn ensure_run_success(cmd: &mut Command) -> Result<()> {
 
 impl Test {
     pub fn new(code: impl Into<String>) -> Result<Self> {
-        let tempdir = temporary_directory()?;
+        let code = code.into();
+        let tempdir = temporary_directory(&code)?;
         Ok(Self {
-            code: code.into(),
+            code,
             external_ann_file_name: tempdir.join("external_annotations.toml"),
             tempdir,
             paralegal_args: vec![],

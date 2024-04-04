@@ -133,12 +133,13 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         known_def_ids.extend(instruction_info.keys().map(|l| l.function.to_def_id()));
 
+        let type_info = self.collect_type_info();
+        known_def_ids.extend(type_info.keys());
         let def_info = known_def_ids
             .iter()
             .map(|id| (*id, def_info_for_item(*id, tcx)))
             .collect();
 
-        let type_info = self.collect_type_info();
         type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
             type_info,
