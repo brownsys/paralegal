@@ -1,6 +1,6 @@
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeQueries};
+use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeExt, NodeQueries};
 use paralegal_spdg::{GlobalNode, Identifier};
 use std::sync::Arc;
 
@@ -26,9 +26,25 @@ fn policy(ctx: Arc<Context>) -> Result<()> {
     let sinks = ctx.nodes_marked_any_way(m_sink).collect::<Box<_>>();
     assert_error!(ctx, !srcs.is_empty());
     assert_error!(ctx, !sinks.is_empty());
+    let mut failed = false;
     for src in srcs.iter() {
-        for sink in sinks.iter() {
-            assert_error!(ctx, src.flows_to(*sink, &ctx, EdgeSelection::Data));
+        if ctx
+            .any_flows(&[*src], &sinks, EdgeSelection::Data)
+            .is_none()
+        {
+            failed = true;
+            ctx.node_error(
+                *src,
+                format!(
+                    "This source does not flow into a sink: {}",
+                    src.describe(&ctx)
+                ),
+            );
+        }
+    }
+    if failed {
+        for s in sinks.iter() {
+            ctx.node_help(*s, format!("This would be a sink {}", s.describe(&ctx)));
         }
     }
     Ok(())
@@ -147,7 +163,7 @@ fn generics() -> Result<()> {
         }
 
         #[paralegal::marker(noinline)]
-        fn source() -> Vec<Child> {
+        fn source() -> Option<Child> {
             unreachable!()
         }
 
@@ -156,12 +172,69 @@ fn generics() -> Result<()> {
 
         #[paralegal::analyze]
         fn main() {
-            let mut p = source();
-            sink(p.pop());
+            let p = source();
+            sink(p);
         }
     ))?;
 
     test.run(policy)
+}
+
+#[test]
+fn generics_precision() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Child {
+            field: usize,
+        }
+
+        struct V<T> {
+            unrelated: usize,
+            payload: Vec<T>,
+        }
+
+        #[paralegal::marker(noinline)]
+        fn source() -> V<Child> {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::marker(safe_sink, arguments = [0])]
+        fn safe<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let mut p = source();
+            sink(p.unrelated);
+            safe(p.payload.pop())
+        }
+    ))?;
+
+    test.run(|ctx| {
+        let m_safe = Identifier::new_intern("safe_sink");
+        let m_dangerous = Identifier::new_intern("dangerous");
+        let m_sink = Identifier::new_intern("sink");
+        let safe_sinks = ctx.nodes_marked_any_way(m_safe).collect::<Box<_>>();
+        let dangerous = ctx.nodes_marked_any_way(m_dangerous).collect::<Box<_>>();
+        let sinks = ctx.nodes_marked_any_way(m_sink).collect::<Box<_>>();
+        assert_error!(ctx, !safe_sinks.is_empty());
+        assert_error!(ctx, !sinks.is_empty());
+        assert_error!(ctx, !dangerous.is_empty());
+        if let Some((from, to)) = ctx.any_flows(&dangerous, &sinks, EdgeSelection::Data) {
+            let mut msg =
+                ctx.struct_node_error(from, format!("This node leaks: {}", from.describe(&ctx)));
+            msg.with_node_note(to, format!("It leaks here {}", to.describe(&ctx)));
+            msg.emit();
+        }
+        assert_error!(
+            ctx,
+            ctx.any_flows(&dangerous, &safe_sinks, EdgeSelection::Data)
+                .is_some()
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -196,7 +269,7 @@ fn generics_fields_and_enums() -> Result<()> {
         #[paralegal::analyze]
         fn main() {
             let mut p = source();
-            sink(p.pop().unwrap().field);
+            sink(p.pop().unwrap().child);
 
             let mut p = source2();
             match p.pop() {
