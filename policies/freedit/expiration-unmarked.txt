@@ -1,0 +1,18 @@
+Definitions:
+1. "expiration_check" is each item where:
+	A. There is a "current_time" marked time where:
+		a. "current_time" goes to item
+	and
+	B. There is a "store" marked db_access where:
+		a. "store" goes to item
+
+In user_chron_job:
+1. For each "pageview" marked pageviews:
+	A. There is a "deleter" marked deletes where:
+		a. There is a "expiration_check" where:
+			i) "pageview" goes to "expiration_check"
+			and
+			ii) "pageview" goes to "deleter"
+			and
+			iii) "expiration_check" affects whether "deleter" happens
+

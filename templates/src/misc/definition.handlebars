@@ -1,4 +1,10 @@
-{{intro}}
-let {{var}}_nodes = {{inner_var}}_nodes.filter(|{{inner_var}}| {
-    {{{filter}}}
-});
+let mut {{var}}_definition = vec![];
+for (c_id, _) in ctx.all_controllers() {
+    {{intro}}
+    let {{var}}_ctrler_definition = {{inner_var}}_nodes.filter(|n| {
+        let {{inner_var}} = *n;
+        {{{filter}}}
+    });
+
+    {{var}}_definition.append(&mut {{var}}_ctrler_definition.collect());
+}

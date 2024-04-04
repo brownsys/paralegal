@@ -3,7 +3,7 @@
 {{checkpoint_intro}}
 
 ctx.always_happens_before(
-    {{src}}_nodes, 
+    {{src}}_nodes.collect::<Vec<_>>(), 
     |checkpoint| {{checkpoint}}_nodes.contains(checkpoint), 
     |sink| {{sink}}_nodes.contains(sink)
 )

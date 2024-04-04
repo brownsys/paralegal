@@ -1,0 +1,10 @@
+let found = ctx.all_controllers().find(|(ct_id, ctrl)| {
+    ctrl.name.as_str() == "{{ctrler}}"
+    &&
+    {
+        let c_id = *ct_id;
+        {{body}}
+    }
+});
+
+    assert_error!(ctx, found.is_some(), format!("{{ctrler}} does not satisfy the policy"));

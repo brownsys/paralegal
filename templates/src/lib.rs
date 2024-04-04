@@ -10,6 +10,7 @@ pub enum Template {
     Definition,
     // variable intro
     Roots,
+    AllNodes,
     Variable, // TODO not sure this needs one? but may be easier to just give it one bc everything else has one
     VariableMarked,
     VariableOfTypeMarked,
@@ -44,6 +45,7 @@ impl From<Template> for &str {
             Template::Base => "misc/base",
             Template::Definition => "misc/definition",
             Template::Roots => "variable-intros/roots",
+            Template::AllNodes => "variable-intros/all-nodes",
             Template::Variable => "variable-intros/variable",
             Template::VariableMarked => "variable-intros/variable-marked",
             Template::VariableOfTypeMarked => "variable-intros/variable-of-type-marked",

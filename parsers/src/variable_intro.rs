@@ -69,6 +69,18 @@ fn roots(s: &str) -> Res<&str, VariableIntro> {
     ))
 }
 
+fn nodes(s: &str) -> Res<&str, VariableIntro> {
+    let mut combinator = context(
+        "nodes",
+        tag("item")
+    );
+    let (remainder, _) = combinator(s)?;
+    Ok((
+        remainder,
+        VariableIntro::AllNodes
+    ))
+}
+
 pub fn variable_intro(s: &str) -> Res<&str, VariableIntro> {
     context(
         "variable intro",
@@ -76,6 +88,7 @@ pub fn variable_intro(s: &str) -> Res<&str, VariableIntro> {
             space0, 
             alt((
                 roots,
+                nodes,
                 variable_type_marked,
                 variable_source_of,
                 variable_marked,
