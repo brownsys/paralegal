@@ -1,7 +1,8 @@
 use clause::l1_clauses;
+use common::colon;
 use definitions::parse_definitions;
 use scope::scope;
-use nom::{IResult, error::{VerboseError, context}, combinator::{all_consuming, opt}, sequence::{tuple, terminated}, character::complete::multispace0};
+use nom::{IResult, error::{VerboseError, context}, combinator::{all_consuming, opt}, sequence::{tuple, terminated, delimited}, character::complete::multispace0, bytes::complete::tag};
 use templates::Template;
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
@@ -174,11 +175,18 @@ pub fn parse(s: &str) -> Res<&str, Policy> {
     let mut combinator = context(
         "parse policy", 
         all_consuming(
-            tuple((opt(parse_definitions), terminated(tuple((scope, l1_clauses)), multispace0)))
+            tuple((
+                scope, 
+                opt(parse_definitions), 
+                delimited(
+                    tuple((multispace0, tag("Policy"), colon)), 
+                    l1_clauses, 
+                    multispace0))
+                )
         )
     );
 
-    let (remainder, (option_defs, (scope, body))) = combinator(s)?;
+    let (remainder, (scope, option_defs, body)) = combinator(s)?;
     Ok((remainder, Policy {definitions: option_defs.unwrap_or_default(), scope, body}))
 }
 

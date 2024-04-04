@@ -1,3 +1,7 @@
-{{src}} 
-||
-{{sink}}
+let left_{{counter}} : bool = {
+    {{src}}
+};
+let right_{{counter}} : bool = {
+    {{sink}}
+};
+left_{{counter}} || right_{{counter}}

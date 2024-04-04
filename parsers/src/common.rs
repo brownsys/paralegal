@@ -117,36 +117,14 @@ pub fn marker(s: &str) -> Res<&str, Marker> {
     )(s)
 }
 
-pub fn root_variable(s: &str) -> Res<&str, Variable> {
-    let mut combinator = context(
-        "root variable",
-        tag("input"),
-    );
-    let (remainder, res) = combinator(s)?;
-    Ok((remainder, String::from(res)))
-}
-
-pub fn item_variable(s: &str) -> Res<&str, Variable> {
-    let mut combinator = context(
-        "item variable",
-        tag("item"),
-    );
-    let (remainder, res) = combinator(s)?;
-    Ok((remainder, String::from(res)))
-}
-
 pub fn variable(s: &str) -> Res<&str, Variable> {
     context(
         "variable",
-        alt((
-            delimited(
-                tuple((space0, tag("\""))),
-                alphabetic_with_underscores,
-                tuple((tag("\""), space0)), 
-            ),
-            delimited(space0, root_variable, space0), 
-            delimited(space0, item_variable, space0), 
-        )) 
+        delimited(
+            tuple((space0, tag("\""))),
+            alphabetic_with_underscores,
+            tuple((tag("\""), space0)), 
+        ),
     )(s)
 }
 

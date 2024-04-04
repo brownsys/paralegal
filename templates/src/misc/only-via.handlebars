@@ -1,9 +1,11 @@
-{{src_intro}}
-{{sink_intro}}
-{{checkpoint_intro}}
+{
+    {{src_intro}}
+    {{sink_intro}}
+    {{checkpoint_intro}}
 
-ctx.always_happens_before(
-    {{src}}_nodes.collect::<Vec<_>>(), 
-    |checkpoint| {{checkpoint}}_nodes.contains(checkpoint), 
-    |sink| {{sink}}_nodes.contains(sink)
-)
+    ctx.always_happens_before(
+        {{src}}_nodes.collect::<Vec<_>>(), 
+        |checkpoint| {{checkpoint}}_nodes.collect::<Vec<_>>().contains(&checkpoint), 
+        |sink| {{sink}}_nodes.collect::<Vec<_>>().contains(&sink), 
+    ).unwrap().holds()
+}

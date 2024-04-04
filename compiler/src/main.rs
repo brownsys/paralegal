@@ -1,4 +1,5 @@
 mod compile;
+mod verify_scope;
 
 use std::env;
 use std::fs;

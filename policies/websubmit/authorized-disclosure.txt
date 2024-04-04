@@ -1,3 +1,6 @@
+Scope:
+Everywhere
+
 Definitions:
 1. "blessed" is each "safe_with_bless" marked safe_source_with_bless where:
 	A. There is a "blesser" marked bless_safe_source where:
@@ -11,7 +14,7 @@ Definitions:
 	A. There is a "sensitive_sink" where:
 		a. "scope" goes to the operation associated with "sensitive_sink"
 
-Everywhere:
-1. Each input goes to a "sensitive_scope" only via a "blessed"
+Policy:
+1. Each "root" input goes to a "sensitive_scope" only via a "blessed"
 or
-2. Each input goes to a "sensitive_scope" only via a "safe" marked safe
+2. Each "root" input goes to a "sensitive_scope" only via a "safe" marked safe

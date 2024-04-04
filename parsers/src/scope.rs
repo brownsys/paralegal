@@ -1,7 +1,7 @@
 use nom::{
     branch::alt,
     error::context,
-    sequence::{tuple, delimited}, character::complete::multispace0, bytes::complete::tag,
+    sequence::{tuple, delimited, preceded}, character::complete::multispace0, bytes::complete::tag,
 };
 
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
 fn everywhere(s: &str) -> Res<&str, PolicyScope> {
     let mut combinator = context(
         "everywhere",
-        tuple((multispace0, tag("Everywhere"), colon)),
+        preceded(multispace0, tag("Everywhere")),
     );
     let (remainder, _) = combinator(s)?;
     Ok((remainder, PolicyScope::Everywhere))
@@ -21,7 +21,7 @@ fn everywhere(s: &str) -> Res<&str, PolicyScope> {
 fn somewhere(s: &str) -> Res<&str, PolicyScope> {
     let mut combinator = context(
         "somewhere",
-        tuple((multispace0, tag("Somewhere"), colon)),
+        preceded(multispace0, tag("Somewhere")),
     );
     let (remainder, _) = combinator(s)?;
     Ok((remainder, PolicyScope::Somewhere))
@@ -30,10 +30,9 @@ fn somewhere(s: &str) -> Res<&str, PolicyScope> {
 fn in_ctrler(s: &str) -> Res<&str, PolicyScope> {
     let mut combinator = context(
         "in ctrler",
-        delimited(
+        preceded(
             tuple((multispace0, tag("In"))),
             alphabetic_with_underscores, 
-            colon,
         )
     );
     let (remainder, ctrler) = combinator(s)?;
@@ -42,6 +41,9 @@ fn in_ctrler(s: &str) -> Res<&str, PolicyScope> {
 
 pub fn scope(s: &str) -> Res<&str, PolicyScope> {
     context("scope", 
-        alt((everywhere, somewhere, in_ctrler))
+        preceded(
+            tuple((multispace0, tag("Scope"), colon)), 
+            alt((everywhere, somewhere, in_ctrler))
+        )
     )(s)
 }

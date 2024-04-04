@@ -3,6 +3,7 @@ let found = ctx.all_controllers().find(|(ct_id, ctrl)| {
     &&
     {
         let c_id = *ct_id;
+        {{definitions}}
         {{body}}
     }
 });

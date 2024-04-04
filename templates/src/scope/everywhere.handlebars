@@ -1,4 +1,5 @@
 let is_compliant = ctx.all_controllers().all(|(c_id, _ctrl)| { 
+    {{definitions}}
     {{body}}
 });
     assert_error!(ctx, is_compliant, format!("At least one controller does not satisfy the policy"));
