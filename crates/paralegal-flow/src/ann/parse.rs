@@ -25,10 +25,7 @@ use tokenstream::*;
 
 pub extern crate nom;
 
-use nom::{
-    error::{Error, ErrorKind},
-    Parser,
-};
+use nom::{error::Error, Parser};
 
 /// Just a newtype-wrapper for `CursorRef` so we can implement traits on it
 /// (specifically [`nom::InputLength`]).
