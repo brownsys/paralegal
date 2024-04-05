@@ -380,18 +380,11 @@ pub struct MarkerControl {
     /// is however emitted in that case.
     #[clap(long, env = "PARALEGAL_NO_LOCAL_FUNCTION_TYPE_MARKING")]
     no_local_function_type_marking: bool,
-
-    #[clap(long)]
-    type_marking_v2: bool,
 }
 
 impl MarkerControl {
     pub fn local_function_type_marking(&self) -> bool {
         !self.no_local_function_type_marking
-    }
-
-    pub fn type_marking_v2(&self) -> bool {
-        self.type_marking_v2
     }
 }
 
