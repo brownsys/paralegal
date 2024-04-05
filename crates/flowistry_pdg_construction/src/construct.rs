@@ -714,7 +714,6 @@ impl<'tcx> GraphConstructor<'tcx> {
             );
             true
         } else {
-            dbg!(self.tcx.def_path_str(def_id));
             false
         }
     }
