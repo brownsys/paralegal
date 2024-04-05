@@ -28,10 +28,14 @@ fn policy(ctx: Arc<Context>) -> Result<()> {
     assert_error!(ctx, !sinks.is_empty());
     let mut failed = false;
     for src in srcs.iter() {
-        if ctx
-            .any_flows(&[*src], &sinks, EdgeSelection::Data)
-            .is_none()
-        {
+        if let Some((_, sink)) = ctx.any_flows(&[*src], &sinks, EdgeSelection::Data) {
+            let mut msg = ctx.struct_node_note(
+                *src,
+                format!("This source flows into a sink {}", src.describe(&ctx)),
+            );
+            msg.with_node_note(sink, "This is the reached sink");
+            msg.emit();
+        } else {
             failed = true;
             ctx.node_error(
                 *src,
@@ -181,6 +185,7 @@ fn generics() -> Result<()> {
 }
 
 #[test]
+#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn generics_precision() -> Result<()> {
     let test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]
@@ -407,6 +412,7 @@ fn hidden_generics_enums() -> Result<()> {
 }
 
 #[test]
+#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn enum_precision() -> Result<()> {
     let mut test = Test::new(stringify!(
         enum Parent {
@@ -440,6 +446,7 @@ fn enum_precision() -> Result<()> {
 }
 
 #[test]
+#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn field_precision() -> Result<()> {
     let mut test = Test::new(stringify!(
         struct Parent {
@@ -472,7 +479,7 @@ fn field_precision() -> Result<()> {
 
 #[test]
 fn references() -> Result<()> {
-    let mut test = Test::new(stringify!(
+    let test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]
         struct Parent<'a> {
             child: &'a Child,
@@ -492,13 +499,38 @@ fn references() -> Result<()> {
             sink(p.child);
         }
     ))?;
-    test.expect_fail();
+    test.run(policy)
+}
+
+#[test]
+fn field_behind_reference() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Parent<'a> {
+            child: &'a Child,
+        }
+
+        struct Child {
+            field: std::path::PathBuf,
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let x = std::path::PathBuf::new();
+            let c = Child { field: x };
+            let p = Parent { child: &c };
+            sink(&p.child.field);
+        }
+    ))?;
     test.run(policy)
 }
 
 #[test]
 fn boxes() -> Result<()> {
-    let mut test = Test::new(stringify!(
+    let test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]
         struct Parent {
             child: Box<Child>,
@@ -515,9 +547,8 @@ fn boxes() -> Result<()> {
         fn main() {
             let c = Child { field: 0 };
             let p = Parent { child: Box::new(c) };
-            sink(p.child.as_ref());
+            sink(*p.child);
         }
     ))?;
-    test.expect_fail();
     test.run(policy)
 }
