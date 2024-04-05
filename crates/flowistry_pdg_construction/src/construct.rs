@@ -5,15 +5,18 @@ use either::Either;
 use flowistry::mir::placeinfo::PlaceInfo;
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
-use log::{debug, trace};
+use log::{debug, log_enabled, trace, Level};
 use petgraph::graph::DiGraph;
+
+use rustc_abi::VariantIdx;
 use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceConflictBias};
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        visit::Visitor, BasicBlock, Body, Location, Operand, Place, PlaceElem, Statement,
-        Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
+        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
     ty::{GenericArg, List, ParamEnv, TyCtxt, TyKind},
 };
@@ -29,7 +32,10 @@ use super::calling_convention::*;
 use super::graph::{DepEdge, DepGraph, DepNode};
 use super::utils::{self, FnResolution};
 use crate::graph::{SourceUse, TargetUse};
-use crate::mutation::{ModularMutationVisitor, Mutation};
+use crate::{
+    mutation::{ModularMutationVisitor, Mutation},
+    try_resolve_function,
+};
 
 /// Whether or not to skip recursing into a function call during PDG construction.
 #[derive(Debug)]
@@ -159,9 +165,15 @@ pub enum InlineMissReason {
 impl<'tcx> PdgParams<'tcx> {
     /// Must provide the [`TyCtxt`] and the [`LocalDefId`] of the function that is the root of the PDG.
     pub fn new(tcx: TyCtxt<'tcx>, root: LocalDefId) -> Self {
+        let root = try_resolve_function(
+            tcx,
+            root.to_def_id(),
+            tcx.param_env_reveal_all_normalized(root),
+            tcx.mk_args(&[]),
+        );
         PdgParams {
             tcx,
-            root: FnResolution::Partial(root.to_def_id()),
+            root,
             call_change_callback: None,
             dump_mir: false,
         }
@@ -238,9 +250,9 @@ impl<'tcx> df::JoinSemiLattice for PartialGraph<'tcx> {
 }
 
 pub(crate) struct CallingContext<'tcx> {
-    call_string: CallString,
-    param_env: ParamEnv<'tcx>,
-    call_stack: Vec<DefId>,
+    pub(crate) call_string: CallString,
+    pub(crate) param_env: ParamEnv<'tcx>,
+    pub(crate) call_stack: Vec<DefId>,
 }
 
 type PdgCache<'tcx> = Rc<Cache<CallString, Rc<PartialGraph<'tcx>>>>;
@@ -354,7 +366,7 @@ impl<'tcx> GraphConstructor<'tcx> {
     ) -> CallingContext<'tcx> {
         CallingContext {
             call_string: self.make_call_string(location),
-            param_env: self.tcx.param_env(self.def_id),
+            param_env: self.tcx.param_env_reveal_all_normalized(self.def_id),
             call_stack: match &self.calling_context {
                 Some(cx) => {
                     let mut cx = cx.call_stack.clone();
@@ -578,11 +590,11 @@ impl<'tcx> GraphConstructor<'tcx> {
         inputs: Inputs<'tcx>,
         target_use: TargetUse,
     ) {
-        trace!("Applying mutation to {mutated:?} with inputs {inputs:?}");
+        trace!("Applying mutation to {mutated:?} with inputs {inputs:?} at {location:?}");
 
         let ctrl_inputs = self.find_control_inputs(location);
 
-        trace!("Found control inputs {ctrl_inputs:?}");
+        trace!("  Found control inputs {ctrl_inputs:?}");
 
         let data_inputs = match inputs {
             Inputs::Unresolved { places } => places
@@ -609,7 +621,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         trace!("  Outputs: {outputs:?}");
 
         for output in &outputs {
-            trace!("Adding node {output:?}");
+            trace!("  Adding node {output}");
             state.nodes.insert(*output);
         }
 
@@ -617,7 +629,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         for (data_input, source_use) in data_inputs {
             let data_edge = DepEdge::data(self.make_call_string(location), source_use, target_use);
             for output in &outputs {
-                trace!("Adding edge {data_input:?} -> {output:?}");
+                trace!("  Adding edge {data_input} -> {output}");
                 state.edges.insert((data_input, *output, data_edge));
             }
         }
@@ -635,17 +647,18 @@ impl<'tcx> GraphConstructor<'tcx> {
         &self,
         func: &Operand<'tcx>,
     ) -> Option<(DefId, &'tcx List<GenericArg<'tcx>>)> {
-        match func {
-            Operand::Constant(func) => match func.literal.ty().kind() {
-                TyKind::FnDef(def_id, generic_args) => Some((*def_id, generic_args)),
-                ty => {
-                    trace!("Bailing from handle_call because func is literal with type: {ty:?}");
-                    None
-                }
-            },
+        let ty = match func {
+            Operand::Constant(func) => func.literal.ty(),
             Operand::Copy(place) | Operand::Move(place) => {
-                // TODO: control-flow analysis to deduce fn for inlined closures
-                trace!("Bailing from handle_call because func is place {place:?}");
+                place.ty(&self.body.local_decls, self.tcx).ty
+            }
+        };
+        let ty = utils::ty_resolve(ty, self.tcx);
+        match ty.kind() {
+            TyKind::FnDef(def_id, generic_args) => Some((*def_id, generic_args)),
+            TyKind::Generator(def_id, generic_args, _) => Some((*def_id, generic_args)),
+            ty => {
+                trace!("Bailing from handle_call because func is literal with type: {ty:?}");
                 None
             }
         }
@@ -653,6 +666,57 @@ impl<'tcx> GraphConstructor<'tcx> {
 
     fn fmt_fn(&self, def_id: DefId) -> String {
         self.tcx.def_path_str(def_id)
+    }
+
+    /// Special case behavior for calls to functions used in desugaring async functions.
+    ///
+    /// Ensures that functions like `Pin::new_unchecked` are not modularly-approximated.
+    fn approximate_async_functions(
+        &self,
+        state: &mut PartialGraph<'tcx>,
+        def_id: DefId,
+        args: &[Operand<'tcx>],
+        destination: Place<'tcx>,
+        location: Location,
+    ) -> bool {
+        let lang_items = self.tcx.lang_items();
+        if Some(def_id) == lang_items.new_unchecked_fn() {
+            let [op] = args else {
+                unreachable!();
+            };
+            let mut operands = IndexVec::new();
+            operands.push(op.clone());
+            let TyKind::Adt(adt_id, generics) =
+                destination.ty(self.body.as_ref(), self.tcx).ty.kind()
+            else {
+                unreachable!()
+            };
+            assert_eq!(adt_id.did(), lang_items.pin_type().unwrap());
+            let aggregate_kind =
+                AggregateKind::Adt(adt_id.did(), VariantIdx::from_u32(0), generics, None, None);
+            let rvalue = Rvalue::Aggregate(Box::new(aggregate_kind), operands);
+            trace!("Handling new_unchecked as assign for {destination:?}");
+            self.modular_mutation_visitor(state)
+                .visit_assign(&destination, &rvalue, location);
+            true
+        } else if Some(def_id) == lang_items.into_future_fn()
+            // FIXME: better way to get retrieve this stdlib DefId?
+            || self.tcx.def_path_str(def_id) == "<F as std::future::IntoFuture>::into_future"
+        {
+            trace!("Handling into_future as assign for {destination:?}");
+            let [op] = args else {
+                unreachable!();
+            };
+            self.modular_mutation_visitor(state).visit_assign(
+                &destination,
+                &Rvalue::Use(op.clone()),
+                location,
+            );
+            true
+        } else {
+            dbg!(self.tcx.def_path_str(def_id));
+            false
+        }
     }
 
     /// Attempt to inline a call to a function, returning None if call is not inline-able.
@@ -673,11 +737,11 @@ impl<'tcx> GraphConstructor<'tcx> {
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
 
         // Monomorphize the called function with the known generic_args.
-        let param_env = tcx.param_env(self.def_id);
+        let param_env = tcx.param_env_reveal_all_normalized(self.def_id);
         let resolved_fn =
             utils::try_resolve_function(self.tcx, called_def_id, param_env, generic_args);
         let resolved_def_id = resolved_fn.def_id();
-        if called_def_id != resolved_def_id {
+        if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
             trace!("  `{called}` monomorphized to `{resolved}`",);
         }
@@ -688,6 +752,10 @@ impl<'tcx> GraphConstructor<'tcx> {
                 trace!("  Bailing due to recursive call");
                 return None;
             }
+        }
+
+        if self.approximate_async_functions(state, resolved_def_id, args, destination, location) {
+            return Some(());
         }
 
         if !resolved_def_id.is_local() {
@@ -738,7 +806,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             )?;
 
             let parent_place_projected = parent_place.project_deeper(child_projection, tcx);
-            trace!("    Translated to: {parent_place_projected:?}");
+            trace!("  ⮑ Translated to: {parent_place_projected:?}");
             Some(utils::retype_place(
                 parent_place_projected,
                 self.tcx,
@@ -787,6 +855,15 @@ impl<'tcx> GraphConstructor<'tcx> {
         // Handle async functions at the time of polling, not when the future is created.
         if tcx.asyncness(resolved_def_id).is_async() {
             trace!("  Bailing because func is async");
+
+            // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
+            let rvalue = Rvalue::Aggregate(
+                Box::new(AggregateKind::Tuple),
+                IndexVec::from_iter(args.iter().cloned()),
+            );
+            self.modular_mutation_visitor(state)
+                .visit_assign(&destination, &rvalue, location);
+
             // If a skip was requested then "poll" will not be inlined later so we
             // bail with "None" here and perform the mutations. Otherwise we bail with
             // "Some", knowing that handling "poll" later will handle the mutations.
@@ -884,6 +961,7 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
+        trace!("PARENT -> CHILD EDGES:");
         for (child_src, _kind) in parentable_srcs {
             if let Some(parent_place) = translate_to_parent(child_src.place) {
                 self.apply_mutation(
@@ -903,6 +981,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         //
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
+        trace!("CHILD -> PARENT EDGES:");
         for (child_dst, kind) in parentable_dsts {
             if let Some(parent_place) = translate_to_parent(child_dst.place) {
                 self.apply_mutation(
@@ -1086,7 +1165,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         &'a self,
         def_id: DefId,
         original_args: &'a [Operand<'tcx>],
-    ) -> Result<CallKind<'tcx, 'a>, String> {
+    ) -> Result<CallKind<'tcx>, String> {
         match self.try_poll_call_kind(def_id, original_args) {
             AsyncDeterminationResult::Resolved(r) => Ok(r),
             AsyncDeterminationResult::NotAsync => Ok(self
@@ -1096,7 +1175,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
     }
 
-    fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx, '_>> {
+    fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
         let lang_items = self.tcx.lang_items();
         let my_impl = self.tcx.impl_of_method(def_id)?;
         let my_trait = self.tcx.trait_id_of_impl(my_impl)?;
@@ -1107,17 +1186,13 @@ impl<'tcx> GraphConstructor<'tcx> {
     }
 }
 
-pub enum CallKind<'tcx, 'a> {
+pub enum CallKind<'tcx> {
     /// A standard function call like `f(x)`.
     Direct,
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
     Indirect,
     /// A poll to an async function, like `f.await`.
-    AsyncPoll(
-        FnResolution<'tcx>,
-        Location,
-        AsyncCallingConvention<'tcx, 'a>,
-    ),
+    AsyncPoll(FnResolution<'tcx>, Location, Place<'tcx>),
 }
 
 struct DfAnalysis<'a, 'tcx>(&'a GraphConstructor<'tcx>);

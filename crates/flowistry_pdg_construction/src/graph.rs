@@ -28,7 +28,7 @@ pub struct DepNode<'tcx> {
     /// Pretty representation of the place.
     /// This is cached as an interned string on [`DepNode`] because to compute it later,
     /// we would have to regenerate the entire monomorphized body for a given place.
-    place_pretty: Option<Intern<String>>,
+    pub(crate) place_pretty: Option<Intern<String>>,
 }
 
 impl PartialEq for DepNode<'_> {
@@ -183,7 +183,7 @@ impl<'tcx> DepGraph<'tcx> {
                 &self.graph,
                 &[],
                 &|_, _| format!("fontname=\"Courier New\""),
-                &|_, (_, _)| format!("fontname=\"Courier New\"")
+                &|_, (_, _)| format!("fontname=\"Courier New\",shape=box")
             )
         );
         rustc_utils::mir::body::run_dot(path.as_ref(), graph_dot.into_bytes())

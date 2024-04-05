@@ -1,18 +1,22 @@
 //! Identifies the mutated places in a MIR instruction via modular approximation based on types.
 
 use flowistry_pdg::{rustc_portable::Place, TargetUse};
+use itertools::Itertools;
 use log::debug;
 use rustc_middle::{
     mir::{visit::Visitor, *},
     ty::{AdtKind, TyKind},
 };
 use rustc_target::abi::FieldIdx;
+
 use rustc_utils::{mir::place::PlaceCollector, AdtDefExt, OperandExt, PlaceExt};
 
 use flowistry::mir::{
     placeinfo::PlaceInfo,
     utils::{self, AsyncHack},
 };
+
+use crate::utils::ty_resolve;
 
 /// Indicator of certainty about whether a place is being mutated.
 /// Used to determine whether an update should be strong or weak.
@@ -117,15 +121,24 @@ where
                             (mutated.project_deeper(&[field], tcx), input_place)
                         });
                 for (mutated, input) in fields {
-                    (self.f)(
-                        location,
-                        Mutation {
-                            mutated,
-                            mutation_reason: TargetUse::Assign,
-                            inputs: input.map(|i| (i, None)).into_iter().collect::<Vec<_>>(),
-                            status: MutationStatus::Definitely,
-                        },
-                    )
+                    match input {
+                        // If we have an aggregate of aggregates, then recursively destructure sub-aggregates
+                        Some(input_place) => self.visit_assign(
+                            &mutated,
+                            &Rvalue::Use(Operand::Move(input_place)),
+                            location,
+                        ),
+                        // Otherwise, just record the mutation.
+                        None => (self.f)(
+                            location,
+                            Mutation {
+                                mutated,
+                                mutation_reason: TargetUse::Assign,
+                                inputs: input.map(|i| (i, None)).into_iter().collect::<Vec<_>>(),
+                                status: MutationStatus::Definitely,
+                            },
+                        ),
+                    }
                 }
                 true
             }
@@ -134,21 +147,31 @@ where
             // then destructure this into a series of mutations like
             // _1.x = _2.x, _1.y = _2.y, and so on.
             Rvalue::Use(Operand::Move(place) | Operand::Copy(place)) => {
-                let place_ty = place.ty(&body.local_decls, tcx).ty;
-                let TyKind::Adt(adt_def, substs) = place_ty.kind() else {
-                    return false;
+                let place_ty = ty_resolve(place.ty(&body.local_decls, tcx).ty, tcx);
+                let fields = match place_ty.kind() {
+                    TyKind::Adt(adt_def, substs) => {
+                        if !adt_def.is_struct() {
+                            return false;
+                        };
+                        adt_def
+                            .all_visible_fields(self.place_info.def_id, self.place_info.tcx)
+                            .enumerate()
+                            .map(|(i, field_def)| {
+                                PlaceElem::Field(FieldIdx::from_usize(i), field_def.ty(tcx, substs))
+                            })
+                            .collect_vec()
+                    }
+                    TyKind::Generator(_, args, _) => {
+                        let ty = args.as_generator().prefix_tys();
+                        ty.iter()
+                            .enumerate()
+                            .map(|(i, ty)| PlaceElem::Field(FieldIdx::from_usize(i), ty))
+                            .collect_vec()
+                    }
+
+                    _ty => return false,
                 };
-                if !adt_def.is_struct() {
-                    return false;
-                };
-                let mut fields = adt_def
-                    .all_visible_fields(self.place_info.def_id, self.place_info.tcx)
-                    .enumerate()
-                    .map(|(i, field_def)| {
-                        PlaceElem::Field(FieldIdx::from_usize(i), field_def.ty(tcx, substs))
-                    })
-                    .peekable();
-                if fields.peek().is_none() {
+                if fields.is_empty() {
                     (self.f)(
                         location,
                         Mutation {
