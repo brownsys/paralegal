@@ -503,6 +503,104 @@ fn references() -> Result<()> {
 }
 
 #[test]
+fn hidden_references() -> Result<()> {
+    let test = Test::new(stringify!(
+        struct Parent<'a> {
+            child: &'a Child,
+        }
+
+        #[paralegal::marker(dangerous)]
+        struct Child {
+            field: usize,
+        }
+
+        #[paralegal::marker(noinline)]
+        fn source<'a>() -> Parent<'a> {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let p = source();
+            sink(p);
+        }
+    ))?;
+    test.run(policy)
+}
+
+#[test]
+fn hidden_field_and_reference() -> Result<()> {
+    let test = Test::new(stringify!(
+        struct Parent<'a> {
+            child: &'a Child,
+        }
+
+        struct Child {
+            field: Grandchild,
+        }
+
+        #[paralegal::marker(dangerous)]
+        struct Grandchild {
+            field: usize,
+        }
+
+        #[paralegal::marker(noinline)]
+        fn source<'a>() -> Parent<'a> {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let p = source();
+            sink(p);
+        }
+    ))?;
+    test.run(policy)
+}
+
+#[test]
+#[ignore = "Undecided semantics. https://github.com/brownsys/paralegal/issues/129"]
+fn mut_reference() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Parent<'a> {
+            child: &'a mut Child,
+        }
+
+        struct Child {
+            field: usize,
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let mut c = Child { field: 0 };
+            let p = Parent { child: &mut c };
+            sink(c);
+        }
+    ))?;
+    test.run(|ctx| {
+        let m_dangerous = Identifier::new_intern("dangerous");
+        let m_sink = Identifier::new_intern("sink");
+        let srcs = ctx.nodes_marked_any_way(m_dangerous).collect::<Box<_>>();
+        let sinks = ctx.nodes_marked_any_way(m_sink).collect::<Box<_>>();
+        assert_error!(
+            ctx,
+            ctx.any_flows(&srcs, &sinks, EdgeSelection::Data).is_some()
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn field_behind_reference() -> Result<()> {
     let test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]
