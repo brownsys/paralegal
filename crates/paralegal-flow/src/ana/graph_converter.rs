@@ -298,7 +298,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         &self,
         at: CallString,
         place: mir::PlaceRef<'tcx>,
-    ) -> mir::tcx::PlaceTy<'tcx> {
+    ) -> Option<mir::tcx::PlaceTy<'tcx>> {
         let tcx = self.tcx();
         let locations = at.iter_from_root().collect::<Vec<_>>();
         let (last, mut rest) = locations.split_last().unwrap();
@@ -316,7 +316,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // Flowistry sometimes tracks subplaces instead but we want the marker
         // from the base place.
         let place = if self.entrypoint_is_async() && place.local.as_u32() == 1 && rest.len() == 1 {
-            assert!(place.projection.len() >= 1, "{place:?} at {rest:?}");
+            if place.projection.len() < 1 {
+                return None;
+            }
             // in the case of targeting the top-level async closure (e.g. async args)
             // we'll keep the first projection.
             mir::Place {
@@ -332,7 +334,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // Thread through each caller to recover generic arguments
         let body = tcx.body_for_def_id(last.function).unwrap();
         let raw_ty = place.ty(&body.body, tcx);
-        *resolution.try_monomorphize(tcx, ty::ParamEnv::reveal_all(), &raw_ty)
+        Some(*resolution.try_monomorphize(tcx, ty::ParamEnv::reveal_all(), &raw_ty))
     }
 
     /// Fetch annotations item identified by this `id`.
@@ -369,13 +371,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn handle_node_types(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
         let i = self.new_node_for(old_node);
 
-        let place_ty = self.determine_place_type(weight.at, weight.place.as_ref());
+        let place_ty = self
+            .determine_place_type(weight.at, weight.place.as_ref())
+            .unwrap();
         let place_info = self.place_info(weight.at.leaf().function);
         let deep = !place_info.children(weight.place).is_empty();
         let mut node_types = self.type_is_marked(place_ty, deep).collect::<HashSet<_>>();
         for (p, _) in weight.place.iter_projections() {
-            let place_ty = self.determine_place_type(weight.at, p);
-            node_types.extend(self.type_is_marked(place_ty, false));
+            if let Some(place_ty) = self.determine_place_type(weight.at, p) {
+                node_types.extend(self.type_is_marked(place_ty, false));
+            }
         }
         self.known_def_ids.extend(node_types.iter().copied());
         let tcx = self.tcx();
