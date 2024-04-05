@@ -685,3 +685,36 @@ pdg_test! {
   (x -fake> z),
   (y -fake> *b)
 }
+
+pdg_test! {
+  clone,
+  {
+    #[derive(Clone)]
+    struct Foo {
+      x: i32,
+      y: i32
+    }
+
+    fn main() {
+      let x = 1;
+      let y = 2;
+      let a = Foo { x, y };
+      let b = a.clone();
+      let z = b.x;
+    }
+  },
+  (x -> z),
+  (y -/> z)
+}
+
+pdg_test! {
+  async_mut_arg,
+  {
+    async fn foo(x: &mut i32) {}
+    async fn main() {
+      let mut x = 1;
+      foo(&mut x).await;
+    }
+  },
+  (x -/> x)
+}
