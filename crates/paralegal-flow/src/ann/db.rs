@@ -290,7 +290,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn deep_type_markers<'a>(&'a self, key: ty::Ty<'tcx>) -> &'a TypeMarkers {
         self.0
             .type_markers
-            .get(key, |key| {
+            .get_maybe_recursive(key, |key| {
                 use ty::*;
                 let tcx = self.tcx();
                 let mut markers = self.shallow_type_markers(key).collect::<Vec<_>>();
@@ -334,7 +334,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                 }
                 markers.as_slice().into()
             })
-            .as_ref()
+            .map_or(&[], Box::as_ref)
     }
 
     fn type_markers_for_adt<'a>(
