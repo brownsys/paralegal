@@ -268,13 +268,32 @@ impl<'tcx> MarkerCtx<'tcx> {
         })
     }
 
-    pub fn type_markers<'a>(&'a self, key: ty::Ty<'tcx>) -> &'a TypeMarkers<'tcx> {
+    pub fn shallow_type_markers<'a>(
+        &'a self,
+        key: ty::Ty<'tcx>,
+    ) -> impl Iterator<Item = TypeMarkerElem> + 'a {
+        use ty::*;
+        let def_id = match key.kind() {
+            Adt(def, _) => Some(def.did()),
+            Alias(_, inner) => Some(inner.def_id),
+            _ => None,
+        };
+        def_id
+            .map(|def_id| {
+                self.combined_markers(def_id)
+                    .map(move |m| (def_id, m.marker))
+            })
+            .into_iter()
+            .flatten()
+    }
+
+    pub fn deep_type_markers<'a>(&'a self, key: ty::Ty<'tcx>) -> &'a TypeMarkers {
         self.0
             .type_markers
             .get(key, |key| {
                 use ty::*;
                 let tcx = self.tcx();
-                let mut markers = Vec::new();
+                let mut markers = self.shallow_type_markers(key).collect::<Vec<_>>();
                 match key.kind() {
                     Bool
                     | Char
@@ -293,19 +312,17 @@ impl<'tcx> MarkerCtx<'tcx> {
                     | Bound { .. }
                     | Error(_) => (),
                     Adt(def, generics) => markers.extend(self.type_markers_for_adt(def, &generics)),
-                    Tuple(tys) => markers.extend(tys.iter().enumerate().flat_map(|(idx, ty)| {
-                        let project = Box::new([mir::PlaceElem::Field(idx.into(), ty)]);
-                        self.submarkers_projected(project, ty)
-                    })),
-                    Alias(_, inner) => return self.type_markers(inner.to_ty(tcx)).into(),
+                    Tuple(tys) => {
+                        markers.extend(tys.iter().flat_map(|ty| self.deep_type_markers(ty)))
+                    }
+                    Alias(_, inner) => return self.deep_type_markers(inner.to_ty(tcx)).into(),
                     // We can't track indices so we simply overtaint to the entire array
-                    Array(inner, _) | Slice(inner) => markers.extend(
-                        self.type_markers(*inner)
-                            .iter()
-                            .map(|(_, marker)| (ty::List::empty(), *marker)),
-                    ),
-                    RawPtr(ty::TypeAndMut { ty, .. }) | Ref(_, ty, _) => markers
-                        .extend(self.submarkers_projected(Box::new([mir::PlaceElem::Deref]), *ty)),
+                    Array(inner, _) | Slice(inner) => {
+                        markers.extend(self.deep_type_markers(*inner))
+                    }
+                    RawPtr(ty::TypeAndMut { ty, .. }) | Ref(_, ty, _) => {
+                        markers.extend(self.deep_type_markers(*ty))
+                    }
                     Param(_) | Dynamic { .. } => self
                         .tcx()
                         .sess
@@ -320,44 +337,22 @@ impl<'tcx> MarkerCtx<'tcx> {
             .as_ref()
     }
 
-    fn submarkers_projected<'a>(
-        &'a self,
-        projection: Box<[mir::PlaceElem<'tcx>]>,
-        t: ty::Ty<'tcx>,
-    ) -> impl Iterator<Item = TypeMarkerElem<'tcx>> + 'a {
-        self.type_markers(t)
-            .iter()
-            .map(move |(inner_projection, marker)| {
-                (
-                    self.tcx().mk_place_elems_from_iter(
-                        projection.iter().copied().chain(inner_projection.iter()),
-                    ),
-                    *marker,
-                )
-            })
-    }
-
     fn type_markers_for_adt<'a>(
         &'a self,
         adt: &'a ty::AdtDef<'tcx>,
         generics: &'tcx ty::List<ty::GenericArg<'tcx>>,
-    ) -> impl Iterator<Item = TypeMarkerElem<'tcx>> + 'a {
+    ) -> impl Iterator<Item = &'a TypeMarkerElem> {
         let tcx = self.tcx();
         adt.variants()
             .iter_enumerated()
-            .flat_map(move |(vidx, vdef)| {
-                vdef.fields.iter_enumerated().flat_map(move |(fidx, fdef)| {
+            .flat_map(move |(_, vdef)| {
+                vdef.fields.iter_enumerated().flat_map(move |(_, fdef)| {
                     let f_ty = fdef.ty(tcx, generics);
-                    let variant_project = adt
-                        .is_enum()
-                        .then_some(mir::PlaceElem::Downcast(Some(vdef.name), vidx));
-                    let outer_projection = variant_project
-                        .into_iter()
-                        .chain([mir::PlaceElem::Field(fidx, f_ty)])
-                        .collect::<Box<_>>();
-                    self.submarkers_projected(outer_projection, f_ty)
+                    self.deep_type_markers(f_ty)
                 })
             })
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
@@ -426,8 +421,8 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 }
 
-pub type TypeMarkerElem<'tcx> = (&'tcx ty::List<mir::PlaceElem<'tcx>>, Identifier);
-pub type TypeMarkers<'tcx> = [TypeMarkerElem<'tcx>];
+pub type TypeMarkerElem = (DefId, Identifier);
+pub type TypeMarkers = [TypeMarkerElem];
 
 /// The structure inside of [`MarkerCtx`].
 pub struct MarkerDatabase<'tcx> {
@@ -440,7 +435,7 @@ pub struct MarkerDatabase<'tcx> {
     reachable_markers: Cache<FnResolution<'tcx>, Box<[Identifier]>>,
     /// Configuration options
     config: &'static MarkerControl,
-    type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers<'tcx>>>,
+    type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {

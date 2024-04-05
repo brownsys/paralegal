@@ -16,6 +16,7 @@ paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }
 
 flowistry_pdg_construction = { path = "../flowistry_pdg_construction" }
 flowistry_pdg = { path = "../flowistry_pdg" }
+flowistry = { workspace = true }
 
 rustc_utils = { workspace = true }
 rustc_plugin = { workspace = true }

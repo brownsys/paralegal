@@ -8,8 +8,10 @@ use crate::{
     utils::*,
     DefId, HashMap, HashSet, MarkerCtx,
 };
+use flowistry::mir::placeinfo::PlaceInfo;
 use flowistry_pdg::SourceUse;
 use paralegal_spdg::{Node, SPDGStats};
+use rustc_utils::cache::Cache;
 
 use std::{
     cell::RefCell,
@@ -64,7 +66,10 @@ pub struct GraphConverter<'tcx, 'a, C> {
     call_string_resolver: call_string_resolver::CallStringResolver<'tcx>,
     stats: SPDGStats,
     analyzed_functions: HashSet<LocalDefId>,
+    place_info_cache: PlaceInfoCache<'tcx>,
 }
+
+pub type PlaceInfoCache<'tcx> = Rc<Cache<LocalDefId, PlaceInfo<'tcx>>>;
 
 impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// Initialize a new converter by creating an initial PDG using flowistry.
@@ -72,6 +77,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         generator: &'a SPDGGenerator<'tcx>,
         known_def_ids: &'a mut C,
         target: FnToAnalyze,
+        place_info_cache: PlaceInfoCache<'tcx>,
     ) -> Result<Self> {
         let local_def_id = target.def_id.expect_local();
         let start = Instant::now();
@@ -101,6 +107,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             call_string_resolver: CallStringResolver::new(generator.tcx, local_def_id),
             stats,
             analyzed_functions,
+            place_info_cache,
         })
     }
 
@@ -144,6 +151,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 .or_default()
                 .extend(markers);
         }
+    }
+
+    fn place_info(&self, def_id: LocalDefId) -> &PlaceInfo<'tcx> {
+        self.place_info_cache.get(def_id, |_| {
+            PlaceInfo::build(
+                self.tcx(),
+                def_id.to_def_id(),
+                &self.tcx().body_for_def_id(def_id).unwrap(),
+            )
+        })
     }
 
     /// Find direct annotations on this node and register them in the marker map.
@@ -280,7 +297,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn determine_place_type(
         &self,
         at: CallString,
-        place: mir::Place<'tcx>,
+        place: mir::PlaceRef<'tcx>,
     ) -> mir::tcx::PlaceTy<'tcx> {
         let tcx = self.tcx();
         let locations = at.iter_from_root().collect::<Vec<_>>();
@@ -352,9 +369,14 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn handle_node_types(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
         let i = self.new_node_for(old_node);
 
-        let place_ty = self.determine_place_type(weight.at, weight.place);
-
-        let node_types = self.type_is_marked(place_ty, true);
+        let place_ty = self.determine_place_type(weight.at, weight.place.as_ref());
+        let place_info = self.place_info(weight.at.leaf().function);
+        let deep = !place_info.children(weight.place).is_empty();
+        let mut node_types = self.type_is_marked(place_ty, deep).collect::<HashSet<_>>();
+        for (p, _) in weight.place.iter_projections() {
+            let place_ty = self.determine_place_type(weight.at, p);
+            node_types.extend(self.type_is_marked(place_ty, false));
+        }
         self.known_def_ids.extend(node_types.iter().copied());
         let tcx = self.tcx();
         if !node_types.is_empty() {
@@ -593,18 +615,22 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     /// Return the (sub)types of this type that are marked.
-    fn type_is_marked(&self, typ: mir::tcx::PlaceTy<'tcx>, walk: bool) -> Vec<TypeId> {
-        if walk {
-            self.marker_ctx()
-                .all_type_markers(typ.ty)
-                .map(|t| t.1 .1)
-                .collect()
+    fn type_is_marked(
+        &'a self,
+        typ: mir::tcx::PlaceTy<'tcx>,
+        deep: bool,
+    ) -> impl Iterator<Item = TypeId> + 'a {
+        if deep {
+            Either::Left(self.marker_ctx().deep_type_markers(typ.ty).iter().copied())
         } else {
-            self.marker_ctx()
-                .type_has_surface_markers(typ.ty)
-                .into_iter()
-                .collect()
+            Either::Right(self.marker_ctx().shallow_type_markers(typ.ty))
         }
+        .map(|(d, _)| d)
+
+        //     self.marker_ctx()
+        //         .all_type_markers(typ.ty)
+        //         .map(|t| t.1 .1)
+        //         .collect()
     }
 
     /// Similar to `CallString::is_at_root`, but takes into account top-level
