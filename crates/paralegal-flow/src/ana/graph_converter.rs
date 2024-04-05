@@ -316,7 +316,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // Flowistry sometimes tracks subplaces instead but we want the marker
         // from the base place.
         let place = if self.entrypoint_is_async() && place.local.as_u32() == 1 && rest.len() == 1 {
-            if place.projection.len() == 1 {
+            if place.projection.is_empty() {
                 return None;
             }
             // in the case of targeting the top-level async closure (e.g. async args)
