@@ -316,7 +316,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // Flowistry sometimes tracks subplaces instead but we want the marker
         // from the base place.
         let place = if self.entrypoint_is_async() && place.local.as_u32() == 1 && rest.len() == 1 {
-            if place.projection.len() < 1 {
+            if place.projection.len() == 1 {
                 return None;
             }
             // in the case of targeting the top-level async closure (e.g. async args)
@@ -371,9 +371,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn handle_node_types(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
         let i = self.new_node_for(old_node);
 
-        let place_ty = self
-            .determine_place_type(weight.at, weight.place.as_ref())
-            .unwrap();
+        let Some(place_ty) = self.determine_place_type(weight.at, weight.place.as_ref()) else {
+            return;
+        };
         let place_info = self.place_info(weight.at.leaf().function);
         let deep = !place_info.children(weight.place).is_empty();
         let mut node_types = self.type_is_marked(place_ty, deep).collect::<HashSet<_>>();
