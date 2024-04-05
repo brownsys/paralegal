@@ -292,7 +292,6 @@ impl<'tcx> MarkerCtx<'tcx> {
             .type_markers
             .get_maybe_recursive(key, |key| {
                 use ty::*;
-                let tcx = self.tcx();
                 let mut markers = self.shallow_type_markers(key).collect::<Vec<_>>();
                 match key.kind() {
                     Bool
@@ -315,7 +314,10 @@ impl<'tcx> MarkerCtx<'tcx> {
                     Tuple(tys) => {
                         markers.extend(tys.iter().flat_map(|ty| self.deep_type_markers(ty)))
                     }
-                    Alias(_, inner) => return self.deep_type_markers(inner.to_ty(tcx)).into(),
+                    Alias(_, _) => {
+                        trace!("Alias type {key:?} remains. Was not normalized.");
+                        return Box::new([]);
+                    }
                     // We can't track indices so we simply overtaint to the entire array
                     Array(inner, _) | Slice(inner) => {
                         markers.extend(self.deep_type_markers(*inner))
