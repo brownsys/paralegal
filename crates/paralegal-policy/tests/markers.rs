@@ -254,12 +254,12 @@ fn generics_fields_and_enums() -> Result<()> {
         }
 
         #[paralegal::marker(noinline)]
-        fn source() -> Vec<Parent> {
+        fn source() -> Option<Parent> {
             unreachable!()
         }
 
         #[paralegal::marker(noinline)]
-        fn source2() -> Vec<Parent2> {
+        fn source2() -> Option<Parent2> {
             unreachable!()
         }
 
@@ -269,10 +269,10 @@ fn generics_fields_and_enums() -> Result<()> {
         #[paralegal::analyze]
         fn main() {
             let mut p = source();
-            sink(p.pop().unwrap().child);
+            sink(p.unwrap().child);
 
             let mut p = source2();
-            match p.pop() {
+            match p {
                 Some(Parent2::Child(c)) => sink(c),
                 _ => (),
             }
@@ -341,6 +341,72 @@ fn hidden_enums() -> Result<()> {
 }
 
 #[test]
+fn hidden_generics_fields() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Child {
+            field: usize,
+        }
+
+        struct Parent {
+            child: Child,
+        }
+
+        enum Parent2 {
+            Child(Child),
+        }
+
+        #[paralegal::marker(noinline)]
+        fn source() -> Option<Vec<Parent>> {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            sink(source());
+        }
+    ))?;
+
+    test.run(policy)
+}
+
+#[test]
+fn hidden_generics_enums() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Child {
+            field: usize,
+        }
+
+        struct Parent {
+            child: Child,
+        }
+
+        enum Parent2 {
+            Child(Child),
+        }
+
+        #[paralegal::marker(noinline)]
+        fn source() -> Option<Vec<Parent2>> {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            sink(source());
+        }
+    ))?;
+
+    test.run(policy)
+}
+
+#[test]
 fn enum_precision() -> Result<()> {
     let mut test = Test::new(stringify!(
         enum Parent {
@@ -398,6 +464,58 @@ fn field_precision() -> Result<()> {
         fn main() {
             let p = source();
             sink(p.other);
+        }
+    ))?;
+    test.expect_fail();
+    test.run(policy)
+}
+
+#[test]
+fn references() -> Result<()> {
+    let mut test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Parent<'a> {
+            child: &'a Child,
+        }
+
+        struct Child {
+            field: usize,
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let c = Child { field: 0 };
+            let p = Parent { child: &c };
+            sink(p.child);
+        }
+    ))?;
+    test.expect_fail();
+    test.run(policy)
+}
+
+#[test]
+fn boxes() -> Result<()> {
+    let mut test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Parent {
+            child: Box<Child>,
+        }
+
+        struct Child {
+            field: usize,
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let c = Child { field: 0 };
+            let p = Parent { child: Box::new(c) };
+            sink(p.child.as_ref());
         }
     ))?;
     test.expect_fail();
