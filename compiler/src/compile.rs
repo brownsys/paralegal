@@ -13,9 +13,14 @@ fn compile_variable_intro(
     map: &mut HashMap<&str, String>,
 ) -> (String, String) {
     match intro {
-         VariableIntro::Roots(var) | VariableIntro::AllNodes(var) | VariableIntro::Variable(var) => {
+         VariableIntro::Roots(var) | VariableIntro::AllNodes(var) => {
             map.insert("var", var.into());
         },
+        VariableIntro::Variable(var) => {
+            map.insert("var", var.into());
+            // just insert a non-null string
+            map.insert("definition", String::from("true"));
+        }
         VariableIntro::VariableMarked((var, marker)) | VariableIntro::VariableOfTypeMarked((var, marker)) => {
             map.insert("var", var.into());
             map.insert("marker", marker.into());

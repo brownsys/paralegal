@@ -2,4 +2,4 @@
 let {{var}}_nodes = {{inner_var}}_nodes.filter(|n| {
     let {{inner_var}} = *n;
     {{{filter}}}
-});
+}).collect::<Vec<_>>();

@@ -2,20 +2,22 @@ Scope:
 Everywhere
 
 Definitions:
-1. "stored_commit" is each "commit" marked commit where:
-    A. There is a "store" marked store where:
-        a. "commit" goes to "store"
+1. "stored_resource" is each "resource" marked resource where:
+    A. There is a "store" marked sink where:
+        a. "resource" goes to "store"
 
-2. "new_resource" is each "resource" marked new_resource where:
-    A. There is a "stored_commit" where:
-        a. "resource" goes to "stored_commit" 
+2. "set_new_resource_properties" is each "set_property_val" marked new_resource where:
+    A. There is a "stored_resource" where:
+        a. For each "parent_val" marked parent_property:
+            i) "stored_resource" does not go to "parent_val"
+        and
+        b. "stored_resource" goes to "set_property_val"
 
 Policy:
-1. For each "stored_commit":
-    A. There is a "auth_check" marked auth_check where:
-        a. For each "new_resource":
-            i) "new_resource" does not go to "auth_check"
-        and
-        b. "stored_commit" goes to "auth_check"
-        and
-        c. "auth_check" affects whether "stored_commit" happens
+1. For each "set_new_resource_properties":
+    A. For each "stored_resource":
+        a. If "stored_resource" goes to "set_new_resource_properties" then:
+            i) There is a "auth_check" marked check_rights where:
+                A) "stored_resource" goes to "auth_check"
+                and
+                B) "auth_check" affects whether "set_new_resource_properties" happens

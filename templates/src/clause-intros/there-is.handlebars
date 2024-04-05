@@ -1,7 +1,11 @@
 {
     {{intro}}
 
-    {{var}}_nodes.any(|{{var}}| {
+    {{var}}_nodes
+    {{#if definition}}
+    .clone().into_iter()
+    {{/if}}
+    .any(|{{var}}| {
         {{body}}
     })
 }
