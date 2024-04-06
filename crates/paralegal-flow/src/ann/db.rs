@@ -200,24 +200,32 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
     fn compute_reachable_markers(&self, res: FnResolution<'tcx>) -> Box<[Identifier]> {
+        trace!("Computing reachable markers for {res:?}");
         let Some(local) = res.def_id().as_local() else {
+            trace!("  Is not local");
             return Box::new([]);
         };
         if self.is_marked(res.def_id()) {
+            trace!("  Is marked");
             return Box::new([]);
         }
         let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
+            trace!("  Cannot find body");
             return Box::new([]);
         };
-        let mono_body = res.try_monomorphize(self.tcx(), ty::ParamEnv::reveal_all(), &body.body);
+        let mono_body = res.try_monomorphize(
+            self.tcx(),
+            self.tcx().param_env_reveal_all_normalized(local),
+            &body.body,
+        );
         if let Some((async_fn, _)) = determine_async(self.tcx(), local, &mono_body) {
             return self.get_reachable_markers(async_fn).into();
         }
-        let body = &body.body;
-        body.basic_blocks
+        mono_body
+            .basic_blocks
             .iter()
             .flat_map(|bbdat| {
-                self.terminator_reachable_markers(&body.local_decls, bbdat.terminator())
+                self.terminator_reachable_markers(&mono_body.local_decls, bbdat.terminator())
             })
             .collect::<HashSet<_>>()
             .into_iter()
@@ -230,25 +238,33 @@ impl<'tcx> MarkerCtx<'tcx> {
         local_decls: &mir::LocalDecls,
         terminator: &mir::Terminator<'tcx>,
     ) -> impl Iterator<Item = Identifier> + '_ {
-        if let Ok((res, _args, _)) = terminator.as_instance_and_args(self.tcx()) {
-            debug!(
-                "Checking function {} for markers",
+        trace!(
+            "  Finding reachable markers for terminator {:?}",
+            terminator.kind
+        );
+        let res = if let Ok((res, _, _)) = terminator.as_instance_and_args(self.tcx()) {
+            trace!(
+                "    Checking function {} for markers",
                 self.tcx().def_path_debug_str(res.def_id())
             );
-            let transitive_reachable = self.get_reachable_and_self_markers(res);
+            let transitive_reachable = self.get_reachable_and_self_markers(res).collect::<Vec<_>>();
+            trace!("    Found transitively reachable markers {transitive_reachable:?}");
             let others = if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
                     local_decls[mir::RETURN_PLACE].ty.kind()
                 && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
+                trace!("    fits opaque type");
                 Either::Left(self.get_reachable_and_self_markers(
                     FnResolution::Final(ty::Instance::expect_resolve(self.tcx(), ty::ParamEnv::reveal_all(), *closure_fn, substs))
                 ))
             } else {
                 Either::Right(std::iter::empty())
             };
-            Either::Right(transitive_reachable.chain(others))
+            Either::Right(transitive_reachable.into_iter().chain(others))
         } else {
             Either::Left(std::iter::empty())
-        }.into_iter()
+        }.into_iter();
+        trace!("  Done with {:?}", terminator.kind);
+        res
     }
 
     /// All the markers applied to this type and its subtypes.
