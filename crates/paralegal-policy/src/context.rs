@@ -564,7 +564,7 @@ impl Context {
     #[deprecated = "Use NodeExt::successors instead"]
     /// Return the immediate successors of this node
     pub fn successors(&self, node: GlobalNode) -> impl Iterator<Item = GlobalNode> + '_ {
-        node.predecessors(self)
+        node.successors(self)
     }
 
     #[deprecated = "Use NodeExt::predecessors instead"]
