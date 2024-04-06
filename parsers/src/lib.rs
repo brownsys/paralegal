@@ -22,10 +22,20 @@ pub enum PolicyScope {
     InCtrler(String)
 }
 
+// definitions are controller-specific by default, but can be specified to be anywhere in the application
+// usually, controller-specific is what you would want
+// I added "Everywhere" support for the websubmit deletion policy, which reasons about all sensitive types that are stored anywhere in the application
+#[derive(Debug, PartialEq, Eq)]
+pub enum DefinitionScope {
+    Ctrler,
+    Everywhere
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Definition {
     // quantifier is everywhere "all" bc definitions are over *each* var that satisifes condition
     pub variable: Variable,
+    pub scope: DefinitionScope,
     pub declaration: VariableIntro,
     pub filter: ASTNode
 }

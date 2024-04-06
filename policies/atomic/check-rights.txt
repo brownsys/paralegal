@@ -9,12 +9,12 @@ Definitions:
     B. There is a "store" marked sink where:
         a. "resource" goes to "store"
 
-2. "set_new_resource_properties" is each "set_property_val" marked new_resource where:
+2. "set_new_resource_properties" is each "set_permissions" marked new_resource where:
     A. There is a "stored_resource" where:
-        a. For each "parent_val" marked parent_property:
-            i) "stored_resource" does not go to "parent_val"
+        a. For each "get_parent_permissions" marked parent_property:
+            i) "stored_resource" does not go to "get_parent_permissions"
         and
-        b. "stored_resource" goes to "set_property_val"
+        b. "stored_resource" goes to "set_permissions"
 
 Policy:
 1. For each "set_new_resource_properties":

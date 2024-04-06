@@ -1,5 +1,5 @@
 use handlebars::Handlebars;
-use parsers::{ASTNode, Variable, Relation, ClauseIntro, VariableIntro, Policy, Definition, PolicyScope, Operator};
+use parsers::{ASTNode, Variable, Relation, ClauseIntro, VariableIntro, Policy, Definition, PolicyScope, Operator, DefinitionScope};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Result;
@@ -190,6 +190,9 @@ fn compile_definitions(
     let mut map : HashMap<&str, String> = HashMap::new();
     let mut results : Vec<String> = Vec::new();
     for definition in definitions {
+        if let DefinitionScope::Everywhere = definition.scope  {
+            map.insert("everywhere", String::from("true"));
+        }
         let (inner_var, variable_intro) = compile_variable_intro(handlebars, &definition.declaration, &mut map);
         map.insert("inner_var", inner_var);
         map.insert("var", definition.variable.clone());

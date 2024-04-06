@@ -1,12 +1,11 @@
 Scope:
-Somewhere // TODO change this to In <websubmit deletion controller name>
+Somewhere
 
 Definitions:
-1. "sensitive_types_that_are_stored" is each "sensitive" type marked sensitive where:
+1. "sensitive_types_that_are_stored" is each "sensitive" type marked sensitive where, anywhere in the application:
 	A. There is a "source" that is a source of "sensitive" where:
 		a. There is a "store" marked stores where:
 			i) "source" goes to "store"
-
 Policy:
 1. For each "sensitive_types_that_are_stored":
 	A. There is a "source" that is a source of "sensitive_types_that_are_stored" where:
