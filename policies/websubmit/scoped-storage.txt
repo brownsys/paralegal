@@ -2,7 +2,7 @@ Scope:
 Everywhere
 
 Definitions:
-1. "sensitive_store" is each "store" marked store where:
+1. "sensitive_store" is each "store" marked stores where:
 	A. There is a "sensitive" marked sensitive where:
 		a. "sensitive" goes to "store"
 
