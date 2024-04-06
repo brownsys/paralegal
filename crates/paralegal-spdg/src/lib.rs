@@ -557,61 +557,101 @@ impl IntoIterGlobalNodes for GlobalNode {
     }
 }
 
-/// A globally identified set of nodes that are all located in the same
-/// controller.
-///
-/// Sometimes it is more convenient to think about such a group instead of
-/// individual [`GlobalNode`]s
-#[derive(Debug, Hash, Clone)]
-pub struct NodeCluster {
-    controller_id: LocalDefId,
-    nodes: Box<[Node]>,
-}
+pub mod node_cluster {
+    use std::ops::Range;
 
-/// Iterate over a node cluster but yielding [`GlobalNode`]s
-pub struct NodeClusterIter<'a> {
-    inner: std::slice::Iter<'a, Node>,
-}
+    use flowistry_pdg::rustc_portable::LocalDefId;
 
-impl Iterator for NodeClusterIter<'_> {
-    type Item = Node;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied()
+    use crate::{GlobalNode, IntoIterGlobalNodes, Node};
+
+    /// A globally identified set of nodes that are all located in the same
+    /// controller.
+    ///
+    /// Sometimes it is more convenient to think about such a group instead of
+    /// individual [`GlobalNode`]s
+    #[derive(Debug, Hash, Clone)]
+    pub struct NodeCluster {
+        controller_id: LocalDefId,
+        nodes: Box<[Node]>,
     }
-}
 
-impl<'a> IntoIterGlobalNodes for &'a NodeCluster {
-    type Iter = NodeClusterIter<'a>;
-    fn iter_nodes(self) -> Self::Iter {
-        NodeClusterIter {
-            inner: self.nodes.iter(),
+    /// Owned iterator of a [`NodeCluster`]
+    pub struct IntoIter {
+        inner: NodeCluster,
+        idx: Range<usize>,
+    }
+
+    impl Iterator for IntoIter {
+        type Item = GlobalNode;
+        fn next(&mut self) -> Option<Self::Item> {
+            let idx = self.idx.next()?;
+            Some(GlobalNode::from_local_node(
+                self.inner.controller_id,
+                self.inner.nodes[idx],
+            ))
         }
     }
 
-    fn controller_id(self) -> LocalDefId {
-        self.controller_id
+    /// Iterate over a node cluster but yielding [`GlobalNode`]s
+    pub struct Iter<'a> {
+        inner: std::slice::Iter<'a, Node>,
     }
-}
 
-impl NodeCluster {
-    /// Create a new cluster. This for internal use.
-    pub fn new(controller_id: LocalDefId, nodes: impl IntoIterator<Item = Node>) -> Self {
-        Self {
-            controller_id,
-            nodes: nodes.into_iter().collect::<Vec<_>>().into(),
+    impl Iterator for Iter<'_> {
+        type Item = Node;
+        fn next(&mut self) -> Option<Self::Item> {
+            self.inner.next().copied()
         }
     }
 
-    /// Controller that these nodes belong to
-    pub fn controller_id(&self) -> LocalDefId {
-        self.controller_id
+    impl<'a> IntoIterGlobalNodes for &'a NodeCluster {
+        type Iter = Iter<'a>;
+        fn iter_nodes(self) -> Self::Iter {
+            self.iter()
+        }
+
+        fn controller_id(self) -> LocalDefId {
+            self.controller_id
+        }
     }
 
-    /// Nodes in this cluster
-    pub fn nodes(&self) -> &[Node] {
-        &self.nodes
+    impl NodeCluster {
+        /// Create a new cluster. This for internal use.
+        pub fn new(controller_id: LocalDefId, nodes: impl IntoIterator<Item = Node>) -> Self {
+            Self {
+                controller_id,
+                nodes: nodes.into_iter().collect::<Vec<_>>().into(),
+            }
+        }
+
+        /// Iterate nodes borrowing `self`
+        pub fn iter(&self) -> Iter<'_> {
+            Iter {
+                inner: self.nodes.iter(),
+            }
+        }
+
+        /// Controller that these nodes belong to
+        pub fn controller_id(&self) -> LocalDefId {
+            self.controller_id
+        }
+
+        /// Nodes in this cluster
+        pub fn nodes(&self) -> &[Node] {
+            &self.nodes
+        }
+
+        /// Move-iterate `self`
+        pub fn into_iter(self) -> IntoIter {
+            IntoIter {
+                idx: 0..self.nodes.len(),
+                inner: self,
+            }
+        }
     }
 }
+
+pub use node_cluster::NodeCluster;
 
 /// The global version of an edge that is tied to some specific entrypoint
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -783,10 +823,7 @@ impl SPDG {
     /// The arguments of this spdg. The same as the `arguments` field, but
     /// conveniently paired with the controller id
     pub fn arguments(&self) -> NodeCluster {
-        NodeCluster {
-            controller_id: self.id,
-            nodes: self.arguments.clone(),
-        }
+        NodeCluster::new(self.id, self.arguments.iter().copied())
     }
 
     /// All types (if any) assigned to this node

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::{Duration, Instant};
@@ -61,6 +61,8 @@ impl MarkerTargets {
 }
 
 use petgraph::visit::{GraphRef, IntoNeighbors, Visitable};
+
+use self::private::Sealed;
 
 fn bfs_iter<
     G: IntoNeighbors + GraphRef + Visitable<NodeId = SPDGNode, Map = <SPDGImpl as Visitable>::Map>,
@@ -564,7 +566,7 @@ impl Context {
     #[deprecated = "Use NodeExt::successors instead"]
     /// Return the immediate successors of this node
     pub fn successors(&self, node: GlobalNode) -> impl Iterator<Item = GlobalNode> + '_ {
-        node.predecessors(self)
+        node.successors(self)
     }
 
     #[deprecated = "Use NodeExt::predecessors instead"]
@@ -798,7 +800,7 @@ mod private {
 }
 
 /// Extension trait with queries for single nodes
-pub trait NodeExt: private::Sealed + Sized {
+pub trait NodeExt: private::Sealed {
     /// Find the call string for the statement or function that produced this node.
     fn associated_call_site(self, ctx: &Context) -> CallString;
     /// Get the type(s) of a Node.
@@ -810,9 +812,9 @@ pub trait NodeExt: private::Sealed + Sized {
     /// Retrieve metadata about the instruction executed by a specific node.
     fn instruction(self, ctx: &Context) -> &InstructionInfo;
     /// Return the immediate successors of this node
-    fn successors(self, ctx: &Context) -> Box<dyn Iterator<Item = Self> + '_>;
+    fn successors<'a>(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
     /// Return the immediate predecessors of this node
-    fn predecessors(self, ctx: &Context) -> Box<dyn Iterator<Item = Self> + '_>;
+    fn predecessors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
     /// Get the span of a node
     fn get_location(self, ctx: &Context) -> &Span;
     /// Returns whether this Node has the marker applied to it directly or via its type.
@@ -820,10 +822,10 @@ pub trait NodeExt: private::Sealed + Sized {
     /// The shortest path between this and a target node
     fn shortest_path(
         self,
-        to: Self,
+        to: GlobalNode,
         ctx: &Context,
         edge_selection: EdgeSelection,
-    ) -> Option<Box<[Self]>>;
+    ) -> Option<Box<[GlobalNode]>>;
 }
 
 impl NodeExt for GlobalNode {
@@ -922,6 +924,55 @@ impl NodeExt for GlobalNode {
             .map(|n| GlobalNode::from_local_node(self.controller_id(), n))
             .collect()
         })
+    }
+}
+
+impl<T: Sealed> Sealed for &'_ T {}
+
+impl<T: NodeExt + Copy> NodeExt for &'_ T {
+    fn info(self, ctx: &Context) -> &NodeInfo {
+        (*self).info(ctx)
+    }
+
+    fn types(self, ctx: &Context) -> &[TypeId] {
+        (*self).types(ctx)
+    }
+
+    fn describe(self, ctx: &Context) -> DisplayNode {
+        (*self).describe(ctx)
+    }
+
+    fn has_marker<C: HasDiagnosticsBase>(self, ctx: C, marker: Marker) -> bool {
+        (*self).has_marker(ctx, marker)
+    }
+
+    fn successors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
+        (*self).successors(ctx)
+    }
+
+    fn instruction(self, ctx: &Context) -> &InstructionInfo {
+        (*self).instruction(ctx)
+    }
+
+    fn get_location(self, ctx: &Context) -> &Span {
+        (*self).get_location(ctx)
+    }
+
+    fn predecessors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
+        (*self).predecessors(ctx)
+    }
+
+    fn shortest_path(
+        self,
+        to: GlobalNode,
+        ctx: &Context,
+        edge_selection: EdgeSelection,
+    ) -> Option<Box<[GlobalNode]>> {
+        (*self).shortest_path(to, ctx, edge_selection)
+    }
+
+    fn associated_call_site(self, ctx: &Context) -> CallString {
+        (*self).associated_call_site(ctx)
     }
 }
 

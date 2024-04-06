@@ -895,6 +895,7 @@ dependencies = [
  "clap",
  "dot",
  "enum-map",
+ "flowistry",
  "flowistry_pdg",
  "flowistry_pdg_construction",
  "humantime",

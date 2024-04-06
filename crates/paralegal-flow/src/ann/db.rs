@@ -200,24 +200,32 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
     fn compute_reachable_markers(&self, res: FnResolution<'tcx>) -> Box<[Identifier]> {
+        trace!("Computing reachable markers for {res:?}");
         let Some(local) = res.def_id().as_local() else {
+            trace!("  Is not local");
             return Box::new([]);
         };
         if self.is_marked(res.def_id()) {
+            trace!("  Is marked");
             return Box::new([]);
         }
         let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
+            trace!("  Cannot find body");
             return Box::new([]);
         };
-        let mono_body = res.try_monomorphize(self.tcx(), ty::ParamEnv::reveal_all(), &body.body);
+        let mono_body = res.try_monomorphize(
+            self.tcx(),
+            self.tcx().param_env_reveal_all_normalized(local),
+            &body.body,
+        );
         if let Some((async_fn, _)) = determine_async(self.tcx(), local, &mono_body) {
             return self.get_reachable_markers(async_fn).into();
         }
-        let body = &body.body;
-        body.basic_blocks
+        mono_body
+            .basic_blocks
             .iter()
             .flat_map(|bbdat| {
-                self.terminator_reachable_markers(&body.local_decls, bbdat.terminator())
+                self.terminator_reachable_markers(&mono_body.local_decls, bbdat.terminator())
             })
             .collect::<HashSet<_>>()
             .into_iter()
@@ -230,25 +238,39 @@ impl<'tcx> MarkerCtx<'tcx> {
         local_decls: &mir::LocalDecls,
         terminator: &mir::Terminator<'tcx>,
     ) -> impl Iterator<Item = Identifier> + '_ {
-        if let Ok((res, _args, _)) = terminator.as_instance_and_args(self.tcx()) {
-            debug!(
-                "Checking function {} for markers",
+        trace!(
+            "  Finding reachable markers for terminator {:?}",
+            terminator.kind
+        );
+        let res = if let Ok((res, _, _)) = terminator.as_instance_and_args(self.tcx()) {
+            trace!(
+                "    Checking function {} for markers",
                 self.tcx().def_path_debug_str(res.def_id())
             );
-            let transitive_reachable = self.get_reachable_and_self_markers(res);
+            let transitive_reachable = self.get_reachable_and_self_markers(res).collect::<Vec<_>>();
+            trace!("    Found transitively reachable markers {transitive_reachable:?}");
+
+            // We have to proceed differently than graph construction,
+            // because we are not given the closure function, instead
+            // we are provided the id of the function that creates the
+            // future. As such we can't just monomorphize and traverse,
+            // we have to find the generator first.
             let others = if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
                     local_decls[mir::RETURN_PLACE].ty.kind()
                 && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
+                trace!("    fits opaque type");
                 Either::Left(self.get_reachable_and_self_markers(
                     FnResolution::Final(ty::Instance::expect_resolve(self.tcx(), ty::ParamEnv::reveal_all(), *closure_fn, substs))
                 ))
             } else {
                 Either::Right(std::iter::empty())
             };
-            Either::Right(transitive_reachable.chain(others))
+            Either::Right(transitive_reachable.into_iter().chain(others))
         } else {
             Either::Left(std::iter::empty())
-        }.into_iter()
+        }.into_iter();
+        trace!("  Done with {:?}", terminator.kind);
+        res
     }
 
     /// All the markers applied to this type and its subtypes.
@@ -266,6 +288,95 @@ impl<'tcx> MarkerCtx<'tcx> {
                     .zip(std::iter::repeat((typ, did)))
             })
         })
+    }
+
+    pub fn shallow_type_markers<'a>(
+        &'a self,
+        key: ty::Ty<'tcx>,
+    ) -> impl Iterator<Item = TypeMarkerElem> + 'a {
+        use ty::*;
+        let def_id = match key.kind() {
+            Adt(def, _) => Some(def.did()),
+            Alias(_, inner) => Some(inner.def_id),
+            _ => None,
+        };
+        def_id
+            .map(|def_id| {
+                self.combined_markers(def_id)
+                    .map(move |m| (def_id, m.marker))
+            })
+            .into_iter()
+            .flatten()
+    }
+
+    pub fn deep_type_markers<'a>(&'a self, key: ty::Ty<'tcx>) -> &'a TypeMarkers {
+        self.0
+            .type_markers
+            .get_maybe_recursive(key, |key| {
+                use ty::*;
+                let mut markers = self.shallow_type_markers(key).collect::<Vec<_>>();
+                match key.kind() {
+                    Bool
+                    | Char
+                    | Int(_)
+                    | Uint(_)
+                    | Float(_)
+                    | Foreign(_)
+                    | Str
+                    | FnDef { .. }
+                    | FnPtr { .. }
+                    | Closure { .. }
+                    | Generator { .. }
+                    | GeneratorWitness { .. }
+                    | GeneratorWitnessMIR { .. }
+                    | Never
+                    | Bound { .. }
+                    | Error(_) => (),
+                    Adt(def, generics) => markers.extend(self.type_markers_for_adt(def, &generics)),
+                    Tuple(tys) => {
+                        markers.extend(tys.iter().flat_map(|ty| self.deep_type_markers(ty)))
+                    }
+                    Alias(_, _) => {
+                        trace!("Alias type {key:?} remains. Was not normalized.");
+                        return Box::new([]);
+                    }
+                    // We can't track indices so we simply overtaint to the entire array
+                    Array(inner, _) | Slice(inner) => {
+                        markers.extend(self.deep_type_markers(*inner))
+                    }
+                    RawPtr(ty::TypeAndMut { ty, .. }) | Ref(_, ty, _) => {
+                        markers.extend(self.deep_type_markers(*ty))
+                    }
+                    Param(_) | Dynamic { .. } => self
+                        .tcx()
+                        .sess
+                        .warn(format!("Cannot determine markers for type {key:?}")),
+                    Placeholder(_) | Infer(_) => self
+                        .tcx()
+                        .sess
+                        .fatal(format!("Did not expect this type here {key:?}")),
+                }
+                markers.as_slice().into()
+            })
+            .map_or(&[], Box::as_ref)
+    }
+
+    fn type_markers_for_adt<'a>(
+        &'a self,
+        adt: &'a ty::AdtDef<'tcx>,
+        generics: &'tcx ty::List<ty::GenericArg<'tcx>>,
+    ) -> impl Iterator<Item = &'a TypeMarkerElem> {
+        let tcx = self.tcx();
+        adt.variants()
+            .iter_enumerated()
+            .flat_map(move |(_, vdef)| {
+                vdef.fields.iter_enumerated().flat_map(move |(_, fdef)| {
+                    let f_ty = fdef.ty(tcx, generics);
+                    self.deep_type_markers(f_ty)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
@@ -333,6 +444,10 @@ impl<'tcx> MarkerCtx<'tcx> {
             )
     }
 }
+
+pub type TypeMarkerElem = (DefId, Identifier);
+pub type TypeMarkers = [TypeMarkerElem];
+
 /// The structure inside of [`MarkerCtx`].
 pub struct MarkerDatabase<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -344,6 +459,7 @@ pub struct MarkerDatabase<'tcx> {
     reachable_markers: Cache<FnResolution<'tcx>, Box<[Identifier]>>,
     /// Configuration options
     config: &'static MarkerControl,
+    type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
@@ -355,6 +471,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
             config: args.marker_control(),
+            type_markers: Default::default(),
         }
     }
 
