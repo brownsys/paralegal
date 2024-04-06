@@ -249,6 +249,12 @@ impl<'tcx> MarkerCtx<'tcx> {
             );
             let transitive_reachable = self.get_reachable_and_self_markers(res).collect::<Vec<_>>();
             trace!("    Found transitively reachable markers {transitive_reachable:?}");
+
+            // We have to proceed differently than graph construction,
+            // because we are not given the closure function, instead
+            // we are provided the id of the function that creates the
+            // future. As such we can't just monomorphize and traverse,
+            // we have to find the generator first.
             let others = if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
                     local_decls[mir::RETURN_PLACE].ty.kind()
                 && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
