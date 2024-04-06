@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while1},
@@ -9,7 +11,7 @@ use nom::{
 };
 
 use crate::{
-    Marker, Operator, Variable, Res, ASTNode, TwoNodeObligation
+    Marker, Operator, Variable, Res, ASTNode, TwoNodeObligation, VariableIntro,
 };
 
 pub fn colon(s: &str) -> Res<&str, &str> {
@@ -128,10 +130,37 @@ pub fn variable(s: &str) -> Res<&str, Variable> {
     )(s)
 }
 
+pub fn join_variable_intros(tup: (VariableIntro, Vec<(Operator, VariableIntro)>)) -> (Option<Operator>, Vec<VariableIntro>) {
+    let mut ops : HashSet<&Operator> = HashSet::new();
+    for (op, _) in &tup.1 {
+        ops.insert(op);
+    }
+
+    assert!(ops.len() <= 1, "Ambigious policy: cannot mix ands/ors on the same level");
+
+    let mut op = None;
+    let mut vec = vec![tup.0];
+
+    if !tup.1.is_empty() {
+        for (operator, intro) in tup.1 {
+            op = Some(operator);
+            vec.push(intro)
+        }
+    }
+    (op, vec)
+}
+
 // Given an initial node and a vector of (operator, node) pairs, construct an ASTNode::{Operator}
 // joining each of the nodes
-// TODO add assertion that each operator in the vector is the same (can't mix ands & ors)
 pub fn join_nodes(tup: (ASTNode, Vec<(Operator, ASTNode)>)) -> ASTNode {
+
+    let mut ops : HashSet<&Operator> = HashSet::new();
+    for (op, _) in &tup.1 {
+        ops.insert(op);
+    }
+
+    assert!(ops.len() <= 1, "Ambigious policy: cannot mix ands/ors on the same level");
+
     tup.1
     .into_iter()
     .fold(tup.0, |acc, (op, clause)| {

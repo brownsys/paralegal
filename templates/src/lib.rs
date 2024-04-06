@@ -15,6 +15,7 @@ pub enum Template {
     VariableMarked,
     VariableOfTypeMarked,
     VariableSourceOf,
+    OnlyViaIntro,
     // relations
     FlowsTo,
     NoFlowsTo,
@@ -50,6 +51,7 @@ impl From<Template> for &str {
             Template::VariableMarked => "variable-intros/variable-marked",
             Template::VariableOfTypeMarked => "variable-intros/variable-of-type-marked",
             Template::VariableSourceOf =>  "variable-intros/variable-source-of",
+            Template::OnlyViaIntro => "misc/only-via-intro",
             Template::FlowsTo => "relations/flows-to",
             Template::NoFlowsTo => "relations/no-flows-to",
             Template::ControlFlow => "relations/control-flow",
@@ -91,6 +93,16 @@ pub fn render_template(
     template: Template,
 ) -> String { 
     let name : &str = template.into();
+    handlebars
+        .render(name, &map)
+        .expect(&format!("Could not render {name} handlebars template"))
+}
+
+pub fn render_only_via_template(
+    handlebars: &mut Handlebars,
+    map: &HashMap<&str, Vec<String>>,
+) -> String { 
+    let name : &str = Template::OnlyVia.into();
     handlebars
         .render(name, &map)
         .expect(&format!("Could not render {name} handlebars template"))

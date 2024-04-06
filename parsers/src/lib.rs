@@ -2,7 +2,7 @@ use clause::l1_clauses;
 use common::colon;
 use definitions::parse_definitions;
 use scope::scope;
-use nom::{IResult, error::{VerboseError, context}, combinator::{all_consuming, opt}, sequence::{tuple, terminated, delimited}, character::complete::multispace0, bytes::complete::tag};
+use nom::{IResult, error::{VerboseError, context}, combinator::{all_consuming, opt}, sequence::{tuple, delimited}, character::complete::multispace0, bytes::complete::tag};
 use templates::Template;
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
@@ -57,7 +57,7 @@ pub enum Relation {
 pub type Variable = String;
 pub type Marker = String;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Operator {
     And,
     Or,
@@ -166,7 +166,7 @@ pub struct Clause {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ASTNode {
     Relation(Relation),
-    OnlyVia((VariableIntro, VariableIntro, VariableIntro)),
+    OnlyVia((VariableIntro, (Option<Operator>, Vec<VariableIntro>), (Option<Operator>, Vec<VariableIntro>))),
     Clause(Box<Clause>),
     JoinedNodes(Box<TwoNodeObligation>),
 }

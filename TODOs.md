@@ -11,3 +11,4 @@
 - cargo new for the policy and write a template Cargo.toml for it as well
 - rust format the outputted policies (or at least fix the heinous spacing)
 - stricter bullet parsing (can't have duplicates or out of order)
+- consider adding support for only via within a clause

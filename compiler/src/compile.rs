@@ -1,10 +1,10 @@
 use handlebars::Handlebars;
-use parsers::{ASTNode, Variable, Relation, ClauseIntro, VariableIntro, Policy, Definition, PolicyScope};
+use parsers::{ASTNode, Variable, Relation, ClauseIntro, VariableIntro, Policy, Definition, PolicyScope, Operator};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Result;
 
-use templates::{register_templates, render_template, Template};
+use templates::{register_templates, render_template, Template, render_only_via_template};
 use crate::verify_scope::{VarContext, verify_definitions_scope, verify_scope};
 
 fn compile_variable_intro(
@@ -78,16 +78,80 @@ fn compile_ast_node(
             compile_relation(handlebars, relation, &mut map)
         },
         ASTNode::OnlyVia((src_intro, sink_intro, checkpoint_intro)) => {
-            let (src_var, compiled_src_intro) = compile_variable_intro(handlebars, src_intro, &mut map);
-            let (sink_var, compiled_sink_intro) = compile_variable_intro(handlebars, sink_intro, &mut map);
-            let (checkpoint_var, compiled_checkpoint_intro) = compile_variable_intro(handlebars, checkpoint_intro, &mut map);
-            map.insert("src", src_var);
-            map.insert("sink", sink_var);
-            map.insert("checkpoint", checkpoint_var);
-            map.insert("src_intro", compiled_src_intro);
-            map.insert("sink_intro", compiled_sink_intro);
-            map.insert("checkpoint_intro", compiled_checkpoint_intro);
-            render_template(handlebars, &map, node.into())
+            // TODO this logic is overcomplicated and gross
+            // but I have an SOSP deadline and it works, so fix later...
+
+            let mut only_via_map : HashMap<&str, Vec<String>> = HashMap::new();
+
+            let (src_var, compiled_src_intro) = compile_variable_intro(handlebars, &src_intro, &mut map);
+            map.insert("intro", compiled_src_intro);
+            let src_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
+            map.remove_entry("definition");
+            only_via_map.insert("src-intros", vec![src_intro]);
+            only_via_map.insert("src", vec![src_var]);
+
+            match &sink_intro.0 {
+                // an operator is present, so there are multiple variable intros in the vector
+                Some(op) => {
+                    let mut compiled_intros : Vec<String> = vec![];
+                    let mut vars : Vec<String> = vec![];
+                    for intro in &sink_intro.1 {
+                        let (sink_var, compiled_sink_intro) = compile_variable_intro(handlebars, &intro, &mut map);
+                        map.insert("intro", compiled_sink_intro);
+                        let only_via_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
+                        map.remove_entry("definition");
+                        compiled_intros.push(only_via_intro);
+                        vars.push(sink_var);
+                    }
+                    only_via_map.insert("sink-intros", compiled_intros);
+                    only_via_map.insert("sink-names", vars);
+                    if let &Operator::Or = op {
+                        only_via_map.insert("sink-or", vec![String::from("true")]);
+                    }
+                }
+                // no operator, so just a single variable intro in the vector
+                None => {
+                    let (sink_var, compiled_sink_intro) = compile_variable_intro(handlebars, &sink_intro.1[0], &mut map);
+                    map.insert("intro", compiled_sink_intro);
+                    let only_via_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
+                    map.remove_entry("definition");
+                    only_via_map.insert("sink-intros", vec![only_via_intro]);
+                    only_via_map.insert("sink-names", vec![sink_var]);
+                }
+            }
+
+            match &checkpoint_intro.0 {
+                // an operator is present, so there are multiple variable intros in the vector
+                Some(op) => {
+                    let mut compiled_intros : Vec<String> = vec![];
+                    let mut vars : Vec<String> = vec![];
+                    for intro in &checkpoint_intro.1 {
+                        let (sink_var, compiled_checkpoint_intro) = compile_variable_intro(handlebars, &intro, &mut map);
+                        map.insert("intro", compiled_checkpoint_intro);
+                        let only_via_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
+                        map.remove_entry("definition");
+                        compiled_intros.push(only_via_intro);
+                        vars.push(sink_var);
+                    }
+                    only_via_map.insert("checkpoint-intros", compiled_intros);
+                    only_via_map.insert("checkpoint-names", vars);
+
+                    if let &Operator::Or = op {
+                        only_via_map.insert("checkpoint-or", vec![String::from("true")]);
+                    }
+                }
+                // no operator, so just a single variable intro in the vector
+                None => {
+                    let (checkpoint_var, compiled_sink_intro) = compile_variable_intro(handlebars, &sink_intro.1[0], &mut map);
+                    map.insert("intro", compiled_sink_intro);
+                    let only_via_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
+                    map.remove_entry("definition");
+                    only_via_map.insert("checkpoint-intros", vec![only_via_intro]);
+                    only_via_map.insert("checkpoint-names", vec![checkpoint_var]);
+                }
+            }
+            
+            render_only_via_template(handlebars, &only_via_map)
         },
         ASTNode::JoinedNodes(obligation) => {
             let src_res = compile_ast_node(handlebars, &obligation.src, counter);

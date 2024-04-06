@@ -1,7 +1,7 @@
 use nom::{
     branch::alt,
     error::context,
-    sequence::{tuple, delimited, preceded}, character::complete::multispace0, bytes::complete::tag,
+    sequence::{tuple, preceded}, character::complete::multispace0, bytes::complete::tag,
 };
 
 use crate::{

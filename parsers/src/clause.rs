@@ -2,7 +2,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     error::context,
-    sequence::{tuple, delimited, preceded, pair}, character::complete::space1, multi::many0, combinator::map,
+    sequence::{tuple, delimited, preceded, pair}, character::complete::space1, multi::many0, combinator::{map},
 };
 
 use crate::{
@@ -83,7 +83,6 @@ fn l2_clause(s: &str) -> Res<&str, ASTNode> {
             alt((
                 l3_relations,
                 l3_clauses,
-                // join nodes of pair(alt((relation, clause, many0(pair(operator, alt((l3_clause, l3_relations))))
             ))
         ))
     );
@@ -144,16 +143,30 @@ pub fn l1_clauses(s: &str) -> Res<&str, ASTNode> {
     )(s)
 }
 
+
+
 fn only_via(s: &str) -> Res<&str, ASTNode> {
     let mut combinator = context(
         "only via relation",
         tuple((
             // these are only allowed to be present at the top level, hence the L1 bullet restriction
             delimited(tuple((l1_bullet, tag("Each"), space1)), variable_intro, tag("goes to a")),
-            alt((variable_marked, variable_def)),
+            map(
+                pair(
+                    alt((variable_marked, variable_def)),
+                    many0(tuple((operator, alt((variable_marked, variable_def)))))
+                ),
+                join_variable_intros
+            ),
             preceded(
                 tag("only via a"),
-                alt((variable_marked, variable_def)),
+                map(
+                    pair(
+                        alt((variable_marked, variable_def)),
+                        many0(tuple((operator, alt((variable_marked, variable_def)))))
+                    ),
+                    join_variable_intros
+                ),
             ) 
         ))
     );

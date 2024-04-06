@@ -147,33 +147,33 @@ pub fn verify_scope(
     node: &ASTNode,
     env: &mut Vec<(Variable, VarContext)>,
 ) {
-    match node {
-        ASTNode::Relation(relation) => {
-            verify_relation_scope(relation, env);
-        },
-        ASTNode::OnlyVia((src_intro, sink_intro, checkpoint_intro)) => {
-            let env_size_before = env.len();
-            verify_variable_intro_scope(src_intro, env);
-            verify_variable_intro_scope(sink_intro, env);
-            verify_variable_intro_scope(checkpoint_intro, env);
-            remove_from_env(env, env_size_before);
-        },
-        ASTNode::JoinedNodes(obligation) => {
-            verify_scope(&obligation.src, env);
-            verify_scope(&obligation.sink, env);
-        }
-        ASTNode::Clause(clause) => {
-            let env_size_before_clause = env.len();
-            match &clause.intro {
-                ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => verify_variable_intro_scope(&intro, env),
-                ClauseIntro::Conditional(relation) => verify_relation_scope(&relation, env),
-            };
-            verify_scope(&clause.body, env);
+    // match node {
+    //     ASTNode::Relation(relation) => {
+    //         verify_relation_scope(relation, env);
+    //     },
+    //     ASTNode::OnlyVia((src_intro, sink_intro, checkpoint_intro)) => {
+    //         let env_size_before = env.len();
+    //         verify_variable_intro_scope(src_intro, env);
+    //         verify_variable_intro_scope(sink_intro, env);
+    //         verify_variable_intro_scope(checkpoint_intro, env);
+    //         remove_from_env(env, env_size_before);
+    //     },
+    //     ASTNode::JoinedNodes(obligation) => {
+    //         verify_scope(&obligation.src, env);
+    //         verify_scope(&obligation.sink, env);
+    //     }
+    //     ASTNode::Clause(clause) => {
+    //         let env_size_before_clause = env.len();
+    //         match &clause.intro {
+    //             ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => verify_variable_intro_scope(&intro, env),
+    //             ClauseIntro::Conditional(relation) => verify_relation_scope(&relation, env),
+    //         };
+    //         verify_scope(&clause.body, env);
 
-            // variables introduced in this clause must go out of scope once it ends
-            remove_from_env(env, env_size_before_clause);
-        },
-    }
+    //         // variables introduced in this clause must go out of scope once it ends
+    //         remove_from_env(env, env_size_before_clause);
+    //     },
+    // }
 }
 
 pub fn verify_definitions_scope(

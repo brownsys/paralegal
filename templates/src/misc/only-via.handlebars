@@ -1,11 +1,17 @@
 {
-    {{src_intro}}
-    {{sink_intro}}
-    {{checkpoint_intro}}
+    {{#each src-intros}}
+    {{this}}
+    {{/each}}
+    {{#each sink-intros}}
+    {{this}}
+    {{/each}}
+    {{#each checkpoint-intros}}
+    {{this}}
+    {{/each}}
 
     ctx.always_happens_before(
-        {{src}}_nodes.collect::<Vec<_>>(), 
-        |checkpoint| {{checkpoint}}_nodes.collect::<Vec<_>>().contains(&checkpoint), 
-        |sink| {{sink}}_nodes.collect::<Vec<_>>().contains(&sink), 
+        {{#each src}}{{this}}_nodes{{/each}},
+        |checkpoint| {{#each checkpoint-names}}{{this}}_nodes.contains(&checkpoint){{#unless @last}}{{#if checkpoint-or}} || {{else}} || {{/if}}{{/unless}}{{/each}},
+        |sink| {{#each sink-names}}{{this}}_nodes.contains(&sink){{#unless @last}}{{#if sink-or}} || {{else}} && {{/if}}{{/unless}}{{/each}},
     ).unwrap().holds()
 }
