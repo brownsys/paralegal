@@ -173,15 +173,13 @@ fn manufacture_substs_for<'tcx>(
         Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
         ExistentialTraitRef, ImplPolarity, ParamTy, Region,
     };
+
     let generics = tcx.generics_of(function);
-    let predicates = tcx.predicates_of(function);
-    assert!(
-        generics.parent.is_none(),
-        "Generics of {function:?} have a parent: {generics:?}"
-    );
-    let types = generics.params.iter().map(|param| {
+    let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
+    let types = (0..generics.count()).map(|gidx| {
+        let param = generics.param_at(gidx, tcx);
         let param_as_ty = ParamTy::for_def(param);
-        let constraints = predicates.predicates.iter().filter_map(|(clause, _)| {
+        let constraints = predicates.predicates.iter().filter_map(|clause| {
             let pred = if let Some(trait_ref) = clause.as_trait_clause() {
                 if trait_ref.polarity() != ImplPolarity::Positive {
                     return None;
