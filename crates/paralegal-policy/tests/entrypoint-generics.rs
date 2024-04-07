@@ -85,3 +85,13 @@ fn default_method() -> Result<()> {
 
     test.run(simple_policy)
 }
+
+#[test]
+fn lifetime() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::analyze]
+        async fn main<'a>() {}
+    ))?;
+
+    test.run(|ctx| Ok(()))
+}

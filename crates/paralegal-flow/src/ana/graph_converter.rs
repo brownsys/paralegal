@@ -488,6 +488,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             }
         }
         let params = PdgParams::new(tcx, local_def_id)
+            .map_err(|_| anyhow!("unable to contruct PDG for {local_def_id:?}"))?
             .with_call_change_callback(MyCallback {
                 judge,
                 stat_wrap,

@@ -38,7 +38,7 @@ fn pdg(
     let _ = env_logger::try_init();
     rustc_utils::test_utils::compile(input, move |tcx| {
         let def_id = get_main(tcx);
-        let params = configure(tcx, PdgParams::new(tcx, def_id));
+        let params = configure(tcx, PdgParams::new(tcx, def_id).unwrap());
         let pdg = flowistry_pdg_construction::compute_pdg(params);
         tests(tcx, pdg)
     })

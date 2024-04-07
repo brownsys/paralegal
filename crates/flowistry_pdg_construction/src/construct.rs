@@ -21,6 +21,7 @@ use rustc_middle::{
     ty::{GenericArg, List, ParamEnv, Ty, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df};
+use rustc_span::ErrorGuaranteed;
 use rustc_utils::cache::Cache;
 use rustc_utils::{
     mir::{borrowck_facts, control_dependencies::ControlDependencies},
@@ -168,23 +169,49 @@ pub enum InlineMissReason {
 fn manufacture_substs_for<'tcx>(
     tcx: TyCtxt<'tcx>,
     function: LocalDefId,
-) -> &'tcx List<GenericArg<'tcx>> {
+) -> Result<&'tcx List<GenericArg<'tcx>>, ErrorGuaranteed> {
     use rustc_middle::ty::{
         Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
-        ExistentialTraitRef, ImplPolarity, ParamTy, Region,
+        ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
     };
 
     let generics = tcx.generics_of(function);
     let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
     let types = (0..generics.count()).map(|gidx| {
         let param = generics.param_at(gidx, tcx);
+        if let Some(default_val) = param.default_value(tcx) {
+            return Ok(default_val.instantiate_identity());
+        }
+        match param.kind {
+            // I'm not sure this is correct. We could probably return also "erased" or "static" here.
+            GenericParamDefKind::Lifetime => {
+                return Ok(GenericArg::from(Region::new_free(
+                    tcx,
+                    function.to_def_id(),
+                    BoundRegionKind::BrAnon(None),
+                )))
+            }
+            GenericParamDefKind::Const { .. } => {
+                return Err(tcx.sess.span_err(
+                    tcx.def_span(param.def_id),
+                    "Cannot use constants as generic parameters in controllers",
+                ))
+            }
+            GenericParamDefKind::Type { .. } => (),
+        };
+
         let param_as_ty = ParamTy::for_def(param);
         let constraints = predicates.predicates.iter().filter_map(|clause| {
             let pred = if let Some(trait_ref) = clause.as_trait_clause() {
                 if trait_ref.polarity() != ImplPolarity::Positive {
                     return None;
                 };
-                let trait_ref = trait_ref.no_bound_vars()?.trait_ref;
+                let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
+                    return Some(Err(tcx.sess.span_err(
+                        tcx.def_span(param.def_id),
+                        format!("Trait ref had binder {trait_ref:?}"),
+                    )));
+                };
                 if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
                     return None;
                 };
@@ -203,36 +230,34 @@ fn manufacture_substs_for<'tcx>(
                 None
             }?;
 
-            Some(Binder::dummy(pred))
+            Some(Ok(Binder::dummy(pred)))
         });
         let ty = Ty::new_dynamic(
             tcx,
-            tcx.mk_poly_existential_predicates_from_iter(constraints),
+            tcx.mk_poly_existential_predicates_from_iter(constraints)?,
             Region::new_free(tcx, function.to_def_id(), BoundRegionKind::BrAnon(None)),
             DynKind::Dyn,
         );
-        GenericArg::from(ty)
+        Ok(GenericArg::from(ty))
     });
     tcx.mk_args_from_iter(types)
 }
 
 impl<'tcx> PdgParams<'tcx> {
     /// Must provide the [`TyCtxt`] and the [`LocalDefId`] of the function that is the root of the PDG.
-    pub fn new(tcx: TyCtxt<'tcx>, root: LocalDefId) -> Self {
-        trace!("{:?}", tcx.fn_sig(root));
-        trace!("{:?}", tcx.predicates_of(root));
+    pub fn new(tcx: TyCtxt<'tcx>, root: LocalDefId) -> Result<Self, ErrorGuaranteed> {
         let root = try_resolve_function(
             tcx,
             root.to_def_id(),
             tcx.param_env_reveal_all_normalized(root),
-            manufacture_substs_for(tcx, root),
+            manufacture_substs_for(tcx, root)?,
         );
-        PdgParams {
+        Ok(PdgParams {
             tcx,
             root,
             call_change_callback: None,
             dump_mir: false,
-        }
+        })
     }
 
     pub fn with_dump_mir(mut self, dump_mir: bool) -> Self {
