@@ -27,6 +27,7 @@ use crate::{
     Either, HashSet, Symbol, TyCtxt,
 };
 
+pub use flowistry_pdg_construction::is_non_default_trait_method;
 pub use flowistry_pdg_construction::FnResolution;
 
 use std::cmp::Ordering;
@@ -990,16 +991,6 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
             }
         }
     }
-}
-
-pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId> {
-    let assoc_item = tcx.opt_associated_item(function)?;
-    if assoc_item.container != ty::AssocItemContainer::TraitContainer
-        || assoc_item.defaultness(tcx).has_value()
-    {
-        return None;
-    }
-    assoc_item.trait_item_def_id
 }
 
 /// A struct that can be used to apply a [`FnMut`] to every [`Place`] in a MIR

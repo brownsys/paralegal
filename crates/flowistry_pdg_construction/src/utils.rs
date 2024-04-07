@@ -98,6 +98,16 @@ pub fn try_resolve_function<'tcx>(
     }
 }
 
+pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId> {
+    let assoc_item = tcx.opt_associated_item(function)?;
+    if assoc_item.container != ty::AssocItemContainer::TraitContainer
+        || assoc_item.defaultness(tcx).has_value()
+    {
+        return None;
+    }
+    assoc_item.trait_item_def_id
+}
+
 impl<'tcx> FnResolution<'tcx> {
     pub fn try_monomorphize<'a, T>(
         self,

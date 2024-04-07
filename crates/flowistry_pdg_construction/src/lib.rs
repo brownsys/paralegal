@@ -22,7 +22,7 @@ pub use construct::{
     CallChangeCallback, CallChangeCallbackFn, CallChanges, CallInfo, FakeEffect, FakeEffectKind,
     InlineMissReason, PdgParams, SkipCall,
 };
-pub use utils::try_resolve_function;
+pub use utils::{is_non_default_trait_method, try_resolve_function};
 
 mod async_support;
 mod calling_convention;

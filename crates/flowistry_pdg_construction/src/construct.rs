@@ -18,7 +18,7 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
         Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArg, List, ParamEnv, TyCtxt, TyKind},
+    ty::{GenericArg, List, ParamEnv, Ty, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df};
 use rustc_utils::cache::Cache;
@@ -31,7 +31,10 @@ use super::async_support::*;
 use super::calling_convention::*;
 use super::graph::{DepEdge, DepGraph, DepNode};
 use super::utils::{self, FnResolution};
-use crate::graph::{SourceUse, TargetUse};
+use crate::{
+    graph::{SourceUse, TargetUse},
+    utils::is_non_default_trait_method,
+};
 use crate::{
     mutation::{ModularMutationVisitor, Mutation},
     try_resolve_function,
@@ -162,14 +165,69 @@ pub enum InlineMissReason {
     Async(String),
 }
 
+fn manufacture_substs_for<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    function: LocalDefId,
+) -> &'tcx List<GenericArg<'tcx>> {
+    use rustc_middle::ty::{
+        Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
+        ExistentialTraitRef, ImplPolarity, ParamTy, Region,
+    };
+    let generics = tcx.generics_of(function);
+    let predicates = tcx.predicates_of(function);
+    assert!(
+        generics.parent.is_none(),
+        "Generics of {function:?} have a parent: {generics:?}"
+    );
+    let types = generics.params.iter().map(|param| {
+        let param_as_ty = ParamTy::for_def(param);
+        let constraints = predicates.predicates.iter().filter_map(|(clause, _)| {
+            let pred = if let Some(trait_ref) = clause.as_trait_clause() {
+                if trait_ref.polarity() != ImplPolarity::Positive {
+                    return None;
+                };
+                let trait_ref = trait_ref.no_bound_vars()?.trait_ref;
+                if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
+                    return None;
+                };
+                Some(ExistentialPredicate::Trait(
+                    ExistentialTraitRef::erase_self_ty(tcx, trait_ref),
+                ))
+            } else if let Some(pred) = clause.as_projection_clause() {
+                let pred = pred.no_bound_vars()?;
+                if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
+                    return None;
+                };
+                Some(ExistentialPredicate::Projection(
+                    ExistentialProjection::erase_self_ty(tcx, pred),
+                ))
+            } else {
+                None
+            }?;
+
+            Some(Binder::dummy(pred))
+        });
+        let ty = Ty::new_dynamic(
+            tcx,
+            tcx.mk_poly_existential_predicates_from_iter(constraints),
+            Region::new_free(tcx, function.to_def_id(), BoundRegionKind::BrAnon(None)),
+            DynKind::Dyn,
+        );
+        GenericArg::from(ty)
+    });
+    tcx.mk_args_from_iter(types)
+}
+
 impl<'tcx> PdgParams<'tcx> {
     /// Must provide the [`TyCtxt`] and the [`LocalDefId`] of the function that is the root of the PDG.
     pub fn new(tcx: TyCtxt<'tcx>, root: LocalDefId) -> Self {
+        trace!("{:?}", tcx.fn_sig(root));
+        trace!("{:?}", tcx.predicates_of(root));
         let root = try_resolve_function(
             tcx,
             root.to_def_id(),
             tcx.param_env_reveal_all_normalized(root),
-            tcx.mk_args(&[]),
+            manufacture_substs_for(tcx, root),
         );
         PdgParams {
             tcx,
@@ -743,6 +801,11 @@ impl<'tcx> GraphConstructor<'tcx> {
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
             trace!("  `{called}` monomorphized to `{resolved}`",);
+        }
+
+        if is_non_default_trait_method(tcx, resolved_def_id).is_some() {
+            trace!("  bailing because is unresolvable trait method");
+            return None;
         }
 
         // Don't inline recursive calls.

@@ -726,7 +726,33 @@ pdg_test! {
             fn method(&self);
         }
 
+        fn main<T: Tr>(t: T) {
+            t.method()
+        }
+    },
+}
+
+pdg_test! {
+    opaque_impl2,
+    {
+        trait Tr {
+            fn method(&self);
+        }
+
         fn main(t: impl Tr) {
+            t.method()
+        }
+    },
+}
+
+pdg_test! {
+    opaque_impl_ref,
+    {
+        trait Tr {
+            fn method(&self);
+        }
+
+        fn main(t: &impl Tr) {
             t.method()
         }
     },
