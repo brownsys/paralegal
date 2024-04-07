@@ -718,3 +718,16 @@ pdg_test! {
   },
   (x -/> x)
 }
+
+pdg_test! {
+    opaque_impl,
+    {
+        trait Tr {
+            fn method(&self);
+        }
+
+        fn main(t: impl Tr) {
+            t.method()
+        }
+    },
+}
