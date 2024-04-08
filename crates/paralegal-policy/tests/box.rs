@@ -1,12 +1,36 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{algo::ahb, assert_error};
+use paralegal_policy::{algo::ahb, assert_error, Context};
 use paralegal_spdg::{HashSet, Identifier};
 
 mod helpers;
 
+fn simple_policy(ctx: Arc<Context>) -> Result<()> {
+    let sources = ctx
+        .nodes_marked_any_way(Identifier::new_intern("source"))
+        .collect::<Box<_>>();
+    let checkpoints = ctx
+        .nodes_marked_any_way(Identifier::new_intern("checkpoint"))
+        .collect::<HashSet<_>>();
+    let sinks = ctx
+        .nodes_marked_any_way(Identifier::new_intern("sink"))
+        .collect::<HashSet<_>>();
+    assert_error!(ctx, !sinks.is_empty());
+    assert_error!(ctx, !checkpoints.is_empty());
+    assert_error!(ctx, !sources.is_empty());
+    ctx.always_happens_before(
+        sources.iter().copied(),
+        |a| checkpoints.contains(&a),
+        |t| sinks.contains(&t),
+    )?
+    .report(ctx.clone());
+    Ok(())
+}
+
 #[test]
-fn much_simpler_box_test_case() -> Result<()> {
+fn box_overtaint() -> Result<()> {
     let mut test = Test::new(stringify!(
         type F = usize;
         #[paralegal::marker(source, return)]
@@ -30,25 +54,5 @@ fn much_simpler_box_test_case() -> Result<()> {
 
     test.context_config().always_happens_before_tracing = ahb::TraceLevel::Full;
 
-    test.run(|ctx| {
-        let sources = ctx
-            .nodes_marked_any_way(Identifier::new_intern("source"))
-            .collect::<Box<_>>();
-        let checkpoints = ctx
-            .nodes_marked_any_way(Identifier::new_intern("checkpoint"))
-            .collect::<HashSet<_>>();
-        let sinks = ctx
-            .nodes_marked_any_way(Identifier::new_intern("sink"))
-            .collect::<HashSet<_>>();
-        assert_error!(ctx, !sinks.is_empty());
-        assert_error!(ctx, !checkpoints.is_empty());
-        assert_error!(ctx, !sources.is_empty());
-        ctx.always_happens_before(
-            sources.iter().copied(),
-            |a| checkpoints.contains(&a),
-            |t| sinks.contains(&t),
-        )?
-        .report(ctx.clone());
-        Ok(())
-    })
+    test.run(simple_policy)
 }
