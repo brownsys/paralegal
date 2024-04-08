@@ -93,5 +93,17 @@ fn lifetime() -> Result<()> {
         async fn main<'a>() {}
     ))?;
 
-    test.run(|ctx| Ok(()))
+    test.try_compile()
+}
+
+#[test]
+fn object_safety() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::analyze]
+        fn main<T: Clone>(t: &T) {
+            let _ = t.clone();
+        }
+    ))?;
+
+    test.try_compile()
 }

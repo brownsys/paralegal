@@ -177,20 +177,7 @@ impl Test {
 
     #[allow(dead_code)]
     pub fn run(self, test_function: impl FnOnce(Arc<Context>) -> Result<()>) -> Result<()> {
-        self.populate_test_crate()?;
-
-        let mut paralegal_cmd = Command::new(self.tool_path);
-        paralegal_cmd.arg("paralegal-flow");
-        if self.external_annotations.is_some() {
-            paralegal_cmd.args([
-                OsStr::new("--external-annotations"),
-                self.external_ann_file_name.as_os_str(),
-            ]);
-        }
-        paralegal_cmd.args(&self.paralegal_args);
-        paralegal_cmd.current_dir(&self.tempdir);
-        ensure_run_success(&mut paralegal_cmd)?;
-
+        self.try_compile()?;
         let ret = GraphLocation::std(&self.tempdir)
             .with_context_configured(self.context_config, test_function)?;
         println!(
@@ -203,5 +190,21 @@ impl Test {
             fs::remove_dir_all(self.tempdir)?;
         }
         Ok(())
+    }
+
+    pub fn try_compile(&self) -> Result<()> {
+        self.populate_test_crate()?;
+
+        let mut paralegal_cmd = Command::new(self.tool_path);
+        paralegal_cmd.arg("paralegal-flow");
+        if self.external_annotations.is_some() {
+            paralegal_cmd.args([
+                OsStr::new("--external-annotations"),
+                self.external_ann_file_name.as_os_str(),
+            ]);
+        }
+        paralegal_cmd.args(&self.paralegal_args);
+        paralegal_cmd.current_dir(&self.tempdir);
+        ensure_run_success(&mut paralegal_cmd)
     }
 }
