@@ -419,74 +419,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         record_inlining(&stat_wrap, tcx, local_def_id, false);
         let stat_wrap_copy = stat_wrap.clone();
         let judge = generator.inline_judge.clone();
-        struct MyCallback<'tcx> {
-            judge: InlineJudge<'tcx>,
-            stat_wrap: Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>,
-            tcx: TyCtxt<'tcx>,
-        }
-
-        impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
-            fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx> {
-                let mut changes = CallChanges::default();
-
-                let mut skip = true;
-
-                if is_non_default_trait_method(self.tcx, info.callee.def_id()).is_some() {
-                    self.tcx.sess.span_warn(
-                        self.tcx.def_span(info.callee.def_id()),
-                        "Skipping analysis of unresolvable trait method.",
-                    );
-                } else if self.judge.should_inline(&info) {
-                    skip = false;
-                };
-
-                if skip {
-                    changes = changes.with_skip(Skip);
-                } else {
-                    record_inlining(
-                        &self.stat_wrap,
-                        self.tcx,
-                        info.callee.def_id().expect_local(),
-                        info.is_cached,
-                    )
-                }
-                changes
-            }
-
-            fn on_inline_miss(
-                &self,
-                resolution: FnResolution<'tcx>,
-                loc: Location,
-                parent: FnResolution<'tcx>,
-                call_string: Option<CallString>,
-                reason: InlineMissReason,
-            ) {
-                let body = self
-                    .tcx
-                    .body_for_def_id(parent.def_id().expect_local())
-                    .unwrap();
-                let span = body
-                    .body
-                    .stmt_at(loc)
-                    .either(|s| s.source_info.span, |t| t.source_info.span);
-                let markers_reachable = self.judge.marker_ctx().get_reachable_markers(resolution);
-                self.tcx.sess.span_err(
-                    span,
-                    format!(
-                        "Could not inline this function call in {:?}, at {} because {reason:?}. {}",
-                        parent.def_id(),
-                        call_string.map_or("root".to_owned(), |c| c.to_string()),
-                        Print(|f| if markers_reachable.is_empty() {
-                            f.write_str("No markers are reachable")
-                        } else {
-                            f.write_str("Markers ")?;
-                            write_sep(f, ", ", markers_reachable.iter(), Display::fmt)?;
-                            f.write_str(" are reachable")
-                        })
-                    ),
-                );
-            }
-        }
         let params = PdgParams::new(tcx, local_def_id)
             .map_err(|_| anyhow!("unable to contruct PDG for {local_def_id:?}"))?
             .with_call_change_callback(MyCallback {
@@ -698,12 +630,78 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 }
 
-fn record_inlining(
-    tracker: &Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>,
-    tcx: TyCtxt<'_>,
-    def_id: LocalDefId,
-    is_in_cache: bool,
-) {
+struct MyCallback<'tcx> {
+    judge: InlineJudge<'tcx>,
+    stat_wrap: StatStracker,
+    tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
+    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx> {
+        let mut changes = CallChanges::default();
+
+        let mut skip = true;
+
+        if is_non_default_trait_method(self.tcx, info.callee.def_id()).is_some() {
+            self.tcx.sess.span_warn(
+                self.tcx.def_span(info.callee.def_id()),
+                "Skipping analysis of unresolvable trait method.",
+            );
+        } else if self.judge.should_inline(&info) {
+            skip = false;
+        };
+
+        if skip {
+            changes = changes.with_skip(Skip);
+        } else {
+            record_inlining(
+                &self.stat_wrap,
+                self.tcx,
+                info.callee.def_id().expect_local(),
+                info.is_cached,
+            )
+        }
+        changes
+    }
+
+    fn on_inline_miss(
+        &self,
+        resolution: FnResolution<'tcx>,
+        loc: Location,
+        parent: FnResolution<'tcx>,
+        call_string: Option<CallString>,
+        reason: InlineMissReason,
+    ) {
+        let body = self
+            .tcx
+            .body_for_def_id(parent.def_id().expect_local())
+            .unwrap();
+        let span = body
+            .body
+            .stmt_at(loc)
+            .either(|s| s.source_info.span, |t| t.source_info.span);
+        let markers_reachable = self.judge.marker_ctx().get_reachable_markers(resolution);
+        self.tcx.sess.span_err(
+            span,
+            format!(
+                "Could not inline this function call in {:?}, at {} because {reason:?}. {}",
+                parent.def_id(),
+                call_string.map_or("root".to_owned(), |c| c.to_string()),
+                Print(|f| if markers_reachable.is_empty() {
+                    f.write_str("No markers are reachable")
+                } else {
+                    f.write_str("Markers ")?;
+                    write_sep(f, ", ", markers_reachable.iter(), Display::fmt)?;
+                    f.write_str(" are reachable")
+                })
+            ),
+        );
+    }
+}
+
+type StatStracker = Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>;
+
+fn record_inlining(tracker: &StatStracker, tcx: TyCtxt<'_>, def_id: LocalDefId, is_in_cache: bool) {
     let mut borrow = tracker.borrow_mut();
     let (stats, loc_set) = &mut *borrow;
     let src_map = tcx.sess.source_map();
