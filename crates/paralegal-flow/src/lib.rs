@@ -170,16 +170,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 }
 
                 let ser = Instant::now();
-                serde_json::to_writer(
-                    &mut std::fs::OpenOptions::new()
-                        .truncate(true)
-                        .create(true)
-                        .write(true)
-                        .open(self.opts.result_path())
-                        .unwrap(),
-                    &desc,
-                )
-                .unwrap();
+                desc.canonical_write(self.opts.result_path()).unwrap();
                 self.stats
                     .record_timed(TimedStat::Serialization, ser.elapsed());
 

@@ -161,7 +161,7 @@ pub struct ClapArgs {
     #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
     debug_target: Option<String>,
     /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
-    #[clap(long, default_value = "flow-graph.json")]
+    #[clap(long, default_value = paralegal_spdg::FLOW_GRAPH_OUT_NAME)]
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     #[clap(long, env = "PARALEGAL_RELAXED")]

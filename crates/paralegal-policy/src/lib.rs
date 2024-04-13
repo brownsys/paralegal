@@ -102,9 +102,10 @@ impl std::fmt::Display for Stats {
         }
         write!(
             f,
-            ", Index Creation: {}, Policy Execution: {}",
+            ", Index Creation: {}, Policy Execution: {}, Deser: {}",
             TruncatedHumanTime::from(self.context_contruction),
-            TruncatedHumanTime::from(self.policy)
+            TruncatedHumanTime::from(self.policy),
+            TruncatedHumanTime::from(self.deserialization),
         )
     }
 }
@@ -262,13 +263,7 @@ impl GraphLocation {
         let _ = simple_logger::init_with_env();
 
         let deser_started = Instant::now();
-        let desc = {
-            let mut f = File::open(&self.path)?;
-            anyhow::Context::with_context(
-                serde_json::from_reader::<_, ProgramDescription>(&mut f),
-                || format!("Reading SPDG (JSON) from {}", self.path.display()),
-            )?
-        };
+        let desc = ProgramDescription::canonical_read(&self.path)?;
         let mut ctx = Context::new(desc, config);
         ctx.stats.pdg_construction = self.construction_time;
         ctx.stats.deserialization = Some(deser_started.elapsed());

@@ -24,6 +24,7 @@ extern crate strum;
 pub use flowistry_pdg::*;
 
 pub mod dot;
+pub mod ser;
 mod tiny_bitset;
 pub mod traverse;
 pub mod utils;
@@ -54,9 +55,9 @@ pub type TypeId = DefId;
 /// Identifiers for functions
 pub type Function = Identifier;
 
-/// Name of the file used for emitting the JSON serialized
+/// Name of the file used for emitting the serialized
 /// [`ProgramDescription`].
-pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
+pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.o";
 
 #[allow(dead_code)]
 mod ser_localdefid_map {
