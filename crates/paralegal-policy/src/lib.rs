@@ -59,7 +59,6 @@ pub use paralegal_spdg::{
 };
 use std::time::{Duration, Instant};
 use std::{
-    fs::File,
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
@@ -210,6 +209,11 @@ impl GraphLocation {
             path,
             construction_time: None,
         }
+    }
+
+    /// Inspect the path that will be loaded
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Builds a context, then runs the property.
