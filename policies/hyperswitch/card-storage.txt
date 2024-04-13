@@ -3,7 +3,7 @@ Everywhere
 
 Policy:
 1. For each "card" marked credit_card:
-	A. For each "sink" marked sink:
-		a. If "card" goes to "sink" then:
-	    	i) There is a "consent" marked consent where:
-				A) "consent" affects whether "sink" happens
+	A. For each "store" marked store:
+		a. If "card" goes to "store" then:
+	    	i) There is a "consent" marked future_usage_decision where:
+				A) "consent" affects whether "store" happens

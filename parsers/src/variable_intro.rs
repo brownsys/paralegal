@@ -48,7 +48,7 @@ fn variable_type_marked(s: &str) -> Res<&str, VariableIntro> {
 fn variable_source_of(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "variable source of",
-        separated_pair(variable, tag("that is a source of"), variable)
+        separated_pair(variable, tag("that produces"), variable)
     );
     let (remainder, (source_of_var, var)) = combinator(s)?;
     Ok((

@@ -1,0 +1,17 @@
+Scope:
+Everywhere
+
+Definitions:
+1. "pageview_store" is each "store" marked db_store where:
+	A. There is a "pageview" marked pageviews:
+		a. "pageviews" goes to "store"
+
+# version where db_store is on argument 0, where the pageview goes
+# and another marker new_date is on argument 1
+Policy:
+1. For each "pageview_store":
+	A. There is a "date" marked "time" where:
+		a. There is a "new_date" marked new_date where:
+			i) "date" goes to "new_date"
+		and
+		b. "date" goes to the operation associated with "pageview_store"

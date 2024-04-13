@@ -1,0 +1,7 @@
+Scope:
+Everywhere
+
+Policy:
+1. For each "sensitive" marked sensitive:
+    A. For each "store" marked sink:
+        a. "sensitive" does not go to "store"

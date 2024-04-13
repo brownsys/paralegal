@@ -3,11 +3,11 @@ Somewhere
 
 Definitions:
 1. "sensitive_types_that_are_stored" is each "sensitive" type marked sensitive where, anywhere in the application:
-	A. There is a "source" that is a source of "sensitive" where:
+	A. There is a "source" that produces "sensitive" where:
 		a. There is a "store" marked stores where:
 			i) "source" goes to "store"
 Policy:
 1. For each "sensitive_types_that_are_stored":
-	A. There is a "source" that is a source of "sensitive_types_that_are_stored" where:
+	A. There is a "source" that produces "sensitive_types_that_are_stored" where:
 		a. There is a "deleter" marked deletes where:
 			i) "source" goes to "deleter"

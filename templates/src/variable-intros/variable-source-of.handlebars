@@ -1,1 +1,1 @@
-let mut {{var}}_nodes = std::iter::once({{type-var}}).chain(self.cx.otypes(*{{type-var}}).iter()).flat_map(|ty| self.cx.srcs_with_type(c_id, *ty));
+let mut {{var}}_nodes = std::iter::once({{type-var}}).chain(ctx.otypes(*{{type-var}}).iter()).flat_map(|ty| ctx.srcs_with_type(c_id, *ty));

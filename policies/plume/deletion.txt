@@ -3,6 +3,6 @@ In delete
 
 Policy:
 1. For each "stored_data" type marked user_data:
-    A. There is a "retrieval" that is a source of "stored_data" where:
+    A. There is a "retrieval" that produces "stored_data" where:
        a. There is a "deletes" marked to_delete where:
 	       i) "retrieval" goes to "deletes"
