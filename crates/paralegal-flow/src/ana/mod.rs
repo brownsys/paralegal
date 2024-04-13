@@ -162,10 +162,21 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let analyzed_spans = seen_functions
             .iter()
             .copied()
-            .map(|f| {
+            // Because we now take the functions seen from the marker context
+            // this includes functions where the body is not present (e.g. `dyn`)
+            // so if we fail to retrieve the body in that case it is allowed.
+            //
+            // Prefereably in future we would filter what we get from the marker
+            // context better.
+            .filter_map(|f| {
                 let f = f.expect_local();
-                let span = body_span(&tcx.body_for_def_id(f).unwrap().body);
-                (f, src_loc_for_span(span, tcx))
+                let body = match tcx.body_for_def_id(f) {
+                    Ok(b) => Some(b),
+                    Err(BodyResolutionError::IsTraitAssocFn(_)) => None,
+                    Err(e) => panic!("{e:?}"),
+                }?;
+                let span = body_span(&body.body);
+                Some((f, src_loc_for_span(span, tcx)))
             })
             .collect::<HashMap<_, _>>();
 
