@@ -31,6 +31,10 @@ impl<'tcx> InlineJudge<'tcx> {
 
     /// Should we perform inlining on this function?
     pub fn should_inline(&self, info: &CallInfo<'tcx>) -> bool {
+        // Force for now so we can do sanity check on number of analyzed lines
+        let _ = self
+            .marker_ctx
+            .has_transitive_reachable_markers(info.callee);
         match self.analysis_control.inlining_depth() {
             _ if self.marker_ctx.is_marked(info.callee.def_id())
                 || !info.callee.def_id().is_local() =>

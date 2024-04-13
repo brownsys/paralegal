@@ -14,7 +14,7 @@ use crate::{
     DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 
-use std::time::Instant;
+use std::{borrow::Cow, time::Instant};
 
 use anyhow::Result;
 use either::Either;
@@ -67,7 +67,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn handle_target(
         &mut self,
         //_hash_verifications: &mut HashVerifications,
-        target: FnToAnalyze,
+        target: &FnToAnalyze,
         known_def_ids: &mut impl Extend<DefId>,
     ) -> Result<(Endpoint, SPDG)> {
         info!("Handling target {}", self.tcx.def_path_str(target.def_id));
@@ -105,7 +105,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let mut known_def_ids = HashSet::new();
 
         targets
-            .into_iter()
+            .iter()
             .map(|desc| {
                 let target_name = desc.name();
                 with_reset_level_if_target(self.opts, target_name, || {
@@ -119,7 +119,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
             .map(|controllers| {
                 let start = Instant::now();
-                let desc = self.make_program_description(controllers, known_def_ids);
+                let desc = self.make_program_description(controllers, known_def_ids, &targets);
                 self.stats
                     .record_timed(TimedStat::Conversion, start.elapsed());
                 desc
@@ -133,12 +133,43 @@ impl<'tcx> SPDGGenerator<'tcx> {
         &self,
         controllers: HashMap<Endpoint, SPDG>,
         mut known_def_ids: HashSet<DefId>,
+        targets: &[FnToAnalyze],
     ) -> ProgramDescription {
         let tcx = self.tcx;
 
         let instruction_info = self.collect_instruction_info(&controllers);
 
-        known_def_ids.extend(instruction_info.keys().map(|l| l.function.to_def_id()));
+        let inlined_functions = instruction_info
+            .keys()
+            .map(|l| l.function.to_def_id())
+            .collect::<HashSet<_>>();
+        let functions_seen_by_marker_ctx = self.marker_ctx().function_seen();
+        let seen_functions = if functions_seen_by_marker_ctx.is_empty() {
+            Cow::Borrowed(&inlined_functions)
+        } else {
+            Cow::Owned(
+                functions_seen_by_marker_ctx
+                    .into_iter()
+                    .map(|res| res.def_id())
+                    // This filter first before adding controllers, because they can be
+                    // marked but have to be included still
+                    .filter(|f| !self.marker_ctx().is_marked(f))
+                    .chain(targets.iter().map(|t| t.def_id))
+                    .filter(|r| r.is_local())
+                    .collect::<HashSet<_>>(),
+            )
+        };
+        let analyzed_spans = seen_functions
+            .iter()
+            .copied()
+            .map(|f| {
+                let f = f.expect_local();
+                let span = body_span(&tcx.body_for_def_id(f).unwrap().body);
+                (f, src_loc_for_span(span, tcx))
+            })
+            .collect::<HashMap<_, _>>();
+
+        known_def_ids.extend(inlined_functions);
 
         let type_info = self.collect_type_info();
         known_def_ids.extend(type_info.keys());
@@ -159,6 +190,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 .filter_map(|m| m.1.either(Annotation::as_marker, Some))
                 .count() as u32,
             rustc_time: self.stats.get_timed(TimedStat::Rustc),
+            seen_locs: analyzed_spans.values().map(Span::line_len).sum(),
+            seen_functions: analyzed_spans.len() as u32,
+            analyzed_spans,
         }
     }
 

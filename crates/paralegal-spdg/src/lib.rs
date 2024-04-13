@@ -223,6 +223,11 @@ impl Span {
     pub fn contains(&self, other: &Self) -> bool {
         self.source_file == other.source_file && self.start <= other.start && self.end >= other.end
     }
+
+    /// How many lines this span spans
+    pub fn line_len(&self) -> u32 {
+        self.end.line - self.start.line + 1
+    }
 }
 
 /// Metadata on a function call.
@@ -303,6 +308,17 @@ pub struct ProgramDescription {
     pub marker_annotation_count: u32,
     /// How long rustc ran before out plugin executed
     pub rustc_time: Duration,
+    /// The number of functions we needed to inspect the source of. This is the
+    /// same as the sum of [`SPDGStats::locs_seen`] if adaptive-depth was not used, but
+    /// higher if it was, because this includes functions where we checked
+    /// the body for markers.
+    pub seen_functions: u32,
+    /// The lines of code corresponding to the functions from
+    /// [`Self::seen_functions`]
+    pub seen_locs: u32,
+    #[doc(hidden)]
+    #[serde(with = "ser_localdefid_map")]
+    pub analyzed_spans: HashMap<LocalDefId, Span>,
 }
 
 /// Metadata about a type
@@ -754,25 +770,22 @@ pub struct SPDG {
     pub type_assigns: HashMap<Node, Types>,
     /// Statistics
     pub statistics: SPDGStats,
-    #[doc(hidden)]
-    #[serde(with = "ser_localdefid_map")]
-    pub analyzed_spans: HashMap<LocalDefId, Span>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 /// Statistics about the code that produced an SPDG
 pub struct SPDGStats {
-    /// The number of unique lines of code we analyzed. This means MIR bodies
-    /// without considering monomorphization
+    /// The number of unique lines of code we generated a PDG for. This means
+    /// MIR bodies without considering monomorphization
     pub unique_locs: u32,
-    /// The number of unique functions we analyzed. Corresponds to
-    /// [`Self::UniqueLoCs`].
+    /// The number of unique functions that became part of the PDG. Corresponds
+    /// to [`Self::UniqueLoCs`].
     pub unique_functions: u32,
     /// The number of lines we ran through the PDG construction. This is higher
     /// than unique LoCs, because we need to analyze some functions multiple
     /// times, due to monomorphization and calls tring differences.
     pub analyzed_locs: u32,
-    /// Number of functions analyzed. Corresponds to [`Self::AnalyzedLoCs`].
+    /// Number of functions that correspond to [`Self::analyzed_locs]`
     pub analyzed_functions: u32,
     /// How many times we inlined functions. This will be higher than
     /// [`Self::AnalyzedFunction`] because sometimes the callee PDG is served

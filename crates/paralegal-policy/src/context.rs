@@ -604,9 +604,8 @@ impl Context {
     ) -> std::io::Result<()> {
         let ordered_span_set = self
             .desc
-            .controllers
+            .analyzed_spans
             .values()
-            .flat_map(|c| c.analyzed_spans.values())
             .zip(std::iter::repeat(true))
             .chain(
                 include_signatures
@@ -614,11 +613,11 @@ impl Context {
                         self.desc
                             .def_info
                             .iter()
-                            .filter(|(did, _)|
+                            .filter(|(did, _)| {
                                 !matches!(defid_as_local(**did), Some(local)
-                                    if self.desc.controllers.values().any(|c| c.analyzed_spans.contains_key(&local))
+                                    if self.desc.analyzed_spans.contains_key(&local)
                                 )
-                            )
+                            })
                             .map(|(_, i)| (&i.src_info, matches!(i.kind, DefKind::Type)))
                     })
                     .into_iter()

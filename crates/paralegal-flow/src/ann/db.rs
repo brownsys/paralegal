@@ -443,6 +443,11 @@ impl<'tcx> MarkerCtx<'tcx> {
                     .flat_map(|(&id, anns)| anns.iter().map(move |ann| (id, Either::Right(ann)))),
             )
     }
+
+    pub fn function_seen(&self) -> Vec<FnResolution<'tcx>> {
+        let cache = self.0.reachable_markers.borrow();
+        cache.keys().copied().collect::<Vec<_>>()
+    }
 }
 
 pub type TypeMarkerElem = (DefId, Identifier);

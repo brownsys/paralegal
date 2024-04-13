@@ -19,6 +19,7 @@ use crate::{
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_borrowck::consumers::BodyWithBorrowckFacts,
         rustc_data_structures::intern::Interned,
+        rustc_span::Span as RustSpan,
         rustc_span::{symbol::Ident, Span},
         rustc_target::spec::abi::Abi,
         ty,
@@ -40,6 +41,28 @@ mod print;
 pub use print::*;
 
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
+
+/// This function exists to deal with `#[tracing::instrument]`. In that case,
+/// sadly, the `Span` value attached to a body directly refers only to the
+/// `#[tracing::instrument]` macro call. This function instead reconstitutes the
+/// span from the collection of spans on each statement.
+pub fn body_span(body: &mir::Body<'_>) -> RustSpan {
+    let combined = body
+        .basic_blocks
+        .iter()
+        .flat_map(|bbdat| {
+            bbdat
+                .statements
+                .iter()
+                .map(|s| s.source_info.span.source_callsite())
+                .chain([bbdat.terminator().source_info.span])
+        })
+        .map(|s| s.source_callsite())
+        .filter(|s| !s.is_dummy() || !s.is_empty())
+        .reduce(RustSpan::to)
+        .unwrap();
+    combined
+}
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),

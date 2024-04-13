@@ -482,7 +482,7 @@ dependencies = [
  "itertools 0.12.0",
  "log",
  "petgraph",
- "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=89bc7b4979c8513a097068626b90b5b0e57f4917)",
+ "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=e990ded60afc928f76293fb9ad265c58405da1a7)",
 ]
 
 [[package]]
@@ -912,7 +912,7 @@ dependencies = [
  "petgraph",
  "pretty",
  "rustc_plugin",
- "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=89bc7b4979c8513a097068626b90b5b0e57f4917)",
+ "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=e990ded60afc928f76293fb9ad265c58405da1a7)",
  "serde",
  "serde_bare",
  "serde_json",
@@ -1096,7 +1096,7 @@ checksum = "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76"
 [[package]]
 name = "rustc_plugin"
 version = "0.7.4-nightly-2023-08-25"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=89bc7b4979c8513a097068626b90b5b0e57f4917#89bc7b4979c8513a097068626b90b5b0e57f4917"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=e990ded60afc928f76293fb9ad265c58405da1a7#e990ded60afc928f76293fb9ad265c58405da1a7"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1128,7 +1128,7 @@ dependencies = [
 [[package]]
 name = "rustc_utils"
 version = "0.7.4-nightly-2023-08-25"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=89bc7b4979c8513a097068626b90b5b0e57f4917#89bc7b4979c8513a097068626b90b5b0e57f4917"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=e990ded60afc928f76293fb9ad265c58405da1a7#e990ded60afc928f76293fb9ad265c58405da1a7"
 dependencies = [
  "anyhow",
  "cfg-if",

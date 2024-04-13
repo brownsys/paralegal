@@ -3,7 +3,7 @@ use crate::{
     ann::MarkerAnnotation,
     desc::*,
     discover::FnToAnalyze,
-    rust::{hir::def, rustc_span::Span as RustSpan, *},
+    rust::{hir::def, *},
     stats::TimedStat,
     utils::*,
     DefId, HashMap, HashSet, MarkerCtx,
@@ -45,7 +45,7 @@ pub struct GraphConverter<'tcx, 'a, C> {
     /// The parent generator
     generator: &'a SPDGGenerator<'tcx>,
     /// Information about the function this PDG belongs to
-    target: FnToAnalyze,
+    target: &'a FnToAnalyze,
     /// The flowistry graph we are converting
     dep_graph: Rc<DepGraph<'tcx>>,
     /// Same as the ID stored in self.target, but as a local def id
@@ -76,7 +76,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     pub fn new_with_flowistry(
         generator: &'a SPDGGenerator<'tcx>,
         known_def_ids: &'a mut C,
-        target: FnToAnalyze,
+        target: &'a FnToAnalyze,
         place_info_cache: PlaceInfoCache<'tcx>,
     ) -> Result<Self> {
         let local_def_id = target.def_id.expect_local();
@@ -479,14 +479,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 .map(|(k, v)| (k, Types(v.into())))
                 .collect(),
             statistics: self.stats,
-            analyzed_spans: self
-                .analyzed_functions
-                .into_iter()
-                .map(|f| {
-                    let span = body_span(&tcx.body_for_def_id(f).unwrap().body);
-                    (f, src_loc_for_span(span, tcx))
-                })
-                .collect(),
         }
     }
 
@@ -699,28 +691,6 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
     }
 }
 
-/// This function exists to deal with `#[tracing::instrument]`. In that case,
-/// sadly, the `Span` value attached to a body directly refers only to the
-/// `#[tracing::instrument]` macro call. This function instead reconstitutes the
-/// span from the collection of spans on each statement.
-fn body_span(body: &mir::Body<'_>) -> RustSpan {
-    let combined = body
-        .basic_blocks
-        .iter()
-        .flat_map(|bbdat| {
-            bbdat
-                .statements
-                .iter()
-                .map(|s| s.source_info.span.source_callsite())
-                .chain([bbdat.terminator().source_info.span])
-        })
-        .map(|s| s.source_callsite())
-        .filter(|s| !s.is_dummy() || !s.is_empty())
-        .reduce(RustSpan::to)
-        .unwrap();
-    combined
-}
-
 type StatStracker = Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>;
 
 fn record_inlining(tracker: &StatStracker, tcx: TyCtxt<'_>, def_id: LocalDefId, is_in_cache: bool) {
@@ -736,7 +706,7 @@ fn record_inlining(tracker: &StatStracker, tcx: TyCtxt<'_>, def_id: LocalDefId, 
     let src_map = tcx.sess.source_map();
     let span = body_span(&tcx.body_for_def_id(def_id).unwrap().body);
     let (_, start_line, _, end_line, _) = src_map.span_to_location_info(span);
-    let body_lines = (end_line - start_line) as u32;
+    let body_lines = (end_line - start_line + 1) as u32;
     if is_new {
         stats.unique_functions += 1;
         stats.unique_locs += body_lines;
