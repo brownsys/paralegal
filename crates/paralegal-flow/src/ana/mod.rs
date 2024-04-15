@@ -14,7 +14,7 @@ use crate::{
     DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 
-use std::{borrow::Cow, time::Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use either::Either;
@@ -119,7 +119,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
             .map(|controllers| {
                 let start = Instant::now();
-                let desc = self.make_program_description(controllers, known_def_ids, &targets);
+                let desc = self.make_program_description(controllers, known_def_ids);
                 self.stats
                     .record_timed(TimedStat::Conversion, start.elapsed());
                 desc
@@ -133,7 +133,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
         &self,
         controllers: HashMap<Endpoint, SPDG>,
         mut known_def_ids: HashSet<DefId>,
-        targets: &[FnToAnalyze],
     ) -> ProgramDescription {
         let tcx = self.tcx;
 
@@ -143,23 +142,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .keys()
             .map(|l| l.function.to_def_id())
             .collect::<HashSet<_>>();
-        let functions_seen_by_marker_ctx = self.marker_ctx().function_seen();
-        let seen_functions = if functions_seen_by_marker_ctx.is_empty() {
-            Cow::Borrowed(&inlined_functions)
-        } else {
-            Cow::Owned(
-                functions_seen_by_marker_ctx
-                    .into_iter()
-                    .map(|res| res.def_id())
-                    // This filter first before adding controllers, because they can be
-                    // marked but have to be included still
-                    .filter(|f| !self.marker_ctx().is_marked(f))
-                    .chain(targets.iter().map(|t| t.def_id))
-                    .filter(|r| r.is_local())
-                    .collect::<HashSet<_>>(),
-            )
-        };
-        let analyzed_spans = seen_functions
+        let analyzed_spans = inlined_functions
             .iter()
             .copied()
             // Because we now take the functions seen from the marker context
@@ -201,8 +184,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 .filter_map(|m| m.1.either(Annotation::as_marker, Some))
                 .count() as u32,
             rustc_time: self.stats.get_timed(TimedStat::Rustc),
-            seen_locs: analyzed_spans.values().map(Span::line_len).sum(),
-            seen_functions: analyzed_spans.len() as u32,
+            dedup_locs: analyzed_spans.values().map(Span::line_len).sum(),
+            dedup_functions: analyzed_spans.len() as u32,
             analyzed_spans,
         }
     }

@@ -309,14 +309,13 @@ pub struct ProgramDescription {
     pub marker_annotation_count: u32,
     /// How long rustc ran before out plugin executed
     pub rustc_time: Duration,
-    /// The number of functions we needed to inspect the source of. This is the
-    /// same as the sum of [`SPDGStats::locs_seen`] if adaptive-depth was not used, but
-    /// higher if it was, because this includes functions where we checked
-    /// the body for markers.
-    pub seen_functions: u32,
+    /// The number of functions we needed to inspect the source of across
+    /// all controllers.
+    pub dedup_functions: u32,
     /// The lines of code corresponding to the functions from
-    /// [`Self::seen_functions`]
-    pub seen_locs: u32,
+    /// [`dedup_functions::seen_functions`]. This is the sum of all
+    /// `analyzed_locs` of the controllers but deduplicated.
+    pub dedup_locs: u32,
     #[doc(hidden)]
     #[serde(with = "ser_localdefid_map")]
     pub analyzed_spans: HashMap<LocalDefId, Span>,
