@@ -259,10 +259,10 @@ impl<'g> HasGraph<'g> for &'g PreFrg {
 impl PreFrg {
     pub fn from_file_at(dir: &str) -> Self {
         use_rustc(|| {
-            let desc: ProgramDescription = serde_json::from_reader(
-                &mut std::fs::File::open(format!("{dir}/{}", crate::consts::FLOW_GRAPH_OUT_NAME))
-                    .unwrap(),
-            )
+            let desc = ProgramDescription::canonical_read(format!(
+                "{dir}/{}",
+                crate::consts::FLOW_GRAPH_OUT_NAME
+            ))
             .unwrap();
             let name_map = desc
                 .def_info

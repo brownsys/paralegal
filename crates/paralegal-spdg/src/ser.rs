@@ -17,7 +17,8 @@ cfg_if! {
 
 impl ProgramDescription {
     /// Write `self` using the configured serialization format
-    pub fn canonical_write(&self, path: &Path) -> Result<()> {
+    pub fn canonical_write(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
         let mut out_file = File::create(path)?;
         cfg_if! {
             if #[cfg(feature = "binenc")] {
@@ -44,7 +45,8 @@ impl ProgramDescription {
     }
 
     /// Read `self` using the configured serialization format
-    pub fn canonical_read(path: &Path) -> Result<Self> {
+    pub fn canonical_read(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
         let in_file = File::open(path)?;
         cfg_if! {
             if #[cfg(feature = "binenc")] {
