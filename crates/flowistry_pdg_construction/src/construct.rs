@@ -115,6 +115,10 @@ pub struct CallInfo<'tcx> {
     /// The potentially-monomorphized resolution of the callee.
     pub callee: FnResolution<'tcx>,
 
+    /// If the callee is an async closure created by an `async fn`, this is the
+    /// `async fn` item.
+    pub async_parent: Option<FnResolution<'tcx>>,
+
     /// The call-stack up to the current call site.
     pub call_string: CallString,
 
@@ -913,26 +917,23 @@ impl<'tcx> GraphConstructor<'tcx> {
         let is_cached = self.pdg_cache.is_in_cache(&cache_key);
 
         let call_changes = self.params.call_change_callback.as_ref().map(|callback| {
-            let info = if let CallKind::AsyncPoll(resolution, loc, _) = call_kind {
-                // Special case for async. We ask for skipping not on the closure, but
-                // on the "async" function that created it. This is needed for
-                // consistency in skipping. Normally, when "poll" is inlined, mutations
-                // introduced by the creator of the future are not recorded and instead
-                // handled here, on the closure. But if the closure is skipped we need
-                // those mutations to occur. To ensure this we always ask for the
-                // "CallChanges" on the creator so that both creator and closure have
-                // the same view of whether they are inlined or "Skip"ped.
-                CallInfo {
-                    callee: resolution,
-                    call_string: self.make_call_string(loc),
-                    is_cached,
-                }
-            } else {
-                CallInfo {
-                    callee: resolved_fn,
-                    call_string,
-                    is_cached,
-                }
+            let info = CallInfo {
+                callee: resolved_fn,
+                call_string,
+                is_cached,
+                async_parent: if let CallKind::AsyncPoll(resolution, _loc, _) = call_kind {
+                    // Special case for async. We ask for skipping not on the closure, but
+                    // on the "async" function that created it. This is needed for
+                    // consistency in skipping. Normally, when "poll" is inlined, mutations
+                    // introduced by the creator of the future are not recorded and instead
+                    // handled here, on the closure. But if the closure is skipped we need
+                    // those mutations to occur. To ensure this we always ask for the
+                    // "CallChanges" on the creator so that both creator and closure have
+                    // the same view of whether they are inlined or "Skip"ped.
+                    Some(resolution)
+                } else {
+                    None
+                },
             };
             callback.on_inline(info)
         });

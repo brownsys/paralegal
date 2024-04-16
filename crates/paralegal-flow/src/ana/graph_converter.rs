@@ -26,6 +26,7 @@ use super::{default_index, path_for_item, src_loc_for_span, SPDGGenerator};
 use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
+    determine_async,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, match_async_trait_assign, CallChangeCallback, CallChanges, CallInfo,
     InlineMissReason, PdgParams,
@@ -281,6 +282,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                             call_string: weight.at,
                             callee: fun,
                             is_cached: true,
+                            async_parent: unimplemented!("Fix fixed inlining depth"),
                         })
                     {
                         let mctx = self.marker_ctx().clone();
@@ -415,8 +417,11 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             },
             Default::default(),
         )));
+        // TODO: I don't like that I have to do that here. Clean this up
+        let target = determine_async(tcx, local_def_id, &tcx.body_for_def_id(local_def_id)?.body)
+            .map_or(local_def_id, |res| res.0.def_id().expect_local());
         // Make sure we count outselves
-        record_inlining(&stat_wrap, tcx, local_def_id, false);
+        record_inlining(&stat_wrap, tcx, target, false);
         let stat_wrap_copy = stat_wrap.clone();
         let judge = generator.inline_judge.clone();
         let params = PdgParams::new(tcx, local_def_id)
@@ -460,7 +465,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             .stats
             .record_timed(TimedStat::Conversion, start.elapsed());
         self.stats.conversion_time = start.elapsed();
-        let tcx = self.tcx();
         SPDG {
             path: path_for_item(self.local_def_id.to_def_id(), self.tcx()),
             graph: self.spdg,

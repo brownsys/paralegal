@@ -31,15 +31,17 @@ impl<'tcx> InlineJudge<'tcx> {
 
     /// Should we perform inlining on this function?
     pub fn should_inline(&self, info: &CallInfo<'tcx>) -> bool {
+        let marker_target = info.async_parent.unwrap_or(info.callee);
+        let marker_target_def_id = marker_target.def_id();
         match self.analysis_control.inlining_depth() {
-            _ if self.marker_ctx.is_marked(info.callee.def_id())
-                || !info.callee.def_id().is_local() =>
+            _ if self.marker_ctx.is_marked(marker_target_def_id)
+                || !marker_target_def_id.is_local() =>
             {
                 false
             }
             InliningDepth::Adaptive => self
                 .marker_ctx
-                .has_transitive_reachable_markers(info.callee),
+                .has_transitive_reachable_markers(marker_target),
             InliningDepth::Fixed(limit) => {
                 debug_assert!(!info.call_string.is_empty());
                 info.call_string.len() <= *limit as usize
