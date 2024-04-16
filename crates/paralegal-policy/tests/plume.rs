@@ -47,7 +47,7 @@ fn notification_deletion() -> Result<()> {
                 //     .map(|_| ())
                 //     .map_err(Error::from)
             }
-            #[paralegal_flow::marker(noinline, arguments = [0])]
+            //#[paralegal_flow::marker(noinline, arguments = [0])]
             pub fn find_followed_by(conn: &Connection, user: &User) -> Result<Vec<Notification>> {
                 unimplemented!()
             }
