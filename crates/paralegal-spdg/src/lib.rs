@@ -573,6 +573,7 @@ impl IntoIterGlobalNodes for GlobalNode {
     }
 }
 
+/// Collections of nodes in a single controller
 pub mod node_cluster {
     use std::ops::Range;
 
@@ -663,6 +664,22 @@ pub mod node_cluster {
                 idx: 0..self.nodes.len(),
                 inner: self,
             }
+        }
+
+        /// Attempt to collect an iterator of nodes into a cluster
+        ///
+        /// Returns `None` if the iterator was empty or if two nodes did
+        /// not have identical controller id's
+        pub fn try_from_iter(iter: impl IntoIterator<Item = GlobalNode>) -> Option<Self> {
+            let mut it = iter.into_iter();
+            let first = it.next()?;
+            let ctrl_id = first.controller_id();
+            Some(Self {
+                controller_id: ctrl_id,
+                nodes: std::iter::once(Some(first.local_node()))
+                    .chain(it.map(|n| (n.controller_id() == ctrl_id).then_some(n.local_node())))
+                    .collect::<Option<Box<_>>>()?,
+            })
         }
     }
 }

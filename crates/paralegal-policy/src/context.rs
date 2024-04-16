@@ -724,10 +724,9 @@ where
         ctx: &Context,
     ) -> bool {
         self.flows_to(target, ctx, EdgeSelection::Control)
-            || self
-                .influencees(ctx, EdgeSelection::Data)
-                .into_iter()
-                .any(|inf| inf.flows_to(target, ctx, EdgeSelection::Control))
+            || NodeCluster::try_from_iter(self.influencees(ctx, EdgeSelection::Data).into_iter())
+                .unwrap()
+                .flows_to(target, ctx, EdgeSelection::Control)
     }
 
     /// Returns iterator over all Nodes that influence the given sink Node.
