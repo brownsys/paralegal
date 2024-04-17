@@ -190,6 +190,26 @@ fn dummy_policy(_: Arc<Context>) -> Result<()> {
     Ok(())
 }
 
+// #[allow(dead_code)]
+// fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
+//     let my_policy_result = Eval::any(ctx.all_controllers().collect(), |(deleter_id, _ignored)| {
+//         Eval::all(ctx.marked_type(Marker::new_intern("user_data")).iter().collect(), |&t| {
+//             Eval::any(ctx.srcs_with_type(deleter_id, t).collect(), |src| {
+//                 Eval::any(
+//                     ctx
+//                     .all_nodes_for_ctrl(deleter_id)
+//                     .filter(|n| ctx.has_marker(Marker::new_intern("deletes"), *n))
+//                     .collect::<Vec<_>>(), |sink| {
+//                         src!(ctx.flows_to(src, sink, EdgeSelection::Data))
+//                     })
+//             })
+//         })
+//     });
+//     my_policy_result.emit("", true);
+//     Ok(())
+// }
+
+#[allow(dead_code)]
 fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
     let my_policy_result = Eval::any(ctx.all_controllers().collect(), |(deleter_id, _ignored)| {
         Eval::all(
