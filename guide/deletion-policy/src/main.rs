@@ -16,7 +16,7 @@ fn main() -> Result<()> {
         .external_annotations("external-annotations.toml")
         .abort_after_analysis()
         .run(dir)?
-        .with_context(deletion_policy)?;
+        .with_context(paper_deletion_policy)?;
     println!("Policy successful");
     Ok(())
 }
@@ -203,6 +203,37 @@ fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
                             .filter(|n| ctx.has_marker(Marker::new_intern("deletes"), *n))
                             .collect::<Vec<_>>(),
                         |sink| src!(ctx.flows_to(src, sink, EdgeSelection::Data)),
+                    )
+                })
+            },
+        )
+    });
+    my_policy_result.emit("", true);
+    Ok(())
+}
+
+fn paper_deletion_policy(ctx: Arc<Context>) -> Result<()> {
+    let my_policy_result = Eval::any(ctx.all_controllers().collect(), |(deleter_id, _ignored)| {
+        Eval::all(
+            ctx.marked_type(Marker::new_intern("user_data"))
+                .iter()
+                .collect(),
+            |&t| {
+                Eval::any(ctx.srcs_with_type(deleter_id, t).collect(), |src| {
+                    Eval::any(
+                        ctx.all_nodes_for_ctrl(deleter_id)
+                            .filter(|n| ctx.has_marker(Marker::new_intern("make_delete_query"), *n))
+                            .collect::<Vec<_>>(),
+                        |sink| Eval::and(
+                            src!(ctx.flows_to(src, sink, EdgeSelection::Data)),
+                            Eval::any(
+                                ctx.all_nodes_for_ctrl(deleter_id)
+                                    .filter(|n| ctx.has_marker(Marker::new_intern("executes"), *n))
+                                    .collect::<Vec<_>>(),
+                                |exec| {
+                                    src!(ctx.flows_to(sink, exec, EdgeSelection::Data))
+                                })
+                        )
                     )
                 })
             },

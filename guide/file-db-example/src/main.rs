@@ -1,78 +1,59 @@
-//! Stores
-//!
-//! db/
-//!  |-- img/
-//!  |    |-- username.filename.jpg
-//!  |-- doc/
-//!       |-- username.docname.txt
-
-#![allow(dead_code, unused_variables)]
-
-struct User {
-    name: String,
+pub struct QueryBuilder {
+    /* ... */
+}
+impl QueryBuilder { // TODO
+    fn add(&mut self, query: Query) { /* ... */ }
+    #[paralegal::marker(executes, arguments = [self])]
+    fn execute(&mut self) { /* ... */ }
 }
 
-#[paralegal::marker(user_data)]
-struct Image {
-    user: User,
-    name: String,
+enum Query {
+    Delete(DeleteQuery),
+    // Other variants here
+}
+#[derive(Debug)]
+#[paralegal::marker(make_delete_query, field = [0])]
+struct DeleteQuery {
+    id: Id,
+    table_name: &'static str,
+}
+pub struct User {
+    id : Id,
+    /* ... */
+
+}
+#[paralegal::marker(userdata)]
+pub struct Post {
+    id : Id,
+    /* ... */
+}
+#[paralegal::marker(userdata)]
+pub struct Comment { 
+    id: Id,
+    /* ... */ 
 }
 
-impl Image {
-    fn for_user(user: &User) -> Vec<Self> {
-        todo!()
-    }
-
-    fn delete(self) {
-        std::fs::remove_file(
-            std::path::Path::new("db")
-                .join("img")
-                .join(format!("{}-{}.jpg", self.user.name, self.name)),
-        )
-        .unwrap()
-    }
+pub struct Id {
+    id : String,
 }
-
-#[paralegal::marker(user_data)]
-struct Document {
-    user: User,
-    name: String,
+struct Authored {
+    posts: Vec<Post>,
+    comments: Vec<Comment>,
 }
-
-impl Document {
-    fn for_user(user: &User) -> Vec<Self> {
-        todo!()
+impl User {
+    #[paralegal::analyze]
+    fn delete_user(&self, builder: &mut QueryBuilder) {
+        let authored: Authored = self.authored();
+        builder.add(Query::Delete(self.id, "users"));
+        builder.execute();
+        for post in &authored.posts { // TODO
+            builder.add(Query::Delete(post.id, "posts"));
+        }
+        builder.execute();
+        for comment in &authored.comments {
+            builder.add(Query::Delete(comment.id, "comments"));
+        }
+        builder.execute();
     }
-
-    fn delete(self) {
-        std::fs::remove_file(
-            std::path::Path::new("db")
-                .join("doc")
-                .join(format!("{}-{}.txt", self.user.name, self.name)),
-        )
-        .unwrap()
-    }
-}
-
-#[paralegal::analyze]
-fn delete(user: User) {
-    for doc in Document::for_user(&user) {
-        doc.delete()
-    }
-
-    // Comment this back in to make the policy pass
-    for img in Image::for_user(&user) {
-        img.delete()
-    }
-}
-
-fn main() {
-    let mut args = std::env::args().skip(1);
-
-    match args.next().unwrap().as_str() {
-        "delete" => delete(User {
-            name: args.next().unwrap(),
-        }),
-        other => panic!("Command not implemented {other}"),
-    }
+    fn authored() -> Authored { /* ... */ }
 }
