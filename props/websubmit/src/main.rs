@@ -340,6 +340,19 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    println!("WS Directory: {:?}", args.ws_dir);
+    if let Some(edit) = &args.edit_type {
+        println!("Edit Type: {:?}", edit);
+    } else {
+        println!("No Edit Type specified");
+    }
+
+    if let Some(policy) = &args.policy {
+        println!("Policy: {:?}", policy);
+    } else {
+        println!("Running all policies");
+    }
+
 
     let prop = match args.policy {
         Some(s) => match s.as_str() {
@@ -360,7 +373,7 @@ fn main() -> Result<()> {
     if let Some(edit) = args.edit_type.as_ref() {
         command
             .get_command()
-            .args(["--", "--lib", "--features", &edit]);
+            .args(["--", "--features", &edit]);
     }
     let mut cfg = paralegal_policy::Config::default();
     cfg.always_happens_before_tracing = paralegal_policy::algo::ahb::TraceLevel::Full;

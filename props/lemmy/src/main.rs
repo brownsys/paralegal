@@ -135,10 +135,10 @@ fn main() -> anyhow::Result<()> {
             .values()
             .map(|spdg| spdg.graph.node_count())
             .sum::<usize>();
-        println!(
-            "Analyzing over {num_controllers} controllers with avg {} nodes per graph",
-            sum_nodes / num_controllers
-        );
+        // println!(
+        //     "Analyzing over {num_controllers} controllers with avg {} nodes per graph",
+        //     sum_nodes / num_controllers
+        // );
         for ctrl in cx.desc().controllers.values() {
             let num_nodes = ctrl.graph.node_count();
             if num_nodes < 1000 {
