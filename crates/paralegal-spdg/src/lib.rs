@@ -200,7 +200,7 @@ impl SourceFileInfo {
 ///
 /// NOTE: The ordering of this type must be such that if point "a" is earlier in
 /// the file than "b", then "a" < "b".
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord, Hash)]
 pub struct SpanCoord {
     /// Line in the source file
     pub line: u32,
@@ -209,7 +209,7 @@ pub struct SpanCoord {
 }
 
 /// Encodes a source code location
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord, Hash)]
 pub struct Span {
     /// Which file this comes from
     pub source_file: SourceFile,
