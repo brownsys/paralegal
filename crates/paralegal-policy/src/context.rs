@@ -265,6 +265,23 @@ impl Context {
         self.diagnostics.emit(w)
     }
 
+    pub fn all_nodes(&self) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.desc().controllers.iter().flat_map(|(id, spdg)| {
+            let id = *id;
+            spdg.graph
+                .node_indices()
+                .map(move |n| GlobalNode::from_local_node(id, n))
+        })
+    }
+
+    pub fn roots_where<'a>(
+        &'a self,
+        f: impl Fn(GlobalNode) -> bool + 'a,
+    ) -> impl Iterator<Item = GlobalNode> + 'a {
+        self.all_nodes()
+            .filter(move |n| f(*n) && n.predecessors(self).all(|n| !f(n)))
+    }
+
     /// Emit a warning if this marker was not found in the source code.
     pub fn report_marker_if_absent(&self, marker: Marker) {
         assert_warning!(
@@ -799,6 +816,7 @@ mod private {
 
 /// Extension trait with queries for single nodes
 pub trait NodeExt: private::Sealed {
+    fn has_type(self, t: TypeId, ctx: &Context) -> bool;
     /// Find the call string for the statement or function that produced this node.
     fn associated_call_site(self, ctx: &Context) -> CallString;
     /// Get the type(s) of a Node.
@@ -827,6 +845,12 @@ pub trait NodeExt: private::Sealed {
 }
 
 impl NodeExt for GlobalNode {
+    fn has_type(self, t: TypeId, ctx: &Context) -> bool {
+        ctx.desc().controllers[&self.controller_id()]
+            .type_assigns
+            .get(&self.local_node())
+            .map_or(false, |tys| tys.0.contains(&t))
+    }
     fn associated_call_site(self, ctx: &Context) -> CallString {
         ctx.desc.controllers[&self.controller_id()]
             .node_info(self.local_node())
@@ -928,6 +952,9 @@ impl NodeExt for GlobalNode {
 impl<T: Sealed> Sealed for &'_ T {}
 
 impl<T: NodeExt + Copy> NodeExt for &'_ T {
+    fn has_type(self, t: TypeId, ctx: &Context) -> bool {
+        (*self).has_type(t, ctx)
+    }
     fn info(self, ctx: &Context) -> &NodeInfo {
         (*self).info(ctx)
     }
