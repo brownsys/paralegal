@@ -169,7 +169,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         known_def_ids.extend(type_info.keys());
         let def_info = known_def_ids
             .iter()
-            .map(|id| (*id, def_info_for_item(*id, tcx)))
+            .map(|id| (*id, def_info_for_item(*id, self.marker_ctx(), tcx)))
             .collect();
 
         type_info_sanity_check(&controllers, &type_info);
@@ -210,26 +210,25 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|i| {
                 let body = &self.tcx.body_for_def_id(i.function).unwrap().body;
 
-                let kind = match i.location {
-                    RichLocation::End => InstructionKind::Return,
-                    RichLocation::Start => InstructionKind::Start,
-                    RichLocation::Location(loc) => {
-                        let kind = match body.stmt_at(loc) {
-                            crate::Either::Right(term) => {
-                                if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
-                                    InstructionKind::FunctionCall(FunctionCallInfo {
-                                        id,
-                                        is_inlined: id.is_local(),
-                                    })
-                                } else {
-                                    InstructionKind::Terminator
-                                }
-                            }
-                            crate::Either::Left(_) => InstructionKind::Statement,
-                        };
-
-                        kind
-                    }
+                let (kind, description) = match i.location {
+                    RichLocation::End => (InstructionKind::Return, "start".to_owned()),
+                    RichLocation::Start => (InstructionKind::Start, "end".to_owned()),
+                    RichLocation::Location(loc) => match body.stmt_at(loc) {
+                        crate::Either::Right(term) => {
+                            let kind = if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
+                                InstructionKind::FunctionCall(FunctionCallInfo {
+                                    id,
+                                    is_inlined: id.is_local(),
+                                })
+                            } else {
+                                InstructionKind::Terminator
+                            };
+                            (kind, format!("{:?}", term.kind))
+                        }
+                        crate::Either::Left(stmt) => {
+                            (InstructionKind::Statement, format!("{:?}", stmt.kind))
+                        }
+                    },
                 };
                 let rust_span = match i.location {
                     RichLocation::Location(loc) => {
@@ -249,6 +248,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     InstructionInfo {
                         kind,
                         span: src_loc_for_span(rust_span, self.tcx),
+                        description: Identifier::new_intern(&description),
                     },
                 )
             })
@@ -372,7 +372,7 @@ fn path_for_item(id: DefId, tcx: TyCtxt) -> Box<[Identifier]> {
         .collect()
 }
 
-fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
+fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
     let name = crate::utils::identifier_for_item(tcx, id);
     let kind = def_kind_for_item(id, tcx);
     DefInfo {
@@ -380,6 +380,15 @@ fn def_info_for_item(id: DefId, tcx: TyCtxt) -> DefInfo {
         path: path_for_item(id, tcx),
         kind,
         src_info: src_loc_for_span(tcx.def_span(id), tcx),
+        markers: markers
+            .combined_markers(id)
+            .cloned()
+            .map(|ann| paralegal_spdg::MarkerAnnotation {
+                marker: ann.marker,
+                on_return: ann.refinement.on_return(),
+                on_argument: ann.refinement.on_argument(),
+            })
+            .collect(),
     }
 }
 

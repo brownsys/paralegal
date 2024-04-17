@@ -88,6 +88,37 @@ mod ser_localdefid_map {
     }
 }
 
+/// A marker annotation and its refinements.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
+pub struct MarkerAnnotation {
+    /// The (unchanged) name of the marker as provided by the user
+    pub marker: Identifier,
+    pub on_return: bool,
+    pub on_argument: TinyBitSet,
+}
+
+impl MarkerAnnotation {
+    /// Get the refinements on arguments
+    pub fn on_argument(&self, arg: u16) -> bool {
+        self.on_argument.contains(arg as u32).unwrap_or(false)
+    }
+
+    /// Is this refinement targeting the return value?
+    pub fn on_return(&self) -> bool {
+        self.on_return
+    }
+
+    /// True if this refinement is empty, i.e. the annotation is targeting the
+    /// item itself.
+    pub fn on_self(&self) -> bool {
+        self.on_argument.is_empty() && !self.on_return
+    }
+}
+
+fn const_false() -> bool {
+    false
+}
+
 #[cfg(feature = "rustc")]
 mod ser_defid_map {
     use serde::{Deserialize, Serialize};
@@ -130,6 +161,8 @@ pub struct DefInfo {
     pub kind: DefKind,
     /// Information about the span
     pub src_info: Span,
+    /// Marker annotations on this item
+    pub markers: Box<[MarkerAnnotation]>,
 }
 
 /// Provides a way to format rust paths
@@ -275,6 +308,8 @@ pub struct InstructionInfo {
     pub kind: InstructionKind,
     /// The source code span
     pub span: Span,
+    /// Textual rendering of the MIR
+    pub description: Identifier,
 }
 
 /// information about each encountered type.
