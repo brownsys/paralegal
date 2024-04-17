@@ -167,7 +167,7 @@ pub enum DefKind {
 }
 
 /// An interned [`SourceFileInfo`]
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Hash, PartialOrd, Ord)]
 pub struct SourceFile(Intern<SourceFileInfo>);
 
 impl std::ops::Deref for SourceFile {
@@ -178,7 +178,7 @@ impl std::ops::Deref for SourceFile {
 }
 
 /// Information about a source file
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash, PartialOrd, Ord)]
 pub struct SourceFileInfo {
     /// Printable location of the source code file - either an absolute path to library source code
     /// or a path relative to within the compiled crate (e.g. `src/...`)
