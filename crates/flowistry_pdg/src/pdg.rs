@@ -101,17 +101,33 @@ impl fmt::Display for GlobalLocation {
 ///
 /// Note: This type is copyable due to interning.
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug, Serialize, Deserialize)]
-pub struct CallString(Intern<Vec<GlobalLocation>>);
+pub struct CallString(Intern<CallStringInner>);
+
+type CallStringInner = Box<[GlobalLocation]>;
 
 impl CallString {
     /// Create a new call string from a list of global locations.
-    fn new(locs: Vec<GlobalLocation>) -> Self {
+    fn new(locs: CallStringInner) -> Self {
         CallString(Intern::new(locs))
+    }
+
+    /// Split the leaf (the current instruction) from the caller for the
+    /// function (if any) and return both. Same as `(self.leaf(), self.caller())`.
+    pub fn pop(self) -> (GlobalLocation, Option<CallString>) {
+        let (last, rest) = self
+            .0
+            .split_last()
+            .expect("Invariant broken, call strings must have at least length 1");
+
+        (
+            *last,
+            (!rest.is_empty()).then(|| CallString::new(rest.into())),
+        )
     }
 
     /// Create an initial call string for the single location `loc`.
     pub fn single(loc: GlobalLocation) -> Self {
-        Self::new(vec![loc])
+        Self::new(Box::new([loc]))
     }
 
     /// Returns the leaf of the call string (the currently-called function).
@@ -119,20 +135,21 @@ impl CallString {
         *self.0.last().unwrap()
     }
 
-    /// Returns the call string minus the root.
-    pub fn caller(self) -> Self {
-        CallString::new(self.0[..self.0.len() - 1].to_vec())
+    /// Returns the call string minus the leaf. Returns `None` if this location
+    /// is at the root.
+    pub fn caller(self) -> Option<Self> {
+        self.pop().1
     }
 
-    /// Returns an iterator over the locations in the call string, starting at the leaf and going to the root.
+    /// Returns an iterator over the locations in the call string, starting at
+    /// the leaf and going to the root.
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = GlobalLocation> + '_ {
         self.0.iter().rev().copied()
     }
 
     /// Adds a new call site to the end of the call string.
     pub fn push(self, loc: GlobalLocation) -> Self {
-        let mut string = self.0.to_vec();
-        string.push(loc);
+        let string = self.0.iter().copied().chain(Some(loc)).collect();
         CallString::new(string)
     }
 
@@ -145,10 +162,12 @@ impl CallString {
     }
 
     pub fn stable_id(self) -> usize {
-        let r: &'static Vec<GlobalLocation> = self.0.as_ref();
-        r as *const Vec<GlobalLocation> as usize
+        let r: &'static CallStringInner = self.0.as_ref();
+        r as *const CallStringInner as usize
     }
 
+    /// Returns an iterator over the locations in the call string, starting at
+    /// the root and going to the leaf.
     pub fn iter_from_root(&self) -> impl DoubleEndedIterator<Item = GlobalLocation> + '_ {
         self.0.iter().copied()
     }
@@ -172,4 +191,26 @@ impl fmt::Display for CallString {
         }
         Ok(())
     }
+}
+
+/// Additional information about the source of data.
+///
+/// If the operation is a function call this contains the argument index
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs,
+)]
+pub enum SourceUse {
+    Operand,
+    Argument(u8),
+}
+
+/// Additional information about this mutation.
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs)]
+pub enum TargetUse {
+    /// A function returned, assigning to it's return destination
+    Return,
+    /// This mutation is a non-function assign
+    Assign,
+    /// A mutable argument was modified by a function call
+    MutArg(u8),
 }

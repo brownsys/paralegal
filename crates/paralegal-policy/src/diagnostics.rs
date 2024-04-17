@@ -79,12 +79,13 @@
 #![allow(clippy::arc_with_non_send_sync)]
 
 use colored::*;
+use indexmap::IndexMap;
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
 use paralegal_spdg::{GlobalNode, Identifier, Span, SpanCoord, SPDG};
 
-use crate::{Context, ControllerId};
+use crate::{Context, ControllerId, NodeExt};
 
 /// Check the condition and emit a [`Diagnostics::error`] if it fails.
 #[macro_export]
@@ -127,7 +128,7 @@ macro_rules! assert_warning {
 }
 
 /// Severity of a recorded diagnostic message
-#[derive(Debug, Clone, Copy, strum::AsRefStr)]
+#[derive(Debug, Clone, Copy, strum::AsRefStr, Hash, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")]
 pub enum Severity {
     /// This indicates that the policy failed.
@@ -158,6 +159,7 @@ impl Severity {
 /// Context provided to [`HasDiagnosticsBase::record`].
 type DiagnosticContextStack = Vec<String>;
 
+#[derive(Hash, PartialEq, Eq)]
 /// Representation of a diagnostic message. You should not interact with this
 /// type directly but use the methods on [`Diagnostics`] or
 /// [`DiagnosticBuilder`] to create these.
@@ -181,20 +183,20 @@ impl Diagnostic {
     }
 }
 
-#[derive(Debug)]
+#[derive(Hash, PartialEq, Eq, Debug)]
 struct DiagnosticPart {
     message: String,
     severity: Severity,
     span: Option<HighlightedSpan>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct SubSpan {
     start: SpanCoord,
     end: SpanCoord,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 /// A span with only a portion highlighted.
 pub struct HighlightedSpan {
     span: Span,
@@ -669,7 +671,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
 }
 
 fn highlighted_node_span(ctx: &Context, node: GlobalNode) -> HighlightedSpan {
-    let node_span = ctx.get_location(node);
+    let node_span = node.get_location(ctx);
     let stmt_span = &ctx.instruction_at_node(node).span;
     if stmt_span.contains(node_span) {
         HighlightedSpan::new(stmt_span.clone(), node_span.start, node_span.end)
@@ -989,7 +991,7 @@ impl Context {
 
 /// Base database of emitted diagnostics.
 #[derive(Debug, Default)]
-pub(crate) struct DiagnosticsRecorder(std::sync::Mutex<Vec<Diagnostic>>);
+pub(crate) struct DiagnosticsRecorder(std::sync::Mutex<IndexMap<Diagnostic, ()>>);
 
 struct DisplayDiagnostic<'a>(&'a Diagnostic);
 
@@ -1007,7 +1009,7 @@ impl DiagnosticsRecorder {
     pub(crate) fn emit(&self, mut w: impl Write) -> std::io::Result<bool> {
         let w = &mut w;
         let mut can_continue = true;
-        for diag in self.0.lock().unwrap().drain(..) {
+        for (diag, ()) in self.0.lock().unwrap().drain(..) {
             writeln!(w, "{}", DisplayDiagnostic(&diag))?;
             can_continue &= !diag.main.severity.must_abort();
         }
@@ -1018,7 +1020,7 @@ impl DiagnosticsRecorder {
 impl HasDiagnosticsBase for Context {
     /// Record a diagnostic message.
     fn record(&self, diagnostic: Diagnostic) {
-        self.diagnostics.0.lock().unwrap().push(diagnostic);
+        self.diagnostics.0.lock().unwrap().insert(diagnostic, ());
     }
 
     fn as_ctx(&self) -> &Context {

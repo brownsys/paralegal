@@ -17,10 +17,14 @@ strum = { version = "0.25", features = ["derive"] }
 #     "indexical",
 # ] }
 # rustc_plugin = "=0.7.4-nightly-2023-08-25"
-rustc_utils = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46", features = [
+rustc_utils = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "e990ded60afc928f76293fb9ad265c58405da1a7", features = [
     "indexical",
 ] }
-rustc_plugin = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "a8ef2e8aede625c0ae7765ed9cc688cdd1b1df46" }
+rustc_plugin = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "e990ded60afc928f76293fb9ad265c58405da1a7" }
+#rustc_plugin = { path = "../rustc_plugin/crates/rustc_plugin" }
+#rustc_utils = { path = "../rustc_plugin/crates/rustc_utils", features = ["indexical"] }
+flowistry = { git = "https://github.com/brownsys/flowistry", rev = "a2ccfca2e6b5668ffd246eddc6abaf4d6e440a35", default-features = false }
+anyhow = { version = "1.0.72", features = ["backtrace"] }
 
 [profile.release]
 debug = true

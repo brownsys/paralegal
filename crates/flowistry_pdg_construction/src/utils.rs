@@ -10,9 +10,9 @@ use rustc_middle::{
         tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::{self, EarlyBinder, GenericArgsRef, Instance, ParamEnv, TyCtxt, TyKind},
+    ty::{self, EarlyBinder, GenericArgsRef, Instance, ParamEnv, Ty, TyCtxt, TyKind},
 };
-use rustc_type_ir::fold::TypeFoldable;
+use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
@@ -98,25 +98,33 @@ pub fn try_resolve_function<'tcx>(
     }
 }
 
-pub fn try_monomorphize<'a, 'tcx, T>(
-    tcx: TyCtxt<'tcx>,
-    fn_resolution: FnResolution<'tcx>,
-    param_env: ParamEnv<'tcx>,
-    t: &'a T,
-) -> Cow<'a, T>
-where
-    T: TypeFoldable<TyCtxt<'tcx>> + Clone,
-{
-    match fn_resolution {
-        FnResolution::Partial(_) => Cow::Borrowed(t),
-        FnResolution::Final(inst) => {
-            // let (t, _) = tcx.replace_late_bound_regions(Binder::dummy(t.clone()), |r| todo!());
-            // Cow::Owned(EarlyBinder::bind(t).instantiate(tcx, inst.args))
-            Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
+pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId> {
+    let assoc_item = tcx.opt_associated_item(function)?;
+    if assoc_item.container != ty::AssocItemContainer::TraitContainer
+        || assoc_item.defaultness(tcx).has_value()
+    {
+        return None;
+    }
+    assoc_item.trait_item_def_id
+}
+
+impl<'tcx> FnResolution<'tcx> {
+    pub fn try_monomorphize<'a, T>(
+        self,
+        tcx: TyCtxt<'tcx>,
+        param_env: ParamEnv<'tcx>,
+        t: &'a T,
+    ) -> Cow<'a, T>
+    where
+        T: TypeFoldable<TyCtxt<'tcx>> + Clone,
+    {
+        match self {
+            FnResolution::Partial(_) => Cow::Borrowed(t),
+            FnResolution::Final(inst) => Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
                 tcx,
                 param_env,
                 EarlyBinder::bind(tcx.erase_regions(t.clone())),
-            ))
+            )),
         }
     }
 }
@@ -131,7 +139,7 @@ pub fn retype_place<'tcx>(
 
     let mut new_projection = Vec::new();
     let mut ty = PlaceTy::from_ty(body.local_decls()[orig.local].ty);
-    let param_env = tcx.param_env(def_id);
+    let param_env = tcx.param_env_reveal_all_normalized(def_id);
     for elem in orig.projection.iter() {
         if matches!(
             ty.ty.kind(),
@@ -236,4 +244,11 @@ pub fn find_body_assignments(body: &Body<'_>) -> BodyAssignments {
         .into_group_map()
         .into_iter()
         .collect()
+}
+
+pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
+    match ty.kind() {
+        TyKind::Alias(AliasKind::Opaque, alias_ty) => tcx.type_of(alias_ty.def_id).skip_binder(),
+        _ => ty,
+    }
 }

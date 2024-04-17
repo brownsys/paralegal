@@ -24,6 +24,7 @@ extern crate strum;
 pub use flowistry_pdg::*;
 
 pub mod dot;
+pub mod ser;
 mod tiny_bitset;
 pub mod traverse;
 pub mod utils;
@@ -32,6 +33,7 @@ use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use std::{fmt, hash::Hash, path::PathBuf};
 use utils::write_sep;
 
@@ -53,9 +55,9 @@ pub type TypeId = DefId;
 /// Identifiers for functions
 pub type Function = Identifier;
 
-/// Name of the file used for emitting the JSON serialized
+/// Name of the file used for emitting the serialized
 /// [`ProgramDescription`].
-pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.json";
+pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.o";
 
 #[allow(dead_code)]
 mod ser_localdefid_map {
@@ -167,7 +169,7 @@ pub enum DefKind {
 }
 
 /// An interned [`SourceFileInfo`]
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Hash, PartialOrd, Ord)]
 pub struct SourceFile(Intern<SourceFileInfo>);
 
 impl std::ops::Deref for SourceFile {
@@ -178,7 +180,7 @@ impl std::ops::Deref for SourceFile {
 }
 
 /// Information about a source file
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash, PartialOrd, Ord)]
 pub struct SourceFileInfo {
     /// Printable location of the source code file - either an absolute path to library source code
     /// or a path relative to within the compiled crate (e.g. `src/...`)
@@ -198,7 +200,7 @@ impl SourceFileInfo {
 ///
 /// NOTE: The ordering of this type must be such that if point "a" is earlier in
 /// the file than "b", then "a" < "b".
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord, Hash)]
 pub struct SpanCoord {
     /// Line in the source file
     pub line: u32,
@@ -207,7 +209,7 @@ pub struct SpanCoord {
 }
 
 /// Encodes a source code location
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord, Hash)]
 pub struct Span {
     /// Which file this comes from
     pub source_file: SourceFile,
@@ -221,6 +223,11 @@ impl Span {
     /// Is `other` completely contained within `self`
     pub fn contains(&self, other: &Self) -> bool {
         self.source_file == other.source_file && self.start <= other.start && self.end >= other.end
+    }
+
+    /// How many lines this span spans
+    pub fn line_len(&self) -> u32 {
+        self.end.line - self.start.line + 1
     }
 }
 
@@ -298,6 +305,20 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
+    /// How many marker annotations were found
+    pub marker_annotation_count: u32,
+    /// How long rustc ran before out plugin executed
+    pub rustc_time: Duration,
+    /// The number of functions we needed to inspect the source of across
+    /// all controllers.
+    pub dedup_functions: u32,
+    /// The lines of code corresponding to the functions from
+    /// [`dedup_functions::seen_functions`]. This is the sum of all
+    /// `analyzed_locs` of the controllers but deduplicated.
+    pub dedup_locs: u32,
+    #[doc(hidden)]
+    #[serde(with = "ser_localdefid_map")]
+    pub analyzed_spans: HashMap<LocalDefId, Span>,
 }
 
 /// Metadata about a type
@@ -306,14 +327,14 @@ pub struct TypeDescription {
     /// How rustc would debug print this type
     pub rendering: String,
     /// Aliases
-    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))]
-    pub otypes: Vec<TypeId>,
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_seq"))]
+    pub otypes: Box<[TypeId]>,
     /// Attached markers. Guaranteed not to be empty.
     pub markers: Vec<Identifier>,
 }
 
 #[cfg(feature = "rustc")]
-mod ser_defid_vec {
+mod ser_defid_seq {
     use flowistry_pdg::rustc_proxies;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -321,18 +342,15 @@ mod ser_defid_vec {
     #[repr(transparent)]
     struct DefIdWrap(#[serde(with = "rustc_proxies::DefId")] crate::DefId);
 
-    pub fn serialize<S: Serializer>(
-        v: &Vec<crate::DefId>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        unsafe { Vec::<DefIdWrap>::serialize(std::mem::transmute(v), serializer) }
+    pub fn serialize<S: Serializer>(v: &[crate::DefId], serializer: S) -> Result<S::Ok, S::Error> {
+        unsafe { <[DefIdWrap]>::serialize(std::mem::transmute(v), serializer) }
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
-    ) -> Result<Vec<crate::DefId>, D::Error> {
+    ) -> Result<Box<[crate::DefId]>, D::Error> {
         unsafe {
-            Ok(std::mem::transmute(Vec::<DefIdWrap>::deserialize(
+            Ok(std::mem::transmute(Box::<[DefIdWrap]>::deserialize(
                 deserializer,
             )?))
         }
@@ -555,61 +573,118 @@ impl IntoIterGlobalNodes for GlobalNode {
     }
 }
 
-/// A globally identified set of nodes that are all located in the same
-/// controller.
-///
-/// Sometimes it is more convenient to think about such a group instead of
-/// individual [`GlobalNode`]s
-#[derive(Debug, Hash, Clone)]
-pub struct NodeCluster {
-    controller_id: LocalDefId,
-    nodes: Box<[Node]>,
-}
+/// Collections of nodes in a single controller
+pub mod node_cluster {
+    use std::ops::Range;
 
-/// Iterate over a node cluster but yielding [`GlobalNode`]s
-pub struct NodeClusterIter<'a> {
-    inner: std::slice::Iter<'a, Node>,
-}
+    use flowistry_pdg::rustc_portable::LocalDefId;
 
-impl Iterator for NodeClusterIter<'_> {
-    type Item = Node;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied()
+    use crate::{GlobalNode, IntoIterGlobalNodes, Node};
+
+    /// A globally identified set of nodes that are all located in the same
+    /// controller.
+    ///
+    /// Sometimes it is more convenient to think about such a group instead of
+    /// individual [`GlobalNode`]s
+    #[derive(Debug, Hash, Clone)]
+    pub struct NodeCluster {
+        controller_id: LocalDefId,
+        nodes: Box<[Node]>,
     }
-}
 
-impl<'a> IntoIterGlobalNodes for &'a NodeCluster {
-    type Iter = NodeClusterIter<'a>;
-    fn iter_nodes(self) -> Self::Iter {
-        NodeClusterIter {
-            inner: self.nodes.iter(),
+    /// Owned iterator of a [`NodeCluster`]
+    pub struct IntoIter {
+        inner: NodeCluster,
+        idx: Range<usize>,
+    }
+
+    impl Iterator for IntoIter {
+        type Item = GlobalNode;
+        fn next(&mut self) -> Option<Self::Item> {
+            let idx = self.idx.next()?;
+            Some(GlobalNode::from_local_node(
+                self.inner.controller_id,
+                self.inner.nodes[idx],
+            ))
         }
     }
 
-    fn controller_id(self) -> LocalDefId {
-        self.controller_id
+    /// Iterate over a node cluster but yielding [`GlobalNode`]s
+    pub struct Iter<'a> {
+        inner: std::slice::Iter<'a, Node>,
     }
-}
 
-impl NodeCluster {
-    /// Create a new cluster. This for internal use.
-    pub fn new(controller_id: LocalDefId, nodes: impl IntoIterator<Item = Node>) -> Self {
-        Self {
-            controller_id,
-            nodes: nodes.into_iter().collect::<Vec<_>>().into(),
+    impl Iterator for Iter<'_> {
+        type Item = Node;
+        fn next(&mut self) -> Option<Self::Item> {
+            self.inner.next().copied()
         }
     }
 
-    /// Controller that these nodes belong to
-    pub fn controller_id(&self) -> LocalDefId {
-        self.controller_id
+    impl<'a> IntoIterGlobalNodes for &'a NodeCluster {
+        type Iter = Iter<'a>;
+        fn iter_nodes(self) -> Self::Iter {
+            self.iter()
+        }
+
+        fn controller_id(self) -> LocalDefId {
+            self.controller_id
+        }
     }
 
-    /// Nodes in this cluster
-    pub fn nodes(&self) -> &[Node] {
-        &self.nodes
+    impl NodeCluster {
+        /// Create a new cluster. This for internal use.
+        pub fn new(controller_id: LocalDefId, nodes: impl IntoIterator<Item = Node>) -> Self {
+            Self {
+                controller_id,
+                nodes: nodes.into_iter().collect::<Vec<_>>().into(),
+            }
+        }
+
+        /// Iterate nodes borrowing `self`
+        pub fn iter(&self) -> Iter<'_> {
+            Iter {
+                inner: self.nodes.iter(),
+            }
+        }
+
+        /// Controller that these nodes belong to
+        pub fn controller_id(&self) -> LocalDefId {
+            self.controller_id
+        }
+
+        /// Nodes in this cluster
+        pub fn nodes(&self) -> &[Node] {
+            &self.nodes
+        }
+
+        /// Move-iterate `self`
+        pub fn into_iter(self) -> IntoIter {
+            IntoIter {
+                idx: 0..self.nodes.len(),
+                inner: self,
+            }
+        }
+
+        /// Attempt to collect an iterator of nodes into a cluster
+        ///
+        /// Returns `None` if the iterator was empty or if two nodes did
+        /// not have identical controller id's
+        pub fn try_from_iter(iter: impl IntoIterator<Item = GlobalNode>) -> Option<Self> {
+            let mut it = iter.into_iter();
+            let first = it.next()?;
+            let ctrl_id = first.controller_id();
+            Some(Self {
+                controller_id: ctrl_id,
+                nodes: std::iter::once(Some(first.local_node()))
+                    .chain(it.map(|n| (n.controller_id() == ctrl_id).then_some(n.local_node())))
+                    .collect::<Option<Box<_>>>()?,
+            })
+        }
     }
 }
+
+pub use node_cluster::NodeCluster;
 
 /// The global version of an edge that is tied to some specific entrypoint
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -632,47 +707,13 @@ pub struct NodeInfo {
     pub at: CallString,
     /// The debug print of the `mir::Place` that this node represents
     pub description: String,
-    /// Additional information of how this node is used in the source.
-    pub kind: NodeKind,
     /// Span information for this node
     pub span: Span,
 }
 
 impl Display for NodeInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} @ {} ({})", self.description, self.at, self.kind)
-    }
-}
-
-/// Additional information about what a given node may represent
-#[derive(Clone, Debug, Serialize, Deserialize, Copy, strum::EnumIs)]
-pub enum NodeKind {
-    /// The node is (part of) a formal parameter of a function (0-indexed). e.g.
-    /// in `fn foo(x: usize)` `x` would be a `FormalParameter(0)`.
-    FormalParameter(u8),
-    /// Formal return of a function, e.g. `x` in `return x`;
-    FormalReturn,
-    /// Parameter given to a function at the call site, e.g. `x` in `foo(x)`.
-    ActualParameter(TinyBitSet),
-    /// Return value received from a call, e.g. `x` in `let x = foo(...);`
-    ActualReturn,
-    /// Any other kind of node
-    Unspecified,
-}
-
-impl Display for NodeKind {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            NodeKind::FormalParameter(i) => {
-                write!(f, "Formal Parameter [{i}]")
-            }
-            NodeKind::FormalReturn => f.write_str("Formal Return"),
-            NodeKind::ActualParameter(p) => {
-                write!(f, "Actual Parameters {}", p.display_pretty())
-            }
-            NodeKind::ActualReturn => f.write_str("Actual Return"),
-            NodeKind::Unspecified => f.write_str("Unspecified"),
-        }
+        write!(f, "{} @ {}", self.description, self.at)
     }
 }
 
@@ -683,6 +724,11 @@ pub struct EdgeInfo {
     pub kind: EdgeKind,
     /// Where in the program this edge arises from
     pub at: CallString,
+
+    /// Why the source of this edge is read
+    pub source_use: SourceUse,
+    /// Why the target of this edge is written
+    pub target_use: TargetUse,
 }
 
 impl Display for EdgeInfo {
@@ -730,20 +776,47 @@ pub struct SPDG {
     /// The PDG
     pub graph: SPDGImpl,
     /// Nodes to which markers are assigned.
-    pub markers: HashMap<Node, Vec<Identifier>>,
+    pub markers: HashMap<Node, Box<[Identifier]>>,
     /// The nodes that represent arguments to the entrypoint
-    pub arguments: Vec<Node>,
+    pub arguments: Box<[Node]>,
     /// If the return is `()` or `!` then this is `None`
-    pub return_: Option<Node>,
+    pub return_: Box<[Node]>,
     /// Stores the assignment of relevant (e.g. marked) types to nodes. Node
     /// that this contains multiple types for a single node, because it hold
     /// top-level types and subtypes that may be marked.
     pub type_assigns: HashMap<Node, Types>,
+    /// Statistics
+    pub statistics: SPDGStats,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+/// Statistics about the code that produced an SPDG
+pub struct SPDGStats {
+    /// The number of unique lines of code we generated a PDG for. This means
+    /// MIR bodies without considering monomorphization
+    pub unique_locs: u32,
+    /// The number of unique functions that became part of the PDG. Corresponds
+    /// to [`Self::UniqueLoCs`].
+    pub unique_functions: u32,
+    /// The number of lines we ran through the PDG construction. This is higher
+    /// than unique LoCs, because we need to analyze some functions multiple
+    /// times, due to monomorphization and calls tring differences.
+    pub analyzed_locs: u32,
+    /// Number of functions that correspond to [`Self::analyzed_locs]`
+    pub analyzed_functions: u32,
+    /// How many times we inlined functions. This will be higher than
+    /// [`Self::AnalyzedFunction`] because sometimes the callee PDG is served
+    /// from the cache.
+    pub inlinings_performed: u32,
+    /// How long it took to create this PDG
+    pub construction_time: Duration,
+    /// How long it took to calculate markers and otherwise set up the pdg
+    pub conversion_time: Duration,
 }
 
 /// Holds [`TypeId`]s that were assigned to a node.
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_vec"))] pub Vec<TypeId>);
+pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_seq"))] pub Box<[TypeId]>);
 
 impl SPDG {
     /// Retrieve metadata for this node
@@ -780,10 +853,7 @@ impl SPDG {
     /// The arguments of this spdg. The same as the `arguments` field, but
     /// conveniently paired with the controller id
     pub fn arguments(&self) -> NodeCluster {
-        NodeCluster {
-            controller_id: self.id,
-            nodes: self.arguments.clone().into(),
-        }
+        NodeCluster::new(self.id, self.arguments.iter().copied())
     }
 
     /// All types (if any) assigned to this node
@@ -827,9 +897,8 @@ impl<'a> Display for DisplayNode<'a> {
         if self.detailed {
             write!(
                 f,
-                "{{{}}} ({}) {} @ {}",
+                "{{{}}} {} @ {}",
                 self.node.index(),
-                weight.kind,
                 weight.description,
                 weight.at
             )

@@ -1,5 +1,12 @@
 use anyhow::Result;
-use paralegal_policy::{assert_error, paralegal_spdg::traverse::EdgeSelection, Context, Marker, paralegal_spdg::GlobalNode, paralegal_spdg::SPDG, ControllerId, paralegal_spdg::rustc_portable::{DefId, LocalDefId}};
+use paralegal_policy::{
+    assert_error,
+    paralegal_spdg::rustc_portable::{DefId, LocalDefId},
+    paralegal_spdg::traverse::EdgeSelection,
+    paralegal_spdg::GlobalNode,
+    paralegal_spdg::SPDG,
+    Context, ControllerId, Marker,
+};
 use std::sync::Arc;
 extern crate strum_macros;
 
@@ -7,12 +14,12 @@ fn main() -> Result<()> {
     let dir = "../file-db-example/";
     paralegal_policy::SPDGGenCommand::global()
         .external_annotations("external-annotations.toml")
+        .abort_after_analysis()
         .run(dir)?
         .with_context(deletion_policy)?;
     println!("Policy successful");
     Ok(())
 }
-
 
 #[derive(strum_macros::AsRefStr)]
 enum Eval {
@@ -52,7 +59,7 @@ impl Eval {
             ),
             Self::Not(inner) if inner.success() == expectation => {
                 succeeding.push(("not".to_owned(), inner.as_ref()))
-            },
+            }
             Self::Or { left, right } => succeeding.extend(
                 [
                     ("left hand side".to_owned(), left.as_ref()),
@@ -116,7 +123,7 @@ impl Eval {
         }
     }
     fn not(expr: Eval) -> Eval {
-        Self::Not (Box::new(expr))
+        Self::Not(Box::new(expr))
     }
 
     fn emit(&self, prefix: &str, expectation: bool) {
@@ -204,19 +211,77 @@ fn dummy_policy(_: Arc<Context>) -> Result<()> {
 
 #[allow(dead_code)]
 fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
-    let user_data_types = ctx.marked_type(Marker::new_intern("user_data"));
-
-    let found = ctx.all_controllers().any(|(deleter_id, _ignored)| {
-        let delete_sinks = ctx
-            .all_nodes_for_ctrl(deleter_id)
-            .filter(|n| ctx.has_marker(Marker::new_intern("deletes"), *n))
-            .collect::<Vec<_>>();
-        user_data_types.iter().all(|&t| {
-            let sources = ctx.srcs_with_type(deleter_id, t).collect::<Vec<_>>();
-            ctx.any_flows(&sources, &delete_sinks, EdgeSelection::Data)
-                .is_some()
-        })
+    let my_policy_result = Eval::any(ctx.all_controllers().collect(), |(deleter_id, _ignored)| {
+        Eval::all(
+            ctx.marked_type(Marker::new_intern("user_data"))
+                .iter()
+                .collect(),
+            |&t| {
+                Eval::any(ctx.srcs_with_type(deleter_id, t).collect(), |src| {
+                    Eval::any(
+                        ctx.all_nodes_for_ctrl(deleter_id)
+                            .filter(|n| ctx.has_marker(Marker::new_intern("deletes"), *n))
+                            .collect::<Vec<_>>(),
+                        |sink| src!(ctx.flows_to(src, sink, EdgeSelection::Data)),
+                    )
+                })
+            },
+        )
     });
-    assert_error!(ctx, found, "Could not find a controller deleting all types");
+    my_policy_result.emit("", true);
     Ok(())
+}
+
+struct QueryBuilder { /* ... */ }
+
+impl QueryBuilder {
+  fn add(&mut self, query: Query) { /* ... */ }
+  ^#[paralegal::marker(executes, arguments = [self])]^
+  fn execute(&mut self) { /* ... */ }
+}
+
+enum Query {
+  ^#[paralegal::marker(make_delete_query, field = [0])]^
+  Delete(Id, &'static str /* table name */ ),
+  /* ... */
+}
+
+pub struct User {
+    id : String,
+    posts : Vec<Post>,
+    comments : Vec<Comment>,
+ }
+#[paralegal::marker(userdata)]^
+pub struct Post {
+    id : String,
+    user: User,
+    body : String,
+ }
+^#[paralegal::marker(userdata)]^
+pub struct Comment { 
+    id : String,
+    user : User,
+    body : String,
+}
+
+struct Authored {
+  posts: Vec<Post>,
+  comments: Vec<Comment>,
+}
+
+impl User {
+    #[paralegal::analyze]
+    fn delete_user(&self, builder: &mut QueryBuilder) {
+        let authored: Authored = self.authored();
+        builder.add(Query::Delete(self.id, "users"));
+        builder.execute();
+        for blog in &authored.posts {
+            builder.add(Query::Delete(post.id, "posts"));
+        }
+        builder.execute();
+        // for comment in &authored.comments {
+        //     builder.add(Query::Delete(comment.id, "comments"));
+        // }
+        // builder.execute();
+    }
 }

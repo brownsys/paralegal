@@ -59,7 +59,6 @@ pub use paralegal_spdg::{
 };
 use std::time::{Duration, Instant};
 use std::{
-    fs::File,
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
@@ -88,6 +87,8 @@ pub struct Stats {
     pub context_contruction: Duration,
     /// How long the policy runs
     pub policy: Duration,
+    /// How long it took to read in the graph description
+    pub deserialization: Duration,
 }
 
 impl std::fmt::Display for Stats {
@@ -100,9 +101,10 @@ impl std::fmt::Display for Stats {
         }
         write!(
             f,
-            ", Index Creation: {}, Policy Execution: {}",
+            ", Index Creation: {}, Policy Execution: {}, Deser: {}",
             TruncatedHumanTime::from(self.context_contruction),
-            TruncatedHumanTime::from(self.policy)
+            TruncatedHumanTime::from(self.policy),
+            TruncatedHumanTime::from(self.deserialization),
         )
     }
 }
@@ -209,6 +211,11 @@ impl GraphLocation {
         }
     }
 
+    /// Inspect the path that will be loaded
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Builds a context, then runs the property.
     ///
     /// Emits any recorded diagnostic messages to stdout and aborts the program
@@ -243,8 +250,9 @@ impl GraphLocation {
             success,
             result,
             stats: Stats {
-                analysis: ctx.stats.0,
-                context_contruction: ctx.stats.1,
+                analysis: ctx.stats.pdg_construction,
+                context_contruction: ctx.stats.precomputation,
+                deserialization: ctx.stats.deserialization.unwrap(),
                 policy: start.elapsed(),
             },
         })
@@ -258,15 +266,11 @@ impl GraphLocation {
     pub fn build_context(&self, config: Config) -> Result<Context> {
         let _ = simple_logger::init_with_env();
 
-        let desc = {
-            let mut f = File::open(&self.path)?;
-            anyhow::Context::with_context(
-                serde_json::from_reader::<_, ProgramDescription>(&mut f),
-                || format!("Reading SPDG (JSON) from {}", self.path.display()),
-            )?
-        };
+        let deser_started = Instant::now();
+        let desc = ProgramDescription::canonical_read(&self.path)?;
         let mut ctx = Context::new(desc, config);
-        ctx.stats.0 = self.construction_time;
+        ctx.stats.pdg_construction = self.construction_time;
+        ctx.stats.deserialization = Some(deser_started.elapsed());
         Ok(ctx)
     }
 }
@@ -276,12 +280,16 @@ impl GraphLocation {
 pub struct Config {
     /// How much information to retain for error messages in `always_happens_before`
     pub always_happens_before_tracing: algo::ahb::TraceLevel,
+    /// Whether tho precompute an index for `flows_to` queries with
+    /// `EdgeSelection::Data` or whether to use a new DFS every time.
+    pub use_flows_to_index: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             always_happens_before_tracing: algo::ahb::TraceLevel::StartAndEnd,
+            use_flows_to_index: false,
         }
     }
 }
