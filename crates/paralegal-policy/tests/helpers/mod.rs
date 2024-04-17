@@ -1,7 +1,8 @@
+#![allow(dead_code)]
 use std::{
     collections::hash_map::DefaultHasher,
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{self, File},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -31,11 +32,12 @@ lazy_static::lazy_static! {
     };
 }
 
-fn temporary_directory() -> Result<PathBuf> {
+fn temporary_directory(to_hash: &impl Hash) -> Result<PathBuf> {
     let tmpdir = env::temp_dir();
     let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
     let mut hasher = DefaultHasher::new();
     secs.hash(&mut hasher);
+    to_hash.hash(&mut hasher);
     let hash = hasher.finish();
     let short_hash = hash % 0x1_000_000;
     let path = tmpdir.join(format!("test-crate-{short_hash:06x}"));
@@ -43,6 +45,7 @@ fn temporary_directory() -> Result<PathBuf> {
     Ok(path)
 }
 
+#[must_use]
 /// A builder for integration tests
 pub struct Test {
     code: String,
@@ -50,8 +53,11 @@ pub struct Test {
     paralegal_args: Vec<String>,
     context_config: paralegal_policy::Config,
     external_annotations: Option<String>,
+    deps: Vec<Vec<OsString>>,
     tool_path: &'static Path,
     external_ann_file_name: PathBuf,
+    cleanup: bool,
+    expect_fail: bool,
 }
 
 fn ensure_run_success(cmd: &mut Command) -> Result<()> {
@@ -61,18 +67,31 @@ fn ensure_run_success(cmd: &mut Command) -> Result<()> {
 }
 
 impl Test {
-    #[allow(dead_code)]
     pub fn new(code: impl Into<String>) -> Result<Self> {
-        let tempdir = temporary_directory()?;
+        let code = code.into();
+        let tempdir = temporary_directory(&code)?;
         Ok(Self {
-            code: code.into(),
+            code,
             external_ann_file_name: tempdir.join("external_annotations.toml"),
             tempdir,
             paralegal_args: vec![],
             context_config: Default::default(),
             external_annotations: None,
             tool_path: &*TOOL_BUILT,
+            deps: Default::default(),
+            cleanup: true,
+            expect_fail: false,
         })
+    }
+
+    pub fn expect_fail(&mut self) {
+        self.expect_fail = true;
+    }
+
+    #[allow(dead_code)]
+    pub fn with_cleanup(&mut self, cleanup: bool) -> &mut Self {
+        self.cleanup = cleanup;
+        self
     }
 
     #[allow(dead_code)]
@@ -90,6 +109,15 @@ impl Test {
         if let Some(anns) = res {
             panic!("Duplicate setting of external annotations. Found prior:\n{anns}");
         }
+        self
+    }
+
+    /// Add additional dependencies. The argument to this function are command
+    /// line arguments as would be given to `cargo add`. You may call this
+    /// function multiple times fo add more dependencies.
+    #[allow(dead_code)]
+    pub fn with_dep(&mut self, it: impl IntoIterator<Item = impl Into<OsString>>) -> &mut Self {
+        self.deps.push(it.into_iter().map(Into::into).collect());
         self
     }
 
@@ -132,6 +160,9 @@ impl Test {
             paralegal_lib_path.display()
         );
         self.add_cargo_dep([OsStr::new("--path"), paralegal_lib_path.as_os_str()])?;
+        for dep in &self.deps {
+            self.add_cargo_dep(dep)?;
+        }
         if let Some(external_anns) = self.external_annotations.as_ref() {
             let mut f = File::create(&self.external_ann_file_name)?;
             writeln!(f, "{external_anns}")?;
@@ -146,6 +177,22 @@ impl Test {
 
     #[allow(dead_code)]
     pub fn run(self, test_function: impl FnOnce(Arc<Context>) -> Result<()>) -> Result<()> {
+        self.try_compile()?;
+        let ret = GraphLocation::std(&self.tempdir)
+            .with_context_configured(self.context_config, test_function)?;
+        println!(
+            "Test crate directory: {}\nStatistics: {}",
+            self.tempdir.display(),
+            ret.stats
+        );
+        ensure!(self.expect_fail ^ ret.success);
+        if self.cleanup {
+            fs::remove_dir_all(self.tempdir)?;
+        }
+        Ok(())
+    }
+
+    pub fn try_compile(&self) -> Result<()> {
         self.populate_test_crate()?;
 
         let mut paralegal_cmd = Command::new(self.tool_path);
@@ -158,16 +205,6 @@ impl Test {
         }
         paralegal_cmd.args(&self.paralegal_args);
         paralegal_cmd.current_dir(&self.tempdir);
-        ensure_run_success(&mut paralegal_cmd)?;
-
-        let ret = GraphLocation::std(&self.tempdir)
-            .with_context_configured(self.context_config, test_function)?;
-        println!(
-            "Test crate directory: {}\nStatistics: {}",
-            self.tempdir.display(),
-            ret.stats
-        );
-        ensure!(ret.success);
-        Ok(())
+        ensure_run_success(&mut paralegal_cmd)
     }
 }

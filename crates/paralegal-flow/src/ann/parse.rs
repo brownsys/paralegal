@@ -25,10 +25,7 @@ use tokenstream::*;
 
 pub extern crate nom;
 
-use nom::{
-    error::{Error, ErrorKind},
-    Parser,
-};
+use nom::{error::Error, Parser};
 
 /// Just a newtype-wrapper for `CursorRef` so we can implement traits on it
 /// (specifically [`nom::InputLength`]).
@@ -150,21 +147,26 @@ pub fn assert_identifier<'a>(s: Symbol) -> impl FnMut(I<'a>) -> R<'a, ()> {
 /// Parse a [`TokenTree::Delimited`] with the delimiter character `delim`,
 /// applying the subparser `p` to the tokens in between the delimiters and
 /// return the result of the subparser.
-pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>>>(
+pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>> + 'a>(
     mut p: P,
     delim: Delimiter,
 ) -> impl FnMut(I<'a>) -> R<'a, A> {
-    move |i| {
-        one(i).and_then(|(i, t)| match t {
-            TokenTree::Delimited(_, d, s) if *d == delim => {
-                p.parse(I::from_stream(s)).map(|(mut rest, r)| {
-                    assert!(rest.next().is_none());
-                    (i, r)
-                })
+    nom::combinator::map_res(
+        nom::combinator::map_res(
+            nom::combinator::map_res(one, move |t| match t {
+                TokenTree::Delimited(_, d, s) if *d == delim => Ok(s),
+                _ => Result::Err(""),
+            }),
+            move |s| p.parse(I::from_stream(s)),
+        ),
+        |(mut rest, r)| {
+            if rest.next().is_some() {
+                Result::Err("")
+            } else {
+                Ok(r)
             }
-            _ => Result::Err(nom::Err::Error(Error::new(i, ErrorKind::Fail))),
-        })
-    }
+        },
+    )
 }
 
 /// Expect the next token to have the token kind `k`.
@@ -180,7 +182,13 @@ pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
 /// Expects the next token to be a braces delimited subtree containing pairs of
 /// `keys` and `values` that are comme separated and where each key and value is
 /// separated with an `=`. E.g. something of the form `{ k1 = v1, k2 = v2, ...}`
-pub fn dict<'a, K, V, P: Parser<I<'a>, K, Error<I<'a>>>, G: Parser<I<'a>, V, Error<I<'a>>>>(
+pub fn dict<
+    'a,
+    K: 'a,
+    V: 'a,
+    P: Parser<I<'a>, K, Error<I<'a>>> + 'a,
+    G: Parser<I<'a>, V, Error<I<'a>>> + 'a,
+>(
     keys: P,
     values: G,
 ) -> impl FnMut(I<'a>) -> R<'a, Vec<(K, V)>> {
@@ -206,7 +214,7 @@ pub fn tiny_bitset(i: I) -> R<TinyBitSet> {
 }
 
 /// Parser for the payload of the `#[paralegal_flow::output_type(...)]` annotation.
-pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Vec<DefId> {
+pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<DefId>, String> {
     match ann {
         ast::AttrArgs::Delimited(dargs) => {
             let mut p = nom::multi::separated_list0(
@@ -217,31 +225,29 @@ pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Vec<DefId> {
                 ),
             );
             p(I::from_stream(&dargs.tokens))
-                .unwrap_or_else(|err: nom::Err<_>| {
-                    panic!("parser failed on {ann:?} with error {err:?}")
-                })
+                .map_err(|err: nom::Err<_>| format!("parser failed with error {err:?}"))?
                 .1
                 .into_iter()
                 .map(|strs| {
                     let segment_vec = strs.iter().map(AsRef::as_ref).collect::<Vec<&str>>();
-                    utils::resolve::def_path_res(tcx, &segment_vec)
-                        .unwrap_or_else(|err| {
-                            panic!(
+                    Ok(utils::resolve::def_path_res(tcx, &segment_vec)
+                        .map_err(|err| {
+                            format!(
                                 "Could not resolve {}: {err:?}",
                                 Print(|f| write_sep(f, "::", &segment_vec, |elem, f| f
                                     .write_str(elem)))
                             )
-                        })
-                        .def_id()
+                        })?
+                        .def_id())
                 })
                 .collect()
         }
-        _ => panic!(),
+        _ => Result::Err("Expected delimoted annotation".to_owned()),
     }
 }
 
 /// Parser for an [`ExceptionAnnotation`]
-pub(crate) fn match_exception(ann: &rustc_ast::AttrArgs) -> ExceptionAnnotation {
+pub(crate) fn match_exception(ann: &rustc_ast::AttrArgs) -> Result<ExceptionAnnotation, String> {
     use rustc_ast::*;
     match ann {
         ast::AttrArgs::Delimited(dargs) => {
@@ -260,9 +266,9 @@ pub(crate) fn match_exception(ann: &rustc_ast::AttrArgs) -> ExceptionAnnotation 
                 Ok(ExceptionAnnotation { verification_hash })
             };
             p(I::from_stream(&dargs.tokens))
-                .unwrap_or_else(|err: nom::Err<_>| panic!("parser failed with error {err:?}"))
+                .map_err(|err: nom::Err<_>| format!("parser failed with error {err:?}"))
         }
-        _ => panic!(),
+        _ => Result::Err("Expected delimited annotation".to_owned()),
     }
 }
 
@@ -298,7 +304,7 @@ fn refinements_parser(i: I) -> R<MarkerRefinement> {
 }
 
 /// Parser for a [`LabelAnnotation`]
-pub(crate) fn ann_match_fn(ann: &rustc_ast::AttrArgs) -> MarkerAnnotation {
+pub(crate) fn ann_match_fn(ann: &rustc_ast::AttrArgs) -> Result<MarkerAnnotation, String> {
     use rustc_ast::*;
     use token::*;
     match ann {
@@ -314,8 +320,8 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::AttrArgs) -> MarkerAnnotation {
                 })
             };
             p(I::from_stream(&dargs.tokens))
-                .unwrap_or_else(|err: nom::Err<_>| panic!("parser failed with error {err:?}"))
+                .map_err(|err: nom::Err<_>| format!("parser failed with error {err:?}"))
         }
-        _ => panic!(),
+        _ => Result::Err("Expected delimited annotation".to_owned()),
     }
 }

@@ -85,7 +85,7 @@ use std::{io::Write, sync::Arc};
 
 use paralegal_spdg::{GlobalNode, Identifier, Span, SpanCoord, SPDG};
 
-use crate::{Context, ControllerId};
+use crate::{Context, ControllerId, NodeExt};
 
 /// Check the condition and emit a [`Diagnostics::error`] if it fails.
 #[macro_export]
@@ -671,7 +671,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
 }
 
 fn highlighted_node_span(ctx: &Context, node: GlobalNode) -> HighlightedSpan {
-    let node_span = ctx.get_location(node);
+    let node_span = node.get_location(ctx);
     let stmt_span = &ctx.instruction_at_node(node).span;
     if stmt_span.contains(node_span) {
         HighlightedSpan::new(stmt_span.clone(), node_span.start, node_span.end)

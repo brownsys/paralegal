@@ -1,6 +1,6 @@
 //! The representation of the PDG.
 
-use std::{fmt, path::Path};
+use std::{fmt, hash::Hash, path::Path};
 
 use flowistry_pdg::CallString;
 use internment::Intern;
@@ -11,11 +11,13 @@ use rustc_middle::{
 };
 use rustc_utils::PlaceExt;
 
+pub use flowistry_pdg::{SourceUse, TargetUse};
+
 /// A node in the program dependency graph.
 ///
 /// Represents a place at a particular call-string.
 /// The place is in the body of the root of the call-string.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct DepNode<'tcx> {
     /// A place in memory in a particular body.
     pub place: Place<'tcx>,
@@ -26,7 +28,37 @@ pub struct DepNode<'tcx> {
     /// Pretty representation of the place.
     /// This is cached as an interned string on [`DepNode`] because to compute it later,
     /// we would have to regenerate the entire monomorphized body for a given place.
-    place_pretty: Option<Intern<String>>,
+    pub(crate) place_pretty: Option<Intern<String>>,
+}
+
+impl PartialEq for DepNode<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        // Using an explicit match here with all fields, so that should new
+        // fields be added we remember to check whether they need to be included
+        // here.
+        let Self {
+            place,
+            at,
+            place_pretty: _,
+        } = *self;
+        (place, at).eq(&(other.place, other.at))
+    }
+}
+
+impl Eq for DepNode<'_> {}
+
+impl Hash for DepNode<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Using an explicit match here with all fields, so that should new
+        // fields be added we remember to check whether they need to be included
+        // here.
+        let Self {
+            place,
+            at,
+            place_pretty: _,
+        } = self;
+        (place, at).hash(state)
+    }
 }
 
 impl<'tcx> DepNode<'tcx> {
@@ -75,29 +107,37 @@ pub enum DepEdgeKind {
 /// An edge in the program dependence graph.
 ///
 /// Represents an operation that induces a dependency between places.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DepEdge {
     /// Either data or control.
     pub kind: DepEdgeKind,
 
     /// The location of the operation.
     pub at: CallString,
+
+    pub source_use: SourceUse,
+
+    pub target_use: TargetUse,
 }
 
 impl DepEdge {
     /// Constructs a data edge.
-    pub fn data(at: CallString) -> Self {
+    pub fn data(at: CallString, source_use: SourceUse, target_use: TargetUse) -> Self {
         DepEdge {
             kind: DepEdgeKind::Data,
             at,
+            source_use,
+            target_use,
         }
     }
 
     /// Constructs a control edge.
-    pub fn control(at: CallString) -> Self {
+    pub fn control(at: CallString, source_use: SourceUse, target_use: TargetUse) -> Self {
         DepEdge {
             kind: DepEdgeKind::Control,
             at,
+            source_use,
+            target_use,
         }
     }
 }
@@ -143,7 +183,7 @@ impl<'tcx> DepGraph<'tcx> {
                 &self.graph,
                 &[],
                 &|_, _| format!("fontname=\"Courier New\""),
-                &|_, (_, _)| format!("fontname=\"Courier New\"")
+                &|_, (_, _)| format!("fontname=\"Courier New\",shape=box")
             )
         );
         rustc_utils::mir::body::run_dot(path.as_ref(), graph_dot.into_bytes())

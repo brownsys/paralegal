@@ -203,6 +203,7 @@ dependencies = [
  "cfg-if",
  "internment",
  "serde",
+ "strum",
 ]
 
 [[package]]

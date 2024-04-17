@@ -34,3 +34,12 @@ cfg_if::cfg_if! {
         pub use crate::rustc_proxies::*;
     }
 }
+
+pub fn defid_as_local(did: DefId) -> Option<LocalDefId> {
+    #[cfg(not(feature = "rustc"))]
+    return (did.krate == crate::rustc_proxies::LOCAL_CRATE).then_some(LocalDefId {
+        local_def_index: did.index,
+    });
+    #[cfg(feature = "rustc")]
+    return did.as_local();
+}

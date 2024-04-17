@@ -2,7 +2,10 @@
 //! and discovers functions marked for analysis.
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
-use crate::{ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, rust::*, utils::*};
+
+use crate::{
+    ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, rust::*, stats::Stats, utils::*,
+};
 
 use hir::{
     def_id::DefId,
@@ -24,7 +27,7 @@ pub type AttrMatchT = Vec<Symbol>;
 /// discovery phase [`Self::analyze`] is used to drive the
 /// actual analysis. All of this is conveniently encapsulated in the
 /// [`Self::run`] method.
-pub struct CollectingVisitor<'tcx, 'st> {
+pub struct CollectingVisitor<'tcx> {
     /// Reference to rust compiler queries.
     pub tcx: TyCtxt<'tcx>,
     /// Command line arguments.
@@ -33,7 +36,7 @@ pub struct CollectingVisitor<'tcx, 'st> {
     /// later perform the analysis
     pub functions_to_analyze: Vec<FnToAnalyze>,
 
-    stats: &'st mut crate::Stats,
+    stats: Stats,
 
     pub marker_ctx: MarkerDatabase<'tcx>,
 }
@@ -52,12 +55,8 @@ impl FnToAnalyze {
     }
 }
 
-impl<'tcx: 'st, 'st> CollectingVisitor<'tcx, 'st> {
-    pub(crate) fn new(
-        tcx: TyCtxt<'tcx>,
-        opts: &'static crate::Args,
-        stats: &'st mut crate::Stats,
-    ) -> Self {
+impl<'tcx> CollectingVisitor<'tcx> {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args, stats: Stats) -> Self {
         let functions_to_analyze = opts
             .anactrl()
             .selected_targets()
@@ -85,7 +84,7 @@ impl<'tcx: 'st, 'st> CollectingVisitor<'tcx, 'st> {
 
     /// After running the discovery with `visit_all_item_likes_in_crate`, create
     /// the read-only [`SPDGGenerator`] upon which the analysis will run.
-    fn into_generator(self) -> SPDGGenerator<'tcx, 'st> {
+    fn into_generator(self) -> SPDGGenerator<'tcx> {
         SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx, self.stats)
     }
 
@@ -109,7 +108,7 @@ impl<'tcx: 'st, 'st> CollectingVisitor<'tcx, 'st> {
     }
 }
 
-impl<'tcx, 'st> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx, 'st> {
+impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
 
     fn nested_visit_map(&mut self) -> Self::Map {

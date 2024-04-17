@@ -1,5 +1,6 @@
 //! Checking always-happens-before relationships
 
+use std::borrow::Cow;
 use std::{collections::HashSet, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
@@ -9,13 +10,15 @@ use paralegal_spdg::{GlobalNode, Identifier, Node, SPDGImpl};
 use anyhow::{ensure, Result};
 use itertools::Itertools;
 
-use petgraph::visit::{Control, DfsEvent, GraphBase, NodeIndexable};
+use petgraph::visit::{
+    Control, DfsEvent, EdgeFiltered, GraphBase, IntoEdgeReferences, NodeIndexable,
+};
 
-use crate::Diagnostics;
 use crate::{
     assert_warning,
     diagnostics::{CombinatorContext, HasDiagnosticsBase},
 };
+use crate::{Diagnostics, NodeExt};
 
 /// Statistics about the result of running [`Context::always_happens_before`]
 /// that are useful to understand how the property failed.
@@ -98,6 +101,21 @@ impl AlwaysHappensBefore {
     pub fn is_vacuous(&self) -> bool {
         self.checkpointed.is_empty() && self.reached.is_empty()
     }
+
+    /// If the trace level is sufficient, return the pairing of start and end nodes that were found.
+    pub fn reached(&self) -> Result<Cow<'_, [(GlobalNode, GlobalNode)]>> {
+        match &self.reached {
+            Trace::None(_) => Err(anyhow::anyhow!(
+                "Trace level too low to report reached node"
+            )),
+            Trace::StartAndEnd(st) => Ok(st.as_slice().into()),
+            Trace::Full(all) => Ok(all
+                .iter()
+                .map(|v| (*v.first().unwrap(), *v.last().unwrap()))
+                .collect::<Vec<_>>()
+                .into()),
+        }
+    }
 }
 
 impl crate::Context {
@@ -127,12 +145,14 @@ impl crate::Context {
 
         let mut trace = Trace::new(self.config.always_happens_before_tracing);
 
+        let select_data = |e: <&SPDGImpl as IntoEdgeReferences>::EdgeRef| e.weight().is_data();
+
         for (ctrl_id, starts) in &start_map {
             let spdg = &self.desc().controllers[&ctrl_id];
-            let g = &spdg.graph;
+            let g = EdgeFiltered::from_fn(&spdg.graph, select_data);
             let mut tracer =
                 Tracer::new(&mut trace, g.node_bound(), starts.iter().copied(), *ctrl_id);
-            petgraph::visit::depth_first_search(g, starts.iter().copied(), |event| match event {
+            petgraph::visit::depth_first_search(&g, starts.iter().copied(), |event| match event {
                 DfsEvent::TreeEdge(from, to) => {
                     tracer.edge(from, to);
                     Control::<()>::Continue
@@ -216,16 +236,13 @@ impl Trace {
             Self::StartAndEnd(reached) => {
                 let context = ctx.as_ctx();
                 for &(reached, from) in reached {
-                    let from_info = context.node_info(from);
-                    let reached_info = context.node_info(reached);
+                    let from_info = from.info(context);
+                    let reached_info = reached.info(context);
                     let mut err = ctx.struct_node_error(
                         reached,
                         format!(
-                            "Reached this terminal {} ({}) -> {} ({})",
-                            from_info.description,
-                            from_info.kind,
-                            reached_info.description,
-                            reached_info.kind,
+                            "Reached this terminal {} -> {} ",
+                            from_info.description, reached_info.description,
                         ),
                     );
                     err.with_node_note(from, "Started from this node");
@@ -238,22 +255,16 @@ impl Trace {
                     let (reached, rest) = path
                         .split_first()
                         .expect("Invaraint broken, path must have a start");
-                    let reached_info = context.node_info(*reached);
+                    let reached_info = reached.info(context);
                     let mut err = ctx.struct_node_error(
                         *reached,
-                        format!(
-                            "Reached this terminal {} ({})",
-                            reached_info.description, reached_info.kind,
-                        ),
+                        format!("Reached this terminal {}", reached_info.description,),
                     );
                     for &from in rest {
-                        let from_info = context.node_info(from);
+                        let from_info = from.info(context);
                         err.with_node_note(
                             from,
-                            format!(
-                                "Reached from this node {} ({})",
-                                from_info.description, from_info.kind
-                            ),
+                            format!("Reached from this node {} ", from_info.description,),
                         );
                     }
                     err.emit();
@@ -333,13 +344,9 @@ fn test_happens_before() -> Result<()> {
     let f = File::create("graph.gv")?;
     ctrl.dump_dot(f)?;
 
-    let Some(ret) = ctrl.return_ else {
-        unreachable!("No return found")
-    };
-
     let is_terminal = |end: GlobalNode| -> bool {
         assert_eq!(end.controller_id(), ctrl_name);
-        ret == end.local_node()
+        ctrl.return_.contains(&end.local_node())
     };
     let start = ctx
         .all_nodes_for_ctrl(ctrl_name)

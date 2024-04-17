@@ -19,18 +19,20 @@ use crate::{
         mir::{self, Location, Place, ProjectionElem, Statement, Terminator},
         rustc_borrowck::consumers::BodyWithBorrowckFacts,
         rustc_data_structures::intern::Interned,
+        rustc_span::Span as RustSpan,
         rustc_span::{symbol::Ident, Span},
         rustc_target::spec::abi::Abi,
         ty,
     },
     rustc_span::ErrorGuaranteed,
-    Either, HashMap, HashSet, Symbol, TyCtxt,
+    Either, HashSet, Symbol, TyCtxt,
 };
 
+pub use flowistry_pdg_construction::is_non_default_trait_method;
 pub use flowistry_pdg_construction::FnResolution;
 
 use std::cmp::Ordering;
-use std::{cell::RefCell, default::Default, hash::Hash, pin::Pin};
+use std::hash::Hash;
 
 pub mod resolve;
 
@@ -39,6 +41,28 @@ mod print;
 pub use print::*;
 
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
+
+/// This function exists to deal with `#[tracing::instrument]`. In that case,
+/// sadly, the `Span` value attached to a body directly refers only to the
+/// `#[tracing::instrument]` macro call. This function instead reconstitutes the
+/// span from the collection of spans on each statement.
+pub fn body_span(body: &mir::Body<'_>) -> RustSpan {
+    let combined = body
+        .basic_blocks
+        .iter()
+        .flat_map(|bbdat| {
+            bbdat
+                .statements
+                .iter()
+                .map(|s| s.source_info.span.source_callsite())
+                .chain([bbdat.terminator().source_info.span])
+        })
+        .map(|s| s.source_callsite())
+        .filter(|s| !s.is_dummy() || !s.is_empty())
+        .reduce(RustSpan::to)
+        .unwrap();
+    combined
+}
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
 /// interest is [`match_extract`](#tymethod.match_extract),
@@ -992,16 +1016,6 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
     }
 }
 
-pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId> {
-    let assoc_item = tcx.opt_associated_item(function)?;
-    if assoc_item.container != ty::AssocItemContainer::TraitContainer
-        || assoc_item.defaultness(tcx).has_value()
-    {
-        return None;
-    }
-    assoc_item.trait_item_def_id
-}
-
 /// A struct that can be used to apply a [`FnMut`] to every [`Place`] in a MIR
 /// object via the [`MutVisitor`](mir::visit::MutVisitor) trait. Crucial
 /// difference to [`PlaceVisitor`] is that this function can alter the place
@@ -1038,47 +1052,6 @@ pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilte
     let r = f();
     log::set_max_level(reset_level);
     r
-}
-
-/// This code is adapted from [`flowistry::cached::Cache`] but with a recursion
-/// breaking mechanism. This alters the [`Self::get`] method signature to return
-/// an [`Option`] of a reference. In particular the method will return [`None`]
-/// if it is called *with the same key* while computing a construction function
-/// for that key.
-pub struct RecursionBreakingCache<In, Out>(RefCell<HashMap<In, Option<Pin<Box<Out>>>>>);
-
-impl<In, Out> RecursionBreakingCache<In, Out>
-where
-    In: Hash + Eq + Clone,
-    Out: Unpin,
-{
-    pub fn size(&self) -> usize {
-        self.0.borrow().len()
-    }
-    /// Get or compute the value for this key. Returns `None` if called recursively.
-    pub fn get<'a>(&'a self, key: In, compute: impl FnOnce(In) -> Out) -> Option<&'a Out> {
-        if !self.0.borrow().contains_key(&key) {
-            self.0.borrow_mut().insert(key.clone(), None);
-            let out = Pin::new(Box::new(compute(key.clone())));
-            self.0.borrow_mut().insert(key.clone(), Some(out));
-        }
-
-        let cache = self.0.borrow();
-        // Important here to first `unwrap` the `Option` created by `get`, then
-        // propagate the potential option stored in the map.
-        let entry = cache.get(&key).unwrap().as_ref()?;
-
-        // SAFETY: because the entry is pinned, it cannot move and this pointer will
-        // only be invalidated if Cache is dropped. The returned reference has a lifetime
-        // equal to Cache, so Cache cannot be dropped before this reference goes out of scope.
-        Some(unsafe { std::mem::transmute::<&'_ Out, &'a Out>(&**entry) })
-    }
-}
-
-impl<In, Out> Default for RecursionBreakingCache<In, Out> {
-    fn default() -> Self {
-        Self(RefCell::new(HashMap::default()))
-    }
 }
 
 pub fn time<R, F: FnOnce() -> R>(msg: &str, f: F) -> R {
@@ -1151,5 +1124,16 @@ impl<'tcx> Spanned<'tcx> for (LocalDefId, mir::Location) {
     fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
         let body = tcx.body_for_def_id(self.0).unwrap();
         (&body.body, self.1).span(tcx)
+    }
+}
+
+pub fn map_either<A, B, C, D>(
+    either: Either<A, B>,
+    f: impl FnOnce(A) -> C,
+    g: impl FnOnce(B) -> D,
+) -> Either<C, D> {
+    match either {
+        Either::Left(l) => Either::Left(f(l)),
+        Either::Right(r) => Either::Right(g(r)),
     }
 }

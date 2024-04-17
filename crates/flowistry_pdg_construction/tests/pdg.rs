@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepGraph},
-    CallChanges, FakeEffect, FakeEffectKind, PdgParams, SkipCall,
+    CallChangeCallbackFn, CallChanges, FakeEffect, FakeEffectKind, PdgParams, SkipCall,
 };
 use itertools::Itertools;
 use rustc_hir::def_id::LocalDefId;
@@ -35,10 +35,10 @@ fn pdg(
     configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PdgParams<'tcx>) -> PdgParams<'tcx> + Send,
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, DepGraph<'tcx>) + Send,
 ) {
-    let _ = simple_logger::init_with_env();
+    let _ = env_logger::try_init();
     rustc_utils::test_utils::compile(input, move |tcx| {
         let def_id = get_main(tcx);
-        let params = configure(tcx, PdgParams::new(tcx, def_id));
+        let params = configure(tcx, PdgParams::new(tcx, def_id).unwrap());
         let pdg = flowistry_pdg_construction::compute_pdg(params);
         tests(tcx, pdg)
     })
@@ -438,7 +438,7 @@ pdg_test! {
 }
 
 pdg_test! {
-  async_inline,
+  async_inline_basic,
   {
     async fn foo(x: i32, y: i32) -> i32 {
       x
@@ -448,6 +448,65 @@ pdg_test! {
       let a = 1;
       let b = 2;
       let c = foo(a, b).await;
+    }
+  },
+  (a -> c),
+  (b -/> c)
+}
+
+pdg_test! {
+  async_inline_rename,
+  {
+    async fn foo(x: i32, y: i32) -> i32 {
+      x
+    }
+
+    async fn main() {
+      let a = 1;
+      let b = 2;
+      let fut = foo(a, b);
+      let fut2 = fut;
+      let c = fut2.await;
+    }
+  },
+  (a -> c),
+  (b -/> c)
+}
+
+pdg_test! {
+  async_hof,
+  {
+    use std::future::Future;
+    async fn await_it<F: Future>(f: F) -> F::Output {
+      f.await
+    }
+
+    async fn foo(x: i32, y: i32) -> i32 {
+      x
+    }
+
+    async fn main() {
+      let a = 1;
+      let b = 2;
+      let c = await_it(foo(a, b)).await;
+    }
+  },
+  (a -> c),
+  (b -/> c)
+}
+
+pdg_test! {
+  async_block,
+  {
+    async fn foo(x: i32, y: i32) -> i32 {
+      x
+    }
+
+    async fn main() {
+      let a = 1;
+      let b = 2;
+      let fut = async { foo(a, b).await };
+      let c = fut.await;
     }
   },
   (a -> c),
@@ -532,9 +591,9 @@ pdg_test! {
         }
     },
     |_, params| {
-        params.with_call_change_callback(move |_| {
+        params.with_call_change_callback(CallChangeCallbackFn::new( move |_| {
             CallChanges::default().with_skip(SkipCall::Skip)
-        })
+        }))
     },
     (recipients -/> sender)
 }
@@ -560,7 +619,7 @@ pdg_test! {
       nested_layer_one(&mut w, z);
     }
   },
-  |tcx, params| params.with_call_change_callback(move |info| {
+  |tcx, params| params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
       let name = tcx.opt_item_name(info.callee.def_id());
       let skip = if !matches!(name.as_ref().map(|sym| sym.as_str()), Some("no_inline"))
           && info.call_string.len() < 2
@@ -570,7 +629,7 @@ pdg_test! {
           SkipCall::Skip
       };
       CallChanges::default().with_skip(skip)
-  }),
+  })),
   (y -> x),
   (z -> w)
 }
@@ -603,24 +662,98 @@ pdg_test! {
     }
   },
   |tcx, params| params.with_call_change_callback(
-    move |info| {
-        let name = tcx.opt_item_name(info.callee.def_id());
-        if matches!(name.as_ref().map(|sym| sym.as_str()), Some("fake")) {
-            let fake_write = FakeEffect {
-                place: Place::make(Local::from_usize(1), &[ProjectionElem::Deref], tcx),
-                kind: FakeEffectKind::Write,
-            };
-            let fake_read = FakeEffect {
-                place: Place::make(Local::from_usize(2), &[ProjectionElem::Deref], tcx),
-                kind: FakeEffectKind::Read,
-            };
-            let fake_effects = vec![fake_write, fake_read];
-            CallChanges::default().with_fake_effects(fake_effects)
-        } else {
-            CallChanges::default()
-        }
-    },
+    CallChangeCallbackFn::new(
+      move |info| {
+          let name = tcx.opt_item_name(info.callee.def_id());
+          if matches!(name.as_ref().map(|sym| sym.as_str()), Some("fake")) {
+              let fake_write = FakeEffect {
+                  place: Place::make(Local::from_usize(1), &[ProjectionElem::Deref], tcx),
+                  kind: FakeEffectKind::Write,
+              };
+              let fake_read = FakeEffect {
+                  place: Place::make(Local::from_usize(2), &[ProjectionElem::Deref], tcx),
+                  kind: FakeEffectKind::Read,
+              };
+              let fake_effects = vec![fake_write, fake_read];
+              CallChanges::default().with_fake_effects(fake_effects)
+          } else {
+              CallChanges::default()
+          }
+      },
+    )
   ),
   (x -fake> z),
   (y -fake> *b)
+}
+
+pdg_test! {
+  clone,
+  {
+    #[derive(Clone)]
+    struct Foo {
+      x: i32,
+      y: i32
+    }
+
+    fn main() {
+      let x = 1;
+      let y = 2;
+      let a = Foo { x, y };
+      let b = a.clone();
+      let z = b.x;
+    }
+  },
+  (x -> z),
+  (y -/> z)
+}
+
+pdg_test! {
+  async_mut_arg,
+  {
+    async fn foo(x: &mut i32) {}
+    async fn main() {
+      let mut x = 1;
+      foo(&mut x).await;
+    }
+  },
+  (x -/> x)
+}
+
+pdg_test! {
+    opaque_impl,
+    {
+        trait Tr {
+            fn method(&self);
+        }
+
+        fn main<T: Tr>(t: T) {
+            t.method()
+        }
+    },
+}
+
+pdg_test! {
+    opaque_impl2,
+    {
+        trait Tr {
+            fn method(&self);
+        }
+
+        fn main(t: impl Tr) {
+            t.method()
+        }
+    },
+}
+
+pdg_test! {
+    opaque_impl_ref,
+    {
+        trait Tr {
+            fn method(&self);
+        }
+
+        fn main(t: &impl Tr) {
+            t.method()
+        }
+    },
 }

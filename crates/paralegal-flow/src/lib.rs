@@ -63,16 +63,13 @@ pub mod rust {
 }
 
 use args::{ClapArgs, LogLevelConfig};
-use desc::utils::{write_sep, TruncatedHumanTime};
+use desc::utils::write_sep;
 use rust::*;
 
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
-use std::{
-    fmt::Display,
-    time::{Duration, Instant},
-};
+use std::{fmt::Display, time::Instant};
 
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
@@ -86,6 +83,7 @@ pub mod ann;
 mod args;
 pub mod dbg;
 mod discover;
+mod stats;
 //mod sah;
 pub mod serializers;
 #[macro_use]
@@ -96,11 +94,13 @@ pub mod test_utils;
 
 pub use paralegal_spdg as desc;
 
+pub use crate::ann::db::MarkerCtx;
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
-use crate::utils::Print;
-
-pub use crate::ann::db::MarkerCtx;
+use crate::{
+    stats::{Stats, TimedStat},
+    utils::Print,
+};
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -133,43 +133,6 @@ struct Callbacks {
     start: Instant,
 }
 
-#[derive(Debug, Clone, Copy, strum::AsRefStr, PartialEq, Eq, enum_map::Enum)]
-pub enum Stat {
-    Rustc,
-    Flowistry,
-    Conversion,
-    Serialization,
-}
-
-pub struct Stats(enum_map::EnumMap<Stat, Option<Duration>>);
-
-impl Stats {
-    pub fn record(&mut self, stat: Stat, duration: Duration) {
-        *self.0[stat].get_or_insert(Duration::ZERO) += duration
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (Stat, Option<Duration>)> + '_ {
-        self.0.iter().map(|(k, v)| (k, *v))
-    }
-}
-
-impl Default for Stats {
-    fn default() -> Self {
-        Self(enum_map::enum_map! { _ => None })
-    }
-}
-
-impl Display for Stats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (s, dur) in self.iter() {
-            if let Some(dur) = dur {
-                write!(f, "{}: {} ", s.as_ref(), TruncatedHumanTime::from(dur))?;
-            }
-        }
-        Ok(())
-    }
-}
-
 struct NoopCallbacks {}
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
@@ -189,14 +152,15 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        self.stats.record(Stat::Rustc, self.start.elapsed());
+        self.stats
+            .record_timed(TimedStat::Rustc, self.start.elapsed());
         queries
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
                 tcx.sess.abort_if_errors();
                 let desc =
-                    discover::CollectingVisitor::new(tcx, self.opts, &mut self.stats).run()?;
+                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
 
@@ -206,17 +170,9 @@ impl rustc_driver::Callbacks for Callbacks {
                 }
 
                 let ser = Instant::now();
-                serde_json::to_writer(
-                    &mut std::fs::OpenOptions::new()
-                        .truncate(true)
-                        .create(true)
-                        .write(true)
-                        .open(self.opts.result_path())
-                        .unwrap(),
-                    &desc,
-                )
-                .unwrap();
-                self.stats.record(Stat::Serialization, ser.elapsed());
+                desc.canonical_write(self.opts.result_path()).unwrap();
+                self.stats
+                    .record_timed(TimedStat::Serialization, ser.elapsed());
 
                 println!("Analysis finished with timing: {}", self.stats);
 
@@ -379,6 +335,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .map_or(false, |n| n == "build_script_build");
 
         if !is_target || is_build_script {
+            if plugin_args.weird_hacks().rustc_reset_for_linux() {
+                std::env::remove_var("RUSTC_WRAPPER");
+                std::env::set_var("RUSTC", "rustc");
+            }
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
@@ -386,7 +346,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // //let lvl = log::LevelFilter::Debug;
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
-            .with_module_level("flowistry", log::LevelFilter::Error)
+            //.with_module_level("flowistry", lvl)
             .with_module_level("rustc_utils", log::LevelFilter::Error)
             .init()
             .unwrap();

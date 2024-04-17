@@ -9,6 +9,8 @@ rustc_private = true
 
 [features]
 rustc = ["flowistry_pdg/rustc"]
+binenc = ["dep:bincode"]
+default = ["binenc"]
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
@@ -25,3 +27,6 @@ flowistry_pdg = { path = "../flowistry_pdg" }
 petgraph = { workspace = true }
 static_assertions = "1"
 dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106" }
+serde_json = { version = "1" }
+bincode = { version = "1.1.3", optional = true }
+anyhow = { workspace = true }

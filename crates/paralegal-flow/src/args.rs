@@ -53,6 +53,7 @@ impl TryFrom<ClapArgs> for Args {
             marker_control,
             cargo_args,
             trace,
+            weird_hacks,
         } = value;
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
@@ -96,12 +97,13 @@ impl TryFrom<ClapArgs> for Args {
             relaxed,
             target,
             abort_after_analysis,
-            anactrl,
+            anactrl: anactrl.try_into()?,
             modelctrl,
             dump,
             build_config,
             marker_control,
             cargo_args,
+            weird_hacks,
         })
     }
 }
@@ -129,6 +131,10 @@ pub struct Args {
     dump: DumpArgs,
     /// Additional configuration for the build process/rustc
     build_config: BuildConfig,
+    /// Arguments that work around some form of platform bug that we don't have
+    /// a clean fix for yet. See
+    /// https://www.notion.so/justus-adam/Weird-Hacks-7640b34a6a90471f8ce63d6f18cabcb9?pvs=4
+    weird_hacks: WeirdHackArgs,
     /// Additional options for cargo
     cargo_args: Vec<String>,
 }
@@ -155,7 +161,7 @@ pub struct ClapArgs {
     #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
     debug_target: Option<String>,
     /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
-    #[clap(long, default_value = "flow-graph.json")]
+    #[clap(long, default_value = paralegal_spdg::FLOW_GRAPH_OUT_NAME)]
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     #[clap(long, env = "PARALEGAL_RELAXED")]
@@ -168,7 +174,7 @@ pub struct ClapArgs {
     abort_after_analysis: bool,
     /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis")]
-    anactrl: AnalysisCtrl,
+    anactrl: ClapAnalysisCtrl,
     /// Additional arguments which control marker assignment and discovery
     #[clap(flatten, next_help_heading = "Marker Control")]
     marker_control: MarkerControl,
@@ -178,6 +184,11 @@ pub struct ClapArgs {
     /// Additional arguments that control debug args specifically
     #[clap(flatten)]
     dump: ParseableDumpArgs,
+    /// Arguments that work around some form of platform bug that we don't have
+    /// a clean fix for yet. See
+    /// https://www.notion.so/justus-adam/Weird-Hacks-7640b34a6a90471f8ce63d6f18cabcb9?pvs=4
+    #[clap(flatten, next_help_heading = "Weird Hacks")]
+    weird_hacks: WeirdHackArgs,
     /// Pass through for additional cargo arguments (like --features)
     #[clap(last = true)]
     cargo_args: Vec<String>,
@@ -347,6 +358,10 @@ impl Args {
     pub fn cargo_args(&self) -> &[String] {
         &self.cargo_args
     }
+
+    pub fn weird_hacks(&self) -> &WeirdHackArgs {
+        &self.weird_hacks
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args)]
@@ -389,8 +404,8 @@ impl MarkerControl {
 }
 
 /// Arguments that control the flow analysis
-#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
-pub struct AnalysisCtrl {
+#[derive(clap::Args)]
+struct ClapAnalysisCtrl {
     /// Target this function as analysis target. Command line version of
     /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
     /// function. May be specified multiple times and multiple, comma separated
@@ -399,10 +414,71 @@ pub struct AnalysisCtrl {
     analyze: Vec<String>,
     /// Disables all recursive analysis (both paralegal_flow's inlining as well as
     /// Flowistry's recursive analysis).
-    ///
-    /// Also implies --no-pruning, because pruning only makes sense after inlining
     #[clap(long, env)]
     no_cross_function_analysis: bool,
+    /// Generate PDGs that span all called functions which can attach markers
+    #[clap(long, conflicts_with_all = ["fixed_depth", "unconstrained_depth", "no_cross_function_analysis"])]
+    adaptive_depth: bool,
+    /// Generate PDGs that span functions up to a certain depth
+    #[clap(long, conflicts_with_all = ["adaptive_depth", "unconstrained_depth", "no_cross_function_analysis"])]
+    fixed_depth: Option<u8>,
+    /// Generate PDGs that span to all functions for which we have source code.
+    ///
+    /// If no depth option is specified this is the default right now but that
+    /// is not guaranteed to be the case in the future. If you want to guarantee
+    /// this is used explicitly supply the argument.
+    #[clap(long, conflicts_with_all = ["fixed_depth", "adaptive_depth", "no_cross_function_analysis"])]
+    unconstrained_depth: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct AnalysisCtrl {
+    /// Target this function as analysis target. Command line version of
+    /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
+    /// function. May be specified multiple times and multiple, comma separated
+    /// paths may be supplied at the same time.
+    analyze: Vec<String>,
+    /// Disables all recursive analysis (both paralegal_flow's inlining as well as
+    /// Flowistry's recursive analysis).
+    inlining_depth: InliningDepth,
+}
+
+impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
+    type Error = Error;
+    fn try_from(value: ClapAnalysisCtrl) -> Result<Self, Self::Error> {
+        let ClapAnalysisCtrl {
+            analyze,
+            no_cross_function_analysis,
+            adaptive_depth,
+            fixed_depth,
+            unconstrained_depth: _,
+        } = value;
+
+        let inlining_depth = if adaptive_depth {
+            InliningDepth::Adaptive
+        } else if let Some(n) = fixed_depth {
+            InliningDepth::Fixed(n)
+        } else if no_cross_function_analysis {
+            InliningDepth::Fixed(0)
+        } else {
+            InliningDepth::Unconstrained
+        };
+
+        Ok(Self {
+            analyze,
+            inlining_depth,
+        })
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, strum::EnumIs, strum::AsRefStr, Clone)]
+pub enum InliningDepth {
+    /// Inline to arbitrary depth
+    Unconstrained,
+    /// Inline to a depth of `n` and no further
+    Fixed(u8),
+    /// Inline so long as markers are reachable
+    Adaptive,
 }
 
 impl AnalysisCtrl {
@@ -413,7 +489,11 @@ impl AnalysisCtrl {
 
     /// Are we recursing into (unmarked) called functions with the analysis?
     pub fn use_recursive_analysis(&self) -> bool {
-        !self.no_cross_function_analysis
+        !matches!(self.inlining_depth, InliningDepth::Fixed(0))
+    }
+
+    pub fn inlining_depth(&self) -> &InliningDepth {
+        &self.inlining_depth
     }
 }
 
@@ -436,11 +516,26 @@ impl DumpArgs {
     }
 }
 
+#[derive(Debug, Args, serde::Deserialize, serde::Serialize)]
+pub struct WeirdHackArgs {
+    /// Reset the `RUSTC` env variable for non-analysis invocations of the
+    /// compiler to work around build script crashes.
+    #[clap(long)]
+    rustc_reset_for_linux: bool,
+}
+
+impl WeirdHackArgs {
+    pub fn rustc_reset_for_linux(&self) -> bool {
+        self.rustc_reset_for_linux
+    }
+}
+
 /// Dependency specific configuration
 #[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
 pub struct DepConfig {
+    #[serde(default)]
     /// Additional rust features to enable
-    pub rust_features: Vec<String>,
+    pub rust_features: Box<[String]>,
 }
 
 /// Additional configuration for the build process/rustc
