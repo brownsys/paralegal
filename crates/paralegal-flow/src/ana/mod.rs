@@ -185,11 +185,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     .filter(|f| !mctx.is_marked(f))
                     .filter_map(|f| f.as_local()),
             );
-            let seen_functions = total_functions.len() as u32;
+            let mut seen_functions = 0;
             let locs = total_functions
                 .into_iter()
                 .filter_map(|f| Some(body_span(&tcx.body_for_def_id(f).ok()?.body)))
                 .map(|span| {
+                    seen_functions += 1;
                     let (_, start_line, _, end_line, _) =
                         tcx.sess.source_map().span_to_location_info(span);
                     end_line - start_line + 1
