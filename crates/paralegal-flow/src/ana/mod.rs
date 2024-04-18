@@ -188,7 +188,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             let seen_functions = total_functions.len() as u32;
             let locs = total_functions
                 .into_iter()
-                .map(|f| body_span(&tcx.body_for_def_id(f).unwrap().body))
+                .filter_map(|f| Some(body_span(&tcx.body_for_def_id(f).ok()?.body)))
                 .map(|span| {
                     let (_, start_line, _, end_line, _) =
                         tcx.sess.source_map().span_to_location_info(span);
