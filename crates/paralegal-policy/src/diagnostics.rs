@@ -225,32 +225,27 @@ impl From<Span> for HighlightedSpan {
     }
 }
 
-impl DiagnosticPart {
-    fn write(&self, s: &mut impl std::fmt::Write) -> std::fmt::Result {
-        let severity = self.severity;
-        let coloring = severity.color();
-
+impl HighlightedSpan {
+    pub fn write(&self, s: &mut impl std::fmt::Write, coloring: Color) -> std::fmt::Result {
         use std::io::BufRead;
-
-        writeln!(s, "{}: {}", severity.as_ref().color(coloring), self.message)?;
-        if let Some(src_loc) = &self.span {
-            let start_line = src_loc.span.start.line as usize;
-            let start_col = src_loc.span.start.col as usize;
-            let end_line = src_loc.span.end.line as usize;
-            let end_col = src_loc.span.end.col as usize;
-            let (hl_start_line, hl_start_col, hl_end_line, hl_end_col) =
-                if let Some(hl) = &src_loc.highlight {
-                    (
-                        hl.start.line as usize,
-                        hl.start.col as usize,
-                        hl.end.line as usize,
-                        hl.end.col as usize,
-                    )
-                } else {
-                    (start_line, start_col, end_line, end_col)
-                };
-            let max_line_len =
-                std::cmp::max(start_line.to_string().len(), end_line.to_string().len());
+        let src_loc = self;
+        let start_line = src_loc.span.start.line as usize;
+        let start_col = src_loc.span.start.col as usize;
+        let end_line = src_loc.span.end.line as usize;
+        let end_col = src_loc.span.end.col as usize;
+        let (hl_start_line, hl_start_col, hl_end_line, hl_end_col) =
+            if let Some(hl) = &src_loc.highlight {
+                (
+                    hl.start.line as usize,
+                    hl.start.col as usize,
+                    hl.end.line as usize,
+                    hl.end.col as usize,
+                )
+            } else {
+                (start_line, start_col, end_line, end_col)
+            };
+        let max_line_len =
+            std::cmp::max(start_line.to_string().len(), end_line.to_string().len());
             let tab: String = " ".repeat(max_line_len);
             writeln!(
                 s,
@@ -271,7 +266,6 @@ impl DiagnosticPart {
             for (i, line) in lines {
                 let line_content: String = line.unwrap();
                 let line_num = start_line + i;
-
                 writeln!(
                     s,
                     "{:<max_line_len$} {} {}",
@@ -290,6 +284,7 @@ impl DiagnosticPart {
                     } else {
                         line_length_while(&line_content, char::is_whitespace)
                     };
+
                     writeln!(
                         s,
                         "{tab} {} {}{}",
@@ -299,7 +294,21 @@ impl DiagnosticPart {
                     )?;
                 }
             }
-            writeln!(s, "{tab} {}", "|".blue())?;
+            writeln!(s, "{tab} {}", "|".blue())
+
+    }
+}
+
+impl DiagnosticPart {
+    fn write(&self, s: &mut impl std::fmt::Write) -> std::fmt::Result {
+        let severity = self.severity;
+        let coloring = severity.color();
+
+        writeln!(s, "{}: {}", severity.as_ref().color(coloring), self.message)?;
+        if let Some(src_loc) = &self.span {
+            src_loc.write(s, coloring)?
+
+
         }
 
         Ok(())
@@ -670,7 +679,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
     }
 }
 
-fn highlighted_node_span(ctx: &Context, node: GlobalNode) -> HighlightedSpan {
+pub fn highlighted_node_span(ctx: &Context, node: GlobalNode) -> HighlightedSpan {
     let node_span = node.get_location(ctx);
     let stmt_span = &ctx.instruction_at_node(node).span;
     if stmt_span.contains(node_span) {

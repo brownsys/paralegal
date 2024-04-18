@@ -6,8 +6,11 @@ use paralegal_policy::{
     paralegal_spdg::GlobalNode,
     paralegal_spdg::SPDG,
     Context, ControllerId, Marker,
+    diagnostics::highlighted_node_span
 };
 use std::sync::Arc;
+use colored::color::*;
+
 extern crate strum_macros;
 
 fn main() -> Result<()> {
@@ -21,7 +24,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-#[derive(strum_macros::AsRefStr)]
+// #[derive(strum_macros::AsRefStr)]
 enum Eval {
     Not(Box<Eval>),
     Src { code: &'static str, result: bool },
@@ -87,23 +90,23 @@ impl Eval {
         succeeding
     }
 
-    fn all<D: std::fmt::Debug>(iterator: Vec<D>, mut body: impl FnMut(D) -> Eval) -> Eval {
+    fn all<D: Show>(iterator: Vec<D>, mut body: impl FnMut(D) -> Eval) -> Eval {
         Self::All(
             iterator
                 .into_iter()
                 .map(|item| IterItem {
-                    item_rendering: format!("{item:?}"),
+                    item_rendering: format!("{}", DisplayAsShow(&item)),
                     body_eval: body(item),
                 })
                 .collect(),
         )
     }
-    fn any<D: std::fmt::Debug>(iterator: Vec<D>, mut body: impl FnMut(D) -> Eval) -> Eval {
+    fn any<D: Show>(iterator: Vec<D>, mut body: impl FnMut(D) -> Eval) -> Eval {
         Self::Any(
             iterator
                 .into_iter()
                 .map(|item| IterItem {
-                    item_rendering: format!("{item:?}"),
+                    item_rendering: format!("{}", DisplayAsShow(&item)),
                     body_eval: body(item),
                 })
                 .collect(),
@@ -138,7 +141,7 @@ impl Eval {
                     println!("{prefix}empty children");
                 }
             }
-            for (message, inner) in self.children_where(expectation) {
+            for (message, inner) in self.children_where(expectation).into_iter().take(1) {
                 println!("{prefix}Inner failure from {message}");
                 inner.emit(
                     &format!("  {prefix}"),
@@ -150,26 +153,29 @@ impl Eval {
             }
         }
     }
-    // fn as_ref(&self) -> &str {
-    //     match self {
-    //         Self::Not { .. } => "not",
-    //         Self::Or { .. } => "or",
-    //         Self::All { .. } => "all",
-    //         Self::Src { code, .. } => code,
-    //     }
-    // }
-}
-
-trait FlowsTo {
-    fn flows<T>(&self, _: &T) -> bool
-    where
-        T: ?Sized,
-    {
-        false
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Not { .. } => "not",
+            Self::Or { .. } => "or",
+            Self::All { .. } => "all",
+            Self::Src { code, .. } => code,
+            Self::Any {..} => "any",
+            Self::And { .. } => "and",
+            _ => "other",
+        }
     }
 }
 
-impl<T> FlowsTo for T {}
+// trait FlowsTo {
+//     fn flows<T>(&self, _: &T) -> bool
+//     where
+//         T: ?Sized,
+//     {
+//         false
+//     }
+// }
+
+// impl<T> FlowsTo for T {}
 
 macro_rules! src {
     ($($code:tt)*) => {
@@ -180,15 +186,15 @@ macro_rules! src {
     }
 }
 
-fn dummy_policy(_: Arc<Context>) -> Result<()> {
-    let my_policy_result = Eval::all(vec!["hello", "there"], |s: &str| {
-        Eval::all(vec![1, 2, 3], |i: u32| {
-            Eval::or(src!(s.flows(&i)), src!(i.flows(s)))
-        })
-    });
-    my_policy_result.emit("", true);
-    Ok(())
-}
+// fn dummy_policy(_: Arc<Context>) -> Result<()> {
+//     let my_policy_result = Eval::all(vec!["hello", "there"], |s: &str| {
+//         Eval::all(vec![1, 2, 3], |i: u32| {
+//             Eval::or(src!(s.flows(&i)), src!(i.flows(s)))
+//         })
+//     });
+//     my_policy_result.emit("", true);
+//     Ok(())
+// }
 
 // #[allow(dead_code)]
 // fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
@@ -261,4 +267,53 @@ fn paper_deletion_policy(ctx: Arc<Context>) -> Result<()> {
     });
     my_policy_result.emit("", true);
     Ok(())
+}
+
+use paralegal_policy::diagnostics::HighlightedSpan;
+
+struct DisplayAsShow<'a, T>(&'a T);
+
+impl<T: Show> std::fmt::Display for DisplayAsShow<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>, ctx : &Context) -> std::fmt::Result {
+        self.0.show(f, ctx) // JUSTUS
+    }
+}
+
+trait Show {
+    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result;
+}
+
+impl Show for &DefId {
+    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+        write!(f, "{}", ctx.desc().def_info[self].name)
+    }
+}
+impl Show for LocalDefId {
+    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+        write!(f, "{}", ctx.desc().def_info[&self.to_def_id()].name)
+    }
+}
+impl Show for &SPDG {
+    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+impl Show for (LocalDefId, &SPDG) {
+    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+        self.0.show(f, ctx)?;
+        self.1.show(f, ctx)
+    }
+}
+// impl Show for ControllerId {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         write!(f, "{}", ctx.desc().def_info[self].name)
+//     }
+// }
+
+impl Show for GlobalNode {
+    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+        let span : HighlightedSpan = highlighted_node_span(ctx, *self);
+        writeln!(f, "");
+        span.write(f, Color::Black)
+    }
 }

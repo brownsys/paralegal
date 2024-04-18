@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+colored = "2.1.0"
 paralegal-policy = { path = "../../crates/paralegal-policy" }
 strum = "0.26.2"
 strum_macros = "0.26.2"
