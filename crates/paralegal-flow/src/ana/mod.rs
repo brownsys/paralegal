@@ -19,7 +19,7 @@ use std::time::Instant;
 use anyhow::Result;
 use either::Either;
 use itertools::Itertools;
-use petgraph::visit::GraphBase;
+use petgraph::visit::{GraphBase, IntoNodeReferences, NodeRef};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
 
 mod graph_converter;
@@ -133,7 +133,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         &self,
         controllers: HashMap<Endpoint, SPDG>,
         mut known_def_ids: HashSet<DefId>,
-        targets: &[FnToAnalyze],
+        _targets: &[FnToAnalyze],
     ) -> ProgramDescription {
         let tcx = self.tcx;
 
@@ -141,7 +141,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let inlined_functions = instruction_info
             .keys()
-            .map(|l| l.function.to_def_id())
+            .filter_map(|l| l.function.to_def_id().as_local())
             .collect::<HashSet<_>>();
         let analyzed_spans = inlined_functions
             .iter()
@@ -153,7 +153,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             // Prefereably in future we would filter what we get from the marker
             // context better.
             .filter_map(|f| {
-                let f = f.expect_local();
                 let body = match tcx.body_for_def_id(f) {
                     Ok(b) => Some(b),
                     Err(BodyResolutionError::IsTraitAssocFn(_)) => None,
@@ -164,7 +163,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             })
             .collect::<HashMap<_, _>>();
 
-        known_def_ids.extend(inlined_functions);
+        known_def_ids.extend(inlined_functions.iter().map(|f| f.to_def_id()));
 
         let type_info = self.collect_type_info();
         known_def_ids.extend(type_info.keys());
@@ -177,17 +176,17 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let dedup_functions = analyzed_spans.len() as u32;
 
         let (seen_locs, seen_functions) = if self.opts.anactrl().inlining_depth().is_adaptive() {
+            let mut total_functions = inlined_functions;
             let mctx = self.marker_ctx();
-            let marker_ctx_seen_functions = mctx
-                .functions_seen()
-                .into_iter()
-                .map(|f| f.def_id())
-                .filter(|f| !mctx.is_marked(f))
-                .chain(targets.iter().map(|t| t.def_id))
-                .filter_map(|f| f.as_local())
-                .collect::<HashSet<_>>();
-            let seen_functions = marker_ctx_seen_functions.len() as u32;
-            let locs = marker_ctx_seen_functions
+            total_functions.extend(
+                mctx.functions_seen()
+                    .into_iter()
+                    .map(|f| f.def_id())
+                    .filter(|f| !mctx.is_marked(f))
+                    .filter_map(|f| f.as_local()),
+            );
+            let seen_functions = total_functions.len() as u32;
+            let locs = total_functions
                 .into_iter()
                 .map(|f| body_span(&tcx.body_for_def_id(f).unwrap().body))
                 .map(|span| {
