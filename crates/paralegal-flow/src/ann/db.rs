@@ -444,7 +444,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             )
     }
 
-    pub fn function_seen(&self) -> Vec<FnResolution<'tcx>> {
+    pub fn functions_seen(&self) -> Vec<FnResolution<'tcx>> {
         let cache = self.0.reachable_markers.borrow();
         cache.keys().copied().collect::<Vec<_>>()
     }

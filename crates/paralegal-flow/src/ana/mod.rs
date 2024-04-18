@@ -119,7 +119,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
             .map(|controllers| {
                 let start = Instant::now();
-                let desc = self.make_program_description(controllers, known_def_ids);
+                let desc = self.make_program_description(controllers, known_def_ids, &targets);
                 self.stats
                     .record_timed(TimedStat::Conversion, start.elapsed());
                 desc
@@ -133,6 +133,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         &self,
         controllers: HashMap<Endpoint, SPDG>,
         mut known_def_ids: HashSet<DefId>,
+        targets: &[FnToAnalyze],
     ) -> ProgramDescription {
         let tcx = self.tcx;
 
@@ -172,6 +173,34 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|id| (*id, def_info_for_item(*id, self.marker_ctx(), tcx)))
             .collect();
 
+        let dedup_locs = analyzed_spans.values().map(Span::line_len).sum();
+        let dedup_functions = analyzed_spans.len() as u32;
+
+        let (seen_locs, seen_functions) = if self.opts.anactrl().inlining_depth().is_adaptive() {
+            let mctx = self.marker_ctx();
+            let marker_ctx_seen_functions = mctx
+                .functions_seen()
+                .into_iter()
+                .map(|f| f.def_id())
+                .filter(|f| !mctx.is_marked(f))
+                .chain(targets.iter().map(|t| t.def_id))
+                .filter_map(|f| f.as_local())
+                .collect::<HashSet<_>>();
+            let seen_functions = marker_ctx_seen_functions.len() as u32;
+            let locs = marker_ctx_seen_functions
+                .into_iter()
+                .map(|f| body_span(&tcx.body_for_def_id(f).unwrap().body))
+                .map(|span| {
+                    let (_, start_line, _, end_line, _) =
+                        tcx.sess.source_map().span_to_location_info(span);
+                    end_line - start_line + 1
+                })
+                .sum::<usize>() as u32;
+            (locs, seen_functions)
+        } else {
+            (dedup_locs, dedup_functions)
+        };
+
         type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
             type_info,
@@ -184,8 +213,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 .filter_map(|m| m.1.either(Annotation::as_marker, Some))
                 .count() as u32,
             rustc_time: self.stats.get_timed(TimedStat::Rustc),
-            dedup_locs: analyzed_spans.values().map(Span::line_len).sum(),
-            dedup_functions: analyzed_spans.len() as u32,
+            dedup_locs,
+            dedup_functions,
+            seen_functions,
+            seen_locs,
             analyzed_spans,
         }
     }

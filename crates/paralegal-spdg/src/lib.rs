@@ -344,13 +344,18 @@ pub struct ProgramDescription {
     pub marker_annotation_count: u32,
     /// How long rustc ran before out plugin executed
     pub rustc_time: Duration,
-    /// The number of functions we needed to inspect the source of across
-    /// all controllers.
+    /// The number of functions we produced a PDG for
     pub dedup_functions: u32,
+    /// The lines of code corresponding to the functions from
+    /// [`Self::dedup_functions`].
+    pub dedup_locs: u32,
+    /// The number of functions we produced PDGs for or we inspected to check
+    /// for markers.
+    pub seen_functions: u32,
     /// The lines of code corresponding to the functions from
     /// [`dedup_functions::seen_functions`]. This is the sum of all
     /// `analyzed_locs` of the controllers but deduplicated.
-    pub dedup_locs: u32,
+    pub seen_locs: u32,
     #[doc(hidden)]
     #[serde(with = "ser_localdefid_map")]
     pub analyzed_spans: HashMap<LocalDefId, Span>,
