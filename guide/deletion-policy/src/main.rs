@@ -9,7 +9,7 @@ use paralegal_policy::{
     diagnostics::highlighted_node_span
 };
 use std::sync::Arc;
-use colored::color::*;
+// use colored::color::*;
 
 extern crate strum_macros;
 
@@ -51,6 +51,25 @@ impl Eval {
         }
     }
 
+    fn score(&self) -> u32 { // gives highest score and the child with that score
+        match self {
+            Self::All(children) => {
+                let scores:u32 = children
+                                .iter()
+                                .map(|c| c.body_eval.score())
+                                .sum();
+                return scores / children.len() as u32
+            },
+            Self::Any(children) => {
+                let scores = children.iter().map(|c| c.body_eval.score()).max();
+                return scores.unwrap_or_default()
+            },
+            Self::And { left, right } => return (left.score() + right.score()) / 2,
+            Self::Or { left, right } => return if left.score() > right.score() {left.score()} else {right.score()},
+            Self::Not(inner) => return 1 - inner.score(),
+            Self::Src { result, .. } => return if *result {1} else {0},
+        }
+    }
     fn children_where(&self, expectation: bool) -> Vec<(String, &Eval)> {
         let mut succeeding = vec![];
         match self {
@@ -90,23 +109,23 @@ impl Eval {
         succeeding
     }
 
-    fn all<D: Show>(iterator: Vec<D>, mut body: impl FnMut(D) -> Eval) -> Eval {
+    fn all<D: std::fmt::Debug>(iterator: Vec<D>, mut body: impl FnMut(D) -> Eval) -> Eval {
         Self::All(
             iterator
                 .into_iter()
                 .map(|item| IterItem {
-                    item_rendering: format!("{}", DisplayAsShow(&item)),
+                    item_rendering: format!("{item:?}"),
                     body_eval: body(item),
                 })
                 .collect(),
         )
     }
-    fn any<D: Show>(iterator: Vec<D>, mut body: impl FnMut(D) -> Eval) -> Eval {
+    fn any<D: std::fmt::Debug>(iterator: Vec<D>, mut body: impl FnMut(D) -> Eval) -> Eval {
         Self::Any(
             iterator
                 .into_iter()
                 .map(|item| IterItem {
-                    item_rendering: format!("{}", DisplayAsShow(&item)),
+                    item_rendering: format!("{item:?}"),
                     body_eval: body(item),
                 })
                 .collect(),
@@ -141,15 +160,34 @@ impl Eval {
                     println!("{prefix}empty children");
                 }
             }
-            for (message, inner) in self.children_where(expectation).into_iter().take(1) {
-                println!("{prefix}Inner failure from {message}");
-                inner.emit(
-                    &format!("  {prefix}"),
-                    match self {
-                        Self::Not { .. } => !expectation,
-                        _ => expectation,
-                    },
-                )
+            let children = self.children_where(expectation);
+            let scores = children.iter().map(|(_, c)| c.score());
+            // println!("{}", scores[0]);
+            let best_child = if expectation { scores.max() } else {scores.min() };
+            // println!("{}", best_child);
+            let best;
+            match best_child {
+                Some(x) => {
+                println!("{}", x);
+                best = x;
+            },
+                None => {
+                    println!("empty stuff?");
+                    best = 0;
+                },
+            }
+            for (message, inner) in children.iter() {
+                if inner.score() >= best {
+                    println!("{prefix}Inner failure from {message}");
+                    inner.emit(
+                        &format!("  {prefix}"),
+                        match self {
+                            Self::Not { .. } => !expectation,
+                            _ => expectation,
+                        },
+                    );
+                    break;
+                }
             }
         }
     }
@@ -269,51 +307,51 @@ fn paper_deletion_policy(ctx: Arc<Context>) -> Result<()> {
     Ok(())
 }
 
-use paralegal_policy::diagnostics::HighlightedSpan;
+// use paralegal_policy::diagnostics::HighlightedSpan;
 
-struct DisplayAsShow<'a, T>(&'a T);
+// struct DisplayAsShow<'a, T>(&'a T);
 
-impl<T: Show> std::fmt::Display for DisplayAsShow<'_, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>, ctx : &Context) -> std::fmt::Result {
-        self.0.show(f, ctx) // JUSTUS
-    }
-}
+// impl<T: Show> std::fmt::Display for DisplayAsShow<'_, T> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>, ctx : &Context) -> std::fmt::Result {
+//         self.0.show(f, ctx) // JUSTUS
+//     }
+// }
 
-trait Show {
-    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result;
-}
+// trait Show {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result;
+// }
 
-impl Show for &DefId {
-    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
-        write!(f, "{}", ctx.desc().def_info[self].name)
-    }
-}
-impl Show for LocalDefId {
-    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
-        write!(f, "{}", ctx.desc().def_info[&self.to_def_id()].name)
-    }
-}
-impl Show for &SPDG {
-    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
-        write!(f, "{}", self.name)
-    }
-}
-impl Show for (LocalDefId, &SPDG) {
-    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
-        self.0.show(f, ctx)?;
-        self.1.show(f, ctx)
-    }
-}
+// impl Show for &DefId {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         write!(f, "{}", ctx.desc().def_info[self].name)
+//     }
+// }
+// impl Show for LocalDefId {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         write!(f, "{}", ctx.desc().def_info[&self.to_def_id()].name)
+//     }
+// }
+// impl Show for &SPDG {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         write!(f, "{}", self.name)
+//     }
+// }
+// impl Show for (LocalDefId, &SPDG) {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         self.0.show(f, ctx)?;
+//         self.1.show(f, ctx)
+//     }
+// }
 // impl Show for ControllerId {
 //     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
 //         write!(f, "{}", ctx.desc().def_info[self].name)
 //     }
 // }
 
-impl Show for GlobalNode {
-    fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
-        let span : HighlightedSpan = highlighted_node_span(ctx, *self);
-        writeln!(f, "");
-        span.write(f, Color::Black)
-    }
-}
+// impl Show for GlobalNode {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         let span : HighlightedSpan = highlighted_node_span(ctx, *self);
+//         writeln!(f, "");
+//         span.write(f, Color::Black)
+//     }
+// }
