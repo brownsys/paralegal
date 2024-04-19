@@ -855,7 +855,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             return None;
         };
 
-        let call_kind = match self.classify_call_kind(called_def_id, args) {
+        let call_kind = match self.classify_call_kind(called_def_id, resolved_def_id, args) {
             Ok(cc) => cc,
             Err(async_err) => {
                 if let Some(cb) = self.params.call_change_callback.as_ref() {
@@ -1250,25 +1250,27 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn classify_call_kind<'a>(
         &'a self,
         def_id: DefId,
+        resolved_def_id: DefId,
         original_args: &'a [Operand<'tcx>],
     ) -> Result<CallKind<'tcx>, String> {
         match self.try_poll_call_kind(def_id, original_args) {
             AsyncDeterminationResult::Resolved(r) => Ok(r),
             AsyncDeterminationResult::NotAsync => Ok(self
-                .try_indirect_call_kind(def_id)
+                .try_indirect_call_kind(resolved_def_id)
                 .unwrap_or(CallKind::Direct)),
             AsyncDeterminationResult::Unresolvable(reason) => Err(reason),
         }
     }
 
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
-        let lang_items = self.tcx.lang_items();
-        let my_impl = self.tcx.impl_of_method(def_id)?;
-        let my_trait = self.tcx.trait_id_of_impl(my_impl)?;
-        (Some(my_trait) == lang_items.fn_trait()
-            || Some(my_trait) == lang_items.fn_mut_trait()
-            || Some(my_trait) == lang_items.fn_once_trait())
-        .then_some(CallKind::Indirect)
+        // let lang_items = self.tcx.lang_items();
+        // let my_impl = self.tcx.impl_of_method(def_id)?;
+        // let my_trait = self.tcx.trait_id_of_impl(my_impl)?;
+        // (Some(my_trait) == lang_items.fn_trait()
+        //     || Some(my_trait) == lang_items.fn_mut_trait()
+        //     || Some(my_trait) == lang_items.fn_once_trait())
+        // .then_some(CallKind::Indirect)
+        self.tcx.is_closure(def_id).then_some(CallKind::Indirect)
     }
 }
 
