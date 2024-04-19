@@ -51,11 +51,11 @@ impl User {
         for post in &authored.posts { // TODO
             builder.add(Query::Delete(DeleteQuery{id : post.id, table_name: "posts"}));
         }
-        // builder.execute();
+        builder.execute();
         for comment in &authored.comments {
             builder.add(Query::Delete(DeleteQuery{id : comment.id, table_name : "comments"}));
         }
-        // builder.execute();
+        builder.execute();
     }
     fn authored(&self) -> Authored { /* ... */
         return Authored {

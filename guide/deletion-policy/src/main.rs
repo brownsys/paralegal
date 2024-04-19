@@ -54,7 +54,7 @@ impl Eval {
     fn score(&self) -> u32 { // gives highest score and the child with that score
         match self {
             Self::All(children) => {
-                let scores:u32 = children
+                let scores : u32 = children
                                 .iter()
                                 .map(|c| c.body_eval.score())
                                 .sum();
@@ -62,12 +62,20 @@ impl Eval {
             },
             Self::Any(children) => {
                 let scores = children.iter().map(|c| c.body_eval.score()).max();
-                return scores.unwrap_or_default()
+                return scores.unwrap_or_default();
             },
-            Self::And { left, right } => return (left.score() + right.score()) / 2,
+            Self::And { left, right } => {
+                let and = (left.score() + right.score()) / 2;
+                if and > 0 {
+                    println!("and is {}", and);
+                }
+                return (left.score() + right.score()) / 2;
+            },
             Self::Or { left, right } => return if left.score() > right.score() {left.score()} else {right.score()},
             Self::Not(inner) => return 1 - inner.score(),
-            Self::Src { result, .. } => return if *result {1} else {0},
+            Self::Src { result, .. } => {
+                return if *result {100} else {0};
+            },
         }
     }
     fn children_where(&self, expectation: bool) -> Vec<(String, &Eval)> {
@@ -162,17 +170,13 @@ impl Eval {
             }
             let children = self.children_where(expectation);
             let scores = children.iter().map(|(_, c)| c.score());
-            // println!("{}", scores[0]);
             let best_child = if expectation { scores.max() } else {scores.min() };
-            // println!("{}", best_child);
             let best;
             match best_child {
                 Some(x) => {
-                println!("{}", x);
                 best = x;
             },
                 None => {
-                    println!("empty stuff?");
                     best = 0;
                 },
             }
@@ -295,7 +299,7 @@ fn paper_deletion_policy(ctx: Arc<Context>) -> Result<()> {
                                     .filter(|n| ctx.has_marker(Marker::new_intern("executes"), *n))
                                     .collect::<Vec<_>>(),
                                 |exec| {
-                                    src!(ctx.flows_to(sink, exec, EdgeSelection::Data))
+                                    src!(ctx.flows_to(sink, exec, EdgeSelection::Control))
                                 })
                         )
                     )
