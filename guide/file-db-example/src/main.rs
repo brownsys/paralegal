@@ -2,6 +2,7 @@ pub struct QueryBuilder {
     /* ... */
 }
 impl QueryBuilder { // TODO
+    // #[paralegal::marker(executes, arguments = [0])]
     fn add(&mut self, query: Query) { /* ... */ }
     #[paralegal::marker(executes, arguments = [0])]
     fn execute(&mut self) { /* ... */ }
@@ -64,6 +65,3 @@ impl User {
         };
     }
 }
-
-// controller.name
-// defid -> 

@@ -279,7 +279,11 @@ fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
     my_policy_result.emit("", true);
     Ok(())
 }
-
+/**
+ * If you only have all sources flowing into deletes but no deletes flowing into
+ * execs, you have a 50% progress because you need to make one of the deletes
+ * flow into exec.
+ */
 fn paper_deletion_policy(ctx: Arc<Context>) -> Result<()> {
     let my_policy_result = Eval::any(ctx.all_controllers().collect(), |(deleter_id, _ignored)| {
         Eval::all(
@@ -299,7 +303,7 @@ fn paper_deletion_policy(ctx: Arc<Context>) -> Result<()> {
                                     .filter(|n| ctx.has_marker(Marker::new_intern("executes"), *n))
                                     .collect::<Vec<_>>(),
                                 |exec| {
-                                    src!(ctx.flows_to(sink, exec, EdgeSelection::Control))
+                                    src!(ctx.flows_to(sink, exec, EdgeSelection::Both))
                                 })
                         )
                     )
@@ -308,6 +312,7 @@ fn paper_deletion_policy(ctx: Arc<Context>) -> Result<()> {
         )
     });
     my_policy_result.emit("", true);
+    println!("Policy progress : {}%", my_policy_result.score());
     Ok(())
 }
 
