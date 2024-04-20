@@ -9,7 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  CARGO_MAKE_VERSION: 0.37.9
 
 jobs:
   compiler-tests:
@@ -36,7 +35,7 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Install cargo-make
-      run: cargo install --force --debug cargo-make --version ${CARGO_MAKE_VERSION}
+      run: rustup run stable cargo install --force --debug cargo-make
     - name: Build
       run: cargo make install
     - name: Run tests
@@ -55,7 +54,7 @@ jobs:
         path: ~/.rustup
         key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
     - name: Install cargo-make
-      run: cargo install --force --debug cargo-make --version ${CARGO_MAKE_VERSION}
+      run: rustup run stable cargo install --force --debug cargo-make
     - name: Run checks
       run: cargo make format-check-all
 
@@ -80,7 +79,7 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Install cargo-make
-      run: cargo install --force --debug cargo-make --version ${CARGO_MAKE_VERSION}
+      run: rustup run stable cargo install --force --debug cargo-make
     - name: Here come the complaints
       run: cargo make clippy-check-all
 
@@ -105,6 +104,6 @@ jobs:
           target/
         key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
     - name: Install cargo-make
-      run: cargo install --force --debug cargo-make --version ${CARGO_MAKE_VERSION}
+      run: rustup run stable cargo install --force --debug cargo-make
     - name: Here come the complaints
       run: cargo make doc-check

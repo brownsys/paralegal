@@ -6,7 +6,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_MAKE_VERSION: 0.37.9
 
 jobs:
   update-docs:
@@ -23,7 +22,7 @@ jobs:
         git config --local user.email "docmaster+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
     - name: Install cargo-make
-      run: cargo install --force --debug cargo-make --version ${CARGO_MAKE_VERSION}
+      run: rustup run stable cargo install --force --debug cargo-make
     - name: Prepare
       run: |
         cargo doc --document-private-items
