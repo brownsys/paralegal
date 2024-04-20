@@ -18,9 +18,9 @@ use paralegal_spdg::{
     DefInfo, EdgeInfo, Node, NodeKind, SPDG,
 };
 
-use crate::pdg::rustc_portable::LocalDefId;
-use crate::pdg::CallString;
+use flowistry_pdg::CallString;
 use itertools::Itertools;
+use paralegal_spdg::rustc_portable::LocalDefId;
 use petgraph::visit::IntoNeighbors;
 use petgraph::visit::Visitable;
 use petgraph::visit::{
