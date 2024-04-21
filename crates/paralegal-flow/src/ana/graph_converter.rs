@@ -276,19 +276,19 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     //   other reachable markers outside
                     // - If the function was inlined, the PDG will cover the
                     //   markers so we don't have to.
-                    if self.generator.opts.anactrl().inlining_depth().is_fixed()
-                        && !self.marker_ctx().is_marked(fun.def_id())
-                        && !self.generator.inline_judge.should_inline(&CallInfo {
-                            call_string: weight.at,
-                            callee: fun,
-                            is_cached: true,
-                            async_parent: unimplemented!("Fix fixed inlining depth"),
-                        })
-                    {
-                        let mctx = self.marker_ctx().clone();
-                        let markers = mctx.get_reachable_markers(fun);
-                        self.register_markers(node, markers.iter().copied())
-                    }
+                    // if self.generator.opts.anactrl().inlining_depth().is_fixed()
+                    //     && !self.marker_ctx().is_marked(fun.def_id())
+                    //     && !self.generator.inline_judge.should_inline(&CallInfo {
+                    //         call_string: weight.at,
+                    //         callee: fun,
+                    //         is_cached: true,
+                    //         async_parent: unimplemented!("Fix fixed inlining depth"),
+                    //     })
+                    // {
+                    //     let mctx = self.marker_ctx().clone();
+                    //     let markers = mctx.get_reachable_markers(fun);
+                    //     self.register_markers(node, markers.iter().copied())
+                    // }
                 }
             }
             _ => (),
