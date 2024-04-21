@@ -489,6 +489,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
         }
 
         if handle_as_inline().is_none() {
+            trace!("Handling terminator {:?} as not inlined", terminator.kind);
             let mut vis = ModularMutationVisitor::new(
                 &results.analysis.0.place_info,
                 move |location, mutation| {
@@ -706,7 +707,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             .root
             .try_monomorphize(tcx, param_env, &body_with_facts.body);
 
-        if params.dump_mir {
+        if params.dump_mir || log_enabled!(log::Level::Trace) {
             use std::io::Write;
             let path = tcx.def_path_str(def_id) + ".mir";
             let mut f = std::fs::File::create(path.as_str()).unwrap();
@@ -1423,11 +1424,11 @@ impl<'tcx> GraphConstructor<'tcx> {
             // Special case: if the current block is a SwitchInt, then other blocks could be control-dependent on it.
             // We need to create a node for the value of the discriminant at this point, so control-dependent mutations
             // can use it as a source.
-            TerminatorKind::SwitchInt { discr, .. } => {
-                if let Some(place) = discr.place() {
-                    self.apply_mutation(state, location, place);
-                }
-            }
+            // TerminatorKind::SwitchInt { discr, .. } => {
+            //     if let Some(place) = discr.place() {
+            //         self.apply_mutation(state, location, place);
+            //     }
+            // }
 
             // Special case: need to deal with context-sensitivity for function calls.
             TerminatorKind::Call {
@@ -1440,6 +1441,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                     .handle_call(state, location, func, args, *destination)
                     .is_none()
                 {
+                    trace!("Terminator {:?} failed the preamble", terminator.kind);
                     self.modular_mutation_visitor(state)
                         .visit_terminator(terminator, location)
                 }
