@@ -1,8 +1,6 @@
 use std::{borrow::Cow, collections::HashSet, iter, rc::Rc};
 
-use df::{
-    fmt::DebugWithContext, Analysis, AnalysisDomain, JoinSemiLattice, Results, ResultsVisitor,
-};
+use df::{fmt::DebugWithContext, Analysis, AnalysisDomain, Results, ResultsVisitor};
 use either::Either;
 use flowistry::mir::placeinfo::PlaceInfo;
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
@@ -37,97 +35,13 @@ use super::utils::{self, FnResolution};
 use crate::{
     graph::{SourceUse, TargetUse},
     mutation::Time,
-    utils::is_non_default_trait_method,
+    utils::{is_non_default_trait_method, manufacture_substs_for},
+    InlineMissReason, SkipCall,
 };
 use crate::{
     mutation::{ModularMutationVisitor, Mutation},
-    try_resolve_function,
+    try_resolve_function, CallChangeCallback, CallChanges, CallInfo,
 };
-
-/// Whether or not to skip recursing into a function call during PDG construction.
-#[derive(Debug)]
-pub enum SkipCall {
-    /// Skip the function, and perform a modular approxmation of its effects.
-    Skip,
-
-    /// Recurse into the function as normal.
-    NoSkip,
-}
-
-/// A fake effect to insert into the PDG upon a function call.
-#[derive(Debug)]
-pub struct FakeEffect<'tcx> {
-    /// The place (in the *callee*!) subject to a fake effect.
-    pub place: Place<'tcx>,
-
-    /// The kind of fake effect to insert into the PDG.
-    pub kind: FakeEffectKind,
-}
-
-/// The kind of fake effect to insert into the PDG.
-#[derive(Debug)]
-pub enum FakeEffectKind {
-    /// A fake read to an argument of a function call.
-    ///
-    /// For example, a fake read to argument `_1` of the call `f(_5)`
-    /// would add an edge `_5@main::fcall -> _1@main->f::START`.
-    Read,
-
-    /// A fake write to an argument of a function call.
-    ///
-    /// For example, a fake write to argument `(*_1)` of the call `f(&mut _5)`
-    /// would add an edge `_5@main::<before> -> _5@main::fcall`.
-    Write,
-}
-
-/// User-provided changes to the default PDG construction behavior for function calls.
-///
-/// Construct [`CallChanges`] via [`CallChanges::default`].
-#[derive(Debug)]
-pub struct CallChanges<'tcx> {
-    skip: SkipCall,
-    fake_effects: Vec<FakeEffect<'tcx>>,
-}
-
-impl<'tcx> CallChanges<'tcx> {
-    /// Inidicate whether or not to skip recursing into the given function.
-    pub fn with_skip(self, skip: SkipCall) -> Self {
-        CallChanges { skip, ..self }
-    }
-
-    /// Provide a set of fake effect to insert into the PDG.
-    pub fn with_fake_effects(self, fake_effects: Vec<FakeEffect<'tcx>>) -> Self {
-        CallChanges {
-            fake_effects,
-            ..self
-        }
-    }
-}
-
-impl Default for CallChanges<'_> {
-    fn default() -> Self {
-        CallChanges {
-            skip: SkipCall::NoSkip,
-            fake_effects: vec![],
-        }
-    }
-}
-
-/// Information about the function being called.
-pub struct CallInfo<'tcx> {
-    /// The potentially-monomorphized resolution of the callee.
-    pub callee: FnResolution<'tcx>,
-
-    /// If the callee is an async closure created by an `async fn`, this is the
-    /// `async fn` item.
-    pub async_parent: Option<FnResolution<'tcx>>,
-
-    /// The call-stack up to the current call site.
-    pub call_string: CallString,
-
-    /// Would the PDG for this function be served from the cache.
-    pub is_cached: bool,
-}
 
 /// Top-level parameters to PDG construction.
 #[derive(Clone)]
@@ -136,118 +50,6 @@ pub struct PdgParams<'tcx> {
     root: FnResolution<'tcx>,
     call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
     dump_mir: bool,
-}
-
-pub trait CallChangeCallback<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx>;
-
-    fn on_inline_miss(
-        &self,
-        _resolution: FnResolution<'tcx>,
-        _loc: Location,
-        _under_analysis: FnResolution<'tcx>,
-        _call_string: Option<CallString>,
-        _reason: InlineMissReason,
-    ) {
-    }
-}
-
-pub struct CallChangeCallbackFn<'tcx> {
-    f: Box<dyn Fn(CallInfo<'tcx>) -> CallChanges<'tcx> + 'tcx>,
-}
-
-impl<'tcx> CallChangeCallbackFn<'tcx> {
-    pub fn new(f: impl Fn(CallInfo<'tcx>) -> CallChanges<'tcx> + 'tcx) -> Self {
-        Self { f: Box::new(f) }
-    }
-}
-
-impl<'tcx> CallChangeCallback<'tcx> for CallChangeCallbackFn<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx> {
-        (self.f)(info)
-    }
-}
-
-#[derive(Debug)]
-pub enum InlineMissReason {
-    Async(String),
-}
-
-fn manufacture_substs_for<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    function: LocalDefId,
-) -> Result<&'tcx List<GenericArg<'tcx>>, ErrorGuaranteed> {
-    use rustc_middle::ty::{
-        Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
-        ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
-    };
-
-    let generics = tcx.generics_of(function);
-    let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
-    let types = (0..generics.count()).map(|gidx| {
-        let param = generics.param_at(gidx, tcx);
-        if let Some(default_val) = param.default_value(tcx) {
-            return Ok(default_val.instantiate_identity());
-        }
-        match param.kind {
-            // I'm not sure this is correct. We could probably return also "erased" or "static" here.
-            GenericParamDefKind::Lifetime => {
-                return Ok(GenericArg::from(Region::new_free(
-                    tcx,
-                    function.to_def_id(),
-                    BoundRegionKind::BrAnon(None),
-                )))
-            }
-            GenericParamDefKind::Const { .. } => {
-                return Err(tcx.sess.span_err(
-                    tcx.def_span(param.def_id),
-                    "Cannot use constants as generic parameters in controllers",
-                ))
-            }
-            GenericParamDefKind::Type { .. } => (),
-        };
-
-        let param_as_ty = ParamTy::for_def(param);
-        let constraints = predicates.predicates.iter().filter_map(|clause| {
-            let pred = if let Some(trait_ref) = clause.as_trait_clause() {
-                if trait_ref.polarity() != ImplPolarity::Positive {
-                    return None;
-                };
-                let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
-                    return Some(Err(tcx.sess.span_err(
-                        tcx.def_span(param.def_id),
-                        format!("Trait ref had binder {trait_ref:?}"),
-                    )));
-                };
-                if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
-                    return None;
-                };
-                Some(ExistentialPredicate::Trait(
-                    ExistentialTraitRef::erase_self_ty(tcx, trait_ref),
-                ))
-            } else if let Some(pred) = clause.as_projection_clause() {
-                let pred = pred.no_bound_vars()?;
-                if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
-                    return None;
-                };
-                Some(ExistentialPredicate::Projection(
-                    ExistentialProjection::erase_self_ty(tcx, pred),
-                ))
-            } else {
-                None
-            }?;
-
-            Some(Ok(Binder::dummy(pred)))
-        });
-        let ty = Ty::new_dynamic(
-            tcx,
-            tcx.mk_poly_existential_predicates_from_iter(constraints)?,
-            Region::new_free(tcx, function.to_def_id(), BoundRegionKind::BrAnon(None)),
-            DynKind::Dyn,
-        );
-        Ok(GenericArg::from(ty))
-    });
-    tcx.mk_args_from_iter(types)
 }
 
 impl<'tcx> PdgParams<'tcx> {
@@ -317,8 +119,6 @@ impl<'tcx> PdgParams<'tcx> {
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]
 pub struct InstructionState<'tcx> {
-    //nodes: FxHashSet<DepNode<'tcx>>,
-    //edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
     last_mutation: FxHashMap<Place<'tcx>, FxHashSet<RichLocation>>,
 }
 
@@ -326,14 +126,11 @@ impl<C> DebugWithContext<C> for InstructionState<'_> {}
 
 impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        // let b1 = utils::hashset_join(&mut self.edges, &other.edges);
-        // let b2 = utils::hashset_join(&mut self.nodes, &other.nodes);
         let b3 = utils::hashmap_join(
             &mut self.last_mutation,
             &other.last_mutation,
             utils::hashset_join,
         );
-        //b1 || b2 ||
         b3
     }
 }
@@ -361,6 +158,22 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
         vis.visit_statement(statement, location)
     }
 
+    /// We handle terminators during graph construction generally in the before
+    /// state, because we're interested in what the dependencies of our read
+    /// places are before the modification pass overwrites the read places from
+    /// any mutable arguments.
+    ///
+    /// There is one exception which is that non-inlined function calls are
+    /// handled in two steps. Before the primary effects we generate edges from
+    /// the dependencies to the input arguments. After the primary effect we
+    /// insert edges from each argument to each modified location. It is cleaner
+    /// to do this afterwards, because the logic that resolves a place to a
+    /// graph node assumes that you are reading all of your inputs from the
+    /// "last_modification". In the "before" state that map contains the
+    /// "original" dependencies of each argument, e.g. we haven't combined them
+    /// with the reachable places yet. So this ordering means we can reuse the
+    /// same logic but just have to run it twice for every non-inlined function
+    /// call site.
     fn visit_terminator_before_primary_effect(
         &mut self,
         results: &Results<'tcx, DfAnalysis<'mir, 'tcx>>,
@@ -381,9 +194,9 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
             let constructor = results.analysis.0;
 
             let (child_constructor, calling_convention) =
-                match constructor.handle_call_preamble(location, func, args)? {
-                    PreambleResult::Ready(one, two) => (one, two),
-                    PreambleResult::ApproxAsyncFn => {
+                match constructor.determine_call_handling(location, func, args)? {
+                    CallHandling::Ready(one, two) => (one, two),
+                    CallHandling::ApproxAsyncFn => {
                         // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                         let rvalue = Rvalue::Aggregate(
                             Box::new(AggregateKind::Tuple),
@@ -396,7 +209,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                         );
                         return Some(());
                     }
-                    PreambleResult::ApproxAsyncSM(how) => {
+                    CallHandling::ApproxAsyncSM(how) => {
                         how(
                             constructor,
                             &mut self.modular_mutation_visitor(results, state),
@@ -522,8 +335,8 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
             let constructor = results.analysis.0;
 
             if matches!(
-                constructor.handle_call_preamble(location, func, args),
-                Some(PreambleResult::Ready(_, _))
+                constructor.determine_call_handling(location, func, args),
+                Some(CallHandling::Ready(_, _))
             ) {
                 return;
             }
@@ -1000,14 +813,12 @@ impl<'tcx> GraphConstructor<'tcx> {
             .collect()
     }
 
-    /// Returns all nodes `dst` such that `dst` is an alias of `mutated`.
-    ///
-    /// Also updates the last-mutated location for `dst` to the given `location`.
-    fn update_outputs(
+    /// Updates the last-mutated location for `dst` to the given `location`.
+    fn apply_mutation(
         &self,
         state: &mut InstructionState<'tcx>,
-        mutated: Place<'tcx>,
         location: Location,
+        mutated: Place<'tcx>,
     ) {
         self.find_outputs(state, mutated, location)
             .into_iter()
@@ -1021,61 +832,6 @@ impl<'tcx> GraphConstructor<'tcx> {
                 // Register that `dst` is mutated at the current location.
                 dst_mutations.insert(RichLocation::Location(location));
             })
-    }
-
-    /// Update the PDG with arrows from `inputs` to `mutated` at `location`.
-    fn apply_mutation(
-        &self,
-        state: &mut InstructionState<'tcx>,
-        location: Location,
-        mutated: Place<'tcx>,
-    ) {
-        // trace!("Applying mutation to {mutated:?} with inputs {inputs:?} at {location:?}");
-
-        // let ctrl_inputs = self.find_control_inputs(location);
-
-        // trace!("  Found control inputs {ctrl_inputs:?}");
-
-        // let data_inputs = match inputs {
-        //     Inputs::Unresolved { places } => places
-        //         .into_iter()
-        //         .flat_map(|(input, input_use)| {
-        //             self.find_data_inputs(state, input)
-        //                 .into_iter()
-        //                 .map(move |input| {
-        //                     (
-        //                         input,
-        //                         input_use.map_or(SourceUse::Operand, SourceUse::Argument),
-        //                     )
-        //                 })
-        //         })
-        //         .collect::<Vec<_>>(),
-        //     Inputs::Resolved { node_use, node } => vec![(node, node_use)],
-        // };
-        // trace!("  Data inputs: {data_inputs:?}");
-
-        self.update_outputs(state, mutated, location);
-
-        // for output in &outputs {
-        //     trace!("  Adding node {output}");
-        //     state.nodes.insert(*output);
-        // }
-
-        // // Add data dependencies: data_input -> output
-        // for (data_input, source_use) in data_inputs {
-        //     let data_edge = DepEdge::data(self.make_call_string(location), source_use, target_use);
-        //     for output in &outputs {
-        //         trace!("  Adding edge {data_input} -> {output}");
-        //         state.edges.insert((data_input, *output, data_edge));
-        //     }
-        // }
-
-        // // Add control dependencies: ctrl_input -> output
-        // for (ctrl_input, edge) in &ctrl_inputs {
-        //     for output in &outputs {
-        //         state.edges.insert((*ctrl_input, *output, *edge));
-        //     }
-        // }
     }
 
     /// Resolve a function [`Operand`] to a specific [`DefId`] and generic arguments if possible.
@@ -1163,12 +919,12 @@ impl<'tcx> GraphConstructor<'tcx> {
         vis.visit_assign(&destination, &rvalue, location);
     }
 
-    fn handle_call_preamble<'a>(
+    fn determine_call_handling<'a>(
         &self,
         location: Location,
         func: &Operand<'tcx>,
         args: &'a [Operand<'tcx>],
-    ) -> Option<PreambleResult<'tcx, 'a>> {
+    ) -> Option<CallHandling<'tcx, 'a>> {
         let tcx = self.tcx;
 
         let (called_def_id, generic_args) = self.operand_to_def_id(func)?;
@@ -1198,7 +954,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
 
         if let Some(handler) = self.can_approximate_async_functions(resolved_def_id) {
-            return Some(PreambleResult::ApproxAsyncSM(handler));
+            return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
         if !resolved_def_id.is_local() {
@@ -1284,7 +1040,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                     ..
                 })
             ))
-            .then_some(PreambleResult::ApproxAsyncFn);
+            .then_some(CallHandling::ApproxAsyncFn);
         }
 
         if matches!(
@@ -1304,7 +1060,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             self.async_info.clone(),
             &self.pdg_cache,
         );
-        Some(PreambleResult::Ready(child_constructor, calling_convention))
+        Some(CallHandling::Ready(child_constructor, calling_convention))
     }
 
     /// Attempt to inline a call to a function, returning None if call is not inline-able.
@@ -1319,49 +1075,13 @@ impl<'tcx> GraphConstructor<'tcx> {
         // Note: my comments here will use "child" to refer to the callee and
         // "parent" to refer to the caller, since the words are most visually distinct.
 
-        // if let Some(changes) = call_changes {
-        //     for FakeEffect {
-        //         place: callee_place,
-        //         kind: cause,
-        //     } in changes.fake_effects
-        //     {
-        //         let caller_place = match translate_to_parent(callee_place) {
-        //             Some(place) => place,
-        //             None => continue,
-        //         };
-        //         let source_use = Some(callee_place.local.as_u32() as u8);
-        //         let target_use = TargetUse::Assign;
-        //         let inputs = Inputs::Unresolved {
-        //             places: vec![(caller_place, source_use)],
-        //         };
-        //         match cause {
-        //             FakeEffectKind::Read => self.apply_mutation(
-        //                 state,
-        //                 location,
-        //                 Either::Right(
-        //                     child_constructor.make_dep_node(callee_place, RichLocation::Start),
-        //                 ),
-        //                 inputs,
-        //                 target_use,
-        //             ),
-        //             FakeEffectKind::Write => self.apply_mutation(
-        //                 state,
-        //                 location,
-        //                 Either::Left(caller_place),
-        //                 inputs,
-        //                 target_use,
-        //             ),
-        //         };
-        //     }
-        // }
-
-        let preamble = self.handle_call_preamble(location, func, args)?;
+        let preamble = self.determine_call_handling(location, func, args)?;
 
         let (child_constructor, calling_convention) = match preamble {
-            PreambleResult::Ready(child_constructor, calling_convention) => {
+            CallHandling::Ready(child_constructor, calling_convention) => {
                 (child_constructor, calling_convention)
             }
-            PreambleResult::ApproxAsyncFn => {
+            CallHandling::ApproxAsyncFn => {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
                     Box::new(AggregateKind::Tuple),
@@ -1371,7 +1091,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                     .visit_assign(&destination, &rvalue, location);
                 return Some(());
             }
-            PreambleResult::ApproxAsyncSM(handler) => {
+            CallHandling::ApproxAsyncSM(handler) => {
                 handler(
                     self,
                     &mut self.modular_mutation_visitor(state),
@@ -1385,9 +1105,6 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         let child_graph = child_constructor.construct_partial_cached();
 
-        // Find every reference to a parent-able node in the child's graph.
-        // let parentable_srcs =
-        //     child_graph.parentable_srcs(child_constructor.def_id, &child_constructor.body);
         let parentable_dsts =
             child_graph.parentable_dsts(child_constructor.def_id, &child_constructor.body);
         let parent_body = &self.body;
@@ -1402,38 +1119,17 @@ impl<'tcx> GraphConstructor<'tcx> {
             )
         };
 
-        // For each source node CHILD that is parentable to PLACE,
-        // add an edge from PLACE -> CHILD.
-        // trace!("PARENT -> CHILD EDGES:");
-        // for (child_src, _kind) in parentable_srcs {
-        //     if let Some(parent_place) = translate_to_parent(child_src.place) {
-        //         self.apply_mutation(
-        //             state,
-        //             location,
-        //             Either::Right(child_src),
-        //             Inputs::Unresolved {
-        //                 places: vec![(parent_place, None)],
-        //             },
-        //             TargetUse::Assign,
-        //         );
-        //     }
-        // }
-
         // For each destination node CHILD that is parentable to PLACE,
         // add an edge from CHILD -> PLACE.
         //
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
-        for (child_dst, kind) in parentable_dsts {
+        for (child_dst, _) in parentable_dsts {
             if let Some(parent_place) = translate_to_parent(child_dst.place) {
                 self.apply_mutation(state, location, parent_place);
             }
         }
-
-        // state.nodes.extend(&child_graph.nodes);
-        // state.edges.extend(&child_graph.edges);
-
         trace!(
             "  Inlined {}",
             self.fmt_fn(child_constructor.def_id.to_def_id())
@@ -1461,37 +1157,25 @@ impl<'tcx> GraphConstructor<'tcx> {
         location: Location,
         time: Time,
     ) {
-        match &terminator.kind {
-            // Special case: if the current block is a SwitchInt, then other blocks could be control-dependent on it.
-            // We need to create a node for the value of the discriminant at this point, so control-dependent mutations
-            // can use it as a source.
-            // TerminatorKind::SwitchInt { discr, .. } => {
-            //     if let Some(place) = discr.place() {
-            //         self.apply_mutation(state, location, place);
-            //     }
-            // }
-
-            // Special case: need to deal with context-sensitivity for function calls.
-            TerminatorKind::Call {
-                func,
-                args,
-                destination,
-                ..
-            } => {
-                if self
-                    .handle_call(state, location, func, args, *destination)
-                    .is_none()
-                {
-                    trace!("Terminator {:?} failed the preamble", terminator.kind);
-                    self.term_vis(state, time)
-                        .visit_terminator(terminator, location)
-                }
+        if let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &terminator.kind
+        {
+            if self
+                .handle_call(state, location, func, args, *destination)
+                .is_none()
+            {
+                trace!("Terminator {:?} failed the preamble", terminator.kind);
+                self.terminator_visitor(state, time)
+                    .visit_terminator(terminator, location)
             }
-
+        } else {
             // Fallback: call the visitor
-            _ => self
-                .term_vis(state, time)
-                .visit_terminator(terminator, location),
+            self.terminator_visitor(state, time)
+                .visit_terminator(terminator, location)
         }
     }
 
@@ -1606,7 +1290,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         self.tcx.is_closure(def_id).then_some(CallKind::Indirect)
     }
 
-    fn term_vis<'a>(
+    fn terminator_visitor<'a>(
         &'a self,
         state: &'a mut InstructionState<'tcx>,
         time: Time,
@@ -1626,7 +1310,7 @@ pub enum CallKind<'tcx> {
     AsyncPoll(FnResolution<'tcx>, Location, Place<'tcx>),
 }
 
-enum PreambleResult<'tcx, 'a> {
+enum CallHandling<'tcx, 'a> {
     ApproxAsyncFn,
     Ready(GraphConstructor<'tcx>, CallingConvention<'tcx, 'a>),
     ApproxAsyncSM(
@@ -1665,15 +1349,6 @@ impl<'tcx> df::Analysis<'tcx> for DfAnalysis<'_, 'tcx> {
             .modular_mutation_visitor(state)
             .visit_statement(statement, location)
     }
-
-    // fn apply_before_terminator_effect(
-    //     &mut self,
-    //     state: &mut Self::Domain,
-    //     terminator: &rustc_middle::mir::Terminator<'tcx>,
-    //     location: Location,
-    // ) {
-    //     self.0.handle_terminator(terminator, state, location, true);
-    // }
 
     fn apply_terminator_effect<'mir>(
         &mut self,

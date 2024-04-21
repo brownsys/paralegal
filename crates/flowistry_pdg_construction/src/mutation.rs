@@ -58,6 +58,21 @@ where
     time: Time,
 }
 
+/// A classification on when this visitor is executed. This is designed to allow
+/// splitting of the effect of a function call into the argument unification and
+/// the return/mut arg modification.
+///
+/// [Self::Before] means we are evaluating the state before the call happens, so
+/// we are only concerned with mutations if the argument places that read all
+/// their reachable values.
+///
+/// [Self::After] means we are evaluating the state when the call is taking
+/// place. That is to say the modification it performs on any reachable mutable
+/// places or the return value.
+///
+/// [Self::Unspecified] mean do both.
+///
+/// This has no effect on any statements or terminators besides function calls.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Time {
     Unspecified,
@@ -78,6 +93,7 @@ where
         }
     }
 
+    /// Set when this visitor is executing. See [Time] for more details.
     pub fn set_time(&mut self, time: Time) {
         self.time = time;
     }

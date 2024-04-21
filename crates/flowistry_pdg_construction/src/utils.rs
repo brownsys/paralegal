@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::hash_map::Entry, hash::Hash};
 
 use either::Either;
+use flowistry_pdg::rustc_portable::LocalDefId;
 use itertools::Itertools;
 use log::{debug, trace};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -10,8 +11,11 @@ use rustc_middle::{
         tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::{self, EarlyBinder, GenericArgsRef, Instance, ParamEnv, Ty, TyCtxt, TyKind},
+    ty::{
+        self, EarlyBinder, GenericArg, GenericArgsRef, Instance, List, ParamEnv, Ty, TyCtxt, TyKind,
+    },
 };
+use rustc_span::ErrorGuaranteed;
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
@@ -251,4 +255,81 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
         TyKind::Alias(AliasKind::Opaque, alias_ty) => tcx.type_of(alias_ty.def_id).skip_binder(),
         _ => ty,
     }
+}
+
+pub fn manufacture_substs_for<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    function: LocalDefId,
+) -> Result<&'tcx List<GenericArg<'tcx>>, ErrorGuaranteed> {
+    use rustc_middle::ty::{
+        Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
+        ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
+    };
+
+    let generics = tcx.generics_of(function);
+    let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
+    let types = (0..generics.count()).map(|gidx| {
+        let param = generics.param_at(gidx, tcx);
+        if let Some(default_val) = param.default_value(tcx) {
+            return Ok(default_val.instantiate_identity());
+        }
+        match param.kind {
+            // I'm not sure this is correct. We could probably return also "erased" or "static" here.
+            GenericParamDefKind::Lifetime => {
+                return Ok(GenericArg::from(Region::new_free(
+                    tcx,
+                    function.to_def_id(),
+                    BoundRegionKind::BrAnon(None),
+                )))
+            }
+            GenericParamDefKind::Const { .. } => {
+                return Err(tcx.sess.span_err(
+                    tcx.def_span(param.def_id),
+                    "Cannot use constants as generic parameters in controllers",
+                ))
+            }
+            GenericParamDefKind::Type { .. } => (),
+        };
+
+        let param_as_ty = ParamTy::for_def(param);
+        let constraints = predicates.predicates.iter().filter_map(|clause| {
+            let pred = if let Some(trait_ref) = clause.as_trait_clause() {
+                if trait_ref.polarity() != ImplPolarity::Positive {
+                    return None;
+                };
+                let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
+                    return Some(Err(tcx.sess.span_err(
+                        tcx.def_span(param.def_id),
+                        format!("Trait ref had binder {trait_ref:?}"),
+                    )));
+                };
+                if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
+                    return None;
+                };
+                Some(ExistentialPredicate::Trait(
+                    ExistentialTraitRef::erase_self_ty(tcx, trait_ref),
+                ))
+            } else if let Some(pred) = clause.as_projection_clause() {
+                let pred = pred.no_bound_vars()?;
+                if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
+                    return None;
+                };
+                Some(ExistentialPredicate::Projection(
+                    ExistentialProjection::erase_self_ty(tcx, pred),
+                ))
+            } else {
+                None
+            }?;
+
+            Some(Ok(Binder::dummy(pred)))
+        });
+        let ty = Ty::new_dynamic(
+            tcx,
+            tcx.mk_poly_existential_predicates_from_iter(constraints)?,
+            Region::new_free(tcx, function.to_def_id(), BoundRegionKind::BrAnon(None)),
+            DynKind::Dyn,
+        );
+        Ok(GenericArg::from(ty))
+    });
+    tcx.mk_args_from_iter(types)
 }
