@@ -203,6 +203,23 @@ pdg_test! {
 }
 
 pdg_test! {
+  mut_arg_simple,
+  {
+    fn main() {
+      let g = 0;
+      let mut x = g;
+      let r = &mut x;
+      let y = 1;
+      *r += y;
+      let z = *r;
+    }
+  },
+  (x -> z),
+  (y -> z),
+  (g -> z)
+}
+
+pdg_test! {
   dep_alias_simple,
   {
     fn main() {
