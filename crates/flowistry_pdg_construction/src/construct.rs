@@ -36,6 +36,7 @@ use super::graph::{DepEdge, DepGraph, DepNode};
 use super::utils::{self, FnResolution};
 use crate::{
     graph::{SourceUse, TargetUse},
+    mutation::Time,
     utils::is_non_default_trait_method,
 };
 use crate::{
@@ -348,7 +349,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
 {
     type FlowState = <DfAnalysis<'mir, 'tcx> as AnalysisDomain<'tcx>>::Domain;
 
-    fn visit_statement_after_primary_effect(
+    fn visit_statement_before_primary_effect(
         &mut self,
         results: &Results<'tcx, DfAnalysis<'mir, 'tcx>>,
         state: &Self::FlowState,
@@ -360,7 +361,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
         vis.visit_statement(statement, location)
     }
 
-    fn visit_terminator_after_primary_effect(
+    fn visit_terminator_before_primary_effect(
         &mut self,
         results: &Results<'tcx, DfAnalysis<'mir, 'tcx>>,
         state: &Self::FlowState,
@@ -490,7 +491,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
 
         if handle_as_inline().is_none() {
             trace!("Handling terminator {:?} as not inlined", terminator.kind);
-            let mut vis = ModularMutationVisitor::new(
+            let mut arg_vis = ModularMutationVisitor::new(
                 &results.analysis.0.place_info,
                 move |location, mutation| {
                     self.register_mutation(
@@ -505,8 +506,47 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                     )
                 },
             );
-            vis.visit_terminator(terminator, location)
+            arg_vis.set_time(Time::Before);
+            arg_vis.visit_terminator(terminator, location);
         }
+    }
+
+    fn visit_terminator_after_primary_effect(
+        &mut self,
+        results: &Results<'tcx, DfAnalysis<'mir, 'tcx>>,
+        state: &Self::FlowState,
+        terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
+        location: Location,
+    ) {
+        if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
+            let constructor = results.analysis.0;
+
+            if matches!(
+                constructor.handle_call_preamble(location, func, args),
+                Some(PreambleResult::Ready(_, _))
+            ) {
+                return;
+            }
+        }
+
+        trace!("Handling terminator {:?} as not inlined", terminator.kind);
+        let mut arg_vis = ModularMutationVisitor::new(
+            &results.analysis.0.place_info,
+            move |location, mutation| {
+                self.register_mutation(
+                    results,
+                    state,
+                    Inputs::Unresolved {
+                        places: mutation.inputs,
+                    },
+                    Either::Left(mutation.mutated),
+                    location,
+                    mutation.mutation_reason,
+                )
+            },
+        );
+        arg_vis.set_time(Time::After);
+        arg_vis.visit_terminator(terminator, location);
     }
 }
 fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: LocalDefId, body: &Body<'tcx>) -> Option<Option<u8>> {
@@ -1419,6 +1459,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         terminator: &Terminator<'tcx>,
         state: &mut InstructionState<'tcx>,
         location: Location,
+        time: Time,
     ) {
         match &terminator.kind {
             // Special case: if the current block is a SwitchInt, then other blocks could be control-dependent on it.
@@ -1442,14 +1483,14 @@ impl<'tcx> GraphConstructor<'tcx> {
                     .is_none()
                 {
                     trace!("Terminator {:?} failed the preamble", terminator.kind);
-                    self.modular_mutation_visitor(state)
+                    self.term_vis(state, time)
                         .visit_terminator(terminator, location)
                 }
             }
 
             // Fallback: call the visitor
             _ => self
-                .modular_mutation_visitor(state)
+                .term_vis(state, time)
                 .visit_terminator(terminator, location),
         }
     }
@@ -1564,6 +1605,16 @@ impl<'tcx> GraphConstructor<'tcx> {
         // .then_some(CallKind::Indirect)
         self.tcx.is_closure(def_id).then_some(CallKind::Indirect)
     }
+
+    fn term_vis<'a>(
+        &'a self,
+        state: &'a mut InstructionState<'tcx>,
+        time: Time,
+    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
+        let mut vis = self.modular_mutation_visitor(state);
+        vis.set_time(time);
+        vis
+    }
 }
 
 pub enum CallKind<'tcx> {
@@ -1615,13 +1666,23 @@ impl<'tcx> df::Analysis<'tcx> for DfAnalysis<'_, 'tcx> {
             .visit_statement(statement, location)
     }
 
+    // fn apply_before_terminator_effect(
+    //     &mut self,
+    //     state: &mut Self::Domain,
+    //     terminator: &rustc_middle::mir::Terminator<'tcx>,
+    //     location: Location,
+    // ) {
+    //     self.0.handle_terminator(terminator, state, location, true);
+    // }
+
     fn apply_terminator_effect<'mir>(
         &mut self,
         state: &mut Self::Domain,
         terminator: &'mir Terminator<'tcx>,
         location: Location,
     ) -> TerminatorEdges<'mir, 'tcx> {
-        self.0.handle_terminator(terminator, state, location);
+        self.0
+            .handle_terminator(terminator, state, location, Time::Unspecified);
         terminator.edges()
     }
 

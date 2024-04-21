@@ -55,6 +55,14 @@ where
 {
     f: F,
     place_info: &'a PlaceInfo<'tcx>,
+    time: Time,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Time {
+    Unspecified,
+    Before,
+    After,
 }
 
 impl<'a, 'tcx, F> ModularMutationVisitor<'a, 'tcx, F>
@@ -63,7 +71,15 @@ where
 {
     /// Constructs a new visitor.
     pub fn new(place_info: &'a PlaceInfo<'tcx>, f: F) -> Self {
-        ModularMutationVisitor { place_info, f }
+        ModularMutationVisitor {
+            place_info,
+            f,
+            time: Time::Unspecified,
+        }
+    }
+
+    pub fn set_time(&mut self, time: Time) {
+        self.time = time;
     }
 
     fn handle_special_rvalues(
@@ -279,49 +295,53 @@ where
             .copied()
             .map(|(i, arg)| (arg, Some(i as u8)))
             .collect::<Vec<_>>();
-        // Make sure we combine all inputs in the arguments.
-        for (_, arg) in arg_places.iter().copied() {
-            let inputs = self
-                .place_info
-                .reachable_values(arg, Mutability::Not)
-                .iter()
-                .map(|v| (*v, None))
-                .collect();
+
+        if matches!(self.time, Time::Unspecified | Time::Before) {
+            // Make sure we combine all inputs in the arguments.
+            for (_, arg) in arg_places.iter().copied() {
+                let inputs = self
+                    .place_info
+                    .reachable_values(arg, Mutability::Not)
+                    .iter()
+                    .map(|v| (*v, None))
+                    .collect();
+                (self.f)(
+                    location,
+                    Mutation {
+                        mutated: arg,
+                        mutation_reason: TargetUse::Assign,
+                        inputs,
+                        status: MutationStatus::Definitely,
+                    },
+                );
+            }
+        }
+        if matches!(self.time, Time::Unspecified | Time::After) {
+            for (num, arg) in arg_places.iter().copied() {
+                for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
+                    if *arg_mut != arg {
+                        (self.f)(
+                            location,
+                            Mutation {
+                                mutated: *arg_mut,
+                                mutation_reason: TargetUse::MutArg(num as u8),
+                                inputs: arg_place_inputs.clone(),
+                                status: MutationStatus::Possibly,
+                            },
+                        )
+                    }
+                }
+            }
             (self.f)(
                 location,
                 Mutation {
-                    mutated: arg,
-                    mutation_reason: TargetUse::Assign,
-                    inputs,
+                    mutated: destination,
+                    inputs: arg_place_inputs,
+                    mutation_reason: TargetUse::Return,
                     status: MutationStatus::Definitely,
                 },
             );
         }
-
-        for (num, arg) in arg_places.iter().copied() {
-            for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
-                if *arg_mut != arg {
-                    (self.f)(
-                        location,
-                        Mutation {
-                            mutated: *arg_mut,
-                            mutation_reason: TargetUse::MutArg(num as u8),
-                            inputs: arg_place_inputs.clone(),
-                            status: MutationStatus::Possibly,
-                        },
-                    )
-                }
-            }
-        }
-        (self.f)(
-            location,
-            Mutation {
-                mutated: destination,
-                inputs: arg_place_inputs,
-                mutation_reason: TargetUse::Return,
-                status: MutationStatus::Definitely,
-            },
-        );
     }
 }
 
