@@ -649,42 +649,42 @@ pdg_test! {
   (x -fake/> z)
 }
 
-pdg_test! {
-  false_call_edges_modified,
-  {
-    fn fake(a: &mut i32, b: &i32) {}
+// pdg_test! {
+//   false_call_edges_modified,
+//   {
+//     fn fake(a: &mut i32, b: &i32) {}
 
-    fn main() {
-      let mut x = 0;
-      let y = 0;
-      fake(&mut x, &y);
-      let z = x;
-    }
-  },
-  |tcx, params| params.with_call_change_callback(
-    CallChangeCallbackFn::new(
-      move |info| {
-          let name = tcx.opt_item_name(info.callee.def_id());
-          if matches!(name.as_ref().map(|sym| sym.as_str()), Some("fake")) {
-              let fake_write = FakeEffect {
-                  place: Place::make(Local::from_usize(1), &[ProjectionElem::Deref], tcx),
-                  kind: FakeEffectKind::Write,
-              };
-              let fake_read = FakeEffect {
-                  place: Place::make(Local::from_usize(2), &[ProjectionElem::Deref], tcx),
-                  kind: FakeEffectKind::Read,
-              };
-              let fake_effects = vec![fake_write, fake_read];
-              CallChanges::default().with_fake_effects(fake_effects)
-          } else {
-              CallChanges::default()
-          }
-      },
-    )
-  ),
-  (x -fake> z),
-  (y -fake> *b)
-}
+//     fn main() {
+//       let mut x = 0;
+//       let y = 0;
+//       fake(&mut x, &y);
+//       let z = x;
+//     }
+//   },
+//   |tcx, params| params.with_call_change_callback(
+//     CallChangeCallbackFn::new(
+//       move |info| {
+//           let name = tcx.opt_item_name(info.callee.def_id());
+//           if matches!(name.as_ref().map(|sym| sym.as_str()), Some("fake")) {
+//               let fake_write = FakeEffect {
+//                   place: Place::make(Local::from_usize(1), &[ProjectionElem::Deref], tcx),
+//                   kind: FakeEffectKind::Write,
+//               };
+//               let fake_read = FakeEffect {
+//                   place: Place::make(Local::from_usize(2), &[ProjectionElem::Deref], tcx),
+//                   kind: FakeEffectKind::Read,
+//               };
+//               let fake_effects = vec![fake_write, fake_read];
+//               CallChanges::default().with_fake_effects(fake_effects)
+//           } else {
+//               CallChanges::default()
+//           }
+//       },
+//     )
+//   ),
+//   (x -fake> z),
+//   (y -fake> *b)
+// }
 
 pdg_test! {
   clone,

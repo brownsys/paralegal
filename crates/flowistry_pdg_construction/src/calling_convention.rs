@@ -1,3 +1,5 @@
+use flowistry_pdg::rustc_portable::{DefId, LocalDefId};
+use log::trace;
 use rustc_abi::FieldIdx;
 
 use rustc_middle::{
@@ -5,8 +7,8 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
-use crate::async_support::AsyncInfo;
 use crate::construct::CallKind;
+use crate::{async_support::AsyncInfo, utils};
 
 pub enum CallingConvention<'tcx, 'a> {
     Direct(&'a [Operand<'tcx>]),
@@ -30,6 +32,29 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
                 tupled_arguments: &args[1],
             },
         }
+    }
+
+    pub(crate) fn translate_to_parent(
+        &self,
+        child: Place<'tcx>,
+        async_info: &AsyncInfo,
+        tcx: TyCtxt<'tcx>,
+        parent_body: &Body<'tcx>,
+        parent_def_id: DefId,
+        destination: Place<'tcx>,
+    ) -> Option<Place<'tcx>> {
+        trace!("  Translating child place: {child:?}");
+        let (parent_place, child_projection) =
+            self.handle_translate(async_info, tcx, child, destination, parent_body)?;
+
+        let parent_place_projected = parent_place.project_deeper(child_projection, tcx);
+        trace!("  ⮑ Translated to: {parent_place_projected:?}");
+        Some(utils::retype_place(
+            parent_place_projected,
+            tcx,
+            parent_body,
+            parent_def_id,
+        ))
     }
 
     pub(crate) fn handle_translate(

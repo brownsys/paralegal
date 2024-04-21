@@ -12,7 +12,7 @@ use rustc_middle::{
     ty::{GenericArgsRef, TyCtxt},
 };
 
-use crate::construct::{CallKind, PartialGraph};
+use crate::construct::{CallKind, InstructionState, PartialGraph};
 
 use super::construct::GraphConstructor;
 use super::utils::{self, FnResolution};
