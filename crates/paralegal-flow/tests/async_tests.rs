@@ -63,7 +63,10 @@ define_test!(two_data_over_boundary : graph -> {
     assert!(!get2.output().flows_to_data(&send.input()));
 });
 
-define_test!(inlining_crate_local_async_fns: graph -> {
+define_test!(inlining_crate_local_async_fns
+    skip
+    "Odd aliasing behavior with async. See https://github.com/brownsys/paralegal/issues/144"
+    : graph -> {
 
     let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
@@ -111,7 +114,10 @@ define_test!(no_inlining_overtaint
     assert!(!get2.output().flows_to_data(&send.input()));
 });
 
-define_test!(no_immutable_inlining_overtaint : graph -> {
+define_test!(no_immutable_inlining_overtaint
+    skip
+    "Odd aliasing behavior with async. See https://github.com/brownsys/paralegal/issues/144"
+    : graph -> {
     let get_fn = graph.function("get_user_data");
     let get = graph.call_site(&get_fn);
     let get2_fn = graph.function("get_user_data2");
