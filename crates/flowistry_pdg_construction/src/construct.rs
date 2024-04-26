@@ -170,10 +170,10 @@ pub enum InlineMissReason {
     Async(String),
 }
 
-fn manufacture_substs_for<'tcx>(
-    tcx: TyCtxt<'tcx>,
+fn manufacture_substs_for(
+    tcx: TyCtxt<'_>,
     function: LocalDefId,
-) -> Result<&'tcx List<GenericArg<'tcx>>, ErrorGuaranteed> {
+) -> Result<&List<GenericArg<'_>>, ErrorGuaranteed> {
     use rustc_middle::ty::{
         Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
         ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
