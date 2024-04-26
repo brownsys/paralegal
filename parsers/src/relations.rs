@@ -82,10 +82,9 @@ fn does_not_go_to_relation(s: &str) -> Res<&str, Relation> {
 fn operation_associated_with_relation(s: &str) -> Res<&str, Relation> {
     let mut combinator = context(
         "operation associated with relation",
-        separated_pair(
-            variable, 
-            tag("goes to the operation associated with"), 
-            variable
+        pair(
+            terminated(variable, tag("goes to")), 
+            terminated(variable, tag("'s operation")), 
         )
     );
     let (remainder, (var1, var2)) = combinator(s)?;
@@ -166,6 +165,7 @@ pub fn relation(s: &str) -> Res<&str, Relation> {
     context(
         "relation",
         alt((
+            operation_associated_with_relation,
             goes_to_relation,
             does_not_go_to_relation,
             affects_whether_relation,
@@ -174,7 +174,6 @@ pub fn relation(s: &str) -> Res<&str, Relation> {
             is_not_marked_relation,
             influences_relation,
             does_not_influence_relation,
-            operation_associated_with_relation,
         ))
     )(s)
 }

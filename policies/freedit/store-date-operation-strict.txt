@@ -14,4 +14,4 @@ Policy:
 		a. There is a "new_date" marked new_date where:
 			i) "date" goes to "new_date"
 		and
-		b. "date" goes to the operation associated with "pageview_store"
+		b. "date" goes to "pageview_store"'s operation

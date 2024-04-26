@@ -12,4 +12,4 @@ Policy:
         a. There is a "authorization" marked auth_witness where:
 			i) "authorization" goes to "scope"
         and
-        b. "scope" goes to the operation associated with "sensitive_store"
+        b. "scope" goes to "sensitive_store"'s operation
