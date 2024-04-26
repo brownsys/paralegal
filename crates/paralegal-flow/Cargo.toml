@@ -14,14 +14,12 @@ test = []
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }
 
-#flowistry = { path = "../../../flowistry/crates/flowistry" }
-flowistry = { git = "https://github.com/brownsys/flowistry", rev = "d1fcc76509032dd94f5255fd03c0ad0397efe834" }
-#flowistry = { git = "https://github.com/willcrichton/flowistry", rev = "3b0a12668894220010d715092bb6e9fb2cefb5ba" }
+flowistry_pdg_construction = { path = "../flowistry_pdg_construction" }
+flowistry_pdg = { path = "../flowistry_pdg" }
+flowistry = { workspace = true }
 
-rustc_plugin = "=0.7.4-nightly-2023-08-25"
-rustc_utils = { version = "=0.7.4-nightly-2023-08-25", features = [
-    "indexical",
-] }
+rustc_utils = { workspace = true }
+rustc_plugin = { workspace = true }
 indexical = { version = "0.3.1", default-features = false, features = [
     "rustc",
 ] }
