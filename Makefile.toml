@@ -216,3 +216,11 @@ mv ${source_path} docs/compiler
 [tasks.get-rustc-docs]
 command = "rustup"
 args = ["component", "add", "rustc-docs"]
+dependencies = ["clean-rustc-docs-location"]
+
+[tasks.clean-rustc-docs-location]
+command = "rm"
+args = [
+    "-f",
+    "${RUSTUP_HOME}/toolchains/${RUSTUP_TOOLCHAIN}/share/doc/rust/html/rustc",
+]
