@@ -1,5 +1,6 @@
 use crate::{utils::FnResolution, AnalysisCtrl, MarkerCtx, TyCtxt};
 
+#[derive(Clone)]
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.
 ///
@@ -37,5 +38,9 @@ impl<'tcx> InlineJudge<'tcx> {
     /// Should we perform inlining on this function?
     pub fn should_inline(&self, function: FnResolution<'tcx>) -> bool {
         self.analysis_control.use_recursive_analysis() && !self.function_has_markers(function)
+    }
+
+    pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
+        &self.marker_ctx
     }
 }

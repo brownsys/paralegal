@@ -202,6 +202,7 @@ impl Context {
                 .get(candidate)
                 .ok_or_else(|| anyhow!("Impossible"))?
                 .path
+                .as_ref()
                 == path
             {
                 return Ok(*candidate);
@@ -401,7 +402,7 @@ impl Context {
         self.desc.controllers[&node.controller_id()]
             .type_assigns
             .get(&node.local_node())
-            .map_or(&[], |v| v.0.as_slice())
+            .map_or(&[], |v| v.0.as_ref())
     }
 
     /// Returns whether the given Node has the marker applied to it directly or via its type.
@@ -465,7 +466,7 @@ impl Context {
         self.desc()
             .type_info
             .get(&id)
-            .map_or(&[], |info| info.otypes.as_slice())
+            .map_or(&[], |info| info.otypes.as_ref())
     }
 
     /// Enforce that on every data flow path from the `starting_points` to `is_terminal` a
@@ -662,7 +663,7 @@ impl<'a> std::fmt::Display for DisplayDef<'a> {
         let info = &self.ctx.desc().def_info[&self.def_id];
         f.write_str(info.kind.as_ref())?;
         f.write_str(" `")?;
-        for segment in &info.path {
+        for segment in info.path.iter() {
             f.write_str(segment.as_str())?;
             f.write_str("::")?;
         }
@@ -811,58 +812,6 @@ fn test_context() {
             .count(),
         2
     );
-}
-
-#[test]
-#[ignore = "Something is weird with the PDG construction here.
-    See https://github.com/willcrichton/flowistry/issues/95"]
-fn test_happens_before() -> Result<()> {
-    use std::fs::File;
-    let ctx = crate::test_utils::test_ctx();
-
-    let start_marker = Identifier::new_intern("start");
-    let bless_marker = Identifier::new_intern("bless");
-
-    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_pass"))?;
-    let ctrl = &ctx.desc.controllers[&ctrl_name];
-    let f = File::create("graph.gv")?;
-    ctrl.dump_dot(f)?;
-
-    let Some(ret) = ctrl.return_ else {
-        unreachable!("No return found")
-    };
-
-    let is_terminal = |end: GlobalNode| -> bool {
-        assert_eq!(end.controller_id(), ctrl_name);
-        ret == end.local_node()
-    };
-    let start = ctx
-        .all_nodes_for_ctrl(ctrl_name)
-        .filter(|n| ctx.has_marker(start_marker, *n))
-        .collect::<Vec<_>>();
-
-    let pass = ctx.always_happens_before(
-        start,
-        |checkpoint| ctx.has_marker(bless_marker, checkpoint),
-        is_terminal,
-    )?;
-
-    ensure!(pass.holds(), "{pass}");
-    ensure!(!pass.is_vacuous(), "{pass}");
-
-    let ctrl_name = ctx.controller_by_name(Identifier::new_intern("happens_before_fail"))?;
-
-    let fail = ctx.always_happens_before(
-        ctx.all_nodes_for_ctrl(ctrl_name)
-            .filter(|n| ctx.has_marker(start_marker, *n)),
-        |check| ctx.has_marker(bless_marker, check),
-        is_terminal,
-    )?;
-
-    ensure!(!fail.holds());
-    ensure!(!fail.is_vacuous());
-
-    Ok(())
 }
 
 #[test]

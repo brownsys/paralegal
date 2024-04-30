@@ -33,7 +33,13 @@ use flowistry_pdg_construction::{
     SkipCall::Skip,
 };
 
+mod graph_converter;
 mod inline_judge;
+
+use self::{
+    graph_converter::{GraphConverter, PlaceInfoCache},
+    inline_judge::InlineJudge,
+};
 
 /// Read-only database of information the analysis needs.
 ///
@@ -48,9 +54,10 @@ pub struct SPDGGenerator<'tcx> {
 impl<'tcx> SPDGGenerator<'tcx> {
     pub fn new(marker_ctx: MarkerCtx<'tcx>, opts: &'static crate::Args, tcx: TyCtxt<'tcx>) -> Self {
         Self {
-            marker_ctx,
+            inline_judge: InlineJudge::new(marker_ctx, tcx, &opts.anactrl()),
             opts,
             tcx,
+            place_info_cache: Default::default(),
         }
     }
 
@@ -103,7 +110,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let mut known_def_ids = HashSet::new();
 
         targets
-            .into_iter()
+            .iter()
             .map(|desc| {
                 let target_name = desc.name();
                 with_reset_level_if_target(self.opts, target_name, || {
@@ -115,7 +122,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 })
             })
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
-            .map(|controllers| self.make_program_description(controllers, &known_def_ids))
+            .map(|controllers| self.make_program_description(controllers, known_def_ids))
     }
 
     /// Given the PDGs and a record of all [`DefId`]s we've seen, compile
@@ -124,7 +131,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn make_program_description(
         &self,
         controllers: HashMap<Endpoint, SPDG>,
-        known_def_ids: &HashSet<DefId>,
+        mut known_def_ids: HashSet<DefId>,
     ) -> ProgramDescription {
         let tcx = self.tcx;
 

@@ -1143,3 +1143,14 @@ impl<'tcx> Spanned<'tcx> for (LocalDefId, mir::Location) {
         (&body.body, self.1).span(tcx)
     }
 }
+
+pub fn map_either<A, B, C, D>(
+    either: Either<A, B>,
+    f: impl FnOnce(A) -> C,
+    g: impl FnOnce(B) -> D,
+) -> Either<C, D> {
+    match either {
+        Either::Left(l) => Either::Left(f(l)),
+        Either::Right(r) => Either::Right(g(r)),
+    }
+}

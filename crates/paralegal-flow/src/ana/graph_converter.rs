@@ -4,13 +4,12 @@ use crate::{
     desc::*,
     discover::FnToAnalyze,
     rust::{hir::def, *},
-    stats::TimedStat,
     utils::*,
     DefId, HashMap, HashSet, MarkerCtx,
 };
 use flowistry::mir::placeinfo::PlaceInfo;
 use flowistry_pdg::SourceUse;
-use paralegal_spdg::{Node, SPDGStats};
+use paralegal_spdg::Node;
 use rustc_utils::cache::Cache;
 
 use std::{
@@ -28,8 +27,8 @@ use either::Either;
 use flowistry_pdg_construction::{
     determine_async,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
-    is_async_trait_fn, match_async_trait_assign, CallChangeCallback, CallChanges, CallInfo,
-    InlineMissReason, PdgParams,
+    is_async_trait_fn, is_non_default_trait_method, match_async_trait_assign, CallChangeCallback,
+    CallChanges, CallInfo, InlineMissReason, PdgParams,
     SkipCall::Skip,
 };
 use petgraph::{
@@ -81,10 +80,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let local_def_id = target.def_id.expect_local();
         let start = Instant::now();
         let dep_graph = Self::create_flowistry_graph(generator, local_def_id)?;
-        generator
-            .stats
-            .record_timed(TimedStat::Flowistry, start.elapsed());
-
         if generator.opts.dbg().dump_flowistry_pdg() {
             dep_graph.generate_graphviz(format!(
                 "{}.flowistry-pdg.pdf",
@@ -576,7 +571,7 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
                 self.tcx.def_span(info.callee.def_id()),
                 "Skipping analysis of unresolvable trait method.",
             );
-        } else if self.judge.should_inline(&info) {
+        } else if self.judge.should_inline(info.callee) {
             skip = false;
         };
 
