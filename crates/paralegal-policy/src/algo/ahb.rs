@@ -20,7 +20,7 @@ use crate::{
 };
 use crate::{Diagnostics, NodeExt};
 
-/// Statistics about the result of running [`Context::always_happens_before`]
+/// Statistics about the result of running [`crate::Context::always_happens_before`]
 /// that are useful to understand how the property failed.
 ///
 /// The [`std::fmt::Display`] implementation presents the information in human

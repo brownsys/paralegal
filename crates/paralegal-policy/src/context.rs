@@ -463,7 +463,7 @@ impl Context {
         edge_type: EdgeSelection,
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         let g = &self.desc.controllers[&ctrl_id].graph;
-        let ref filtered = edge_type.filter_graph(g);
+        let filtered = &edge_type.filter_graph(g);
 
         let mut roots = vec![];
         let mut root_like = HashSet::new();
@@ -686,8 +686,7 @@ where
                         .filter(move |n| *n != node)
                         .map(|n| n.local_node())
                 })
-                .collect::<HashSet<_>>()
-                .into_iter(),
+                .collect::<HashSet<_>>(),
         )
     }
 
@@ -744,7 +743,7 @@ where
         ctx: &Context,
     ) -> bool {
         self.flows_to(target, ctx, EdgeSelection::Control)
-            || NodeCluster::try_from_iter(self.influencees(ctx, EdgeSelection::Data).into_iter())
+            || NodeCluster::try_from_iter(self.influencees(ctx, EdgeSelection::Data))
                 .unwrap()
                 .flows_to(target, ctx, EdgeSelection::Control)
     }
@@ -832,7 +831,7 @@ pub trait NodeExt: private::Sealed {
     /// Retrieve metadata about the instruction executed by a specific node.
     fn instruction(self, ctx: &Context) -> &InstructionInfo;
     /// Return the immediate successors of this node
-    fn successors<'a>(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
+    fn successors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
     /// Return the immediate predecessors of this node
     fn predecessors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
     /// Get the span of a node

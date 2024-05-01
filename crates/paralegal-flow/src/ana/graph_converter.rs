@@ -114,7 +114,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
-        &self.generator.marker_ctx()
+        self.generator.marker_ctx()
     }
 
     /// Is the top-level function (entrypoint) an `async fn`
@@ -156,7 +156,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             PlaceInfo::build(
                 self.tcx(),
                 def_id.to_def_id(),
-                &self.tcx().body_for_def_id(def_id).unwrap(),
+                self.tcx().body_for_def_id(def_id).unwrap(),
             )
         })
     }
@@ -688,10 +688,7 @@ fn record_inlining(tracker: &StatStracker, tcx: TyCtxt<'_>, def_id: LocalDefId, 
 }
 
 /// Find the statement at this location or fail.
-fn expect_stmt_at<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    loc: GlobalLocation,
-) -> Either<&'tcx mir::Statement<'tcx>, &'tcx mir::Terminator<'tcx>> {
+fn expect_stmt_at(tcx: TyCtxt, loc: GlobalLocation) -> Either<&mir::Statement, &mir::Terminator> {
     let body = &tcx.body_for_def_id(loc.function).unwrap().body;
     let RichLocation::Location(loc) = loc.location else {
         unreachable!();
