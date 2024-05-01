@@ -1,9 +1,6 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
-use thiserror::Error;
-
-use smallvec::SmallVec;
 
 use crate::{
     desc::Identifier,
@@ -25,22 +22,20 @@ use crate::{
         ty,
     },
     rustc_span::ErrorGuaranteed,
-    Either, HashSet, Symbol, TyCtxt,
+    Either, Symbol, TyCtxt,
 };
+pub use flowistry_pdg_construction::{is_non_default_trait_method, FnResolution};
+pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
-pub use flowistry_pdg_construction::is_non_default_trait_method;
-pub use flowistry_pdg_construction::FnResolution;
+use smallvec::SmallVec;
+use thiserror::Error;
 
-use std::hash::Hash;
-use std::{cmp::Ordering, fs::File};
-
-pub mod resolve;
+use std::{cmp::Ordering, hash::Hash};
 
 mod print;
+pub mod resolve;
 
 pub use print::*;
-
-pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
 /// This function exists to deal with `#[tracing::instrument]`. In that case,
 /// sadly, the `Span` value attached to a body directly refers only to the
