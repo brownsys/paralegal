@@ -15,10 +15,10 @@ use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
-        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        visit::Visitor, AggregateKind, BasicBlock, Body, Location, Mutability, Operand, Place,
+        PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArg, List, ParamEnv, Ty, TyCtxt, TyKind},
+    ty::{GenericArg, List, ParamEnv, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df};
 use rustc_span::ErrorGuaranteed;
@@ -457,7 +457,7 @@ impl<'tcx> PartialGraph<'tcx> {
             Either::Left(place) => results
                 .analysis
                 .0
-                .find_outputs(state, place, location)
+                .find_outputs(place, location)
                 .into_iter()
                 .map(|t| t.1)
                 .collect(),
@@ -789,7 +789,6 @@ impl<'tcx> GraphConstructor<'tcx> {
 
     fn find_outputs(
         &self,
-        _state: &InstructionState<'tcx>,
         mutated: Place<'tcx>,
         location: Location,
     ) -> Vec<(Place<'tcx>, DepNode<'tcx>)> {
@@ -820,7 +819,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         location: Location,
         mutated: Place<'tcx>,
     ) {
-        self.find_outputs(state, mutated, location)
+        self.find_outputs(mutated, location)
             .into_iter()
             .for_each(|(dst, _)| {
                 // Create a destination node for (DST @ CURRENT_LOC).
@@ -1105,8 +1104,6 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         let child_graph = child_constructor.construct_partial_cached();
 
-        let parentable_dsts =
-            child_graph.parentable_dsts(child_constructor.def_id, &child_constructor.body);
         let parent_body = &self.body;
         let translate_to_parent = |child: Place<'tcx>| -> Option<Place<'tcx>> {
             calling_convention.translate_to_parent(
@@ -1118,22 +1115,42 @@ impl<'tcx> GraphConstructor<'tcx> {
                 destination,
             )
         };
-
-        // For each destination node CHILD that is parentable to PLACE,
-        // add an edge from CHILD -> PLACE.
-        //
-        // PRECISION TODO: for a given child place, we only want to connect
-        // the *last* nodes in the child function to the parent, not *all* of them.
-        trace!("CHILD -> PARENT EDGES:");
-        for (child_dst, _) in parentable_dsts {
-            if let Some(parent_place) = translate_to_parent(child_dst.place) {
+        let parentable_dsts = child_constructor
+            .body
+            .args_iter()
+            .flat_map(|a| {
+                child_constructor
+                    .place_info
+                    .reachable_values(a.into(), Mutability::Mut)
+            })
+            .copied()
+            .chain(std::iter::once(RETURN_PLACE.into()))
+            //.filter(|p| !p.projection.is_empty() || !p.is_arg(&child_constructor.body))
+            .flat_map(|p| child_constructor.place_info.children(p));
+        for child_dst in parentable_dsts {
+            if let Some(parent_place) = translate_to_parent(child_dst) {
                 self.apply_mutation(state, location, parent_place);
             }
         }
-        trace!(
-            "  Inlined {}",
-            self.fmt_fn(child_constructor.def_id.to_def_id())
-        );
+
+        // let parentable_dsts =
+        //     child_graph.parentable_dsts(child_constructor.def_id, &child_constructor.body);
+
+        // // For each destination node CHILD that is parentable to PLACE,
+        // // add an edge from CHILD -> PLACE.
+        // //
+        // // PRECISION TODO: for a given child place, we only want to connect
+        // // the *last* nodes in the child function to the parent, not *all* of them.
+        // trace!("CHILD -> PARENT EDGES:");
+        // for child_dst in parentable_dsts {
+        //     if let Some(parent_place) = translate_to_parent(child_dst.0.place) {
+        //         self.apply_mutation(state, location, parent_place);
+        //     }
+        // }
+        // trace!(
+        //     "  Inlined {}",
+        //     self.fmt_fn(child_constructor.def_id.to_def_id())
+        // );
 
         Some(())
     }

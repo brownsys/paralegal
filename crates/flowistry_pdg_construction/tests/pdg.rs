@@ -234,6 +234,36 @@ pdg_test! {
 }
 
 pdg_test! {
+  field_sensitivity,
+  {
+    struct S {
+      usize_field: usize,
+      string_field: String,
+    }
+    fn modify_a_field(s: &mut S) {
+      let a = 100;
+      s.usize_field = a;
+    }
+    fn main() {
+      let my_string = "str".to_owned();
+      let my_usize = 0;
+      let mut s = S {
+          usize_field: my_usize,
+          string_field: my_string,
+      };
+      modify_a_field(&mut s);
+      let read_usize = s.usize_field;
+      let read_string = s.string_field;
+    }
+  },
+  (my_string -> read_string),
+  (my_usize -/> read_usize),
+  (a -> read_usize),
+  (my_string -/> read_usize),
+  (my_usize -/> read_string)
+}
+
+pdg_test! {
   dep_alias_dynamic,
   {
     fn main() {
