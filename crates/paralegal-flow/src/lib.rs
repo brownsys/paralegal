@@ -85,7 +85,6 @@ pub mod dbg;
 mod discover;
 mod stats;
 //mod sah;
-pub mod serializers;
 #[macro_use]
 pub mod utils;
 pub mod consts;

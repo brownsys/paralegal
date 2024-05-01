@@ -464,27 +464,13 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             let body = &tcx.body_for_def_id(at.function).unwrap().body;
 
             let node_span = body.local_decls[weight.place.local].source_info.span;
-            let new_idx = self.register_node(
+            self.register_node(
                 i,
                 NodeInfo {
                     at: weight.at,
                     description: format!("{:?}", weight.place),
                     span: src_loc_for_span(node_span, tcx),
                 },
-            );
-            trace!(
-                "Node {new_idx:?}\n  description: {:?}\n  at: {at}\n  stmt: {}",
-                weight.place,
-                match at.location {
-                    RichLocation::Location(loc) => {
-                        match body.stmt_at(loc) {
-                            Either::Left(s) => format!("{:?}", s.kind),
-                            Either::Right(s) => format!("{:?}", s.kind),
-                        }
-                    }
-                    RichLocation::End => "end".to_string(),
-                    RichLocation::Start => "start".to_string(),
-                }
             );
             self.node_annotations(i, weight);
 
@@ -526,11 +512,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             Either::Right(self.marker_ctx().shallow_type_markers(typ.ty))
         }
         .map(|(d, _)| d)
-
-        //     self.marker_ctx()
-        //         .all_type_markers(typ.ty)
-        //         .map(|t| t.1 .1)
-        //         .collect()
     }
 
     /// Similar to `CallString::is_at_root`, but takes into account top-level
@@ -551,8 +532,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// TODO: Include mutable inputs
     fn determine_return(&self) -> Box<[Node]> {
         // In async functions
-        let return_candidates = self
-            .spdg
+        self.spdg
             .node_references()
             .filter(|n| {
                 let weight = n.weight();
@@ -560,11 +540,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::End)
             })
             .map(|n| n.id())
-            .collect::<Box<[_]>>();
-        if return_candidates.len() != 1 {
-            warn!("Found many candidates for the return: {return_candidates:?}.");
-        }
-        return_candidates
+            .collect()
     }
 
     /// Determine the set if nodes corresponding to the inputs to the
