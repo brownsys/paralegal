@@ -24,11 +24,7 @@ args = ["install", "--locked", "--path", "crates/paralegal-flow"]
 
 [tasks.pdg-tests]
 description = "The suite of synthetic tests for the PDG and the policy framweork."
-dependencies = [
-    "analyzer-tests",
-    "policy-framework-tests",
-    "guide-project",
-]
+dependencies = ["analyzer-tests", "policy-framework-tests", "guide-project"]
 
 [tasks.check-all]
 description = "Perform all formatting-like checks. This is the same set that runs in the CI."
@@ -221,6 +217,6 @@ dependencies = ["clean-rustc-docs-location"]
 [tasks.clean-rustc-docs-location]
 command = "rm"
 args = [
-    "-f",
+    "-rf",
     "${RUSTUP_HOME}/toolchains/${RUSTUP_TOOLCHAIN}/share/doc/rust/html/rustc",
 ]
