@@ -218,6 +218,6 @@ dependencies = ["clean-rustc-docs-location"]
 [tasks.clean-rustc-docs-location]
 command = "rm"
 args = [
-    "-f",
+    "-rf",
     "${RUSTUP_HOME}/toolchains/${RUSTUP_TOOLCHAIN}/share/doc/rust/html/rustc",
 ]
