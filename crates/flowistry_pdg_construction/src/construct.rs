@@ -290,18 +290,18 @@ impl<'tcx> PdgParams<'tcx> {
     /// ```
     /// # #![feature(rustc_private)]
     /// # extern crate rustc_middle;
-    /// # use flowistry_pdg_construction::{PdgParams, SkipCall, CallChanges};
+    /// # use flowistry_pdg_construction::{PdgParams, SkipCall, CallChanges, CallChangeCallbackFn};
     /// # use rustc_middle::ty::TyCtxt;
     /// # const THRESHOLD: usize = 5;
     /// # fn f<'tcx>(tcx: TyCtxt<'tcx>, params: PdgParams<'tcx>) -> PdgParams<'tcx> {
-    /// params.with_call_change_callback(|info| {
+    /// params.with_call_change_callback(CallChangeCallbackFn::new(|info| {
     ///   let skip = if info.call_string.len() > THRESHOLD {
     ///     SkipCall::Skip
     ///   } else {
     ///     SkipCall::NoSkip
     ///   };
     ///   CallChanges::default().with_skip(skip)
-    /// })
+    /// }))
     /// # }
     /// ```
     pub fn with_call_change_callback(self, f: impl CallChangeCallback<'tcx> + 'tcx) -> Self {

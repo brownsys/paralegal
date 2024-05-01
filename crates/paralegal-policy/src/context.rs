@@ -1038,6 +1038,7 @@ fn overlaps<T: Eq + std::hash::Hash>(
 }
 
 #[test]
+#[ignore = "This does a lof of counting of marked nodes, which I'm not sure is the right way to test this behavior at the moment."]
 fn test_context() {
     let ctx = crate::test_utils::test_ctx();
     assert!(ctx

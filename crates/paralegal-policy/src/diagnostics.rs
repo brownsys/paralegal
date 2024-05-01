@@ -43,17 +43,29 @@
 //! ## Intended Workflow
 //!
 //! ```no_run
+//! use paralegal_policy::{
+//!     Context, assert_error, assert_warning,
+//!     paralegal_spdg::Identifier
+//! };
+//! use std::sync::Arc;
+//!
 //! fn my_check(ctx: Arc<Context>) {
-//!     ctx.named_policy("cannot escape", |ctx| {
-//!         let result_1 = ctx.named_combinator("collect something", |ctx| {
-//!             /* actual computation */
-//!             assert_error!(ctx, 1 + 2 == 4, "Oh oh, fail!");
-//!             true
-//!         });
-//!         let result_2 = ctx.named_combinator("reach something", |ctx| {
-//!             assert_warning!(ctx, 1 - 3 == 0, "maybe wrong?");
-//!             false
-//!         })
+//!     ctx.named_policy(Identifier::new_intern("cannot escape"), |ctx| {
+//!         let result_1 = ctx.clone().named_combinator(
+//!             Identifier::new_intern("collect something"),
+//!             |ctx| {
+//!                 /* actual computation */
+//!                 assert_error!(ctx, 1 + 2 == 4, "Oh oh, fail!");
+//!                 true
+//!             }
+//!         );
+//!         let result_2 = ctx.clone().named_combinator(
+//!             Identifier::new_intern("reach something"),
+//!             |ctx| {
+//!                 assert_warning!(ctx, 1 - 3 == 0, "maybe wrong?");
+//!                 false
+//!             }
+//!         );
 //!         assert_error!(ctx, result_1 || result_2, "combination failure");
 //!     })
 //!

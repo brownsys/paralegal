@@ -31,8 +31,8 @@ use crate::{
 pub use flowistry_pdg_construction::is_non_default_trait_method;
 pub use flowistry_pdg_construction::FnResolution;
 
-use std::cmp::Ordering;
 use std::hash::Hash;
+use std::{cmp::Ordering, fs::File};
 
 pub mod resolve;
 
@@ -673,27 +673,7 @@ pub fn dump_file_pls<I: IntoLocalDefId>(
     id: I,
     ext: &str,
 ) -> std::io::Result<std::fs::File> {
-    outfile_pls(format!("{}.{ext}", unique_and_terse_body_name_pls(tcx, id)))
-}
-
-/// Give me this file as writable (possibly creating or overwriting it).
-///
-/// This is just a common pattern of how we want to open files we're writing
-/// output to. Literally just implemented as
-///
-/// ```
-/// std::fs::OpenOptions::new()
-///     .create(true)
-///     .truncate(true)
-///     .write(true)
-///     .open(path)
-/// ```
-pub fn outfile_pls<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<std::fs::File> {
-    std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(path)
+    File::create(format!("{}.{ext}", unique_and_terse_body_name_pls(tcx, id)))
 }
 
 pub trait ProjectionElemExt {
