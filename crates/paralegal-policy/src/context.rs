@@ -265,6 +265,7 @@ impl Context {
         self.diagnostics.emit(w)
     }
 
+    /// Returns all nodes that are in any of the PDGs
     pub fn all_nodes(&self) -> impl Iterator<Item = GlobalNode> + '_ {
         self.desc().controllers.iter().flat_map(|(id, spdg)| {
             let id = *id;
@@ -274,6 +275,8 @@ impl Context {
         })
     }
 
+    /// Return nodes that satisfy the predicate and which have no ancestors that
+    /// satisfy the same predicate.
     pub fn roots_where<'a>(
         &'a self,
         f: impl Fn(GlobalNode) -> bool + 'a,
@@ -816,6 +819,7 @@ mod private {
 
 /// Extension trait with queries for single nodes
 pub trait NodeExt: private::Sealed {
+    /// Returns true if this node has the provided type
     fn has_type(self, t: TypeId, ctx: &Context) -> bool;
     /// Find the call string for the statement or function that produced this node.
     fn associated_call_site(self, ctx: &Context) -> CallString;
@@ -1029,7 +1033,6 @@ fn overlaps<T: Eq + std::hash::Hash>(
     one: impl IntoIterator<Item = T>,
     other: impl IntoIterator<Item = T>,
 ) -> bool {
-    use std::collections::HashSet;
     let target = one.into_iter().collect::<HashSet<_>>();
     other.into_iter().any(|n| target.contains(&n))
 }
@@ -1053,27 +1056,27 @@ fn test_context() {
     // The two Foo inputs are marked as input via the type, input and output of identity also marked via the type
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
-            .filter(|n| ctx.has_marker(Marker::new_intern("input"), *n))
+            .filter(|n| n.has_marker(&ctx, Marker::new_intern("input")))
             .count(),
         3
     );
     let src_markers = ctx
         .all_nodes_for_ctrl(controller)
-        .filter(|n| ctx.has_marker(Marker::new_intern("src"), *n))
+        .filter(|n| n.has_marker(&ctx, Marker::new_intern("src")))
         .collect::<Vec<_>>();
     // Return of identity marked as src
     assert_eq!(src_markers.len(), 1);
     // The sinks are marked via arguments
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
-            .filter(|n| ctx.has_marker(Marker::new_intern("sink"), *n))
+            .filter(|n| n.has_marker(&ctx, Marker::new_intern("sink")))
             .count(),
         3
     );
     // The 3rd argument and the return of the controller.
     assert_eq!(
         ctx.all_nodes_for_ctrl(controller)
-            .filter(|n| ctx.has_marker(Marker::new_intern("ctrl"), *n))
+            .filter(|n| n.has_marker(&ctx, Marker::new_intern("ctrl")))
             .count(),
         2
     );

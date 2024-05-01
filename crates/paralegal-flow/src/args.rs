@@ -402,17 +402,14 @@ struct ClapAnalysisCtrl {
     #[clap(long, env)]
     no_cross_function_analysis: bool,
     /// Generate PDGs that span all called functions which can attach markers
-    #[clap(long, conflicts_with_all = ["fixed_depth", "unconstrained_depth", "no_cross_function_analysis"])]
+    #[clap(long, conflicts_with_all = ["unconstrained_depth", "no_cross_function_analysis"])]
     adaptive_depth: bool,
-    /// Generate PDGs that span functions up to a certain depth
-    #[clap(long, conflicts_with_all = ["adaptive_depth", "unconstrained_depth", "no_cross_function_analysis"])]
-    fixed_depth: Option<u8>,
     /// Generate PDGs that span to all functions for which we have source code.
     ///
     /// If no depth option is specified this is the default right now but that
     /// is not guaranteed to be the case in the future. If you want to guarantee
     /// this is used explicitly supply the argument.
-    #[clap(long, conflicts_with_all = ["fixed_depth", "adaptive_depth", "no_cross_function_analysis"])]
+    #[clap(long, conflicts_with_all = ["adaptive_depth", "no_cross_function_analysis"])]
     unconstrained_depth: bool,
 }
 
@@ -435,16 +432,13 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             analyze,
             no_cross_function_analysis,
             adaptive_depth,
-            fixed_depth,
             unconstrained_depth: _,
         } = value;
 
         let inlining_depth = if adaptive_depth {
             InliningDepth::Adaptive
-        } else if let Some(n) = fixed_depth {
-            InliningDepth::Fixed(n)
         } else if no_cross_function_analysis {
-            InliningDepth::Fixed(0)
+            InliningDepth::Shallow
         } else {
             InliningDepth::Unconstrained
         };
@@ -460,8 +454,8 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
 pub enum InliningDepth {
     /// Inline to arbitrary depth
     Unconstrained,
-    /// Inline to a depth of `n` and no further
-    Fixed(u8),
+    /// Perform no inlining
+    Shallow,
     /// Inline so long as markers are reachable
     Adaptive,
 }
@@ -474,7 +468,7 @@ impl AnalysisCtrl {
 
     /// Are we recursing into (unmarked) called functions with the analysis?
     pub fn use_recursive_analysis(&self) -> bool {
-        !matches!(self.inlining_depth, InliningDepth::Fixed(0))
+        !matches!(self.inlining_depth, InliningDepth::Shallow)
     }
 
     pub fn inlining_depth(&self) -> &InliningDepth {

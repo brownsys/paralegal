@@ -19,7 +19,7 @@ use std::time::Instant;
 use anyhow::Result;
 use either::Either;
 use itertools::Itertools;
-use petgraph::visit::{GraphBase, IntoNodeReferences, NodeRef};
+use petgraph::visit::GraphBase;
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
 
 mod graph_converter;

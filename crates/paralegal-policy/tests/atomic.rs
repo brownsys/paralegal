@@ -5,7 +5,7 @@ use std::{collections::HashSet, sync::Arc};
 use helpers::Test;
 
 use anyhow::Result;
-use paralegal_policy::{assert_error, Context, Diagnostics as _, EdgeSelection};
+use paralegal_policy::{assert_error, Context, Diagnostics as _, EdgeSelection, NodeExt as _};
 use paralegal_spdg::{GlobalNode, Identifier, NodeCluster, SourceUse};
 use petgraph::Outgoing;
 
@@ -19,23 +19,9 @@ macro_rules! marker {
 }
 
 trait NodeExt: Sized {
-    fn siblings(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
-
     fn is_argument(self, ctx: &Context, num: u8) -> bool;
 }
 impl NodeExt for GlobalNode {
-    fn siblings(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
-        let self_at = ctx.node_info(self).at;
-        let mut set: HashSet<_> = ctx
-            .predecessors(self)
-            .flat_map(|n| ctx.successors(n))
-            .chain(ctx.successors(self).flat_map(|n| ctx.predecessors(n)))
-            .filter(|n| ctx.node_info(*n).at == self_at)
-            .collect();
-        set.remove(&self);
-        Box::new(set.into_iter())
-    }
-
     fn is_argument(self, ctx: &Context, num: u8) -> bool {
         ctx.desc().controllers[&self.controller_id()]
             .graph
@@ -162,7 +148,7 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
         // If commit is stored
         let stores = ctx
             .influencees(&commit, EdgeSelection::Both)
-            .filter(|s| ctx.has_marker(marker!(sink), *s))
+            .filter(|s| s.has_marker(&ctx, marker!(sink)))
             .collect::<Box<[_]>>();
         if stores.is_empty() {
             continue;
@@ -171,11 +157,11 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
 
         let new_resources = ctx
             .influencees(&commit, EdgeSelection::Data)
-            .filter(|n| ctx.has_marker(marker!(new_resource), *n))
+            .filter(|n| n.has_marker(&ctx, marker!(new_resource)))
             .collect::<Box<[_]>>();
 
         for r in new_resources.iter() {
-            let rs_info = ctx.node_info(*r);
+            let rs_info = r.info(&ctx);
             let msg = ctx.struct_node_help(
                 *r,
                 format!(
@@ -190,7 +176,7 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
         let valid_checks = ctx
             .influencees(&commit, EdgeSelection::Data)
             .filter(|check| {
-                ctx.has_marker(check_rights, *check)
+                check.has_marker(&ctx, check_rights)
                     && ctx
                         .any_flows(&new_resources, &[*check], EdgeSelection::Data)
                         .is_none()
@@ -199,9 +185,9 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
 
         for check in ctx
             .influencees(&commit, EdgeSelection::Data)
-            .filter(|n| ctx.has_marker(check_rights, *n))
+            .filter(|n| n.has_marker(&ctx, check_rights))
         {
-            let check_info = ctx.node_info(check);
+            let check_info = check.info(&ctx);
             let mut msg = ctx.struct_node_help(
                 check,
                 format!(
@@ -210,7 +196,7 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
                 ),
             );
             if let Some((from, _)) = ctx.any_flows(&new_resources, &[check], EdgeSelection::Data) {
-                let new_resource_info = ctx.node_info(from);
+                let new_resource_info = from.info(&ctx);
                 msg.with_node_note(
                     from,
                     format!(
@@ -233,8 +219,8 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
                 (
                     store,
                     valid_checks.iter().copied().find_map(|check| {
-                        let store_cs = ctx
-                            .successors(store)
+                        let store_cs = store
+                            .successors(&ctx)
                             .find(|cs| ctx.has_ctrl_influence(check, *cs))?;
                         Some((check, store_cs))
                     }),
@@ -246,7 +232,7 @@ fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
             if let Some((check, store_cs)) = check {
                 let mut msg =
                     ctx.struct_node_note(*store, "This value is properly checked before storage");
-                let check_info = ctx.node_info(*check);
+                let check_info = check.info(&ctx);
                 msg.with_node_note(
                     *check,
                     format!(
@@ -378,7 +364,7 @@ fn isolation() -> Result<()> {
             .marked_nodes(Identifier::new_intern("source"))
             .collect::<Box<[_]>>();
         for sink in ctx.marked_nodes(Identifier::new_intern("target")) {
-            let sink_info = ctx.node_info(sink);
+            let sink_info = sink.info(&ctx);
             if let Some((from, _)) = ctx.any_flows(&sources, &[sink], EdgeSelection::Data) {
                 let mut msg = ctx.struct_node_note(
                     sink,
@@ -387,7 +373,7 @@ fn isolation() -> Result<()> {
                         sink_info.description, sink_info.at
                     ),
                 );
-                let src_info = ctx.node_info(from);
+                let src_info = from.info(&ctx);
                 msg.with_node_note(
                     from,
                     format!("By this source {} @ {}", src_info.description, src_info.at),
@@ -455,7 +441,7 @@ fn isolation_2() -> Result<()> {
             .marked_nodes(Identifier::new_intern("source"))
             .collect::<Box<[_]>>();
         for sink in ctx.marked_nodes(Identifier::new_intern("target")) {
-            let sink_info = ctx.node_info(sink);
+            let sink_info = sink.info(&ctx);
             if let Some((from, _)) = ctx.any_flows(&sources, &[sink], EdgeSelection::Data) {
                 let mut msg = ctx.struct_node_note(
                     sink,
@@ -464,7 +450,7 @@ fn isolation_2() -> Result<()> {
                         sink_info.description, sink_info.at
                     ),
                 );
-                let src_info = ctx.node_info(from);
+                let src_info = from.info(&ctx);
                 msg.with_node_note(
                     from,
                     format!("By this source {} @ {}", src_info.description, src_info.at),
@@ -486,7 +472,7 @@ fn isolation_2() -> Result<()> {
 
 #[test]
 fn commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
-    let mut test = Test::new(stringify!(
+    let test = Test::new(stringify!(
 
         #![allow(warnings, unused)]
 
@@ -736,7 +722,7 @@ fn commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
             // If commit is stored
             let stores = ctx
                 .influencees(&commit, EdgeSelection::Both)
-                .filter(|s| ctx.has_marker(marker!(sink), *s))
+                .filter(|s| s.has_marker(&ctx, marker!(sink)))
                 .collect::<Box<[_]>>();
             if stores.is_empty() {
                 continue;
@@ -745,41 +731,10 @@ fn commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
 
             let commit_influencees = ctx.influencees(&commit, EdgeSelection::Data).collect::<HashSet<_>>();
 
-            let new_resources = commit_influencees
-                .iter()
-                .copied()
-                .filter(|n| ctx.has_marker(marker!(new_resource), *n))
-                .filter(|n| {
-                    // Hackery
-                    //
-                    // On one hand this is hacky beacuse we're selecting a specific
-                    // argument. This shold probably be done cleanly via markers. On
-                    // the other hand we're just checking that the first argument is
-                    // not form the commit (e.g. user-specified), which is not bad,
-                    // but really I think this should be a whitelisted source, such
-                    // as `urls::PARENT`, *but* we can't annotate constants so this
-                    // has to do.
-                    let argument_siblings = n.siblings(&ctx)
-                        .filter(|n| n.is_argument(&ctx, 1))
-                        .collect::<Box<[_]>>();
-
-                    let valid = argument_siblings.iter().copied().any(|n| {
-                            commit_influencees.contains(&n)
-                        });
-                    // let mut msg = ctx.struct_node_help(*n, format!("This is a new resource, it has {} argument 1 siblings. It is {}problematic", argument_siblings.len(), if valid { "" } else {"un"}));
-                    // for sibling in argument_siblings.iter().copied() {
-                    //     msg.with_node_note(sibling, "This is an argument 1 sibling");
-                    // }
-                    // msg.emit();
-                    valid
-
-                })
-                .collect::<Box<[_]>>();
-
             // All checks that flow from the commit but not from a new_resource
             let valid_checks = commit_influencees.iter().copied()
                 .filter(|check| {
-                    ctx.has_marker(check_rights, *check)
+                    check.has_marker(&ctx, check_rights)
                 })
                 .collect::<Box<[_]>>();
 
@@ -794,8 +749,9 @@ fn commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
                     (
                         store,
                         valid_checks.iter().copied().find_map(|check| {
-                            let store_cs = ctx
-                                .successors(store)
+                            let store_cs = store
+                                .successors(&ctx)
+                                .into_iter()
                                 .find(|cs| ctx.has_ctrl_influence(check, *cs))?;
                             Some((check, store_cs))
                         }),
@@ -896,7 +852,7 @@ fn tiny_commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
             ctx,
             ctx.marked_nodes(Identifier::new_intern("a"))
                 .flat_map(|n| ctx.influencees(n, EdgeSelection::Both))
-                .any(|n| ctx.has_marker(Identifier::new_intern("b"), n))
+                .any(|n| n.has_marker(&ctx, Identifier::new_intern("b")))
         );
         Ok(())
     })

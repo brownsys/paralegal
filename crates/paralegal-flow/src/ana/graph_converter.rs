@@ -66,7 +66,6 @@ pub struct GraphConverter<'tcx, 'a, C> {
     marker_assignments: HashMap<Node, HashSet<Identifier>>,
     call_string_resolver: call_string_resolver::CallStringResolver<'tcx>,
     stats: SPDGStats,
-    analyzed_functions: HashSet<LocalDefId>,
     place_info_cache: PlaceInfoCache<'tcx>,
 }
 
@@ -82,8 +81,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) -> Result<Self> {
         let local_def_id = target.def_id.expect_local();
         let start = Instant::now();
-        let (dep_graph, stats, analyzed_functions) =
-            Self::create_flowistry_graph(generator, local_def_id)?;
+        let (dep_graph, stats) = Self::create_flowistry_graph(generator, local_def_id)?;
         generator
             .stats
             .record_timed(TimedStat::Flowistry, start.elapsed());
@@ -107,7 +105,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             marker_assignments: Default::default(),
             call_string_resolver: CallStringResolver::new(generator.tcx, local_def_id),
             stats,
-            analyzed_functions,
             place_info_cache,
         })
     }
@@ -258,37 +255,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                             ann.refinement.on_argument().contains(arg as u32).unwrap()
                         });
                     }
-
-                    // Overapproximation of markers for fixed inlining depths.
-                    // If the skipped inlining a function because of the
-                    // inlining depth restriction we overapproximate how the
-                    // reachable markers may have affected each argument and
-                    // return by attaching each reachable marker to each
-                    // argument and the return.
-                    //
-                    // Explanation of each `&&`ed part of this condition in
-                    // order:
-                    //
-                    // - Optimization. If the inlining depth is not fixed, none
-                    //   of the following conditions will be true and this one
-                    //   is cheap to check.
-                    // - If the function is marked we currently don't propagate
-                    //   other reachable markers outside
-                    // - If the function was inlined, the PDG will cover the
-                    //   markers so we don't have to.
-                    if self.generator.opts.anactrl().inlining_depth().is_fixed()
-                        && !self.marker_ctx().is_marked(fun.def_id())
-                        && !self.generator.inline_judge.should_inline(&CallInfo {
-                            call_string: weight.at,
-                            callee: fun,
-                            is_cached: true,
-                            async_parent: unimplemented!("Fix fixed inlining depth"),
-                        })
-                    {
-                        let mctx = self.marker_ctx().clone();
-                        let markers = mctx.get_reachable_markers(fun);
-                        self.register_markers(node, markers.iter().copied())
-                    }
                 }
             }
             _ => (),
@@ -402,7 +368,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn create_flowistry_graph(
         generator: &SPDGGenerator<'tcx>,
         local_def_id: LocalDefId,
-    ) -> Result<(DepGraph<'tcx>, SPDGStats, HashSet<LocalDefId>)> {
+    ) -> Result<(DepGraph<'tcx>, SPDGStats)> {
         let tcx = generator.tcx;
         let opts = generator.opts;
         let stat_wrap = Rc::new(RefCell::new((
@@ -449,10 +415,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
         let flowistry_time = Instant::now();
         let pdg = flowistry_pdg_construction::compute_pdg(params);
-        let (mut stats, ana_fnset) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
+        let (mut stats, _) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
         stats.construction_time = flowistry_time.elapsed();
 
-        Ok((pdg, stats, ana_fnset))
+        Ok((pdg, stats))
     }
 
     /// Consume the generator and compile the [`SPDG`].

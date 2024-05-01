@@ -3,7 +3,9 @@ mod helpers;
 use std::{collections::hash_map::RandomState, sync::Arc};
 
 use helpers::{Result, Test};
-use paralegal_policy::{assert_error, assert_warning, Context, Diagnostics, EdgeSelection};
+use paralegal_policy::{
+    assert_error, assert_warning, Context, Diagnostics, EdgeSelection, NodeExt,
+};
 use paralegal_spdg::{GlobalNode, Identifier};
 
 const ASYNC_TRAIT_CODE: &str = stringify!(
@@ -281,7 +283,7 @@ fn transitive_control_flow() -> Result<()> {
     test.run(|ctx| {
         let accesses = ctx
             .marked_nodes(Identifier::new_intern("db_access"))
-            .filter(|n| !ctx.has_marker(Identifier::new_intern("db_user_read"), *n))
+            .filter(|n| !n.has_marker(&ctx, Identifier::new_intern("db_user_read")))
             .collect::<Vec<_>>();
         println!("{} accesses total", accesses.len());
         let _delete_checks = ctx.marked_nodes(instance_delete);
@@ -292,7 +294,7 @@ fn transitive_control_flow() -> Result<()> {
         for access in accesses {
             if !ctx
                 .influencers(access, EdgeSelection::Both)
-                .any(|n| ctx.has_marker(instance_delete, n))
+                .any(|n| n.has_marker(&ctx, instance_delete))
             {
                 //if !delete_checks.any(|dc| ctx.flows_to(dc, access, EdgeSelection::Both)) {
                 ctx.node_error(access, "No delete check found for this access");
@@ -300,7 +302,7 @@ fn transitive_control_flow() -> Result<()> {
                 for i in std::collections::HashSet::<_, RandomState>::from_iter(
                     ctx.influencers(access, EdgeSelection::Both),
                 ) {
-                    let info = ctx.node_info(i);
+                    let info = i.info(&ctx);
                     ctx.node_note(
                         i,
                         format!("This is an influencer {} @ {}", info.description, info.at),
@@ -309,7 +311,7 @@ fn transitive_control_flow() -> Result<()> {
             }
             if !ctx
                 .influencers(access, EdgeSelection::Both)
-                .any(|n| ctx.has_marker(instance_ban, n))
+                .any(|n| n.has_marker(&ctx, instance_ban))
             {
                 //if !ban_checks.any(|bc| ctx.flows_to(bc, access, EdgeSelection::Both)) {
                 ctx.node_error(access, "No ban check found for this access");
@@ -324,7 +326,7 @@ fn transitive_control_flow() -> Result<()> {
             }
 
             for check in delete_checks {
-                let info = ctx.node_info(check);
+                let info = check.info(&ctx);
                 let mut help = ctx.struct_node_help(
                     check,
                     format!(

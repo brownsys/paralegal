@@ -335,10 +335,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .map_or(false, |n| n == "build_script_build");
 
         if !is_target || is_build_script {
-            if plugin_args.weird_hacks().rustc_reset_for_linux() {
-                std::env::remove_var("RUSTC_WRAPPER");
-                std::env::set_var("RUSTC", "rustc");
-            }
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
