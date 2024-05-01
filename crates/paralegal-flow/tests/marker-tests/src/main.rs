@@ -17,7 +17,7 @@ fn use_wrapper() {
 }
 
 trait Test {
-    #[paralegal::marker(find_me)]
+    #[paralegal::marker(find_me, arguments = [0])]
     fn method(self);
 }
 

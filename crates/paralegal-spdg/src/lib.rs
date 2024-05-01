@@ -93,7 +93,9 @@ mod ser_localdefid_map {
 pub struct MarkerAnnotation {
     /// The (unchanged) name of the marker as provided by the user
     pub marker: Identifier,
+    /// The annotation should apply to the return value
     pub on_return: bool,
+    /// The annotation should apply to these arguments
     pub on_argument: TinyBitSet,
 }
 
@@ -113,10 +115,6 @@ impl MarkerAnnotation {
     pub fn on_self(&self) -> bool {
         self.on_argument.is_empty() && !self.on_return
     }
-}
-
-fn const_false() -> bool {
-    false
 }
 
 #[cfg(feature = "rustc")]
