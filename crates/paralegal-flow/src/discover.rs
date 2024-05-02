@@ -2,7 +2,10 @@
 //! and discovers functions marked for analysis.
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
-use crate::{ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, rust::*, utils::*};
+
+use crate::{
+    ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, rust::*, stats::Stats, utils::*,
+};
 
 use hir::{
     def_id::DefId,
@@ -33,6 +36,8 @@ pub struct CollectingVisitor<'tcx> {
     /// later perform the analysis
     pub functions_to_analyze: Vec<FnToAnalyze>,
 
+    stats: Stats,
+
     pub marker_ctx: MarkerDatabase<'tcx>,
 }
 
@@ -51,7 +56,7 @@ impl FnToAnalyze {
 }
 
 impl<'tcx> CollectingVisitor<'tcx> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args, stats: Stats) -> Self {
         let functions_to_analyze = opts
             .anactrl()
             .selected_targets()
@@ -73,13 +78,14 @@ impl<'tcx> CollectingVisitor<'tcx> {
             opts,
             functions_to_analyze,
             marker_ctx: MarkerDatabase::init(tcx, opts),
+            stats,
         }
     }
 
     /// After running the discovery with `visit_all_item_likes_in_crate`, create
     /// the read-only [`SPDGGenerator`] upon which the analysis will run.
     fn into_generator(self) -> SPDGGenerator<'tcx> {
-        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx)
+        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx, self.stats)
     }
 
     /// Driver function. Performs the data collection via visit, then calls

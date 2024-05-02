@@ -47,7 +47,7 @@ export!(
     /// ```
     /// #[paralegal::marker(receiving, arguments = [0], return)]
     /// #[paralegal::marker(leaking, arguments = [1])]
-    /// fn send(recipients: &[String], content: &str) { .. }
+    /// fn send(recipients: &[String], content: &str) {  }
     /// ```
     marker
 );
@@ -60,7 +60,7 @@ export!(
     /// ### Example
     ///
     /// ```
-    /// #[paralegal::output_type(Address)]
+    /// #[paralegal::output_types(Address)]
     /// struct Email {}
     /// ```
     output_types

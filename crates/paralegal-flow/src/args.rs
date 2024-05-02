@@ -52,6 +52,7 @@ impl TryFrom<ClapArgs> for Args {
             dump,
             marker_control,
             cargo_args,
+            trace,
         } = value;
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
@@ -77,17 +78,25 @@ impl TryFrom<ClapArgs> for Args {
         };
         let log_level_config = match debug_target {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
-            _ if debug => LogLevelConfig::Enabled,
             _ => LogLevelConfig::Disabled,
         };
+        let verbosity = if trace {
+            log::LevelFilter::Trace
+        } else if debug {
+            log::LevelFilter::Debug
+        } else if verbose {
+            log::LevelFilter::Info
+        } else {
+            log::LevelFilter::Warn
+        };
         Ok(Args {
-            verbose,
+            verbosity,
             log_level_config,
             result_path,
             relaxed,
             target,
             abort_after_analysis,
-            anactrl,
+            anactrl: anactrl.try_into()?,
             modelctrl,
             dump,
             build_config,
@@ -100,7 +109,7 @@ impl TryFrom<ClapArgs> for Args {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Args {
     /// Print additional logging output (up to the "info" level)
-    verbose: bool,
+    verbosity: log::LevelFilter,
     log_level_config: LogLevelConfig,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
@@ -141,10 +150,12 @@ pub struct ClapArgs {
     /// is enabled.
     #[clap(long, env = "PARALEGAL_DEBUG")]
     debug: bool,
+    #[clap(long, env = "PARALEGAL_TRACE")]
+    trace: bool,
     #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
     debug_target: Option<String>,
     /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
-    #[clap(long, default_value = "flow-graph.json")]
+    #[clap(long, default_value = paralegal_spdg::FLOW_GRAPH_OUT_NAME)]
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     #[clap(long, env = "PARALEGAL_RELAXED")]
@@ -157,7 +168,7 @@ pub struct ClapArgs {
     abort_after_analysis: bool,
     /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis")]
-    anactrl: AnalysisCtrl,
+    anactrl: ClapAnalysisCtrl,
     /// Additional arguments which control marker assignment and discovery
     #[clap(flatten, next_help_heading = "Marker Control")]
     marker_control: MarkerControl,
@@ -276,8 +287,12 @@ pub enum LogLevelConfig {
     Targeted(String),
     /// Logging for this level is not directly enabled
     Disabled,
-    /// Logging for this level was directly enabled
-    Enabled,
+}
+
+impl LogLevelConfig {
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, LogLevelConfig::Targeted(_))
+    }
 }
 
 impl std::fmt::Display for LogLevelConfig {
@@ -286,18 +301,12 @@ impl std::fmt::Display for LogLevelConfig {
     }
 }
 
-impl LogLevelConfig {
-    pub fn is_enabled(&self) -> bool {
-        matches!(self, LogLevelConfig::Targeted(..) | LogLevelConfig::Enabled)
-    }
-}
-
 impl Args {
     pub fn target(&self) -> Option<&str> {
         self.target.as_deref()
     }
     /// Returns the configuration specified for the `--debug` option
-    pub fn debug(&self) -> &LogLevelConfig {
+    pub fn direct_debug(&self) -> &LogLevelConfig {
         &self.log_level_config
     }
     /// Access the debug arguments
@@ -317,8 +326,8 @@ impl Args {
         self.result_path.as_path()
     }
     /// Should we output additional log messages (level `info`)
-    pub fn verbose(&self) -> bool {
-        self.verbose
+    pub fn verbosity(&self) -> log::LevelFilter {
+        self.verbosity
     }
     /// Warn instead of crashing the program in case of non-fatal errors
     pub fn relaxed(&self) -> bool {
@@ -380,8 +389,8 @@ impl MarkerControl {
 }
 
 /// Arguments that control the flow analysis
-#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
-pub struct AnalysisCtrl {
+#[derive(clap::Args)]
+struct ClapAnalysisCtrl {
     /// Target this function as analysis target. Command line version of
     /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
     /// function. May be specified multiple times and multiple, comma separated
@@ -390,10 +399,65 @@ pub struct AnalysisCtrl {
     analyze: Vec<String>,
     /// Disables all recursive analysis (both paralegal_flow's inlining as well as
     /// Flowistry's recursive analysis).
-    ///
-    /// Also implies --no-pruning, because pruning only makes sense after inlining
     #[clap(long, env)]
     no_cross_function_analysis: bool,
+    /// Generate PDGs that span all called functions which can attach markers
+    #[clap(long, conflicts_with_all = ["unconstrained_depth", "no_cross_function_analysis"])]
+    adaptive_depth: bool,
+    /// Generate PDGs that span to all functions for which we have source code.
+    ///
+    /// If no depth option is specified this is the default right now but that
+    /// is not guaranteed to be the case in the future. If you want to guarantee
+    /// this is used explicitly supply the argument.
+    #[clap(long, conflicts_with_all = ["adaptive_depth", "no_cross_function_analysis"])]
+    unconstrained_depth: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct AnalysisCtrl {
+    /// Target this function as analysis target. Command line version of
+    /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
+    /// function. May be specified multiple times and multiple, comma separated
+    /// paths may be supplied at the same time.
+    analyze: Vec<String>,
+    /// Disables all recursive analysis (both paralegal_flow's inlining as well as
+    /// Flowistry's recursive analysis).
+    inlining_depth: InliningDepth,
+}
+
+impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
+    type Error = Error;
+    fn try_from(value: ClapAnalysisCtrl) -> Result<Self, Self::Error> {
+        let ClapAnalysisCtrl {
+            analyze,
+            no_cross_function_analysis,
+            adaptive_depth,
+            unconstrained_depth: _,
+        } = value;
+
+        let inlining_depth = if adaptive_depth {
+            InliningDepth::Adaptive
+        } else if no_cross_function_analysis {
+            InliningDepth::Shallow
+        } else {
+            InliningDepth::Unconstrained
+        };
+
+        Ok(Self {
+            analyze,
+            inlining_depth,
+        })
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, strum::EnumIs, strum::AsRefStr, Clone)]
+pub enum InliningDepth {
+    /// Inline to arbitrary depth
+    Unconstrained,
+    /// Perform no inlining
+    Shallow,
+    /// Inline so long as markers are reachable
+    Adaptive,
 }
 
 impl AnalysisCtrl {
@@ -404,7 +468,11 @@ impl AnalysisCtrl {
 
     /// Are we recursing into (unmarked) called functions with the analysis?
     pub fn use_recursive_analysis(&self) -> bool {
-        !self.no_cross_function_analysis
+        !matches!(self.inlining_depth, InliningDepth::Shallow)
+    }
+
+    pub fn inlining_depth(&self) -> &InliningDepth {
+        &self.inlining_depth
     }
 }
 
@@ -430,8 +498,9 @@ impl DumpArgs {
 /// Dependency specific configuration
 #[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
 pub struct DepConfig {
+    #[serde(default)]
     /// Additional rust features to enable
-    pub rust_features: Vec<String>,
+    pub rust_features: Box<[String]>,
 }
 
 /// Additional configuration for the build process/rustc

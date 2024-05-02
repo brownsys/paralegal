@@ -233,3 +233,15 @@ fn and_desugaring_similar_pattern() {
         read_t(&a_val);
     }
 }
+
+/// For now this is just a test that this compiles
+#[paralegal::analyze]
+fn box_test() {
+    let mut b = Box::<[usize; 3]>::new([4, 5, 6]);
+
+    *b = [1, 2, 3];
+
+    for a in b.as_ref().iter() {
+        output(*a as i32);
+    }
+}

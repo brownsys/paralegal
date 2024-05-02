@@ -32,30 +32,27 @@ ordermap = "0.3"
 trait_enum = "0.5"
 pretty = "0.11"
 nom = "7"
-log = "0.4"
+log = { version = "0.4", features = ["serde"] }
 simple_logger = "2"
 num-derive = "0.4"
 num-traits = "0.2"
 petgraph = { workspace = true }
 humantime = "2"
 strum = { workspace = true }
-
+enum-map = "2.7"
+serial_test = "2.0.0"
+itertools = "0.12"
+anyhow = "1.0.72"
+thiserror = "1"
+serde_bare = "0.5.0"
+toml = "0.7"
 
 #dot = "0.1"
 dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106" }
 #dot = {path = "../../clones/dot-rust" }
 
-serde_bare = "0.5.0"
-serde_json = "1"
-toml = "0.7"
-
-
 # This is just for pinning this dependency
 camino = "= 1.0.9"
-serial_test = "2.0.0"
-itertools = "0.12"
-anyhow = "1.0.72"
-thiserror = "1"
 
 [build-dependencies]
 chrono = "0.4"

@@ -15,17 +15,15 @@ use std::process::Command;
 use paralegal_spdg::{
     rustc_portable::DefId,
     traverse::{generic_flows_to, EdgeSelection},
-    DefInfo, EdgeInfo, Node, NodeKind, SPDG,
+    DefInfo, EdgeInfo, Node, SPDG,
 };
 
+use flowistry_pdg::rustc_portable::LocalDefId;
 use flowistry_pdg::CallString;
 use itertools::Itertools;
-use paralegal_spdg::rustc_portable::LocalDefId;
-use petgraph::visit::IntoNeighbors;
-use petgraph::visit::Visitable;
-use petgraph::visit::{
-    Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges, IntoNodeReferences,
-};
+use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
+use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
+use petgraph::visit::{NodeRef as _, Visitable};
 use petgraph::Direction;
 use std::path::Path;
 
@@ -261,10 +259,10 @@ impl<'g> HasGraph<'g> for &'g PreFrg {
 impl PreFrg {
     pub fn from_file_at(dir: &str) -> Self {
         use_rustc(|| {
-            let desc: ProgramDescription = serde_json::from_reader(
-                &mut std::fs::File::open(format!("{dir}/{}", crate::consts::FLOW_GRAPH_OUT_NAME))
-                    .unwrap(),
-            )
+            let desc = ProgramDescription::canonical_read(format!(
+                "{dir}/{}",
+                crate::consts::FLOW_GRAPH_OUT_NAME
+            ))
             .unwrap();
             let name_map = desc
                 .def_info
@@ -306,12 +304,7 @@ impl<'g> HasGraph<'g> for &CtrlRef<'g> {
 impl<'g> CtrlRef<'g> {
     pub fn return_value(&self) -> NodeRefs {
         // TODO only include mutable formal parameters?
-        let nodes = self
-            .ctrl
-            .return_
-            .as_ref()
-            .map_or(&[] as &[_], std::slice::from_ref)
-            .to_vec();
+        let nodes = self.ctrl.return_.to_vec();
         NodeRefs { nodes, graph: self }
     }
 
@@ -377,7 +370,7 @@ impl<'g> CtrlRef<'g> {
         self.ctrl
             .type_assigns
             .get(&target)
-            .map_or(&[], |t| t.0.as_slice())
+            .map_or(&[], |t| t.0.as_ref())
     }
 }
 
@@ -429,23 +422,13 @@ impl<'g> CallStringRef<'g> {
         // Alternative??
         let mut nodes: Vec<_> = graph
             .edge_references()
-            .filter(|e| e.weight().at == self.call_site && e.weight().is_data())
-            .map(|e| e.source())
+            .filter(|e| e.weight().at == self.call_site)
+            .map(|e| (e.weight().source_use, e.source()))
             .collect();
-        // let mut nodes: Vec<_> = graph
-        //     .node_references()
-        //     .filter(|(_n, weight)| weight.at == self.call_site)
-        //     .filter_map(|(n, weight)| match weight.kind {
-        //         NodeKind::ActualParameter(p) => Some((n, p)),
-        //         _ => None,
-        //     })
-        //     .flat_map(move |(src, idxes)| idxes.into_iter_set_in_domain().map(move |i| (src, i)))
-        //     .collect();
-        // nodes.sort_by_key(|s| s.1);
         nodes.sort();
         nodes.dedup();
         NodeRefs {
-            nodes, //.into_iter().map(|t| t.0).collect(),
+            nodes: nodes.into_iter().map(|t| t.1).collect(),
             graph: self.ctrl,
         }
     }
@@ -454,15 +437,13 @@ impl<'g> CallStringRef<'g> {
         let graph = &self.ctrl.ctrl.graph;
         let mut nodes: Vec<_> = graph
             .edge_references()
-            .filter(|e| e.weight().at == self.call_site && e.weight().is_data())
+            .filter(|e| e.weight().at == self.call_site)
             .map(|e| e.target())
             .chain(
                 graph
                     .node_references()
-                    .filter(|(_n, weight)| weight.at == self.call_site)
-                    .filter_map(|(n, weight)| {
-                        matches!(weight.kind, NodeKind::ActualReturn).then_some(n)
-                    }),
+                    .filter(|n| n.weight().at == self.call_site)
+                    .map(|n| n.id()),
             )
             .collect();
         nodes.sort();
@@ -501,10 +482,7 @@ impl Debug for NodeRefs<'_> {
         let mut list = f.debug_list();
         for &n in &self.nodes {
             let weight = self.graph.ctrl.graph.node_weight(n).unwrap();
-            list.entry(&format!(
-                "{n:?} {} @ {} ({:?})",
-                weight.description, weight.at, weight.kind
-            ));
+            list.entry(&format!("{n:?} {} @ {} ", weight.description, weight.at));
         }
         list.finish()
     }

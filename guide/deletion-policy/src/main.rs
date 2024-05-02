@@ -1,5 +1,7 @@
 use anyhow::Result;
-use paralegal_policy::{assert_error, paralegal_spdg::traverse::EdgeSelection, Context, Marker};
+use paralegal_policy::{
+    assert_error, paralegal_spdg::traverse::EdgeSelection, Context, Marker, NodeExt,
+};
 use std::sync::Arc;
 
 fn dummy_policy(_ctx: Arc<Context>) -> Result<()> {
@@ -24,7 +26,7 @@ fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
     let found = ctx.all_controllers().any(|(deleter_id, _ignored)| {
         let delete_sinks = ctx
             .all_nodes_for_ctrl(deleter_id)
-            .filter(|n| ctx.has_marker(Marker::new_intern("deletes"), *n))
+            .filter(|n| n.has_marker(&ctx, Marker::new_intern("deletes")))
             .collect::<Vec<_>>();
         user_data_types.iter().all(|&t| {
             let sources = ctx.srcs_with_type(deleter_id, t).collect::<Vec<_>>();

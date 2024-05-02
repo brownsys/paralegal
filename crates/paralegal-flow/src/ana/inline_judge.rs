@@ -1,5 +1,8 @@
-use crate::{utils::FnResolution, AnalysisCtrl, MarkerCtx, TyCtxt};
+use flowistry_pdg_construction::CallInfo;
 
+use crate::{args::InliningDepth, AnalysisCtrl, MarkerCtx, TyCtxt};
+
+#[derive(Clone)]
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.
 ///
@@ -14,14 +17,6 @@ pub struct InlineJudge<'tcx> {
 }
 
 impl<'tcx> InlineJudge<'tcx> {
-    /// Are there any markers on this function (direct or output type)?
-    fn function_has_markers(&self, function: FnResolution<'tcx>) -> bool {
-        self.marker_ctx
-            .all_function_markers(function)
-            .next()
-            .is_some()
-    }
-
     pub fn new(
         marker_ctx: MarkerCtx<'tcx>,
         tcx: TyCtxt<'tcx>,
@@ -35,7 +30,24 @@ impl<'tcx> InlineJudge<'tcx> {
     }
 
     /// Should we perform inlining on this function?
-    pub fn should_inline(&self, function: FnResolution<'tcx>) -> bool {
-        self.analysis_control.use_recursive_analysis() && !self.function_has_markers(function)
+    pub fn should_inline(&self, info: &CallInfo<'tcx>) -> bool {
+        let marker_target = info.async_parent.unwrap_or(info.callee);
+        let marker_target_def_id = marker_target.def_id();
+        match self.analysis_control.inlining_depth() {
+            _ if self.marker_ctx.is_marked(marker_target_def_id)
+                || !marker_target_def_id.is_local() =>
+            {
+                false
+            }
+            InliningDepth::Adaptive => self
+                .marker_ctx
+                .has_transitive_reachable_markers(marker_target),
+            InliningDepth::Shallow => false,
+            InliningDepth::Unconstrained => true,
+        }
+    }
+
+    pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
+        &self.marker_ctx
     }
 }

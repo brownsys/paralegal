@@ -16,3 +16,6 @@ flow-graph.json
 
 .DS_Store
 *.flowistry-pdg.pdf
+
+*.mir
+*.o

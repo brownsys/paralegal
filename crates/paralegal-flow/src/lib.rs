@@ -69,7 +69,7 @@ use rust::*;
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
-use std::fmt::Display;
+use std::{fmt::Display, time::Instant};
 
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
@@ -83,8 +83,8 @@ pub mod ann;
 mod args;
 pub mod dbg;
 mod discover;
+mod stats;
 //mod sah;
-pub mod serializers;
 #[macro_use]
 pub mod utils;
 pub mod consts;
@@ -93,11 +93,13 @@ pub mod test_utils;
 
 pub use paralegal_spdg as desc;
 
+pub use crate::ann::db::MarkerCtx;
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
-use crate::utils::Print;
-
-pub use crate::ann::db::MarkerCtx;
+use crate::{
+    stats::{Stats, TimedStat},
+    utils::Print,
+};
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -107,7 +109,12 @@ pub struct DfppPlugin;
 /// forwarded and `_progname` is only to comply with the calling convention of
 /// `cargo` (it passes the program name as first argument).
 #[derive(clap::Parser)]
-#[clap(version = concat!(crate_version!(), "\nbuilt ", env!("BUILD_TIME"), "\ncommit ", env!("COMMIT_HASH")), about)]
+#[clap(version = concat!(
+    crate_version!(),
+    "\nbuilt ", env!("BUILD_TIME"),
+    "\ncommit ", env!("COMMIT_HASH"),
+    "\nwith ", env!("RUSTC_VERSION"),
+) , about)]
 struct ArgWrapper {
     /// This argument doesn't do anything, but when cargo invokes `cargo-paralegal-flow`
     /// it always provides "paralegal-flow" as the first argument and since we parse with
@@ -121,6 +128,8 @@ struct ArgWrapper {
 
 struct Callbacks {
     opts: &'static Args,
+    stats: Stats,
+    start: Instant,
 }
 
 struct NoopCallbacks {}
@@ -142,12 +151,15 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
+        self.stats
+            .record_timed(TimedStat::Rustc, self.start.elapsed());
         queries
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
                 tcx.sess.abort_if_errors();
-                let desc = discover::CollectingVisitor::new(tcx, self.opts).run()?;
+                let desc =
+                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
 
@@ -156,16 +168,12 @@ impl rustc_driver::Callbacks for Callbacks {
                     paralegal_spdg::dot::dump(&desc, out).unwrap();
                 }
 
-                serde_json::to_writer(
-                    &mut std::fs::OpenOptions::new()
-                        .truncate(true)
-                        .create(true)
-                        .write(true)
-                        .open(self.opts.result_path())
-                        .unwrap(),
-                    &desc,
-                )
-                .unwrap();
+                let ser = Instant::now();
+                desc.canonical_write(self.opts.result_path()).unwrap();
+                self.stats
+                    .record_timed(TimedStat::Serialization, ser.elapsed());
+
+                println!("Analysis finished with timing: {}", self.stats);
 
                 anyhow::Ok(if self.opts.abort_after_analysis() {
                     rustc_driver::Compilation::Stop
@@ -239,7 +247,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // All right so actually all that's happening here is that we drop the
         // "--all" that rustc_plugin automatically adds in such cases where the
         // arguments passed to paralegal indicate that we are supposed to run
-        // only on select crates.
+        // only on select crates. Also we replace the `RUSTC_WORKSPACE_WRAPPER`
+        // argument with `RUSTC_WRAPPER`
+        // because of https://github.com/cognitive-engineering-lab/rustc_plugin/issues/19
         //
         // There isn't a nice way to do this so we hand-code what amounts to a
         // call to `cargo.clone()`, but with the one modification of removing
@@ -251,7 +261,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         if args.target().is_some() | args_select_package {
             let mut new_cmd = std::process::Command::new(cargo.get_program());
             for (k, v) in cargo.get_envs() {
-                if let Some(v) = v {
+                if k == "RUSTC_WORKSPACE_WRAPPER" {
+                    new_cmd.env("RUSTC_WRAPPER", v.unwrap());
+                } else if let Some(v) = v {
                     new_cmd.env(k, v);
                 } else {
                     new_cmd.env_remove(k);
@@ -264,8 +276,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             *cargo = new_cmd
         }
         if let Some(target) = args.target().as_ref() {
-            assert!(!args_select_package);
-            cargo.args(["-p", target]);
+            if !args_select_package {
+                cargo.args(["-p", target]);
+            }
         }
         cargo.args(args.cargo_args());
     }
@@ -324,27 +337,16 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
-        let lvl = if plugin_args.debug().is_enabled() {
-            log::LevelFilter::Debug
-        } else if plugin_args.verbose() {
-            log::LevelFilter::Info
-        } else {
-            log::LevelFilter::Warn
-        };
+        let lvl = plugin_args.verbosity();
         // //let lvl = log::LevelFilter::Debug;
         simple_logger::SimpleLogger::new()
             .with_level(lvl)
-            .with_module_level("flowistry", log::LevelFilter::Error)
+            //.with_module_level("flowistry", lvl)
             .with_module_level("rustc_utils", log::LevelFilter::Error)
-            .without_timestamps()
             .init()
             .unwrap();
-        if matches!(*plugin_args.debug(), LogLevelConfig::Targeted(..)) {
-            log::set_max_level(if plugin_args.verbose() {
-                log::LevelFilter::Info
-            } else {
-                log::LevelFilter::Warn
-            });
+        if matches!(*plugin_args.direct_debug(), LogLevelConfig::Targeted(..)) {
+            log::set_max_level(log::LevelFilter::Warn);
         }
         let opts = Box::leak(Box::new(plugin_args));
 
@@ -359,6 +361,14 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             "Arguments: {}",
             Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
         );
-        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks { opts }).run()
+        rustc_driver::RunCompiler::new(
+            &compiler_args,
+            &mut Callbacks {
+                opts,
+                stats: Default::default(),
+                start: Instant::now(),
+            },
+        )
+        .run()
     }
 }
