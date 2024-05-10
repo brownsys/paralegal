@@ -575,7 +575,7 @@ struct MyCallback<'tcx> {
 }
 
 impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx> {
+    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges {
         let mut changes = CallChanges::default();
 
         let mut skip = true;

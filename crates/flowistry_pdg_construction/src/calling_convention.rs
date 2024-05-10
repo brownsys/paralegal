@@ -1,4 +1,4 @@
-use flowistry_pdg::rustc_portable::{DefId, LocalDefId};
+use flowistry_pdg::rustc_portable::DefId;
 use log::trace;
 use rustc_abi::FieldIdx;
 
@@ -7,8 +7,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
-use crate::async_support::AsyncInfo;
-use crate::construct::CallKind;
+use crate::{async_support::AsyncInfo, construct::CallKind, utils};
 
 pub enum CallingConvention<'tcx, 'a> {
     Direct(&'a [Operand<'tcx>]),

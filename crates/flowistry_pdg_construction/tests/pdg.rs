@@ -9,15 +9,15 @@ use std::collections::HashSet;
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepGraph},
-    CallChangeCallbackFn, CallChanges, FakeEffect, FakeEffectKind, PdgParams, SkipCall,
+    CallChangeCallbackFn, CallChanges, PdgParams, SkipCall,
 };
 use itertools::Itertools;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
-    mir::{Local, Place, ProjectionElem, Terminator, TerminatorKind},
+    mir::{Terminator, TerminatorKind},
     ty::TyCtxt,
 };
-use rustc_utils::{mir::borrowck_facts, source_map::find_bodies::find_bodies, PlaceExt};
+use rustc_utils::{mir::borrowck_facts, source_map::find_bodies::find_bodies};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)

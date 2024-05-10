@@ -1,12 +1,11 @@
 //! CAllbacks to influence graph construction and their supporting types.
 
 use flowistry_pdg::{rustc_portable::Location, CallString};
-use rustc_middle::mir::Place;
 
 use crate::FnResolution;
 
 pub trait CallChangeCallback<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx>;
+    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges;
 
     fn on_inline_miss(
         &self,
@@ -20,17 +19,17 @@ pub trait CallChangeCallback<'tcx> {
 }
 
 pub struct CallChangeCallbackFn<'tcx> {
-    f: Box<dyn Fn(CallInfo<'tcx>) -> CallChanges<'tcx> + 'tcx>,
+    f: Box<dyn Fn(CallInfo<'tcx>) -> CallChanges + 'tcx>,
 }
 
 impl<'tcx> CallChangeCallbackFn<'tcx> {
-    pub fn new(f: impl Fn(CallInfo<'tcx>) -> CallChanges<'tcx> + 'tcx) -> Self {
+    pub fn new(f: impl Fn(CallInfo<'tcx>) -> CallChanges + 'tcx) -> Self {
         Self { f: Box::new(f) }
     }
 }
 
 impl<'tcx> CallChangeCallback<'tcx> for CallChangeCallbackFn<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges<'tcx> {
+    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges {
         (self.f)(info)
     }
 }
@@ -40,11 +39,10 @@ pub enum InlineMissReason {
     Async(String),
 }
 
-impl Default for CallChanges<'_> {
+impl Default for CallChanges {
     fn default() -> Self {
         CallChanges {
             skip: SkipCall::NoSkip,
-            fake_effects: vec![],
         }
     }
 }
@@ -65,39 +63,12 @@ pub struct CallInfo<'tcx> {
     pub is_cached: bool,
 }
 
-/// A fake effect to insert into the PDG upon a function call.
-#[derive(Debug)]
-pub struct FakeEffect<'tcx> {
-    /// The place (in the *callee*!) subject to a fake effect.
-    pub place: Place<'tcx>,
-
-    /// The kind of fake effect to insert into the PDG.
-    pub kind: FakeEffectKind,
-}
-
-/// The kind of fake effect to insert into the PDG.
-#[derive(Debug)]
-pub enum FakeEffectKind {
-    /// A fake read to an argument of a function call.
-    ///
-    /// For example, a fake read to argument `_1` of the call `f(_5)`
-    /// would add an edge `_5@main::fcall -> _1@main->f::START`.
-    Read,
-
-    /// A fake write to an argument of a function call.
-    ///
-    /// For example, a fake write to argument `(*_1)` of the call `f(&mut _5)`
-    /// would add an edge `_5@main::<before> -> _5@main::fcall`.
-    Write,
-}
-
 /// User-provided changes to the default PDG construction behavior for function calls.
 ///
 /// Construct [`CallChanges`] via [`CallChanges::default`].
 #[derive(Debug)]
-pub struct CallChanges<'tcx> {
+pub struct CallChanges {
     pub(crate) skip: SkipCall,
-    fake_effects: Vec<FakeEffect<'tcx>>,
 }
 
 /// Whether or not to skip recursing into a function call during PDG construction.
@@ -110,17 +81,9 @@ pub enum SkipCall {
     NoSkip,
 }
 
-impl<'tcx> CallChanges<'tcx> {
+impl CallChanges {
     /// Inidicate whether or not to skip recursing into the given function.
     pub fn with_skip(self, skip: SkipCall) -> Self {
         CallChanges { skip, ..self }
-    }
-
-    /// Provide a set of fake effect to insert into the PDG.
-    pub fn with_fake_effects(self, fake_effects: Vec<FakeEffect<'tcx>>) -> Self {
-        CallChanges {
-            fake_effects,
-            ..self
-        }
     }
 }
