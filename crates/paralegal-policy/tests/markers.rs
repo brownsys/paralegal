@@ -14,7 +14,7 @@ fn policy(ctx: Arc<Context>) -> Result<()> {
     let ctrl = ctx.all_controllers().next().unwrap();
     for (n, ty) in ctrl.1.type_assigns.iter() {
         for d_ty in d_tys.iter() {
-            if ty.0.contains(&d_ty) {
+            if ty.0.contains(d_ty) {
                 ctx.node_note(
                     GlobalNode::from_local_node(ctrl.0, *n),
                     format!("This node has the marked type {}", ctx.describe_def(*d_ty)),

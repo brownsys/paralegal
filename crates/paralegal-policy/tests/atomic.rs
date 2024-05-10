@@ -751,7 +751,6 @@ fn commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
                         valid_checks.iter().copied().find_map(|check| {
                             let store_cs = store
                                 .successors(&ctx)
-                                .into_iter()
                                 .find(|cs| ctx.has_ctrl_influence(check, *cs))?;
                             Some((check, store_cs))
                         }),

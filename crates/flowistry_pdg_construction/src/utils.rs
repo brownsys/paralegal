@@ -257,10 +257,10 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     }
 }
 
-pub fn manufacture_substs_for<'tcx>(
-    tcx: TyCtxt<'tcx>,
+pub fn manufacture_substs_for(
+    tcx: TyCtxt<'_>,
     function: LocalDefId,
-) -> Result<&'tcx List<GenericArg<'tcx>>, ErrorGuaranteed> {
+) -> Result<&List<GenericArg<'_>>, ErrorGuaranteed> {
     use rustc_middle::ty::{
         Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
         ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,

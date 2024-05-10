@@ -202,7 +202,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                             IndexVec::from_iter(args.iter().cloned()),
                         );
                         self.modular_mutation_visitor(results, state).visit_assign(
-                            &destination,
+                            destination,
                             &rvalue,
                             location,
                         );
@@ -212,7 +212,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                         how(
                             constructor,
                             &mut self.modular_mutation_visitor(results, state),
-                            &args,
+                            args,
                             *destination,
                             location,
                         );
@@ -367,7 +367,7 @@ fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: LocalDefId, body: &Body<'tcx>) -> 
     }
     if node.place.local == RETURN_PLACE {
         Some(None)
-    } else if node.place.is_arg(&body) {
+    } else if node.place.is_arg(body) {
         Some(Some(node.place.local.as_u32() as u8 - 1))
     } else {
         None

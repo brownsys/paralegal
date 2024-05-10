@@ -84,6 +84,6 @@ pub enum SkipCall {
 impl CallChanges {
     /// Inidicate whether or not to skip recursing into the given function.
     pub fn with_skip(self, skip: SkipCall) -> Self {
-        CallChanges { skip, ..self }
+        CallChanges { skip }
     }
 }
