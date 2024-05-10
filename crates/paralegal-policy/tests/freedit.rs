@@ -2,7 +2,7 @@ mod helpers;
 
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{assert_error, Diagnostics, EdgeSelection};
+use paralegal_policy::{assert_error, Diagnostics, EdgeSelection, NodeExt};
 use paralegal_spdg::Identifier;
 
 #[test]
@@ -170,10 +170,10 @@ fn simple_monomorphization() -> Result<()> {
                 expect_connect
             );
             for &src in sources.iter() {
-                ctx.node_note(src, format!("This is a source {}", ctx.describe_node(src)));
+                ctx.node_note(src, format!("This is a source {}", src.describe(&ctx)));
             }
             for &src in targets.iter() {
-                ctx.node_note(src, format!("This is a target {}", ctx.describe_node(src)));
+                ctx.node_note(src, format!("This is a target {}", src.describe(&ctx)));
             }
         });
         Ok(())
@@ -254,10 +254,10 @@ fn markers_on_generic_calls() -> Result<()> {
                 expect_connect
             );
             for &src in sources.iter() {
-                ctx.node_note(src, format!("This is a source {}", ctx.describe_node(src)));
+                ctx.node_note(src, format!("This is a source {}", src.describe(&ctx)));
             }
             for &src in targets.iter() {
-                ctx.node_note(src, format!("This is a target {}", ctx.describe_node(src)));
+                ctx.node_note(src, format!("This is a target {}", src.describe(&ctx)));
             }
         });
         Ok(())

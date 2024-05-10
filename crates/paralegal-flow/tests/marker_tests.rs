@@ -27,7 +27,7 @@ define_test!(use_wrapper: ctrl -> {
     println!("{:?}", &ctrl.graph().desc.type_info);
     let tp = cs.output().as_singles().any(|n|
         dbg!(ctrl.types_for(n.node())).iter().any(|t|
-            dbg!(&ctrl.graph().desc.type_info[t].rendering) == "Wrapper"
+            ctrl.graph().desc.type_info[t].rendering.contains("::Wrapper")
         )
     );
     assert!(tp, "Type not found on method");

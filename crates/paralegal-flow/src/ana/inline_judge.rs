@@ -42,10 +42,7 @@ impl<'tcx> InlineJudge<'tcx> {
             InliningDepth::Adaptive => self
                 .marker_ctx
                 .has_transitive_reachable_markers(marker_target),
-            InliningDepth::Fixed(limit) => {
-                debug_assert!(!info.call_string.is_empty());
-                info.call_string.len() <= *limit as usize
-            }
+            InliningDepth::Shallow => false,
             InliningDepth::Unconstrained => true,
         }
     }

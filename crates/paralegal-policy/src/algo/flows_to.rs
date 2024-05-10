@@ -70,6 +70,9 @@ impl CtrlFlowsTo {
 
 use petgraph::visit::{Bfs, GraphBase, Visitable, Walker, WalkerIter};
 
+#[cfg(test)]
+use crate::NodeQueries;
+
 /// An [`Iterator`] over the [`SPDGNode`]s from the given src in
 /// the transitive closure of data and control flow of the given [`SPDG`].
 pub struct DataAndControlInfluencees<'a> {
@@ -117,11 +120,11 @@ fn test_data_flows_to() {
     let src = ctx.controller_argument(controller, 0).unwrap();
     let sink1 = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
     let sink2 = crate::test_utils::get_sink_node(&ctx, controller, "sink2");
-    assert!(ctx.flows_to(src, &sink1, EdgeSelection::Data));
-    assert!(!ctx.flows_to(src, &sink2, EdgeSelection::Data));
+    assert!(src.flows_to(&sink1, &ctx, EdgeSelection::Data));
+    assert!(!src.flows_to(&sink2, &ctx, EdgeSelection::Data));
 }
 
-/// TODO: Make this test more stable. The use if `nth_successor` whould be
+/// TODO: Make this test more stable. The use if `nth_successor` would be
 /// replaced by something more robust.
 #[test]
 fn test_ctrl_flows_to() {
@@ -137,15 +140,11 @@ fn test_ctrl_flows_to() {
     let cs2 = crate::test_utils::get_callsite_node(&ctx, controller, "sink2");
     let switch_int_after_src_a = ctx.nth_successors(2, src_a);
     let switch_int_after_src_c = ctx.nth_successors(2, src_c);
-    assert!(ctx.flows_to(&switch_int_after_src_a, &cs1, EdgeSelection::Control));
-    assert!(ctx.flows_to(&switch_int_after_src_c, &cs2, EdgeSelection::Control));
-    assert!(ctx.flows_to(
-        dbg!(&switch_int_after_src_a),
-        dbg!(&cs2),
-        EdgeSelection::Control
-    ));
-    assert!(!ctx.flows_to(src_b, &cs1, EdgeSelection::Control));
-    assert!(!ctx.flows_to(src_b, &cs2, EdgeSelection::Control));
+    assert!(switch_int_after_src_a.flows_to(&cs1, &ctx, EdgeSelection::Control));
+    assert!(switch_int_after_src_c.flows_to(&cs2, &ctx, EdgeSelection::Control));
+    assert!(switch_int_after_src_a.flows_to(&cs2, &ctx, EdgeSelection::Control));
+    assert!(!src_b.flows_to(&cs1, &ctx, EdgeSelection::Control));
+    assert!(!src_b.flows_to(&cs2, &ctx, EdgeSelection::Control));
 }
 
 #[test]
@@ -160,9 +159,9 @@ fn test_flows_to() {
     let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
     let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
     // a flows to the sink1 callsite (by ctrl flow)
-    assert!(ctx.flows_to(src_a, &cs, EdgeSelection::Both));
-    assert!(!ctx.flows_to(src_a, &cs, EdgeSelection::Data));
+    assert!(src_a.flows_to(&cs, &ctx, EdgeSelection::Both));
+    assert!(!src_a.flows_to(&cs, &ctx, EdgeSelection::Data));
     // b flows to the sink1 datasink (by data flow)
-    assert!(ctx.flows_to(src_b, &sink, EdgeSelection::Both));
-    assert!(ctx.flows_to(src_b, &sink, EdgeSelection::Data));
+    assert!(src_b.flows_to(&sink, &ctx, EdgeSelection::Both));
+    assert!(src_b.flows_to(&sink, &ctx, EdgeSelection::Data));
 }

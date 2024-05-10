@@ -95,18 +95,18 @@ impl<'tcx> PdgParams<'tcx> {
     /// ```
     /// # #![feature(rustc_private)]
     /// # extern crate rustc_middle;
-    /// # use flowistry_pdg_construction::{PdgParams, SkipCall, CallChanges};
+    /// # use flowistry_pdg_construction::{PdgParams, SkipCall, CallChanges, CallChangeCallbackFn};
     /// # use rustc_middle::ty::TyCtxt;
     /// # const THRESHOLD: usize = 5;
     /// # fn f<'tcx>(tcx: TyCtxt<'tcx>, params: PdgParams<'tcx>) -> PdgParams<'tcx> {
-    /// params.with_call_change_callback(|info| {
+    /// params.with_call_change_callback(CallChangeCallbackFn::new(|info| {
     ///   let skip = if info.call_string.len() > THRESHOLD {
     ///     SkipCall::Skip
     ///   } else {
     ///     SkipCall::NoSkip
     ///   };
     ///   CallChanges::default().with_skip(skip)
-    /// })
+    /// }))
     /// # }
     /// ```
     pub fn with_call_change_callback(self, f: impl CallChangeCallback<'tcx> + 'tcx) -> Self {
@@ -126,12 +126,11 @@ impl<C> DebugWithContext<C> for InstructionState<'_> {}
 
 impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        let b3 = utils::hashmap_join(
+        utils::hashmap_join(
             &mut self.last_mutation,
             &other.last_mutation,
             utils::hashset_join,
-        );
-        b3
+        )
     }
 }
 
@@ -560,7 +559,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             .root
             .try_monomorphize(tcx, param_env, &body_with_facts.body);
 
-        if params.dump_mir || log_enabled!(log::Level::Trace) {
+        if params.dump_mir {
             use std::io::Write;
             let path = tcx.def_path_str(def_id) + ".mir";
             let mut f = std::fs::File::create(path.as_str()).unwrap();

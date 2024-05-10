@@ -18,3 +18,4 @@ flow-graph.json
 *.flowistry-pdg.pdf
 
 *.mir
+*.o

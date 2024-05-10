@@ -20,7 +20,7 @@ use crate::{
 };
 use crate::{Diagnostics, NodeExt};
 
-/// Statistics about the result of running [`Context::always_happens_before`]
+/// Statistics about the result of running [`crate::Context::always_happens_before`]
 /// that are useful to understand how the property failed.
 ///
 /// The [`std::fmt::Display`] implementation presents the information in human
@@ -350,12 +350,12 @@ fn test_happens_before() -> Result<()> {
     };
     let start = ctx
         .all_nodes_for_ctrl(ctrl_name)
-        .filter(|n| ctx.has_marker(start_marker, *n))
+        .filter(|n| n.has_marker(&ctx, start_marker))
         .collect::<Vec<_>>();
 
     let pass = ctx.always_happens_before(
         start,
-        |checkpoint| ctx.has_marker(bless_marker, checkpoint),
+        |checkpoint| checkpoint.has_marker(&ctx, bless_marker),
         is_terminal,
     )?;
 
@@ -366,8 +366,8 @@ fn test_happens_before() -> Result<()> {
 
     let fail = ctx.always_happens_before(
         ctx.all_nodes_for_ctrl(ctrl_name)
-            .filter(|n| ctx.has_marker(start_marker, *n)),
-        |check| ctx.has_marker(bless_marker, check),
+            .filter(|n| n.has_marker(&ctx, start_marker)),
+        |check| check.has_marker(&ctx, bless_marker),
         is_terminal,
     )?;
 

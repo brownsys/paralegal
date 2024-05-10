@@ -7,8 +7,8 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
+use crate::async_support::AsyncInfo;
 use crate::construct::CallKind;
-use crate::{async_support::AsyncInfo, utils};
 
 pub enum CallingConvention<'tcx, 'a> {
     Direct(&'a [Operand<'tcx>]),

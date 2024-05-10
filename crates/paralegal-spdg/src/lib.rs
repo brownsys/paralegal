@@ -93,7 +93,9 @@ mod ser_localdefid_map {
 pub struct MarkerAnnotation {
     /// The (unchanged) name of the marker as provided by the user
     pub marker: Identifier,
+    /// The annotation should apply to the return value
     pub on_return: bool,
+    /// The annotation should apply to these arguments
     pub on_argument: TinyBitSet,
 }
 
@@ -113,10 +115,6 @@ impl MarkerAnnotation {
     pub fn on_self(&self) -> bool {
         self.on_argument.is_empty() && !self.on_return
     }
-}
-
-fn const_false() -> bool {
-    false
 }
 
 #[cfg(feature = "rustc")]
@@ -353,7 +351,7 @@ pub struct ProgramDescription {
     /// for markers.
     pub seen_functions: u32,
     /// The lines of code corresponding to the functions from
-    /// [`dedup_functions::seen_functions`]. This is the sum of all
+    /// [`Self::seen_functions`]. This is the sum of all
     /// `analyzed_locs` of the controllers but deduplicated.
     pub seen_locs: u32,
     #[doc(hidden)]
@@ -672,6 +670,17 @@ pub mod node_cluster {
         }
     }
 
+    impl IntoIterator for NodeCluster {
+        type Item = GlobalNode;
+        type IntoIter = IntoIter;
+        fn into_iter(self) -> Self::IntoIter {
+            IntoIter {
+                idx: 0..self.nodes.len(),
+                inner: self,
+            }
+        }
+    }
+
     impl NodeCluster {
         /// Create a new cluster. This for internal use.
         pub fn new(controller_id: LocalDefId, nodes: impl IntoIterator<Item = Node>) -> Self {
@@ -696,14 +705,6 @@ pub mod node_cluster {
         /// Nodes in this cluster
         pub fn nodes(&self) -> &[Node] {
             &self.nodes
-        }
-
-        /// Move-iterate `self`
-        pub fn into_iter(self) -> IntoIter {
-            IntoIter {
-                idx: 0..self.nodes.len(),
-                inner: self,
-            }
         }
 
         /// Attempt to collect an iterator of nodes into a cluster
@@ -836,7 +837,7 @@ pub struct SPDGStats {
     /// MIR bodies without considering monomorphization
     pub unique_locs: u32,
     /// The number of unique functions that became part of the PDG. Corresponds
-    /// to [`Self::UniqueLoCs`].
+    /// to [`Self::unique_locs`].
     pub unique_functions: u32,
     /// The number of lines we ran through the PDG construction. This is higher
     /// than unique LoCs, because we need to analyze some functions multiple
@@ -845,7 +846,7 @@ pub struct SPDGStats {
     /// Number of functions that correspond to [`Self::analyzed_locs]`
     pub analyzed_functions: u32,
     /// How many times we inlined functions. This will be higher than
-    /// [`Self::AnalyzedFunction`] because sometimes the callee PDG is served
+    /// [`Self::analyzed_functions`] because sometimes the callee PDG is served
     /// from the cache.
     pub inlinings_performed: u32,
     /// How long it took to create this PDG

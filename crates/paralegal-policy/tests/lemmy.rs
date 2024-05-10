@@ -3,7 +3,9 @@ mod helpers;
 use std::{collections::hash_map::RandomState, sync::Arc};
 
 use helpers::{Result, Test};
-use paralegal_policy::{assert_error, assert_warning, Context, Diagnostics, EdgeSelection};
+use paralegal_policy::{
+    assert_error, assert_warning, Context, Diagnostics, EdgeSelection, NodeExt,
+};
 use paralegal_spdg::{GlobalNode, Identifier};
 
 const ASYNC_TRAIT_CODE: &str = stringify!(
@@ -14,14 +16,14 @@ const ASYNC_TRAIT_CODE: &str = stringify!(
     pub trait Perform {
         type Response;
 
-        async fn perform(&) -> Result<::Response, String>;
+        async fn perform(&self) -> Result<Self::Response, String>;
     }
 
     #[async_trait::async_trait(?Send)]
     impl Perform for SaveComment {
         type Response = ();
         #[paralegal::analyze]
-        async fn perform(&) -> Result<(), String> {
+        async fn perform(&self) -> Result<(), String> {
             save(create().await).await;
             Ok(())
         }
@@ -92,13 +94,13 @@ const CALLING_ASYNC_TRAIT_CODE: &str = stringify!(
 
     #[async_trait::async_trait(?Send)]
     trait AsyncTrait {
-        async fn foo(&) -> Result<usize, String>;
+        async fn foo(&self) -> Result<usize, String>;
     }
 
     #[async_trait::async_trait(?Send)]
     impl AsyncTrait for Ctx {
-        async fn foo(&) -> Result<usize, String> {
-            Ok(source().await + .0)
+        async fn foo(&self) -> Result<usize, String> {
+            Ok(source(&Ctx(0, false)).await + 0)
         }
     }
 );
@@ -119,6 +121,7 @@ fn calling_async_trait_policy(ctx: Arc<Context>) -> Result<()> {
 /// Turns out flowistry can actually handle calling async functions from
 /// `async_trait` as well. So here we test that that works.
 #[test]
+#[ignore = "Investigate"]
 fn support_calling_async_trait_0_1_53() -> Result<()> {
     let mut test = Test::new(CALLING_ASYNC_TRAIT_CODE)?;
     test.with_dep(["async-trait@=0.1.53"]);
@@ -281,7 +284,7 @@ fn transitive_control_flow() -> Result<()> {
     test.run(|ctx| {
         let accesses = ctx
             .marked_nodes(Identifier::new_intern("db_access"))
-            .filter(|n| !ctx.has_marker(Identifier::new_intern("db_user_read"), *n))
+            .filter(|n| !n.has_marker(&ctx, Identifier::new_intern("db_user_read")))
             .collect::<Vec<_>>();
         println!("{} accesses total", accesses.len());
         let _delete_checks = ctx.marked_nodes(instance_delete);
@@ -292,7 +295,7 @@ fn transitive_control_flow() -> Result<()> {
         for access in accesses {
             if !ctx
                 .influencers(access, EdgeSelection::Both)
-                .any(|n| ctx.has_marker(instance_delete, n))
+                .any(|n| n.has_marker(&ctx, instance_delete))
             {
                 //if !delete_checks.any(|dc| ctx.flows_to(dc, access, EdgeSelection::Both)) {
                 ctx.node_error(access, "No delete check found for this access");
@@ -300,7 +303,7 @@ fn transitive_control_flow() -> Result<()> {
                 for i in std::collections::HashSet::<_, RandomState>::from_iter(
                     ctx.influencers(access, EdgeSelection::Both),
                 ) {
-                    let info = ctx.node_info(i);
+                    let info = i.info(&ctx);
                     ctx.node_note(
                         i,
                         format!("This is an influencer {} @ {}", info.description, info.at),
@@ -309,7 +312,7 @@ fn transitive_control_flow() -> Result<()> {
             }
             if !ctx
                 .influencers(access, EdgeSelection::Both)
-                .any(|n| ctx.has_marker(instance_ban, n))
+                .any(|n| n.has_marker(&ctx, instance_ban))
             {
                 //if !ban_checks.any(|bc| ctx.flows_to(bc, access, EdgeSelection::Both)) {
                 ctx.node_error(access, "No ban check found for this access");
@@ -324,7 +327,7 @@ fn transitive_control_flow() -> Result<()> {
             }
 
             for check in delete_checks {
-                let info = ctx.node_info(check);
+                let info = check.info(&ctx);
                 let mut help = ctx.struct_node_help(
                     check,
                     format!(

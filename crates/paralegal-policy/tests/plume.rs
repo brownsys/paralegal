@@ -4,7 +4,7 @@ use helpers::Test;
 
 use anyhow::Result;
 
-use paralegal_policy::{Diagnostics, EdgeSelection};
+use paralegal_policy::{Diagnostics, EdgeSelection, NodeExt};
 use paralegal_spdg::Identifier;
 
 macro_rules! marker {
@@ -60,7 +60,7 @@ fn notification_deletion() -> Result<()> {
         let found = ctx.all_controllers().find(|(deleter_id, ctrl)| {
             let delete_sinks = ctx
                 .all_nodes_for_ctrl(*deleter_id)
-                .filter(|n| ctx.has_marker(marker!(to_delete), *n))
+                .filter(|n| n.has_marker(&ctx, marker!(to_delete)))
                 .collect::<Vec<_>>();
             user_data_types.iter().all(|&t| {
                 let sources = ctx.srcs_with_type(*deleter_id, t).collect::<Vec<_>>();
@@ -78,7 +78,7 @@ fn notification_deletion() -> Result<()> {
                             src,
                             format!(
                                 "This is a source for that type {}",
-                                ctx.node_info(src).description
+                                src.info(&ctx).description
                             ),
                         );
                     }

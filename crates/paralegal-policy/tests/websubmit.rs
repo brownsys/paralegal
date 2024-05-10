@@ -1,7 +1,7 @@
 mod helpers;
 
 use helpers::{Result, Test};
-use paralegal_policy::{algo::ahb, loc, paralegal_spdg, Diagnostics, Marker};
+use paralegal_policy::{algo::ahb, loc, paralegal_spdg, Diagnostics, Marker, NodeExt, NodeQueries};
 use paralegal_spdg::traverse::EdgeSelection;
 macro_rules! marker {
     ($id:ident) => {
@@ -94,32 +94,33 @@ fn email_send_overtaint() -> Result<()> {
             let safe_scopes = cx
                 // All nodes marked "safe"
                 .all_nodes_for_ctrl(*c_id)
-                .filter(|n| cx.has_marker(marker!(safe_source), *n))
+                .filter(|n| n.has_marker(&cx, marker!(safe_source)))
                 // And all nodes marked "safe_with_bless"
                 .chain(cx.all_nodes_for_ctrl(*c_id).filter(|node| {
-                    cx.has_marker(marker!(safe_source_with_bless), *node)
-                        && cx
+                    node.has_marker(&cx, marker!(safe_source_with_bless))
+                        && node
                             // That are influenced by a node marked "bless"
-                            .influencers(*node, EdgeSelection::Both)
-                            .any(|b| cx.has_marker(marker!(bless_safe_source), b))
+                            .influencers(&cx, EdgeSelection::Both)
+                            .into_iter()
+                            .any(|b| b.has_marker(&cx, marker!(bless_safe_source)))
                 }))
                 .collect::<Vec<_>>();
             let sinks = cx
                 .all_nodes_for_ctrl(*c_id)
-                .filter(|n| cx.has_marker(marker!(sink), *n))
+                .filter(|n| n.has_marker(&cx, marker!(sink)))
                 .collect::<Vec<_>>();
             let mut sensitives = cx
                 .all_nodes_for_ctrl(*c_id)
-                .filter(|node| cx.has_marker(marker!(sensitive), *node));
+                .filter(|node| node.has_marker(&cx, marker!(sensitive)));
 
             let some_failure = sensitives.any(|sens| {
                 sinks.iter().any(|sink| {
                     // sensitive flows to store implies
-                    if !cx.flows_to(sens, *sink, EdgeSelection::Data) {
+                    if !sens.flows_to(*sink, &cx, EdgeSelection::Data) {
                         return false;
                     }
 
-                    let call_sites = cx.consuming_call_sites(*sink).collect::<Box<[_]>>();
+                    let call_sites = sink.consuming_call_sites(&cx).collect::<Box<[_]>>();
                     let [cs] = call_sites.as_ref() else {
                         cx.node_error(
                             *sink,
@@ -137,7 +138,7 @@ fn email_send_overtaint() -> Result<()> {
                     // scopes for the store
                     let store_scopes = cx
                         .influencers(&sink_callsite, EdgeSelection::Data)
-                        .filter(|n| cx.has_marker(marker!(scopes), *n))
+                        .filter(|n| n.has_marker(&cx, marker!(scopes)))
                         .collect::<Vec<_>>();
                     if store_scopes.is_empty() {
                         cx.node_error(*sink, loc!("Did not find any scopes for this sink"));

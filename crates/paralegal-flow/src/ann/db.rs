@@ -332,7 +332,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     | Never
                     | Bound { .. }
                     | Error(_) => (),
-                    Adt(def, generics) => markers.extend(self.type_markers_for_adt(def, &generics)),
+                    Adt(def, generics) => markers.extend(self.type_markers_for_adt(def, generics)),
                     Tuple(tys) => {
                         markers.extend(tys.iter().flat_map(|ty| self.deep_type_markers(ty)))
                     }

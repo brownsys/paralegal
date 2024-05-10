@@ -1,6 +1,6 @@
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeExt, NodeQueries};
+use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeExt};
 use paralegal_spdg::{GlobalNode, Identifier};
 use std::sync::Arc;
 
