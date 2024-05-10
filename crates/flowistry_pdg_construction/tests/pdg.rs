@@ -9,15 +9,15 @@ use std::collections::HashSet;
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepGraph},
-    CallChangeCallbackFn, CallChanges, FakeEffect, FakeEffectKind, PdgParams, SkipCall,
+    CallChangeCallbackFn, CallChanges, PdgParams, SkipCall,
 };
 use itertools::Itertools;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
-    mir::{Local, Place, ProjectionElem, Terminator, TerminatorKind},
+    mir::{Terminator, TerminatorKind},
     ty::TyCtxt,
 };
-use rustc_utils::{mir::borrowck_facts, source_map::find_bodies::find_bodies, PlaceExt};
+use rustc_utils::{mir::borrowck_facts, source_map::find_bodies::find_bodies};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)
@@ -200,6 +200,23 @@ pdg_test! {
   (y -> z),
   (z -/> y),
   (z -/> x)
+}
+
+pdg_test! {
+  mut_arg_simple,
+  {
+    fn main() {
+      let g = 0;
+      let mut x = g;
+      let r = &mut x;
+      let y = 1;
+      *r += y;
+      let z = *r;
+    }
+  },
+  (x -> z),
+  (y -> z),
+  (g -> z)
 }
 
 pdg_test! {
@@ -649,42 +666,42 @@ pdg_test! {
   (x -fake/> z)
 }
 
-pdg_test! {
-  false_call_edges_modified,
-  {
-    fn fake(a: &mut i32, b: &i32) {}
+// pdg_test! {
+//   false_call_edges_modified,
+//   {
+//     fn fake(a: &mut i32, b: &i32) {}
 
-    fn main() {
-      let mut x = 0;
-      let y = 0;
-      fake(&mut x, &y);
-      let z = x;
-    }
-  },
-  |tcx, params| params.with_call_change_callback(
-    CallChangeCallbackFn::new(
-      move |info| {
-          let name = tcx.opt_item_name(info.callee.def_id());
-          if matches!(name.as_ref().map(|sym| sym.as_str()), Some("fake")) {
-              let fake_write = FakeEffect {
-                  place: Place::make(Local::from_usize(1), &[ProjectionElem::Deref], tcx),
-                  kind: FakeEffectKind::Write,
-              };
-              let fake_read = FakeEffect {
-                  place: Place::make(Local::from_usize(2), &[ProjectionElem::Deref], tcx),
-                  kind: FakeEffectKind::Read,
-              };
-              let fake_effects = vec![fake_write, fake_read];
-              CallChanges::default().with_fake_effects(fake_effects)
-          } else {
-              CallChanges::default()
-          }
-      },
-    )
-  ),
-  (x -fake> z),
-  (y -fake> *b)
-}
+//     fn main() {
+//       let mut x = 0;
+//       let y = 0;
+//       fake(&mut x, &y);
+//       let z = x;
+//     }
+//   },
+//   |tcx, params| params.with_call_change_callback(
+//     CallChangeCallbackFn::new(
+//       move |info| {
+//           let name = tcx.opt_item_name(info.callee.def_id());
+//           if matches!(name.as_ref().map(|sym| sym.as_str()), Some("fake")) {
+//               let fake_write = FakeEffect {
+//                   place: Place::make(Local::from_usize(1), &[ProjectionElem::Deref], tcx),
+//                   kind: FakeEffectKind::Write,
+//               };
+//               let fake_read = FakeEffect {
+//                   place: Place::make(Local::from_usize(2), &[ProjectionElem::Deref], tcx),
+//                   kind: FakeEffectKind::Read,
+//               };
+//               let fake_effects = vec![fake_write, fake_read];
+//               CallChanges::default().with_fake_effects(fake_effects)
+//           } else {
+//               CallChanges::default()
+//           }
+//       },
+//     )
+//   ),
+//   (x -fake> z),
+//   (y -fake> *b)
+// }
 
 pdg_test! {
   clone,

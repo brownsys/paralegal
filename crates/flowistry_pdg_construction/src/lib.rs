@@ -18,10 +18,11 @@ pub use utils::FnResolution;
 use self::graph::DepGraph;
 pub use async_support::{determine_async, is_async_trait_fn, match_async_trait_assign};
 use construct::GraphConstructor;
-pub use construct::{
-    CallChangeCallback, CallChangeCallbackFn, CallChanges, CallInfo, FakeEffect, FakeEffectKind,
-    InlineMissReason, PdgParams, SkipCall,
+pub mod callback;
+pub use callback::{
+    CallChangeCallback, CallChangeCallbackFn, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
+pub use construct::PdgParams;
 pub use utils::{is_non_default_trait_method, try_resolve_function};
 
 mod async_support;

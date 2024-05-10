@@ -1,6 +1,9 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
+use thiserror::Error;
+
+use smallvec::SmallVec;
 
 use crate::{
     desc::Identifier,
@@ -26,9 +29,6 @@ use crate::{
 };
 pub use flowistry_pdg_construction::{is_non_default_trait_method, FnResolution};
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
-
-use smallvec::SmallVec;
-use thiserror::Error;
 
 use std::{cmp::Ordering, hash::Hash};
 
