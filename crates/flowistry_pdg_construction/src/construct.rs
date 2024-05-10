@@ -862,10 +862,7 @@ impl<'tcx> GraphConstructor<'tcx> {
     /// Special case behavior for calls to functions used in desugaring async functions.
     ///
     /// Ensures that functions like `Pin::new_unchecked` are not modularly-approximated.
-    fn can_approximate_async_functions(
-        &self,
-        def_id: DefId,
-    ) -> Option<fn(&Self, &mut dyn Visitor<'tcx>, &[Operand<'tcx>], Place<'tcx>, Location)> {
+    fn can_approximate_async_functions(&self, def_id: DefId) -> Option<ApproximationHandler<'tcx>> {
         let lang_items = self.tcx.lang_items();
         if Some(def_id) == lang_items.new_unchecked_fn() {
             Some(Self::approximate_new_unchecked)
@@ -1309,18 +1306,13 @@ pub enum CallKind<'tcx> {
     AsyncPoll(FnResolution<'tcx>, Location, Place<'tcx>),
 }
 
+type ApproximationHandler<'tcx> =
+    fn(&GraphConstructor<'tcx>, &mut dyn Visitor<'tcx>, &[Operand<'tcx>], Place<'tcx>, Location);
+
 enum CallHandling<'tcx, 'a> {
     ApproxAsyncFn,
     Ready(GraphConstructor<'tcx>, CallingConvention<'tcx, 'a>),
-    ApproxAsyncSM(
-        fn(
-            &GraphConstructor<'tcx>,
-            &mut dyn Visitor<'tcx>,
-            &[Operand<'tcx>],
-            Place<'tcx>,
-            Location,
-        ),
-    ),
+    ApproxAsyncSM(ApproximationHandler<'tcx>),
 }
 
 struct DfAnalysis<'a, 'tcx>(&'a GraphConstructor<'tcx>);
