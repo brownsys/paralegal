@@ -22,7 +22,7 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df};
 use rustc_span::ErrorGuaranteed;
-use rustc_utils::cache::Cache;
+use rustc_utils::{cache::Cache, source_map::find_bodies::find_bodies};
 use rustc_utils::{
     mir::{borrowck_facts, control_dependencies::ControlDependencies},
     BodyExt, PlaceExt,
@@ -192,9 +192,12 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
             };
             let constructor = results.analysis.0;
 
-            let (child_constructor, calling_convention) =
+            let (child_descriptor, calling_convention) =
                 match constructor.determine_call_handling(location, func, args)? {
-                    CallHandling::Ready(one, two) => (one, two),
+                    CallHandling::Ready {
+                        calling_convention,
+                        descriptor,
+                    } => (descriptor, calling_convention),
                     CallHandling::ApproxAsyncFn => {
                         // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                         let rvalue = Rvalue::Aggregate(
@@ -220,12 +223,11 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                     }
                 };
 
-            let child_graph = child_constructor.construct_partial_cached();
-
-            let parentable_srcs =
-                child_graph.parentable_srcs(child_constructor.def_id, &child_constructor.body);
-            let parentable_dsts =
-                child_graph.parentable_dsts(child_constructor.def_id, &child_constructor.body);
+            let SubgraphDescriptor {
+                graph: child_graph,
+                parentable_srcs,
+                parentable_dsts,
+            } = &*child_descriptor;
 
             // For each source node CHILD that is parentable to PLACE,
             // add an edge from PLACE -> CHILD.
@@ -245,7 +247,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                         Inputs::Unresolved {
                             places: vec![(parent_place, None)],
                         },
-                        Either::Right(child_src),
+                        Either::Right(*child_src),
                         location,
                         TargetUse::Assign,
                     );
@@ -271,7 +273,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                         results,
                         state,
                         Inputs::Resolved {
-                            node: child_dst,
+                            node: *child_dst,
                             node_use: SourceUse::Operand,
                         },
                         Either::Left(parent_place),
@@ -335,7 +337,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
 
             if matches!(
                 constructor.determine_call_handling(location, func, args),
-                Some(CallHandling::Ready(_, _))
+                Some(CallHandling::Ready { .. })
             ) {
                 return;
             }
@@ -496,7 +498,7 @@ pub(crate) struct CallingContext<'tcx> {
     pub(crate) call_stack: Vec<DefId>,
 }
 
-type PdgCache<'tcx> = Rc<Cache<CallString, Rc<PartialGraph<'tcx>>>>;
+type PdgCache<'tcx> = Rc<Cache<CallString, Rc<SubgraphDescriptor<'tcx>>>>;
 
 pub struct GraphConstructor<'tcx> {
     pub(crate) tcx: TyCtxt<'tcx>,
@@ -1056,7 +1058,11 @@ impl<'tcx> GraphConstructor<'tcx> {
             self.async_info.clone(),
             &self.pdg_cache,
         );
-        Some(CallHandling::Ready(child_constructor, calling_convention))
+        let graph = child_constructor.construct_partial_cached();
+        Some(CallHandling::Ready {
+            descriptor: graph,
+            calling_convention,
+        })
     }
 
     /// Attempt to inline a call to a function, returning None if call is not inline-able.
@@ -1074,9 +1080,10 @@ impl<'tcx> GraphConstructor<'tcx> {
         let preamble = self.determine_call_handling(location, func, args)?;
 
         let (child_constructor, calling_convention) = match preamble {
-            CallHandling::Ready(child_constructor, calling_convention) => {
-                (child_constructor, calling_convention)
-            }
+            CallHandling::Ready {
+                descriptor,
+                calling_convention,
+            } => (descriptor, calling_convention),
             CallHandling::ApproxAsyncFn => {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
@@ -1099,10 +1106,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             }
         };
 
-        let child_graph = child_constructor.construct_partial_cached();
-
-        let parentable_dsts =
-            child_graph.parentable_dsts(child_constructor.def_id, &child_constructor.body);
+        let parentable_dsts = &child_constructor.parentable_dsts;
         let parent_body = &self.body;
         let translate_to_parent = |child: Place<'tcx>| -> Option<Place<'tcx>> {
             calling_convention.translate_to_parent(
@@ -1126,10 +1130,6 @@ impl<'tcx> GraphConstructor<'tcx> {
                 self.apply_mutation(state, location, parent_place);
             }
         }
-        trace!(
-            "  Inlined {}",
-            self.fmt_fn(child_constructor.def_id.to_def_id())
-        );
 
         Some(())
     }
@@ -1175,15 +1175,14 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
     }
 
-    fn construct_partial_cached(&self) -> Rc<PartialGraph<'tcx>> {
+    fn construct_partial_cached(&self) -> Rc<SubgraphDescriptor<'tcx>> {
         let key = self.make_call_string(RichLocation::Start);
-        let pdg = self
-            .pdg_cache
-            .get(key, move |_| Rc::new(self.construct_partial()));
-        Rc::clone(pdg)
+        self.pdg_cache
+            .get(key, move |_| Rc::new(self.construct_partial()))
+            .clone()
     }
 
-    pub(crate) fn construct_partial(&self) -> PartialGraph<'tcx> {
+    pub(crate) fn construct_partial(&self) -> SubgraphDescriptor<'tcx> {
         if let Some(g) = self.try_handle_as_async() {
             return g;
         }
@@ -1225,7 +1224,15 @@ impl<'tcx> GraphConstructor<'tcx> {
             }
         }
 
-        final_state
+        SubgraphDescriptor {
+            parentable_dsts: final_state
+                .parentable_dsts(self.def_id, &self.body)
+                .collect(),
+            parentable_srcs: final_state
+                .parentable_srcs(self.def_id, &self.body)
+                .collect(),
+            graph: final_state,
+        }
     }
 
     fn domain_to_petgraph(self, domain: &PartialGraph<'tcx>) -> DepGraph<'tcx> {
@@ -1252,7 +1259,7 @@ impl<'tcx> GraphConstructor<'tcx> {
 
     pub fn construct(self) -> DepGraph<'tcx> {
         let partial = self.construct_partial_cached();
-        self.domain_to_petgraph(&partial)
+        self.domain_to_petgraph(&partial.graph)
     }
 
     /// Determine the type of call-site.
@@ -1309,9 +1316,18 @@ pub enum CallKind<'tcx> {
 type ApproximationHandler<'tcx> =
     fn(&GraphConstructor<'tcx>, &mut dyn Visitor<'tcx>, &[Operand<'tcx>], Place<'tcx>, Location);
 
+pub(crate) struct SubgraphDescriptor<'tcx> {
+    graph: PartialGraph<'tcx>,
+    parentable_srcs: Vec<(DepNode<'tcx>, Option<u8>)>,
+    parentable_dsts: Vec<(DepNode<'tcx>, Option<u8>)>,
+}
+
 enum CallHandling<'tcx, 'a> {
     ApproxAsyncFn,
-    Ready(GraphConstructor<'tcx>, CallingConvention<'tcx, 'a>),
+    Ready {
+        calling_convention: CallingConvention<'tcx, 'a>,
+        descriptor: Rc<SubgraphDescriptor<'tcx>>,
+    },
     ApproxAsyncSM(ApproximationHandler<'tcx>),
 }
 

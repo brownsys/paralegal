@@ -12,7 +12,7 @@ use rustc_middle::{
     ty::{GenericArgsRef, TyCtxt},
 };
 
-use crate::construct::{CallKind, PartialGraph};
+use crate::construct::{CallKind, PartialGraph, SubgraphDescriptor};
 
 use super::construct::GraphConstructor;
 use super::utils::{self, FnResolution};
@@ -167,7 +167,7 @@ pub enum AsyncDeterminationResult<T> {
 }
 
 impl<'tcx> GraphConstructor<'tcx> {
-    pub(crate) fn try_handle_as_async(&self) -> Option<PartialGraph<'tcx>> {
+    pub(crate) fn try_handle_as_async(&self) -> Option<SubgraphDescriptor<'tcx>> {
         let (generator_fn, location) = determine_async(self.tcx, self.def_id, &self.body)?;
 
         let calling_context = self.calling_context_for(generator_fn.def_id(), location);
