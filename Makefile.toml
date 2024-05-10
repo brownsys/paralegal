@@ -24,7 +24,7 @@ args = ["install", "--locked", "--path", "crates/paralegal-flow"]
 
 [tasks.pdg-tests]
 description = "The suite of synthetic tests for the PDG and the policy framweork."
-dependencies = ["analyzer-tests", "policy-framework-tests", "guide-project"]
+dependencies = ["cargo-tests", "policy-framework-tests", "guide-project"]
 
 [tasks.check-all]
 description = "Perform all formatting-like checks. This is the same set that runs in the CI."
@@ -47,30 +47,10 @@ stage them and rerun the script until no more errors occur.
 """
 dependencies = ["format-all", "clippy-all"]
 
-[tasks.analyzer-tests]
+[tasks.cargo-tests]
 description = "Low-level tests for the PDG emitted by the analyzer specifically."
 command = "cargo"
-args = [
-    "test",
-    "-p",
-    "paralegal-flow",
-    "--test",
-    "non_transitive_graph_tests",
-    "--test",
-    "call_chain_analysis_tests",
-    "--test",
-    "control_flow_tests",
-    "--test",
-    "new_alias_analysis_tests",
-    "--test",
-    "async_tests",
-    "--no-fail-fast",
-]
-
-[tasks.policy-framework-tests]
-description = "Tests related to the correctness of the policy framework."
-command = "cargo"
-args = ["test", "-p", "paralegal-policy", "--lib"]
+args = ["test"]
 
 [tasks.guide-project]
 description = "Build and run the policy from the guide."
