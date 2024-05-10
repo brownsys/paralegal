@@ -22,9 +22,9 @@ default_to_workspace = false
 command = "cargo"
 args = ["install", "--locked", "--path", "crates/paralegal-flow"]
 
-[tasks.pdg-tests]
-description = "The suite of synthetic tests for the PDG and the policy framweork."
-dependencies = ["cargo-tests", "policy-framework-tests", "guide-project"]
+[tasks.ci-tests]
+description = "The suite of tests we run in CI"
+dependencies = ["cargo-tests", "guide-project"]
 
 [tasks.check-all]
 description = "Perform all formatting-like checks. This is the same set that runs in the CI."
