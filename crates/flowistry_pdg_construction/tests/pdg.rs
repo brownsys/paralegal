@@ -39,8 +39,8 @@ fn pdg(
     rustc_utils::test_utils::compile(input, move |tcx| {
         let def_id = get_main(tcx);
         let mut memo = MemoPdgConstructor::new(tcx);
-        let params = configure(tcx, &mut memo);
-        let pdg = memo.construct_graph(def_id);
+        configure(tcx, &mut memo);
+        let pdg = memo.construct_graph(def_id).unwrap();
         tests(tcx, pdg)
     })
 }
@@ -167,7 +167,7 @@ macro_rules! pdg_constraint {
 
 macro_rules! pdg_test {
   ($name:ident, { $($i:item)* }, $($cs:tt),*) => {
-    pdg_test!($name, { $($i)* }, |_, params| (), $($cs),*);
+    pdg_test!($name, { $($i)* }, |_, _| (), $($cs),*);
   };
   ($name:ident, { $($i:item)* }, $e:expr, $($cs:tt),*) => {
     #[test]

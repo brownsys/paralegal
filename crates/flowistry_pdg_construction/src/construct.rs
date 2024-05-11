@@ -22,8 +22,8 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df};
 use rustc_span::ErrorGuaranteed;
-use rustc_utils::{cache::Cache, source_map::find_bodies::find_bodies};
 use rustc_utils::{
+    cache::Cache,
     mir::{borrowck_facts, control_dependencies::ControlDependencies},
     BodyExt, PlaceExt,
 };
@@ -35,12 +35,13 @@ use super::utils::{self, FnResolution};
 use crate::{
     graph::{SourceUse, TargetUse},
     mutation::Time,
+    try_resolve_function,
     utils::{is_non_default_trait_method, manufacture_substs_for},
     InlineMissReason, SkipCall,
 };
 use crate::{
     mutation::{ModularMutationVisitor, Mutation},
-    try_resolve_function, CallChangeCallback, CallChanges, CallInfo,
+    CallChangeCallback, CallChanges, CallInfo,
 };
 
 pub struct MemoPdgConstructor<'tcx> {
@@ -86,10 +87,18 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             .map(Rc::clone)
     }
 
-    pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
-        self.construct_for(FnResolution::Partial(function.to_def_id()))
+    pub fn construct_graph(&self, function: LocalDefId) -> Result<DepGraph<'tcx>, ErrorGuaranteed> {
+        let args = manufacture_substs_for(self.tcx, function)?;
+        let g = self
+            .construct_for(try_resolve_function(
+                self.tcx,
+                function.to_def_id(),
+                ParamEnv::reveal_all(),
+                args,
+            ))
             .unwrap()
-            .to_petgraph()
+            .to_petgraph();
+        Ok(g)
     }
 }
 
@@ -485,12 +494,6 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-pub(crate) struct CallingContext<'tcx> {
-    pub(crate) call_string: CallString,
-    pub(crate) param_env: ParamEnv<'tcx>,
-    pub(crate) call_stack: Vec<DefId>,
-}
-
 type PdgCache<'tcx> = Rc<Cache<FnResolution<'tcx>, Rc<SubgraphDescriptor<'tcx>>>>;
 
 pub struct GraphConstructor<'tcx, 'a> {
@@ -563,14 +566,6 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             start_loc,
             def_id,
             body_assignments,
-        }
-    }
-
-    /// Creates a [`GlobalLocation`] at the current function.
-    fn make_global_loc(&self, location: impl Into<RichLocation>) -> GlobalLocation {
-        GlobalLocation {
-            function: self.def_id,
-            location: location.into(),
         }
     }
 

@@ -826,8 +826,6 @@ pub struct SPDG {
     /// that this contains multiple types for a single node, because it hold
     /// top-level types and subtypes that may be marked.
     pub type_assigns: HashMap<Node, Types>,
-    /// Statistics
-    pub statistics: SPDGStats,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

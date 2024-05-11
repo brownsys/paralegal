@@ -13,17 +13,12 @@ use flowistry_pdg::SourceUse;
 use paralegal_spdg::{Node, SPDGStats};
 use rustc_utils::cache::Cache;
 
-use std::{
-    cell::RefCell,
-    fmt::Display,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, fmt::Display, rc::Rc, time::Instant};
 
 use self::call_string_resolver::CallStringResolver;
 
 use super::{default_index, path_for_item, src_loc_for_span, SPDGGenerator};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use either::Either;
 use flowistry_pdg_construction::{
     determine_async,
@@ -65,7 +60,6 @@ pub struct GraphConverter<'tcx, 'a, C> {
     spdg: SPDGImpl,
     marker_assignments: HashMap<Node, HashSet<Identifier>>,
     call_string_resolver: call_string_resolver::CallStringResolver<'tcx>,
-    stats: SPDGStats,
     place_info_cache: PlaceInfoCache<'tcx>,
 }
 
@@ -81,7 +75,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) -> Result<Self> {
         let local_def_id = target.def_id.expect_local();
         let start = Instant::now();
-        let (dep_graph, stats) = Self::create_flowistry_graph(generator, local_def_id)?;
+        let dep_graph = Self::create_flowistry_graph(generator, local_def_id)?;
         generator
             .stats
             .record_timed(TimedStat::Flowistry, start.elapsed());
@@ -104,7 +98,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             spdg: Default::default(),
             marker_assignments: Default::default(),
             call_string_resolver: CallStringResolver::new(generator.tcx, local_def_id),
-            stats,
             place_info_cache,
         })
     }
@@ -368,27 +361,12 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn create_flowistry_graph(
         generator: &SPDGGenerator<'tcx>,
         local_def_id: LocalDefId,
-    ) -> Result<(DepGraph<'tcx>, SPDGStats)> {
+    ) -> Result<DepGraph<'tcx>> {
         let tcx = generator.tcx;
         let opts = generator.opts;
-        let stat_wrap = Rc::new(RefCell::new((
-            SPDGStats {
-                unique_functions: 0,
-                unique_locs: 0,
-                analyzed_functions: 0,
-                analyzed_locs: 0,
-                inlinings_performed: 0,
-                construction_time: Duration::ZERO,
-                conversion_time: Duration::ZERO,
-            },
-            Default::default(),
-        )));
         // TODO: I don't like that I have to do that here. Clean this up
         let target = determine_async(tcx, local_def_id, &tcx.body_for_def_id(local_def_id)?.body)
             .map_or(local_def_id, |res| res.0.def_id().expect_local());
-        // Make sure we count outselves
-        record_inlining(&stat_wrap, tcx, target, false);
-        let stat_wrap_copy = stat_wrap.clone();
 
         if opts.dbg().dump_mir() {
             let mut file = std::fs::File::create(format!(
@@ -404,14 +382,11 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 &mut file,
             )?
         }
-        let flowistry_time = Instant::now();
-        let pdg = generator
-            .flowistry_constructor
-            .construct_graph(local_def_id);
-        let (mut stats, _) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
-        stats.construction_time = flowistry_time.elapsed();
+        let Ok(pdg) = generator.flowistry_constructor.construct_graph(target) else {
+            bail!("Failed to construct the graph");
+        };
 
-        Ok((pdg, stats))
+        Ok(pdg)
     }
 
     /// Consume the generator and compile the [`SPDG`].
@@ -423,7 +398,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         self.generator
             .stats
             .record_timed(TimedStat::Conversion, start.elapsed());
-        self.stats.conversion_time = start.elapsed();
         SPDG {
             path: path_for_item(self.local_def_id.to_def_id(), self.tcx()),
             graph: self.spdg,
@@ -441,7 +415,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 .into_iter()
                 .map(|(k, v)| (k, Types(v.into())))
                 .collect(),
-            statistics: self.stats,
         }
     }
 

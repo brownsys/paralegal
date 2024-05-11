@@ -257,6 +257,7 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     }
 }
 
+#[allow(unused)]
 pub fn manufacture_substs_for(
     tcx: TyCtxt<'_>,
     function: LocalDefId,
