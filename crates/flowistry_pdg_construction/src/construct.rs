@@ -43,77 +43,53 @@ use crate::{
     try_resolve_function, CallChangeCallback, CallChanges, CallInfo,
 };
 
-/// Top-level parameters to PDG construction.
-#[derive(Clone)]
-pub struct PdgParams<'tcx> {
-    tcx: TyCtxt<'tcx>,
-    root: FnResolution<'tcx>,
-    call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
-    dump_mir: bool,
+pub struct MemoPdgConstructor<'tcx> {
+    pub(crate) tcx: TyCtxt<'tcx>,
+    pub(crate) call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
+    pub(crate) dump_mir: bool,
+    pub(crate) async_info: Rc<AsyncInfo>,
+    pub(crate) pdg_cache: PdgCache<'tcx>,
 }
 
-impl<'tcx> PdgParams<'tcx> {
-    /// Must provide the [`TyCtxt`] and the [`LocalDefId`] of the function that is the root of the PDG.
-    pub fn new(tcx: TyCtxt<'tcx>, root: LocalDefId) -> Result<Self, ErrorGuaranteed> {
-        let root = try_resolve_function(
+impl<'tcx> MemoPdgConstructor<'tcx> {
+    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self {
             tcx,
-            root.to_def_id(),
-            tcx.param_env_reveal_all_normalized(root),
-            manufacture_substs_for(tcx, root)?,
-        );
-        Ok(PdgParams {
-            tcx,
-            root,
             call_change_callback: None,
             dump_mir: false,
-        })
+            async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
+            pdg_cache: Default::default(),
+        }
     }
 
-    pub fn with_dump_mir(mut self, dump_mir: bool) -> Self {
+    pub fn with_dump_mir(&mut self, dump_mir: bool) -> &mut Self {
         self.dump_mir = dump_mir;
         self
     }
 
-    /// Provide a callback for changing the behavior of how the PDG generator manages function calls.
-    ///
-    /// Currently, this callback can either indicate that a function call should be skipped (i.e., not recursed into),
-    /// or indicate that a set of fake effects should occur at the function call. See [`CallChanges`] for details.
-    ///
-    /// For example, in this code:
-    ///
-    /// ```
-    /// fn incr(x: i32) -> i32 { x + 1 }
-    /// fn main() {
-    ///   let a = 0;
-    ///   let b = incr(a);
-    /// }
-    /// ```
-    ///
-    /// When inspecting the call `incr(a)`, the callback will be called with `f({callee: incr, call_string: [main]})`.
-    /// You could apply a hard limit on call string length like this:
-    ///
-    /// ```
-    /// # #![feature(rustc_private)]
-    /// # extern crate rustc_middle;
-    /// # use flowistry_pdg_construction::{PdgParams, SkipCall, CallChanges, CallChangeCallbackFn};
-    /// # use rustc_middle::ty::TyCtxt;
-    /// # const THRESHOLD: usize = 5;
-    /// # fn f<'tcx>(tcx: TyCtxt<'tcx>, params: PdgParams<'tcx>) -> PdgParams<'tcx> {
-    /// params.with_call_change_callback(CallChangeCallbackFn::new(|info| {
-    ///   let skip = if info.call_string.len() > THRESHOLD {
-    ///     SkipCall::Skip
-    ///   } else {
-    ///     SkipCall::NoSkip
-    ///   };
-    ///   CallChanges::default().with_skip(skip)
-    /// }))
-    /// # }
-    /// ```
-    pub fn with_call_change_callback(self, f: impl CallChangeCallback<'tcx> + 'tcx) -> Self {
-        PdgParams {
-            call_change_callback: Some(Rc::new(f)),
-            ..self
-        }
+    pub fn with_call_change_callback(
+        &mut self,
+        callback: impl CallChangeCallback<'tcx> + 'tcx,
+    ) -> &mut Self {
+        self.call_change_callback.replace(Rc::new(callback));
+        self
+    }
+
+    pub(crate) fn construct_for(
+        &self,
+        resolution: FnResolution<'tcx>,
+    ) -> Option<Rc<SubgraphDescriptor<'tcx>>> {
+        self.pdg_cache
+            .get_maybe_recursive(resolution, |_| {
+                GraphConstructor::new(self, resolution).construct_partial()
+            })
+            .map(Rc::clone)
+    }
+
+    pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
+        self.construct_for(FnResolution::Partial(function.to_def_id()))
+            .unwrap()
+            .to_petgraph()
     }
 }
 
@@ -191,6 +167,15 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                 return None;
             };
             let constructor = results.analysis.0;
+            let gloc = GlobalLocation {
+                location: location.into(),
+                function: results.analysis.0.def_id,
+            };
+
+            let extend_node = |dep: DepNode<'tcx>| DepNode {
+                at: dep.at.push_front(gloc),
+                ..dep
+            };
 
             let (child_descriptor, calling_convention) =
                 match constructor.determine_call_handling(location, func, args)? {
@@ -235,8 +220,8 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
             for (child_src, _kind) in parentable_srcs {
                 if let Some(parent_place) = calling_convention.translate_to_parent(
                     child_src.place,
-                    &constructor.async_info,
-                    constructor.tcx,
+                    &constructor.async_info(),
+                    constructor.tcx(),
                     &constructor.body,
                     constructor.def_id.to_def_id(),
                     *destination,
@@ -247,7 +232,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                         Inputs::Unresolved {
                             places: vec![(parent_place, None)],
                         },
-                        Either::Right(*child_src),
+                        Either::Right(extend_node(*child_src)),
                         location,
                         TargetUse::Assign,
                     );
@@ -263,8 +248,8 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
             for (child_dst, kind) in parentable_dsts {
                 if let Some(parent_place) = calling_convention.translate_to_parent(
                     child_dst.place,
-                    &constructor.async_info,
-                    constructor.tcx,
+                    &constructor.async_info(),
+                    constructor.tcx(),
                     &constructor.body,
                     constructor.def_id.to_def_id(),
                     *destination,
@@ -273,7 +258,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                         results,
                         state,
                         Inputs::Resolved {
-                            node: *child_dst,
+                            node: extend_node(*child_dst),
                             node_use: SourceUse::Operand,
                         },
                         Either::Left(parent_place),
@@ -282,8 +267,15 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                     );
                 }
             }
-            self.nodes.extend(&child_graph.nodes);
-            self.edges.extend(&child_graph.edges);
+            self.nodes
+                .extend(child_graph.nodes.iter().copied().map(extend_node));
+            self.edges.extend(
+                child_graph
+                    .edges
+                    .iter()
+                    .copied()
+                    .map(|(n1, n2, e)| (extend_node(n1), extend_node(n2), e)),
+            );
             Some(())
         };
 
@@ -363,6 +355,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
         arg_vis.visit_terminator(terminator, location);
     }
 }
+
 fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: LocalDefId, body: &Body<'tcx>) -> Option<Option<u8>> {
     if node.at.leaf().function != def_id {
         return None;
@@ -379,7 +372,7 @@ fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: LocalDefId, body: &Body<'tcx>) -> 
 impl<'tcx> PartialGraph<'tcx> {
     fn modular_mutation_visitor<'a>(
         &'a mut self,
-        results: &'a Results<'tcx, DfAnalysis<'_, 'tcx>>,
+        results: &'a Results<'tcx, DfAnalysis<'a, 'tcx>>,
         state: &'a InstructionState<'tcx>,
     ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
         ModularMutationVisitor::new(&results.analysis.0.place_info, move |location, mutation| {
@@ -498,21 +491,18 @@ pub(crate) struct CallingContext<'tcx> {
     pub(crate) call_stack: Vec<DefId>,
 }
 
-type PdgCache<'tcx> = Rc<Cache<CallString, Rc<SubgraphDescriptor<'tcx>>>>;
+type PdgCache<'tcx> = Rc<Cache<FnResolution<'tcx>, Rc<SubgraphDescriptor<'tcx>>>>;
 
-pub struct GraphConstructor<'tcx> {
-    pub(crate) tcx: TyCtxt<'tcx>,
-    pub(crate) params: PdgParams<'tcx>,
+pub struct GraphConstructor<'tcx, 'a> {
+    pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
+    root: FnResolution<'tcx>,
     body_with_facts: &'tcx BodyWithBorrowckFacts<'tcx>,
     pub(crate) body: Cow<'tcx, Body<'tcx>>,
     pub(crate) def_id: LocalDefId,
     place_info: PlaceInfo<'tcx>,
     control_dependencies: ControlDependencies<BasicBlock>,
     pub(crate) body_assignments: utils::BodyAssignments,
-    pub(crate) calling_context: Option<CallingContext<'tcx>>,
     start_loc: FxHashSet<RichLocation>,
-    pub(crate) async_info: Rc<AsyncInfo>,
-    pub(crate) pdg_cache: PdgCache<'tcx>,
 }
 
 fn other_as_arg<'tcx>(place: Place<'tcx>, body: &Body<'tcx>) -> Option<u8> {
@@ -531,37 +521,23 @@ enum Inputs<'tcx> {
     },
 }
 
-impl<'tcx> GraphConstructor<'tcx> {
-    /// Creates a [`GraphConstructor`] at the root of the PDG.
-    pub fn root(params: PdgParams<'tcx>) -> Self {
-        let tcx = params.tcx;
-        GraphConstructor::new(
-            params,
-            None,
-            AsyncInfo::make(tcx).expect("async functions are not defined"),
-            &PdgCache::default(),
-        )
-    }
-
+impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
     /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution` in a given `calling_context`.
     pub(crate) fn new(
-        params: PdgParams<'tcx>,
-        calling_context: Option<CallingContext<'tcx>>,
-        async_info: Rc<AsyncInfo>,
-        pdg_cache: &PdgCache<'tcx>,
-    ) -> Self {
-        let tcx = params.tcx;
-        let def_id = params.root.def_id().expect_local();
+        memo: &'a MemoPdgConstructor<'tcx>,
+        root: FnResolution<'tcx>,
+    ) -> GraphConstructor<'tcx, 'a> {
+        let tcx = memo.tcx;
+        let def_id = root.def_id().expect_local();
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
-        let param_env = match &calling_context {
-            Some(cx) => cx.param_env,
-            None => ParamEnv::reveal_all(),
-        };
-        let body = params
-            .root
-            .try_monomorphize(tcx, param_env, &body_with_facts.body);
+        let param_env = ParamEnv::reveal_all();
+        // let param_env = match &calling_context {
+        //     Some(cx) => cx.param_env,
+        //     None => ParamEnv::reveal_all(),
+        // };
+        let body = root.try_monomorphize(tcx, param_env, &body_with_facts.body);
 
-        if params.dump_mir {
+        if memo.dump_mir {
             use std::io::Write;
             let path = tcx.def_path_str(def_id) + ".mir";
             let mut f = std::fs::File::create(path.as_str()).unwrap();
@@ -576,21 +552,17 @@ impl<'tcx> GraphConstructor<'tcx> {
         start_loc.insert(RichLocation::Start);
 
         let body_assignments = utils::find_body_assignments(&body);
-        let pdg_cache = Rc::clone(pdg_cache);
 
         GraphConstructor {
-            tcx,
-            params,
+            memo,
+            root,
             body_with_facts,
             body,
             place_info,
             control_dependencies,
             start_loc,
             def_id,
-            calling_context,
             body_assignments,
-            async_info,
-            pdg_cache,
         }
     }
 
@@ -602,48 +574,17 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
     }
 
-    pub(crate) fn calling_context_for(
-        &self,
-        call_stack_extension: DefId,
-        location: Location,
-    ) -> CallingContext<'tcx> {
-        CallingContext {
-            call_string: self.make_call_string(location),
-            param_env: self.tcx.param_env_reveal_all_normalized(self.def_id),
-            call_stack: match &self.calling_context {
-                Some(cx) => {
-                    let mut cx = cx.call_stack.clone();
-                    cx.push(call_stack_extension);
-                    cx
-                }
-                None => vec![],
-            },
-        }
-    }
-
-    pub(crate) fn pdg_params_for_call(&self, root: FnResolution<'tcx>) -> PdgParams<'tcx> {
-        PdgParams {
-            root,
-            ..self.params.clone()
-        }
-    }
-
-    /// Creates a [`CallString`] with the current function at the root,
-    /// with the rest of the string provided by the [`CallingContext`].
-    fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
-        let global_loc = self.make_global_loc(location);
-        match &self.calling_context {
-            Some(cx) => cx.call_string.push(global_loc),
-            None => CallString::single(global_loc),
-        }
-    }
-
     fn make_dep_node(
         &self,
         place: Place<'tcx>,
         location: impl Into<RichLocation>,
     ) -> DepNode<'tcx> {
-        DepNode::new(place, self.make_call_string(location), self.tcx, &self.body)
+        DepNode::new(
+            place,
+            self.make_call_string(location),
+            self.tcx(),
+            &self.body,
+        )
     }
 
     /// Returns all pairs of `(src, edge)`` such that the given `location` is control-dependent on `edge`
@@ -670,7 +611,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                         continue;
                     };
                     let at = self.make_call_string(ctrl_loc);
-                    let src = DepNode::new(ctrl_place, at, self.tcx, &self.body);
+                    let src = DepNode::new(ctrl_place, at, self.tcx(), &self.body);
                     let edge = DepEdge::control(at, SourceUse::Operand, TargetUse::Assign);
                     out.push((src, edge));
                 }
@@ -679,8 +620,23 @@ impl<'tcx> GraphConstructor<'tcx> {
         out
     }
 
+    fn call_change_callback(&self) -> Option<&dyn CallChangeCallback<'tcx>> {
+        self.memo.call_change_callback.as_ref().map(Rc::as_ref)
+    }
+
+    fn async_info(&self) -> &AsyncInfo {
+        &*self.memo.async_info
+    }
+
+    fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
+        CallString::single(GlobalLocation {
+            function: self.root.def_id().expect_local(),
+            location: location.into(),
+        })
+    }
+
     /// Returns the aliases of `place`. See [`PlaceInfo::aliases`] for details.
-    pub(crate) fn aliases(&self, place: Place<'tcx>) -> impl Iterator<Item = Place<'tcx>> + '_ {
+    pub(crate) fn aliases(&'a self, place: Place<'tcx>) -> impl Iterator<Item = Place<'tcx>> + 'a {
         // MASSIVE HACK ALERT:
         // The issue is that monomorphization erases regions, due to how it's implemented in rustc.
         // However, Flowistry's alias analysis uses regions to figure out aliases.
@@ -695,15 +651,19 @@ impl<'tcx> GraphConstructor<'tcx> {
         // This is a massive hack bc it's inefficient and I'm not certain that it's sound.
         let place_retyped = utils::retype_place(
             place,
-            self.tcx,
+            self.tcx(),
             &self.body_with_facts.body,
             self.def_id.to_def_id(),
         );
         self.place_info.aliases(place_retyped).iter().map(|alias| {
             let mut projection = alias.projection.to_vec();
             projection.extend(&place.projection[place_retyped.projection.len()..]);
-            Place::make(alias.local, &projection, self.tcx)
+            Place::make(alias.local, &projection, self.tcx())
         })
+    }
+
+    pub(crate) fn tcx(&self) -> TyCtxt<'tcx> {
+        self.memo.tcx
     }
 
     /// Returns all nodes `src` such that `src` is:
@@ -717,7 +677,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
             .refs_in_projection()
-            .map(|(place_ref, _)| Place::from_ref(place_ref, self.tcx));
+            .map(|(place_ref, _)| Place::from_ref(place_ref, self.tcx()));
         let inputs = iter::once(input).chain(provenance);
 
         inputs
@@ -743,8 +703,8 @@ impl<'tcx> GraphConstructor<'tcx> {
                             let mut place = *place;
                             if let Some((PlaceElem::Deref, rest)) = place.projection.split_last() {
                                 let mut new_place = place;
-                                new_place.projection = self.tcx.mk_place_elems(rest);
-                                if new_place.ty(self.body.as_ref(), self.tcx).ty.is_box() {
+                                new_place.projection = self.tcx().mk_place_elems(rest);
+                                if new_place.ty(self.body.as_ref(), self.tcx()).ty.is_box() {
                                     if new_place.is_indirect() {
                                         // TODO might be unsound: We assume that if
                                         // there are other indirections in here,
@@ -756,7 +716,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                                 }
                             }
                             places_conflict(
-                                self.tcx,
+                                self.tcx(),
                                 &self.body,
                                 place,
                                 alias,
@@ -781,7 +741,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                         last_mut_locs.iter().map(move |last_mut_loc| {
                             // Return <CONFLICT> @ <LAST_MUT_LOC> as an input node.
                             let at = self.make_call_string(*last_mut_loc);
-                            DepNode::new(conflict, at, self.tcx, &self.body)
+                            DepNode::new(conflict, at, self.tcx(), &self.body)
                         })
                     })
             })
@@ -808,7 +768,12 @@ impl<'tcx> GraphConstructor<'tcx> {
                 // Create a destination node for (DST @ CURRENT_LOC).
                 (
                     *dst,
-                    DepNode::new(*dst, self.make_call_string(location), self.tcx, &self.body),
+                    DepNode::new(
+                        *dst,
+                        self.make_call_string(location),
+                        self.tcx(),
+                        &self.body,
+                    ),
                 )
             })
             .collect()
@@ -843,10 +808,10 @@ impl<'tcx> GraphConstructor<'tcx> {
         let ty = match func {
             Operand::Constant(func) => func.literal.ty(),
             Operand::Copy(place) | Operand::Move(place) => {
-                place.ty(&self.body.local_decls, self.tcx).ty
+                place.ty(&self.body.local_decls, self.tcx()).ty
             }
         };
-        let ty = utils::ty_resolve(ty, self.tcx);
+        let ty = utils::ty_resolve(ty, self.tcx());
         match ty.kind() {
             TyKind::FnDef(def_id, generic_args) => Some((*def_id, generic_args)),
             TyKind::Generator(def_id, generic_args, _) => Some((*def_id, generic_args)),
@@ -858,19 +823,22 @@ impl<'tcx> GraphConstructor<'tcx> {
     }
 
     fn fmt_fn(&self, def_id: DefId) -> String {
-        self.tcx.def_path_str(def_id)
+        self.tcx().def_path_str(def_id)
     }
 
     /// Special case behavior for calls to functions used in desugaring async functions.
     ///
     /// Ensures that functions like `Pin::new_unchecked` are not modularly-approximated.
-    fn can_approximate_async_functions(&self, def_id: DefId) -> Option<ApproximationHandler<'tcx>> {
-        let lang_items = self.tcx.lang_items();
+    fn can_approximate_async_functions(
+        &self,
+        def_id: DefId,
+    ) -> Option<ApproximationHandler<'tcx, 'a>> {
+        let lang_items = self.tcx().lang_items();
         if Some(def_id) == lang_items.new_unchecked_fn() {
             Some(Self::approximate_new_unchecked)
         } else if Some(def_id) == lang_items.into_future_fn()
             // FIXME: better way to get retrieve this stdlib DefId?
-            || self.tcx.def_path_str(def_id) == "<F as std::future::IntoFuture>::into_future"
+            || self.tcx().def_path_str(def_id) == "<F as std::future::IntoFuture>::into_future"
         {
             Some(Self::approximate_into_future)
         } else {
@@ -899,13 +867,14 @@ impl<'tcx> GraphConstructor<'tcx> {
         destination: Place<'tcx>,
         location: Location,
     ) {
-        let lang_items = self.tcx.lang_items();
+        let lang_items = self.tcx().lang_items();
         let [op] = args else {
             unreachable!();
         };
         let mut operands = IndexVec::new();
         operands.push(op.clone());
-        let TyKind::Adt(adt_id, generics) = destination.ty(self.body.as_ref(), self.tcx).ty.kind()
+        let TyKind::Adt(adt_id, generics) =
+            destination.ty(self.body.as_ref(), self.tcx()).ty.kind()
         else {
             unreachable!()
         };
@@ -917,13 +886,13 @@ impl<'tcx> GraphConstructor<'tcx> {
         vis.visit_assign(&destination, &rvalue, location);
     }
 
-    fn determine_call_handling<'a>(
+    fn determine_call_handling<'b>(
         &self,
         location: Location,
         func: &Operand<'tcx>,
-        args: &'a [Operand<'tcx>],
-    ) -> Option<CallHandling<'tcx, 'a>> {
-        let tcx = self.tcx;
+        args: &'b [Operand<'tcx>],
+    ) -> Option<CallHandling<'tcx, 'b>> {
+        let tcx = self.tcx();
 
         let (called_def_id, generic_args) = self.operand_to_def_id(func)?;
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
@@ -931,7 +900,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         // Monomorphize the called function with the known generic_args.
         let param_env = tcx.param_env_reveal_all_normalized(self.def_id);
         let resolved_fn =
-            utils::try_resolve_function(self.tcx, called_def_id, param_env, generic_args);
+            utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args);
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
@@ -941,14 +910,6 @@ impl<'tcx> GraphConstructor<'tcx> {
         if is_non_default_trait_method(tcx, resolved_def_id).is_some() {
             trace!("  bailing because is unresolvable trait method");
             return None;
-        }
-
-        // Don't inline recursive calls.
-        if let Some(cx) = &self.calling_context {
-            if cx.call_stack.contains(&resolved_def_id) {
-                trace!("  Bailing due to recursive call");
-                return None;
-            }
         }
 
         if let Some(handler) = self.can_approximate_async_functions(resolved_def_id) {
@@ -966,12 +927,12 @@ impl<'tcx> GraphConstructor<'tcx> {
         let call_kind = match self.classify_call_kind(called_def_id, resolved_def_id, args) {
             Ok(cc) => cc,
             Err(async_err) => {
-                if let Some(cb) = self.params.call_change_callback.as_ref() {
+                if let Some(cb) = self.call_change_callback() {
                     cb.on_inline_miss(
                         resolved_fn,
                         location,
-                        self.params.root,
-                        self.calling_context.as_ref().map(|s| s.call_string),
+                        self.root,
+                        None,
                         InlineMissReason::Async(async_err),
                     )
                 }
@@ -991,21 +952,15 @@ impl<'tcx> GraphConstructor<'tcx> {
         );
 
         // Recursively generate the PDG for the child function.
-        let params = self.pdg_params_for_call(resolved_fn);
-        let calling_context = self.calling_context_for(resolved_def_id, location);
-        let call_string = calling_context.call_string;
 
-        let cache_key = call_string.push(GlobalLocation {
-            function: resolved_fn.def_id().expect_local(),
-            location: RichLocation::Start,
-        });
+        let cache_key = resolved_fn;
 
-        let is_cached = self.pdg_cache.is_in_cache(&cache_key);
+        let is_cached = self.memo.pdg_cache.is_in_cache(&cache_key);
 
-        let call_changes = self.params.call_change_callback.as_ref().map(|callback| {
+        let call_changes = self.call_change_callback().map(|callback| {
             let info = CallInfo {
                 callee: resolved_fn,
-                call_string,
+                call_string: self.make_call_string(location),
                 is_cached,
                 async_parent: if let CallKind::AsyncPoll(resolution, _loc, _) = call_kind {
                     // Special case for async. We ask for skipping not on the closure, but
@@ -1051,16 +1006,9 @@ impl<'tcx> GraphConstructor<'tcx> {
             trace!("  Bailing because user callback said to bail");
             return None;
         }
-
-        let child_constructor = GraphConstructor::new(
-            params,
-            Some(calling_context),
-            self.async_info.clone(),
-            &self.pdg_cache,
-        );
-        let graph = child_constructor.construct_partial_cached();
+        let descriptor = self.memo.construct_for(cache_key)?;
         Some(CallHandling::Ready {
-            descriptor: graph,
+            descriptor,
             calling_convention,
         })
     }
@@ -1111,8 +1059,8 @@ impl<'tcx> GraphConstructor<'tcx> {
         let translate_to_parent = |child: Place<'tcx>| -> Option<Place<'tcx>> {
             calling_convention.translate_to_parent(
                 child,
-                &self.async_info,
-                self.tcx,
+                &self.async_info(),
+                self.tcx(),
                 parent_body,
                 self.def_id.to_def_id(),
                 destination,
@@ -1134,10 +1082,10 @@ impl<'tcx> GraphConstructor<'tcx> {
         Some(())
     }
 
-    fn modular_mutation_visitor<'a>(
-        &'a self,
+    fn modular_mutation_visitor<'b: 'a>(
+        &'b self,
         state: &'a mut InstructionState<'tcx>,
-    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
+    ) -> ModularMutationVisitor<'b, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'b> {
         ModularMutationVisitor::new(
             &self.place_info,
             move |location, mutation: Mutation<'tcx>| {
@@ -1175,20 +1123,13 @@ impl<'tcx> GraphConstructor<'tcx> {
         }
     }
 
-    fn construct_partial_cached(&self) -> Rc<SubgraphDescriptor<'tcx>> {
-        let key = self.make_call_string(RichLocation::Start);
-        self.pdg_cache
-            .get(key, move |_| Rc::new(self.construct_partial()))
-            .clone()
-    }
-
-    pub(crate) fn construct_partial(&self) -> SubgraphDescriptor<'tcx> {
+    pub(crate) fn construct_partial(&self) -> Rc<SubgraphDescriptor<'tcx>> {
         if let Some(g) = self.try_handle_as_async() {
             return g;
         }
 
         let mut analysis = DfAnalysis(self)
-            .into_engine(self.tcx, &self.body)
+            .into_engine(self.tcx(), &self.body)
             .iterate_to_fixpoint();
 
         let mut final_state = PartialGraph::default();
@@ -1224,7 +1165,7 @@ impl<'tcx> GraphConstructor<'tcx> {
             }
         }
 
-        SubgraphDescriptor {
+        Rc::new(SubgraphDescriptor {
             parentable_dsts: final_state
                 .parentable_dsts(self.def_id, &self.body)
                 .collect(),
@@ -1232,10 +1173,77 @@ impl<'tcx> GraphConstructor<'tcx> {
                 .parentable_srcs(self.def_id, &self.body)
                 .collect(),
             graph: final_state,
+        })
+    }
+
+    /// Determine the type of call-site.
+    ///
+    /// The error case is if we tried to resolve this as async and failed. We
+    /// know it *is* async but we couldn't determine the information needed to
+    /// analyze the function, therefore we will have to approximate it.
+    fn classify_call_kind<'b>(
+        &'b self,
+        def_id: DefId,
+        resolved_def_id: DefId,
+        original_args: &'b [Operand<'tcx>],
+    ) -> Result<CallKind<'tcx>, String> {
+        match self.try_poll_call_kind(def_id, original_args) {
+            AsyncDeterminationResult::Resolved(r) => Ok(r),
+            AsyncDeterminationResult::NotAsync => Ok(self
+                .try_indirect_call_kind(resolved_def_id)
+                .unwrap_or(CallKind::Direct)),
+            AsyncDeterminationResult::Unresolvable(reason) => Err(reason),
         }
     }
 
-    fn domain_to_petgraph(self, domain: &PartialGraph<'tcx>) -> DepGraph<'tcx> {
+    fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
+        // let lang_items = self.tcx.lang_items();
+        // let my_impl = self.tcx.impl_of_method(def_id)?;
+        // let my_trait = self.tcx.trait_id_of_impl(my_impl)?;
+        // (Some(my_trait) == lang_items.fn_trait()
+        //     || Some(my_trait) == lang_items.fn_mut_trait()
+        //     || Some(my_trait) == lang_items.fn_once_trait())
+        // .then_some(CallKind::Indirect)
+        self.tcx().is_closure(def_id).then_some(CallKind::Indirect)
+    }
+
+    fn terminator_visitor<'b: 'a>(
+        &'b self,
+        state: &'b mut InstructionState<'tcx>,
+        time: Time,
+    ) -> ModularMutationVisitor<'b, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'b> {
+        let mut vis = self.modular_mutation_visitor(state);
+        vis.set_time(time);
+        vis
+    }
+}
+
+pub enum CallKind<'tcx> {
+    /// A standard function call like `f(x)`.
+    Direct,
+    /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
+    Indirect,
+    /// A poll to an async function, like `f.await`.
+    AsyncPoll(FnResolution<'tcx>, Location, Place<'tcx>),
+}
+
+type ApproximationHandler<'tcx, 'a> = fn(
+    &GraphConstructor<'tcx, 'a>,
+    &mut dyn Visitor<'tcx>,
+    &[Operand<'tcx>],
+    Place<'tcx>,
+    Location,
+);
+
+pub(crate) struct SubgraphDescriptor<'tcx> {
+    pub(crate) graph: PartialGraph<'tcx>,
+    pub(crate) parentable_srcs: Vec<(DepNode<'tcx>, Option<u8>)>,
+    pub(crate) parentable_dsts: Vec<(DepNode<'tcx>, Option<u8>)>,
+}
+
+impl<'tcx> SubgraphDescriptor<'tcx> {
+    pub(crate) fn to_petgraph(&self) -> DepGraph<'tcx> {
+        let domain = &self.graph;
         let mut graph: DiGraph<DepNode<'tcx>, DepEdge> = DiGraph::new();
         let mut nodes = FxHashMap::default();
         macro_rules! add_node {
@@ -1256,70 +1264,6 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         DepGraph::new(graph)
     }
-
-    pub fn construct(self) -> DepGraph<'tcx> {
-        let partial = self.construct_partial_cached();
-        self.domain_to_petgraph(&partial.graph)
-    }
-
-    /// Determine the type of call-site.
-    ///
-    /// The error case is if we tried to resolve this as async and failed. We
-    /// know it *is* async but we couldn't determine the information needed to
-    /// analyze the function, therefore we will have to approximate it.
-    fn classify_call_kind<'a>(
-        &'a self,
-        def_id: DefId,
-        resolved_def_id: DefId,
-        original_args: &'a [Operand<'tcx>],
-    ) -> Result<CallKind<'tcx>, String> {
-        match self.try_poll_call_kind(def_id, original_args) {
-            AsyncDeterminationResult::Resolved(r) => Ok(r),
-            AsyncDeterminationResult::NotAsync => Ok(self
-                .try_indirect_call_kind(resolved_def_id)
-                .unwrap_or(CallKind::Direct)),
-            AsyncDeterminationResult::Unresolvable(reason) => Err(reason),
-        }
-    }
-
-    fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
-        // let lang_items = self.tcx.lang_items();
-        // let my_impl = self.tcx.impl_of_method(def_id)?;
-        // let my_trait = self.tcx.trait_id_of_impl(my_impl)?;
-        // (Some(my_trait) == lang_items.fn_trait()
-        //     || Some(my_trait) == lang_items.fn_mut_trait()
-        //     || Some(my_trait) == lang_items.fn_once_trait())
-        // .then_some(CallKind::Indirect)
-        self.tcx.is_closure(def_id).then_some(CallKind::Indirect)
-    }
-
-    fn terminator_visitor<'a>(
-        &'a self,
-        state: &'a mut InstructionState<'tcx>,
-        time: Time,
-    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
-        let mut vis = self.modular_mutation_visitor(state);
-        vis.set_time(time);
-        vis
-    }
-}
-
-pub enum CallKind<'tcx> {
-    /// A standard function call like `f(x)`.
-    Direct,
-    /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
-    Indirect,
-    /// A poll to an async function, like `f.await`.
-    AsyncPoll(FnResolution<'tcx>, Location, Place<'tcx>),
-}
-
-type ApproximationHandler<'tcx> =
-    fn(&GraphConstructor<'tcx>, &mut dyn Visitor<'tcx>, &[Operand<'tcx>], Place<'tcx>, Location);
-
-pub(crate) struct SubgraphDescriptor<'tcx> {
-    graph: PartialGraph<'tcx>,
-    parentable_srcs: Vec<(DepNode<'tcx>, Option<u8>)>,
-    parentable_dsts: Vec<(DepNode<'tcx>, Option<u8>)>,
 }
 
 enum CallHandling<'tcx, 'a> {
@@ -1328,10 +1272,10 @@ enum CallHandling<'tcx, 'a> {
         calling_convention: CallingConvention<'tcx, 'a>,
         descriptor: Rc<SubgraphDescriptor<'tcx>>,
     },
-    ApproxAsyncSM(ApproximationHandler<'tcx>),
+    ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),
 }
 
-struct DfAnalysis<'a, 'tcx>(&'a GraphConstructor<'tcx>);
+struct DfAnalysis<'a, 'tcx>(&'a GraphConstructor<'tcx, 'a>);
 
 impl<'tcx> df::AnalysisDomain<'tcx> for DfAnalysis<'_, 'tcx> {
     type Domain = InstructionState<'tcx>;

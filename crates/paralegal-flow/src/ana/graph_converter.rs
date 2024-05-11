@@ -29,7 +29,7 @@ use flowistry_pdg_construction::{
     determine_async,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, match_async_trait_assign, CallChangeCallback, CallChanges, CallInfo,
-    InlineMissReason, PdgParams,
+    InlineMissReason,
     SkipCall::Skip,
 };
 use petgraph::{
@@ -389,15 +389,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // Make sure we count outselves
         record_inlining(&stat_wrap, tcx, target, false);
         let stat_wrap_copy = stat_wrap.clone();
-        let judge = generator.inline_judge.clone();
-        let params = PdgParams::new(tcx, local_def_id)
-            .map_err(|_| anyhow!("unable to contruct PDG for {local_def_id:?}"))?
-            .with_call_change_callback(MyCallback {
-                judge,
-                stat_wrap,
-                tcx,
-            })
-            .with_dump_mir(generator.opts.dbg().dump_mir());
 
         if opts.dbg().dump_mir() {
             let mut file = std::fs::File::create(format!(
@@ -414,7 +405,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             )?
         }
         let flowistry_time = Instant::now();
-        let pdg = flowistry_pdg_construction::compute_pdg(params);
+        let pdg = generator
+            .flowistry_constructor
+            .construct_graph(local_def_id);
         let (mut stats, _) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
         stats.construction_time = flowistry_time.elapsed();
 
@@ -568,10 +561,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 }
 
-struct MyCallback<'tcx> {
-    judge: InlineJudge<'tcx>,
-    stat_wrap: StatStracker,
-    tcx: TyCtxt<'tcx>,
+pub(super) struct MyCallback<'tcx> {
+    pub(super) judge: InlineJudge<'tcx>,
+    pub(super) stat_wrap: StatStracker,
+    pub(super) tcx: TyCtxt<'tcx>,
 }
 
 impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {

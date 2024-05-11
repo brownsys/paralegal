@@ -153,6 +153,10 @@ impl CallString {
         CallString::new(string)
     }
 
+    pub fn push_front(self, loc: GlobalLocation) -> Self {
+        CallString::new([loc].into_iter().chain(self.0.iter().copied()).collect())
+    }
+
     pub fn is_at_root(self) -> bool {
         self.0.len() == 1
     }

@@ -17,12 +17,12 @@ pub use utils::FnResolution;
 
 use self::graph::DepGraph;
 pub use async_support::{determine_async, is_async_trait_fn, match_async_trait_assign};
-use construct::GraphConstructor;
 pub mod callback;
+pub use crate::construct::MemoPdgConstructor;
 pub use callback::{
     CallChangeCallback, CallChangeCallbackFn, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
-pub use construct::PdgParams;
+use rustc_middle::ty::TyCtxt;
 pub use utils::{is_non_default_trait_method, try_resolve_function};
 
 mod async_support;
@@ -33,7 +33,7 @@ mod mutation;
 mod utils;
 
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.
-pub fn compute_pdg(params: PdgParams<'_>) -> DepGraph<'_> {
-    let constructor = GraphConstructor::root(params);
-    constructor.construct()
+pub fn compute_pdg<'tcx>(tcx: TyCtxt<'tcx>, params: FnResolution<'tcx>) -> DepGraph<'tcx> {
+    let constructor = MemoPdgConstructor::new(tcx);
+    constructor.construct_for(params).unwrap().to_petgraph()
 }

@@ -14,10 +14,13 @@ use crate::{
     DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 
-use std::time::Instant;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use either::Either;
+use flowistry_pdg_construction::MemoPdgConstructor;
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -38,6 +41,7 @@ pub struct SPDGGenerator<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     stats: Stats,
     place_info_cache: PlaceInfoCache<'tcx>,
+    flowistry_constructor: MemoPdgConstructor<'tcx>,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
@@ -47,12 +51,33 @@ impl<'tcx> SPDGGenerator<'tcx> {
         tcx: TyCtxt<'tcx>,
         stats: Stats,
     ) -> Self {
+        let mut flowistry_constructor = MemoPdgConstructor::new(tcx);
+        let stat_wrap = Rc::new(RefCell::new((
+            SPDGStats {
+                unique_functions: 0,
+                unique_locs: 0,
+                analyzed_functions: 0,
+                analyzed_locs: 0,
+                inlinings_performed: 0,
+                construction_time: Duration::ZERO,
+                conversion_time: Duration::ZERO,
+            },
+            Default::default(),
+        )));
+        flowistry_constructor
+            .with_call_change_callback(graph_converter::MyCallback {
+                judge: InlineJudge::new(marker_ctx.clone(), tcx, opts.anactrl()),
+                stat_wrap,
+                tcx,
+            })
+            .with_dump_mir(opts.dbg().dump_mir());
         Self {
             inline_judge: InlineJudge::new(marker_ctx, tcx, opts.anactrl()),
             opts,
             tcx,
             stats,
             place_info_cache: Default::default(),
+            flowistry_constructor,
         }
     }
 

@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepGraph},
-    CallChangeCallbackFn, CallChanges, PdgParams, SkipCall,
+    CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
 };
 use itertools::Itertools;
 use rustc_hir::def_id::LocalDefId;
@@ -32,14 +32,15 @@ fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
 
 fn pdg(
     input: impl Into<String>,
-    configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PdgParams<'tcx>) -> PdgParams<'tcx> + Send,
+    configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx>) + Send,
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
     rustc_utils::test_utils::compile(input, move |tcx| {
         let def_id = get_main(tcx);
-        let params = configure(tcx, PdgParams::new(tcx, def_id).unwrap());
-        let pdg = flowistry_pdg_construction::compute_pdg(params);
+        let mut memo = MemoPdgConstructor::new(tcx);
+        let params = configure(tcx, &mut memo);
+        let pdg = memo.construct_graph(def_id);
         tests(tcx, pdg)
     })
 }
@@ -166,7 +167,7 @@ macro_rules! pdg_constraint {
 
 macro_rules! pdg_test {
   ($name:ident, { $($i:item)* }, $($cs:tt),*) => {
-    pdg_test!($name, { $($i)* }, |_, params| params, $($cs),*);
+    pdg_test!($name, { $($i)* }, |_, params| (), $($cs),*);
   };
   ($name:ident, { $($i:item)* }, $e:expr, $($cs:tt),*) => {
     #[test]
@@ -610,7 +611,7 @@ pdg_test! {
     |_, params| {
         params.with_call_change_callback(CallChangeCallbackFn::new( move |_| {
             CallChanges::default().with_skip(SkipCall::Skip)
-        }))
+        }));
     },
     (recipients -/> sender)
 }
@@ -636,17 +637,19 @@ pdg_test! {
       nested_layer_one(&mut w, z);
     }
   },
-  |tcx, params| params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
-      let name = tcx.opt_item_name(info.callee.def_id());
-      let skip = if !matches!(name.as_ref().map(|sym| sym.as_str()), Some("no_inline"))
-          && info.call_string.len() < 2
-      {
-          SkipCall::NoSkip
-      } else {
-          SkipCall::Skip
-      };
-      CallChanges::default().with_skip(skip)
-  })),
+  |tcx, params| {
+      params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
+        let name = tcx.opt_item_name(info.callee.def_id());
+        let skip = if !matches!(name.as_ref().map(|sym| sym.as_str()), Some("no_inline"))
+            && info.call_string.len() < 2
+        {
+            SkipCall::NoSkip
+        } else {
+            SkipCall::Skip
+        };
+        CallChanges::default().with_skip(skip)
+    }));
+  },
   (y -> x),
   (z -> w)
 }

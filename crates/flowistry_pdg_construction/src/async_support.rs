@@ -166,29 +166,19 @@ pub enum AsyncDeterminationResult<T> {
     NotAsync,
 }
 
-impl<'tcx> GraphConstructor<'tcx> {
-    pub(crate) fn try_handle_as_async(&self) -> Option<SubgraphDescriptor<'tcx>> {
-        let (generator_fn, location) = determine_async(self.tcx, self.def_id, &self.body)?;
+impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
+    pub(crate) fn try_handle_as_async(&self) -> Option<Rc<SubgraphDescriptor<'tcx>>> {
+        let (generator_fn, location) = determine_async(self.tcx(), self.def_id, &self.body)?;
 
-        let calling_context = self.calling_context_for(generator_fn.def_id(), location);
-        let params = self.pdg_params_for_call(generator_fn);
-        Some(
-            GraphConstructor::new(
-                params,
-                Some(calling_context),
-                self.async_info.clone(),
-                &self.pdg_cache,
-            )
-            .construct_partial(),
-        )
+        self.memo.construct_for(generator_fn)
     }
 
-    pub(crate) fn try_poll_call_kind<'a>(
-        &'a self,
+    pub(crate) fn try_poll_call_kind<'b>(
+        &'b self,
         def_id: DefId,
-        original_args: &'a [Operand<'tcx>],
+        original_args: &'b [Operand<'tcx>],
     ) -> AsyncDeterminationResult<CallKind<'tcx>> {
-        let lang_items = self.tcx.lang_items();
+        let lang_items = self.tcx().lang_items();
         if lang_items.future_poll_fn() == Some(def_id) {
             match self.find_async_args(original_args) {
                 Ok((fun, loc, args)) => {
@@ -202,9 +192,9 @@ impl<'tcx> GraphConstructor<'tcx> {
     }
     /// Given the arguments to a `Future::poll` call, walk back through the
     /// body to find the original future being polled, and get the arguments to the future.
-    fn find_async_args<'a>(
-        &'a self,
-        args: &'a [Operand<'tcx>],
+    fn find_async_args<'b>(
+        &'b self,
+        args: &'b [Operand<'tcx>],
     ) -> Result<(FnResolution<'tcx>, Location, Place<'tcx>), String> {
         macro_rules! let_assert {
             ($p:pat = $e:expr, $($arg:tt)*) => {
@@ -241,7 +231,7 @@ impl<'tcx> GraphConstructor<'tcx> {
         debug_assert!(new_pin_args.len() == 1);
 
         let future_aliases = self
-            .aliases(self.tcx.mk_place_deref(new_pin_args[0].place().unwrap()))
+            .aliases(self.tcx().mk_place_deref(new_pin_args[0].place().unwrap()))
             .collect_vec();
         debug_assert!(future_aliases.len() == 1);
         let future = *future_aliases.first().unwrap();
@@ -308,9 +298,9 @@ impl<'tcx> GraphConstructor<'tcx> {
         let (op, generics, calling_convention, async_fn_call_loc) = chase_target.unwrap();
 
         let resolution = utils::try_resolve_function(
-            self.tcx,
+            self.tcx(),
             op,
-            self.tcx.param_env_reveal_all_normalized(self.def_id),
+            self.tcx().param_env_reveal_all_normalized(self.def_id),
             generics,
         );
 
