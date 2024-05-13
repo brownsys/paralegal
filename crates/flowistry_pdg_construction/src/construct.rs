@@ -91,7 +91,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             .construct_for(try_resolve_function(
                 self.tcx,
                 function.to_def_id(),
-                ParamEnv::reveal_all(),
+                self.tcx.param_env_reveal_all_normalized(function),
                 args,
             ))
             .unwrap()
@@ -321,10 +321,7 @@ impl<'tcx> PartialGraph<'tcx> {
             function: constructor.def_id,
         };
 
-        let extend_node = |dep: DepNode<'tcx>| DepNode {
-            at: dep.at.push_front(gloc),
-            ..dep
-        };
+        let extend_node = |dep: &DepNode<'tcx>| push_call_string_root(dep, gloc);
 
         let (child_descriptor, calling_convention) =
             match constructor.determine_call_handling(location, func, args)? {
@@ -381,7 +378,7 @@ impl<'tcx> PartialGraph<'tcx> {
                     Inputs::Unresolved {
                         places: vec![(parent_place, None)],
                     },
-                    Either::Right(extend_node(*child_src)),
+                    Either::Right(extend_node(child_src)),
                     location,
                     TargetUse::Assign,
                 );
@@ -407,7 +404,7 @@ impl<'tcx> PartialGraph<'tcx> {
                     results,
                     state,
                     Inputs::Resolved {
-                        node: extend_node(*child_dst),
+                        node: extend_node(child_dst),
                         node_use: SourceUse::Operand,
                     },
                     Either::Left(parent_place),
@@ -416,17 +413,13 @@ impl<'tcx> PartialGraph<'tcx> {
                 );
             }
         }
-        self.nodes
-            .extend(child_graph.nodes.iter().copied().map(extend_node));
+        self.nodes.extend(child_graph.nodes.iter().map(extend_node));
         self.edges
-            .extend(child_graph.edges.iter().copied().map(|(n1, n2, e)| {
+            .extend(child_graph.edges.iter().map(|(n1, n2, e)| {
                 (
                     extend_node(n1),
                     extend_node(n2),
-                    DepEdge {
-                        at: e.at.push_front(gloc),
-                        ..e
-                    },
+                    push_call_string_root(e, gloc),
                 )
             }));
         Some(())
@@ -544,7 +537,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         let tcx = memo.tcx;
         let def_id = root.def_id().expect_local();
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
-        let param_env = ParamEnv::reveal_all();
+        let param_env = tcx.param_env_reveal_all_normalized(def_id);
         // let param_env = match &calling_context {
         //     Some(cx) => cx.param_env,
         //     None => ParamEnv::reveal_all(),
@@ -1241,6 +1234,76 @@ type ApproximationHandler<'tcx, 'a> = fn(
     Location,
 );
 
+pub(crate) trait TransformCallString {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self;
+}
+
+impl TransformCallString for CallString {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
+        f(*self)
+    }
+}
+
+impl TransformCallString for DepNode<'_> {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
+        Self {
+            at: f(self.at),
+            ..*self
+        }
+    }
+}
+
+impl TransformCallString for DepEdge {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
+        Self {
+            at: f(self.at),
+            ..*self
+        }
+    }
+}
+
+impl<'tcx> TransformCallString for PartialGraph<'tcx> {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
+        let recurse_node = |n: &DepNode<'tcx>| n.transform_call_string(&f);
+        Self {
+            nodes: self.nodes.iter().map(recurse_node).collect(),
+            edges: self
+                .edges
+                .iter()
+                .map(|(from, to, e)| {
+                    (
+                        recurse_node(from),
+                        recurse_node(to),
+                        e.transform_call_string(&f),
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+impl<'tcx> TransformCallString for SubgraphDescriptor<'tcx> {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
+        let transform_vec = |v: &Vec<(DepNode<'tcx>, Option<u8>)>| {
+            v.iter()
+                .map(|(n, idx)| (n.transform_call_string(&f), *idx))
+                .collect::<Vec<_>>()
+        };
+        Self {
+            graph: self.graph.transform_call_string(&f),
+            parentable_dsts: transform_vec(&self.parentable_dsts),
+            parentable_srcs: transform_vec(&self.parentable_srcs),
+        }
+    }
+}
+
+pub(crate) fn push_call_string_root<T: TransformCallString>(
+    old: &T,
+    new_root: GlobalLocation,
+) -> T {
+    old.transform_call_string(|c| c.push_front(new_root))
+}
+
 pub(crate) struct SubgraphDescriptor<'tcx> {
     pub(crate) graph: PartialGraph<'tcx>,
     pub(crate) parentable_srcs: Vec<(DepNode<'tcx>, Option<u8>)>,
@@ -1276,7 +1339,7 @@ impl<'tcx> SubgraphDescriptor<'tcx> {
         for n in &self.graph.nodes {
             assert_eq!(n.at.root().function, root_function);
         }
-        for (src, target, e) in &self.graph.edges {
+        for (_, _, e) in &self.graph.edges {
             assert_eq!(e.at.root().function, root_function);
         }
     }

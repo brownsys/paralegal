@@ -257,7 +257,6 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     }
 }
 
-#[allow(unused)]
 pub fn manufacture_substs_for(
     tcx: TyCtxt<'_>,
     function: LocalDefId,
@@ -267,8 +266,12 @@ pub fn manufacture_substs_for(
         ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
     };
 
+    trace!("Manufacturing for {function:?}");
+
     let generics = tcx.generics_of(function);
+    trace!("Found generics {generics:?}");
     let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
+    trace!("Found predicates {predicates:?}");
     let types = (0..generics.count()).map(|gidx| {
         let param = generics.param_at(gidx, tcx);
         if let Some(default_val) = param.default_value(tcx) {
@@ -332,5 +335,7 @@ pub fn manufacture_substs_for(
         );
         Ok(GenericArg::from(ty))
     });
-    tcx.mk_args_from_iter(types)
+    let args = tcx.mk_args_from_iter(types);
+    trace!("Created args {args:?}");
+    args
 }

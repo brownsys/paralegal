@@ -246,7 +246,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let (last, mut rest) = locations.split_last().unwrap();
 
         if self.entrypoint_is_async() {
-            let (first, tail) = rest.split_first().unwrap();
+            let Some((first, tail)) = rest.split_first() else {
+                panic!("{at:?}.len() < 2");
+            };
             // The body of a top-level `async` function binds a closure to the
             // return place `_0`. Here we expect are looking at the statement
             // that does this binding.
@@ -363,7 +365,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 &mut file,
             )?
         }
-        let Ok(pdg) = generator.flowistry_constructor.construct_graph(target) else {
+        let Ok(pdg) = generator
+            .flowistry_constructor
+            .construct_graph(local_def_id)
+        else {
             bail!("Failed to construct the graph");
         };
 

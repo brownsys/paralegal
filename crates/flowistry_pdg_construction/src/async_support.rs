@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use either::Either;
+use flowistry_pdg::GlobalLocation;
 use itertools::Itertools;
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::{DefId, LocalDefId};
@@ -12,7 +13,7 @@ use rustc_middle::{
     ty::{GenericArgsRef, TyCtxt},
 };
 
-use crate::construct::{CallKind, SubgraphDescriptor};
+use crate::construct::{push_call_string_root, CallKind, SubgraphDescriptor};
 
 use super::construct::GraphConstructor;
 use super::utils::{self, FnResolution};
@@ -168,9 +169,17 @@ pub enum AsyncDeterminationResult<T> {
 
 impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
     pub(crate) fn try_handle_as_async(&self) -> Option<Rc<SubgraphDescriptor<'tcx>>> {
-        let (generator_fn, _) = determine_async(self.tcx(), self.def_id, &self.body)?;
+        let (generator_fn, location) = determine_async(self.tcx(), self.def_id, &self.body)?;
 
-        self.memo.construct_for(generator_fn)
+        let g = self.memo.construct_for(generator_fn)?;
+        let new_g = push_call_string_root(
+            g.as_ref(),
+            GlobalLocation {
+                function: self.def_id,
+                location: flowistry_pdg::RichLocation::Location(location),
+            },
+        );
+        Some(Rc::new(new_g))
     }
 
     pub(crate) fn try_poll_call_kind<'b>(
