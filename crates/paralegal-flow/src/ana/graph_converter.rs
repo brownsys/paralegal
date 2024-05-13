@@ -209,29 +209,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                             .graph
                             .edges_directed(old_node, Direction::Incoming)
                             .any(|e| {
-                                if weight.at != e.weight().at {
-                                    // Incoming edges are either from our operation or from control flow
-                                    let at = e.weight().at;
-                                    debug_assert!(
-                                        at.leaf().function == leaf_loc.function
-                                            && if let RichLocation::Location(loc) =
-                                                at.leaf().location
-                                            {
-                                                matches!(
-                                                    body.stmt_at(loc),
-                                                    Either::Right(mir::Terminator {
-                                                        kind: mir::TerminatorKind::SwitchInt { .. },
-                                                        ..
-                                                    })
-                                                )
-                                            } else {
-                                                false
-                                            }
-                                    );
-                                    false
-                                } else {
-                                    e.weight().target_use.is_return()
-                                }
+                                let at = e.weight().at;
+                                #[cfg(debug_assertions)]
+                                assert_edge_location_invariant(self.tcx(), at, body, weight.at);
+                                weight.at == at && e.weight().target_use.is_return()
                             });
 
                     if needs_return_markers {
@@ -532,6 +513,44 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             .map(|n| self.new_node_for(n.id()))
             .collect()
     }
+}
+
+fn assert_edge_location_invariant<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    at: CallString,
+    body: &mir::Body<'tcx>,
+    location: CallString,
+) {
+    // Normal case. The edge is introduced where the operation happens
+    if location == at {
+        return;
+    }
+    // Control flow case. The edge is introduced at the `switchInt`
+    if let RichLocation::Location(loc) = at.leaf().location {
+        if at.leaf().function == location.leaf().function
+            && matches!(
+                body.stmt_at(loc),
+                Either::Right(mir::Terminator {
+                    kind: mir::TerminatorKind::SwitchInt { .. },
+                    ..
+                })
+            )
+        {
+            return;
+        }
+    }
+    let mut msg = tcx.sess.struct_span_fatal(
+        at.leaf().span(tcx),
+        format!(
+            "This operation is performed in a different location: {}",
+            at
+        ),
+    );
+    msg.span_note(
+        location.leaf().span(tcx),
+        format!("Expected to originate here: {}", at),
+    );
+    msg.emit()
 }
 
 pub(super) struct MyCallback<'tcx> {

@@ -1,6 +1,5 @@
 use std::{borrow::Cow, collections::HashSet, iter, rc::Rc};
 
-use df::{fmt::DebugWithContext, Analysis, AnalysisDomain, Results, ResultsVisitor};
 use either::Either;
 use flowistry::mir::placeinfo::PlaceInfo;
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
@@ -20,7 +19,9 @@ use rustc_middle::{
     },
     ty::{GenericArg, List, ParamEnv, TyCtxt, TyKind},
 };
-use rustc_mir_dataflow::{self as df};
+use rustc_mir_dataflow::{
+    self as df, fmt::DebugWithContext, Analysis, AnalysisDomain, Results, ResultsVisitor,
+};
 use rustc_span::ErrorGuaranteed;
 use rustc_utils::{
     cache::Cache,
@@ -28,20 +29,15 @@ use rustc_utils::{
     BodyExt, PlaceExt,
 };
 
-use super::async_support::*;
-use super::calling_convention::*;
-use super::graph::{DepEdge, DepGraph, DepNode};
-use super::utils::{self, FnResolution};
 use crate::{
+    async_support::*,
+    calling_convention::*,
+    graph::{DepEdge, DepGraph, DepNode},
     graph::{SourceUse, TargetUse},
-    mutation::Time,
+    mutation::{ModularMutationVisitor, Mutation, Time},
     try_resolve_function,
-    utils::{is_non_default_trait_method, manufacture_substs_for},
-    InlineMissReason, SkipCall,
-};
-use crate::{
-    mutation::{ModularMutationVisitor, Mutation},
-    CallChangeCallback, CallChanges, CallInfo,
+    utils::{self, is_non_default_trait_method, manufacture_substs_for, FnResolution},
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
 
 pub struct MemoPdgConstructor<'tcx> {
@@ -82,7 +78,9 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     ) -> Option<Rc<SubgraphDescriptor<'tcx>>> {
         self.pdg_cache
             .get_maybe_recursive(resolution, |_| {
-                GraphConstructor::new(self, resolution).construct_partial()
+                let g = GraphConstructor::new(self, resolution).construct_partial();
+                g.check_invariants();
+                g
             })
             .map(Rc::clone)
     }
@@ -165,129 +163,6 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
-        let mut handle_as_inline = || {
-            let TerminatorKind::Call {
-                func,
-                args,
-                destination,
-                ..
-            } = &terminator.kind
-            else {
-                return None;
-            };
-            let constructor = results.analysis.0;
-            let gloc = GlobalLocation {
-                location: location.into(),
-                function: results.analysis.0.def_id,
-            };
-
-            let extend_node = |dep: DepNode<'tcx>| DepNode {
-                at: dep.at.push_front(gloc),
-                ..dep
-            };
-
-            let (child_descriptor, calling_convention) =
-                match constructor.determine_call_handling(location, func, args)? {
-                    CallHandling::Ready {
-                        calling_convention,
-                        descriptor,
-                    } => (descriptor, calling_convention),
-                    CallHandling::ApproxAsyncFn => {
-                        // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
-                        let rvalue = Rvalue::Aggregate(
-                            Box::new(AggregateKind::Tuple),
-                            IndexVec::from_iter(args.iter().cloned()),
-                        );
-                        self.modular_mutation_visitor(results, state).visit_assign(
-                            destination,
-                            &rvalue,
-                            location,
-                        );
-                        return Some(());
-                    }
-                    CallHandling::ApproxAsyncSM(how) => {
-                        how(
-                            constructor,
-                            &mut self.modular_mutation_visitor(results, state),
-                            args,
-                            *destination,
-                            location,
-                        );
-                        return Some(());
-                    }
-                };
-
-            let SubgraphDescriptor {
-                graph: child_graph,
-                parentable_srcs,
-                parentable_dsts,
-            } = &*child_descriptor;
-
-            // For each source node CHILD that is parentable to PLACE,
-            // add an edge from PLACE -> CHILD.
-            trace!("PARENT -> CHILD EDGES:");
-            for (child_src, _kind) in parentable_srcs {
-                if let Some(parent_place) = calling_convention.translate_to_parent(
-                    child_src.place,
-                    &constructor.async_info(),
-                    constructor.tcx(),
-                    &constructor.body,
-                    constructor.def_id.to_def_id(),
-                    *destination,
-                ) {
-                    self.register_mutation(
-                        results,
-                        state,
-                        Inputs::Unresolved {
-                            places: vec![(parent_place, None)],
-                        },
-                        Either::Right(extend_node(*child_src)),
-                        location,
-                        TargetUse::Assign,
-                    );
-                }
-            }
-
-            // For each destination node CHILD that is parentable to PLACE,
-            // add an edge from CHILD -> PLACE.
-            //
-            // PRECISION TODO: for a given child place, we only want to connect
-            // the *last* nodes in the child function to the parent, not *all* of them.
-            trace!("CHILD -> PARENT EDGES:");
-            for (child_dst, kind) in parentable_dsts {
-                if let Some(parent_place) = calling_convention.translate_to_parent(
-                    child_dst.place,
-                    &constructor.async_info(),
-                    constructor.tcx(),
-                    &constructor.body,
-                    constructor.def_id.to_def_id(),
-                    *destination,
-                ) {
-                    self.register_mutation(
-                        results,
-                        state,
-                        Inputs::Resolved {
-                            node: extend_node(*child_dst),
-                            node_use: SourceUse::Operand,
-                        },
-                        Either::Left(parent_place),
-                        location,
-                        kind.map_or(TargetUse::Return, TargetUse::MutArg),
-                    );
-                }
-            }
-            self.nodes
-                .extend(child_graph.nodes.iter().copied().map(extend_node));
-            self.edges.extend(
-                child_graph
-                    .edges
-                    .iter()
-                    .copied()
-                    .map(|(n1, n2, e)| (extend_node(n1), extend_node(n2), e)),
-            );
-            Some(())
-        };
-
         if let TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
             if let Some(place) = discr.place() {
                 self.register_mutation(
@@ -304,7 +179,10 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
             return;
         }
 
-        if handle_as_inline().is_none() {
+        if self
+            .handle_as_inline(results, state, terminator, location)
+            .is_none()
+        {
             trace!("Handling terminator {:?} as not inlined", terminator.kind);
             let mut arg_vis = ModularMutationVisitor::new(
                 &results.analysis.0.place_info,
@@ -419,6 +297,139 @@ impl<'tcx> PartialGraph<'tcx> {
             .map(|(_, dst, _)| *dst)
             .filter_map(move |a| Some((a, as_arg(&a, def_id, body)?)))
             .filter(|node| node.0.at.leaf().location.is_end())
+    }
+
+    fn handle_as_inline(
+        &mut self,
+        results: &Results<'tcx, DfAnalysis<'_, 'tcx>>,
+        state: &<DfAnalysis<'_, 'tcx> as AnalysisDomain<'tcx>>::Domain,
+        terminator: &Terminator<'tcx>,
+        location: Location,
+    ) -> Option<()> {
+        let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &terminator.kind
+        else {
+            return None;
+        };
+        let constructor = results.analysis.0;
+        let gloc = GlobalLocation {
+            location: location.into(),
+            function: constructor.def_id,
+        };
+
+        let extend_node = |dep: DepNode<'tcx>| DepNode {
+            at: dep.at.push_front(gloc),
+            ..dep
+        };
+
+        let (child_descriptor, calling_convention) =
+            match constructor.determine_call_handling(location, func, args)? {
+                CallHandling::Ready {
+                    calling_convention,
+                    descriptor,
+                } => (descriptor, calling_convention),
+                CallHandling::ApproxAsyncFn => {
+                    // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
+                    let rvalue = Rvalue::Aggregate(
+                        Box::new(AggregateKind::Tuple),
+                        IndexVec::from_iter(args.iter().cloned()),
+                    );
+                    self.modular_mutation_visitor(results, state).visit_assign(
+                        destination,
+                        &rvalue,
+                        location,
+                    );
+                    return Some(());
+                }
+                CallHandling::ApproxAsyncSM(how) => {
+                    how(
+                        constructor,
+                        &mut self.modular_mutation_visitor(results, state),
+                        args,
+                        *destination,
+                        location,
+                    );
+                    return Some(());
+                }
+            };
+
+        let SubgraphDescriptor {
+            graph: child_graph,
+            parentable_srcs,
+            parentable_dsts,
+        } = &*child_descriptor;
+
+        // For each source node CHILD that is parentable to PLACE,
+        // add an edge from PLACE -> CHILD.
+        trace!("PARENT -> CHILD EDGES:");
+        for (child_src, _kind) in parentable_srcs {
+            if let Some(parent_place) = calling_convention.translate_to_parent(
+                child_src.place,
+                &constructor.async_info(),
+                constructor.tcx(),
+                &constructor.body,
+                constructor.def_id.to_def_id(),
+                *destination,
+            ) {
+                self.register_mutation(
+                    results,
+                    state,
+                    Inputs::Unresolved {
+                        places: vec![(parent_place, None)],
+                    },
+                    Either::Right(extend_node(*child_src)),
+                    location,
+                    TargetUse::Assign,
+                );
+            }
+        }
+
+        // For each destination node CHILD that is parentable to PLACE,
+        // add an edge from CHILD -> PLACE.
+        //
+        // PRECISION TODO: for a given child place, we only want to connect
+        // the *last* nodes in the child function to the parent, not *all* of them.
+        trace!("CHILD -> PARENT EDGES:");
+        for (child_dst, kind) in parentable_dsts {
+            if let Some(parent_place) = calling_convention.translate_to_parent(
+                child_dst.place,
+                &constructor.async_info(),
+                constructor.tcx(),
+                &constructor.body,
+                constructor.def_id.to_def_id(),
+                *destination,
+            ) {
+                self.register_mutation(
+                    results,
+                    state,
+                    Inputs::Resolved {
+                        node: extend_node(*child_dst),
+                        node_use: SourceUse::Operand,
+                    },
+                    Either::Left(parent_place),
+                    location,
+                    kind.map_or(TargetUse::Return, TargetUse::MutArg),
+                );
+            }
+        }
+        self.nodes
+            .extend(child_graph.nodes.iter().copied().map(extend_node));
+        self.edges
+            .extend(child_graph.edges.iter().copied().map(|(n1, n2, e)| {
+                (
+                    extend_node(n1),
+                    extend_node(n2),
+                    DepEdge {
+                        at: e.at.push_front(gloc),
+                        ..e
+                    },
+                )
+            }));
+        Some(())
     }
 
     fn register_mutation(
@@ -1258,6 +1269,16 @@ impl<'tcx> SubgraphDescriptor<'tcx> {
         }
 
         DepGraph::new(graph)
+    }
+
+    fn check_invariants(&self) {
+        let root_function = self.graph.nodes.iter().next().unwrap().at.root().function;
+        for n in &self.graph.nodes {
+            assert_eq!(n.at.root().function, root_function);
+        }
+        for (src, target, e) in &self.graph.edges {
+            assert_eq!(e.at.root().function, root_function);
+        }
     }
 }
 

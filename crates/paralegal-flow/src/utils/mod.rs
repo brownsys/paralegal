@@ -1,6 +1,7 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
+use flowistry_pdg::{GlobalLocation, RichLocation};
 use thiserror::Error;
 
 use smallvec::SmallVec;
@@ -877,6 +878,15 @@ impl<'tcx> Spanned<'tcx> for (LocalDefId, mir::Location) {
     fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
         let body = tcx.body_for_def_id(self.0).unwrap();
         (&body.body, self.1).span(tcx)
+    }
+}
+
+impl<'tcx> Spanned<'tcx> for GlobalLocation {
+    fn span(&self, tcx: TyCtxt<'tcx>) -> RustSpan {
+        match self.location {
+            RichLocation::Location(loc) => (self.function, loc).span(tcx),
+            _ => self.function.to_def_id().span(tcx),
+        }
     }
 }
 
