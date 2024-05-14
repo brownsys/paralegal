@@ -21,7 +21,6 @@ use super::{default_index, path_for_item, src_loc_for_span, SPDGGenerator};
 use anyhow::{anyhow, bail, Result};
 use either::Either;
 use flowistry_pdg_construction::{
-    determine_async,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, match_async_trait_assign, CallChangeCallback, CallChanges, CallInfo,
     InlineMissReason,
@@ -347,9 +346,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) -> Result<DepGraph<'tcx>> {
         let tcx = generator.tcx;
         let opts = generator.opts;
-        // TODO: I don't like that I have to do that here. Clean this up
-        let target = determine_async(tcx, local_def_id, &tcx.body_for_def_id(local_def_id)?.body)
-            .map_or(local_def_id, |res| res.0.def_id().expect_local());
 
         if opts.dbg().dump_mir() {
             let mut file = std::fs::File::create(format!(

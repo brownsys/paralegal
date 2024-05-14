@@ -12,12 +12,13 @@ use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceCon
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
+use rustc_macros::{TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
         visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
         Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArg, List, ParamEnv, TyCtxt, TyKind},
+    ty::{GenericArg, List, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{
     self as df, fmt::DebugWithContext, Analysis, AnalysisDomain, Results, ResultsVisitor,
@@ -117,7 +118,7 @@ impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, TyDecodable, TyEncodable)]
 pub struct PartialGraph<'tcx> {
     nodes: FxHashSet<DepNode<'tcx>>,
     edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
@@ -1304,6 +1305,7 @@ pub(crate) fn push_call_string_root<T: TransformCallString>(
     old.transform_call_string(|c| c.push_front(new_root))
 }
 
+#[derive(TyEncodable)]
 pub(crate) struct SubgraphDescriptor<'tcx> {
     pub(crate) graph: PartialGraph<'tcx>,
     pub(crate) parentable_srcs: Vec<(DepNode<'tcx>, Option<u8>)>,

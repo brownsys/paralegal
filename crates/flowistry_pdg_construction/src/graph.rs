@@ -1,14 +1,16 @@
 //! The representation of the PDG.
 
-use std::{fmt, hash::Hash, path::Path};
+use std::{fmt, hash::Hash, ops::Deref, path::Path};
 
 use flowistry_pdg::CallString;
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
+use rustc_macros::{Decodable, Encodable};
 use rustc_middle::{
     mir::{Body, Place},
-    ty::TyCtxt,
+    ty::{TyCtxt, TyDecoder, TyEncoder},
 };
+use rustc_serialize::{Decodable, Encodable};
 use rustc_utils::PlaceExt;
 
 pub use flowistry_pdg::{SourceUse, TargetUse};
@@ -29,6 +31,25 @@ pub struct DepNode<'tcx> {
     /// This is cached as an interned string on [`DepNode`] because to compute it later,
     /// we would have to regenerate the entire monomorphized body for a given place.
     pub(crate) place_pretty: Option<Intern<String>>,
+}
+
+impl<'tcx, E: TyEncoder<I = TyCtxt<'tcx>>> Encodable<E> for DepNode<'tcx> {
+    fn encode(&self, e: &mut E) {
+        self.place.encode(e);
+        self.at.encode(e);
+        let str: Option<&String> = self.place_pretty.as_ref().map(Deref::deref);
+        str.encode(e);
+    }
+}
+
+impl<'tcx, D: TyDecoder<I = TyCtxt<'tcx>>> Decodable<D> for DepNode<'tcx> {
+    fn decode(d: &mut D) -> Self {
+        Self {
+            place: Decodable::decode(d),
+            at: Decodable::decode(d),
+            place_pretty: <Option<String>>::decode(d).map(|s| Intern::new(s)),
+        }
+    }
 }
 
 impl PartialEq for DepNode<'_> {
@@ -93,7 +114,7 @@ impl fmt::Display for DepNode<'_> {
 }
 
 /// A kind of edge in the program dependence graph.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Decodable, Encodable)]
 pub enum DepEdgeKind {
     /// X is control-dependent on Y if the value of Y influences the execution
     /// of statements that affect the value of X.
@@ -107,7 +128,7 @@ pub enum DepEdgeKind {
 /// An edge in the program dependence graph.
 ///
 /// Represents an operation that induces a dependency between places.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Decodable, Encodable)]
 pub struct DepEdge {
     /// Either data or control.
     pub kind: DepEdgeKind,

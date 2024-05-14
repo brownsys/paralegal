@@ -11,6 +11,11 @@ pub(crate) mod rustc {
     pub use middle::mir;
 }
 
+#[cfg(feature = "rustc")]
+extern crate rustc_macros;
+#[cfg(feature = "rustc")]
+extern crate rustc_serialize;
+
 mod pdg;
 #[cfg(feature = "rustc")]
 mod rustc_impls;

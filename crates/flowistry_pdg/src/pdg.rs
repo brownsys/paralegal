@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use crate::rustc_portable::*;
 #[cfg(feature = "rustc")]
 use crate::rustc_proxies;
+#[cfg(feature = "rustc")]
+use rustc_macros::{Decodable, Encodable};
+#[cfg(feature = "rustc")]
+use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 
 /// Extends a MIR body's `Location` with `Start` (before the first instruction) and `End` (after all returns).
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
@@ -24,6 +28,35 @@ pub enum RichLocation {
 
     /// The end of the body, after all possible return statements.
     End,
+}
+
+#[cfg(feature = "rustc")]
+impl<E: Encoder> Encodable<E> for RichLocation {
+    fn encode(&self, s: &mut E) {
+        match self {
+            Self::Location(loc) => s.emit_enum_variant(0, |s| {
+                s.emit_u32(loc.block.as_u32());
+                s.emit_usize(loc.statement_index);
+            }),
+            Self::Start => s.emit_enum_variant(1, |_| ()),
+            Self::End => s.emit_enum_variant(2, |_| ()),
+        }
+    }
+}
+
+#[cfg(feature = "rustc")]
+impl<D: Decoder> Decodable<D> for RichLocation {
+    fn decode(d: &mut D) -> Self {
+        match d.read_usize() {
+            0 => Self::Location(Location {
+                block: d.read_u32().into(),
+                statement_index: d.read_usize().into(),
+            }),
+            1 => Self::Start,
+            2 => Self::End,
+            v => panic!("Unknown variant index: {v}"),
+        }
+    }
 }
 
 impl RichLocation {
@@ -75,6 +108,7 @@ impl From<Location> for RichLocation {
 /// A [`RichLocation`] within a specific point in a codebase.
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct GlobalLocation {
+    // TODO Change to `DefId`
     /// The function containing the location.
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::LocalDefId"))]
     pub function: LocalDefId,
@@ -83,8 +117,32 @@ pub struct GlobalLocation {
     pub location: RichLocation,
 }
 
-#[cfg(not(feature = "rustc"))]
+#[cfg(feature = "rustc")]
+impl<E: Encoder> Encodable<E> for GlobalLocation {
+    fn encode(&self, e: &mut E) {
+        crate::rustc::middle::ty::tls::with(|tcx| {
+            tcx.def_path_hash(self.function.to_def_id()).encode(e);
+            self.location.encode(e);
+        })
+    }
+}
 
+#[cfg(feature = "rustc")]
+impl<D: Decoder> Decodable<D> for GlobalLocation {
+    fn decode(d: &mut D) -> Self {
+        use crate::rustc::span::def_id::DefPathHash;
+        crate::rustc::middle::ty::tls::with(|tcx| Self {
+            function: tcx
+                .def_path_hash_to_def_id(DefPathHash::decode(d), &mut || {
+                    panic!("Could map hash to def id")
+                })
+                .expect_local(),
+            location: RichLocation::decode(d),
+        })
+    }
+}
+
+#[cfg(not(feature = "rustc"))]
 impl fmt::Display for GlobalLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}::{}", self.function, self.location)
@@ -102,6 +160,21 @@ impl fmt::Display for GlobalLocation {
 /// Note: This type is copyable due to interning.
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct CallString(Intern<CallStringInner>);
+
+#[cfg(feature = "rustc")]
+impl<S: Encoder> Encodable<S> for CallString {
+    fn encode(&self, s: &mut S) {
+        let inner: &CallStringInner = &*self.0;
+        inner.encode(s);
+    }
+}
+
+#[cfg(feature = "rustc")]
+impl<D: Decoder> Decodable<D> for CallString {
+    fn decode(d: &mut D) -> Self {
+        Self(Intern::new(CallStringInner::decode(d)))
+    }
+}
 
 type CallStringInner = Box<[GlobalLocation]>;
 
@@ -203,6 +276,7 @@ impl fmt::Display for CallString {
 #[derive(
     PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs,
 )]
+#[cfg_attr(feature = "rustc", derive(Decodable, Encodable))]
 pub enum SourceUse {
     Operand,
     Argument(u8),
@@ -210,6 +284,7 @@ pub enum SourceUse {
 
 /// Additional information about this mutation.
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs)]
+#[cfg_attr(feature = "rustc", derive(Decodable, Encodable))]
 pub enum TargetUse {
     /// A function returned, assigning to it's return destination
     Return,
