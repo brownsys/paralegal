@@ -78,7 +78,7 @@ impl<'tcx> TyEncoder for ParalegalEncoder<'tcx> {
         &mut self.predicate_shorthands
     }
 
-    fn encode_alloc_id(&mut self, alloc_id: &<Self::I as rustc_type_ir::Interner>::AllocId) {
+    fn encode_alloc_id(&mut self, _alloc_id: &<Self::I as rustc_type_ir::Interner>::AllocId) {
         unimplemented!()
     }
 }
@@ -93,6 +93,16 @@ pub struct ParalegalDecoder<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     mem_decoder: MemDecoder<'a>,
     shorthand_map: FxHashMap<usize, Ty<'tcx>>,
+}
+
+impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
+    pub fn new(tcx: TyCtxt<'tcx>, buf: &'a [u8]) -> Self {
+        Self {
+            tcx,
+            mem_decoder: MemDecoder::new(buf, 0),
+            shorthand_map: Default::default(),
+        }
+    }
 }
 
 impl<'tcx, 'a> TyDecoder for ParalegalDecoder<'tcx, 'a> {
