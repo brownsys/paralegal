@@ -20,6 +20,7 @@ use rustc_utils::{cache::Cache, mir::borrowck_facts};
 
 use crate::{
     construct::SubgraphDescriptor, Asyncness, CallChangeCallback, DepGraph, MemoPdgConstructor,
+    PDGLoader,
 };
 
 pub struct MetadataCollector {
@@ -34,8 +35,9 @@ impl MetadataCollector {
     pub fn into_metadata<'tcx>(
         self,
         tcx: TyCtxt<'tcx>,
+        loader: impl PDGLoader<'tcx> + 'tcx,
     ) -> FxHashMap<DefIndex, SubgraphDescriptor<'tcx>> {
-        let constructor = MemoPdgConstructor::new(tcx);
+        let constructor = MemoPdgConstructor::new(tcx, loader);
         self.targets
             .into_iter()
             .map(|t| {

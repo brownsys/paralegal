@@ -11,6 +11,7 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
+    ana::MetadataLoader,
     ann::{Annotation, MarkerAnnotation},
     args::{Args, MarkerControl},
     consts,
@@ -21,7 +22,7 @@ use crate::{
     DefId, Either, HashMap, HashSet, LocalDefId, TyCtxt,
 };
 use flowistry_pdg_construction::{determine_async, graph::InternedString};
-use rustc_ast::Attribute;
+use rustc_ast::{AnonConst, Attribute};
 use rustc_hir::def::DefKind;
 use rustc_middle::{mir, ty};
 use rustc_utils::cache::Cache;
@@ -64,18 +65,22 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// are present an empty slice is returned.
     ///
     /// Query is cached.
-    pub fn local_annotations(&self, def_id: LocalDefId) -> &[Annotation] {
-        self.db()
-            .local_annotations
-            .get(&self.defid_rewrite(def_id.to_def_id()).expect_local())
-            .map_or(&[], |o| o.as_slice())
+    fn attribute_annotations(&self, key: DefId) -> &[Annotation] {
+        if let Some(local) = key.as_local() {
+            self.db()
+                .local_annotations
+                .get(&self.defid_rewrite(key).expect_local())
+                .map_or(&[], Vec::as_slice)
+        } else {
+            self.0.loader.get_annotations(key)
+        }
     }
 
     /// Retrieves any external markers on this item. If there are not such
     /// markers an empty slice is returned.
     ///
     /// THe external marker database is populated at construction.
-    pub fn external_markers<D: IntoDefId>(&self, did: D) -> &[MarkerAnnotation] {
+    fn external_markers<D: IntoDefId>(&self, did: D) -> &[MarkerAnnotation] {
         self.db()
             .external_annotations
             .get(&self.defid_rewrite(did.into_def_id(self.tcx())))
@@ -86,11 +91,9 @@ impl<'tcx> MarkerCtx<'tcx> {
     ///
     /// Queries are cached/precomputed so calling this repeatedly is cheap.
     pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
-        def_id
-            .as_local()
-            .map(|ldid| self.local_annotations(ldid))
+        self.attribute_annotations(def_id)
             .into_iter()
-            .flat_map(|anns| anns.iter().flat_map(Annotation::as_marker))
+            .filter_map(Annotation::as_marker)
             .chain(self.external_markers(def_id).iter())
     }
 
@@ -111,13 +114,13 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Are there any external markers on this item?
-    pub fn is_externally_marked<D: IntoDefId>(&self, did: D) -> bool {
+    fn is_externally_marked<D: IntoDefId>(&self, did: D) -> bool {
         !self.external_markers(did).is_empty()
     }
 
     /// Are there any local markers on this item?
-    pub fn is_locally_marked(&self, def_id: LocalDefId) -> bool {
-        self.local_annotations(def_id)
+    fn is_attribute_marked(&self, def_id: DefId) -> bool {
+        self.attribute_annotations(def_id)
             .iter()
             .any(Annotation::is_marker)
     }
@@ -127,8 +130,9 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// This is in contrast to [`Self::marker_is_reachable`] which also reports
     /// if markers are reachable from the body of this function (if it is one).
     pub fn is_marked<D: IntoDefId + Copy>(&self, did: D) -> bool {
-        matches!(did.into_def_id(self.tcx()).as_local(), Some(ldid) if self.is_locally_marked(ldid))
-            || self.is_externally_marked(did)
+        let did = did.into_def_id(self.tcx());
+
+        self.is_attribute_marked(did) || self.is_externally_marked(did)
     }
 
     /// Return a complete set of local annotations that were discovered.
@@ -464,11 +468,12 @@ pub struct MarkerDatabase<'tcx> {
     /// Configuration options
     config: &'static MarkerControl,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
+    loader: Rc<MetadataLoader<'tcx>>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
     /// Construct a new database, loading external markers.
-    pub fn init(tcx: TyCtxt<'tcx>, args: &'static Args) -> Self {
+    pub fn init(tcx: TyCtxt<'tcx>, args: &'static Args, loader: Rc<MetadataLoader<'tcx>>) -> Self {
         Self {
             tcx,
             local_annotations: HashMap::default(),
@@ -476,6 +481,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             reachable_markers: Default::default(),
             config: args.marker_control(),
             type_markers: Default::default(),
+            loader,
         }
     }
 

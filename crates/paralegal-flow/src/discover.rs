@@ -3,7 +3,16 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
-use crate::{ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, stats::Stats, utils::*};
+use std::rc::Rc;
+
+use crate::{
+    ana::{MetadataLoader, SPDGGenerator},
+    ann::db::MarkerDatabase,
+    consts,
+    desc::*,
+    stats::Stats,
+    utils::*,
+};
 
 use flowistry_pdg_construction::meta::MetadataCollector;
 use rustc_hir::{
@@ -55,7 +64,11 @@ impl FnToAnalyze {
 }
 
 impl<'tcx> CollectingVisitor<'tcx> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
+    pub(crate) fn new(
+        tcx: TyCtxt<'tcx>,
+        opts: &'static crate::Args,
+        loader: Rc<MetadataLoader<'tcx>>,
+    ) -> Self {
         let functions_to_analyze = opts
             .anactrl()
             .selected_targets()
@@ -76,15 +89,15 @@ impl<'tcx> CollectingVisitor<'tcx> {
             tcx,
             opts,
             functions_to_analyze,
-            marker_ctx: MarkerDatabase::init(tcx, opts),
+            marker_ctx: MarkerDatabase::init(tcx, opts, loader),
             flowistry_collector: MetadataCollector::new(),
         }
     }
 
     /// After running the discovery with `visit_all_item_likes_in_crate`, create
     /// the read-only [`SPDGGenerator`] upon which the analysis will run.
-    fn into_generator(self) -> SPDGGenerator<'tcx> {
-        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx)
+    fn into_generator(self, loader: Rc<MetadataLoader<'tcx>>) -> SPDGGenerator<'tcx> {
+        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx, loader)
     }
 
     /// Driver function. Performs the data collection via visit, then calls

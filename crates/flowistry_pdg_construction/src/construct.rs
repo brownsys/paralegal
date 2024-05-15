@@ -41,22 +41,48 @@ use crate::{
     Asyncness, CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
 
+pub trait PDGLoader<'tcx> {
+    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>>;
+}
+
+pub struct NoLoader;
+
+impl<'tcx> PDGLoader<'tcx> for NoLoader {
+    fn load(&self, _: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+        None
+    }
+}
+
+impl<'tcx, T: PDGLoader<'tcx>> PDGLoader<'tcx> for Rc<T> {
+    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+        (&**self).load(function)
+    }
+}
+
+impl<'tcx, T: PDGLoader<'tcx>> PDGLoader<'tcx> for Box<T> {
+    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+        (&**self).load(function)
+    }
+}
+
 pub struct MemoPdgConstructor<'tcx> {
     pub(crate) tcx: TyCtxt<'tcx>,
     pub(crate) call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
     pub(crate) pdg_cache: PdgCache<'tcx>,
+    pub(crate) loader: Box<dyn PDGLoader<'tcx> + 'tcx>,
 }
 
 impl<'tcx> MemoPdgConstructor<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, loader: impl PDGLoader<'tcx> + 'tcx) -> Self {
         Self {
             tcx,
             call_change_callback: None,
             dump_mir: false,
             async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
             pdg_cache: Default::default(),
+            loader: Box::new(loader),
         }
     }
 
@@ -73,17 +99,35 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         self
     }
 
-    pub(crate) fn construct_for(
-        &self,
+    pub(crate) fn construct_for<'a>(
+        &'a self,
         resolution: FnResolution<'tcx>,
-    ) -> Option<Rc<SubgraphDescriptor<'tcx>>> {
-        self.pdg_cache
-            .get_maybe_recursive(resolution, |_| {
+    ) -> Option<&'a SubgraphDescriptor<'tcx>> {
+        let (def_id, generics) = match resolution {
+            FnResolution::Final(instance) => (instance.def_id(), Some(instance.args)),
+            FnResolution::Partial(def_id) => (def_id, None),
+        };
+        if let Some(local) = def_id.as_local() {
+            self.pdg_cache.get_maybe_recursive((local, generics), |_| {
                 let g = GraphConstructor::new(self, resolution).construct_partial();
                 g.check_invariants();
                 g
             })
-            .map(Rc::clone)
+        } else {
+            self.loader.load(def_id)
+        }
+    }
+
+    pub fn is_in_cache(&self, resolution: FnResolution<'tcx>) -> bool {
+        let (def_id, generics) = match resolution {
+            FnResolution::Final(instance) => (instance.def_id(), Some(instance.args)),
+            FnResolution::Partial(def_id) => (def_id, None),
+        };
+        if let Some(local) = def_id.as_local() {
+            self.pdg_cache.is_in_cache(&(local, generics))
+        } else {
+            self.loader.load(def_id).is_some()
+        }
     }
 
     pub fn construct_graph(&self, function: LocalDefId) -> Result<DepGraph<'tcx>, ErrorGuaranteed> {
@@ -497,7 +541,8 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-type PdgCache<'tcx> = Rc<Cache<FnResolution<'tcx>, Rc<SubgraphDescriptor<'tcx>>>>;
+type PdgCache<'tcx> =
+    Rc<Cache<(LocalDefId, Option<GenericArgsRef<'tcx>>), SubgraphDescriptor<'tcx>>>;
 
 pub struct GraphConstructor<'tcx, 'a> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
@@ -877,7 +922,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
     }
 
     fn determine_call_handling<'b>(
-        &self,
+        &'b self,
         location: Location,
         func: &Operand<'tcx>,
         args: &'b [Operand<'tcx>],
@@ -945,7 +990,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
 
         let cache_key = resolved_fn;
 
-        let is_cached = self.memo.pdg_cache.is_in_cache(&cache_key);
+        let is_cached = self.memo.is_in_cache(cache_key);
 
         let call_changes = self.call_change_callback().map(|callback| {
             let info = CallInfo {
@@ -1115,7 +1160,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         }
     }
 
-    pub(crate) fn construct_partial(&self) -> Rc<SubgraphDescriptor<'tcx>> {
+    pub(crate) fn construct_partial(&self) -> SubgraphDescriptor<'tcx> {
         if let Some(g) = self.try_handle_as_async() {
             return g;
         }
@@ -1157,7 +1202,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             }
         }
 
-        Rc::new(SubgraphDescriptor {
+        SubgraphDescriptor {
             parentable_dsts: final_state
                 .parentable_dsts(self.def_id, &self.body)
                 .collect(),
@@ -1165,7 +1210,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
                 .parentable_srcs(self.def_id, &self.body)
                 .collect(),
             graph: final_state,
-        })
+        }
     }
 
     /// Determine the type of call-site.
@@ -1349,7 +1394,7 @@ enum CallHandling<'tcx, 'a> {
     ApproxAsyncFn,
     Ready {
         calling_convention: CallingConvention<'tcx, 'a>,
-        descriptor: Rc<SubgraphDescriptor<'tcx>>,
+        descriptor: &'a SubgraphDescriptor<'tcx>,
         generic_args: GenericArgsRef<'tcx>,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),

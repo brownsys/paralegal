@@ -185,20 +185,20 @@ pub enum AsyncDeterminationResult<T> {
 }
 
 impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
-    pub(crate) fn try_handle_as_async(&self) -> Option<Rc<SubgraphDescriptor<'tcx>>> {
+    pub(crate) fn try_handle_as_async(&self) -> Option<SubgraphDescriptor<'tcx>> {
         let (generator_fn, location, asyncness) =
             determine_async(self.tcx(), self.def_id, &self.body)?;
 
         let g = self.memo.construct_for(generator_fn)?;
         let mut new_g = push_call_string_root(
-            g.as_ref(),
+            g,
             GlobalLocation {
                 function: self.def_id.to_def_id(),
                 location: flowistry_pdg::RichLocation::Location(location),
             },
         );
         new_g.graph.asyncness = asyncness;
-        Some(Rc::new(new_g))
+        Some(new_g)
     }
 
     pub(crate) fn try_poll_call_kind<'b>(

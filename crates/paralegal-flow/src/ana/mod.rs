@@ -21,7 +21,7 @@ use anyhow::Result;
 use either::Either;
 use flowistry_pdg_construction::{
     graph::InternedString, meta::MetadataCollector, Asyncness, DepGraph, MemoPdgConstructor,
-    SubgraphDescriptor,
+    PDGLoader, SubgraphDescriptor,
 };
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
@@ -40,6 +40,7 @@ use rustc_middle::{
         BasicBlock, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location,
         TerminatorKind,
     },
+    query::AsLocalKey,
     ty::{self, GenericArgsRef, TyCtxt},
 };
 use rustc_serialize::{opaque::FileEncoder, Decodable, Encodable};
@@ -60,25 +61,48 @@ pub struct MetadataLoader<'tcx> {
     cache: Cache<CrateNum, Option<Metadata<'tcx>>>,
 }
 
-pub fn collect_and_emit_metadata<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    args: &'static Args,
-    path: impl AsRef<Path>,
-) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>) {
-    let mut collector = CollectingVisitor::new(tcx, args);
-    collector.run();
-    let pdgs = collector.flowistry_collector.into_metadata(tcx);
-    let meta = Metadata::from_pdgs(tcx, pdgs, &collector.marker_ctx);
-    meta.write(path, tcx);
-    (collector.functions_to_analyze, collector.marker_ctx.into())
+impl<'tcx> PDGLoader<'tcx> for MetadataLoader<'tcx> {
+    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+        self.get_metadata(function.krate)?.pdgs.get(&function.index)
+    }
+}
+
+impl<'tcx> MetadataLoader<'tcx> {
+    pub fn collect_and_emit_metadata(
+        self: Rc<Self>,
+        args: &'static Args,
+        path: impl AsRef<Path>,
+    ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>) {
+        let tcx = self.tcx;
+        let mut collector = CollectingVisitor::new(tcx, args, self.clone());
+        collector.run();
+        let pdgs = collector
+            .flowistry_collector
+            .into_metadata(tcx, self.clone());
+        let meta = Metadata::from_pdgs(tcx, pdgs, &collector.marker_ctx);
+        meta.write(path, tcx);
+        (collector.functions_to_analyze, collector.marker_ctx.into())
+    }
+
+    pub fn get_annotations(&self, key: DefId) -> &[Annotation] {
+        (|| {
+            Some(
+                self.get_metadata(key.krate)?
+                    .local_annotations
+                    .get(&key.index)?
+                    .as_slice(),
+            )
+        })()
+        .unwrap_or(&[])
+    }
 }
 
 #[derive(Clone, Debug, TyEncodable, TyDecodable)]
 pub struct Metadata<'tcx> {
     pub pdgs: FxHashMap<DefIndex, SubgraphDescriptor<'tcx>>,
     pub bodies: FxHashMap<DefIndex, BodyInfo<'tcx>>,
-    pub local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
-    pub reachable_markers: HashMap<FnResolution<'tcx>, Box<[InternedString]>>,
+    pub local_annotations: HashMap<DefIndex, Vec<Annotation>>,
+    pub reachable_markers: HashMap<(DefIndex, Option<GenericArgsRef<'tcx>>), Box<[InternedString]>>,
 }
 
 impl<'tcx> Metadata<'tcx> {
@@ -148,21 +172,34 @@ impl<'tcx> Metadata<'tcx> {
         Self {
             pdgs,
             bodies,
-            local_annotations: markers.local_annotations.clone(),
+            local_annotations: markers
+                .local_annotations
+                .iter()
+                .map(|(k, v)| (k.local_def_index, v.clone()))
+                .collect(),
             reachable_markers: (&*cache_borrow)
                 .iter()
-                .filter_map(|(k, v)| Some((*k, (**(v.as_ref()?)).clone())))
+                .filter_map(|(k, v)| {
+                    let (id, args) = match k {
+                        FnResolution::Partial(d) => (*d, None),
+                        FnResolution::Final(inst) => (inst.def_id(), Some(inst.args)),
+                    };
+                    Some((
+                        (id.as_local()?.local_def_index, args),
+                        (**(v.as_ref()?)).clone(),
+                    ))
+                })
                 .collect(),
         }
     }
 }
 
 impl<'tcx> MetadataLoader<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
-        Self {
+    pub fn new(tcx: TyCtxt<'tcx>) -> Rc<Self> {
+        Rc::new(Self {
             tcx,
             cache: Default::default(),
-        }
+        })
     }
 
     pub fn get_metadata(&self, key: CrateNum) -> Option<&Metadata<'tcx>> {
@@ -273,17 +310,21 @@ pub struct SPDGGenerator<'tcx> {
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
     marker_ctx: MarkerCtx<'tcx>,
-    flowistry_loader: MetadataLoader<'tcx>,
+    flowistry_loader: Rc<MetadataLoader<'tcx>>,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
-    pub fn new(marker_ctx: MarkerCtx<'tcx>, opts: &'static crate::Args, tcx: TyCtxt<'tcx>) -> Self {
-        let mut flowistry_loader = MetadataLoader::new(tcx);
+    pub fn new(
+        marker_ctx: MarkerCtx<'tcx>,
+        opts: &'static crate::Args,
+        tcx: TyCtxt<'tcx>,
+        loader: Rc<MetadataLoader<'tcx>>,
+    ) -> Self {
         Self {
             marker_ctx,
             opts,
             tcx,
-            flowistry_loader,
+            flowistry_loader: loader,
         }
     }
 

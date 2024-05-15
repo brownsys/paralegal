@@ -83,7 +83,7 @@ pub mod test_utils;
 
 pub use paralegal_spdg as desc;
 
-use crate::ana::{collect_and_emit_metadata, SPDGGenerator};
+use crate::ana::{MetadataLoader, SPDGGenerator};
 pub use crate::ann::db::MarkerCtx;
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
@@ -150,8 +150,9 @@ impl rustc_driver::Callbacks for Callbacks {
             .enter(|tcx| {
                 tcx.sess.abort_if_errors();
 
-                let (analysis_targets, mctx) = collect_and_emit_metadata(
-                    tcx,
+                let loader = MetadataLoader::new(tcx);
+
+                let (analysis_targets, mctx) = loader.clone().collect_and_emit_metadata(
                     self.opts,
                     compiler
                         .build_output_filenames(tcx.sess, &[])
@@ -159,7 +160,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 );
                 tcx.sess.abort_if_errors();
 
-                let mut gen = SPDGGenerator::new(mctx, self.opts, tcx);
+                let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, loader.clone());
 
                 let desc = gen.analyze(analysis_targets)?;
 

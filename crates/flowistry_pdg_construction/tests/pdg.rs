@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepGraph},
-    CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
+    CallChangeCallbackFn, CallChanges, MemoPdgConstructor, NoLoader, SkipCall,
 };
 use itertools::Itertools;
 use rustc_hir::def_id::LocalDefId;
@@ -38,7 +38,7 @@ fn pdg(
     let _ = env_logger::try_init();
     rustc_utils::test_utils::compile(input, move |tcx| {
         let def_id = get_main(tcx);
-        let mut memo = MemoPdgConstructor::new(tcx);
+        let mut memo = MemoPdgConstructor::new(tcx, NoLoader);
         configure(tcx, &mut memo);
         let pdg = memo.construct_graph(def_id).unwrap();
         tests(tcx, pdg)

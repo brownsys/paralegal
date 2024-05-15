@@ -24,7 +24,7 @@ pub use crate::construct::MemoPdgConstructor;
 pub use callback::{
     CallChangeCallback, CallChangeCallbackFn, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
-pub use construct::SubgraphDescriptor;
+pub use construct::{NoLoader, PDGLoader, SubgraphDescriptor};
 use rustc_middle::ty::TyCtxt;
 pub use utils::{is_non_default_trait_method, try_resolve_function};
 
@@ -38,6 +38,6 @@ mod utils;
 
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.
 pub fn compute_pdg<'tcx>(tcx: TyCtxt<'tcx>, params: FnResolution<'tcx>) -> DepGraph<'tcx> {
-    let constructor = MemoPdgConstructor::new(tcx);
+    let constructor = MemoPdgConstructor::new(tcx, NoLoader);
     constructor.construct_for(params).unwrap().to_petgraph()
 }
