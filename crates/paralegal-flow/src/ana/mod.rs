@@ -36,7 +36,7 @@ use rustc_middle::{
         BasicBlock, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location,
         TerminatorKind,
     },
-    ty::{GenericArgsRef, List, TyCtxt},
+    ty::{GenericArgsRef, TyCtxt},
 };
 use rustc_serialize::{Decodable, Encodable};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -148,42 +148,42 @@ impl<'tcx> Metadata<'tcx> {
             if let Some(local) = pdg.function.as_local() {
                 let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local);
                 let body = &body_with_facts.body;
-                let body_info = bodies
+                bodies
                     .entry(local.local_def_index)
                     .or_insert_with(|| BodyInfo {
                         arg_count: body.arg_count,
                         decls: body.local_decls().to_owned(),
-                        instructions: Default::default(),
+                        instructions: body
+                            .basic_blocks
+                            .iter()
+                            .map(|bb| {
+                                let t = bb.terminator();
+                                bb.statements
+                                    .iter()
+                                    .map(|s| RustcInstructionInfo {
+                                        kind: RustcInstructionKind::Statement,
+                                        span: s.source_info.span,
+                                        description: format!("{:?}", s.kind).into(),
+                                    })
+                                    .chain([RustcInstructionInfo {
+                                        kind: if let Ok((id, ..)) = t.as_fn_and_args(tcx) {
+                                            RustcInstructionKind::FunctionCall(FunctionCallInfo {
+                                                id,
+                                            })
+                                        } else if matches!(t.kind, TerminatorKind::SwitchInt { .. })
+                                        {
+                                            RustcInstructionKind::SwitchInt
+                                        } else {
+                                            RustcInstructionKind::Terminator
+                                        },
+                                        span: t.source_info.span,
+                                        description: format!("{:?}", t.kind).into(),
+                                    }])
+                                    .collect()
+                            })
+                            .collect(),
                         def_span: tcx.def_span(local),
                     });
-                if let RichLocation::Location(loc) = pdg.location {
-                    let bb = body_info
-                        .instructions
-                        .ensure_contains_elem(loc.block, Default::default);
-                    if bb.len() <= loc.statement_index {
-                        bb.resize_with(loc.statement_index + 1, Default::default);
-                    }
-                    bb[loc.statement_index].get_or_insert_with(|| {
-                        body.stmt_at(loc).either(
-                            |s| RustcInstructionInfo {
-                                kind: RustcInstructionKind::Statement,
-                                span: s.source_info.span,
-                                description: InternedString::new(format!("{:?}", s.kind)),
-                            },
-                            |t| RustcInstructionInfo {
-                                kind: if let Ok((id, ..)) = t.as_fn_and_args(tcx) {
-                                    RustcInstructionKind::FunctionCall(FunctionCallInfo { id })
-                                } else if matches!(t.kind, TerminatorKind::SwitchInt { .. }) {
-                                    RustcInstructionKind::SwitchInt
-                                } else {
-                                    RustcInstructionKind::Terminator
-                                },
-                                span: t.source_info.span,
-                                description: InternedString::new(format!("{:?}", t.kind)),
-                            },
-                        )
-                    });
-                }
             }
         }
         let cache_borrow = markers.reachable_markers.borrow();
@@ -283,7 +283,7 @@ impl<'tcx> MetadataLoader<'tcx> {
 pub struct BodyInfo<'tcx> {
     pub arg_count: usize,
     pub decls: IndexVec<Local, LocalDecl<'tcx>>,
-    pub instructions: IndexVec<BasicBlock, Vec<Option<RustcInstructionInfo>>>,
+    pub instructions: IndexVec<BasicBlock, Vec<RustcInstructionInfo>>,
     pub def_span: rustc_span::Span,
 }
 
@@ -324,7 +324,7 @@ impl<'tcx> BodyInfo<'tcx> {
     }
 
     pub fn instruction_at(&self, location: Location) -> RustcInstructionInfo {
-        self.instructions[location.block][location.statement_index].unwrap()
+        self.instructions[location.block][location.statement_index]
     }
 
     pub fn span_of(&self, loc: RichLocation) -> rustc_span::Span {
