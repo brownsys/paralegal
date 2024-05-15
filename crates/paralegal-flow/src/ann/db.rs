@@ -57,7 +57,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     #[inline]
-    fn db(&self) -> &MarkerDatabase<'tcx> {
+    pub fn db(&self) -> &MarkerDatabase<'tcx> {
         &self.0
     }
 

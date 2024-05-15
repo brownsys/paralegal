@@ -324,7 +324,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
 
     /// Consume the generator and compile the [`SPDG`].
     pub fn make_spdg(mut self) -> SPDG {
-        let start = Instant::now();
         self.make_spdg_impl();
         let arguments = self.determine_arguments();
         let return_ = self.determine_return();
@@ -499,7 +498,6 @@ fn assert_edge_location_invariant<'tcx>(
 
 pub(super) struct MyCallback<'tcx> {
     pub(super) judge: InlineJudge<'tcx>,
-    pub(super) stat_wrap: StatStracker,
     pub(super) tcx: TyCtxt<'tcx>,
 }
 
@@ -520,13 +518,6 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
 
         if skip {
             changes = changes.with_skip(Skip);
-        } else {
-            record_inlining(
-                &self.stat_wrap,
-                self.tcx,
-                info.callee.def_id().expect_local(),
-                info.is_cached,
-            )
         }
         changes
     }

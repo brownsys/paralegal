@@ -36,6 +36,7 @@ pub mod utils;
 
 use internment::Intern;
 use itertools::Itertools;
+use rustc_macros::{Decodable, Encodable};
 use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -272,9 +273,10 @@ impl Span {
 
 /// Metadata on a function call.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]
+#[cfg_attr(feature = "rustc", derive(Encodable, Decodable))]
 pub struct FunctionCallInfo {
-    /// Has this call been inlined
-    pub is_inlined: bool,
+    // /// Has this call been inlined
+    // pub is_inlined: bool,
     /// What is the ID of the item that was called here.
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
     pub id: DefId,
@@ -297,28 +299,6 @@ pub enum InstructionKind {
     Start,
     /// The merged exit points of a function
     Return,
-}
-
-#[cfg(feature = "rustc")]
-impl<E: Encoder> Encodable<E> for FunctionCallInfo {
-    fn encode(&self, s: &mut E) {
-        self.is_inlined.encode(s);
-        rustc::middle::ty::tls::with(|tcx| tcx.def_path_hash(self.id).encode(s))
-    }
-}
-
-#[cfg(feature = "rustc")]
-impl<D: Decoder> Decodable<D> for FunctionCallInfo {
-    fn decode(d: &mut D) -> Self {
-        Self {
-            is_inlined: Decodable::decode(d),
-            id: rustc::middle::ty::tls::with(|tcx| {
-                tcx.def_path_hash_to_def_id(Decodable::decode(d), &mut || {
-                    panic!("Could not translate def path hash")
-                })
-            }),
-        }
-    }
 }
 
 impl InstructionKind {

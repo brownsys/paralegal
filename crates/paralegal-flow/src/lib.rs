@@ -164,25 +164,28 @@ impl rustc_driver::Callbacks for Callbacks {
                 let mut gen =
                     SPDGGenerator::new(mctx, self.opts, tcx, pdg_constructor, loader.clone());
 
-                let desc = gen.analyze(analysis_targets)?;
+                if !analysis_targets.is_empty() {
+                    let desc = gen.analyze(analysis_targets)?;
 
-                if self.opts.dbg().dump_spdg() {
-                    let out = std::fs::File::create("call-only-flow.gv").unwrap();
-                    paralegal_spdg::dot::dump(&desc, out).unwrap();
-                }
+                    if self.opts.dbg().dump_spdg() {
+                        let out = std::fs::File::create("call-only-flow.gv").unwrap();
+                        paralegal_spdg::dot::dump(&desc, out).unwrap();
+                    }
 
-                let ser = Instant::now();
-                desc.canonical_write(self.opts.result_path()).unwrap();
-                self.stats
-                    .record_timed(TimedStat::Serialization, ser.elapsed());
+                    let ser = Instant::now();
+                    desc.canonical_write(self.opts.result_path()).unwrap();
+                    self.stats
+                        .record_timed(TimedStat::Serialization, ser.elapsed());
 
-                println!("Analysis finished with timing: {}", self.stats);
-
-                anyhow::Ok(if self.opts.abort_after_analysis() {
-                    rustc_driver::Compilation::Stop
+                    println!("Analysis finished with timing: {}", self.stats);
+                    anyhow::Ok(if self.opts.abort_after_analysis() {
+                        rustc_driver::Compilation::Stop
+                    } else {
+                        rustc_driver::Compilation::Continue
+                    })
                 } else {
-                    rustc_driver::Compilation::Continue
-                })
+                    Ok(rustc_driver::Compilation::Continue)
+                }
             })
             .unwrap()
     }

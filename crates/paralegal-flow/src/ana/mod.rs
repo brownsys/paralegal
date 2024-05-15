@@ -54,7 +54,7 @@ use graph_converter::GraphConverter;
 use rustc_type_ir::TyEncoder;
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
 
-use self::{encoder::ParalegalEncoder, inline_judge::InlineJudge};
+use self::{encoder::ParalegalEncoder, graph_converter::MyCallback, inline_judge::InlineJudge};
 
 pub struct MetadataLoader<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -77,7 +77,12 @@ impl<'tcx> MetadataLoader<'tcx> {
         let mut collector = CollectingVisitor::new(tcx, args, self.clone());
         collector.run();
         let emit_targets = collector.emit_target_collector;
-        let constructor = MemoPdgConstructor::new(tcx, self.clone());
+        let marker_ctx: MarkerCtx = collector.marker_ctx.into();
+        let mut constructor = MemoPdgConstructor::new(tcx, self.clone());
+        constructor.with_call_change_callback(MyCallback {
+            tcx,
+            judge: InlineJudge::new(marker_ctx.clone(), tcx, args.anactrl()),
+        });
         let pdgs = emit_targets
             .into_iter()
             .map(|t| {
@@ -90,13 +95,9 @@ impl<'tcx> MetadataLoader<'tcx> {
                 )
             })
             .collect::<FxHashMap<_, _>>();
-        let meta = Metadata::from_pdgs(tcx, pdgs, &collector.marker_ctx);
+        let meta = Metadata::from_pdgs(tcx, pdgs, marker_ctx.db());
         meta.write(path, tcx);
-        (
-            collector.functions_to_analyze,
-            collector.marker_ctx.into(),
-            constructor,
-        )
+        (collector.functions_to_analyze, marker_ctx, constructor)
     }
 
     pub fn get_annotations(&self, key: DefId) -> &[Annotation] {
@@ -166,10 +167,7 @@ impl<'tcx> Metadata<'tcx> {
                             },
                             |t| RustcInstructionInfo {
                                 kind: if let Ok((id, ..)) = t.as_fn_and_args(tcx) {
-                                    RustcInstructionKind::FunctionCall(FunctionCallInfo {
-                                        id,
-                                        is_inlined: unimplemented!(),
-                                    })
+                                    RustcInstructionKind::FunctionCall(FunctionCallInfo { id })
                                 } else if matches!(t.kind, TerminatorKind::SwitchInt { .. }) {
                                     RustcInstructionKind::SwitchInt
                                 } else {
@@ -531,10 +529,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                             match instruction.kind {
                                 RustcInstructionKind::SwitchInt => InstructionKind::SwitchInt,
                                 RustcInstructionKind::FunctionCall(c) => {
-                                    InstructionKind::FunctionCall(FunctionCallInfo {
-                                        is_inlined: c.is_inlined,
-                                        id: c.id,
-                                    })
+                                    InstructionKind::FunctionCall(c)
                                 }
                                 RustcInstructionKind::Statement => InstructionKind::Statement,
                                 RustcInstructionKind::Terminator => InstructionKind::Terminator,
