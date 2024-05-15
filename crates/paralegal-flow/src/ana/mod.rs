@@ -69,7 +69,7 @@ pub fn collect_and_emit_metadata<'tcx>(
     collector.run();
     let pdgs = collector.flowistry_collector.into_metadata(tcx);
     let meta = Metadata::from_pdgs(tcx, pdgs, &collector.marker_ctx);
-    meta.write(path);
+    meta.write(path, tcx);
     (collector.functions_to_analyze, collector.marker_ctx.into())
 }
 
@@ -82,8 +82,8 @@ pub struct Metadata<'tcx> {
 }
 
 impl<'tcx> Metadata<'tcx> {
-    fn write(&self, path: impl AsRef<Path>) {
-        let mut encoder = ParalegalEncoder::new(path);
+    fn write(&self, path: impl AsRef<Path>, tcx: TyCtxt<'tcx>) {
+        let mut encoder = ParalegalEncoder::new(path, tcx);
         self.encode(&mut encoder);
         encoder.finish()
     }
