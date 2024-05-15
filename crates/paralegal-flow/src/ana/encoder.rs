@@ -39,6 +39,8 @@ impl<'tcx> ParalegalEncoder<'tcx> {
     }
 }
 
+const CLEAR_CROSS_CRATE: bool = false;
+
 impl<'a, 'tcx> Encoder for ParalegalEncoder<'tcx> {
     encoder_methods! {
         emit_usize(usize);
@@ -60,7 +62,7 @@ impl<'a, 'tcx> Encoder for ParalegalEncoder<'tcx> {
 
 impl<'tcx> TyEncoder for ParalegalEncoder<'tcx> {
     type I = TyCtxt<'tcx>;
-    const CLEAR_CROSS_CRATE: bool = false;
+    const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
     fn position(&self) -> usize {
         self.file_encoder.position()
@@ -106,7 +108,7 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
 }
 
 impl<'tcx, 'a> TyDecoder for ParalegalDecoder<'tcx, 'a> {
-    const CLEAR_CROSS_CRATE: bool = true;
+    const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
     type I = TyCtxt<'tcx>;
 
