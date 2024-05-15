@@ -2,34 +2,31 @@
 
 extern crate smallvec;
 use flowistry_pdg::{GlobalLocation, RichLocation};
+use rustc_target::spec::abi::Abi;
 use thiserror::Error;
 
 use smallvec::SmallVec;
 
-use crate::{
-    desc::Identifier,
-    rust::{
-        ast,
-        hir::{
-            self,
-            def::Res,
-            def_id::{DefId, LocalDefId},
-            hir_id::HirId,
-            BodyId,
-        },
-        mir::{self, Location, Place, ProjectionElem},
-        rustc_borrowck::consumers::BodyWithBorrowckFacts,
-        rustc_data_structures::intern::Interned,
-        rustc_span::Span as RustSpan,
-        rustc_span::{symbol::Ident, Span},
-        rustc_target::spec::abi::Abi,
-        ty,
-    },
-    rustc_span::ErrorGuaranteed,
-    Either, Symbol, TyCtxt,
-};
+use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};
+
 pub use flowistry_pdg_construction::{is_non_default_trait_method, FnResolution};
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
+
+use rustc_ast as ast;
+use rustc_borrowck::consumers::BodyWithBorrowckFacts;
+use rustc_data_structures::intern::Interned;
+use rustc_hir::{
+    self as hir,
+    def::Res,
+    def_id::{DefId, LocalDefId},
+    hir_id::HirId,
+    BodyId,
+};
+use rustc_middle::{
+    mir::{self, Location, Place, ProjectionElem},
+    ty,
+};
+use rustc_span::{symbol::Ident, Span as RustSpan};
 
 use std::{cmp::Ordering, hash::Hash};
 
@@ -841,52 +838,6 @@ impl IntoBodyId for LocalDefId {
 impl IntoBodyId for DefId {
     fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
         self.as_local()?.into_body_id(tcx)
-    }
-}
-
-pub trait Spanned<'tcx> {
-    fn span(&self, tcx: TyCtxt<'tcx>) -> Span;
-}
-
-impl<'tcx> Spanned<'tcx> for mir::Terminator<'tcx> {
-    fn span(&self, _tcx: TyCtxt<'tcx>) -> Span {
-        self.source_info.span
-    }
-}
-
-impl<'tcx> Spanned<'tcx> for mir::Statement<'tcx> {
-    fn span(&self, _tcx: TyCtxt<'tcx>) -> Span {
-        self.source_info.span
-    }
-}
-
-impl<'tcx> Spanned<'tcx> for (&mir::Body<'tcx>, mir::Location) {
-    fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
-        self.0
-            .stmt_at(self.1)
-            .either(|e| e.span(tcx), |e| e.span(tcx))
-    }
-}
-
-impl<'tcx> Spanned<'tcx> for DefId {
-    fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
-        tcx.def_span(*self)
-    }
-}
-
-impl<'tcx> Spanned<'tcx> for (LocalDefId, mir::Location) {
-    fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
-        let body = tcx.body_for_def_id(self.0).unwrap();
-        (&body.body, self.1).span(tcx)
-    }
-}
-
-impl<'tcx> Spanned<'tcx> for GlobalLocation {
-    fn span(&self, tcx: TyCtxt<'tcx>) -> RustSpan {
-        match self.location {
-            RichLocation::Location(loc) => (self.function, loc).span(tcx),
-            _ => self.function.to_def_id().span(tcx),
-        }
     }
 }
 

@@ -1,6 +1,6 @@
 //! Display SPDGs as dot graphs
 
-use crate::{GlobalEdge, InstructionKind, Node, ProgramDescription};
+use crate::{Endpoint, GlobalEdge, InstructionKind, Node, ProgramDescription};
 use dot::{CompassPoint, Edges, Id, LabelText, Nodes};
 use flowistry_pdg::rustc_portable::LocalDefId;
 use flowistry_pdg::{CallString, RichLocation};
@@ -11,14 +11,14 @@ use std::collections::HashMap;
 
 struct DotPrintableProgramDescription<'d> {
     spdg: &'d ProgramDescription,
-    call_sites: HashMap<CallString, (LocalDefId, Vec<Node>)>,
-    selected_controllers: Vec<LocalDefId>,
+    call_sites: HashMap<CallString, (Endpoint, Vec<Node>)>,
+    selected_controllers: Vec<Endpoint>,
 }
 
 impl<'d> DotPrintableProgramDescription<'d> {
     pub fn new_for_selection(
         spdg: &'d ProgramDescription,
-        mut selector: impl FnMut(LocalDefId) -> bool,
+        mut selector: impl FnMut(Endpoint) -> bool,
     ) -> Self {
         let selected_controllers: Vec<_> = spdg
             .controllers
@@ -127,6 +127,7 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
                     s.push('*');
                 }
                 InstructionKind::Return => s.push_str("end"),
+                InstructionKind::SwitchInt => s.push('C'),
             };
 
             for &n in nodes {
@@ -197,7 +198,7 @@ pub fn dump<W: std::io::Write>(spdg: &ProgramDescription, out: W) -> std::io::Re
 pub fn dump_for_controller(
     spdg: &ProgramDescription,
     out: impl std::io::Write,
-    controller_id: LocalDefId,
+    controller_id: Endpoint,
 ) -> std::io::Result<()> {
     let mut found = false;
     dump_for_selection(spdg, out, |l| {
@@ -218,7 +219,7 @@ pub fn dump_for_controller(
 pub fn dump_for_selection(
     spdg: &ProgramDescription,
     mut out: impl std::io::Write,
-    selector: impl FnMut(LocalDefId) -> bool,
+    selector: impl FnMut(Endpoint) -> bool,
 ) -> std::io::Result<()> {
     let printable = DotPrintableProgramDescription::new_for_selection(spdg, selector);
     dot::render(&printable, &mut out)

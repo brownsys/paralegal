@@ -23,48 +23,38 @@ extern crate petgraph;
 extern crate num_derive;
 extern crate num_traits;
 
-pub extern crate rustc_index;
+extern crate rustc_abi;
+extern crate rustc_arena;
+extern crate rustc_ast;
+extern crate rustc_borrowck;
+extern crate rustc_data_structures;
+extern crate rustc_driver;
+extern crate rustc_hash;
+extern crate rustc_hir;
+extern crate rustc_index;
+extern crate rustc_interface;
+extern crate rustc_macros;
+extern crate rustc_middle;
+extern crate rustc_mir_dataflow;
+extern crate rustc_query_system;
 extern crate rustc_serialize;
+extern crate rustc_span;
+extern crate rustc_target;
+extern crate rustc_type_ir;
 
-pub mod rust {
-    //! Exposes the rustc external crates (this mod is just to tidy things up).
-    pub extern crate rustc_abi;
-    pub extern crate rustc_arena;
-    pub extern crate rustc_ast;
-    pub extern crate rustc_borrowck;
-    pub extern crate rustc_data_structures;
-    pub extern crate rustc_driver;
-    pub extern crate rustc_hir;
-    pub extern crate rustc_interface;
-    pub extern crate rustc_middle;
-    pub extern crate rustc_mir_dataflow;
-    pub extern crate rustc_query_system;
-    pub extern crate rustc_serialize;
-    pub extern crate rustc_span;
-    pub extern crate rustc_target;
-    pub extern crate rustc_type_ir;
-    pub use super::rustc_index;
-    pub use rustc_type_ir::sty;
+pub use rustc_type_ir::sty;
 
-    pub use rustc_ast as ast;
-    pub mod mir {
-        pub use super::rustc_abi::FieldIdx as Field;
-        pub use super::rustc_middle::mir::*;
-    }
-    pub use rustc_hir as hir;
-    pub use rustc_middle::ty;
+pub use rustc_middle::ty;
 
-    pub use rustc_middle::dep_graph::DepGraph;
-    pub use ty::TyCtxt;
+pub use rustc_middle::dep_graph::DepGraph;
+pub use ty::TyCtxt;
 
-    pub use hir::def_id::{DefId, LocalDefId};
-    pub use hir::BodyId;
-    pub use mir::Location;
-}
+pub use rustc_hir::def_id::{DefId, LocalDefId};
+pub use rustc_hir::BodyId;
+pub use rustc_middle::mir::Location;
 
 use args::{ClapArgs, LogLevelConfig};
 use desc::utils::write_sep;
-use rust::*;
 
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
@@ -93,6 +83,7 @@ pub mod test_utils;
 
 pub use paralegal_spdg as desc;
 
+use crate::ana::{collect_and_emit_metadata, SPDGGenerator};
 pub use crate::ann::db::MarkerCtx;
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
 
@@ -148,7 +139,7 @@ impl rustc_driver::Callbacks for Callbacks {
     // that (when retrieving the MIR bodies for instance)
     fn after_expansion<'tcx>(
         &mut self,
-        _compiler: &rustc_interface::interface::Compiler,
+        compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         self.stats
@@ -158,10 +149,19 @@ impl rustc_driver::Callbacks for Callbacks {
             .unwrap()
             .enter(|tcx| {
                 tcx.sess.abort_if_errors();
-                let desc =
-                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
-                info!("All elems walked");
+
+                let (analysis_targets, mctx) = collect_and_emit_metadata(
+                    tcx,
+                    self.opts,
+                    compiler
+                        .build_output_filenames(tcx.sess, &[])
+                        .with_extension(".para"),
+                );
                 tcx.sess.abort_if_errors();
+
+                let mut gen = SPDGGenerator::new(mctx, self.opts, tcx);
+
+                let desc = gen.analyze(analysis_targets)?;
 
                 if self.opts.dbg().dump_spdg() {
                     let out = std::fs::File::create("call-only-flow.gv").unwrap();

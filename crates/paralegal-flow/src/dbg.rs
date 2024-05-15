@@ -8,7 +8,7 @@
 //! to stdout, a file or a log statement. Some take additional information (such
 //! as [TyCtxt]) to get contextual information that is used to make the output
 //! more useful.
-use crate::rust::mir;
+use rustc_middle::mir;
 
 /// All locations that a body has (helper)
 pub fn locations_of_body<'a: 'tcx, 'tcx>(

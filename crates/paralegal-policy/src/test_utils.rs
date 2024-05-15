@@ -1,6 +1,6 @@
 use crate::Context;
-use crate::ControllerId;
 use paralegal_flow::test_utils::PreFrg;
+use paralegal_spdg::Endpoint;
 use paralegal_spdg::IntoIterGlobalNodes;
 use paralegal_spdg::NodeCluster;
 use paralegal_spdg::{Identifier, InstructionKind, Node as SPDGNode, SPDG};
@@ -21,7 +21,7 @@ pub fn test_ctx() -> Arc<Context> {
 
 pub fn get_callsite_or_datasink_node<'a>(
     ctx: &'a Context,
-    controller: ControllerId,
+    controller: Endpoint,
     name: &'a str,
 ) -> NodeCluster {
     get_callsite_node(ctx, controller, name)
@@ -29,11 +29,7 @@ pub fn get_callsite_or_datasink_node<'a>(
         .unwrap()
 }
 
-pub fn get_callsite_node<'a>(
-    ctx: &'a Context,
-    controller: ControllerId,
-    name: &'a str,
-) -> NodeCluster {
+pub fn get_callsite_node<'a>(ctx: &'a Context, controller: Endpoint, name: &'a str) -> NodeCluster {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl
@@ -57,7 +53,7 @@ fn is_at_function_call_with_name(
     )
 }
 
-pub fn get_sink_node<'a>(ctx: &'a Context, controller: ControllerId, name: &'a str) -> NodeCluster {
+pub fn get_sink_node<'a>(ctx: &'a Context, controller: Endpoint, name: &'a str) -> NodeCluster {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl

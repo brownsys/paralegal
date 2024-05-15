@@ -3,16 +3,15 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
-use crate::{
-    ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, rust::*, stats::Stats, utils::*,
-};
+use crate::{ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, stats::Stats, utils::*};
 
-use hir::{
-    def_id::DefId,
+use flowistry_pdg_construction::meta::MetadataCollector;
+use rustc_hir::{
+    def_id::{DefId, LocalDefId},
     intravisit::{self, FnKind},
     BodyId,
 };
-use rustc_middle::hir::nested_filter::OnlyBodies;
+use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use anyhow::Result;
@@ -36,9 +35,9 @@ pub struct CollectingVisitor<'tcx> {
     /// later perform the analysis
     pub functions_to_analyze: Vec<FnToAnalyze>,
 
-    stats: Stats,
-
     pub marker_ctx: MarkerDatabase<'tcx>,
+
+    pub flowistry_collector: MetadataCollector,
 }
 
 /// A function we will be targeting to analyze with
@@ -56,7 +55,7 @@ impl FnToAnalyze {
 }
 
 impl<'tcx> CollectingVisitor<'tcx> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args, stats: Stats) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         let functions_to_analyze = opts
             .anactrl()
             .selected_targets()
@@ -78,24 +77,22 @@ impl<'tcx> CollectingVisitor<'tcx> {
             opts,
             functions_to_analyze,
             marker_ctx: MarkerDatabase::init(tcx, opts),
-            stats,
+            flowistry_collector: MetadataCollector::new(),
         }
     }
 
     /// After running the discovery with `visit_all_item_likes_in_crate`, create
     /// the read-only [`SPDGGenerator`] upon which the analysis will run.
     fn into_generator(self) -> SPDGGenerator<'tcx> {
-        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx, self.stats)
+        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx)
     }
 
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
-    pub fn run(mut self) -> Result<ProgramDescription> {
+    pub fn run(&mut self) {
         let tcx = self.tcx;
-        tcx.hir().visit_all_item_likes_in_crate(&mut self);
-        let targets = std::mem::take(&mut self.functions_to_analyze);
-        self.into_generator().analyze(targets)
+        tcx.hir().visit_all_item_likes_in_crate(self)
     }
 
     /// Does the function named by this id have the `paralegal_flow::analyze` annotation
@@ -133,13 +130,16 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
         id: LocalDefId,
     ) {
         match &kind {
-            FnKind::ItemFn(name, _, _) | FnKind::Method(name, _)
-                if self.should_analyze_function(id) =>
-            {
-                self.functions_to_analyze.push(FnToAnalyze {
-                    name: *name,
-                    def_id: id.to_def_id(),
-                });
+            FnKind::ItemFn(name, _, _) | FnKind::Method(name, _) => {
+                if self.should_analyze_function(id) {
+                    self.functions_to_analyze.push(FnToAnalyze {
+                        name: *name,
+                        def_id: id.to_def_id(),
+                    });
+                }
+                if self.tcx.generics_of(id).count() == 0 {
+                    self.flowistry_collector.add_target(id)
+                }
             }
             _ => (),
         }

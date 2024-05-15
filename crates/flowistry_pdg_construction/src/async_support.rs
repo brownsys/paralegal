@@ -5,6 +5,7 @@ use flowistry_pdg::GlobalLocation;
 use itertools::Itertools;
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_macros::{Decodable, Encodable};
 use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
@@ -17,6 +18,19 @@ use crate::construct::{push_call_string_root, CallKind, SubgraphDescriptor};
 
 use super::construct::GraphConstructor;
 use super::utils::{self, FnResolution};
+
+#[derive(Debug, Clone, Copy, Decodable, Encodable)]
+pub enum Asyncness {
+    No,
+    AsyncFn,
+    AsyncTrait,
+}
+
+impl Asyncness {
+    pub fn is_async(self) -> bool {
+        !matches!(self, Asyncness::No)
+    }
+}
 
 /// Stores ids that are needed to construct projections around async functions.
 pub(crate) struct AsyncInfo {
@@ -148,16 +162,19 @@ pub fn determine_async<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
     body: &Body<'tcx>,
-) -> Option<(FnResolution<'tcx>, Location)> {
-    let (generator_def_id, args, loc) = if tcx.asyncness(def_id).is_async() {
-        get_async_generator(body)
+) -> Option<(FnResolution<'tcx>, Location, Asyncness)> {
+    let ((generator_def_id, args, loc), asyncness) = if tcx.asyncness(def_id).is_async() {
+        (get_async_generator(body), Asyncness::AsyncFn)
     } else {
-        try_as_async_trait_function(tcx, def_id.to_def_id(), body)?
+        (
+            try_as_async_trait_function(tcx, def_id.to_def_id(), body)?,
+            Asyncness::AsyncTrait,
+        )
     };
     let param_env = tcx.param_env_reveal_all_normalized(def_id);
     let generator_fn =
         utils::try_resolve_function(tcx, generator_def_id.to_def_id(), param_env, args);
-    Some((generator_fn, loc))
+    Some((generator_fn, loc, asyncness))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,16 +186,18 @@ pub enum AsyncDeterminationResult<T> {
 
 impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
     pub(crate) fn try_handle_as_async(&self) -> Option<Rc<SubgraphDescriptor<'tcx>>> {
-        let (generator_fn, location) = determine_async(self.tcx(), self.def_id, &self.body)?;
+        let (generator_fn, location, asyncness) =
+            determine_async(self.tcx(), self.def_id, &self.body)?;
 
         let g = self.memo.construct_for(generator_fn)?;
-        let new_g = push_call_string_root(
+        let mut new_g = push_call_string_root(
             g.as_ref(),
             GlobalLocation {
-                function: self.def_id,
+                function: self.def_id.to_def_id(),
                 location: flowistry_pdg::RichLocation::Location(location),
             },
         );
+        new_g.graph.asyncness = asyncness;
         Some(Rc::new(new_g))
     }
 

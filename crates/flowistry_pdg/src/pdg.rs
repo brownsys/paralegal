@@ -110,8 +110,8 @@ impl From<Location> for RichLocation {
 pub struct GlobalLocation {
     // TODO Change to `DefId`
     /// The function containing the location.
-    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::LocalDefId"))]
-    pub function: LocalDefId,
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    pub function: DefId,
 
     /// The location of an instruction in the function, or the function's start.
     pub location: RichLocation,
@@ -121,7 +121,7 @@ pub struct GlobalLocation {
 impl<E: Encoder> Encodable<E> for GlobalLocation {
     fn encode(&self, e: &mut E) {
         crate::rustc::middle::ty::tls::with(|tcx| {
-            tcx.def_path_hash(self.function.to_def_id()).encode(e);
+            tcx.def_path_hash(self.function).encode(e);
             self.location.encode(e);
         })
     }
@@ -132,11 +132,9 @@ impl<D: Decoder> Decodable<D> for GlobalLocation {
     fn decode(d: &mut D) -> Self {
         use crate::rustc::span::def_id::DefPathHash;
         crate::rustc::middle::ty::tls::with(|tcx| Self {
-            function: tcx
-                .def_path_hash_to_def_id(DefPathHash::decode(d), &mut || {
-                    panic!("Could map hash to def id")
-                })
-                .expect_local(),
+            function: tcx.def_path_hash_to_def_id(DefPathHash::decode(d), &mut || {
+                panic!("Could map hash to def id")
+            }),
             location: RichLocation::decode(d),
         })
     }

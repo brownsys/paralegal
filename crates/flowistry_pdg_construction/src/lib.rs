@@ -17,13 +17,14 @@ extern crate rustc_type_ir;
 
 pub use utils::FnResolution;
 
-use self::graph::DepGraph;
-pub use async_support::{determine_async, is_async_trait_fn, match_async_trait_assign};
+pub use self::graph::DepGraph;
+pub use async_support::{determine_async, is_async_trait_fn, match_async_trait_assign, Asyncness};
 pub mod callback;
 pub use crate::construct::MemoPdgConstructor;
 pub use callback::{
     CallChangeCallback, CallChangeCallbackFn, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
+pub use construct::SubgraphDescriptor;
 use rustc_middle::ty::TyCtxt;
 pub use utils::{is_non_default_trait_method, try_resolve_function};
 
@@ -31,6 +32,7 @@ mod async_support;
 mod calling_convention;
 mod construct;
 pub mod graph;
+pub mod meta;
 mod mutation;
 mod utils;
 

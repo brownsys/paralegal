@@ -95,9 +95,9 @@ use indexmap::IndexMap;
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{GlobalNode, Identifier, Span, SpanCoord, SPDG};
+use paralegal_spdg::{Endpoint, GlobalNode, Identifier, Span, SpanCoord, SPDG};
 
-use crate::{Context, ControllerId, NodeExt};
+use crate::{Context, NodeExt};
 
 /// Check the condition and emit a [`Diagnostics::error`] if it fails.
 #[macro_export]
@@ -785,7 +785,7 @@ impl PolicyContext {
     /// diagnostic context management.
     pub fn named_controller<A>(
         self: Arc<Self>,
-        id: ControllerId,
+        id: Endpoint,
         policy: impl FnOnce(Arc<ControllerContext>) -> A,
     ) -> A {
         policy(Arc::new(ControllerContext {
@@ -820,7 +820,7 @@ impl HasDiagnosticsBase for PolicyContext {
 /// See the [module level documentation][self] for more information on
 /// diagnostic context management.
 pub struct ControllerContext {
-    id: ControllerId,
+    id: Endpoint,
     inner: Arc<dyn HasDiagnosticsBase>,
 }
 
@@ -863,7 +863,7 @@ impl ControllerContext {
     }
 
     /// Access the id for the controller of this context
-    pub fn id(&self) -> ControllerId {
+    pub fn id(&self) -> Endpoint {
         self.id
     }
 
@@ -974,7 +974,7 @@ impl Context {
     /// diagnostic context management.
     pub fn named_controller<A>(
         self: Arc<Self>,
-        id: ControllerId,
+        id: Endpoint,
         policy: impl FnOnce(Arc<ControllerContext>) -> A,
     ) -> A {
         policy(Arc::new(ControllerContext {

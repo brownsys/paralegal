@@ -5,84 +5,290 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
-    ann::{Annotation, MarkerAnnotation},
+    ann::{db::MarkerDatabase, Annotation, MarkerAnnotation},
     desc::*,
-    discover::FnToAnalyze,
-    rust::{hir::def, *},
+    discover::{CollectingVisitor, FnToAnalyze},
     stats::{Stats, TimedStat},
     utils::*,
-    DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
+    Args, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use std::{cell::RefCell, path::Path};
 
 use anyhow::Result;
 use either::Either;
-use flowistry_pdg_construction::MemoPdgConstructor;
+use flowistry_pdg_construction::{
+    graph::InternedString, meta::MetadataCollector, Asyncness, DepGraph, MemoPdgConstructor,
+    SubgraphDescriptor,
+};
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
+
+use rustc_hash::FxHashMap;
+use rustc_hir::{
+    def,
+    def_id::{CrateNum, DefIndex, LocalDefId},
+    intravisit,
+};
+use rustc_index::IndexVec;
+use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
+use rustc_middle::{
+    hir,
+    mir::{
+        BasicBlock, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location,
+        TerminatorKind,
+    },
+    ty::{self, GenericArgsRef, TyCtxt},
+};
+use rustc_serialize::{opaque::FileEncoder, Decodable, Encodable};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
 
+mod encoder;
 mod graph_converter;
 mod inline_judge;
 
 use graph_converter::GraphConverter;
+use rustc_type_ir::TyEncoder;
+use rustc_utils::{cache::Cache, mir::borrowck_facts};
 
-use self::{graph_converter::PlaceInfoCache, inline_judge::InlineJudge};
+use self::{encoder::ParalegalEncoder, inline_judge::InlineJudge};
+
+pub struct MetadataLoader<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    cache: Cache<CrateNum, Option<Metadata<'tcx>>>,
+}
+
+pub fn collect_and_emit_metadata<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    args: &'static Args,
+    path: impl AsRef<Path>,
+) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>) {
+    let mut collector = CollectingVisitor::new(tcx, args);
+    collector.run();
+    let pdgs = collector.flowistry_collector.into_metadata(tcx);
+    let meta = Metadata::from_pdgs(tcx, pdgs, &collector.marker_ctx);
+    meta.write(path);
+    (collector.functions_to_analyze, collector.marker_ctx.into())
+}
+
+#[derive(Clone, Debug, TyEncodable, TyDecodable)]
+pub struct Metadata<'tcx> {
+    pub pdgs: FxHashMap<DefIndex, SubgraphDescriptor<'tcx>>,
+    pub bodies: FxHashMap<DefIndex, BodyInfo<'tcx>>,
+    pub local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
+    pub reachable_markers: HashMap<FnResolution<'tcx>, Box<[InternedString]>>,
+}
+
+impl<'tcx> Metadata<'tcx> {
+    fn write(&self, path: impl AsRef<Path>) {
+        let mut encoder = ParalegalEncoder::new(path);
+        self.encode(&mut encoder);
+        encoder.finish()
+    }
+}
+
+impl<'tcx> Metadata<'tcx> {
+    pub fn from_pdgs(
+        tcx: TyCtxt<'tcx>,
+        pdgs: FxHashMap<DefIndex, SubgraphDescriptor<'tcx>>,
+        markers: &MarkerDatabase<'tcx>,
+    ) -> Self {
+        let mut bodies: FxHashMap<DefIndex, BodyInfo> = Default::default();
+        for pdg in pdgs
+            .values()
+            .flat_map(|d| d.graph.nodes.iter().flat_map(|n| n.at.iter()))
+        {
+            if let Some(local) = pdg.function.as_local() {
+                let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local);
+                let body = &body_with_facts.body;
+                let body_info = bodies
+                    .entry(local.local_def_index)
+                    .or_insert_with(|| BodyInfo {
+                        arg_count: body.arg_count,
+                        decls: body.local_decls().to_owned(),
+                        instructions: Default::default(),
+                        def_span: tcx.def_span(local),
+                    });
+                if let RichLocation::Location(loc) = pdg.location {
+                    let bb = body_info
+                        .instructions
+                        .ensure_contains_elem(loc.block, Default::default);
+                    if bb.len() < loc.statement_index {
+                        bb.resize_with(loc.statement_index, Default::default);
+                    }
+                    bb[loc.statement_index].get_or_insert_with(|| {
+                        body.stmt_at(loc).either(
+                            |s| RustcInstructionInfo {
+                                kind: RustcInstructionKind::Statement,
+                                span: s.source_info.span,
+                                description: InternedString::new(format!("{:?}", s.kind)),
+                            },
+                            |t| RustcInstructionInfo {
+                                kind: if let Ok((id, ..)) = t.as_fn_and_args(tcx) {
+                                    RustcInstructionKind::FunctionCall(FunctionCallInfo {
+                                        id,
+                                        is_inlined: unimplemented!(),
+                                    })
+                                } else if matches!(t.kind, TerminatorKind::SwitchInt { .. }) {
+                                    RustcInstructionKind::SwitchInt
+                                } else {
+                                    RustcInstructionKind::Terminator
+                                },
+                                span: t.source_info.span,
+                                description: InternedString::new(format!("{:?}", t.kind)),
+                            },
+                        )
+                    });
+                }
+            }
+        }
+        let cache_borrow = markers.reachable_markers.borrow();
+        Self {
+            pdgs,
+            bodies,
+            local_annotations: markers.local_annotations.clone(),
+            reachable_markers: (&*cache_borrow)
+                .iter()
+                .filter_map(|(k, v)| Some((*k, (**(v.as_ref()?)).clone())))
+                .collect(),
+        }
+    }
+}
+
+impl<'tcx> MetadataLoader<'tcx> {
+    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self {
+            tcx,
+            cache: Default::default(),
+        }
+    }
+
+    pub fn get_metadata(&self, key: CrateNum) -> Option<&Metadata<'tcx>> {
+        self.cache.get(key, |_| unimplemented!()).as_ref()
+    }
+
+    pub fn get_body_info(&self, key: DefId) -> Option<&BodyInfo<'tcx>> {
+        let meta = self.get_metadata(key.krate)?;
+        meta.bodies.get(&key.index)
+    }
+
+    pub fn get_mono(&self, cs: CallString) -> GenericArgsRef<'tcx> {
+        let key = cs.root().function;
+        self.get_metadata(key.krate).unwrap().pdgs[&key.index]
+            .graph
+            .monos[&cs]
+    }
+
+    pub fn get_pdg(&self, key: DefId) -> Option<DepGraph<'tcx>> {
+        Some(
+            self.get_metadata(key.krate)?
+                .pdgs
+                .get(&key.index)?
+                .to_petgraph(),
+        )
+    }
+
+    pub fn get_asyncness(&self, key: DefId) -> Asyncness {
+        (|| {
+            Some(
+                self.get_metadata(key.krate)?
+                    .pdgs
+                    .get(&key.index)?
+                    .graph
+                    .asyncness,
+            )
+        })()
+        .unwrap_or(Asyncness::No)
+    }
+}
+
+#[derive(Clone, Debug, TyEncodable, TyDecodable)]
+pub struct BodyInfo<'tcx> {
+    pub arg_count: usize,
+    pub decls: IndexVec<Local, LocalDecl<'tcx>>,
+    pub instructions: IndexVec<BasicBlock, Vec<Option<RustcInstructionInfo>>>,
+    pub def_span: rustc_span::Span,
+}
+
+#[derive(Clone, Copy, Debug, Encodable, Decodable)]
+pub struct RustcInstructionInfo {
+    /// Classification of the instruction
+    pub kind: RustcInstructionKind,
+    /// The source code span
+    pub span: rustc_span::Span,
+    /// Textual rendering of the MIR
+    pub description: InternedString,
+}
+
+/// The type of instructions we may encounter
+#[derive(Debug, Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Encodable, Decodable)]
+pub enum RustcInstructionKind {
+    /// Some type of statement
+    Statement,
+    /// A function call
+    FunctionCall(FunctionCallInfo),
+    /// A basic block terminator
+    Terminator,
+    /// The switch int terminator
+    SwitchInt,
+}
+
+impl<'tcx> BodyInfo<'tcx> {
+    pub fn local_kind(&self, local: Local) -> LocalKind {
+        let local = local.as_usize();
+        assert!(local < self.decls.len());
+        if local == 0 {
+            LocalKind::ReturnPointer
+        } else if local < self.arg_count + 1 {
+            LocalKind::Arg
+        } else {
+            LocalKind::Temp
+        }
+    }
+
+    pub fn instruction_at(&self, location: Location) -> RustcInstructionInfo {
+        self.instructions[location.block][location.statement_index].unwrap()
+    }
+
+    pub fn span_of(&self, loc: RichLocation) -> rustc_span::Span {
+        match loc {
+            RichLocation::Location(loc) => self.instruction_at(loc).span,
+            _ => self.def_span,
+        }
+    }
+}
+
+impl<'tcx> HasLocalDecls<'tcx> for BodyInfo<'tcx> {
+    fn local_decls(&self) -> &LocalDecls<'tcx> {
+        &self.decls
+    }
+}
 
 /// Read-only database of information the analysis needs.
 ///
 /// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
 pub struct SPDGGenerator<'tcx> {
-    pub inline_judge: InlineJudge<'tcx>,
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
-    stats: Stats,
-    place_info_cache: PlaceInfoCache<'tcx>,
-    flowistry_constructor: MemoPdgConstructor<'tcx>,
+    marker_ctx: MarkerCtx<'tcx>,
+    flowistry_loader: MetadataLoader<'tcx>,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
-    pub fn new(
-        marker_ctx: MarkerCtx<'tcx>,
-        opts: &'static crate::Args,
-        tcx: TyCtxt<'tcx>,
-        stats: Stats,
-    ) -> Self {
-        let mut flowistry_constructor = MemoPdgConstructor::new(tcx);
-        let stat_wrap = Rc::new(RefCell::new((
-            SPDGStats {
-                unique_functions: 0,
-                unique_locs: 0,
-                analyzed_functions: 0,
-                analyzed_locs: 0,
-                inlinings_performed: 0,
-                construction_time: Duration::ZERO,
-                conversion_time: Duration::ZERO,
-            },
-            Default::default(),
-        )));
-        flowistry_constructor
-            .with_call_change_callback(graph_converter::MyCallback {
-                judge: InlineJudge::new(marker_ctx.clone(), tcx, opts.anactrl()),
-                stat_wrap,
-                tcx,
-            })
-            .with_dump_mir(opts.dbg().dump_mir());
+    pub fn new(marker_ctx: MarkerCtx<'tcx>, opts: &'static crate::Args, tcx: TyCtxt<'tcx>) -> Self {
+        let mut flowistry_loader = MetadataLoader::new(tcx);
         Self {
-            inline_judge: InlineJudge::new(marker_ctx, tcx, opts.anactrl()),
+            marker_ctx,
             opts,
             tcx,
-            stats,
-            place_info_cache: Default::default(),
-            flowistry_constructor,
+            flowistry_loader,
         }
     }
 
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
-        self.inline_judge.marker_ctx()
+        &self.marker_ctx
     }
 
     /// Perform the analysis for one `#[paralegal_flow::analyze]` annotated function and
@@ -96,14 +302,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
         known_def_ids: &mut impl Extend<DefId>,
     ) -> Result<(Endpoint, SPDG)> {
         info!("Handling target {}", self.tcx.def_path_str(target.def_id));
-        let local_def_id = target.def_id.expect_local();
+        let local_def_id = target.def_id;
 
-        let converter = GraphConverter::new_with_flowistry(
-            self,
-            known_def_ids,
-            target,
-            self.place_info_cache.clone(),
-        )?;
+        let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
         let spdg = converter.make_spdg();
 
         Ok((local_def_id, spdg))
@@ -145,8 +346,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|controllers| {
                 let start = Instant::now();
                 let desc = self.make_program_description(controllers, known_def_ids, &targets);
-                self.stats
-                    .record_timed(TimedStat::Conversion, start.elapsed());
+
                 desc
             })
     }
@@ -166,7 +366,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let inlined_functions = instruction_info
             .keys()
-            .filter_map(|l| l.function.to_def_id().as_local())
+            .filter_map(|l| l.function.as_local())
             .collect::<HashSet<_>>();
         let analyzed_spans = inlined_functions
             .iter()
@@ -237,7 +437,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 .all_annotations()
                 .filter_map(|m| m.1.either(Annotation::as_marker, Some))
                 .count() as u32,
-            rustc_time: self.stats.get_timed(TimedStat::Rustc),
             dedup_locs,
             dedup_functions,
             seen_functions,
@@ -252,58 +451,45 @@ impl<'tcx> SPDGGenerator<'tcx> {
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
     ) -> HashMap<GlobalLocation, InstructionInfo> {
-        let all_instructions = controllers
-            .values()
-            .flat_map(|v| {
-                v.graph
-                    .node_weights()
-                    .flat_map(|n| n.at.iter())
-                    .chain(v.graph.edge_weights().flat_map(|e| e.at.iter()))
-            })
-            .collect::<HashSet<_>>();
+        let all_instructions = controllers.values().flat_map(|v| v.graph.node_weights());
         all_instructions
             .into_iter()
-            .map(|i| {
-                let body = &self.tcx.body_for_def_id(i.function).unwrap().body;
-
-                let (kind, description) = match i.location {
-                    RichLocation::End => (InstructionKind::Return, "start".to_owned()),
-                    RichLocation::Start => (InstructionKind::Start, "end".to_owned()),
-                    RichLocation::Location(loc) => match body.stmt_at(loc) {
-                        crate::Either::Right(term) => {
-                            let kind = if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
-                                InstructionKind::FunctionCall(FunctionCallInfo {
-                                    id,
-                                    is_inlined: id.is_local(),
-                                })
-                            } else {
-                                InstructionKind::Terminator
-                            };
-                            (kind, format!("{:?}", term.kind))
-                        }
-                        crate::Either::Left(stmt) => {
-                            (InstructionKind::Statement, format!("{:?}", stmt.kind))
-                        }
-                    },
-                };
-                let rust_span = match i.location {
-                    RichLocation::Location(loc) => {
-                        let expanded_span = match body.stmt_at(loc) {
-                            crate::Either::Right(term) => term.source_info.span,
-                            crate::Either::Left(stmt) => stmt.source_info.span,
-                        };
-                        self.tcx
-                            .sess
-                            .source_map()
-                            .stmt_span(expanded_span, body.span)
+            .map(|n| {
+                let body = self
+                    .flowistry_loader
+                    .get_body_info(n.at.leaf().function)
+                    .unwrap();
+                let (kind, description, span) = match n.at.leaf().location {
+                    RichLocation::End => {
+                        (InstructionKind::Return, "start".to_owned(), body.def_span)
                     }
-                    RichLocation::Start | RichLocation::End => self.tcx.def_span(i.function),
+                    RichLocation::Start => {
+                        (InstructionKind::Start, "end".to_owned(), body.def_span)
+                    }
+                    RichLocation::Location(loc) => {
+                        let instruction = body.instruction_at(loc);
+                        (
+                            match instruction.kind {
+                                RustcInstructionKind::SwitchInt => InstructionKind::SwitchInt,
+                                RustcInstructionKind::FunctionCall(c) => {
+                                    InstructionKind::FunctionCall(FunctionCallInfo {
+                                        is_inlined: c.is_inlined,
+                                        id: c.id,
+                                    })
+                                }
+                                RustcInstructionKind::Statement => InstructionKind::Statement,
+                                RustcInstructionKind::Terminator => InstructionKind::Terminator,
+                            },
+                            (*instruction.description).clone(),
+                            instruction.span,
+                        )
+                    }
                 };
                 (
-                    i,
+                    n.at.leaf(),
                     InstructionInfo {
                         kind,
-                        span: src_loc_for_span(rust_span, self.tcx),
+                        span: src_loc_for_span(span, self.tcx),
                         description: Identifier::new_intern(&description),
                     },
                 )
@@ -342,8 +528,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     k,
                     TypeDescription {
                         rendering,
-                        otypes: otypes.into(),
-                        markers,
+                        otypes: otypes.into_iter().map(|ot| ot.def_id).collect(),
+                        markers: markers
+                            .into_iter()
+                            .map(|i| Identifier::new_intern(i.as_str()))
+                            .collect(),
                     },
                 )
             })
@@ -419,7 +608,7 @@ fn path_for_item(id: DefId, tcx: TyCtxt) -> Box<[Identifier]> {
     let def_path = tcx.def_path(id);
     std::iter::once(Identifier::new(tcx.crate_name(def_path.krate)))
         .chain(def_path.data.iter().filter_map(|segment| {
-            use hir::definitions::DefPathDataName::*;
+            use rustc_hir::definitions::DefPathDataName::*;
             match segment.data.name() {
                 Named(sym) => Some(Identifier::new(sym)),
                 Anon { .. } => None,
@@ -440,7 +629,7 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
             .combined_markers(id)
             .cloned()
             .map(|ann| paralegal_spdg::MarkerAnnotation {
-                marker: ann.marker,
+                marker: Identifier::new_intern(ann.marker.as_str()),
                 on_return: ann.refinement.on_return(),
                 on_argument: ann.refinement.on_argument(),
             })

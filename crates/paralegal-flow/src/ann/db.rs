@@ -11,20 +11,19 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
-    ann::{Annotation, MarkerAnnotation},
+    ann::{Annotation, MarkerAnnotation, OType},
     args::{Args, MarkerControl},
-    ast::Attribute,
     consts,
-    hir::def::DefKind,
-    mir, ty,
     utils::{
         resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, FnResolutionExt,
         IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt, TyExt,
     },
     DefId, Either, HashMap, HashSet, LocalDefId, TyCtxt,
 };
-use flowistry_pdg_construction::determine_async;
-use paralegal_spdg::Identifier;
+use flowistry_pdg_construction::{determine_async, graph::InternedString};
+use rustc_ast::Attribute;
+use rustc_hir::def::DefKind;
+use rustc_middle::{mir, ty};
 use rustc_utils::cache::Cache;
 
 use std::rc::Rc;
@@ -165,7 +164,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         !self.get_reachable_markers(res).is_empty()
     }
 
-    pub fn get_reachable_markers(&self, res: FnResolution<'tcx>) -> &[Identifier] {
+    pub fn get_reachable_markers(&self, res: FnResolution<'tcx>) -> &[InternedString] {
         self.db()
             .reachable_markers
             .get_maybe_recursive(res, |_| self.compute_reachable_markers(res))
@@ -175,7 +174,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     fn get_reachable_and_self_markers(
         &self,
         res: FnResolution<'tcx>,
-    ) -> impl Iterator<Item = Identifier> + '_ {
+    ) -> impl Iterator<Item = InternedString> + '_ {
         if res.def_id().is_local() {
             let mut direct_markers = self
                 .combined_markers(res.def_id())
@@ -199,7 +198,7 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
-    fn compute_reachable_markers(&self, res: FnResolution<'tcx>) -> Box<[Identifier]> {
+    fn compute_reachable_markers(&self, res: FnResolution<'tcx>) -> Box<[InternedString]> {
         trace!("Computing reachable markers for {res:?}");
         let Some(local) = res.def_id().as_local() else {
             trace!("  Is not local");
@@ -218,7 +217,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             self.tcx().param_env_reveal_all_normalized(local),
             &body.body,
         );
-        if let Some((async_fn, _)) = determine_async(self.tcx(), local, &mono_body) {
+        if let Some((async_fn, ..)) = determine_async(self.tcx(), local, &mono_body) {
             return self.get_reachable_markers(async_fn).into();
         }
         mono_body
@@ -237,7 +236,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         &self,
         local_decls: &mir::LocalDecls,
         terminator: &mir::Terminator<'tcx>,
-    ) -> impl Iterator<Item = Identifier> + '_ {
+    ) -> impl Iterator<Item = InternedString> + '_ {
         trace!(
             "  Finding reachable markers for terminator {:?}",
             terminator.kind
@@ -450,7 +449,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 }
 
-pub type TypeMarkerElem = (DefId, Identifier);
+pub type TypeMarkerElem = (DefId, InternedString);
 pub type TypeMarkers = [TypeMarkerElem];
 
 /// The structure inside of [`MarkerCtx`].
@@ -458,10 +457,10 @@ pub struct MarkerDatabase<'tcx> {
     tcx: TyCtxt<'tcx>,
     /// Cache for parsed local annotations. They are created with
     /// [`MarkerCtx::retrieve_local_annotations_for`].
-    local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
+    pub(crate) local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
-    reachable_markers: Cache<FnResolution<'tcx>, Box<[Identifier]>>,
+    pub(crate) reachable_markers: Cache<FnResolution<'tcx>, Box<[InternedString]>>,
     /// Configuration options
     config: &'static MarkerControl,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
@@ -516,7 +515,11 @@ fn try_parse_annotation(
         warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
         one(Annotation::Marker(ann_match_fn(i)?))
     } else if let Some(i) = a.match_get_ref(&consts::OTYPE_MARKER) {
-        Either::Right(otype_ann_match(i, tcx)?.into_iter().map(Annotation::OType))
+        Either::Right(
+            otype_ann_match(i, tcx)?
+                .into_iter()
+                .map(|def_id| Annotation::OType(OType { def_id })),
+        )
     } else if let Some(i) = a.match_get_ref(&consts::EXCEPTION_MARKER) {
         one(Annotation::Exception(match_exception(i)?))
     } else {

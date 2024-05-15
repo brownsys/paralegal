@@ -6,6 +6,7 @@ use itertools::Itertools;
 use log::{debug, trace};
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
+use rustc_macros::{TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
         tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,
@@ -19,7 +20,7 @@ use rustc_span::ErrorGuaranteed;
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, TyDecodable, TyEncodable)]
 pub enum FnResolution<'tcx> {
     Final(ty::Instance<'tcx>),
     Partial(DefId),

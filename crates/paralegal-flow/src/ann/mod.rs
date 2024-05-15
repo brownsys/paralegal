@@ -1,3 +1,6 @@
+use flowistry_pdg_construction::graph::InternedString;
+use rustc_macros::{Decodable, Encodable};
+use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use serde::{Deserialize, Serialize};
 
 use paralegal_spdg::{rustc_proxies, tiny_bitset_pretty, Identifier, TinyBitSet, TypeId};
@@ -11,11 +14,46 @@ pub mod parse;
 /// For convenience the match methods [`Self::as_marker`], [`Self::as_otype`]
 /// and [`Self::as_exception`] are provided. These are particularly useful in
 /// conjunction with e.g. [`Iterator::filter_map`]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, strum::EnumIs)]
+#[derive(
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    strum::EnumIs,
+    Encodable,
+    Decodable,
+)]
 pub enum Annotation {
     Marker(MarkerAnnotation),
-    OType(#[serde(with = "rustc_proxies::DefId")] TypeId),
+    OType(OType),
     Exception(ExceptionAnnotation),
+}
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Deserialize, Serialize)]
+pub struct OType {
+    #[serde(with = "rustc_proxies::DefId")]
+    pub def_id: TypeId,
+}
+
+impl<E: Encoder> Encodable<E> for OType {
+    fn encode(&self, s: &mut E) {
+        rustc_middle::ty::tls::with(|tcx| tcx.def_path_hash(self.def_id)).encode(s)
+    }
+}
+
+impl<D: Decoder> Decodable<D> for OType {
+    fn decode(d: &mut D) -> Self {
+        Self {
+            def_id: rustc_middle::ty::tls::with(|tcx| {
+                tcx.def_path_hash_to_def_id(Decodable::decode(d), &mut || {
+                    panic!("Could not resolve def path")
+                })
+            }),
+        }
+    }
 }
 
 impl Annotation {
@@ -30,7 +68,7 @@ impl Annotation {
     /// If this is an [`Annotation::OType`], returns the underlying [`TypeId`].
     pub fn as_otype(&self) -> Option<TypeId> {
         match self {
-            Annotation::OType(t) => Some(*t),
+            Annotation::OType(t) => Some(t.def_id),
             _ => None,
         }
     }
@@ -46,7 +84,9 @@ impl Annotation {
 
 pub type VerificationHash = u128;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, Encodable, Decodable,
+)]
 pub struct ExceptionAnnotation {
     /// The value of the verification hash we found in the annotation. Is `None`
     /// if there was no verification hash in the annotation.
@@ -54,10 +94,12 @@ pub struct ExceptionAnnotation {
 }
 
 /// A marker annotation and its refinements.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, Encodable, Decodable,
+)]
 pub struct MarkerAnnotation {
     /// The (unchanged) name of the marker as provided by the user
-    pub marker: Identifier,
+    pub marker: InternedString,
     #[serde(flatten)]
     pub refinement: MarkerRefinement,
 }
@@ -69,7 +111,9 @@ fn const_false() -> bool {
 /// Refinements in the marker targeting. The default (no refinement provided) is
 /// `on_argument == vec![]` and `on_return == false`, which is also what is
 /// returned from [`Self::empty`].
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize)]
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, Encodable, Decodable,
+)]
 pub struct MarkerRefinement {
     #[serde(default, with = "tiny_bitset_pretty")]
     on_argument: TinyBitSet,

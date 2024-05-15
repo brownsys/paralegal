@@ -15,7 +15,7 @@ use std::process::Command;
 use paralegal_spdg::{
     rustc_portable::DefId,
     traverse::{generic_flows_to, EdgeSelection},
-    DefInfo, EdgeInfo, Node, SPDG,
+    DefInfo, EdgeInfo, Endpoint, Node, SPDG,
 };
 
 use flowistry_pdg::rustc_portable::LocalDefId;
@@ -212,7 +212,7 @@ pub trait HasGraph<'g>: Sized + Copy {
         }
     }
 
-    fn ctrl_hashed(self, name: &str) -> LocalDefId {
+    fn ctrl_hashed(self, name: &str) -> DefId {
         let candidates = self
             .graph()
             .desc
@@ -277,7 +277,7 @@ impl PreFrg {
 #[derive(Clone)]
 pub struct CtrlRef<'g> {
     graph: &'g PreFrg,
-    id: LocalDefId,
+    id: Endpoint,
     ctrl: &'g SPDG,
 }
 
@@ -325,7 +325,7 @@ impl<'g> CtrlRef<'g> {
         }
     }
 
-    pub fn id(&self) -> LocalDefId {
+    pub fn id(&self) -> Endpoint {
         self.id
     }
     pub fn spdg(&self) -> &'g SPDG {

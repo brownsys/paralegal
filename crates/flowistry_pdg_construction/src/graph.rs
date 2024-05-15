@@ -1,25 +1,42 @@
 //! The representation of the PDG.
 
-use std::{fmt, hash::Hash, ops::Deref, path::Path};
+use std::{
+    fmt::{self, Display},
+    hash::Hash,
+    path::Path,
+};
 
 use flowistry_pdg::CallString;
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
-use rustc_macros::{Decodable, Encodable};
+use rustc_abi::VariantIdx;
+use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hir::def_id::DefIndex;
+use rustc_index::IndexVec;
+use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
-    mir::{Body, Place},
-    ty::{TyCtxt, TyDecoder, TyEncoder},
+    mir::{
+        BasicBlock, Body, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location, Place,
+    },
+    ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt},
 };
-use rustc_serialize::{Decodable, Encodable};
+use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
+use rustc_span::{
+    def_id::{DefId, DefPathHash},
+    Span,
+};
 use rustc_utils::PlaceExt;
 
-pub use flowistry_pdg::{SourceUse, TargetUse};
+pub use flowistry_pdg::{RichLocation, SourceUse, TargetUse};
+use serde::{Deserialize, Serialize};
+
+use crate::Asyncness;
 
 /// A node in the program dependency graph.
 ///
 /// Represents a place at a particular call-string.
 /// The place is in the body of the root of the call-string.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, TyEncodable, TyDecodable)]
 pub struct DepNode<'tcx> {
     /// A place in memory in a particular body.
     pub place: Place<'tcx>,
@@ -30,26 +47,10 @@ pub struct DepNode<'tcx> {
     /// Pretty representation of the place.
     /// This is cached as an interned string on [`DepNode`] because to compute it later,
     /// we would have to regenerate the entire monomorphized body for a given place.
-    pub(crate) place_pretty: Option<Intern<String>>,
-}
-
-impl<'tcx, E: TyEncoder<I = TyCtxt<'tcx>>> Encodable<E> for DepNode<'tcx> {
-    fn encode(&self, e: &mut E) {
-        self.place.encode(e);
-        self.at.encode(e);
-        let str: Option<&String> = self.place_pretty.as_ref().map(Deref::deref);
-        str.encode(e);
-    }
-}
-
-impl<'tcx, D: TyDecoder<I = TyCtxt<'tcx>>> Decodable<D> for DepNode<'tcx> {
-    fn decode(d: &mut D) -> Self {
-        Self {
-            place: Decodable::decode(d),
-            at: Decodable::decode(d),
-            place_pretty: <Option<String>>::decode(d).map(|s| Intern::new(s)),
-        }
-    }
+    pub(crate) place_pretty: Option<InternedString>,
+    /// Does the PDG track subplaces of this place?
+    pub is_split: bool,
+    pub span: Span,
 }
 
 impl PartialEq for DepNode<'_> {
@@ -61,6 +62,8 @@ impl PartialEq for DepNode<'_> {
             place,
             at,
             place_pretty: _,
+            span: _,
+            is_split: _,
         } = *self;
         (place, at).eq(&(other.place, other.at))
     }
@@ -77,6 +80,8 @@ impl Hash for DepNode<'_> {
             place,
             at,
             place_pretty: _,
+            span: _,
+            is_split: _,
         } = self;
         (place, at).hash(state)
     }
@@ -87,11 +92,29 @@ impl<'tcx> DepNode<'tcx> {
     ///
     /// The `tcx` and `body` arguments are used to precompute a pretty string
     /// representation of the [`DepNode`].
-    pub fn new(place: Place<'tcx>, at: CallString, tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> Self {
+    pub fn new(
+        place: Place<'tcx>,
+        at: CallString,
+        tcx: TyCtxt<'tcx>,
+        body: &Body<'tcx>,
+        is_split: bool,
+    ) -> Self {
+        let i = at.leaf();
+        let span = match i.location {
+            RichLocation::Location(loc) => {
+                let expanded_span = body
+                    .stmt_at(loc)
+                    .either(|s| s.source_info.span, |t| t.source_info.span);
+                tcx.sess.source_map().stmt_span(expanded_span, body.span)
+            }
+            RichLocation::Start | RichLocation::End => tcx.def_span(i.function),
+        };
         DepNode {
             place,
             at,
-            place_pretty: place.to_string(tcx, body).map(Intern::new),
+            place_pretty: place.to_string(tcx, body).map(InternedString::new),
+            span,
+            is_split,
         }
     }
 }
@@ -99,7 +122,7 @@ impl<'tcx> DepNode<'tcx> {
 impl DepNode<'_> {
     /// Returns a pretty string representation of the place, if one exists.
     pub fn place_pretty(&self) -> Option<&str> {
-        self.place_pretty.map(|s| s.as_ref().as_str())
+        self.place_pretty.as_ref().map(|s| s.as_str())
     }
 }
 
@@ -208,5 +231,76 @@ impl<'tcx> DepGraph<'tcx> {
             )
         );
         rustc_utils::mir::body::run_dot(path.as_ref(), graph_dot.into_bytes())
+    }
+}
+
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, Debug, Serialize, Deserialize)]
+pub struct InternedString(Intern<String>);
+
+impl Display for InternedString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl InternedString {
+    pub fn new(s: String) -> Self {
+        Self(Intern::new(s))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &**self.0
+    }
+}
+
+impl From<String> for InternedString {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&'_ str> for InternedString {
+    fn from(value: &'_ str) -> Self {
+        Self(Intern::from_ref(value))
+    }
+}
+
+impl std::ops::Deref for InternedString {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl<E: Encoder> Encodable<E> for InternedString {
+    fn encode(&self, e: &mut E) {
+        let s: &String = &*self.0;
+        s.encode(e);
+    }
+}
+
+impl<D: Decoder> Decodable<D> for InternedString {
+    fn decode(d: &mut D) -> Self {
+        Self(Intern::new(String::decode(d)))
+    }
+}
+
+#[derive(Debug, Clone, TyDecodable, TyEncodable)]
+pub struct PartialGraph<'tcx> {
+    pub nodes: FxHashSet<DepNode<'tcx>>,
+    pub edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
+    pub monos: FxHashMap<CallString, GenericArgsRef<'tcx>>,
+    pub asyncness: Asyncness,
+}
+
+impl<'tcx> PartialGraph<'tcx> {
+    pub fn new(asyncness: Asyncness) -> Self {
+        Self {
+            nodes: Default::default(),
+            edges: Default::default(),
+            monos: Default::default(),
+            asyncness,
+        }
     }
 }

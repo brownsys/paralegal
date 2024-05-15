@@ -12,14 +12,15 @@ use super::{
     ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind, VerificationHash,
 };
 use crate::{
-    consts,
-    rust::*,
-    utils,
+    consts, utils,
     utils::{write_sep, Print, TinyBitSet},
     Symbol,
 };
-use ast::{token, tokenstream};
+use flowistry_pdg_construction::graph::InternedString;
 use paralegal_spdg::Identifier;
+use rustc_ast::{token, tokenstream, AttrArgs};
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::TyCtxt;
 use token::*;
 use tokenstream::*;
 
@@ -214,9 +215,9 @@ pub fn tiny_bitset(i: I) -> R<TinyBitSet> {
 }
 
 /// Parser for the payload of the `#[paralegal_flow::output_type(...)]` annotation.
-pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<DefId>, String> {
+pub(crate) fn otype_ann_match(ann: &AttrArgs, tcx: TyCtxt) -> Result<Vec<DefId>, String> {
     match ann {
-        ast::AttrArgs::Delimited(dargs) => {
+        AttrArgs::Delimited(dargs) => {
             let mut p = nom::multi::separated_list0(
                 assert_token(TokenKind::Comma),
                 nom::multi::separated_list0(
@@ -315,7 +316,7 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::AttrArgs) -> Result<MarkerAnnotation
                 let (i, refinement) = nom::combinator::cond(cont.is_some(), refinements_parser)(i)?;
                 let (_, _) = nom::combinator::eof(i)?;
                 Ok(MarkerAnnotation {
-                    marker: Identifier::new(label),
+                    marker: label.as_str().into(),
                     refinement: refinement.unwrap_or_else(MarkerRefinement::empty),
                 })
             };

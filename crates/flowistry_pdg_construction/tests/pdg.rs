@@ -91,8 +91,10 @@ fn connects<'tcx>(
         .edge_indices()
         .filter_map(|edge| {
             let DepEdge { at, .. } = g.graph[edge];
-            let body_with_facts =
-                borrowck_facts::get_body_with_borrowck_facts(tcx, at.leaf().function);
+            let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(
+                tcx,
+                at.leaf().function.expect_local(),
+            );
             let Either::Right(Terminator {
                 kind: TerminatorKind::Call { func, .. },
                 ..

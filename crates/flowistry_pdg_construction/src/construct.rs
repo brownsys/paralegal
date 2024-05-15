@@ -10,15 +10,16 @@ use petgraph::graph::DiGraph;
 use rustc_abi::VariantIdx;
 use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceConflictBias};
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_hir::def_id::{CrateNum, DefId, DefIndex, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_macros::{TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
-        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Local, LocalDecl,
+        LocalDecls, LocalKind, Location, Operand, Place, PlaceElem, Rvalue, Statement, Terminator,
+        TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArg, List, TyCtxt, TyKind},
+    ty::{GenericArg, GenericArgsRef, List, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{
     self as df, fmt::DebugWithContext, Analysis, AnalysisDomain, Results, ResultsVisitor,
@@ -33,12 +34,11 @@ use rustc_utils::{
 use crate::{
     async_support::*,
     calling_convention::*,
-    graph::{DepEdge, DepGraph, DepNode},
-    graph::{SourceUse, TargetUse},
+    graph::{DepEdge, DepGraph, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     try_resolve_function,
     utils::{self, is_non_default_trait_method, manufacture_substs_for, FnResolution},
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
+    Asyncness, CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
 
 pub struct MemoPdgConstructor<'tcx> {
@@ -116,12 +116,6 @@ impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
             utils::hashset_join,
         )
     }
-}
-
-#[derive(Default, Debug, TyDecodable, TyEncodable)]
-pub struct PartialGraph<'tcx> {
-    nodes: FxHashSet<DepNode<'tcx>>,
-    edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
 }
 
 impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>>>
@@ -245,7 +239,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
 }
 
 fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: LocalDefId, body: &Body<'tcx>) -> Option<Option<u8>> {
-    if node.at.leaf().function != def_id {
+    if node.at.leaf().function != def_id.to_def_id() {
         return None;
     }
     if node.place.local == RETURN_PLACE {
@@ -319,7 +313,7 @@ impl<'tcx> PartialGraph<'tcx> {
         let constructor = results.analysis.0;
         let gloc = GlobalLocation {
             location: location.into(),
-            function: constructor.def_id,
+            function: constructor.def_id.to_def_id(),
         };
 
         let extend_node = |dep: &DepNode<'tcx>| push_call_string_root(dep, gloc);
@@ -329,7 +323,11 @@ impl<'tcx> PartialGraph<'tcx> {
                 CallHandling::Ready {
                     calling_convention,
                     descriptor,
-                } => (descriptor, calling_convention),
+                    generic_args,
+                } => {
+                    self.monos.insert(CallString::single(gloc), generic_args);
+                    (descriptor, calling_convention)
+                }
                 CallHandling::ApproxAsyncFn => {
                     // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                     let rvalue = Rvalue::Aggregate(
@@ -584,6 +582,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             self.make_call_string(location),
             self.tcx(),
             &self.body,
+            !self.place_info.children(place).is_empty(),
         )
     }
 
@@ -611,7 +610,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
                         continue;
                     };
                     let at = self.make_call_string(ctrl_loc);
-                    let src = DepNode::new(ctrl_place, at, self.tcx(), &self.body);
+                    let src = self.make_dep_node(ctrl_place, ctrl_loc);
                     let edge = DepEdge::control(at, SourceUse::Operand, TargetUse::Assign);
                     out.push((src, edge));
                 }
@@ -630,7 +629,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
 
     fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
         CallString::single(GlobalLocation {
-            function: self.root.def_id().expect_local(),
+            function: self.root.def_id(),
             location: location.into(),
         })
     }
@@ -740,8 +739,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
                         // For each last mutated location:
                         last_mut_locs.iter().map(move |last_mut_loc| {
                             // Return <CONFLICT> @ <LAST_MUT_LOC> as an input node.
-                            let at = self.make_call_string(*last_mut_loc);
-                            DepNode::new(conflict, at, self.tcx(), &self.body)
+                            self.make_dep_node(conflict, *last_mut_loc)
                         })
                     })
             })
@@ -766,15 +764,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             .iter()
             .map(|dst| {
                 // Create a destination node for (DST @ CURRENT_LOC).
-                (
-                    *dst,
-                    DepNode::new(
-                        *dst,
-                        self.make_call_string(location),
-                        self.tcx(),
-                        &self.body,
-                    ),
-                )
+                (*dst, self.make_dep_node(*dst, location))
             })
             .collect()
     }
@@ -1010,6 +1000,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         Some(CallHandling::Ready {
             descriptor,
             calling_convention,
+            generic_args,
         })
     }
 
@@ -1030,6 +1021,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         let (child_constructor, calling_convention) = match preamble {
             CallHandling::Ready {
                 descriptor,
+                generic_args: _,
                 calling_convention,
             } => (descriptor, calling_convention),
             CallHandling::ApproxAsyncFn => {
@@ -1132,7 +1124,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             .into_engine(self.tcx(), &self.body)
             .iterate_to_fixpoint();
 
-        let mut final_state = PartialGraph::default();
+        let mut final_state = PartialGraph::new(Asyncness::No);
 
         analysis.visit_reachable_with(&self.body, &mut final_state);
 
@@ -1267,6 +1259,7 @@ impl<'tcx> TransformCallString for PartialGraph<'tcx> {
     fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
         let recurse_node = |n: &DepNode<'tcx>| n.transform_call_string(&f);
         Self {
+            asyncness: self.asyncness,
             nodes: self.nodes.iter().map(recurse_node).collect(),
             edges: self
                 .edges
@@ -1278,6 +1271,11 @@ impl<'tcx> TransformCallString for PartialGraph<'tcx> {
                         e.transform_call_string(&f),
                     )
                 })
+                .collect(),
+            monos: self
+                .monos
+                .iter()
+                .map(|(cs, args)| (f(*cs), *args))
                 .collect(),
         }
     }
@@ -1305,15 +1303,15 @@ pub(crate) fn push_call_string_root<T: TransformCallString>(
     old.transform_call_string(|c| c.push_front(new_root))
 }
 
-#[derive(TyEncodable)]
-pub(crate) struct SubgraphDescriptor<'tcx> {
-    pub(crate) graph: PartialGraph<'tcx>,
+#[derive(TyEncodable, TyDecodable, Debug, Clone)]
+pub struct SubgraphDescriptor<'tcx> {
+    pub graph: PartialGraph<'tcx>,
     pub(crate) parentable_srcs: Vec<(DepNode<'tcx>, Option<u8>)>,
     pub(crate) parentable_dsts: Vec<(DepNode<'tcx>, Option<u8>)>,
 }
 
 impl<'tcx> SubgraphDescriptor<'tcx> {
-    pub(crate) fn to_petgraph(&self) -> DepGraph<'tcx> {
+    pub fn to_petgraph(&self) -> DepGraph<'tcx> {
         let domain = &self.graph;
         let mut graph: DiGraph<DepNode<'tcx>, DepEdge> = DiGraph::new();
         let mut nodes = FxHashMap::default();
@@ -1352,6 +1350,7 @@ enum CallHandling<'tcx, 'a> {
     Ready {
         calling_convention: CallingConvention<'tcx, 'a>,
         descriptor: Rc<SubgraphDescriptor<'tcx>>,
+        generic_args: GenericArgsRef<'tcx>,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),
 }

@@ -1,12 +1,15 @@
-use crate::{ast, hir, ty, DefId, Symbol, TyCtxt};
 use ast::Mutability;
-use hir::{
+use rustc_ast as ast;
+use rustc_hir::def_id::DefId;
+use rustc_hir::{
     def::{self, DefKind},
     def_id::CrateNum,
     def_id::LocalDefId,
     def_id::LOCAL_CRATE,
     ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
 };
+use rustc_middle::ty::{self, TyCtxt};
+use rustc_span::Symbol;
 use ty::{fast_reject::SimplifiedType, FloatTy, IntTy, UintTy};
 
 #[derive(Debug, Clone, Copy)]
