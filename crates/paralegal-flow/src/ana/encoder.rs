@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use rustc_hash::FxHashMap;
-use rustc_hir::def_id::DefId;
+use rustc_hir::def_id::{DefId, DefIndex};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
@@ -185,5 +185,17 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for DefId {
             .def_path_hash_to_def_id(Decodable::decode(d), &mut || {
                 panic!("Could not translate hash")
             })
+    }
+}
+
+impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for DefIndex {
+    fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
+        self.as_u32().encode(s)
+    }
+}
+
+impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for DefIndex {
+    fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
+        Self::from_u32(u32::decode(d))
     }
 }

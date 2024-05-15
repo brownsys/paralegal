@@ -26,7 +26,7 @@ use petgraph::visit::GraphBase;
 use rustc_hash::FxHashMap;
 use rustc_hir::{
     def,
-    def_id::{CrateNum, DefIndex},
+    def_id::{CrateNum, DefIndex, LOCAL_CRATE},
 };
 use rustc_index::IndexVec;
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
@@ -96,6 +96,7 @@ impl<'tcx> MetadataLoader<'tcx> {
         let path = path.as_ref();
         println!("Writing metadata to {}", path.display());
         meta.write(path, tcx);
+        self.cache.get(LOCAL_CRATE, |_| Some(meta));
         (collector.functions_to_analyze, marker_ctx, constructor)
     }
 
@@ -154,8 +155,8 @@ impl<'tcx> Metadata<'tcx> {
                     let bb = body_info
                         .instructions
                         .ensure_contains_elem(loc.block, Default::default);
-                    if bb.len() < loc.statement_index {
-                        bb.resize_with(loc.statement_index, Default::default);
+                    if bb.len() <= loc.statement_index {
+                        bb.resize_with(loc.statement_index + 1, Default::default);
                     }
                     bb[loc.statement_index].get_or_insert_with(|| {
                         body.stmt_at(loc).either(

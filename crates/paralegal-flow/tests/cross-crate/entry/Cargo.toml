@@ -1,0 +1,7 @@
+[package]
+name = "entry"
+version = "0.0.1"
+
+[dependencies]
+dependency = { path = "../dependency" }
+paralegal = { path = "../../../../paralegal" }
