@@ -16,8 +16,6 @@ use crate::{
     utils::{write_sep, Print, TinyBitSet},
     Symbol,
 };
-use flowistry_pdg_construction::graph::InternedString;
-use paralegal_spdg::Identifier;
 use rustc_ast::{token, tokenstream, AttrArgs};
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;

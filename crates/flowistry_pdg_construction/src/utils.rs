@@ -1,7 +1,6 @@
 use std::{borrow::Cow, collections::hash_map::Entry, hash::Hash};
 
 use either::Either;
-use flowistry_pdg::rustc_portable::LocalDefId;
 use itertools::Itertools;
 use log::{debug, trace};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -260,7 +259,7 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
 
 pub fn manufacture_substs_for(
     tcx: TyCtxt<'_>,
-    function: LocalDefId,
+    function: DefId,
 ) -> Result<&List<GenericArg<'_>>, ErrorGuaranteed> {
     use rustc_middle::ty::{
         Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
@@ -283,7 +282,7 @@ pub fn manufacture_substs_for(
             GenericParamDefKind::Lifetime => {
                 return Ok(GenericArg::from(Region::new_free(
                     tcx,
-                    function.to_def_id(),
+                    function,
                     BoundRegionKind::BrAnon(None),
                 )))
             }
@@ -331,7 +330,7 @@ pub fn manufacture_substs_for(
         let ty = Ty::new_dynamic(
             tcx,
             tcx.mk_poly_existential_predicates_from_iter(constraints)?,
-            Region::new_free(tcx, function.to_def_id(), BoundRegionKind::BrAnon(None)),
+            Region::new_free(tcx, function, BoundRegionKind::BrAnon(None)),
             DynKind::Dyn,
         );
         Ok(GenericArg::from(ty))

@@ -8,20 +8,17 @@ use crate::{
     ann::{db::MarkerDatabase, Annotation, MarkerAnnotation},
     desc::*,
     discover::{CollectingVisitor, FnToAnalyze},
-    stats::{Stats, TimedStat},
     utils::*,
     Args, DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 
-use std::rc::Rc;
-use std::time::{Duration, Instant};
-use std::{cell::RefCell, path::Path};
+use std::path::Path;
+use std::{fs::File, io::Read, rc::Rc};
 
 use anyhow::Result;
 use either::Either;
 use flowistry_pdg_construction::{
-    graph::InternedString, meta::MetadataCollector, Asyncness, DepGraph, MemoPdgConstructor,
-    PDGLoader, SubgraphDescriptor,
+    graph::InternedString, Asyncness, DepGraph, MemoPdgConstructor, PDGLoader, SubgraphDescriptor,
 };
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
@@ -29,21 +26,18 @@ use petgraph::visit::GraphBase;
 use rustc_hash::FxHashMap;
 use rustc_hir::{
     def,
-    def_id::{CrateNum, DefIndex, LocalDefId},
-    intravisit,
+    def_id::{CrateNum, DefIndex},
 };
 use rustc_index::IndexVec;
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
-    hir,
     mir::{
         BasicBlock, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location,
         TerminatorKind,
     },
-    query::AsLocalKey,
-    ty::{self, GenericArgsRef, TyCtxt},
+    ty::{GenericArgsRef, TyCtxt},
 };
-use rustc_serialize::{opaque::FileEncoder, Decodable, Encodable};
+use rustc_serialize::{Decodable, Encodable};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
 
 mod encoder;
@@ -51,10 +45,13 @@ mod graph_converter;
 mod inline_judge;
 
 use graph_converter::GraphConverter;
-use rustc_type_ir::TyEncoder;
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
 
-use self::{encoder::ParalegalEncoder, graph_converter::MyCallback, inline_judge::InlineJudge};
+use self::{
+    encoder::{ParalegalDecoder, ParalegalEncoder},
+    graph_converter::MyCallback,
+    inline_judge::InlineJudge,
+};
 
 pub struct MetadataLoader<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -96,6 +93,8 @@ impl<'tcx> MetadataLoader<'tcx> {
             })
             .collect::<FxHashMap<_, _>>();
         let meta = Metadata::from_pdgs(tcx, pdgs, marker_ctx.db());
+        let path = path.as_ref();
+        println!("Writing metadata to {}", path.display());
         meta.write(path, tcx);
         (collector.functions_to_analyze, marker_ctx, constructor)
     }
@@ -216,7 +215,25 @@ impl<'tcx> MetadataLoader<'tcx> {
     }
 
     pub fn get_metadata(&self, key: CrateNum) -> Option<&Metadata<'tcx>> {
-        self.cache.get(key, |_| unimplemented!()).as_ref()
+        self.cache
+            .get(key, |_| {
+                let paths = self.tcx.crate_extern_paths(key);
+                for path in paths {
+                    let path = path.with_extension("para");
+                    println!("Trying to load file {}", path.display());
+                    let Ok(mut file) = File::open(path) else {
+                        continue;
+                    };
+                    let mut buf = Vec::new();
+                    file.read_to_end(&mut buf).unwrap();
+                    let mut decoder = ParalegalDecoder::new(self.tcx, buf.as_slice());
+                    let meta = Metadata::decode(&mut decoder);
+                    println!("Successfully loaded");
+                    return Some(meta);
+                }
+                None
+            })
+            .as_ref()
     }
 
     pub fn get_body_info(&self, key: DefId) -> Option<&BodyInfo<'tcx>> {
@@ -401,7 +418,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             })
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
             .map(|controllers| {
-                let start = Instant::now();
                 let desc = self.make_program_description(controllers, known_def_ids, &targets);
 
                 desc

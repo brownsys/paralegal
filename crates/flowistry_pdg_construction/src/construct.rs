@@ -10,14 +10,13 @@ use petgraph::graph::DiGraph;
 use rustc_abi::VariantIdx;
 use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceConflictBias};
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::{CrateNum, DefId, DefIndex, LocalDefId};
+use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_macros::{TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Local, LocalDecl,
-        LocalDecls, LocalKind, Location, Operand, Place, PlaceElem, Rvalue, Statement, Terminator,
-        TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
+        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
     ty::{GenericArg, GenericArgsRef, List, TyCtxt, TyKind},
 };
@@ -130,12 +129,12 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         }
     }
 
-    pub fn construct_graph(&self, function: LocalDefId) -> Result<DepGraph<'tcx>, ErrorGuaranteed> {
+    pub fn construct_graph(&self, function: DefId) -> Result<DepGraph<'tcx>, ErrorGuaranteed> {
         let args = manufacture_substs_for(self.tcx, function)?;
         let g = self
             .construct_for(try_resolve_function(
                 self.tcx,
-                function.to_def_id(),
+                function,
                 self.tcx.param_env_reveal_all_normalized(function),
                 args,
             ))

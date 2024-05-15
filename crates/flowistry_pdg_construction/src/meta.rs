@@ -1,27 +1,8 @@
-use flowistry_pdg::{CallString, RichLocation};
 use rustc_hash::FxHashMap;
-use rustc_hir::{
-    def_id::{CrateNum, DefId, DefIndex, LocalDefId},
-    intravisit::{self, FnKind},
-    BodyId,
-};
-use rustc_index::IndexVec;
-use rustc_macros::{TyDecodable, TyEncodable};
-use rustc_middle::{
-    hir::nested_filter::OnlyBodies,
-    mir::{
-        BasicBlock, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location,
-        TerminatorKind,
-    },
-    ty::{GenericArgsRef, TyCtxt},
-};
-use rustc_span::Span;
-use rustc_utils::{cache::Cache, mir::borrowck_facts};
+use rustc_hir::def_id::{DefIndex, LocalDefId};
+use rustc_middle::ty::TyCtxt;
 
-use crate::{
-    construct::SubgraphDescriptor, Asyncness, CallChangeCallback, DepGraph, MemoPdgConstructor,
-    PDGLoader,
-};
+use crate::{construct::SubgraphDescriptor, MemoPdgConstructor, PDGLoader};
 
 pub struct MetadataCollector {
     targets: Vec<LocalDefId>,

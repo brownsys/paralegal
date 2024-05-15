@@ -18,7 +18,6 @@ use paralegal_spdg::{
     DefInfo, EdgeInfo, Endpoint, Node, SPDG,
 };
 
-use flowistry_pdg::rustc_portable::LocalDefId;
 use flowistry_pdg::CallString;
 use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};

@@ -54,9 +54,6 @@ use petgraph::visit::IntoNodeIdentifiers;
 pub use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
-#[cfg(feature = "rustc")]
-use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
-
 /// The types of identifiers that identify an entrypoint
 pub type Endpoint = DefId;
 /// Identifiers for types

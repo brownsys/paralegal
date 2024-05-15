@@ -9,22 +9,14 @@ use std::{
 use flowistry_pdg::CallString;
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
-use rustc_abi::VariantIdx;
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::DefIndex;
-use rustc_index::IndexVec;
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
-    mir::{
-        BasicBlock, Body, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location, Place,
-    },
-    ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt},
+    mir::{Body, Place},
+    ty::{GenericArgsRef, TyCtxt},
 };
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
-use rustc_span::{
-    def_id::{DefId, DefPathHash},
-    Span,
-};
+use rustc_span::Span;
 use rustc_utils::PlaceExt;
 
 pub use flowistry_pdg::{RichLocation, SourceUse, TargetUse};

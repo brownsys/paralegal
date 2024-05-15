@@ -45,6 +45,7 @@ impl Stats {
         self.inner_mut().record_timed(stat, duration)
     }
 
+    #[allow(dead_code)]
     pub fn get_timed(&self, stat: TimedStat) -> Duration {
         self.0.lock().unwrap().timed[stat].unwrap_or(Duration::ZERO)
     }

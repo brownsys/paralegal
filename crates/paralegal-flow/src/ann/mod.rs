@@ -1,9 +1,8 @@
 use flowistry_pdg_construction::graph::InternedString;
 use rustc_macros::{Decodable, Encodable};
-use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use serde::{Deserialize, Serialize};
 
-use paralegal_spdg::{rustc_proxies, tiny_bitset_pretty, Identifier, TinyBitSet, TypeId};
+use paralegal_spdg::{rustc_proxies, tiny_bitset_pretty, TinyBitSet, TypeId};
 
 pub mod db;
 pub mod parse;

@@ -5,25 +5,15 @@
 
 use std::rc::Rc;
 
-use crate::{
-    ana::{MetadataLoader, SPDGGenerator},
-    ann::db::MarkerDatabase,
-    consts,
-    desc::*,
-    stats::Stats,
-    utils::*,
-};
+use crate::{ana::MetadataLoader, ann::db::MarkerDatabase, consts, utils::*};
 
-use flowistry_pdg_construction::meta::MetadataCollector;
 use rustc_hir::{
     def_id::{DefId, LocalDefId},
     intravisit::{self, FnKind},
     BodyId,
 };
-use rustc_middle::{hir::nested_filter::OnlyBodies, mir::Local, ty::TyCtxt};
+use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
 use rustc_span::{symbol::Ident, Span, Symbol};
-
-use anyhow::Result;
 
 use self::resolve::expect_resolve_string_to_def_id;
 

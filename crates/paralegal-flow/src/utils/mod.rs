@@ -1,7 +1,6 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
-use flowistry_pdg::{GlobalLocation, RichLocation};
 use rustc_target::spec::abi::Abi;
 use thiserror::Error;
 

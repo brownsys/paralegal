@@ -1,6 +1,6 @@
 use crate::{
     ana::inline_judge::InlineJudge, ann::MarkerAnnotation, desc::*, discover::FnToAnalyze,
-    stats::TimedStat, utils::*, DefId, HashMap, HashSet, MarkerCtx,
+    utils::*, DefId, HashMap, HashSet, MarkerCtx,
 };
 use flowistry_pdg::SourceUse;
 use paralegal_spdg::{Node, SPDGStats};
@@ -10,12 +10,12 @@ use rustc_middle::{
     ty::{self, Instance, TyCtxt},
 };
 
-use std::{cell::RefCell, fmt::Display, rc::Rc, time::Instant};
+use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 use super::{
     default_index, path_for_item, src_loc_for_span, BodyInfo, RustcInstructionKind, SPDGGenerator,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
@@ -64,7 +64,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         target: &'a FnToAnalyze,
     ) -> Result<Self> {
         let local_def_id = target.def_id;
-        let start = Instant::now();
         let dep_graph = Self::create_flowistry_graph(generator, local_def_id)?;
 
         if generator.opts.dbg().dump_flowistry_pdg() {
@@ -315,7 +314,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         generator: &SPDGGenerator<'tcx>,
         def_id: DefId,
     ) -> Result<DepGraph<'tcx>> {
-        let Some(pdg) = generator.metadata_loader.get_pdg(def_id) else {
+        let Ok(pdg) = generator.flowistry_loader.construct_graph(def_id) else {
             bail!("Failed to construct the graph");
         };
 
@@ -355,8 +354,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let tcx = self.tcx();
 
         for (i, weight) in input.node_references() {
-            let at = weight.at.leaf();
-
             self.register_node(
                 i,
                 NodeInfo {
@@ -557,8 +554,10 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
     }
 }
 
+#[allow(dead_code)]
 type StatStracker = Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>;
 
+#[allow(dead_code)]
 fn record_inlining(tracker: &StatStracker, tcx: TyCtxt<'_>, def_id: LocalDefId, is_in_cache: bool) {
     let mut borrow = tracker.borrow_mut();
     let (stats, loc_set) = &mut *borrow;

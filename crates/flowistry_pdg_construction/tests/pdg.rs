@@ -40,7 +40,7 @@ fn pdg(
         let def_id = get_main(tcx);
         let mut memo = MemoPdgConstructor::new(tcx, NoLoader);
         configure(tcx, &mut memo);
-        let pdg = memo.construct_graph(def_id).unwrap();
+        let pdg = memo.construct_graph(def_id.to_def_id()).unwrap();
         tests(tcx, pdg)
     })
 }

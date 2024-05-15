@@ -22,7 +22,7 @@ use crate::{
     DefId, Either, HashMap, HashSet, LocalDefId, TyCtxt,
 };
 use flowistry_pdg_construction::{determine_async, graph::InternedString};
-use rustc_ast::{AnonConst, Attribute};
+use rustc_ast::Attribute;
 use rustc_hir::def::DefKind;
 use rustc_middle::{mir, ty};
 use rustc_utils::cache::Cache;
@@ -66,7 +66,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     ///
     /// Query is cached.
     fn attribute_annotations(&self, key: DefId) -> &[Annotation] {
-        if let Some(local) = key.as_local() {
+        if key.is_local() {
             self.db()
                 .local_annotations
                 .get(&self.defid_rewrite(key).expect_local())
