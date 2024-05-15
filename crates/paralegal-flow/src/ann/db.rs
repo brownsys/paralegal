@@ -11,7 +11,7 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
-    ann::{Annotation, MarkerAnnotation, OType},
+    ann::{Annotation, MarkerAnnotation},
     args::{Args, MarkerControl},
     consts,
     utils::{
@@ -515,11 +515,7 @@ fn try_parse_annotation(
         warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
         one(Annotation::Marker(ann_match_fn(i)?))
     } else if let Some(i) = a.match_get_ref(&consts::OTYPE_MARKER) {
-        Either::Right(
-            otype_ann_match(i, tcx)?
-                .into_iter()
-                .map(|def_id| Annotation::OType(OType { def_id })),
-        )
+        Either::Right(otype_ann_match(i, tcx)?.into_iter().map(Annotation::OType))
     } else if let Some(i) = a.match_get_ref(&consts::EXCEPTION_MARKER) {
         one(Annotation::Exception(match_exception(i)?))
     } else {

@@ -29,31 +29,8 @@ pub mod parse;
 )]
 pub enum Annotation {
     Marker(MarkerAnnotation),
-    OType(OType),
+    OType(#[serde(with = "rustc_proxies::DefId")] TypeId),
     Exception(ExceptionAnnotation),
-}
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Deserialize, Serialize)]
-pub struct OType {
-    #[serde(with = "rustc_proxies::DefId")]
-    pub def_id: TypeId,
-}
-
-impl<E: Encoder> Encodable<E> for OType {
-    fn encode(&self, s: &mut E) {
-        rustc_middle::ty::tls::with(|tcx| tcx.def_path_hash(self.def_id)).encode(s)
-    }
-}
-
-impl<D: Decoder> Decodable<D> for OType {
-    fn decode(d: &mut D) -> Self {
-        Self {
-            def_id: rustc_middle::ty::tls::with(|tcx| {
-                tcx.def_path_hash_to_def_id(Decodable::decode(d), &mut || {
-                    panic!("Could not resolve def path")
-                })
-            }),
-        }
-    }
 }
 
 impl Annotation {
@@ -68,7 +45,7 @@ impl Annotation {
     /// If this is an [`Annotation::OType`], returns the underlying [`TypeId`].
     pub fn as_otype(&self) -> Option<TypeId> {
         match self {
-            Annotation::OType(t) => Some(t.def_id),
+            Annotation::OType(t) => Some(*t),
             _ => None,
         }
     }

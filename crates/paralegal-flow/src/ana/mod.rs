@@ -528,7 +528,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     k,
                     TypeDescription {
                         rendering,
-                        otypes: otypes.into_iter().map(|ot| ot.def_id).collect(),
+                        otypes: otypes.into(),
                         markers: markers
                             .into_iter()
                             .map(|i| Identifier::new_intern(i.as_str()))
