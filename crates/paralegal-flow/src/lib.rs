@@ -42,6 +42,7 @@ extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
+use consts::INTERMEDIATE_ARTIFACT_EXT;
 pub use rustc_type_ir::sty;
 
 pub use rustc_middle::ty;
@@ -157,7 +158,7 @@ impl rustc_driver::Callbacks for Callbacks {
                         self.opts,
                         compiler
                             .build_output_filenames(tcx.sess, &[])
-                            .with_extension(".para"),
+                            .with_extension(INTERMEDIATE_ARTIFACT_EXT),
                     );
                 tcx.sess.abort_if_errors();
 

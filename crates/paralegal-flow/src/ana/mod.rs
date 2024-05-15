@@ -6,6 +6,7 @@
 
 use crate::{
     ann::{db::MarkerDatabase, Annotation, MarkerAnnotation},
+    consts::INTERMEDIATE_ARTIFACT_EXT,
     desc::*,
     discover::{CollectingVisitor, FnToAnalyze},
     utils::*,
@@ -35,7 +36,7 @@ use rustc_middle::{
         BasicBlock, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location,
         TerminatorKind,
     },
-    ty::{GenericArgsRef, TyCtxt},
+    ty::{GenericArgsRef, List, TyCtxt},
 };
 use rustc_serialize::{Decodable, Encodable};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -136,10 +137,14 @@ impl<'tcx> Metadata<'tcx> {
         markers: &MarkerDatabase<'tcx>,
     ) -> Self {
         let mut bodies: FxHashMap<DefIndex, BodyInfo> = Default::default();
-        for pdg in pdgs
-            .values()
-            .flat_map(|d| d.graph.nodes.iter().flat_map(|n| n.at.iter()))
-        {
+        for pdg in pdgs.values().flat_map(|d| {
+            d.graph
+                .nodes
+                .iter()
+                .map(|n| &n.at)
+                .chain(d.graph.edges.iter().map(|e| &e.2.at))
+                .flat_map(|at| at.iter())
+        }) {
             if let Some(local) = pdg.function.as_local() {
                 let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local);
                 let body = &body_with_facts.body;
@@ -220,7 +225,7 @@ impl<'tcx> MetadataLoader<'tcx> {
             .get(key, |_| {
                 let paths = self.tcx.crate_extern_paths(key);
                 for path in paths {
-                    let path = path.with_extension("para");
+                    let path = path.with_extension(INTERMEDIATE_ARTIFACT_EXT);
                     println!("Trying to load file {}", path.display());
                     let Ok(mut file) = File::open(path) else {
                         continue;
@@ -243,10 +248,12 @@ impl<'tcx> MetadataLoader<'tcx> {
     }
 
     pub fn get_mono(&self, cs: CallString) -> GenericArgsRef<'tcx> {
+        let get_graph = |key: DefId| &self.get_metadata(key.krate).unwrap().pdgs[&key.index].graph;
+        let Some(cs) = cs.caller() else {
+            return get_graph(cs.leaf().function).generics;
+        };
         let key = cs.root().function;
-        self.get_metadata(key.krate).unwrap().pdgs[&key.index]
-            .graph
-            .monos[&cs]
+        get_graph(key).monos[&cs]
     }
 
     pub fn get_pdg(&self, key: DefId) -> Option<DepGraph<'tcx>> {
@@ -525,15 +532,21 @@ impl<'tcx> SPDGGenerator<'tcx> {
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
     ) -> HashMap<GlobalLocation, InstructionInfo> {
-        let all_instructions = controllers.values().flat_map(|v| v.graph.node_weights());
+        let all_instructions = controllers
+            .values()
+            .flat_map(|v| {
+                v.graph
+                    .node_weights()
+                    .map(|n| &n.at)
+                    .chain(v.graph.edge_weights().map(|e| &e.at))
+            })
+            .flat_map(|at| at.iter())
+            .collect::<HashSet<_>>();
         all_instructions
             .into_iter()
             .map(|n| {
-                let body = self
-                    .metadata_loader
-                    .get_body_info(n.at.leaf().function)
-                    .unwrap();
-                let (kind, description, span) = match n.at.leaf().location {
+                let body = self.metadata_loader.get_body_info(n.function).unwrap();
+                let (kind, description, span) = match n.location {
                     RichLocation::End => {
                         (InstructionKind::Return, "start".to_owned(), body.def_span)
                     }
@@ -557,7 +570,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     }
                 };
                 (
-                    n.at.leaf(),
+                    n,
                     InstructionInfo {
                         kind,
                         span: src_loc_for_span(span, self.tcx),

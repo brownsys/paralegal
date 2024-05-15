@@ -4,7 +4,7 @@ extern crate lazy_static;
 
 use paralegal_flow::test_utils::*;
 
-const CRATE_DIR: &str = "tests/cross-crate/entry";
+const CRATE_DIR: &str = "tests/cross-crate";
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump(CRATE_DIR);

@@ -1130,6 +1130,13 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         )
     }
 
+    fn generic_args(&self) -> GenericArgsRef<'tcx> {
+        match self.root {
+            FnResolution::Final(inst) => inst.args,
+            _ => List::empty(),
+        }
+    }
+
     fn handle_terminator(
         &self,
         terminator: &Terminator<'tcx>,
@@ -1168,7 +1175,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             .into_engine(self.tcx(), &self.body)
             .iterate_to_fixpoint();
 
-        let mut final_state = PartialGraph::new(Asyncness::No);
+        let mut final_state = PartialGraph::new(Asyncness::No, self.generic_args());
 
         analysis.visit_reachable_with(&self.body, &mut final_state);
 
@@ -1303,6 +1310,7 @@ impl<'tcx> TransformCallString for PartialGraph<'tcx> {
     fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
         let recurse_node = |n: &DepNode<'tcx>| n.transform_call_string(&f);
         Self {
+            generics: self.generics,
             asyncness: self.asyncness,
             nodes: self.nodes.iter().map(recurse_node).collect(),
             edges: self

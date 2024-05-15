@@ -283,15 +283,17 @@ pub struct PartialGraph<'tcx> {
     pub nodes: FxHashSet<DepNode<'tcx>>,
     pub edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
     pub monos: FxHashMap<CallString, GenericArgsRef<'tcx>>,
+    pub generics: GenericArgsRef<'tcx>,
     pub asyncness: Asyncness,
 }
 
 impl<'tcx> PartialGraph<'tcx> {
-    pub fn new(asyncness: Asyncness) -> Self {
+    pub fn new(asyncness: Asyncness, generics: GenericArgsRef<'tcx>) -> Self {
         Self {
             nodes: Default::default(),
             edges: Default::default(),
             monos: Default::default(),
+            generics,
             asyncness,
         }
     }

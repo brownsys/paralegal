@@ -6,6 +6,7 @@ extern crate rustc_span;
 
 use crate::{
     desc::{Identifier, ProgramDescription},
+    utils::Print,
     HashSet,
 };
 use std::fmt::{Debug, Formatter};
@@ -341,7 +342,20 @@ impl<'g> CtrlRef<'g> {
             .map(|v| v.at)
             .chain(self.ctrl.graph.node_weights().map(|info| info.at))
             .filter(|m| {
-                instruction_info[&m.leaf()]
+                instruction_info
+                    .get(&m.leaf())
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Could not find instruction {} in\n{}",
+                            m.leaf(),
+                            Print(|fmt| {
+                                for (k, v) in instruction_info.iter() {
+                                    writeln!(fmt, "  {k}: {v:?}")?;
+                                }
+                                Ok(())
+                            })
+                        )
+                    })
                     .kind
                     .as_function_call()
                     .map_or(false, |i| i.id == fun.ident)

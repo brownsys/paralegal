@@ -34,3 +34,5 @@ lazy_static! {
     /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
     pub static ref EXCEPTION_MARKER: AttrMatchT = sym_vec!["paralegal_flow", "exception"];
 }
+
+pub const INTERMEDIATE_ARTIFACT_EXT: &str = "para";
