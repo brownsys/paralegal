@@ -1,3 +1,3 @@
-pub fn find_me<T>(a: T, b: T) -> T {
-    b
+pub fn find_me(a: usize, _b: usize) -> usize {
+    a
 }

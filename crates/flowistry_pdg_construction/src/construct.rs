@@ -950,13 +950,13 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
-        if !resolved_def_id.is_local() {
-            trace!(
-                "  Bailing because func is non-local: `{}`",
-                tcx.def_path_str(resolved_def_id)
-            );
-            return None;
-        };
+        // if !resolved_def_id.is_local() {
+        //     trace!(
+        //         "  Bailing because func is non-local: `{}`",
+        //         tcx.def_path_str(resolved_def_id)
+        //     );
+        //     return None;
+        // };
 
         let call_kind = match self.classify_call_kind(called_def_id, resolved_def_id, args) {
             Ok(cc) => cc,
@@ -1040,7 +1040,10 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             trace!("  Bailing because user callback said to bail");
             return None;
         }
-        let descriptor = self.memo.construct_for(cache_key)?;
+        let Some(descriptor) = self.memo.construct_for(cache_key) else {
+            trace!("  Bailing because cache lookup {cache_key} failed");
+            return None;
+        };
         Some(CallHandling::Ready {
             descriptor,
             calling_convention,

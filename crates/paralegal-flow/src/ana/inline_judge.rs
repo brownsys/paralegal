@@ -34,11 +34,7 @@ impl<'tcx> InlineJudge<'tcx> {
         let marker_target = info.async_parent.unwrap_or(info.callee);
         let marker_target_def_id = marker_target.def_id();
         match self.analysis_control.inlining_depth() {
-            _ if self.marker_ctx.is_marked(marker_target_def_id)
-                || !marker_target_def_id.is_local() =>
-            {
-                false
-            }
+            _ if self.marker_ctx.is_marked(marker_target_def_id) => false,
             InliningDepth::Adaptive => self
                 .marker_ctx
                 .has_transitive_reachable_markers(marker_target),

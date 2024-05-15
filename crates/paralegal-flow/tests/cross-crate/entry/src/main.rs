@@ -8,7 +8,7 @@ fn src() -> usize {
 }
 
 #[paralegal::marker(not_source)]
-fn not_source() -> usize {
+fn not_src() -> usize {
     1
 }
 
@@ -17,7 +17,7 @@ fn target(u: usize) {}
 
 #[paralegal::analyze]
 fn basic() {
-    target(find_me(src(), not_source()))
+    target(find_me(src(), not_src()))
 }
 
 fn main() {}
