@@ -42,32 +42,43 @@ extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
-use consts::INTERMEDIATE_ARTIFACT_EXT;
-pub use rustc_type_ir::sty;
+pub extern crate either;
 
-pub use rustc_middle::ty;
-
-pub use rustc_middle::dep_graph::DepGraph;
-pub use ty::TyCtxt;
+use std::borrow::Cow;
+pub use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::{fmt::Display, time::Instant};
 
 pub use rustc_hir::def_id::{DefId, LocalDefId};
 pub use rustc_hir::BodyId;
+pub use rustc_middle::dep_graph::DepGraph;
 pub use rustc_middle::mir::Location;
+pub use rustc_middle::ty;
+pub use rustc_span::Symbol;
+pub use rustc_type_ir::sty;
+pub use ty::TyCtxt;
 
-use args::{ClapArgs, LogLevelConfig};
-use desc::utils::write_sep;
-
+use rustc_driver::Compilation;
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
-pub use std::collections::{HashMap, HashSet};
-use std::{fmt::Display, time::Instant};
 
+pub use paralegal_spdg as desc;
+
+use crate::{
+    ana::{MetadataLoader, SPDGGenerator},
+    ann::db::MarkerCtx,
+    stats::{Stats, TimedStat},
+    utils::Print,
+};
+pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
+use args::{ClapArgs, LogLevelConfig};
+use consts::INTERMEDIATE_ARTIFACT_EXT;
+use desc::utils::write_sep;
+
+use anyhow::{anyhow, Context as _, Result};
+pub use either::Either;
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
-pub extern crate either;
-pub use either::Either;
-
-pub use rustc_span::Symbol;
 
 pub mod ana;
 pub mod ann;
@@ -81,17 +92,6 @@ pub mod utils;
 pub mod consts;
 #[cfg(feature = "test")]
 pub mod test_utils;
-
-pub use paralegal_spdg as desc;
-
-use crate::ana::{MetadataLoader, SPDGGenerator};
-pub use crate::ann::db::MarkerCtx;
-pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
-
-use crate::{
-    stats::{Stats, TimedStat},
-    utils::Print,
-};
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -121,7 +121,76 @@ struct ArgWrapper {
 struct Callbacks {
     opts: &'static Args,
     stats: Stats,
-    start: Instant,
+}
+
+/// Create the name of the file in which to store intermediate artifacts.
+///
+/// HACK(Justus): `TyCtxt::output_filenames` returns a file stem of
+/// `lib<crate_name>-<hash>`, whereas `OutputFiles::with_extension` returns a file
+/// stem of `<crate_name>-<hash>`. I haven't found a clean way to get the same
+/// name in both places, so i just assume that these two will always have this
+/// relation and prepend the `"lib"` here.
+fn intermediate_out_file_path(tcx: TyCtxt) -> Result<PathBuf> {
+    let rustc_out_file = tcx
+        .output_filenames(())
+        .with_extension(INTERMEDIATE_ARTIFACT_EXT);
+    let dir = rustc_out_file
+        .parent()
+        .ok_or_else(|| anyhow!("{} has no parent", rustc_out_file.display()))?;
+    let file = rustc_out_file
+        .file_name()
+        .ok_or_else(|| anyhow!("has no file name"))
+        .and_then(|s| s.to_str().ok_or_else(|| anyhow!("not utf8")))
+        .with_context(|| format!("{}", rustc_out_file.display()))?;
+
+    let file = if file.starts_with("lib") {
+        Cow::Borrowed(file)
+    } else {
+        format!("lib{file}").into()
+    };
+
+    Ok(dir.join(file.as_ref()))
+}
+
+impl Callbacks {
+    fn in_context(&mut self, tcx: TyCtxt) -> Result<Compilation> {
+        tcx.sess.abort_if_errors();
+
+        let loader = MetadataLoader::new(tcx);
+
+        let intermediate_out_file = intermediate_out_file_path(tcx)?;
+
+        let (analysis_targets, mctx, pdg_constructor) = loader
+            .clone()
+            .collect_and_emit_metadata(self.opts, intermediate_out_file);
+        tcx.sess.abort_if_errors();
+
+        let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, pdg_constructor, loader.clone());
+
+        let compilation = if !analysis_targets.is_empty() {
+            let desc = gen.analyze(analysis_targets)?;
+
+            if self.opts.dbg().dump_spdg() {
+                let out = std::fs::File::create("call-only-flow.gv").unwrap();
+                paralegal_spdg::dot::dump(&desc, out).unwrap();
+            }
+
+            let ser = Instant::now();
+            desc.canonical_write(self.opts.result_path()).unwrap();
+            self.stats
+                .record_timed(TimedStat::Serialization, ser.elapsed());
+
+            println!("Analysis finished with timing: {}", self.stats);
+            if self.opts.abort_after_analysis() {
+                rustc_driver::Compilation::Stop
+            } else {
+                rustc_driver::Compilation::Continue
+            }
+        } else {
+            rustc_driver::Compilation::Continue
+        };
+        Ok(compilation)
+    }
 }
 
 struct NoopCallbacks {}
@@ -140,54 +209,13 @@ impl rustc_driver::Callbacks for Callbacks {
     // that (when retrieving the MIR bodies for instance)
     fn after_expansion<'tcx>(
         &mut self,
-        compiler: &rustc_interface::interface::Compiler,
+        _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        self.stats
-            .record_timed(TimedStat::Rustc, self.start.elapsed());
         queries
             .global_ctxt()
             .unwrap()
-            .enter(|tcx| {
-                tcx.sess.abort_if_errors();
-
-                let loader = MetadataLoader::new(tcx);
-
-                let (analysis_targets, mctx, pdg_constructor) =
-                    loader.clone().collect_and_emit_metadata(
-                        self.opts,
-                        compiler
-                            .build_output_filenames(tcx.sess, &[])
-                            .with_extension(INTERMEDIATE_ARTIFACT_EXT),
-                    );
-                tcx.sess.abort_if_errors();
-
-                let mut gen =
-                    SPDGGenerator::new(mctx, self.opts, tcx, pdg_constructor, loader.clone());
-
-                if !analysis_targets.is_empty() {
-                    let desc = gen.analyze(analysis_targets)?;
-
-                    if self.opts.dbg().dump_spdg() {
-                        let out = std::fs::File::create("call-only-flow.gv").unwrap();
-                        paralegal_spdg::dot::dump(&desc, out).unwrap();
-                    }
-
-                    let ser = Instant::now();
-                    desc.canonical_write(self.opts.result_path()).unwrap();
-                    self.stats
-                        .record_timed(TimedStat::Serialization, ser.elapsed());
-
-                    println!("Analysis finished with timing: {}", self.stats);
-                    anyhow::Ok(if self.opts.abort_after_analysis() {
-                        rustc_driver::Compilation::Stop
-                    } else {
-                        rustc_driver::Compilation::Continue
-                    })
-                } else {
-                    Ok(rustc_driver::Compilation::Continue)
-                }
-            })
+            .enter(|tcx| self.in_context(tcx))
             .unwrap()
     }
 }
@@ -340,9 +368,14 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .as_ref()
             .map_or(false, |n| n == "build_script_build");
 
+        println!("Handling {}", crate_name.unwrap_or("".to_owned()));
+
         if !is_target || is_build_script {
+            println!("Is not target, skipping");
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
+
+        println!("Is target, compiling");
 
         let lvl = plugin_args.verbosity();
         // //let lvl = log::LevelFilter::Debug;
@@ -373,7 +406,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             &mut Callbacks {
                 opts,
                 stats: Default::default(),
-                start: Instant::now(),
             },
         )
         .run()
