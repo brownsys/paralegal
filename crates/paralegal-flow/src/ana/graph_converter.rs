@@ -98,7 +98,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// Is the top-level function (entrypoint) an `async fn`
     fn entrypoint_is_async(&self) -> bool {
         self.generator
-            .flowistry_loader
+            .metadata_loader
             .get_asyncness(self.local_def_id)
             .is_async()
     }
@@ -141,7 +141,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
 
         let body = self
             .generator
-            .flowistry_loader
+            .metadata_loader
             .get_body_info(leaf_loc.function)
             .unwrap();
 
@@ -214,10 +214,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let tcx = self.tcx();
         let body = self
             .generator
-            .flowistry_loader
+            .metadata_loader
             .get_body_info(at.leaf().function)
             .unwrap();
-        let generics = self.generator.flowistry_loader.get_mono(at);
+        let generics = self.generator.metadata_loader.get_mono(at);
 
         // So actually we're going to check the base place only, because
         // Flowistry sometimes tracks subplaces instead but we want the marker
@@ -315,10 +315,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         generator: &SPDGGenerator<'tcx>,
         def_id: DefId,
     ) -> Result<DepGraph<'tcx>> {
-        let tcx = generator.tcx;
-        let opts = generator.opts;
-
-        let Some(pdg) = generator.flowistry_loader.get_pdg(def_id) else {
+        let Some(pdg) = generator.metadata_loader.get_pdg(def_id) else {
             bail!("Failed to construct the graph");
         };
 

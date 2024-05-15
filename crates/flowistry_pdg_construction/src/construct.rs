@@ -99,7 +99,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         self
     }
 
-    pub(crate) fn construct_for<'a>(
+    pub fn construct_for<'a>(
         &'a self,
         resolution: FnResolution<'tcx>,
     ) -> Option<&'a SubgraphDescriptor<'tcx>> {

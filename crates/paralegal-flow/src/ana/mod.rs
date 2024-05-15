@@ -72,16 +72,31 @@ impl<'tcx> MetadataLoader<'tcx> {
         self: Rc<Self>,
         args: &'static Args,
         path: impl AsRef<Path>,
-    ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>) {
+    ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>, MemoPdgConstructor<'tcx>) {
         let tcx = self.tcx;
         let mut collector = CollectingVisitor::new(tcx, args, self.clone());
         collector.run();
-        let pdgs = collector
-            .flowistry_collector
-            .into_metadata(tcx, self.clone());
+        let emit_targets = collector.emit_target_collector;
+        let constructor = MemoPdgConstructor::new(tcx, self.clone());
+        let pdgs = emit_targets
+            .into_iter()
+            .map(|t| {
+                (
+                    t.local_def_index,
+                    (*constructor
+                        .construct_for(FnResolution::Partial(t.to_def_id()))
+                        .unwrap())
+                    .clone(),
+                )
+            })
+            .collect::<FxHashMap<_, _>>();
         let meta = Metadata::from_pdgs(tcx, pdgs, &collector.marker_ctx);
         meta.write(path, tcx);
-        (collector.functions_to_analyze, collector.marker_ctx.into())
+        (
+            collector.functions_to_analyze,
+            collector.marker_ctx.into(),
+            constructor,
+        )
     }
 
     pub fn get_annotations(&self, key: DefId) -> &[Annotation] {
@@ -310,7 +325,8 @@ pub struct SPDGGenerator<'tcx> {
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
     marker_ctx: MarkerCtx<'tcx>,
-    flowistry_loader: Rc<MetadataLoader<'tcx>>,
+    flowistry_loader: MemoPdgConstructor<'tcx>,
+    metadata_loader: Rc<MetadataLoader<'tcx>>,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
@@ -318,13 +334,15 @@ impl<'tcx> SPDGGenerator<'tcx> {
         marker_ctx: MarkerCtx<'tcx>,
         opts: &'static crate::Args,
         tcx: TyCtxt<'tcx>,
-        loader: Rc<MetadataLoader<'tcx>>,
+        loader: MemoPdgConstructor<'tcx>,
+        metadata_loader: Rc<MetadataLoader<'tcx>>,
     ) -> Self {
         Self {
             marker_ctx,
             opts,
             tcx,
             flowistry_loader: loader,
+            metadata_loader,
         }
     }
 
@@ -497,7 +515,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .into_iter()
             .map(|n| {
                 let body = self
-                    .flowistry_loader
+                    .metadata_loader
                     .get_body_info(n.at.leaf().function)
                     .unwrap();
                 let (kind, description, span) = match n.at.leaf().location {

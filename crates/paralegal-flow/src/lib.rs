@@ -152,15 +152,17 @@ impl rustc_driver::Callbacks for Callbacks {
 
                 let loader = MetadataLoader::new(tcx);
 
-                let (analysis_targets, mctx) = loader.clone().collect_and_emit_metadata(
-                    self.opts,
-                    compiler
-                        .build_output_filenames(tcx.sess, &[])
-                        .with_extension(".para"),
-                );
+                let (analysis_targets, mctx, pdg_constructor) =
+                    loader.clone().collect_and_emit_metadata(
+                        self.opts,
+                        compiler
+                            .build_output_filenames(tcx.sess, &[])
+                            .with_extension(".para"),
+                    );
                 tcx.sess.abort_if_errors();
 
-                let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, loader.clone());
+                let mut gen =
+                    SPDGGenerator::new(mctx, self.opts, tcx, pdg_constructor, loader.clone());
 
                 let desc = gen.analyze(analysis_targets)?;
 

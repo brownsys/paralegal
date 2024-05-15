@@ -20,7 +20,7 @@ use rustc_hir::{
     intravisit::{self, FnKind},
     BodyId,
 };
-use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
+use rustc_middle::{hir::nested_filter::OnlyBodies, mir::Local, ty::TyCtxt};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use anyhow::Result;
@@ -46,7 +46,7 @@ pub struct CollectingVisitor<'tcx> {
 
     pub marker_ctx: MarkerDatabase<'tcx>,
 
-    pub flowistry_collector: MetadataCollector,
+    pub emit_target_collector: Vec<LocalDefId>,
 }
 
 /// A function we will be targeting to analyze with
@@ -90,14 +90,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
             opts,
             functions_to_analyze,
             marker_ctx: MarkerDatabase::init(tcx, opts, loader),
-            flowistry_collector: MetadataCollector::new(),
+            emit_target_collector: vec![],
         }
-    }
-
-    /// After running the discovery with `visit_all_item_likes_in_crate`, create
-    /// the read-only [`SPDGGenerator`] upon which the analysis will run.
-    fn into_generator(self, loader: Rc<MetadataLoader<'tcx>>) -> SPDGGenerator<'tcx> {
-        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx, loader)
     }
 
     /// Driver function. Performs the data collection via visit, then calls
@@ -151,7 +145,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                     });
                 }
                 if self.tcx.generics_of(id).count() == 0 {
-                    self.flowistry_collector.add_target(id)
+                    self.emit_target_collector.push(id)
                 }
             }
             _ => (),
