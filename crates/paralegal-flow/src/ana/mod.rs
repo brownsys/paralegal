@@ -288,43 +288,21 @@ impl<'tcx> MetadataLoader<'tcx> {
     pub fn get_body_info(&self, key: DefId) -> Result<&BodyInfo<'tcx>> {
         let meta = self.get_metadata(key.krate)?;
         let res = meta.bodies.get(&key.index).ok_or(NoSuchItemInCate(key));
-        if res.is_err() {
-            println!("Known items are");
-            for &index in meta.bodies.keys() {
-                println!(
-                    "  {:?}",
-                    DefId {
-                        krate: key.krate,
-                        index
-                    }
-                );
-            }
-        }
         Ok(res?)
     }
 
     pub fn get_mono(&self, cs: CallString) -> Result<GenericArgsRef<'tcx>> {
         let get_graph = |key: DefId| {
             let meta = self.get_metadata(key.krate)?;
-            println!("Pdgs are known for");
-            for &index in meta.pdgs.keys() {
-                println!(
-                    "  {:?}",
-                    DefId {
-                        krate: key.krate,
-                        index
-                    }
-                );
-            }
             anyhow::Ok(&meta.pdgs.get(&key.index).ok_or(NoPdgForItem(key))?.graph)
         };
         if let Some(caller) = cs.caller() {
             let key = caller.root().function;
             let monos = &get_graph(key)?.monos;
-            // println!("Known monos for {key:?} are");
-            // for (k, v) in monos {
-            //     println!("  {k}: {v:?}");
-            // }
+            println!("Known monos for {key:?} are");
+            for (k, v) in monos {
+                println!("  {k}: {v:?}");
+            }
             Ok(*monos.get(&caller).ok_or(NoGenericsKnownForCallSite(cs))?)
         } else {
             Ok(get_graph(cs.leaf().function)?.generics)
