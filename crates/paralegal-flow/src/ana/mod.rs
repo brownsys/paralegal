@@ -288,6 +288,10 @@ impl<'tcx> MetadataLoader<'tcx> {
         if let Some(caller) = cs.caller() {
             let key = caller.root().function;
             let monos = &get_graph(key)?.monos;
+            // println!("Known monos for {key:?} are");
+            // for (k, v) in monos {
+            //     println!("  {k}: {v:?}");
+            // }
             monos
                 .get(&caller)
                 .ok_or_else(|| {

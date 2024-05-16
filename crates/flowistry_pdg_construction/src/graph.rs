@@ -13,7 +13,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{Body, Place},
-    ty::{GenericArgsRef, TyCtxt},
+    ty::{GenericArgsRef, Ty, TyCtxt},
 };
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use rustc_span::Span;

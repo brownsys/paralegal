@@ -195,12 +195,12 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             location: flowistry_pdg::RichLocation::Location(location),
         };
         let mut new_g = push_call_string_root(g, gloc);
-        let g_generics = std::mem::replace(&mut new_g.graph.generics, self.generic_args());
+        //let g_generics = std::mem::replace(&mut new_g.graph.generics, self.generic_args());
         new_g.graph.asyncness = asyncness;
         new_g
             .graph
             .monos
-            .insert(CallString::single(gloc), g_generics);
+            .insert(CallString::single(gloc), new_g.graph.generics);
         Some(new_g)
     }
 

@@ -364,11 +364,8 @@ impl<'tcx> PartialGraph<'tcx> {
                 CallHandling::Ready {
                     calling_convention,
                     descriptor,
-                    generic_args,
-                } => {
-                    self.monos.insert(CallString::single(gloc), generic_args);
-                    (descriptor, calling_convention)
-                }
+                    generic_args: _,
+                } => (descriptor, calling_convention),
                 CallHandling::ApproxAsyncFn => {
                     // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                     let rvalue = Rvalue::Aggregate(
@@ -456,6 +453,8 @@ impl<'tcx> PartialGraph<'tcx> {
         self.nodes.extend(child_graph.nodes);
         self.edges.extend(child_graph.edges);
         self.monos.extend(child_graph.monos);
+        self.monos
+            .insert(CallString::single(gloc), child_descriptor.graph.generics);
         Some(())
     }
 
@@ -1175,30 +1174,27 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         analysis.visit_reachable_with(&self.body, &mut final_state);
 
         let all_returns = self.body.all_returns().map(|ret| ret.block).collect_vec();
-        let has_return = !all_returns.is_empty();
         let mut analysis = analysis.into_results_cursor(&self.body);
-        if has_return {
-            for block in all_returns {
-                analysis.seek_to_block_end(block);
-                let return_state = analysis.get();
-                for (place, locations) in &return_state.last_mutation {
-                    let ret_kind = if place.local == RETURN_PLACE {
-                        TargetUse::Return
-                    } else if let Some(num) = other_as_arg(*place, &self.body) {
-                        TargetUse::MutArg(num)
-                    } else {
-                        continue;
-                    };
-                    for location in locations {
-                        let src = self.make_dep_node(*place, *location);
-                        let dst = self.make_dep_node(*place, RichLocation::End);
-                        let edge = DepEdge::data(
-                            self.make_call_string(self.body.terminator_loc(block)),
-                            SourceUse::Operand,
-                            ret_kind,
-                        );
-                        final_state.edges.insert((src, dst, edge));
-                    }
+        for block in all_returns {
+            analysis.seek_to_block_end(block);
+            let return_state = analysis.get();
+            for (place, locations) in &return_state.last_mutation {
+                let ret_kind = if place.local == RETURN_PLACE {
+                    TargetUse::Return
+                } else if let Some(num) = other_as_arg(*place, &self.body) {
+                    TargetUse::MutArg(num)
+                } else {
+                    continue;
+                };
+                for location in locations {
+                    let src = self.make_dep_node(*place, *location);
+                    let dst = self.make_dep_node(*place, RichLocation::End);
+                    let edge = DepEdge::data(
+                        self.make_call_string(self.body.terminator_loc(block)),
+                        SourceUse::Operand,
+                        ret_kind,
+                    );
+                    final_state.edges.insert((src, dst, edge));
                 }
             }
         }

@@ -6,7 +6,7 @@ use flowistry_pdg::SourceUse;
 use paralegal_spdg::{Node, SPDGStats};
 use rustc_hir::{def, def_id::LocalDefId};
 use rustc_middle::{
-    mir::{self, Location},
+    mir::{self, tcx::PlaceTy, Location},
     ty::{self, Instance, TyCtxt},
 };
 
@@ -236,19 +236,23 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         };
 
         let raw_ty = place.ty(body, tcx);
-        Some(
-            *FnResolution::Final(
-                Instance::resolve(
-                    tcx,
-                    ty::ParamEnv::reveal_all(),
-                    at.leaf().function,
-                    generics,
-                )
-                .unwrap()
-                .unwrap(),
+        let function = at.leaf().function;
+        // println!(
+        //     "Resolving {raw_ty:?} for place {place:?} with generics {generics:?} in {function:?}",
+        // );
+        let resolution = *FnResolution::Final(
+            Instance::resolve(
+                tcx,
+                tcx.param_env_reveal_all_normalized(function),
+                function,
+                generics,
             )
-            .try_monomorphize(tcx, ty::ParamEnv::reveal_all(), &raw_ty),
+            .unwrap()
+            .unwrap(),
         )
+        .try_monomorphize(tcx, ty::ParamEnv::reveal_all(), &raw_ty);
+        //println!("Resolved to {resolution:?}");
+        Some(resolution)
     }
 
     /// Fetch annotations item identified by this `id`.
@@ -297,7 +301,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 node_types.extend(self.type_is_marked(place_ty, false));
             }
         }
-        println!("  found marked types {node_types:?}");
         self.known_def_ids.extend(node_types.iter().copied());
         let tcx = self.tcx();
         if !node_types.is_empty() {
