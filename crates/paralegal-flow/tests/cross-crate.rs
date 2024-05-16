@@ -3,6 +3,7 @@
 extern crate lazy_static;
 
 use paralegal_flow::test_utils::*;
+use paralegal_spdg::Identifier;
 
 const CRATE_DIR: &str = "tests/cross-crate";
 
@@ -28,4 +29,10 @@ define_test!(basic : graph -> {
     let target = graph.call_site(&target_fn);
     assert!(src.output().flows_to_data(&target.input()));
     assert!(!not_src.output().flows_to_data(&target.input()));
+});
+
+define_test!(basic_marker: graph -> {
+
+    let marker = Identifier::new_intern("mark");
+    assert!(dbg!(&graph.spdg().markers).iter().any(|(_, markers)| markers.contains(&marker)))
 });
