@@ -26,7 +26,7 @@ define_test!(use_wrapper: ctrl -> {
     let cs = ctrl.call_site(&uwf);
     println!("{:?}", &ctrl.graph().desc.type_info);
     let tp = cs.output().as_singles().any(|n|
-        dbg!(ctrl.types_for(n.node())).iter().any(|t|
+        dbg!(ctrl.types_for(dbg!(n.node()))).iter().any(|t|
             ctrl.graph().desc.type_info[t].rendering.contains("::Wrapper")
         )
     );

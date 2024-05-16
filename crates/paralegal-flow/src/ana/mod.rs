@@ -17,7 +17,6 @@ use std::path::Path;
 use std::{fs::File, io::Read, rc::Rc};
 
 use anyhow::{anyhow, Result};
-use either::Either;
 use flowistry_pdg_construction::{
     graph::InternedString, Asyncness, DepGraph, MemoPdgConstructor, PDGLoader, SubgraphDescriptor,
 };
@@ -111,6 +110,31 @@ impl<'tcx> MetadataLoader<'tcx> {
             )
         })()
         .unwrap_or(&[])
+    }
+
+    pub fn all_annotations<'a>(&'a self) -> impl Iterator<Item = (DefId, &'a Annotation)> {
+        let b = self.cache.borrow();
+
+        // Safety: While we're keeping references to the borrow above, we only
+        // keep references to values behind `Pin<Box<_>>` which are guaranteed
+        // not to move. So even if the borrow is modified, these references are
+        // still valid.
+        //
+        // In terms of race conditions: this is a cache which never overwrites values.
+        let metadatas = unsafe {
+            std::mem::transmute::<
+                Vec<(CrateNum, &_)>,
+                Vec<(CrateNum, &'a HashMap<DefIndex, Vec<Annotation>>)>,
+            >(
+                b.iter()
+                    .filter_map(|(k, v)| Some((*k, &(**(v.as_ref()?)).as_ref()?.local_annotations)))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        metadatas.into_iter().flat_map(|(krate, m)| {
+            m.iter()
+                .flat_map(move |(&index, v)| v.iter().map(move |v| (DefId { krate, index }, v)))
+        })
     }
 }
 
@@ -543,7 +567,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             marker_annotation_count: self
                 .marker_ctx()
                 .all_annotations()
-                .filter_map(|m| m.1.either(Annotation::as_marker, Some))
+                .filter(|m| m.1.as_marker().is_some())
                 .count() as u32,
             dedup_locs,
             dedup_functions,
@@ -618,16 +642,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .fold_with(
                 |id, _| (format!("{id:?}"), vec![], vec![]),
                 |mut desc, _, ann| {
-                    match ann {
-                        Either::Right(MarkerAnnotation { refinement, marker })
-                        | Either::Left(Annotation::Marker(MarkerAnnotation {
-                            refinement,
-                            marker,
-                        })) => {
+                    match ann.as_ref() {
+                        Annotation::Marker(MarkerAnnotation { refinement, marker }) => {
                             assert!(refinement.on_self());
                             desc.2.push(*marker)
                         }
-                        Either::Left(Annotation::OType(id)) => desc.1.push(*id),
+                        Annotation::OType(id) => desc.1.push(*id),
                         _ => panic!("Unexpected type of annotation {ann:?}"),
                     }
                     desc

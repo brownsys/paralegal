@@ -618,7 +618,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             self.make_call_string(location),
             self.tcx(),
             &self.body,
-            !self.place_info.children(place).is_empty(),
+            self.place_info.children(place).iter().any(|p| *p != place),
         )
     }
 

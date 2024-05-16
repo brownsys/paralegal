@@ -27,7 +27,7 @@ use rustc_hir::def::DefKind;
 use rustc_middle::{mir, ty};
 use rustc_utils::cache::Cache;
 
-use std::rc::Rc;
+use std::{borrow::Cow, rc::Rc};
 
 type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 
@@ -66,10 +66,11 @@ impl<'tcx> MarkerCtx<'tcx> {
     ///
     /// Query is cached.
     fn attribute_annotations(&self, key: DefId) -> &[Annotation] {
-        if key.is_local() {
+        let key = self.defid_rewrite(key);
+        if let Some(local) = key.as_local() {
             self.db()
                 .local_annotations
-                .get(&self.defid_rewrite(key).expect_local())
+                .get(&local)
                 .map_or(&[], Vec::as_slice)
         } else {
             self.0.loader.get_annotations(key)
@@ -133,18 +134,6 @@ impl<'tcx> MarkerCtx<'tcx> {
         let did = did.into_def_id(self.tcx());
 
         self.is_attribute_marked(did) || self.is_externally_marked(did)
-    }
-
-    /// Return a complete set of local annotations that were discovered.
-    ///
-    /// Crucially this is a "readout" from the marker cache, which means only
-    /// items reachable from the `paralegal_flow::analyze` will end up in this collection.
-    pub fn local_annotations_found(&self) -> Vec<(LocalDefId, &[Annotation])> {
-        self.db()
-            .local_annotations
-            .iter()
-            .map(|(k, v)| (*k, (v.as_slice())))
-            .collect()
     }
 
     /// Direct access to the loaded database of external markers.
@@ -429,22 +418,24 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Iterate over all discovered annotations, whether local or external
-    pub fn all_annotations(
-        &self,
-    ) -> impl Iterator<Item = (DefId, Either<&Annotation, &MarkerAnnotation>)> {
+    pub fn all_annotations(&self) -> impl Iterator<Item = (DefId, Cow<'_, Annotation>)> {
         self.0
             .local_annotations
             .iter()
             .flat_map(|(&id, anns)| {
                 anns.iter()
-                    .map(move |ann| (id.to_def_id(), Either::Left(ann)))
+                    .map(move |ann| (id.to_def_id(), Cow::Borrowed(ann)))
             })
             .chain(
                 self.0
-                    .external_annotations
-                    .iter()
-                    .flat_map(|(&id, anns)| anns.iter().map(move |ann| (id, Either::Right(ann)))),
+                    .loader
+                    .all_annotations()
+                    .map(|(it, ann)| (it, Cow::Borrowed(ann))),
             )
+            .chain(self.0.external_annotations.iter().flat_map(|(&id, anns)| {
+                anns.iter()
+                    .map(move |ann| (id, Cow::Owned(Annotation::Marker(ann.clone()))))
+            }))
     }
 
     pub fn functions_seen(&self) -> Vec<FnResolution<'tcx>> {

@@ -288,13 +288,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let Some(place_ty) = self.determine_place_type(weight.at, weight.place.as_ref()) else {
             return;
         };
-        let deep = !weight.is_split;
+        // Restore after fixing https://github.com/brownsys/paralegal/issues/138
+        //let deep = !weight.is_split;
+        let deep = true;
         let mut node_types = self.type_is_marked(place_ty, deep).collect::<HashSet<_>>();
         for (p, _) in weight.place.iter_projections() {
             if let Some(place_ty) = self.determine_place_type(weight.at, p) {
                 node_types.extend(self.type_is_marked(place_ty, false));
             }
         }
+        println!("  found marked types {node_types:?}");
         self.known_def_ids.extend(node_types.iter().copied());
         let tcx = self.tcx();
         if !node_types.is_empty() {
