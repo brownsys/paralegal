@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use either::Either;
-use flowistry_pdg::GlobalLocation;
+use flowistry_pdg::{CallString, GlobalLocation};
 use itertools::Itertools;
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::{DefId, LocalDefId};
@@ -190,14 +190,17 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             determine_async(self.tcx(), self.def_id, &self.body)?;
 
         let g = self.memo.construct_for(generator_fn)?;
-        let mut new_g = push_call_string_root(
-            g,
-            GlobalLocation {
-                function: self.def_id.to_def_id(),
-                location: flowistry_pdg::RichLocation::Location(location),
-            },
-        );
+        let gloc = GlobalLocation {
+            function: self.def_id.to_def_id(),
+            location: flowistry_pdg::RichLocation::Location(location),
+        };
+        let mut new_g = push_call_string_root(g, gloc);
+        let g_generics = std::mem::replace(&mut new_g.graph.generics, self.generic_args());
         new_g.graph.asyncness = asyncness;
+        new_g
+            .graph
+            .monos
+            .insert(CallString::single(gloc), g_generics);
         Some(new_g)
     }
 

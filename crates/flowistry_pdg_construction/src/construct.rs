@@ -359,8 +359,6 @@ impl<'tcx> PartialGraph<'tcx> {
             function: constructor.def_id.to_def_id(),
         };
 
-        let extend_node = |dep: &DepNode<'tcx>| push_call_string_root(dep, gloc);
-
         let (child_descriptor, calling_convention) =
             match constructor.determine_call_handling(location, func, args)? {
                 CallHandling::Ready {
@@ -400,7 +398,7 @@ impl<'tcx> PartialGraph<'tcx> {
             graph: child_graph,
             parentable_srcs,
             parentable_dsts,
-        } = &*child_descriptor;
+        } = push_call_string_root(child_descriptor, gloc);
 
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
@@ -420,7 +418,7 @@ impl<'tcx> PartialGraph<'tcx> {
                     Inputs::Unresolved {
                         places: vec![(parent_place, None)],
                     },
-                    Either::Right(extend_node(child_src)),
+                    Either::Right(child_src),
                     location,
                     TargetUse::Assign,
                 );
@@ -446,7 +444,7 @@ impl<'tcx> PartialGraph<'tcx> {
                     results,
                     state,
                     Inputs::Resolved {
-                        node: extend_node(child_dst),
+                        node: child_dst,
                         node_use: SourceUse::Operand,
                     },
                     Either::Left(parent_place),
@@ -455,15 +453,9 @@ impl<'tcx> PartialGraph<'tcx> {
                 );
             }
         }
-        self.nodes.extend(child_graph.nodes.iter().map(extend_node));
-        self.edges
-            .extend(child_graph.edges.iter().map(|(n1, n2, e)| {
-                (
-                    extend_node(n1),
-                    extend_node(n2),
-                    push_call_string_root(e, gloc),
-                )
-            }));
+        self.nodes.extend(child_graph.nodes);
+        self.edges.extend(child_graph.edges);
+        self.monos.extend(child_graph.monos);
         Some(())
     }
 
@@ -545,7 +537,7 @@ type PdgCache<'tcx> =
 
 pub struct GraphConstructor<'tcx, 'a> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
-    root: FnResolution<'tcx>,
+    pub(super) root: FnResolution<'tcx>,
     body_with_facts: &'tcx BodyWithBorrowckFacts<'tcx>,
     pub(crate) body: Cow<'tcx, Body<'tcx>>,
     pub(crate) def_id: LocalDefId,
@@ -1133,7 +1125,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         )
     }
 
-    fn generic_args(&self) -> GenericArgsRef<'tcx> {
+    pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
         match self.root {
             FnResolution::Final(inst) => inst.args,
             _ => List::empty(),

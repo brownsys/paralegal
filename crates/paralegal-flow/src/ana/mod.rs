@@ -16,7 +16,7 @@ use crate::{
 use std::path::Path;
 use std::{fs::File, io::Read, rc::Rc};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
     graph::InternedString, Asyncness, DepGraph, MemoPdgConstructor, PDGLoader, SubgraphDescriptor,
@@ -247,13 +247,40 @@ impl<'tcx> MetadataLoader<'tcx> {
         meta.bodies.get(&key.index)
     }
 
-    pub fn get_mono(&self, cs: CallString) -> GenericArgsRef<'tcx> {
-        let get_graph = |key: DefId| &self.get_metadata(key.krate).unwrap().pdgs[&key.index].graph;
-        let Some(cs) = cs.caller() else {
-            return get_graph(cs.leaf().function).generics;
+    pub fn get_mono(&self, cs: CallString) -> Result<GenericArgsRef<'tcx>> {
+        let get_graph = |key: DefId| {
+            anyhow::Ok(
+                &self
+                    .get_metadata(key.krate)
+                    .ok_or_else(|| {
+                        anyhow!("no metadata for crate {}", self.tcx.crate_name(key.krate))
+                    })?
+                    .pdgs
+                    .get(&key.index)
+                    .ok_or_else(|| anyhow!("no pdg for item {key:?}"))?
+                    .graph,
+            )
         };
-        let key = cs.root().function;
-        get_graph(key).monos[&cs]
+        if let Some(caller) = cs.caller() {
+            let key = caller.root().function;
+            let monos = &get_graph(key)?.monos;
+            monos
+                .get(&caller)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "no generics known for call site {cs} (caller {caller}). Known generics are\n{}",
+                        Print(|fmt| {
+                            for (k, v) in monos {
+                                writeln!(fmt, "  {k}: {v:?}")?;
+                            }
+                            Ok(())
+                        })
+                    )
+                })
+                .map(|s| *s)
+        } else {
+            Ok(get_graph(cs.leaf().function)?.generics)
+        }
     }
 
     pub fn get_pdg(&self, key: DefId) -> Option<DepGraph<'tcx>> {

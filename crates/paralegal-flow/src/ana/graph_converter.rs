@@ -216,7 +216,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             .metadata_loader
             .get_body_info(at.leaf().function)
             .unwrap();
-        let generics = self.generator.metadata_loader.get_mono(at);
+        let generics = self.generator.metadata_loader.get_mono(at).unwrap();
 
         // So actually we're going to check the base place only, because
         // Flowistry sometimes tracks subplaces instead but we want the marker
