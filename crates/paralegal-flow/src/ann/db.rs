@@ -16,15 +16,18 @@ use crate::{
     args::{Args, MarkerControl},
     consts,
     utils::{
-        resolve::expect_resolve_string_to_def_id, AsFnAndArgs, FnResolution, FnResolutionExt,
-        IntoDefId, IntoHirId, MetaItemMatch, TyCtxtExt, TyExt,
+        resolve::expect_resolve_string_to_def_id, AsFnAndArgs, InstanceExt, IntoDefId, IntoHirId,
+        MetaItemMatch, TyCtxtExt, TyExt,
     },
     DefId, Either, HashMap, HashSet, LocalDefId, TyCtxt,
 };
-use flowistry_pdg_construction::{determine_async, graph::InternedString};
+use flowistry_pdg_construction::{determine_async, graph::InternedString, try_monomorphize};
 use rustc_ast::Attribute;
 use rustc_hir::def::DefKind;
-use rustc_middle::{mir, ty};
+use rustc_middle::{
+    mir,
+    ty::{self, Instance},
+};
 use rustc_utils::cache::Cache;
 
 use std::{borrow::Cow, rc::Rc};
@@ -148,16 +151,16 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// functions called in its body are marked.
     ///
     /// XXX Does not take into account reachable type markers
-    pub fn marker_is_reachable(&self, res: FnResolution<'tcx>) -> bool {
+    pub fn marker_is_reachable(&self, res: Instance<'tcx>) -> bool {
         self.is_marked(res.def_id()) || self.has_transitive_reachable_markers(res)
     }
 
     /// Queries the transitive marker cache.
-    pub fn has_transitive_reachable_markers(&self, res: FnResolution<'tcx>) -> bool {
+    pub fn has_transitive_reachable_markers(&self, res: Instance<'tcx>) -> bool {
         !self.get_reachable_markers(res).is_empty()
     }
 
-    pub fn get_reachable_markers(&self, res: FnResolution<'tcx>) -> &[InternedString] {
+    pub fn get_reachable_markers(&self, res: Instance<'tcx>) -> &[InternedString] {
         self.db()
             .reachable_markers
             .get_maybe_recursive(res, |_| self.compute_reachable_markers(res))
@@ -166,7 +169,7 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     fn get_reachable_and_self_markers(
         &self,
-        res: FnResolution<'tcx>,
+        res: Instance<'tcx>,
     ) -> impl Iterator<Item = InternedString> + '_ {
         if res.def_id().is_local() {
             let mut direct_markers = self
@@ -191,7 +194,7 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
-    fn compute_reachable_markers(&self, res: FnResolution<'tcx>) -> Box<[InternedString]> {
+    fn compute_reachable_markers(&self, res: Instance<'tcx>) -> Box<[InternedString]> {
         trace!("Computing reachable markers for {res:?}");
         let Some(local) = res.def_id().as_local() else {
             trace!("  Is not local");
@@ -205,7 +208,8 @@ impl<'tcx> MarkerCtx<'tcx> {
             trace!("  Cannot find body");
             return Box::new([]);
         };
-        let mono_body = res.try_monomorphize(
+        let mono_body = try_monomorphize(
+            res,
             self.tcx(),
             self.tcx().param_env_reveal_all_normalized(local),
             &body.body,
@@ -252,7 +256,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                 && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
                 trace!("    fits opaque type");
                 Either::Left(self.get_reachable_and_self_markers(
-                    FnResolution::Final(ty::Instance::expect_resolve(self.tcx(), ty::ParamEnv::reveal_all(), *closure_fn, substs))
+                    ty::Instance::expect_resolve(self.tcx(), ty::ParamEnv::reveal_all(), *closure_fn, substs)
                 ))
             } else {
                 Either::Right(std::iter::empty())
@@ -383,7 +387,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// the type that was marked (if any).
     pub fn all_function_markers<'a>(
         &'a self,
-        function: FnResolution<'tcx>,
+        function: Instance<'tcx>,
     ) -> impl Iterator<Item = (&'a MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> {
         // Markers not coming from types, hence the "None"
         let direct_markers = self
@@ -438,7 +442,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             }))
     }
 
-    pub fn functions_seen(&self) -> Vec<FnResolution<'tcx>> {
+    pub fn functions_seen(&self) -> Vec<Instance<'tcx>> {
         let cache = self.0.reachable_markers.borrow();
         cache.keys().copied().collect::<Vec<_>>()
     }
@@ -455,7 +459,7 @@ pub struct MarkerDatabase<'tcx> {
     pub(crate) local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
-    pub(crate) reachable_markers: Cache<FnResolution<'tcx>, Box<[InternedString]>>,
+    pub(crate) reachable_markers: Cache<Instance<'tcx>, Box<[InternedString]>>,
     /// Configuration options
     config: &'static MarkerControl,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,

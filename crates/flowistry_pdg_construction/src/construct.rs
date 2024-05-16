@@ -18,7 +18,7 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
         Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArg, GenericArgsRef, List, TyCtxt, TyKind},
+    ty::{GenericArg, GenericArgsRef, Instance, List, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{
     self as df, fmt::DebugWithContext, Analysis, AnalysisDomain, Results, ResultsVisitor,
@@ -36,7 +36,7 @@ use crate::{
     graph::{DepEdge, DepGraph, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     try_resolve_function,
-    utils::{self, is_non_default_trait_method, manufacture_substs_for, FnResolution},
+    utils::{self, is_non_default_trait_method, manufacture_substs_for, try_monomorphize},
     Asyncness, CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
 
@@ -108,18 +108,16 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             function.to_def_id(),
             self.tcx.param_env_reveal_all_normalized(function),
             generics,
-        );
+        )?;
         self.construct_for(resolution)
     }
 
     pub(crate) fn construct_for<'a>(
         &'a self,
-        resolution: FnResolution<'tcx>,
+        resolution: Instance<'tcx>,
     ) -> Option<&'a SubgraphDescriptor<'tcx>> {
-        let (def_id, generics) = match resolution {
-            FnResolution::Final(instance) => (instance.def_id(), Some(instance.args)),
-            FnResolution::Partial(def_id) => (def_id, None),
-        };
+        let def_id = resolution.def_id();
+        let generics = resolution.args;
         if let Some(local) = def_id.as_local() {
             self.pdg_cache.get_maybe_recursive((local, generics), |_| {
                 let g = GraphConstructor::new(self, resolution).construct_partial();
@@ -131,27 +129,31 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         }
     }
 
-    pub fn is_in_cache(&self, resolution: FnResolution<'tcx>) -> bool {
-        let (def_id, generics) = match resolution {
-            FnResolution::Final(instance) => (instance.def_id(), Some(instance.args)),
-            FnResolution::Partial(def_id) => (def_id, None),
-        };
-        if let Some(local) = def_id.as_local() {
-            self.pdg_cache.is_in_cache(&(local, generics))
+    pub fn is_in_cache(&self, resolution: Instance<'tcx>) -> bool {
+        if let Some(local) = resolution.def_id().as_local() {
+            self.pdg_cache.is_in_cache(&(local, resolution.args))
         } else {
-            self.loader.load(def_id).is_some()
+            self.loader.load(resolution.def_id()).is_some()
         }
     }
 
     pub fn construct_graph(&self, function: DefId) -> Result<DepGraph<'tcx>, ErrorGuaranteed> {
         let args = manufacture_substs_for(self.tcx, function)?;
         let g = self
-            .construct_for(try_resolve_function(
-                self.tcx,
-                function,
-                self.tcx.param_env_reveal_all_normalized(function),
-                args,
-            ))
+            .construct_for(
+                try_resolve_function(
+                    self.tcx,
+                    function,
+                    self.tcx.param_env_reveal_all_normalized(function),
+                    args,
+                )
+                .ok_or_else(|| {
+                    self.tcx.sess.span_err(
+                        self.tcx.def_span(function),
+                        "Could not construct graph for this function",
+                    )
+                })?,
+            )
             .unwrap()
             .to_petgraph();
         Ok(g)
@@ -545,14 +547,13 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-type PdgCache<'tcx> =
-    Rc<Cache<(LocalDefId, Option<GenericArgsRef<'tcx>>), SubgraphDescriptor<'tcx>>>;
+type PdgCache<'tcx> = Rc<Cache<(LocalDefId, GenericArgsRef<'tcx>), SubgraphDescriptor<'tcx>>>;
 
 pub struct GraphConstructor<'tcx, 'a> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
-    pub(super) root: FnResolution<'tcx>,
+    pub(super) root: Instance<'tcx>,
     body_with_facts: &'tcx BodyWithBorrowckFacts<'tcx>,
-    pub(crate) body: Cow<'tcx, Body<'tcx>>,
+    pub(crate) body: Body<'tcx>,
     pub(crate) def_id: LocalDefId,
     place_info: PlaceInfo<'tcx>,
     control_dependencies: ControlDependencies<BasicBlock>,
@@ -580,7 +581,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
     /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution` in a given `calling_context`.
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
-        root: FnResolution<'tcx>,
+        root: Instance<'tcx>,
     ) -> GraphConstructor<'tcx, 'a> {
         let tcx = memo.tcx;
         let def_id = root.def_id().expect_local();
@@ -590,7 +591,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         //     Some(cx) => cx.param_env,
         //     None => ParamEnv::reveal_all(),
         // };
-        let body = root.try_monomorphize(tcx, param_env, &body_with_facts.body);
+        let body = try_monomorphize(root, tcx, param_env, &body_with_facts.body);
 
         if memo.dump_mir {
             use std::io::Write;
@@ -752,7 +753,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
                             if let Some((PlaceElem::Deref, rest)) = place.projection.split_last() {
                                 let mut new_place = place;
                                 new_place.projection = self.tcx().mk_place_elems(rest);
-                                if new_place.ty(self.body.as_ref(), self.tcx()).ty.is_box() {
+                                if new_place.ty(&self.body, self.tcx()).ty.is_box() {
                                     if new_place.is_indirect() {
                                         // TODO might be unsound: We assume that if
                                         // there are other indirections in here,
@@ -912,9 +913,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         };
         let mut operands = IndexVec::new();
         operands.push(op.clone());
-        let TyKind::Adt(adt_id, generics) =
-            destination.ty(self.body.as_ref(), self.tcx()).ty.kind()
-        else {
+        let TyKind::Adt(adt_id, generics) = destination.ty(&self.body, self.tcx()).ty.kind() else {
             unreachable!()
         };
         assert_eq!(adt_id.did(), lang_items.pin_type().unwrap());
@@ -939,7 +938,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         // Monomorphize the called function with the known generic_args.
         let param_env = tcx.param_env_reveal_all_normalized(self.def_id);
         let resolved_fn =
-            utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args);
+            utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)?;
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
@@ -1139,10 +1138,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
     }
 
     pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
-        match self.root {
-            FnResolution::Final(inst) => inst.args,
-            _ => List::empty(),
-        }
+        self.root.args
     }
 
     fn handle_terminator(
@@ -1272,7 +1268,7 @@ pub enum CallKind<'tcx> {
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
     Indirect,
     /// A poll to an async function, like `f.await`.
-    AsyncPoll(FnResolution<'tcx>, Location, Place<'tcx>),
+    AsyncPoll(Instance<'tcx>, Location, Place<'tcx>),
 }
 
 type ApproximationHandler<'tcx, 'a> = fn(

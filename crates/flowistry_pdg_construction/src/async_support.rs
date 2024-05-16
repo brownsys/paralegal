@@ -11,13 +11,13 @@ use rustc_middle::{
         AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::{GenericArgsRef, TyCtxt},
+    ty::{GenericArgsRef, Instance, TyCtxt},
 };
 
 use crate::construct::{push_call_string_root, CallKind, SubgraphDescriptor};
 
 use super::construct::GraphConstructor;
-use super::utils::{self, FnResolution};
+use super::utils::{self};
 
 #[derive(Debug, Clone, Copy, Decodable, Encodable)]
 pub enum Asyncness {
@@ -162,7 +162,7 @@ pub fn determine_async<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
     body: &Body<'tcx>,
-) -> Option<(FnResolution<'tcx>, Location, Asyncness)> {
+) -> Option<(Instance<'tcx>, Location, Asyncness)> {
     let ((generator_def_id, args, loc), asyncness) = if tcx.asyncness(def_id).is_async() {
         (get_async_generator(body), Asyncness::AsyncFn)
     } else {
@@ -173,7 +173,7 @@ pub fn determine_async<'tcx>(
     };
     let param_env = tcx.param_env_reveal_all_normalized(def_id);
     let generator_fn =
-        utils::try_resolve_function(tcx, generator_def_id.to_def_id(), param_env, args);
+        utils::try_resolve_function(tcx, generator_def_id.to_def_id(), param_env, args)?;
     Some((generator_fn, loc, asyncness))
 }
 
@@ -226,7 +226,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
     fn find_async_args<'b>(
         &'b self,
         args: &'b [Operand<'tcx>],
-    ) -> Result<(FnResolution<'tcx>, Location, Place<'tcx>), String> {
+    ) -> Result<(Instance<'tcx>, Location, Place<'tcx>), String> {
         macro_rules! let_assert {
             ($p:pat = $e:expr, $($arg:tt)*) => {
                 let $p = $e else {
@@ -333,7 +333,8 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             op,
             self.tcx().param_env_reveal_all_normalized(self.def_id),
             generics,
-        );
+        )
+        .ok_or_else(|| "Resolving function failed")?;
 
         Ok((resolution, async_fn_call_loc, calling_convention))
     }

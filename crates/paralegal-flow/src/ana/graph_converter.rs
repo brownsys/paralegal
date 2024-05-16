@@ -19,7 +19,7 @@ use anyhow::{bail, Result};
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason,
+    try_monomorphize, CallChangeCallback, CallChanges, CallInfo, InlineMissReason,
     SkipCall::Skip,
 };
 use petgraph::{
@@ -243,17 +243,15 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // );
         let generics = self.generator.metadata_loader.get_mono(at).unwrap();
         println!("Determining type fpr place {place:?} at {at} with raw type {raw_ty:?} and generics {generics:?}");
-        let resolution = *FnResolution::Final(
-            Instance::resolve(
-                tcx,
-                tcx.param_env_reveal_all_normalized(function),
-                function,
-                generics,
-            )
-            .unwrap()
-            .unwrap(),
+        let instance = Instance::resolve(
+            tcx,
+            tcx.param_env_reveal_all_normalized(function),
+            function,
+            generics,
         )
-        .try_monomorphize(tcx, ty::ParamEnv::reveal_all(), &raw_ty);
+        .unwrap()
+        .unwrap();
+        let resolution = try_monomorphize(instance, tcx, ty::ParamEnv::reveal_all(), &raw_ty);
         //println!("Resolved to {resolution:?}");
         Some(resolution)
     }
@@ -530,9 +528,9 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
 
     fn on_inline_miss(
         &self,
-        resolution: FnResolution<'tcx>,
+        resolution: Instance<'tcx>,
         loc: Location,
-        parent: FnResolution<'tcx>,
+        parent: Instance<'tcx>,
         call_string: Option<CallString>,
         reason: InlineMissReason,
     ) {

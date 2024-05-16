@@ -1,17 +1,16 @@
 //! CAllbacks to influence graph construction and their supporting types.
 
 use flowistry_pdg::{rustc_portable::Location, CallString};
-
-use crate::FnResolution;
+use rustc_middle::ty::Instance;
 
 pub trait CallChangeCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges;
 
     fn on_inline_miss(
         &self,
-        _resolution: FnResolution<'tcx>,
+        _resolution: Instance<'tcx>,
         _loc: Location,
-        _under_analysis: FnResolution<'tcx>,
+        _under_analysis: Instance<'tcx>,
         _call_string: Option<CallString>,
         _reason: InlineMissReason,
     ) {
@@ -50,11 +49,11 @@ impl Default for CallChanges {
 /// Information about the function being called.
 pub struct CallInfo<'tcx> {
     /// The potentially-monomorphized resolution of the callee.
-    pub callee: FnResolution<'tcx>,
+    pub callee: Instance<'tcx>,
 
     /// If the callee is an async closure created by an `async fn`, this is the
     /// `async fn` item.
-    pub async_parent: Option<FnResolution<'tcx>>,
+    pub async_parent: Option<Instance<'tcx>>,
 
     /// The call-stack up to the current call site.
     pub call_string: CallString,

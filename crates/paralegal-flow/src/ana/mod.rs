@@ -159,7 +159,7 @@ pub struct Metadata<'tcx> {
     pub pdgs: FxHashMap<DefIndex, SubgraphDescriptor<'tcx>>,
     pub bodies: FxHashMap<DefIndex, BodyInfo<'tcx>>,
     pub local_annotations: HashMap<DefIndex, Vec<Annotation>>,
-    pub reachable_markers: HashMap<(DefIndex, Option<GenericArgsRef<'tcx>>), Box<[InternedString]>>,
+    pub reachable_markers: HashMap<(DefIndex, GenericArgsRef<'tcx>), Box<[InternedString]>>,
 }
 
 impl<'tcx> Metadata<'tcx> {
@@ -237,11 +237,9 @@ impl<'tcx> Metadata<'tcx> {
                 .collect(),
             reachable_markers: (&*cache_borrow)
                 .iter()
-                .filter_map(|(k, v)| {
-                    let (id, args) = match k {
-                        FnResolution::Partial(d) => (*d, None),
-                        FnResolution::Final(inst) => (inst.def_id(), Some(inst.args)),
-                    };
+                .filter_map(|(inst, v)| {
+                    let id = inst.def_id();
+                    let args = inst.args;
                     Some((
                         (id.as_local()?.local_def_index, args),
                         (**(v.as_ref()?)).clone(),

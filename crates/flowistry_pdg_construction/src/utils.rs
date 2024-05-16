@@ -19,51 +19,6 @@ use rustc_span::ErrorGuaranteed;
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, TyDecodable, TyEncodable)]
-pub enum FnResolution<'tcx> {
-    Final(ty::Instance<'tcx>),
-    Partial(DefId),
-}
-
-impl<'tcx> PartialOrd for FnResolution<'tcx> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<'tcx> Ord for FnResolution<'tcx> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        use FnResolution::*;
-        match (self, other) {
-            (Final(_), Partial(_)) => std::cmp::Ordering::Greater,
-            (Partial(_), Final(_)) => std::cmp::Ordering::Less,
-            (Partial(slf), Partial(otr)) => slf.cmp(otr),
-            (Final(slf), Final(otr)) => match slf.def.cmp(&otr.def) {
-                std::cmp::Ordering::Equal => slf.args.cmp(otr.args),
-                result => result,
-            },
-        }
-    }
-}
-
-impl<'tcx> FnResolution<'tcx> {
-    pub fn def_id(self) -> DefId {
-        match self {
-            FnResolution::Final(f) => f.def_id(),
-            FnResolution::Partial(p) => p,
-        }
-    }
-}
-
-impl<'tcx> std::fmt::Display for FnResolution<'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FnResolution::Final(sub) => std::fmt::Debug::fmt(sub, f),
-            FnResolution::Partial(p) => std::fmt::Debug::fmt(p, f),
-        }
-    }
-}
-
 /// Try and normalize the provided generics.
 ///
 /// The purpose of this function is to test whether resolving these generics
@@ -86,20 +41,14 @@ pub fn try_resolve_function<'tcx>(
     def_id: DefId,
     param_env: ParamEnv<'tcx>,
     args: GenericArgsRef<'tcx>,
-) -> FnResolution<'tcx> {
+) -> Option<Instance<'tcx>> {
     let param_env = param_env.with_reveal_all_normalized(tcx);
-    let make_opt = || {
-        if let Err(e) = test_generics_normalization(tcx, param_env, args) {
-            debug!("Normalization failed: {e:?}");
-            return None;
-        }
-        Instance::resolve(tcx, param_env, def_id, args).unwrap()
-    };
 
-    match make_opt() {
-        Some(inst) => FnResolution::Final(inst),
-        None => FnResolution::Partial(def_id),
+    if let Err(e) = test_generics_normalization(tcx, param_env, args) {
+        panic!("Normalization failed: {e:?}");
+        return None;
     }
+    Instance::resolve(tcx, param_env, def_id, args).unwrap()
 }
 
 pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId> {
@@ -112,25 +61,20 @@ pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId
     assoc_item.trait_item_def_id
 }
 
-impl<'tcx> FnResolution<'tcx> {
-    pub fn try_monomorphize<'a, T>(
-        self,
-        tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
-        t: &'a T,
-    ) -> Cow<'a, T>
-    where
-        T: TypeFoldable<TyCtxt<'tcx>> + Clone,
-    {
-        match self {
-            FnResolution::Partial(_) => Cow::Borrowed(t),
-            FnResolution::Final(inst) => Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
-                tcx,
-                param_env,
-                EarlyBinder::bind(tcx.erase_regions(t.clone())),
-            )),
-        }
-    }
+pub fn try_monomorphize<'tcx, 'a, T>(
+    inst: Instance<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    param_env: ParamEnv<'tcx>,
+    t: &'a T,
+) -> T
+where
+    T: TypeFoldable<TyCtxt<'tcx>> + Clone,
+{
+    inst.subst_mir_and_normalize_erasing_regions(
+        tcx,
+        param_env,
+        EarlyBinder::bind(tcx.erase_regions(t.clone())),
+    )
 }
 
 pub fn retype_place<'tcx>(

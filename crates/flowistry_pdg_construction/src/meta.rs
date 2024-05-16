@@ -24,10 +24,7 @@ impl MetadataCollector {
             .map(|t| {
                 (
                     t.local_def_index,
-                    (*constructor
-                        .construct_for(crate::FnResolution::Partial(t.to_def_id()))
-                        .unwrap())
-                    .clone(),
+                    (*constructor.construct_root(t).unwrap()).clone(),
                 )
             })
             .collect::<FxHashMap<_, _>>()
