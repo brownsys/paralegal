@@ -174,10 +174,12 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     // this function call be affected/modified by this call? If
                     // so, that location would also need to have this marker
                     // attached
-                    let needs_return_markers = graph
-                        .graph
-                        .edges_directed(old_node, Direction::Incoming)
-                        .any(|e| {
+                    //
+                    // Also yikes. This should have better detection of whether
+                    // a place is (part of) a function return
+                    let mut in_edges = graph.graph.edges_directed(old_node, Direction::Incoming);
+                    let needs_return_markers = in_edges.clone().next().is_none()
+                        || in_edges.any(|e| {
                             let at = e.weight().at;
                             #[cfg(debug_assertions)]
                             assert_edge_location_invariant(self.tcx(), at, body, weight.at);
