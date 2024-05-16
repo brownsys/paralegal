@@ -98,7 +98,21 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         self
     }
 
-    pub fn construct_for<'a>(
+    pub fn construct_root<'a>(
+        &'a self,
+        function: LocalDefId,
+    ) -> Option<&'a SubgraphDescriptor<'tcx>> {
+        let generics = manufacture_substs_for(self.tcx, function.to_def_id()).unwrap();
+        let resolution = try_resolve_function(
+            self.tcx,
+            function.to_def_id(),
+            self.tcx.param_env_reveal_all_normalized(function),
+            generics,
+        );
+        self.construct_for(resolution)
+    }
+
+    pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: FnResolution<'tcx>,
     ) -> Option<&'a SubgraphDescriptor<'tcx>> {

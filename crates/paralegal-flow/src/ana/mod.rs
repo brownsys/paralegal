@@ -16,7 +16,6 @@ use crate::{
 use std::path::Path;
 use std::{fs::File, io::Read, rc::Rc};
 
-use anyhow::{anyhow, Result};
 use flowistry_pdg_construction::{
     graph::InternedString, Asyncness, DepGraph, MemoPdgConstructor, PDGLoader, SubgraphDescriptor,
 };
@@ -35,7 +34,7 @@ use rustc_middle::{
         BasicBlock, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location,
         TerminatorKind,
     },
-    ty::{GenericArgsRef, TyCtxt},
+    ty::{tls, GenericArgsRef, TyCtxt},
 };
 use rustc_serialize::{Decodable, Encodable};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -44,8 +43,10 @@ mod encoder;
 mod graph_converter;
 mod inline_judge;
 
+use anyhow::Result;
 use graph_converter::GraphConverter;
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
+use thiserror::Error;
 
 use self::{
     encoder::{ParalegalDecoder, ParalegalEncoder},
@@ -58,9 +59,26 @@ pub struct MetadataLoader<'tcx> {
     cache: Cache<CrateNum, Option<Metadata<'tcx>>>,
 }
 
+#[derive(Debug, Error)]
+pub enum MetadataLoaderError {
+    #[error("no pdg for item {:?}", .0)]
+    NoPdgForItem(DefId),
+    #[error("no metadata for crate {}", tls::with(|tcx| tcx.crate_name(*.0)))]
+    NoMetadataForCrate(CrateNum),
+    #[error("no generics known for call site {0}")]
+    NoGenericsKnownForCallSite(CallString),
+    #[error("no metadata for item {:?} in crate {}", .0, tls::with(|tcx| tcx.crate_name(.0.krate)))]
+    NoSuchItemInCate(DefId),
+}
+
+use MetadataLoaderError::*;
+
 impl<'tcx> PDGLoader<'tcx> for MetadataLoader<'tcx> {
     fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
-        self.get_metadata(function.krate)?.pdgs.get(&function.index)
+        self.get_metadata(function.krate)
+            .ok()?
+            .pdgs
+            .get(&function.index)
     }
 }
 
@@ -85,10 +103,7 @@ impl<'tcx> MetadataLoader<'tcx> {
             .map(|t| {
                 (
                     t.local_def_index,
-                    (*constructor
-                        .construct_for(FnResolution::Partial(t.to_def_id()))
-                        .unwrap())
-                    .clone(),
+                    (*constructor.construct_root(t).unwrap()).clone(),
                 )
             })
             .collect::<FxHashMap<_, _>>();
@@ -103,7 +118,8 @@ impl<'tcx> MetadataLoader<'tcx> {
     pub fn get_annotations(&self, key: DefId) -> &[Annotation] {
         (|| {
             Some(
-                self.get_metadata(key.krate)?
+                self.get_metadata(key.krate)
+                    .ok()?
                     .local_annotations
                     .get(&key.index)?
                     .as_slice(),
@@ -244,8 +260,9 @@ impl<'tcx> MetadataLoader<'tcx> {
         })
     }
 
-    pub fn get_metadata(&self, key: CrateNum) -> Option<&Metadata<'tcx>> {
-        self.cache
+    pub fn get_metadata(&self, key: CrateNum) -> Result<&Metadata<'tcx>> {
+        let meta = self
+            .cache
             .get(key, |_| {
                 let paths = self.tcx.crate_extern_paths(key);
                 for path in paths {
@@ -264,26 +281,42 @@ impl<'tcx> MetadataLoader<'tcx> {
                 None
             })
             .as_ref()
+            .ok_or(NoMetadataForCrate(key))?;
+        Ok(meta)
     }
 
-    pub fn get_body_info(&self, key: DefId) -> Option<&BodyInfo<'tcx>> {
+    pub fn get_body_info(&self, key: DefId) -> Result<&BodyInfo<'tcx>> {
         let meta = self.get_metadata(key.krate)?;
-        meta.bodies.get(&key.index)
+        let res = meta.bodies.get(&key.index).ok_or(NoSuchItemInCate(key));
+        if res.is_err() {
+            println!("Known items are");
+            for &index in meta.bodies.keys() {
+                println!(
+                    "  {:?}",
+                    DefId {
+                        krate: key.krate,
+                        index
+                    }
+                );
+            }
+        }
+        Ok(res?)
     }
 
     pub fn get_mono(&self, cs: CallString) -> Result<GenericArgsRef<'tcx>> {
         let get_graph = |key: DefId| {
-            anyhow::Ok(
-                &self
-                    .get_metadata(key.krate)
-                    .ok_or_else(|| {
-                        anyhow!("no metadata for crate {}", self.tcx.crate_name(key.krate))
-                    })?
-                    .pdgs
-                    .get(&key.index)
-                    .ok_or_else(|| anyhow!("no pdg for item {key:?}"))?
-                    .graph,
-            )
+            let meta = self.get_metadata(key.krate)?;
+            println!("Pdgs are known for");
+            for &index in meta.pdgs.keys() {
+                println!(
+                    "  {:?}",
+                    DefId {
+                        krate: key.krate,
+                        index
+                    }
+                );
+            }
+            anyhow::Ok(&meta.pdgs.get(&key.index).ok_or(NoPdgForItem(key))?.graph)
         };
         if let Some(caller) = cs.caller() {
             let key = caller.root().function;
@@ -292,38 +325,26 @@ impl<'tcx> MetadataLoader<'tcx> {
             // for (k, v) in monos {
             //     println!("  {k}: {v:?}");
             // }
-            monos
-                .get(&caller)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "no generics known for call site {cs} (caller {caller}). Known generics are\n{}",
-                        Print(|fmt| {
-                            for (k, v) in monos {
-                                writeln!(fmt, "  {k}: {v:?}")?;
-                            }
-                            Ok(())
-                        })
-                    )
-                })
-                .map(|s| *s)
+            Ok(*monos.get(&caller).ok_or(NoGenericsKnownForCallSite(cs))?)
         } else {
             Ok(get_graph(cs.leaf().function)?.generics)
         }
     }
 
-    pub fn get_pdg(&self, key: DefId) -> Option<DepGraph<'tcx>> {
-        Some(
-            self.get_metadata(key.krate)?
-                .pdgs
-                .get(&key.index)?
-                .to_petgraph(),
-        )
+    pub fn get_pdg(&self, key: DefId) -> Result<DepGraph<'tcx>> {
+        Ok(self
+            .get_metadata(key.krate)?
+            .pdgs
+            .get(&key.index)
+            .ok_or(NoPdgForItem(key))?
+            .to_petgraph())
     }
 
     pub fn get_asyncness(&self, key: DefId) -> Asyncness {
         (|| {
             Some(
-                self.get_metadata(key.krate)?
+                self.get_metadata(key.krate)
+                    .ok()?
                     .pdgs
                     .get(&key.index)?
                     .graph
