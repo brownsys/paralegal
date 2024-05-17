@@ -441,7 +441,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
         let spdg = converter.make_spdg();
 
-        Ok((local_def_id, spdg))
+        Ok((local_def_id.to_def_id(), spdg))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]

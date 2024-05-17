@@ -40,7 +40,7 @@ pub struct GraphConverter<'tcx, 'a, C> {
     /// The flowistry graph we are converting
     dep_graph: Rc<DepGraph<'tcx>>,
     /// Same as the ID stored in self.target, but as a local def id
-    local_def_id: DefId,
+    local_def_id: LocalDefId,
 
     // Mutable fields
     /// Where we write every [`DefId`] we encounter into.
@@ -98,7 +98,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn entrypoint_is_async(&self) -> bool {
         self.generator
             .metadata_loader
-            .get_asyncness(self.local_def_id)
+            .get_asyncness(self.local_def_id.to_def_id())
             .is_async()
     }
 
@@ -319,13 +319,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// `local_def_id`.
     fn create_flowistry_graph(
         generator: &SPDGGenerator<'tcx>,
-        def_id: DefId,
+        def_id: LocalDefId,
     ) -> Result<DepGraph<'tcx>> {
-        let Ok(pdg) = generator.flowistry_loader.construct_graph(def_id) else {
-            bail!("Failed to construct the graph");
-        };
-
-        Ok(pdg)
+        generator.metadata_loader.get_pdg(def_id.to_def_id())
     }
 
     /// Consume the generator and compile the [`SPDG`].
@@ -334,9 +330,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let arguments = self.determine_arguments();
         let return_ = self.determine_return();
         SPDG {
-            path: path_for_item(self.local_def_id, self.tcx()),
+            path: path_for_item(self.local_def_id.to_def_id(), self.tcx()),
             graph: self.spdg,
-            id: self.local_def_id,
+            id: self.local_def_id.to_def_id(),
             name: Identifier::new(self.target.name()),
             arguments,
             markers: self

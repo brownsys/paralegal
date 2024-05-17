@@ -10,6 +10,7 @@ use rustc_hir::{
 };
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_span::Symbol;
+use thiserror::Error;
 use ty::{fast_reject::SimplifiedType, FloatTy, IntTy, UintTy};
 
 #[derive(Debug, Clone, Copy)]
@@ -18,18 +19,24 @@ pub enum Res {
     PrimTy(PrimTy),
 }
 
-#[derive(Clone, Debug)]
-pub enum ResolutionError<'a> {
+#[derive(Clone, Debug, Error)]
+pub enum ResolutionError {
+    #[error("cannot resolve primitive type {}", .0)]
     CannotResolvePrimitiveType(Symbol),
+    #[error("path is empty")]
     PathIsEmpty,
+    #[error("could not find child {segment} in {item:?} (which is a {search_space:?})")]
     CouldNotFindChild {
         item: DefId,
-        segment: &'a str,
+        segment: String,
         search_space: SearchSpace,
     },
+    #[error("empty start segments")]
     EmptyStarts,
+    #[error("non-convertible resolution {:?}", .0)]
     UnconvertibleRes(def::Res),
-    CouldNotResolveCrate(&'a str),
+    #[error("could not resolve crate {}", .0)]
+    CouldNotResolveCrate(String),
 }
 
 #[derive(Clone, Debug)]
@@ -39,7 +46,7 @@ pub enum SearchSpace {
 }
 
 impl Res {
-    fn from_def_res<'a>(res: def::Res) -> Result<Self, ResolutionError<'a>> {
+    fn from_def_res(res: def::Res) -> Result<Self, ResolutionError> {
         match res {
             def::Res::Def(k, i) => Ok(Res::Def(k, i)),
             def::Res::PrimTy(t) => Ok(Res::PrimTy(t)),
@@ -116,13 +123,25 @@ pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -
     }
 }
 
+pub fn resolve_string_to_def_id(tcx: TyCtxt, path: &str) -> anyhow::Result<DefId> {
+    let segment_vec = path.split("::").collect::<Vec<_>>();
+
+    let res = def_path_res(tcx, &segment_vec)?;
+    match res {
+        Res::Def(_, did) => Ok(did),
+        other => {
+            anyhow::bail!("expected {path} to resolve to an item, got {other:?}")
+        }
+    }
+}
+
 /// Lifted from `clippy_utils`
-pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, ResolutionError<'a>> {
-    fn item_child_by_name<'a>(
+pub fn def_path_res(tcx: TyCtxt, path: &[&str]) -> Result<Res, ResolutionError> {
+    fn item_child_by_name(
         tcx: TyCtxt<'_>,
         def_id: DefId,
         name: &str,
-    ) -> Option<Result<Res, ResolutionError<'a>>> {
+    ) -> Option<Result<Res, ResolutionError>> {
         if let Some(local_id) = def_id.as_local() {
             local_item_children_by_name(tcx, local_id, name)
         } else {
@@ -130,11 +149,11 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
         }
     }
 
-    fn non_local_item_children_by_name<'a>(
+    fn non_local_item_children_by_name(
         tcx: TyCtxt<'_>,
         def_id: DefId,
         name: &str,
-    ) -> Option<Result<Res, ResolutionError<'a>>> {
+    ) -> Option<Result<Res, ResolutionError>> {
         match tcx.def_kind(def_id) {
             DefKind::Mod | DefKind::Enum | DefKind::Trait => tcx
                 .module_children(def_id)
@@ -151,11 +170,11 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
         }
     }
 
-    fn local_item_children_by_name<'a>(
+    fn local_item_children_by_name(
         tcx: TyCtxt<'_>,
         local_id: LocalDefId,
         name: &str,
-    ) -> Option<Result<Res, ResolutionError<'a>>> {
+    ) -> Option<Result<Res, ResolutionError>> {
         let hir = tcx.hir();
 
         let root_mod;
@@ -235,13 +254,13 @@ pub fn def_path_res<'a>(tcx: TyCtxt, path: &[&'a str]) -> Result<Res, Resolution
                         .find_map(|&impl_def_id| item_child_by_name(tcx, impl_def_id, segment))
                         .unwrap_or(Err(ResolutionError::CouldNotFindChild {
                             item: def_id,
-                            segment,
+                            segment: segment.to_owned(),
                             search_space: SearchSpace::InherentImpl,
                         }))
                 } else {
                     Err(ResolutionError::CouldNotFindChild {
                         item: def_id,
-                        segment,
+                        segment: segment.to_owned(),
                         search_space: SearchSpace::Mod,
                     })
                 }

@@ -137,24 +137,16 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         }
     }
 
-    pub fn construct_graph(&self, function: DefId) -> Result<DepGraph<'tcx>, ErrorGuaranteed> {
-        let args = manufacture_substs_for(self.tcx, function)?;
+    pub fn construct_graph(&self, function: LocalDefId) -> Result<DepGraph<'tcx>, ErrorGuaranteed> {
+        let args = manufacture_substs_for(self.tcx, function.to_def_id())?;
         let g = self
-            .construct_for(
-                try_resolve_function(
-                    self.tcx,
-                    function,
-                    self.tcx.param_env_reveal_all_normalized(function),
-                    args,
+            .construct_root(function)
+            .ok_or_else(|| {
+                self.tcx.sess.span_err(
+                    self.tcx.def_span(function),
+                    "Could not construct graph for this function",
                 )
-                .ok_or_else(|| {
-                    self.tcx.sess.span_err(
-                        self.tcx.def_span(function),
-                        "Could not construct graph for this function",
-                    )
-                })?,
-            )
-            .unwrap()
+            })?
             .to_petgraph();
         Ok(g)
     }

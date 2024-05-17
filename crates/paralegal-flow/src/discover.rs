@@ -8,14 +8,14 @@ use std::rc::Rc;
 use crate::{ana::MetadataLoader, ann::db::MarkerDatabase, consts, utils::*};
 
 use rustc_hir::{
-    def_id::{DefId, LocalDefId},
+    def_id::LocalDefId,
     intravisit::{self, FnKind},
     BodyId,
 };
 use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
-use self::resolve::expect_resolve_string_to_def_id;
+use self::resolve::resolve_string_to_def_id;
 
 /// Values of this type can be matched against Rust attributes
 pub type AttrMatchT = Vec<Symbol>;
@@ -43,7 +43,7 @@ pub struct CollectingVisitor<'tcx> {
 /// [`CollectingVisitor::handle_target`].
 pub struct FnToAnalyze {
     pub name: Ident,
-    pub def_id: DefId,
+    pub def_id: LocalDefId,
 }
 
 impl FnToAnalyze {
@@ -64,15 +64,16 @@ impl<'tcx> CollectingVisitor<'tcx> {
             .selected_targets()
             .iter()
             .filter_map(|path| {
-                let def_id = expect_resolve_string_to_def_id(tcx, path, opts.relaxed())?;
-                if !def_id.is_local() {
+                let def_id = resolve_string_to_def_id(tcx, path).ok()?;
+                if let Some(local) = def_id.as_local() {
+                    Some(FnToAnalyze {
+                        def_id: local,
+                        name: tcx.opt_item_ident(def_id).unwrap(),
+                    })
+                } else {
                     tcx.sess.span_err(tcx.def_span(def_id), "found an external function as analysis target. Analysis targets are required to be local.");
                     return None;
                 }
-                Some(FnToAnalyze {
-                    def_id,
-                    name: tcx.opt_item_ident(def_id).unwrap(),
-                })
             })
             .collect();
         Self {
@@ -131,7 +132,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                 if self.should_analyze_function(id) {
                     self.functions_to_analyze.push(FnToAnalyze {
                         name: *name,
-                        def_id: id.to_def_id(),
+                        def_id: id,
                     });
                     self.emit_target_collector.push(id);
                 } else if self.tcx.generics_of(id).count() == 0 {
