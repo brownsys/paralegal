@@ -201,6 +201,13 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     }
 }
 
+/// This function creates dynamic types that satisfy the constraints on the
+/// given function. It returns a list of generic arguments that are suitable for
+/// calling `Instance::resolve` for this function, guaranteeing that the resolve
+/// call does not fail.
+///
+/// This is achieved by constructing `dyn` types which assume the constraints of
+/// the `where` clause for this function (and any parents).
 pub fn manufacture_substs_for(
     tcx: TyCtxt<'_>,
     function: DefId,
@@ -216,8 +223,10 @@ pub fn manufacture_substs_for(
     trace!("Found generics {generics:?}");
     let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
     trace!("Found predicates {predicates:?}");
+    let lang_items = tcx.lang_items();
     let types = (0..generics.count()).map(|gidx| {
         let param = generics.param_at(gidx, tcx);
+        trace!("Trying param {param:?}");
         if let Some(default_val) = param.default_value(tcx) {
             return Ok(default_val.instantiate_identity());
         }
@@ -240,46 +249,77 @@ pub fn manufacture_substs_for(
         };
 
         let param_as_ty = ParamTy::for_def(param);
-        let constraints = predicates.predicates.iter().filter_map(|clause| {
-            let pred = if let Some(trait_ref) = clause.as_trait_clause() {
-                if trait_ref.polarity() != ImplPolarity::Positive {
+        let constraints = predicates.predicates.iter().enumerate().rev().filter_map(
+            |(pidx, clause)| {
+                trace!("  Trying clause {clause:?}");
+                let pred = if let Some(trait_ref) = clause.as_trait_clause() {
+                    trace!("    is trait clause");
+                    if trait_ref.polarity() != ImplPolarity::Positive {
+                        trace!("    Bailing because it is negative");
+                        return None;
+                    };
+                    let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
+                        return Some(Err(tcx.sess.span_err(
+                            tcx.def_span(param.def_id),
+                            format!("Trait ref had binder {trait_ref:?}"),
+                        )));
+                    };
+                    if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty)
+                    {
+                        trace!("    Bailing because self type is not param type");
+                        return None;
+                    };
+                    if Some(trait_ref.def_id) == lang_items.sized_trait()
+                        || tcx.trait_is_auto(trait_ref.def_id)
+                    {
+                        trace!("    bailing because trait is auto trait");
+                        return None;
+                    }
+                    ExistentialPredicate::Trait(ExistentialTraitRef::erase_self_ty(tcx, trait_ref))
+                } else if let Some(pred) = clause.as_projection_clause() {
+                    trace!("    is projection clause");
+                    let Some(pred) = pred.no_bound_vars() else {
+                        return Some(Err(tcx
+                            .sess
+                            .span_err(predicates.spans[pidx], "Bound vars in predicate")));
+                    };
+                    if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
+                        trace!("    Bailing because self type is not param type");
+                        return None;
+                    };
+                    ExistentialPredicate::Projection(ExistentialProjection::erase_self_ty(
+                        tcx, pred,
+                    ))
+                } else {
+                    trace!("    is other clause: ignoring");
                     return None;
                 };
-                let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
-                    return Some(Err(tcx.sess.span_err(
-                        tcx.def_span(param.def_id),
-                        format!("Trait ref had binder {trait_ref:?}"),
-                    )));
-                };
-                if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
-                    return None;
-                };
-                Some(ExistentialPredicate::Trait(
-                    ExistentialTraitRef::erase_self_ty(tcx, trait_ref),
-                ))
-            } else if let Some(pred) = clause.as_projection_clause() {
-                let pred = pred.no_bound_vars()?;
-                if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
-                    return None;
-                };
-                Some(ExistentialPredicate::Projection(
-                    ExistentialProjection::erase_self_ty(tcx, pred),
-                ))
-            } else {
-                None
-            }?;
 
-            Some(Ok(Binder::dummy(pred)))
-        });
+                trace!("    Created predicate {pred:?}");
+
+                Some(Ok(Binder::dummy(pred)))
+            },
+        );
+        let mut predicates = constraints.collect::<Result<Vec<_>, _>>()?;
+        trace!("  collected predicates {predicates:?}");
+        match predicates.len() {
+            0 => predicates.push(Binder::dummy(ExistentialPredicate::Trait(ExistentialTraitRef { def_id: tcx.get_diagnostic_item(rustc_span::sym::Any).expect("The `Any` item is not defined."), args: List::empty() }))),
+            1 => (),
+            _ =>
+            return Err(tcx.sess.span_err(tcx.def_span(function), format!("Could not create dynamic arguments for this function because more than one predicate were required: {predicates:?}"))),
+        };
+        let poly_predicate = tcx.mk_poly_existential_predicates_from_iter(predicates.into_iter());
+        trace!("  poly predicate {poly_predicate:?}");
         let ty = Ty::new_dynamic(
             tcx,
-            tcx.mk_poly_existential_predicates_from_iter(constraints)?,
+            poly_predicate,
             Region::new_free(tcx, function, BoundRegionKind::BrAnon(None)),
             DynKind::Dyn,
         );
+        trace!("  Created a dyn {ty:?}");
         Ok(GenericArg::from(ty))
     });
-    let args = tcx.mk_args_from_iter(types);
+    let args = tcx.mk_args_from_iter(types)?;
     trace!("Created args {args:?}");
-    args
+    Ok(args)
 }
