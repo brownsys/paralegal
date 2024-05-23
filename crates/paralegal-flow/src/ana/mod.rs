@@ -34,7 +34,7 @@ use rustc_middle::{
         BasicBlock, BasicBlockData, Body, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind,
         Location, Statement, Terminator, TerminatorKind,
     },
-    ty::{tls, GenericArgsRef, TyCtxt},
+    ty::{tls, EarlyBinder, GenericArgsRef, Ty, TyCtxt},
 };
 use rustc_serialize::{Decodable, Encodable};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -303,7 +303,7 @@ impl<'tcx> MetadataLoader<'tcx> {
 pub struct BodyInfo<'tcx> {
     pub arg_count: usize,
     pub decls: IndexVec<Local, LocalDecl<'tcx>>,
-    pub instructions: IndexVec<BasicBlock, Vec<RustcInstructionInfo>>,
+    pub instructions: IndexVec<BasicBlock, Vec<RustcInstructionInfo<'tcx>>>,
     pub def_span: rustc_span::Span,
 }
 
@@ -317,24 +317,24 @@ impl<'tcx> BodyInfo<'tcx> {
             instructions: body
                 .basic_blocks
                 .iter()
-                .map(|bb| RustcInstructionInfo::from_basic_block(tcx, bb))
+                .map(|bb| RustcInstructionInfo::from_basic_block(tcx, body, bb))
                 .collect(),
             def_span: tcx.def_span(function_id),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Encodable, Decodable)]
-pub struct RustcInstructionInfo {
+#[derive(Clone, Copy, Debug, TyEncodable, TyDecodable)]
+pub struct RustcInstructionInfo<'tcx> {
     /// Classification of the instruction
-    pub kind: RustcInstructionKind,
+    pub kind: RustcInstructionKind<'tcx>,
     /// The source code span
     pub span: rustc_span::Span,
     /// Textual rendering of the MIR
     pub description: InternedString,
 }
 
-impl RustcInstructionInfo {
+impl<'tcx> RustcInstructionInfo<'tcx> {
     pub fn from_statement(stmt: &Statement) -> Self {
         Self {
             kind: RustcInstructionKind::Statement,
@@ -343,37 +343,54 @@ impl RustcInstructionInfo {
         }
     }
 
-    pub fn from_terminator<'tcx>(tcx: TyCtxt<'tcx>, term: &Terminator<'tcx>) -> Self {
+    pub fn from_terminator(
+        tcx: TyCtxt<'tcx>,
+        local_decls: &impl HasLocalDecls<'tcx>,
+        term: &Terminator<'tcx>,
+    ) -> Self {
         Self {
-            kind: if let Ok((id, ..)) = term.as_fn_and_args(tcx) {
-                RustcInstructionKind::FunctionCall(FunctionCallInfo { id })
-            } else if matches!(term.kind, TerminatorKind::SwitchInt { .. }) {
-                RustcInstructionKind::SwitchInt
-            } else {
-                RustcInstructionKind::Terminator
+            kind: match &term.kind {
+                TerminatorKind::Call {
+                    func,
+                    args,
+                    destination,
+                    target,
+                    unwind,
+                    call_source,
+                    fn_span,
+                } => {
+                    let op_ty = func.ty(local_decls, tcx);
+                    RustcInstructionKind::FunctionCall(EarlyBinder::bind(op_ty))
+                }
+                TerminatorKind::SwitchInt { .. } => RustcInstructionKind::SwitchInt,
+                _ => RustcInstructionKind::Terminator,
             },
             span: term.source_info.span,
             description: format!("{:?}", term.kind).into(),
         }
     }
 
-    pub fn from_basic_block<'tcx>(tcx: TyCtxt<'tcx>, bb: &BasicBlockData<'tcx>) -> Vec<Self> {
+    pub fn from_basic_block(
+        tcx: TyCtxt<'tcx>,
+        local_decls: &impl HasLocalDecls<'tcx>,
+        bb: &BasicBlockData<'tcx>,
+    ) -> Vec<Self> {
         let t = bb.terminator();
         bb.statements
             .iter()
             .map(Self::from_statement)
-            .chain([Self::from_terminator(tcx, t)])
+            .chain([Self::from_terminator(tcx, local_decls, t)])
             .collect()
     }
 }
 
 /// The type of instructions we may encounter
-#[derive(Debug, Clone, Copy, Eq, Ord, PartialOrd, PartialEq, Encodable, Decodable)]
-pub enum RustcInstructionKind {
+#[derive(Debug, Clone, Copy, Eq, Ord, PartialOrd, PartialEq, TyEncodable, TyDecodable)]
+pub enum RustcInstructionKind<'tcx> {
     /// Some type of statement
     Statement,
-    /// A function call
-    FunctionCall(FunctionCallInfo),
+    /// A function call. The type is guaranteed to be of function type
+    FunctionCall(EarlyBinder<Ty<'tcx>>),
     /// A basic block terminator
     Terminator,
     /// The switch int terminator
@@ -393,7 +410,7 @@ impl<'tcx> BodyInfo<'tcx> {
         }
     }
 
-    pub fn instruction_at(&self, location: Location) -> RustcInstructionInfo {
+    pub fn instruction_at(&self, location: Location) -> RustcInstructionInfo<'tcx> {
         self.instructions[location.block][location.statement_index]
     }
 
@@ -515,32 +532,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let instruction_info = self.collect_instruction_info(&controllers);
 
-        let inlined_functions = instruction_info
-            .keys()
-            .filter_map(|l| l.function.as_local())
-            .collect::<HashSet<_>>();
-        let analyzed_spans = inlined_functions
-            .iter()
-            .copied()
-            // Because we now take the functions seen from the marker context
-            // this includes functions where the body is not present (e.g. `dyn`)
-            // so if we fail to retrieve the body in that case it is allowed.
-            //
-            // Prefereably in future we would filter what we get from the marker
-            // context better.
-            .filter_map(|f| {
-                let body = match tcx.body_for_def_id(f) {
-                    Ok(b) => Some(b),
-                    Err(BodyResolutionError::IsTraitAssocFn(_)) => None,
-                    Err(e) => panic!("{e:?}"),
-                }?;
-                let span = body_span(&body.body);
-                Some((f, src_loc_for_span(span, tcx)))
-            })
-            .collect::<HashMap<_, _>>();
-
-        known_def_ids.extend(inlined_functions.iter().map(|f| f.to_def_id()));
-
         let type_info = self.collect_type_info();
         known_def_ids.extend(type_info.keys());
         let def_info = known_def_ids
@@ -548,51 +539,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|id| (*id, def_info_for_item(*id, self.marker_ctx(), tcx)))
             .collect();
 
-        let dedup_locs = analyzed_spans.values().map(Span::line_len).sum();
-        let dedup_functions = analyzed_spans.len() as u32;
-
-        let (seen_locs, seen_functions) = if self.opts.anactrl().inlining_depth().is_adaptive() {
-            let mut total_functions = inlined_functions;
-            let mctx = self.marker_ctx();
-            total_functions.extend(
-                mctx.functions_seen()
-                    .into_iter()
-                    .map(|f| f.def_id())
-                    .filter(|f| !mctx.is_marked(f))
-                    .filter_map(|f| f.as_local()),
-            );
-            let mut seen_functions = 0;
-            let locs = total_functions
-                .into_iter()
-                .filter_map(|f| Some(body_span(&tcx.body_for_def_id(f).ok()?.body)))
-                .map(|span| {
-                    seen_functions += 1;
-                    let (_, start_line, _, end_line, _) =
-                        tcx.sess.source_map().span_to_location_info(span);
-                    end_line - start_line + 1
-                })
-                .sum::<usize>() as u32;
-            (locs, seen_functions)
-        } else {
-            (dedup_locs, dedup_functions)
-        };
-
         type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
             type_info,
             instruction_info,
             controllers,
             def_info,
-            marker_annotation_count: self
-                .marker_ctx()
-                .all_annotations()
-                .filter(|m| m.1.as_marker().is_some())
-                .count() as u32,
-            dedup_locs,
-            dedup_functions,
-            seen_functions,
-            seen_locs,
-            analyzed_spans,
         }
     }
 
@@ -601,7 +553,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_instruction_info(
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
-    ) -> HashMap<GlobalLocation, InstructionInfo> {
+    ) -> HashMap<CallString, InstructionInfo> {
         let all_instructions = controllers
             .values()
             .flat_map(|v| {
@@ -610,13 +562,16 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     .map(|n| &n.at)
                     .chain(v.graph.edge_weights().map(|e| &e.at))
             })
-            .flat_map(|at| at.iter())
             .collect::<HashSet<_>>();
         all_instructions
             .into_iter()
-            .map(|n| {
-                let body = self.metadata_loader.get_body_info(n.function).unwrap();
-                let (kind, description, span) = match n.location {
+            .map(|&n| {
+                let monos = self.metadata_loader.get_mono(n).unwrap();
+                let body = self
+                    .metadata_loader
+                    .get_body_info(n.leaf().function)
+                    .unwrap();
+                let (kind, description, span) = match n.leaf().location {
                     RichLocation::End => {
                         (InstructionKind::Return, "start".to_owned(), body.def_span)
                     }
@@ -629,7 +584,14 @@ impl<'tcx> SPDGGenerator<'tcx> {
                             match instruction.kind {
                                 RustcInstructionKind::SwitchInt => InstructionKind::SwitchInt,
                                 RustcInstructionKind::FunctionCall(c) => {
-                                    InstructionKind::FunctionCall(c)
+                                    InstructionKind::FunctionCall(FunctionCallInfo {
+                                        id: flowistry_pdg_construction::utils::type_as_fn(
+                                            self.tcx,
+                                            c.instantiate(self.tcx, monos),
+                                        )
+                                        .unwrap()
+                                        .0,
+                                    })
                                 }
                                 RustcInstructionKind::Statement => InstructionKind::Statement,
                                 RustcInstructionKind::Terminator => InstructionKind::Terminator,

@@ -107,7 +107,7 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
     fn node_label(&'a self, n: &CallString) -> LabelText<'a> {
         let (ctrl_id, nodes) = &self.call_sites[n];
         let ctrl = &self.spdg.controllers[ctrl_id];
-        let instruction = &self.spdg.instruction_info[&n.leaf()];
+        let instruction = &self.spdg.instruction_info[&n];
 
         let write_label = || {
             use std::fmt::Write;

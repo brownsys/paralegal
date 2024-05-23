@@ -143,6 +143,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             .metadata_loader
             .get_body_info(leaf_loc.function)
             .unwrap();
+        let monos = self.generator.metadata_loader.get_mono(weight.at).unwrap();
 
         match leaf_loc.location {
             RichLocation::Start
@@ -166,7 +167,13 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             RichLocation::Location(loc) => {
                 let instruction = body.instruction_at(loc);
                 if let RustcInstructionKind::FunctionCall(f) = instruction.kind {
-                    self.known_def_ids.extend(Some(f.id));
+                    let f = flowistry_pdg_construction::utils::type_as_fn(
+                        self.tcx(),
+                        f.instantiate(self.tcx(), monos),
+                    )
+                    .unwrap()
+                    .0;
+                    self.known_def_ids.extend(Some(f));
 
                     // Question: Could a function with no input produce an
                     // output that has aliases? E.g. could some place, where the
@@ -187,7 +194,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         });
 
                     if needs_return_markers {
-                        self.register_annotations_for_function(node, f.id, |ann| {
+                        self.register_annotations_for_function(node, f, |ann| {
                             ann.refinement.on_return()
                         });
                     }
@@ -196,7 +203,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         let SourceUse::Argument(arg) = e.weight().source_use else {
                             continue;
                         };
-                        self.register_annotations_for_function(node, f.id, |ann| {
+                        self.register_annotations_for_function(node, f, |ann| {
                             ann.refinement.on_argument().contains(arg as u32).unwrap()
                         });
                     }

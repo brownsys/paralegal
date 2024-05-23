@@ -843,15 +843,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
                 place.ty(&self.body.local_decls, self.tcx()).ty
             }
         };
-        let ty = utils::ty_resolve(ty, self.tcx());
-        match ty.kind() {
-            TyKind::FnDef(def_id, generic_args) => Some((*def_id, generic_args)),
-            TyKind::Generator(def_id, generic_args, _) => Some((*def_id, generic_args)),
-            ty => {
-                trace!("Bailing from handle_call because func is literal with type: {ty:?}");
-                None
-            }
-        }
+        utils::type_as_fn(self.tcx(), ty)
     }
 
     fn fmt_fn(&self, def_id: DefId) -> String {

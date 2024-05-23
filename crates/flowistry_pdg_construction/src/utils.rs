@@ -46,7 +46,6 @@ pub fn try_resolve_function<'tcx>(
 
     if let Err(e) = test_generics_normalization(tcx, param_env, args) {
         panic!("Normalization failed: {e:?}");
-        return None;
     }
     Instance::resolve(tcx, param_env, def_id, args).unwrap()
 }
@@ -75,6 +74,18 @@ where
         param_env,
         EarlyBinder::bind(tcx.erase_regions(t.clone())),
     )
+}
+
+pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+    let ty = ty_resolve(ty, tcx);
+    match ty.kind() {
+        TyKind::FnDef(def_id, generic_args) => Some((*def_id, generic_args)),
+        TyKind::Generator(def_id, generic_args, _) => Some((*def_id, generic_args)),
+        ty => {
+            trace!("Bailing from handle_call because func is literal with type: {ty:?}");
+            None
+        }
+    }
 }
 
 pub fn retype_place<'tcx>(

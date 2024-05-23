@@ -45,7 +45,7 @@ fn is_at_function_call_with_name(
     node: SPDGNode,
 ) -> bool {
     let weight = ctrl.graph.node_weight(node).unwrap().at;
-    let instruction = &ctx.desc().instruction_info[&weight.leaf()];
+    let instruction = &ctx.desc().instruction_info[&weight];
     matches!(
         instruction.kind,
         InstructionKind::FunctionCall(call) if

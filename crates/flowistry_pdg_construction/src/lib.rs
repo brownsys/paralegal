@@ -32,7 +32,7 @@ mod construct;
 pub mod graph;
 pub mod meta;
 mod mutation;
-mod utils;
+pub mod utils;
 
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.
 pub fn compute_pdg<'tcx>(tcx: TyCtxt<'tcx>, params: Instance<'tcx>) -> DepGraph<'tcx> {

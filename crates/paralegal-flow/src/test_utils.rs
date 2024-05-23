@@ -343,7 +343,7 @@ impl<'g> CtrlRef<'g> {
             .chain(self.ctrl.graph.node_weights().map(|info| info.at))
             .filter(|m| {
                 instruction_info
-                    .get(&m.leaf())
+                    .get(&m)
                     .unwrap_or_else(|| {
                         panic!(
                             "Could not find instruction {} in\n{}",

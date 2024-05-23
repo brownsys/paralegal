@@ -341,31 +341,12 @@ pub struct ProgramDescription {
     /// Metadata about the instructions that are executed at all program
     /// locations we know about.
     #[serde(with = "serde_map_via_vec")]
-    pub instruction_info: HashMap<GlobalLocation, InstructionInfo>,
+    pub instruction_info: HashMap<CallString, InstructionInfo>,
 
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
-    /// How many marker annotations were found
-    pub marker_annotation_count: u32,
-    // /// How long rustc ran before out plugin executed
-    //pub rustc_time: Duration,
-    /// The number of functions we produced a PDG for
-    pub dedup_functions: u32,
-    /// The lines of code corresponding to the functions from
-    /// [`Self::dedup_functions`].
-    pub dedup_locs: u32,
-    /// The number of functions we produced PDGs for or we inspected to check
-    /// for markers.
-    pub seen_functions: u32,
-    /// The lines of code corresponding to the functions from
-    /// [`Self::seen_functions`]. This is the sum of all
-    /// `analyzed_locs` of the controllers but deduplicated.
-    pub seen_locs: u32,
-    #[doc(hidden)]
-    #[serde(with = "ser_localdefid_map")]
-    pub analyzed_spans: HashMap<LocalDefId, Span>,
 }
 
 /// Metadata about a type

@@ -473,9 +473,7 @@ impl Context {
                 continue;
             }
             let w = g.node_weight(n).unwrap();
-            if self.desc.instruction_info[&w.at.leaf()]
-                .kind
-                .is_function_call()
+            if self.desc.instruction_info[&w.at].kind.is_function_call()
                 || w.at.leaf().location.is_start()
             {
                 roots.push(GlobalNode::from_local_node(ctrl_id, n));
@@ -611,55 +609,55 @@ impl Context {
         node.get_location(self)
     }
 
-    #[doc(hidden)]
-    pub fn write_analyzed_code(
-        &self,
-        mut out: impl Write,
-        include_signatures: bool,
-    ) -> std::io::Result<()> {
-        let ordered_span_set = self
-            .desc
-            .analyzed_spans
-            .values()
-            .zip(std::iter::repeat(true))
-            .chain(
-                include_signatures
-                    .then(|| {
-                        self.desc
-                            .def_info
-                            .iter()
-                            .filter(|(did, _)| {
-                                !matches!(defid_as_local(**did), Some(local)
-                                    if self.desc.analyzed_spans.contains_key(&local)
-                                )
-                            })
-                            .map(|(_, i)| (&i.src_info, matches!(i.kind, DefKind::Type)))
-                    })
-                    .into_iter()
-                    .flatten(),
-            )
-            .collect::<BTreeMap<_, _>>();
-        let mut current_file = None;
-        for (s, is_complete) in ordered_span_set {
-            if Some(&s.source_file.file_path) != current_file {
-                writeln!(out, "// {}", s.source_file.file_path)?;
-                current_file = Some(&s.source_file.file_path);
-            }
-            let file = BufReader::new(File::open(&s.source_file.abs_file_path).unwrap());
-            for l in file
-                .lines()
-                .skip(s.start.line as usize - 1)
-                .take((s.end.line - s.start.line + 1) as usize)
-            {
-                writeln!(out, "{}", l.unwrap()).unwrap()
-            }
-            if !is_complete {
-                writeln!(out, "unreachable!() }}")?;
-            }
-        }
+    // #[doc(hidden)]
+    // pub fn write_analyzed_code(
+    //     &self,
+    //     mut out: impl Write,
+    //     include_signatures: bool,
+    // ) -> std::io::Result<()> {
+    //     let ordered_span_set = self
+    //         .desc
+    //         .analyzed_spans
+    //         .values()
+    //         .zip(std::iter::repeat(true))
+    //         .chain(
+    //             include_signatures
+    //                 .then(|| {
+    //                     self.desc
+    //                         .def_info
+    //                         .iter()
+    //                         .filter(|(did, _)| {
+    //                             !matches!(defid_as_local(**did), Some(local)
+    //                                 if self.desc.analyzed_spans.contains_key(&local)
+    //                             )
+    //                         })
+    //                         .map(|(_, i)| (&i.src_info, matches!(i.kind, DefKind::Type)))
+    //                 })
+    //                 .into_iter()
+    //                 .flatten(),
+    //         )
+    //         .collect::<BTreeMap<_, _>>();
+    //     let mut current_file = None;
+    //     for (s, is_complete) in ordered_span_set {
+    //         if Some(&s.source_file.file_path) != current_file {
+    //             writeln!(out, "// {}", s.source_file.file_path)?;
+    //             current_file = Some(&s.source_file.file_path);
+    //         }
+    //         let file = BufReader::new(File::open(&s.source_file.abs_file_path).unwrap());
+    //         for l in file
+    //             .lines()
+    //             .skip(s.start.line as usize - 1)
+    //             .take((s.end.line - s.start.line + 1) as usize)
+    //         {
+    //             writeln!(out, "{}", l.unwrap()).unwrap()
+    //         }
+    //         if !is_complete {
+    //             writeln!(out, "unreachable!() }}")?;
+    //         }
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 }
 
 /// Context queries conveniently accessible on nodes
@@ -874,7 +872,7 @@ impl NodeExt for GlobalNode {
     }
 
     fn instruction(self, ctx: &Context) -> &InstructionInfo {
-        &ctx.desc.instruction_info[&self.info(ctx).at.leaf()]
+        &ctx.desc.instruction_info[&self.info(ctx).at]
     }
 
     fn successors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
