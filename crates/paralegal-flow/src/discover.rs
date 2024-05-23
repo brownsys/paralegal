@@ -72,7 +72,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     })
                 } else {
                     tcx.sess.span_err(tcx.def_span(def_id), "found an external function as analysis target. Analysis targets are required to be local.");
-                    return None;
+                    None
                 }
             })
             .collect();

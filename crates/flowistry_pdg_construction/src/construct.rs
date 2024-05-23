@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet, iter, rc::Rc};
+use std::{collections::HashSet, iter, rc::Rc};
 
 use either::Either;
 use flowistry::mir::placeinfo::PlaceInfo;
@@ -54,13 +54,13 @@ impl<'tcx> PDGLoader<'tcx> for NoLoader {
 
 impl<'tcx, T: PDGLoader<'tcx>> PDGLoader<'tcx> for Rc<T> {
     fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
-        (&**self).load(function)
+        (**self).load(function)
     }
 }
 
 impl<'tcx, T: PDGLoader<'tcx>> PDGLoader<'tcx> for Box<T> {
     fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
-        (&**self).load(function)
+        (**self).load(function)
     }
 }
 
@@ -138,7 +138,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     }
 
     pub fn construct_graph(&self, function: LocalDefId) -> Result<DepGraph<'tcx>, ErrorGuaranteed> {
-        let args = manufacture_substs_for(self.tcx, function.to_def_id())?;
+        let _args = manufacture_substs_for(self.tcx, function.to_def_id())?;
         let g = self
             .construct_root(function)
             .ok_or_else(|| {
@@ -372,7 +372,6 @@ impl<'tcx> PartialGraph<'tcx> {
                 CallHandling::Ready {
                     calling_convention,
                     descriptor,
-                    generic_args: _,
                 } => (descriptor, calling_convention),
                 CallHandling::ApproxAsyncFn => {
                     // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
@@ -411,7 +410,7 @@ impl<'tcx> PartialGraph<'tcx> {
         for (child_src, _kind) in parentable_srcs {
             if let Some(parent_place) = calling_convention.translate_to_parent(
                 child_src.place,
-                &constructor.async_info(),
+                constructor.async_info(),
                 constructor.tcx(),
                 &constructor.body,
                 constructor.def_id.to_def_id(),
@@ -439,7 +438,7 @@ impl<'tcx> PartialGraph<'tcx> {
         for (child_dst, kind) in parentable_dsts {
             if let Some(parent_place) = calling_convention.translate_to_parent(
                 child_dst.place,
-                &constructor.async_info(),
+                constructor.async_info(),
                 constructor.tcx(),
                 &constructor.body,
                 constructor.def_id.to_def_id(),
@@ -666,7 +665,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
     }
 
     fn async_info(&self) -> &AsyncInfo {
-        &*self.memo.async_info
+        &self.memo.async_info
     }
 
     fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
@@ -1035,7 +1034,6 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         Some(CallHandling::Ready {
             descriptor,
             calling_convention,
-            generic_args,
         })
     }
 
@@ -1056,7 +1054,6 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         let (child_constructor, calling_convention) = match preamble {
             CallHandling::Ready {
                 descriptor,
-                generic_args: _,
                 calling_convention,
             } => (descriptor, calling_convention),
             CallHandling::ApproxAsyncFn => {
@@ -1086,7 +1083,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         let translate_to_parent = |child: Place<'tcx>| -> Option<Place<'tcx>> {
             calling_convention.translate_to_parent(
                 child,
-                &self.async_info(),
+                self.async_info(),
                 self.tcx(),
                 parent_body,
                 self.def_id.to_def_id(),
@@ -1387,7 +1384,6 @@ enum CallHandling<'tcx, 'a> {
     Ready {
         calling_convention: CallingConvention<'tcx, 'a>,
         descriptor: &'a SubgraphDescriptor<'tcx>,
-        generic_args: GenericArgsRef<'tcx>,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),
 }

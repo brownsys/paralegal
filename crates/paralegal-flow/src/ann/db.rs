@@ -96,7 +96,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// Queries are cached/precomputed so calling this repeatedly is cheap.
     pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
         self.attribute_annotations(def_id)
-            .into_iter()
+            .iter()
             .filter_map(Annotation::as_marker)
             .chain(self.external_markers(def_id).iter())
     }

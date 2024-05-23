@@ -1,17 +1,13 @@
-use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::time::{Duration, Instant};
 use std::vec;
 use std::{io::Write, process::exit, sync::Arc};
 
-use paralegal_spdg::rustc_portable::defid_as_local;
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
-    CallString, DefKind, DisplayNode, Endpoint, GlobalNode, HashMap, HashSet, Identifier,
-    InstructionInfo, IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo,
-    ProgramDescription, SPDGImpl, Span, TypeId, SPDG,
+    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, HashSet, Identifier, InstructionInfo,
+    IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo, ProgramDescription, SPDGImpl,
+    Span, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, Result};

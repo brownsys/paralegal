@@ -13,7 +13,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{Body, Place},
-    ty::{GenericArgsRef, Ty, TyCtxt},
+    ty::{GenericArgsRef, TyCtxt},
 };
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use rustc_span::Span;
@@ -241,7 +241,7 @@ impl InternedString {
     }
 
     pub fn as_str(&self) -> &str {
-        &**self.0
+        &self.0
     }
 }
 
@@ -261,13 +261,13 @@ impl std::ops::Deref for InternedString {
     type Target = String;
 
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &self.0
     }
 }
 
 impl<E: Encoder> Encodable<E> for InternedString {
     fn encode(&self, e: &mut E) {
-        let s: &String = &*self.0;
+        let s: &String = &self.0;
         s.encode(e);
     }
 }

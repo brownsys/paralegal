@@ -41,7 +41,7 @@ impl<'tcx> ParalegalEncoder<'tcx> {
 
 const CLEAR_CROSS_CRATE: bool = false;
 
-impl<'a, 'tcx> Encoder for ParalegalEncoder<'tcx> {
+impl<'tcx> Encoder for ParalegalEncoder<'tcx> {
     encoder_methods! {
         emit_usize(usize);
         emit_u128(u128);

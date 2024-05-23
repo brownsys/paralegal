@@ -36,6 +36,7 @@ pub mod utils;
 
 use internment::Intern;
 use itertools::Itertools;
+#[cfg(feature = "rustc")]
 use rustc_macros::{Decodable, Encodable};
 use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};

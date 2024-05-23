@@ -50,7 +50,7 @@ impl<D: Decoder> Decodable<D> for RichLocation {
         match d.read_usize() {
             0 => Self::Location(Location {
                 block: d.read_u32().into(),
-                statement_index: d.read_usize().into(),
+                statement_index: d.read_usize(),
             }),
             1 => Self::Start,
             2 => Self::End,
@@ -140,7 +140,7 @@ pub struct CallString(Intern<CallStringInner>);
 #[cfg(feature = "rustc")]
 impl<S: Encoder> Encodable<S> for CallString {
     fn encode(&self, s: &mut S) {
-        let inner: &CallStringInner = &*self.0;
+        let inner: &CallStringInner = &self.0;
         inner.encode(s);
     }
 }

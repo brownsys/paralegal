@@ -290,7 +290,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             .map(|ann| Identifier::new_intern(ann.marker.as_str()))
             .collect::<Vec<_>>();
         trace!("Found markers {markers:?}");
-        self.register_markers(node, markers.into_iter());
+        self.register_markers(node, markers);
         self.known_def_ids.extend(parent);
     }
 

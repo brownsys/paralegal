@@ -1,11 +1,11 @@
-use std::{borrow::Cow, collections::hash_map::Entry, hash::Hash};
+use std::{collections::hash_map::Entry, hash::Hash};
 
 use either::Either;
 use itertools::Itertools;
-use log::{debug, trace};
+use log::trace;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
-use rustc_macros::{TyDecodable, TyEncodable};
+
 use rustc_middle::{
     mir::{
         tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,

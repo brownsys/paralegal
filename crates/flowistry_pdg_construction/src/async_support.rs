@@ -334,7 +334,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
             self.tcx().param_env_reveal_all_normalized(self.def_id),
             generics,
         )
-        .ok_or_else(|| "Resolving function failed")?;
+        .ok_or("Resolving function failed")?;
 
         Ok((resolution, async_fn_call_loc, calling_convention))
     }

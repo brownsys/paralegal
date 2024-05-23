@@ -28,10 +28,10 @@ use rustc_hir::{
     def_id::{CrateNum, DefIndex, LocalDefId, LOCAL_CRATE},
 };
 use rustc_index::IndexVec;
-use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
+use rustc_macros::{TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
-        BasicBlock, BasicBlockData, Body, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind,
+        BasicBlock, BasicBlockData, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind,
         Location, Statement, Terminator, TerminatorKind,
     },
     ty::{tls, EarlyBinder, GenericArgsRef, Ty, TyCtxt},
@@ -87,7 +87,7 @@ impl<'tcx> MetadataLoader<'tcx> {
         self: Rc<Self>,
         args: &'static Args,
         path: impl AsRef<Path>,
-    ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>, MemoPdgConstructor<'tcx>) {
+    ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>) {
         let tcx = self.tcx;
         let mut collector = CollectingVisitor::new(tcx, args, self.clone());
         collector.run();
@@ -109,10 +109,10 @@ impl<'tcx> MetadataLoader<'tcx> {
             .collect::<FxHashMap<_, _>>();
         let meta = Metadata::from_pdgs(tcx, pdgs, marker_ctx.db());
         let path = path.as_ref();
-        println!("Writing metadata to {}", path.display());
+        debug!("Writing metadata to {}", path.display());
         meta.write(path, tcx);
         self.cache.get(LOCAL_CRATE, |_| Some(meta));
-        (collector.functions_to_analyze, marker_ctx, constructor)
+        (collector.functions_to_analyze, marker_ctx)
     }
 
     pub fn get_annotations(&self, key: DefId) -> &[Annotation] {
@@ -203,7 +203,7 @@ impl<'tcx> Metadata<'tcx> {
                 .iter()
                 .map(|(k, v)| (k.local_def_index, v.clone()))
                 .collect(),
-            reachable_markers: (&*cache_borrow)
+            reachable_markers: (*cache_borrow)
                 .iter()
                 .filter_map(|(inst, v)| {
                     let id = inst.def_id();
@@ -352,12 +352,12 @@ impl<'tcx> RustcInstructionInfo<'tcx> {
             kind: match &term.kind {
                 TerminatorKind::Call {
                     func,
-                    args,
-                    destination,
-                    target,
-                    unwind,
-                    call_source,
-                    fn_span,
+                    args: _,
+                    destination: _,
+                    target: _,
+                    unwind: _,
+                    call_source: _,
+                    fn_span: _,
                 } => {
                     let op_ty = func.ty(local_decls, tcx);
                     RustcInstructionKind::FunctionCall(EarlyBinder::bind(op_ty))
@@ -435,7 +435,6 @@ pub struct SPDGGenerator<'tcx> {
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
     marker_ctx: MarkerCtx<'tcx>,
-    flowistry_loader: MemoPdgConstructor<'tcx>,
     metadata_loader: Rc<MetadataLoader<'tcx>>,
 }
 
@@ -444,14 +443,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
         marker_ctx: MarkerCtx<'tcx>,
         opts: &'static crate::Args,
         tcx: TyCtxt<'tcx>,
-        loader: MemoPdgConstructor<'tcx>,
         metadata_loader: Rc<MetadataLoader<'tcx>>,
     ) -> Self {
         Self {
             marker_ctx,
             opts,
             tcx,
-            flowistry_loader: loader,
             metadata_loader,
         }
     }
@@ -512,11 +509,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 })
             })
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
-            .map(|controllers| {
-                let desc = self.make_program_description(controllers, known_def_ids, &targets);
-
-                desc
-            })
+            .map(|controllers| self.make_program_description(controllers, known_def_ids, &targets))
     }
 
     /// Given the PDGs and a record of all [`DefId`]s we've seen, compile

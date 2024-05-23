@@ -160,12 +160,12 @@ impl Callbacks {
 
         let intermediate_out_file = intermediate_out_file_path(tcx)?;
 
-        let (analysis_targets, mctx, pdg_constructor) = loader
+        let (analysis_targets, mctx) = loader
             .clone()
             .collect_and_emit_metadata(self.opts, intermediate_out_file);
         tcx.sess.abort_if_errors();
 
-        let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, pdg_constructor, loader.clone());
+        let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, loader);
 
         let compilation = if !analysis_targets.is_empty() {
             let desc = gen.analyze(analysis_targets)?;
