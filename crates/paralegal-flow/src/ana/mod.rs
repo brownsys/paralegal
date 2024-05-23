@@ -25,14 +25,14 @@ use petgraph::visit::GraphBase;
 use rustc_hash::FxHashMap;
 use rustc_hir::{
     def,
-    def_id::{CrateNum, DefIndex, LOCAL_CRATE},
+    def_id::{CrateNum, DefIndex, LocalDefId, LOCAL_CRATE},
 };
 use rustc_index::IndexVec;
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
-        BasicBlock, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind, Location,
-        TerminatorKind,
+        BasicBlock, BasicBlockData, Body, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind,
+        Location, Statement, Terminator, TerminatorKind,
     },
     ty::{tls, GenericArgsRef, TyCtxt},
 };
@@ -177,53 +177,21 @@ impl<'tcx> Metadata<'tcx> {
         markers: &MarkerDatabase<'tcx>,
     ) -> Self {
         let mut bodies: FxHashMap<DefIndex, BodyInfo> = Default::default();
-        for pdg in pdgs.values().flat_map(|d| {
-            d.graph
+        for location in pdgs.values().flat_map(|subgraph| {
+            subgraph
+                .graph
                 .nodes
                 .iter()
                 .map(|n| &n.at)
-                .chain(d.graph.edges.iter().map(|e| &e.2.at))
+                .chain(subgraph.graph.edges.iter().map(|e| &e.2.at))
                 .flat_map(|at| at.iter())
         }) {
-            if let Some(local) = pdg.function.as_local() {
-                let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, local);
-                let body = &body_with_facts.body;
-                bodies
-                    .entry(local.local_def_index)
-                    .or_insert_with(|| BodyInfo {
-                        arg_count: body.arg_count,
-                        decls: body.local_decls().to_owned(),
-                        instructions: body
-                            .basic_blocks
-                            .iter()
-                            .map(|bb| {
-                                let t = bb.terminator();
-                                bb.statements
-                                    .iter()
-                                    .map(|s| RustcInstructionInfo {
-                                        kind: RustcInstructionKind::Statement,
-                                        span: s.source_info.span,
-                                        description: format!("{:?}", s.kind).into(),
-                                    })
-                                    .chain([RustcInstructionInfo {
-                                        kind: if let Ok((id, ..)) = t.as_fn_and_args(tcx) {
-                                            RustcInstructionKind::FunctionCall(FunctionCallInfo {
-                                                id,
-                                            })
-                                        } else if matches!(t.kind, TerminatorKind::SwitchInt { .. })
-                                        {
-                                            RustcInstructionKind::SwitchInt
-                                        } else {
-                                            RustcInstructionKind::Terminator
-                                        },
-                                        span: t.source_info.span,
-                                        description: format!("{:?}", t.kind).into(),
-                                    }])
-                                    .collect()
-                            })
-                            .collect(),
-                        def_span: tcx.def_span(local),
-                    });
+            if let Some(local) = location.function.as_local() {
+                bodies.entry(local.local_def_index).or_insert_with(|| {
+                    let info = BodyInfo::from_body(tcx, local);
+                    trace!("Created info for body {local:?}\n{info:?}");
+                    info
+                });
             }
         }
         let cache_borrow = markers.reachable_markers.borrow();
@@ -339,6 +307,23 @@ pub struct BodyInfo<'tcx> {
     pub def_span: rustc_span::Span,
 }
 
+impl<'tcx> BodyInfo<'tcx> {
+    pub fn from_body(tcx: TyCtxt<'tcx>, function_id: LocalDefId) -> Self {
+        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, function_id);
+        let body = &body_with_facts.body;
+        Self {
+            arg_count: body.arg_count,
+            decls: body.local_decls().to_owned(),
+            instructions: body
+                .basic_blocks
+                .iter()
+                .map(|bb| RustcInstructionInfo::from_basic_block(tcx, bb))
+                .collect(),
+            def_span: tcx.def_span(function_id),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Encodable, Decodable)]
 pub struct RustcInstructionInfo {
     /// Classification of the instruction
@@ -347,6 +332,39 @@ pub struct RustcInstructionInfo {
     pub span: rustc_span::Span,
     /// Textual rendering of the MIR
     pub description: InternedString,
+}
+
+impl RustcInstructionInfo {
+    pub fn from_statement(stmt: &Statement) -> Self {
+        Self {
+            kind: RustcInstructionKind::Statement,
+            span: stmt.source_info.span,
+            description: format!("{:?}", stmt.kind).into(),
+        }
+    }
+
+    pub fn from_terminator<'tcx>(tcx: TyCtxt<'tcx>, term: &Terminator<'tcx>) -> Self {
+        Self {
+            kind: if let Ok((id, ..)) = term.as_fn_and_args(tcx) {
+                RustcInstructionKind::FunctionCall(FunctionCallInfo { id })
+            } else if matches!(term.kind, TerminatorKind::SwitchInt { .. }) {
+                RustcInstructionKind::SwitchInt
+            } else {
+                RustcInstructionKind::Terminator
+            },
+            span: term.source_info.span,
+            description: format!("{:?}", term.kind).into(),
+        }
+    }
+
+    pub fn from_basic_block<'tcx>(tcx: TyCtxt<'tcx>, bb: &BasicBlockData<'tcx>) -> Vec<Self> {
+        let t = bb.terminator();
+        bb.statements
+            .iter()
+            .map(Self::from_statement)
+            .chain([Self::from_terminator(tcx, t)])
+            .collect()
+    }
 }
 
 /// The type of instructions we may encounter

@@ -6,7 +6,7 @@ use flowistry_pdg::SourceUse;
 use paralegal_spdg::{Node, SPDGStats};
 use rustc_hir::{def, def_id::LocalDefId};
 use rustc_middle::{
-    mir::{self, tcx::PlaceTy, Location},
+    mir::{self, Location},
     ty::{self, Instance, TyCtxt},
 };
 
@@ -15,7 +15,7 @@ use std::{cell::RefCell, fmt::Display, rc::Rc};
 use super::{
     default_index, path_for_item, src_loc_for_span, BodyInfo, RustcInstructionKind, SPDGGenerator,
 };
-use anyhow::{bail, Result};
+use anyhow::Result;
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
@@ -269,20 +269,21 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         function: DefId,
         mut filter: impl FnMut(&MarkerAnnotation) -> bool,
     ) {
+        trace!("Checking annotations for {node:?} on function {function:?}");
         let parent = get_parent(self.tcx(), function);
         let marker_ctx = self.marker_ctx().clone();
-        self.register_markers(
-            node,
-            marker_ctx
-                .combined_markers(function)
-                .chain(
-                    parent
-                        .into_iter()
-                        .flat_map(|parent| marker_ctx.combined_markers(parent)),
-                )
-                .filter(|ann| filter(ann))
-                .map(|ann| Identifier::new_intern(ann.marker.as_str())),
-        );
+        let markers = marker_ctx
+            .combined_markers(function)
+            .chain(
+                parent
+                    .into_iter()
+                    .flat_map(|parent| marker_ctx.combined_markers(parent)),
+            )
+            .filter(|ann| filter(ann))
+            .map(|ann| Identifier::new_intern(ann.marker.as_str()))
+            .collect::<Vec<_>>();
+        trace!("Found markers {markers:?}");
+        self.register_markers(node, markers.into_iter());
         self.known_def_ids.extend(parent);
     }
 
