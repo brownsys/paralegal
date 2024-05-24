@@ -13,7 +13,8 @@ use rustc_middle::{
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 use super::{
-    default_index, path_for_item, src_loc_for_span, BodyInfo, RustcInstructionKind, SPDGGenerator,
+    default_index, metadata::BodyInfo, path_for_item, src_loc_for_span, RustcInstructionKind,
+    SPDGGenerator,
 };
 use anyhow::Result;
 use either::Either;
@@ -249,7 +250,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         //     "Resolving {raw_ty:?} for place {place:?} with generics {generics:?} in {function:?}",
         // );
         let generics = self.generator.metadata_loader.get_mono(at).unwrap();
-        println!("Determining type fpr place {place:?} at {at} with raw type {raw_ty:?} and generics {generics:?}");
+        trace!("Determining type for place {place:?} at {at} with raw type {raw_ty:?} and generics {generics:?}");
         let instance = Instance::resolve(
             tcx,
             tcx.param_env_reveal_all_normalized(function),

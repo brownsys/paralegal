@@ -368,14 +368,14 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .as_ref()
             .map_or(false, |n| n == "build_script_build");
 
-        println!("Handling {}", crate_name.unwrap_or("".to_owned()));
+        debug!("Handling {}", crate_name.unwrap_or("".to_owned()));
 
         if !is_target || is_build_script {
-            println!("Is not target, skipping");
+            debug!("Is not target, skipping");
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
-        println!("Is target, compiling");
+        debug!("Is target, compiling");
 
         let lvl = plugin_args.verbosity();
         // //let lvl = log::LevelFilter::Debug;
