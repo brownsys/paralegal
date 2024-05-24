@@ -186,7 +186,10 @@ pub trait HasGraph<'g>: Sized + Copy {
         let name = Identifier::new_intern(name.as_ref());
         let id = match self.graph().name_map.get(&name).map(Vec::as_slice) {
             Some([one]) => *one,
-            Some([]) | None => panic!("Did not find name {name}"),
+            Some([]) | None => panic!(
+                "Did not find name {name}. Known names:\n{:?}",
+                self.graph().name_map.keys().collect::<Vec<_>>()
+            ),
             _ => panic!("Found too many function matching name {name}"),
         };
         FnRef {

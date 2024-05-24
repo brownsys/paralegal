@@ -34,7 +34,7 @@ use rustc_middle::{
         BasicBlock, BasicBlockData, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind,
         Location, Statement, Terminator, TerminatorKind,
     },
-    ty::{tls, EarlyBinder, GenericArgsRef, Ty, TyCtxt},
+    ty::{tls, EarlyBinder, GenericArgsRef, Instance, ParamEnv, Ty, TyCtxt},
 };
 use rustc_serialize::{Decodable, Encodable};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
@@ -359,7 +359,7 @@ impl<'tcx> RustcInstructionInfo<'tcx> {
                     call_source: _,
                     fn_span: _,
                 } => {
-                    let op_ty = func.ty(local_decls, tcx);
+                    let op_ty = tcx.erase_regions(func.ty(local_decls, tcx));
                     RustcInstructionKind::FunctionCall(EarlyBinder::bind(op_ty))
                 }
                 TerminatorKind::SwitchInt { .. } => RustcInstructionKind::SwitchInt,
@@ -523,7 +523,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     ) -> ProgramDescription {
         let tcx = self.tcx;
 
-        let instruction_info = self.collect_instruction_info(&controllers);
+        let instruction_info = self.collect_instruction_info(&controllers, &mut known_def_ids);
 
         let type_info = self.collect_type_info();
         known_def_ids.extend(type_info.keys());
@@ -546,6 +546,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_instruction_info(
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
+        known_def_ids: &mut impl Extend<DefId>,
     ) -> HashMap<CallString, InstructionInfo> {
         let all_instructions = controllers
             .values()
@@ -577,13 +578,24 @@ impl<'tcx> SPDGGenerator<'tcx> {
                             match instruction.kind {
                                 RustcInstructionKind::SwitchInt => InstructionKind::SwitchInt,
                                 RustcInstructionKind::FunctionCall(c) => {
-                                    InstructionKind::FunctionCall(FunctionCallInfo {
-                                        id: flowistry_pdg_construction::utils::type_as_fn(
+                                    InstructionKind::FunctionCall({
+                                        let (id, generics) =
+                                            flowistry_pdg_construction::utils::type_as_fn(
+                                                self.tcx,
+                                                c.instantiate(self.tcx, monos),
+                                            )
+                                            .unwrap();
+                                        let instance_id = Instance::resolve(
                                             self.tcx,
-                                            c.instantiate(self.tcx, monos),
+                                            ParamEnv::reveal_all(),
+                                            id,
+                                            generics,
                                         )
                                         .unwrap()
-                                        .0,
+                                        .unwrap()
+                                        .def_id();
+                                        known_def_ids.extend(Some(instance_id));
+                                        FunctionCallInfo { id: instance_id }
                                     })
                                 }
                                 RustcInstructionKind::Statement => InstructionKind::Statement,
