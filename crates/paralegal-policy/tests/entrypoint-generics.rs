@@ -68,6 +68,43 @@ fn default_method() -> Result<()> {
         fn actual_sink<T>(t: T) {}
 
         trait Snk {
+            fn sink(&self, t: usize) {
+                actual_sink(t)
+            }
+        }
+
+        struct Wrap<T>(T);
+
+        impl<T: Src> Wrap<T> {
+            #[paralegal::analyze]
+            fn main<S: Snk>(&self, s: &S) {
+                s.sink(self.0.source())
+            }
+        }
+    ))?;
+
+    test.run(simple_policy)
+}
+
+#[test]
+#[ignore = "Default methods with generics don't resolve properly. See https://github.com/brownsys/paralegal/issues/152"]
+fn default_method_with_generic() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::marker(source, return)]
+        fn actual_source() -> usize {
+            0
+        }
+
+        trait Src {
+            fn source(&self) -> usize {
+                actual_source()
+            }
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn actual_sink<T>(t: T) {}
+
+        trait Snk {
             fn sink<T>(&self, t: T) {
                 actual_sink(t)
             }

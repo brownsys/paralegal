@@ -383,6 +383,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .with_level(lvl)
             .with_module_level("flowistry", lvl)
             .with_module_level("rustc_utils", log::LevelFilter::Error)
+            .without_timestamps()
             .init()
             .unwrap();
         if matches!(*plugin_args.direct_debug(), LogLevelConfig::Targeted(..)) {

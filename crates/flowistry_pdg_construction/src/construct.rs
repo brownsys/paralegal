@@ -836,12 +836,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         &self,
         func: &Operand<'tcx>,
     ) -> Option<(DefId, &'tcx List<GenericArg<'tcx>>)> {
-        let ty = match func {
-            Operand::Constant(func) => func.literal.ty(),
-            Operand::Copy(place) | Operand::Move(place) => {
-                place.ty(&self.body.local_decls, self.tcx()).ty
-            }
-        };
+        let ty = func.ty(&self.body, self.tcx());
         utils::type_as_fn(self.tcx(), ty)
     }
 
@@ -922,6 +917,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         let param_env = tcx.param_env_reveal_all_normalized(self.def_id);
         let resolved_fn =
             utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)?;
+        trace!("resolved to instance {resolved_fn:?}");
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
@@ -1050,6 +1046,8 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         // "parent" to refer to the caller, since the words are most visually distinct.
 
         let preamble = self.determine_call_handling(location, func, args)?;
+
+        trace!("Call handling is {}", preamble.as_ref());
 
         let (child_constructor, calling_convention) = match preamble {
             CallHandling::Ready {
@@ -1379,6 +1377,7 @@ impl<'tcx> SubgraphDescriptor<'tcx> {
     }
 }
 
+#[derive(strum::AsRefStr)]
 enum CallHandling<'tcx, 'a> {
     ApproxAsyncFn,
     Ready {

@@ -43,6 +43,15 @@ pub fn try_resolve_function<'tcx>(
     args: GenericArgsRef<'tcx>,
 ) -> Option<Instance<'tcx>> {
     let param_env = param_env.with_reveal_all_normalized(tcx);
+    trace!(
+        "resolving {def_id:?} with arguments {args:?} substituted for {:?}",
+        {
+            let g = tcx.generics_of(def_id);
+            (0..g.count())
+                .map(|i| g.param_at(i, tcx))
+                .collect::<Vec<_>>()
+        }
+    );
 
     if let Err(e) = test_generics_normalization(tcx, param_env, args) {
         panic!("Normalization failed: {e:?}");
