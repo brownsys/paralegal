@@ -1,3 +1,13 @@
+//! Constructing PDGs.
+//!
+//! The construction is split into two steps. A local analysis and a
+//! cross-procedure PDG merging.
+//!
+//! 1. [`GraphConstructor`] is responsible for the local analysis. It performs a
+//!    procedure-local fixpoint analysis to determine a pre- and post effect
+//!    [`InstructionState`] at each instruction in the procedure.
+//! 2. [`PartialGraph`] implements [`ResultsVisitor`] over the analysis result
+
 use std::{collections::HashSet, iter, rc::Rc};
 
 use either::Either;
@@ -12,7 +22,6 @@ use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceCon
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
-use rustc_macros::{TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
         visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
@@ -35,48 +44,31 @@ use crate::{
     calling_convention::*,
     graph::{DepEdge, DepGraph, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    try_resolve_function,
     utils::{
         self, is_async, is_non_default_trait_method, manufacture_substs_for, try_monomorphize,
+        try_resolve_function,
     },
-    Asyncness, CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
+    ArtifactLoader, Asyncness, CallChangeCallback, CallChanges, CallInfo, InlineMissReason,
+    SkipCall, SubgraphDescriptor,
 };
 
-pub trait PDGLoader<'tcx> {
-    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>>;
-}
-
-pub struct NoLoader;
-
-impl<'tcx> PDGLoader<'tcx> for NoLoader {
-    fn load(&self, _: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
-        None
-    }
-}
-
-impl<'tcx, T: PDGLoader<'tcx>> PDGLoader<'tcx> for Rc<T> {
-    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
-        (**self).load(function)
-    }
-}
-
-impl<'tcx, T: PDGLoader<'tcx>> PDGLoader<'tcx> for Box<T> {
-    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
-        (**self).load(function)
-    }
-}
-
+/// A memoizing constructor of PDGs.
+///
+/// Each `(LocalDefId, GenericArgs)` pair is guaranteed to be constructed only
+/// once.
 pub struct MemoPdgConstructor<'tcx> {
     pub(crate) tcx: TyCtxt<'tcx>,
     pub(crate) call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
     pub(crate) pdg_cache: PdgCache<'tcx>,
-    pub(crate) loader: Box<dyn PDGLoader<'tcx> + 'tcx>,
+    pub(crate) loader: Box<dyn ArtifactLoader<'tcx> + 'tcx>,
 }
 
 impl<'tcx> MemoPdgConstructor<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, loader: impl PDGLoader<'tcx> + 'tcx) -> Self {
+    /// Initialize the constructor, parameterized over an [`ArtifactLoader`] for
+    /// retrieving PDGs of functions from dependencies.
+    pub fn new(tcx: TyCtxt<'tcx>, loader: impl ArtifactLoader<'tcx> + 'tcx) -> Self {
         Self {
             tcx,
             call_change_callback: None,
@@ -87,11 +79,14 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         }
     }
 
+    /// Dump the MIR of any function that is visited.
     pub fn with_dump_mir(&mut self, dump_mir: bool) -> &mut Self {
         self.dump_mir = dump_mir;
         self
     }
 
+    /// Register a callback to determine how to deal with function calls seen.
+    /// Overwrites any previously registered callback with no warning.
     pub fn with_call_change_callback(
         &mut self,
         callback: impl CallChangeCallback<'tcx> + 'tcx,
@@ -100,6 +95,8 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         self
     }
 
+    /// Construct the intermediate PDG for this function. Instantiates any
+    /// generic arguments as `dyn <constraints>`.
     pub fn construct_root<'a>(
         &'a self,
         function: LocalDefId,
@@ -122,7 +119,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         let generics = resolution.args;
         if let Some(local) = def_id.as_local() {
             self.pdg_cache.get_maybe_recursive((local, generics), |_| {
-                let g = GraphConstructor::new(self, resolution).construct_partial();
+                let g = LocalAnalysis::new(self, resolution).construct_partial();
                 g.check_invariants();
                 g
             })
@@ -131,6 +128,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         }
     }
 
+    /// Has a PDG been constructed for this instance before?
     pub fn is_in_cache(&self, resolution: Instance<'tcx>) -> bool {
         if let Some(local) = resolution.def_id().as_local() {
             self.pdg_cache.is_in_cache(&(local, resolution.args))
@@ -139,6 +137,8 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         }
     }
 
+    /// Construct a final PDG for this function. Same as
+    /// [`Self::construct_root`] this instantiates all generics as `dyn`.
     pub fn construct_graph(&self, function: LocalDefId) -> Result<DepGraph<'tcx>, ErrorGuaranteed> {
         let _args = manufacture_substs_for(self.tcx, function.to_def_id())?;
         let g = self
@@ -171,14 +171,14 @@ impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
     }
 }
 
-impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>>>
+impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>>
     for PartialGraph<'tcx>
 {
-    type FlowState = <DfAnalysis<'mir, 'tcx> as AnalysisDomain<'tcx>>::Domain;
+    type FlowState = <&'mir LocalAnalysis<'tcx, 'mir> as AnalysisDomain<'tcx>>::Domain;
 
     fn visit_statement_before_primary_effect(
         &mut self,
-        results: &Results<'tcx, DfAnalysis<'mir, 'tcx>>,
+        results: &Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>,
         state: &Self::FlowState,
         statement: &'mir rustc_middle::mir::Statement<'tcx>,
         location: Location,
@@ -206,7 +206,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
     /// call site.
     fn visit_terminator_before_primary_effect(
         &mut self,
-        results: &Results<'tcx, DfAnalysis<'mir, 'tcx>>,
+        results: &Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>,
         state: &Self::FlowState,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
@@ -233,7 +233,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
         {
             trace!("Handling terminator {:?} as not inlined", terminator.kind);
             let mut arg_vis = ModularMutationVisitor::new(
-                &results.analysis.0.place_info,
+                &results.analysis.place_info,
                 move |location, mutation| {
                     self.register_mutation(
                         results,
@@ -254,13 +254,13 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
 
     fn visit_terminator_after_primary_effect(
         &mut self,
-        results: &Results<'tcx, DfAnalysis<'mir, 'tcx>>,
-        state: &Self::FlowState,
+        results: &Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>,
+        state: &<&'mir LocalAnalysis<'tcx, 'mir> as AnalysisDomain<'tcx>>::Domain,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
-            let constructor = results.analysis.0;
+            let constructor = results.analysis;
 
             if matches!(
                 constructor.determine_call_handling(location, func, args),
@@ -271,9 +271,8 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
         }
 
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis = ModularMutationVisitor::new(
-            &results.analysis.0.place_info,
-            move |location, mutation| {
+        let mut arg_vis =
+            ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
                 self.register_mutation(
                     results,
                     state,
@@ -284,8 +283,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, DfAnalysis<'mir, 'tcx>
                     location,
                     mutation.mutation_reason,
                 )
-            },
-        );
+            });
         arg_vis.set_time(Time::After);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -305,12 +303,12 @@ fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: LocalDefId, body: &Body<'tcx>) -> 
 }
 
 impl<'tcx> PartialGraph<'tcx> {
-    fn modular_mutation_visitor<'a>(
+    fn modular_mutation_visitor<'a, 'mir>(
         &'a mut self,
-        results: &'a Results<'tcx, DfAnalysis<'a, 'tcx>>,
+        results: &'a Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>,
         state: &'a InstructionState<'tcx>,
     ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
-        ModularMutationVisitor::new(&results.analysis.0.place_info, move |location, mutation| {
+        ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
             self.register_mutation(
                 results,
                 state,
@@ -347,10 +345,10 @@ impl<'tcx> PartialGraph<'tcx> {
             .filter(|node| node.0.at.leaf().location.is_end())
     }
 
-    fn handle_as_inline(
+    fn handle_as_inline<'a>(
         &mut self,
-        results: &Results<'tcx, DfAnalysis<'_, 'tcx>>,
-        state: &<DfAnalysis<'_, 'tcx> as AnalysisDomain<'tcx>>::Domain,
+        results: &Results<'tcx, &'a LocalAnalysis<'tcx, 'a>>,
+        state: &<&'a LocalAnalysis<'tcx, 'a> as AnalysisDomain<'tcx>>::Domain,
         terminator: &Terminator<'tcx>,
         location: Location,
     ) -> Option<()> {
@@ -363,7 +361,7 @@ impl<'tcx> PartialGraph<'tcx> {
         else {
             return None;
         };
-        let constructor = results.analysis.0;
+        let constructor = results.analysis;
         let gloc = GlobalLocation {
             location: location.into(),
             function: constructor.def_id.to_def_id(),
@@ -390,7 +388,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 }
                 CallHandling::ApproxAsyncSM(how) => {
                     how(
-                        constructor,
+                        &constructor,
                         &mut self.modular_mutation_visitor(results, state),
                         args,
                         *destination,
@@ -467,9 +465,9 @@ impl<'tcx> PartialGraph<'tcx> {
         Some(())
     }
 
-    fn register_mutation(
+    fn register_mutation<'a>(
         &mut self,
-        results: &Results<'tcx, DfAnalysis<'_, 'tcx>>,
+        results: &Results<'tcx, &'a LocalAnalysis<'tcx, 'a>>,
         state: &InstructionState<'tcx>,
         inputs: Inputs<'tcx>,
         mutated: Either<Place<'tcx>, DepNode<'tcx>>,
@@ -477,7 +475,7 @@ impl<'tcx> PartialGraph<'tcx> {
         target_use: TargetUse,
     ) {
         trace!("Registering mutation to {mutated:?} with inputs {inputs:?} at {location:?}");
-        let constructor = results.analysis.0;
+        let constructor = results.analysis;
         let ctrl_inputs = constructor.find_control_inputs(location);
 
         trace!("  Found control inputs {ctrl_inputs:?}");
@@ -505,7 +503,6 @@ impl<'tcx> PartialGraph<'tcx> {
             Either::Right(node) => vec![node],
             Either::Left(place) => results
                 .analysis
-                .0
                 .find_outputs(state, place, location)
                 .into_iter()
                 .map(|t| t.1)
@@ -542,7 +539,7 @@ impl<'tcx> PartialGraph<'tcx> {
 
 type PdgCache<'tcx> = Rc<Cache<(LocalDefId, GenericArgsRef<'tcx>), SubgraphDescriptor<'tcx>>>;
 
-pub struct GraphConstructor<'tcx, 'a> {
+pub struct LocalAnalysis<'tcx, 'a> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
     pub(super) root: Instance<'tcx>,
     body_with_facts: &'tcx BodyWithBorrowckFacts<'tcx>,
@@ -570,12 +567,12 @@ enum Inputs<'tcx> {
     },
 }
 
-impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
+impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution` in a given `calling_context`.
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
         root: Instance<'tcx>,
-    ) -> GraphConstructor<'tcx, 'a> {
+    ) -> LocalAnalysis<'tcx, 'a> {
         let tcx = memo.tcx;
         let def_id = root.def_id().expect_local();
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
@@ -602,7 +599,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
 
         let body_assignments = utils::find_body_assignments(&body);
 
-        GraphConstructor {
+        LocalAnalysis {
             memo,
             root,
             body_with_facts,
@@ -1151,12 +1148,12 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         }
     }
 
-    pub(crate) fn construct_partial(&self) -> SubgraphDescriptor<'tcx> {
+    pub(crate) fn construct_partial(&'a self) -> SubgraphDescriptor<'tcx> {
         if let Some(g) = self.try_handle_as_async() {
             return g;
         }
 
-        let mut analysis = DfAnalysis(self)
+        let mut analysis = self
             .into_engine(self.tcx(), &self.body)
             .iterate_to_fixpoint();
 
@@ -1252,13 +1249,8 @@ pub enum CallKind<'tcx> {
     AsyncPoll(Instance<'tcx>, Location, Place<'tcx>),
 }
 
-type ApproximationHandler<'tcx, 'a> = fn(
-    &GraphConstructor<'tcx, 'a>,
-    &mut dyn Visitor<'tcx>,
-    &[Operand<'tcx>],
-    Place<'tcx>,
-    Location,
-);
+type ApproximationHandler<'tcx, 'a> =
+    fn(&LocalAnalysis<'tcx, 'a>, &mut dyn Visitor<'tcx>, &[Operand<'tcx>], Place<'tcx>, Location);
 
 pub(crate) trait TransformCallString {
     fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self;
@@ -1337,13 +1329,6 @@ pub(crate) fn push_call_string_root<T: TransformCallString>(
     old.transform_call_string(|c| c.push_front(new_root))
 }
 
-#[derive(TyEncodable, TyDecodable, Debug, Clone)]
-pub struct SubgraphDescriptor<'tcx> {
-    pub graph: PartialGraph<'tcx>,
-    pub(crate) parentable_srcs: Vec<(DepNode<'tcx>, Option<u8>)>,
-    pub(crate) parentable_dsts: Vec<(DepNode<'tcx>, Option<u8>)>,
-}
-
 impl<'tcx> SubgraphDescriptor<'tcx> {
     pub fn to_petgraph(&self) -> DepGraph<'tcx> {
         let domain = &self.graph;
@@ -1389,9 +1374,7 @@ enum CallHandling<'tcx, 'a> {
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),
 }
 
-struct DfAnalysis<'a, 'tcx>(&'a GraphConstructor<'tcx, 'a>);
-
-impl<'tcx> df::AnalysisDomain<'tcx> for DfAnalysis<'_, 'tcx> {
+impl<'tcx, 'a> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
     type Domain = InstructionState<'tcx>;
 
     const NAME: &'static str = "GraphConstructor";
@@ -1403,15 +1386,14 @@ impl<'tcx> df::AnalysisDomain<'tcx> for DfAnalysis<'_, 'tcx> {
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
 }
 
-impl<'tcx> df::Analysis<'tcx> for DfAnalysis<'_, 'tcx> {
+impl<'a, 'tcx> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
     fn apply_statement_effect(
         &mut self,
         state: &mut Self::Domain,
         statement: &Statement<'tcx>,
         location: Location,
     ) {
-        self.0
-            .modular_mutation_visitor(state)
+        self.modular_mutation_visitor(state)
             .visit_statement(statement, location)
     }
 
@@ -1421,8 +1403,7 @@ impl<'tcx> df::Analysis<'tcx> for DfAnalysis<'_, 'tcx> {
         terminator: &'mir Terminator<'tcx>,
         location: Location,
     ) -> TerminatorEdges<'mir, 'tcx> {
-        self.0
-            .handle_terminator(terminator, state, location, Time::Unspecified);
+        self.handle_terminator(terminator, state, location, Time::Unspecified);
         terminator.edges()
     }
 

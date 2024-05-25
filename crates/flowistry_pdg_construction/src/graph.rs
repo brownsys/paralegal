@@ -4,12 +4,14 @@ use std::{
     fmt::{self, Display},
     hash::Hash,
     path::Path,
+    rc::Rc,
 };
 
 use flowistry_pdg::CallString;
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hir::def_id::{DefId, DefIndex};
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{Body, Place},
@@ -297,4 +299,41 @@ impl<'tcx> PartialGraph<'tcx> {
             asyncness,
         }
     }
+}
+
+/// Abstracts over how previously written [`Artifact`]s are retrieved, allowing
+/// the user of this module to chose where to store them.
+pub trait ArtifactLoader<'tcx> {
+    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>>;
+}
+
+/// Intermediate data that gets stored for each crate.
+pub type Artifact<'tcx> = FxHashMap<DefIndex, SubgraphDescriptor<'tcx>>;
+
+/// An [`ArtifactLoader`] that always returns `None`.
+pub struct NoLoader;
+
+impl<'tcx> ArtifactLoader<'tcx> for NoLoader {
+    fn load(&self, _: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+        None
+    }
+}
+
+impl<'tcx, T: ArtifactLoader<'tcx>> ArtifactLoader<'tcx> for Rc<T> {
+    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+        (**self).load(function)
+    }
+}
+
+impl<'tcx, T: ArtifactLoader<'tcx>> ArtifactLoader<'tcx> for Box<T> {
+    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+        (**self).load(function)
+    }
+}
+
+#[derive(TyEncodable, TyDecodable, Debug, Clone)]
+pub struct SubgraphDescriptor<'tcx> {
+    pub graph: PartialGraph<'tcx>,
+    pub(crate) parentable_srcs: Vec<(DepNode<'tcx>, Option<u8>)>,
+    pub(crate) parentable_dsts: Vec<(DepNode<'tcx>, Option<u8>)>,
 }

@@ -14,11 +14,15 @@ use rustc_middle::{
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
 
-use crate::construct::{push_call_string_root, CallKind, SubgraphDescriptor};
+use crate::{
+    construct::{push_call_string_root, CallKind, LocalAnalysis},
+    utils, SubgraphDescriptor,
+};
 
-use super::construct::GraphConstructor;
-use super::utils::{self};
-
+/// Describe in which way a function is `async`.
+///
+/// Critically distinguishes between a normal `async fn` and an
+/// `#[async_trait]`.
 #[derive(Debug, Clone, Copy, Decodable, Encodable)]
 pub enum Asyncness {
     No,
@@ -158,6 +162,11 @@ fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (LocalDefId, GenericArgsRef<'
     (def_id.expect_local(), generic_args, location)
 }
 
+/// Try to interpret this function as an async function.
+///
+/// If this is an async function it returns the [`Instance`] of the generator,
+/// the location where the generator is bound and the type of [`Asyncness`]
+/// which in this case is guaranteed to satisfy [`Asyncness::is_async`].
 pub fn determine_async<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
@@ -184,7 +193,7 @@ pub enum AsyncDeterminationResult<T> {
     NotAsync,
 }
 
-impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
+impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn try_handle_as_async(&self) -> Option<SubgraphDescriptor<'tcx>> {
         let (generator_fn, location, asyncness) =
             determine_async(self.tcx(), self.def_id, &self.body)?;

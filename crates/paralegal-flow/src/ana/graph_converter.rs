@@ -20,7 +20,8 @@ use anyhow::Result;
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
-    try_monomorphize, CallChangeCallback, CallChanges, CallInfo, InlineMissReason,
+    utils::try_monomorphize,
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason,
     SkipCall::Skip,
 };
 use petgraph::{

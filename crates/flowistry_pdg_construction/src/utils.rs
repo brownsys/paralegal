@@ -19,27 +19,12 @@ use rustc_span::ErrorGuaranteed;
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
-/// Try and normalize the provided generics.
-///
-/// The purpose of this function is to test whether resolving these generics
-/// will return an error. We need this because [`ty::Instance::resolve`] fails
-/// with a hard error when this normalization fails (even though it returns
-/// [`Result`]). However legitimate situations can arise in the code where this
-/// normalization fails for which we want to report warnings but carry on with
-/// the analysis which a hard error doesn't allow us to do.
-fn test_generics_normalization<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
-    args: &'tcx ty::List<ty::GenericArg<'tcx>>,
-) -> Result<(), ty::normalize_erasing_regions::NormalizationError<'tcx>> {
-    tcx.try_normalize_erasing_regions(param_env, args)
-        .map(|_| ())
-}
-
+/// An async check that does not crash if called on closures.
 pub fn is_async<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
     !tcx.is_closure(def_id) && tcx.asyncness(def_id).is_async()
 }
 
+/// Resolve the `def_id` item to an instance.
 pub fn try_resolve_function<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
@@ -47,22 +32,10 @@ pub fn try_resolve_function<'tcx>(
     args: GenericArgsRef<'tcx>,
 ) -> Option<Instance<'tcx>> {
     let param_env = param_env.with_reveal_all_normalized(tcx);
-    trace!(
-        "resolving {def_id:?} with arguments {args:?} substituted for {:?}",
-        {
-            let g = tcx.generics_of(def_id);
-            (0..g.count())
-                .map(|i| g.param_at(i, tcx))
-                .collect::<Vec<_>>()
-        }
-    );
-
-    if let Err(e) = test_generics_normalization(tcx, param_env, args) {
-        panic!("Normalization failed: {e:?}");
-    }
     Instance::resolve(tcx, param_env, def_id, args).unwrap()
 }
 
+/// Returns the default implementation of this method if it is a trait method.
 pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId> {
     let assoc_item = tcx.opt_associated_item(function)?;
     if assoc_item.container != ty::AssocItemContainer::TraitContainer
@@ -73,6 +46,7 @@ pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId
     assoc_item.trait_item_def_id
 }
 
+/// The "canonical" way we monomorphize
 pub fn try_monomorphize<'tcx, 'a, T>(
     inst: Instance<'tcx>,
     tcx: TyCtxt<'tcx>,
@@ -89,6 +63,8 @@ where
     )
 }
 
+/// Attempt to interpret this type as a statically determinable function and its
+/// generic arguments.
 pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(DefId, GenericArgsRef<'tcx>)> {
     let ty = ty_resolve(ty, tcx);
     match ty.kind() {
@@ -101,7 +77,7 @@ pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(DefId, Gener
     }
 }
 
-pub fn retype_place<'tcx>(
+pub(crate) fn retype_place<'tcx>(
     orig: Place<'tcx>,
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
@@ -169,7 +145,7 @@ pub fn retype_place<'tcx>(
     p
 }
 
-pub fn hashset_join<T: Hash + Eq + PartialEq + Clone>(
+pub(crate) fn hashset_join<T: Hash + Eq + PartialEq + Clone>(
     hs1: &mut FxHashSet<T>,
     hs2: &FxHashSet<T>,
 ) -> bool {
@@ -178,7 +154,7 @@ pub fn hashset_join<T: Hash + Eq + PartialEq + Clone>(
     hs1.len() != orig_len
 }
 
-pub fn hashmap_join<K: Hash + Eq + PartialEq + Clone, V: Clone>(
+pub(crate) fn hashmap_join<K: Hash + Eq + PartialEq + Clone, V: Clone>(
     hm1: &mut FxHashMap<K, V>,
     hm2: &FxHashMap<K, V>,
     join: impl Fn(&mut V, &V) -> bool,
@@ -198,9 +174,9 @@ pub fn hashmap_join<K: Hash + Eq + PartialEq + Clone, V: Clone>(
     changed
 }
 
-pub type BodyAssignments = FxHashMap<Local, Vec<Location>>;
+pub(crate) type BodyAssignments = FxHashMap<Local, Vec<Location>>;
 
-pub fn find_body_assignments(body: &Body<'_>) -> BodyAssignments {
+pub(crate) fn find_body_assignments(body: &Body<'_>) -> BodyAssignments {
     body.all_locations()
         .filter_map(|location| match body.stmt_at(location) {
             Either::Left(Statement {
@@ -218,6 +194,7 @@ pub fn find_body_assignments(body: &Body<'_>) -> BodyAssignments {
         .collect()
 }
 
+/// Resolve through type aliases
 pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     match ty.kind() {
         TyKind::Alias(AliasKind::Opaque, alias_ty) => tcx.type_of(alias_ty.def_id).skip_binder(),

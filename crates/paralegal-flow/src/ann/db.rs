@@ -22,7 +22,9 @@ use crate::{
     DefId, Either, HashMap, HashSet, LocalDefId, TyCtxt,
 };
 use flowistry_pdg_construction::{
-    determine_async, graph::InternedString, try_monomorphize, utils::is_async,
+    determine_async,
+    graph::InternedString,
+    utils::{is_async, try_monomorphize},
 };
 use rustc_ast::Attribute;
 use rustc_hir::def::DefKind;

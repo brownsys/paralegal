@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 
 use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};
 
-pub use flowistry_pdg_construction::is_non_default_trait_method;
+pub use flowistry_pdg_construction::utils::is_non_default_trait_method;
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
 use rustc_ast as ast;
