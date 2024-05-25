@@ -7,7 +7,7 @@ use paralegal_spdg::{Node, SPDGStats};
 use rustc_hir::{def, def_id::LocalDefId};
 use rustc_middle::{
     mir::{self, Location},
-    ty::{self, Instance, TyCtxt},
+    ty::{self, Instance, ParamEnv, TyCtxt},
 };
 
 use std::{cell::RefCell, fmt::Display, rc::Rc};
@@ -168,12 +168,14 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             RichLocation::Location(loc) => {
                 let instruction = body.instruction_at(loc);
                 if let RustcInstructionKind::FunctionCall(f) = instruction.kind {
-                    let f = flowistry_pdg_construction::utils::type_as_fn(
+                    let (def_id, args) = flowistry_pdg_construction::utils::type_as_fn(
                         self.tcx(),
                         f.instantiate(self.tcx(), monos),
                     )
-                    .unwrap()
-                    .0;
+                    .unwrap();
+                    let f = Instance::resolve(self.tcx(), ParamEnv::reveal_all(), def_id, args)
+                        .unwrap()
+                        .map_or(def_id, |i| i.def_id());
                     self.known_def_ids.extend(Some(f));
 
                     // Question: Could a function with no input produce an

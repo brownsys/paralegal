@@ -132,7 +132,7 @@ fn simple_monomorphization() -> Result<()> {
 
         #[paralegal::analyze]
         fn unconnected() {
-            Receiver.target(Donator.source())
+            Donator.target(Receiver.source())
         }
     ))?;
     test.run(|ctx| {
@@ -146,7 +146,7 @@ fn simple_monomorphization() -> Result<()> {
                 .filter(|n| n.controller_id() == ctx.id())
                 .collect();
 
-            let expect_connect = ctx.current().name.as_str() != "connected";
+            let expect_connect = ctx.current().name.as_str() == "connected";
 
             assert_error!(
                 ctx,
