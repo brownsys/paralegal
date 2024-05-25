@@ -21,7 +21,9 @@ use crate::{
     },
     DefId, Either, HashMap, HashSet, LocalDefId, TyCtxt,
 };
-use flowistry_pdg_construction::{determine_async, graph::InternedString, try_monomorphize};
+use flowistry_pdg_construction::{
+    determine_async, graph::InternedString, try_monomorphize, utils::is_async,
+};
 use rustc_ast::Attribute;
 use rustc_hir::def::DefKind;
 use rustc_middle::{
@@ -108,7 +110,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         if matches!(def_kind, DefKind::Generator) {
             if let Some(parent) = self.tcx().opt_parent(def_id) {
                 if matches!(self.tcx().def_kind(parent), DefKind::AssocFn | DefKind::Fn)
-                    && self.tcx().asyncness(parent).is_async()
+                    && is_async(self.tcx(), parent)
                 {
                     return parent;
                 }
