@@ -36,6 +36,10 @@ fn test_generics_normalization<'tcx>(
         .map(|_| ())
 }
 
+pub fn is_async<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
+    !tcx.is_closure(def_id) && tcx.asyncness(def_id).is_async()
+}
+
 pub fn try_resolve_function<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,

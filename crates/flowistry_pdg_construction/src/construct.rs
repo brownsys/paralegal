@@ -36,7 +36,9 @@ use crate::{
     graph::{DepEdge, DepGraph, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     try_resolve_function,
-    utils::{self, is_non_default_trait_method, manufacture_substs_for, try_monomorphize},
+    utils::{
+        self, is_async, is_non_default_trait_method, manufacture_substs_for, try_monomorphize,
+    },
     Asyncness, CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
 
@@ -997,7 +999,7 @@ impl<'tcx, 'a> GraphConstructor<'tcx, 'a> {
         });
 
         // Handle async functions at the time of polling, not when the future is created.
-        if tcx.asyncness(resolved_def_id).is_async() {
+        if is_async(tcx, resolved_def_id) {
             trace!("  Bailing because func is async");
 
             // If a skip was requested then "poll" will not be inlined later so we
