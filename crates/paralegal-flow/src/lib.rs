@@ -63,13 +63,12 @@ use paralegal_spdg as desc;
 use crate::{
     ana::{MetadataLoader, SPDGGenerator},
     ann::db::MarkerCtx,
+    args::{AnalysisCtrl, Args, ClapArgs, LogLevelConfig},
+    consts::INTERMEDIATE_ARTIFACT_EXT,
+    desc::utils::write_sep,
     stats::{Stats, TimedStat},
     utils::Print,
 };
-use args::{AnalysisCtrl, Args};
-use args::{ClapArgs, LogLevelConfig};
-use consts::INTERMEDIATE_ARTIFACT_EXT;
-use desc::utils::write_sep;
 
 use anyhow::{anyhow, Context as _, Result};
 use either::Either;

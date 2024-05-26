@@ -106,6 +106,7 @@ impl TryFrom<ClapArgs> for Args {
     }
 }
 
+/// Post-processed command line and environment arguments.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Args {
     /// Print additional logging output (up to the "info" level)
@@ -184,7 +185,7 @@ pub struct ClapArgs {
 }
 
 #[derive(Clone, clap::Args)]
-pub struct ParseableDumpArgs {
+struct ParseableDumpArgs {
     /// Generate intermediate of various formats and at various stages of
     /// compilation. A short description of each value is provided here, for a
     /// more comprehensive explanation refer to the [notion page on
@@ -302,6 +303,7 @@ impl std::fmt::Display for LogLevelConfig {
 }
 
 impl Args {
+    /// Are we targeting a specific crate
     pub fn target(&self) -> Option<&str> {
         self.target.as_deref()
     }
@@ -318,6 +320,7 @@ impl Args {
         &self.anactrl
     }
 
+    /// Configuration related to modeling
     pub fn modelctrl(&self) -> &ModelCtrl {
         &self.modelctrl
     }
