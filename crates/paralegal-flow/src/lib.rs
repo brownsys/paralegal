@@ -42,27 +42,23 @@ extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
-pub extern crate either;
+extern crate either;
 
 use std::borrow::Cow;
-pub use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::{fmt::Display, time::Instant};
 
-pub use rustc_hir::def_id::{DefId, LocalDefId};
-pub use rustc_hir::BodyId;
-pub use rustc_middle::dep_graph::DepGraph;
-pub use rustc_middle::mir::Location;
-pub use rustc_middle::ty;
-pub use rustc_span::Symbol;
-pub use rustc_type_ir::sty;
-pub use ty::TyCtxt;
+use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_middle::ty;
+use rustc_span::Symbol;
+use ty::TyCtxt;
 
 use rustc_driver::Compilation;
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 
-pub use paralegal_spdg as desc;
+use paralegal_spdg as desc;
 
 use crate::{
     ana::{MetadataLoader, SPDGGenerator},
@@ -70,26 +66,26 @@ use crate::{
     stats::{Stats, TimedStat},
     utils::Print,
 };
-pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
+use args::{AnalysisCtrl, Args};
 use args::{ClapArgs, LogLevelConfig};
 use consts::INTERMEDIATE_ARTIFACT_EXT;
 use desc::utils::write_sep;
 
 use anyhow::{anyhow, Context as _, Result};
-pub use either::Either;
+use either::Either;
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
 
-pub mod ana;
-pub mod ann;
+mod ana;
+mod ann;
 mod args;
-pub mod dbg;
+mod dbg;
 mod discover;
 mod stats;
 //mod sah;
 #[macro_use]
-pub mod utils;
-pub mod consts;
+mod utils;
+mod consts;
 #[cfg(feature = "test")]
 pub mod test_utils;
 
