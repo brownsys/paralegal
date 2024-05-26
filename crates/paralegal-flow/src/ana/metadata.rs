@@ -10,7 +10,7 @@ use std::path::Path;
 use std::{fs::File, io::Read, rc::Rc};
 
 use flowistry_pdg_construction::{
-    graph::InternedString, Asyncness, DepGraph, MemoPdgConstructor, ArtifactLoader, SubgraphDescriptor,
+    graph::InternedString, ArtifactLoader, Asyncness, DepGraph, MemoPdgConstructor, PartialGraph,
 };
 
 use rustc_hash::FxHashMap;
@@ -55,7 +55,7 @@ pub enum MetadataLoaderError {
 use MetadataLoaderError::*;
 
 impl<'tcx> ArtifactLoader<'tcx> for MetadataLoader<'tcx> {
-    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+    fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
         self.get_metadata(function.krate)
             .ok()?
             .pdgs
@@ -136,7 +136,7 @@ impl<'tcx> MetadataLoader<'tcx> {
 }
 #[derive(Clone, Debug, TyEncodable, TyDecodable)]
 pub struct Metadata<'tcx> {
-    pub pdgs: FxHashMap<DefIndex, SubgraphDescriptor<'tcx>>,
+    pub pdgs: FxHashMap<DefIndex, PartialGraph<'tcx>>,
     pub bodies: FxHashMap<DefIndex, BodyInfo<'tcx>>,
     pub local_annotations: HashMap<DefIndex, Vec<Annotation>>,
     pub reachable_markers: HashMap<(DefIndex, GenericArgsRef<'tcx>), Box<[InternedString]>>,
@@ -153,17 +153,16 @@ impl<'tcx> Metadata<'tcx> {
 impl<'tcx> Metadata<'tcx> {
     pub fn from_pdgs(
         tcx: TyCtxt<'tcx>,
-        pdgs: FxHashMap<DefIndex, SubgraphDescriptor<'tcx>>,
+        pdgs: FxHashMap<DefIndex, PartialGraph<'tcx>>,
         markers: &MarkerDatabase<'tcx>,
     ) -> Self {
         let mut bodies: FxHashMap<DefIndex, BodyInfo> = Default::default();
         for location in pdgs.values().flat_map(|subgraph| {
             subgraph
-                .graph
                 .nodes
                 .iter()
                 .map(|n| &n.at)
-                .chain(subgraph.graph.edges.iter().map(|e| &e.2.at))
+                .chain(subgraph.edges.iter().map(|e| &e.2.at))
                 .flat_map(|at| at.iter())
         }) {
             if let Some(local) = location.function.as_local() {
@@ -240,7 +239,7 @@ impl<'tcx> MetadataLoader<'tcx> {
     pub fn get_mono(&self, cs: CallString) -> Result<GenericArgsRef<'tcx>> {
         let get_graph = |key: DefId| {
             let meta = self.get_metadata(key.krate)?;
-            anyhow::Ok(&meta.pdgs.get(&key.index).ok_or(NoPdgForItem(key))?.graph)
+            anyhow::Ok(meta.pdgs.get(&key.index).ok_or(NoPdgForItem(key))?)
         };
         if let Some(caller) = cs.caller() {
             let key = caller.root().function;
@@ -271,7 +270,6 @@ impl<'tcx> MetadataLoader<'tcx> {
                     .ok()?
                     .pdgs
                     .get(&key.index)?
-                    .graph
                     .asyncness,
             )
         })()

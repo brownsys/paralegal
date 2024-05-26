@@ -24,7 +24,7 @@ use rustc_utils::PlaceExt;
 pub use flowistry_pdg::{RichLocation, SourceUse, TargetUse};
 use serde::{Deserialize, Serialize};
 
-use crate::Asyncness;
+use crate::{construct::TransformCallString, Asyncness};
 
 /// A node in the program dependency graph.
 ///
@@ -287,16 +287,88 @@ pub struct PartialGraph<'tcx> {
     pub monos: FxHashMap<CallString, GenericArgsRef<'tcx>>,
     pub generics: GenericArgsRef<'tcx>,
     pub asyncness: Asyncness,
+    def_id: DefId,
+    arg_count: usize,
 }
 
 impl<'tcx> PartialGraph<'tcx> {
-    pub fn new(asyncness: Asyncness, generics: GenericArgsRef<'tcx>) -> Self {
+    pub fn new(
+        asyncness: Asyncness,
+        generics: GenericArgsRef<'tcx>,
+        def_id: DefId,
+        arg_count: usize,
+    ) -> Self {
         Self {
             nodes: Default::default(),
             edges: Default::default(),
             monos: Default::default(),
             generics,
             asyncness,
+            def_id,
+            arg_count,
+        }
+    }
+
+    pub(crate) fn parentable_srcs<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (DepNode<'tcx>, Option<u8>)> + 'a {
+        self.edges
+            .iter()
+            .map(|(src, _, _)| *src)
+            .filter_map(move |a| Some((a, as_arg(&a, self.def_id, self.arg_count)?)))
+            .filter(|(node, _)| node.at.leaf().location.is_start())
+    }
+
+    pub(crate) fn parentable_dsts<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (DepNode<'tcx>, Option<u8>)> + 'a {
+        self.edges
+            .iter()
+            .map(|(_, dst, _)| *dst)
+            .filter_map(move |a| Some((a, as_arg(&a, self.def_id, self.arg_count)?)))
+            .filter(|node| node.0.at.leaf().location.is_end())
+    }
+}
+
+fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: DefId, arg_count: usize) -> Option<Option<u8>> {
+    if node.at.leaf().function != def_id {
+        return None;
+    }
+    let local = node.place.local.as_usize();
+    if node.place.local == rustc_middle::mir::RETURN_PLACE {
+        Some(None)
+    } else if local > 0 && (local - 1) < arg_count {
+        Some(Some(node.place.local.as_u32() as u8 - 1))
+    } else {
+        None
+    }
+}
+
+impl<'tcx> TransformCallString for PartialGraph<'tcx> {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
+        let recurse_node = |n: &DepNode<'tcx>| n.transform_call_string(&f);
+        Self {
+            generics: self.generics,
+            asyncness: self.asyncness,
+            nodes: self.nodes.iter().map(recurse_node).collect(),
+            edges: self
+                .edges
+                .iter()
+                .map(|(from, to, e)| {
+                    (
+                        recurse_node(from),
+                        recurse_node(to),
+                        e.transform_call_string(&f),
+                    )
+                })
+                .collect(),
+            monos: self
+                .monos
+                .iter()
+                .map(|(cs, args)| (f(*cs), *args))
+                .collect(),
+            def_id: self.def_id,
+            arg_count: self.arg_count,
         }
     }
 }
@@ -304,36 +376,29 @@ impl<'tcx> PartialGraph<'tcx> {
 /// Abstracts over how previously written [`Artifact`]s are retrieved, allowing
 /// the user of this module to chose where to store them.
 pub trait ArtifactLoader<'tcx> {
-    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>>;
+    fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>>;
 }
 
 /// Intermediate data that gets stored for each crate.
-pub type Artifact<'tcx> = FxHashMap<DefIndex, SubgraphDescriptor<'tcx>>;
+pub type Artifact<'tcx> = FxHashMap<DefIndex, PartialGraph<'tcx>>;
 
 /// An [`ArtifactLoader`] that always returns `None`.
 pub struct NoLoader;
 
 impl<'tcx> ArtifactLoader<'tcx> for NoLoader {
-    fn load(&self, _: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+    fn load(&self, _: DefId) -> Option<&PartialGraph<'tcx>> {
         None
     }
 }
 
 impl<'tcx, T: ArtifactLoader<'tcx>> ArtifactLoader<'tcx> for Rc<T> {
-    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+    fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
         (**self).load(function)
     }
 }
 
 impl<'tcx, T: ArtifactLoader<'tcx>> ArtifactLoader<'tcx> for Box<T> {
-    fn load(&self, function: DefId) -> Option<&SubgraphDescriptor<'tcx>> {
+    fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
         (**self).load(function)
     }
-}
-
-#[derive(TyEncodable, TyDecodable, Debug, Clone)]
-pub struct SubgraphDescriptor<'tcx> {
-    pub graph: PartialGraph<'tcx>,
-    pub(crate) parentable_srcs: Vec<(DepNode<'tcx>, Option<u8>)>,
-    pub(crate) parentable_dsts: Vec<(DepNode<'tcx>, Option<u8>)>,
 }

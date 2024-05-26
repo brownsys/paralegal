@@ -16,7 +16,7 @@ use rustc_middle::{
 
 use crate::{
     construct::{push_call_string_root, CallKind, LocalAnalysis},
-    utils, SubgraphDescriptor,
+    utils, PartialGraph,
 };
 
 /// Describe in which way a function is `async`.
@@ -194,7 +194,7 @@ pub enum AsyncDeterminationResult<T> {
 }
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
-    pub(crate) fn try_handle_as_async(&self) -> Option<SubgraphDescriptor<'tcx>> {
+    pub(crate) fn try_handle_as_async(&self) -> Option<PartialGraph<'tcx>> {
         let (generator_fn, location, asyncness) =
             determine_async(self.tcx(), self.def_id, &self.body)?;
 
@@ -205,11 +205,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         };
         let mut new_g = push_call_string_root(g, gloc);
         //let g_generics = std::mem::replace(&mut new_g.graph.generics, self.generic_args());
-        new_g.graph.asyncness = asyncness;
-        new_g
-            .graph
-            .monos
-            .insert(CallString::single(gloc), new_g.graph.generics);
+        new_g.asyncness = asyncness;
+        new_g.monos.insert(CallString::single(gloc), new_g.generics);
         Some(new_g)
     }
 

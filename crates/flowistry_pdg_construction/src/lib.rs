@@ -16,7 +16,7 @@ extern crate rustc_target;
 extern crate rustc_type_ir;
 
 pub use async_support::{determine_async, is_async_trait_fn, Asyncness};
-pub use graph::{Artifact, ArtifactLoader, DepGraph, NoLoader, SubgraphDescriptor};
+pub use graph::{Artifact, ArtifactLoader, DepGraph, NoLoader, PartialGraph};
 pub mod callback;
 pub use crate::construct::MemoPdgConstructor;
 pub use callback::{

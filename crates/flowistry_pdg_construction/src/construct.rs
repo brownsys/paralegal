@@ -49,7 +49,7 @@ use crate::{
         try_resolve_function,
     },
     ArtifactLoader, Asyncness, CallChangeCallback, CallChanges, CallInfo, InlineMissReason,
-    SkipCall, SubgraphDescriptor,
+    SkipCall,
 };
 
 /// A memoizing constructor of PDGs.
@@ -97,10 +97,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
     /// Construct the intermediate PDG for this function. Instantiates any
     /// generic arguments as `dyn <constraints>`.
-    pub fn construct_root<'a>(
-        &'a self,
-        function: LocalDefId,
-    ) -> Option<&'a SubgraphDescriptor<'tcx>> {
+    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Option<&'a PartialGraph<'tcx>> {
         let generics = manufacture_substs_for(self.tcx, function.to_def_id()).unwrap();
         let resolution = try_resolve_function(
             self.tcx,
@@ -114,7 +111,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> Option<&'a SubgraphDescriptor<'tcx>> {
+    ) -> Option<&'a PartialGraph<'tcx>> {
         let def_id = resolution.def_id();
         let generics = resolution.args;
         if let Some(local) = def_id.as_local() {
@@ -155,7 +152,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 }
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]
-pub struct InstructionState<'tcx> {
+pub(crate) struct InstructionState<'tcx> {
     last_mutation: FxHashMap<Place<'tcx>, FxHashSet<RichLocation>>,
 }
 
@@ -321,29 +318,6 @@ impl<'tcx> PartialGraph<'tcx> {
             )
         })
     }
-    fn parentable_srcs<'a>(
-        &'a self,
-        def_id: LocalDefId,
-        body: &'a Body<'tcx>,
-    ) -> impl Iterator<Item = (DepNode<'tcx>, Option<u8>)> + 'a {
-        self.edges
-            .iter()
-            .map(|(src, _, _)| *src)
-            .filter_map(move |a| Some((a, as_arg(&a, def_id, body)?)))
-            .filter(|(node, _)| node.at.leaf().location.is_start())
-    }
-
-    fn parentable_dsts<'a>(
-        &'a self,
-        def_id: LocalDefId,
-        body: &'a Body<'tcx>,
-    ) -> impl Iterator<Item = (DepNode<'tcx>, Option<u8>)> + 'a {
-        self.edges
-            .iter()
-            .map(|(_, dst, _)| *dst)
-            .filter_map(move |a| Some((a, as_arg(&a, def_id, body)?)))
-            .filter(|node| node.0.at.leaf().location.is_end())
-    }
 
     fn handle_as_inline<'a>(
         &mut self,
@@ -398,16 +372,12 @@ impl<'tcx> PartialGraph<'tcx> {
                 }
             };
 
-        let SubgraphDescriptor {
-            graph: child_graph,
-            parentable_srcs,
-            parentable_dsts,
-        } = push_call_string_root(child_descriptor, gloc);
+        let child_graph = push_call_string_root(child_descriptor, gloc);
 
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
         trace!("PARENT -> CHILD EDGES:");
-        for (child_src, _kind) in parentable_srcs {
+        for (child_src, _kind) in child_graph.parentable_srcs() {
             if let Some(parent_place) = calling_convention.translate_to_parent(
                 child_src.place,
                 constructor.async_info(),
@@ -435,7 +405,7 @@ impl<'tcx> PartialGraph<'tcx> {
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
-        for (child_dst, kind) in parentable_dsts {
+        for (child_dst, kind) in child_graph.parentable_dsts() {
             if let Some(parent_place) = calling_convention.translate_to_parent(
                 child_dst.place,
                 constructor.async_info(),
@@ -461,7 +431,7 @@ impl<'tcx> PartialGraph<'tcx> {
         self.edges.extend(child_graph.edges);
         self.monos.extend(child_graph.monos);
         self.monos
-            .insert(CallString::single(gloc), child_descriptor.graph.generics);
+            .insert(CallString::single(gloc), child_descriptor.generics);
         Some(())
     }
 
@@ -537,9 +507,9 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-type PdgCache<'tcx> = Rc<Cache<(LocalDefId, GenericArgsRef<'tcx>), SubgraphDescriptor<'tcx>>>;
+type PdgCache<'tcx> = Rc<Cache<(LocalDefId, GenericArgsRef<'tcx>), PartialGraph<'tcx>>>;
 
-pub struct LocalAnalysis<'tcx, 'a> {
+pub(crate) struct LocalAnalysis<'tcx, 'a> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
     pub(super) root: Instance<'tcx>,
     body_with_facts: &'tcx BodyWithBorrowckFacts<'tcx>,
@@ -1075,7 +1045,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
         };
 
-        let parentable_dsts = &child_constructor.parentable_dsts;
+        let parentable_dsts = child_constructor.parentable_dsts();
         let parent_body = &self.body;
         let translate_to_parent = |child: Place<'tcx>| -> Option<Place<'tcx>> {
             calling_convention.translate_to_parent(
@@ -1148,7 +1118,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         }
     }
 
-    pub(crate) fn construct_partial(&'a self) -> SubgraphDescriptor<'tcx> {
+    pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx> {
         if let Some(g) = self.try_handle_as_async() {
             return g;
         }
@@ -1157,7 +1127,12 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             .into_engine(self.tcx(), &self.body)
             .iterate_to_fixpoint();
 
-        let mut final_state = PartialGraph::new(Asyncness::No, self.generic_args());
+        let mut final_state = PartialGraph::new(
+            Asyncness::No,
+            self.generic_args(),
+            self.def_id.to_def_id(),
+            self.body.arg_count,
+        );
 
         analysis.visit_reachable_with(&self.body, &mut final_state);
 
@@ -1187,15 +1162,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
         }
 
-        SubgraphDescriptor {
-            parentable_dsts: final_state
-                .parentable_dsts(self.def_id, &self.body)
-                .collect(),
-            parentable_srcs: final_state
-                .parentable_srcs(self.def_id, &self.body)
-                .collect(),
-            graph: final_state,
-        }
+        final_state
     }
 
     /// Determine the type of call-site.
@@ -1280,48 +1247,6 @@ impl TransformCallString for DepEdge {
     }
 }
 
-impl<'tcx> TransformCallString for PartialGraph<'tcx> {
-    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
-        let recurse_node = |n: &DepNode<'tcx>| n.transform_call_string(&f);
-        Self {
-            generics: self.generics,
-            asyncness: self.asyncness,
-            nodes: self.nodes.iter().map(recurse_node).collect(),
-            edges: self
-                .edges
-                .iter()
-                .map(|(from, to, e)| {
-                    (
-                        recurse_node(from),
-                        recurse_node(to),
-                        e.transform_call_string(&f),
-                    )
-                })
-                .collect(),
-            monos: self
-                .monos
-                .iter()
-                .map(|(cs, args)| (f(*cs), *args))
-                .collect(),
-        }
-    }
-}
-
-impl<'tcx> TransformCallString for SubgraphDescriptor<'tcx> {
-    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
-        let transform_vec = |v: &Vec<(DepNode<'tcx>, Option<u8>)>| {
-            v.iter()
-                .map(|(n, idx)| (n.transform_call_string(&f), *idx))
-                .collect::<Vec<_>>()
-        };
-        Self {
-            graph: self.graph.transform_call_string(&f),
-            parentable_dsts: transform_vec(&self.parentable_dsts),
-            parentable_srcs: transform_vec(&self.parentable_srcs),
-        }
-    }
-}
-
 pub(crate) fn push_call_string_root<T: TransformCallString>(
     old: &T,
     new_root: GlobalLocation,
@@ -1329,9 +1254,9 @@ pub(crate) fn push_call_string_root<T: TransformCallString>(
     old.transform_call_string(|c| c.push_front(new_root))
 }
 
-impl<'tcx> SubgraphDescriptor<'tcx> {
+impl<'tcx> PartialGraph<'tcx> {
     pub fn to_petgraph(&self) -> DepGraph<'tcx> {
-        let domain = &self.graph;
+        let domain = self;
         let mut graph: DiGraph<DepNode<'tcx>, DepEdge> = DiGraph::new();
         let mut nodes = FxHashMap::default();
         macro_rules! add_node {
@@ -1354,11 +1279,11 @@ impl<'tcx> SubgraphDescriptor<'tcx> {
     }
 
     fn check_invariants(&self) {
-        let root_function = self.graph.nodes.iter().next().unwrap().at.root().function;
-        for n in &self.graph.nodes {
+        let root_function = self.nodes.iter().next().unwrap().at.root().function;
+        for n in &self.nodes {
             assert_eq!(n.at.root().function, root_function);
         }
-        for (_, _, e) in &self.graph.edges {
+        for (_, _, e) in &self.edges {
             assert_eq!(e.at.root().function, root_function);
         }
     }
@@ -1369,7 +1294,7 @@ enum CallHandling<'tcx, 'a> {
     ApproxAsyncFn,
     Ready {
         calling_convention: CallingConvention<'tcx, 'a>,
-        descriptor: &'a SubgraphDescriptor<'tcx>,
+        descriptor: &'a PartialGraph<'tcx>,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),
 }
