@@ -157,20 +157,18 @@ impl<'tcx> Metadata<'tcx> {
         markers: &MarkerDatabase<'tcx>,
     ) -> Self {
         let mut bodies: FxHashMap<DefIndex, BodyInfo> = Default::default();
-        for location in pdgs.values().flat_map(|subgraph| {
-            subgraph
-                .nodes
-                .iter()
-                .map(|n| &n.at)
-                .chain(subgraph.edges.iter().map(|e| &e.2.at))
-                .flat_map(|at| at.iter())
-        }) {
-            if let Some(local) = location.function.as_local() {
-                bodies.entry(local.local_def_index).or_insert_with(|| {
-                    let info = BodyInfo::from_body(tcx, local);
-                    trace!("Created info for body {local:?}\n{info:?}");
-                    info
-                });
+        for call_string in pdgs
+            .values()
+            .flat_map(|subgraph| subgraph.mentioned_call_string())
+        {
+            for location in call_string.iter() {
+                if let Some(local) = location.function.as_local() {
+                    bodies.entry(local.local_def_index).or_insert_with(|| {
+                        let info = BodyInfo::from_body(tcx, local);
+                        trace!("Created info for body {local:?}\n{info:?}");
+                        info
+                    });
+                }
             }
         }
         let cache_borrow = markers.reachable_markers.borrow();
@@ -237,21 +235,14 @@ impl<'tcx> MetadataLoader<'tcx> {
     }
 
     pub fn get_mono(&self, cs: CallString) -> Result<GenericArgsRef<'tcx>> {
-        let get_graph = |key: DefId| {
-            let meta = self.get_metadata(key.krate)?;
-            anyhow::Ok(meta.pdgs.get(&key.index).ok_or(NoPdgForItem(key))?)
-        };
-        if let Some(caller) = cs.caller() {
-            let key = caller.root().function;
-            let monos = &get_graph(key)?.monos;
-            trace!("Known monos for {key:?} are");
-            for (k, v) in monos {
-                trace!("  {k}: {v:?}");
-            }
-            Ok(*monos.get(&caller).ok_or(NoGenericsKnownForCallSite(cs))?)
-        } else {
-            Ok(get_graph(cs.leaf().function)?.generics)
-        }
+        let key = cs.root().function;
+        let meta = self.get_metadata(key.krate)?;
+        Ok(meta
+            .pdgs
+            .get(&key.index)
+            .ok_or(NoPdgForItem(key))?
+            .get_mono(cs)
+            .ok_or(NoGenericsKnownForCallSite(cs))?)
     }
 
     pub fn get_pdg(&self, key: DefId) -> Result<DepGraph<'tcx>> {
@@ -270,7 +261,7 @@ impl<'tcx> MetadataLoader<'tcx> {
                     .ok()?
                     .pdgs
                     .get(&key.index)?
-                    .asyncness,
+                    .asyncness(),
             )
         })()
         .unwrap_or(Asyncness::No)

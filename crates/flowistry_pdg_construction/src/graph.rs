@@ -24,7 +24,7 @@ use rustc_utils::PlaceExt;
 pub use flowistry_pdg::{RichLocation, SourceUse, TargetUse};
 use serde::{Deserialize, Serialize};
 
-use crate::{construct::TransformCallString, Asyncness};
+use crate::{construct::TransformCallString, utils::Captures, Asyncness};
 
 /// A node in the program dependency graph.
 ///
@@ -280,18 +280,41 @@ impl<D: Decoder> Decodable<D> for InternedString {
     }
 }
 
+/// A PDG that is fit for combining with other PDGs
 #[derive(Debug, Clone, TyDecodable, TyEncodable)]
 pub struct PartialGraph<'tcx> {
-    pub nodes: FxHashSet<DepNode<'tcx>>,
-    pub edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
-    pub monos: FxHashMap<CallString, GenericArgsRef<'tcx>>,
-    pub generics: GenericArgsRef<'tcx>,
-    pub asyncness: Asyncness,
+    pub(crate) nodes: FxHashSet<DepNode<'tcx>>,
+    pub(crate) edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
+    pub(crate) monos: FxHashMap<CallString, GenericArgsRef<'tcx>>,
+    pub(crate) generics: GenericArgsRef<'tcx>,
+    pub(crate) asyncness: Asyncness,
     def_id: DefId,
     arg_count: usize,
 }
 
 impl<'tcx> PartialGraph<'tcx> {
+    pub fn mentioned_call_string<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = CallString> + Captures<'tcx> + 'a {
+        self.nodes
+            .iter()
+            .map(|n| &n.at)
+            .chain(self.edges.iter().map(|e| &e.2.at))
+            .copied()
+    }
+
+    pub fn get_mono(&self, cs: CallString) -> Option<GenericArgsRef<'tcx>> {
+        if let Some(caller) = cs.caller() {
+            self.monos.get(&caller).copied()
+        } else {
+            Some(self.generics)
+        }
+    }
+
+    pub fn asyncness(&self) -> Asyncness {
+        self.asyncness
+    }
+
     pub fn new(
         asyncness: Asyncness,
         generics: GenericArgsRef<'tcx>,

@@ -286,19 +286,6 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, &'mir LocalAnalysis<'t
     }
 }
 
-fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: LocalDefId, body: &Body<'tcx>) -> Option<Option<u8>> {
-    if node.at.leaf().function != def_id.to_def_id() {
-        return None;
-    }
-    if node.place.local == RETURN_PLACE {
-        Some(None)
-    } else if node.place.is_arg(body) {
-        Some(Some(node.place.local.as_u32() as u8 - 1))
-    } else {
-        None
-    }
-}
-
 impl<'tcx> PartialGraph<'tcx> {
     fn modular_mutation_visitor<'a, 'mir>(
         &'a mut self,
