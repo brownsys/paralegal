@@ -143,22 +143,6 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.is_attribute_marked(did) || self.is_externally_marked(did)
     }
 
-    /// Direct access to the loaded database of external markers.
-    #[inline]
-    pub fn external_annotations(&self) -> &ExternalMarkers {
-        &self.db().external_annotations
-    }
-
-    /// Are there markers reachable from this (function)?
-    ///
-    /// Returns true if the item itself carries a marker *or* if one of the
-    /// functions called in its body are marked.
-    ///
-    /// XXX Does not take into account reachable type markers
-    pub fn marker_is_reachable(&self, res: Instance<'tcx>) -> bool {
-        self.is_marked(res.def_id()) || self.has_transitive_reachable_markers(res)
-    }
-
     /// Queries the transitive marker cache.
     pub fn has_transitive_reachable_markers(&self, res: Instance<'tcx>) -> bool {
         !self.get_reachable_markers(res).is_empty()
@@ -379,14 +363,6 @@ impl<'tcx> MarkerCtx<'tcx> {
             .into_iter()
     }
 
-    pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
-        let def_id = ty.defid()?;
-        self.combined_markers(def_id)
-            .next()
-            .is_some()
-            .then_some(def_id)
-    }
-
     /// All markers placed on this function, directly or through the type plus
     /// the type that was marked (if any).
     pub fn all_function_markers<'a>(
@@ -444,11 +420,6 @@ impl<'tcx> MarkerCtx<'tcx> {
                 anns.iter()
                     .map(move |ann| (id, Cow::Owned(Annotation::Marker(ann.clone()))))
             }))
-    }
-
-    pub fn functions_seen(&self) -> Vec<Instance<'tcx>> {
-        let cache = self.0.reachable_markers.borrow();
-        cache.keys().copied().collect::<Vec<_>>()
     }
 }
 

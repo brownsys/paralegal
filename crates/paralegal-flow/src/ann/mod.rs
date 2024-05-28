@@ -41,6 +41,7 @@ impl Annotation {
         }
     }
 
+    #[allow(dead_code)]
     /// If this is an [`Annotation::OType`], returns the underlying [`TypeId`].
     pub fn as_otype(&self) -> Option<TypeId> {
         match self {
@@ -49,6 +50,7 @@ impl Annotation {
         }
     }
 
+    #[allow(dead_code)]
     /// If this is an [`Annotation::Exception`], returns the underlying [`ExceptionAnnotation`].
     pub fn as_exception(&self) -> Option<&ExceptionAnnotation> {
         match self {

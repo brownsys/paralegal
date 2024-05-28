@@ -35,8 +35,6 @@ pub enum ResolutionError {
     EmptyStarts,
     #[error("non-convertible resolution {:?}", .0)]
     UnconvertibleRes(def::Res),
-    #[error("could not resolve crate {}", .0)]
-    CouldNotResolveCrate(String),
 }
 
 #[derive(Clone, Debug)]

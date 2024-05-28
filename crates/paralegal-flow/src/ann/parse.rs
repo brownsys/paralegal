@@ -176,6 +176,7 @@ pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
     )
 }
 
+#[allow(dead_code)]
 /// Parse something dictionnary-like.
 ///
 /// Expects the next token to be a braces delimited subtree containing pairs of

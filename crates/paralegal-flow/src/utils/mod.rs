@@ -321,8 +321,6 @@ pub enum AsFnAndArgsErr<'tcx> {
     NotAConstant,
     #[error("is not a function type: {0:?}")]
     NotFunctionType(ty::TyKind<'tcx>),
-    #[error("is not a `Val` constant: {0}")]
-    NotValueLevelConstant(ty::Const<'tcx>),
     #[error("terminator is not a `Call`")]
     NotAFunctionCall,
     #[error("function instance could not be resolved")]
@@ -415,6 +413,7 @@ pub enum Overlap<'tcx> {
 }
 
 impl<'tcx> Overlap<'tcx> {
+    #[allow(dead_code)]
     pub fn contains_other(self) -> bool {
         matches!(self, Overlap::Equal | Overlap::Parent(_))
     }
@@ -652,10 +651,6 @@ pub enum BodyResolutionError {
     #[error("not a function-like object")]
     /// The provided id did not refer to a function-like object.
     NotAFunction,
-    #[error("body not available")]
-    /// The provided id refers to an external entity and we have no access to
-    /// its body
-    External,
     /// The function refers to a trait item (not an `impl` item or raw `fn`)
     #[error("is associated function of trait {0:?}")]
     IsTraitAssocFn(DefId),
@@ -717,7 +712,6 @@ impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
             Err(e) => {
                 let sess = self.sess;
                 match e {
-                    BodyResolutionError::External => (),
                     BodyResolutionError::IsTraitAssocFn(r#trait) => {
                         sess.struct_span_warn(
                             self.def_span(local_def_id.to_def_id()),
@@ -758,6 +752,7 @@ pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilte
     r
 }
 
+#[allow(dead_code)]
 pub fn time<R, F: FnOnce() -> R>(msg: &str, f: F) -> R {
     info!("Starting {msg}");
     let time = std::time::Instant::now();
@@ -794,6 +789,7 @@ impl IntoBodyId for DefId {
     }
 }
 
+#[allow(dead_code)]
 pub fn map_either<A, B, C, D>(
     either: Either<A, B>,
     f: impl FnOnce(A) -> C,
