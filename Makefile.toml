@@ -65,6 +65,8 @@ args = [
     "--test",
     "async_tests",
     "--no-fail-fast",
+    "--test",
+    "cross-crate",
 ]
 
 [tasks.policy-framework-tests]
