@@ -349,7 +349,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 }
                 CallHandling::ApproxAsyncSM(how) => {
                     how(
-                        &constructor,
+                        constructor,
                         &mut self.modular_mutation_visitor(results, state),
                         args,
                         *destination,

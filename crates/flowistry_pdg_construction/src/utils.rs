@@ -23,7 +23,7 @@ pub trait Captures<'a> {}
 impl<'a, T: ?Sized> Captures<'a> for T {}
 
 /// An async check that does not crash if called on closures.
-pub fn is_async<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
+pub fn is_async(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     !tcx.is_closure(def_id) && tcx.asyncness(def_id).is_async()
 }
 

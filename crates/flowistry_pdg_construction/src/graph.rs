@@ -353,7 +353,7 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: DefId, arg_count: usize) -> Option<Option<u8>> {
+fn as_arg(node: &DepNode<'_>, def_id: DefId, arg_count: usize) -> Option<Option<u8>> {
     if node.at.leaf().function != def_id {
         return None;
     }
