@@ -43,9 +43,9 @@ pub struct MetadataLoader<'tcx> {
 #[derive(Debug, Error)]
 pub enum MetadataLoaderError {
     #[error("no pdg for item {:?}", .0)]
-    NoPdgForItem(DefId),
+    PdgForItemMissing(DefId),
     #[error("no metadata for crate {}", tls::with(|tcx| tcx.crate_name(*.0)))]
-    NoMetadataForCrate(CrateNum),
+    MetadataForCrateMissing(CrateNum),
     #[error("no generics known for call site {0}")]
     NoGenericsKnownForCallSite(CallString),
     #[error("no metadata for item {:?} in crate {}", .0, tls::with(|tcx| tcx.crate_name(.0.krate)))]
@@ -224,7 +224,7 @@ impl<'tcx> MetadataLoader<'tcx> {
                 None
             })
             .as_ref()
-            .ok_or(NoMetadataForCrate(key))?;
+            .ok_or(MetadataForCrateMissing(key))?;
         Ok(meta)
     }
 
@@ -240,7 +240,7 @@ impl<'tcx> MetadataLoader<'tcx> {
         Ok(meta
             .pdgs
             .get(&key.index)
-            .ok_or(NoPdgForItem(key))?
+            .ok_or(PdgForItemMissing(key))?
             .get_mono(cs)
             .ok_or(NoGenericsKnownForCallSite(cs))?)
     }
@@ -250,7 +250,7 @@ impl<'tcx> MetadataLoader<'tcx> {
             .get_metadata(key.krate)?
             .pdgs
             .get(&key.index)
-            .ok_or(NoPdgForItem(key))?
+            .ok_or(PdgForItemMissing(key))?
             .to_petgraph())
     }
 
