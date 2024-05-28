@@ -36,3 +36,14 @@ define_test!(basic_marker: graph -> {
     let marker = Identifier::new_intern("mark");
     assert!(dbg!(&graph.spdg().markers).iter().any(|(_, markers)| markers.contains(&marker)))
 });
+
+define_test!(assigns_marker: graph -> {
+    let sources = graph.marked(Identifier::new_intern("source"));
+    let mark = graph.marked(Identifier::new_intern("mark"));
+    let target = graph.marked(Identifier::new_intern("target"));
+    assert!(!sources.is_empty());
+    assert!(!mark.is_empty());
+    assert!(!target.is_empty());
+    assert!(sources.flows_to_data(&mark));
+    assert!(mark.flows_to_data(&target));
+});

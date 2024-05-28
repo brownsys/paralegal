@@ -1,8 +1,8 @@
 extern crate dependency;
 
-use dependency::{find_me, source};
+use dependency::{assign_marker, find_me, source};
 
-#[paralegal::marker(source)]
+#[paralegal::marker(source, return)]
 fn src() -> usize {
     0
 }
@@ -12,7 +12,7 @@ fn not_src() -> usize {
     1
 }
 
-#[paralegal::marker(target)]
+#[paralegal::marker(target, arguments = [0])]
 fn target(u: usize) {}
 
 #[paralegal::analyze]
@@ -23,6 +23,11 @@ fn basic() {
 #[paralegal::analyze]
 fn basic_marker() {
     target(source());
+}
+
+#[paralegal::analyze]
+fn assigns_marker() {
+    target(assign_marker(src()));
 }
 
 fn main() {}
