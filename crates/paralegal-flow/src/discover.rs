@@ -134,10 +134,8 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                         name: *name,
                         def_id: id,
                     });
-                    self.emit_target_collector.push(id);
-                } else if self.tcx.generics_of(id).count() == 0 {
-                    self.emit_target_collector.push(id)
                 }
+                self.emit_target_collector.push(id)
             }
             _ => (),
         }

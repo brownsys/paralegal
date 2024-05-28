@@ -56,10 +56,12 @@ use MetadataLoaderError::*;
 
 impl<'tcx> ArtifactLoader<'tcx> for MetadataLoader<'tcx> {
     fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
-        self.get_metadata(function.krate)
+        let res = self
+            .get_metadata(function.krate)
             .ok()?
             .pdgs
-            .get(&function.index)
+            .get(&function.index);
+        res
     }
 }
 
@@ -210,7 +212,6 @@ impl<'tcx> MetadataLoader<'tcx> {
                 let paths = self.tcx.crate_extern_paths(key);
                 for path in paths {
                     let path = path.with_extension(INTERMEDIATE_ARTIFACT_EXT);
-                    println!("Trying to load file {}", path.display());
                     let Ok(mut file) = File::open(path) else {
                         continue;
                     };
@@ -218,7 +219,6 @@ impl<'tcx> MetadataLoader<'tcx> {
                     file.read_to_end(&mut buf).unwrap();
                     let mut decoder = ParalegalDecoder::new(self.tcx, buf.as_slice());
                     let meta = Metadata::decode(&mut decoder);
-                    println!("Successfully loaded");
                     return Some(meta);
                 }
                 None
