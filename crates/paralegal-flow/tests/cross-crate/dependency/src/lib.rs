@@ -8,8 +8,8 @@ pub fn source() -> usize {
 }
 
 #[paralegal::marker(mark, return)]
-fn taint_it(_: usize) -> usize {
-    9
+fn taint_it<A>(_: A) -> A {
+    unimplemented!()
 }
 
 pub fn assign_marker(a: usize) -> usize {
@@ -23,4 +23,8 @@ pub fn find_me_generic<A>(a: A, _b: A) -> A {
 #[paralegal::marker(mark, return)]
 pub fn generic_source<A>() -> A {
     unimplemented!()
+}
+
+pub fn assign_marker_generic<A>(a: A) -> A {
+    taint_it(a)
 }
