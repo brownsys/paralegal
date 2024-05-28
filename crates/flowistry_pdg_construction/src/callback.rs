@@ -11,7 +11,6 @@ pub trait CallChangeCallback<'tcx> {
         _resolution: Instance<'tcx>,
         _loc: Location,
         _under_analysis: Instance<'tcx>,
-        _call_string: Option<CallString>,
         _reason: InlineMissReason,
     ) {
     }

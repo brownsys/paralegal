@@ -889,14 +889,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
-        // if !resolved_def_id.is_local() {
-        //     trace!(
-        //         "  Bailing because func is non-local: `{}`",
-        //         tcx.def_path_str(resolved_def_id)
-        //     );
-        //     return None;
-        // };
-
         let call_kind = match self.classify_call_kind(called_def_id, resolved_def_id, args) {
             Ok(cc) => cc,
             Err(async_err) => {
@@ -905,7 +897,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                         resolved_fn,
                         location,
                         self.root,
-                        None,
                         InlineMissReason::Async(async_err),
                     )
                 }

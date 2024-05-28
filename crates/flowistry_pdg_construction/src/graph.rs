@@ -56,10 +56,15 @@ impl PartialEq for DepNode<'_> {
             place,
             at,
             place_pretty: _,
-            span: _,
-            is_split: _,
+            span,
+            is_split,
         } = *self;
-        (place, at).eq(&(other.place, other.at))
+        let eq = (place, at).eq(&(other.place, other.at));
+        if eq {
+            debug_assert_eq!(span, other.span);
+            debug_assert_eq!(is_split, other.is_split);
+        }
+        eq
     }
 }
 

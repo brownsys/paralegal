@@ -1,3 +1,12 @@
+//! Readers and writers for the intermediate artifacts we store per crate.
+//!
+//! Most of this code is adapted/copied from `EncodeContext` and `DecodeContext` in
+//! `rustc_metadata`.
+//!
+//! Note that the methods pertaining to allocations of `AllocId`'s are
+//! unimplemented and will cause a crash if you try to stick an `AllocId` into
+//! the Paralegal artifact.
+
 use std::path::Path;
 
 use rustc_hash::FxHashMap;

@@ -1,3 +1,8 @@
+//! Per-crate intermediate data we store.
+//!
+//! [`Metadata`] is what gets stored, whereas a [`MetadataLoader`] is
+//! responsible for reading/writing this data.
+
 use crate::{
     ann::{db::MarkerDatabase, Annotation},
     consts::INTERMEDIATE_ARTIFACT_EXT,
@@ -35,11 +40,14 @@ use super::{
     graph_converter::MyCallback,
     inline_judge::InlineJudge,
 };
+
+/// Manager responsible for reading and writing [`Metadata`] artifacts.
 pub struct MetadataLoader<'tcx> {
     tcx: TyCtxt<'tcx>,
     cache: Cache<CrateNum, Option<Metadata<'tcx>>>,
 }
 
+/// The types of errors that can arise from interacting with the [`MetadataLoader`].
 #[derive(Debug, Error)]
 pub enum MetadataLoaderError {
     #[error("no pdg for item {:?}", .0)]
@@ -66,6 +74,13 @@ impl<'tcx> ArtifactLoader<'tcx> for MetadataLoader<'tcx> {
 }
 
 impl<'tcx> MetadataLoader<'tcx> {
+    /// Traverse the items of this crate, create PDGs and collect other relevant
+    /// information about them. Write the metadata to disk, but also register
+    /// them with the loader itself for downstream analyses.
+    ///
+    /// Returns which functions should be emitted for policy enforcement (e.g.
+    /// analysis targets) and a context of discovered markers suitable for query
+    /// during that analysis.
     pub fn collect_and_emit_metadata(
         self: Rc<Self>,
         args: &'static Args,
@@ -136,6 +151,11 @@ impl<'tcx> MetadataLoader<'tcx> {
         })
     }
 }
+
+/// Intermediate artifacts stored on disc for every crate.
+///
+/// Contains PDGs and reduced information about the source code that is needed
+/// downstream.
 #[derive(Clone, Debug, TyEncodable, TyDecodable)]
 pub struct Metadata<'tcx> {
     pub pdgs: FxHashMap<DefIndex, PartialGraph<'tcx>>,
@@ -153,6 +173,8 @@ impl<'tcx> Metadata<'tcx> {
 }
 
 impl<'tcx> Metadata<'tcx> {
+    /// Given a set of PDGs created, query additional information we need to
+    /// record from rustc and return a serializable metadata artifact.
     pub fn from_pdgs(
         tcx: TyCtxt<'tcx>,
         pdgs: FxHashMap<DefIndex, PartialGraph<'tcx>>,
@@ -268,6 +290,7 @@ impl<'tcx> MetadataLoader<'tcx> {
     }
 }
 
+/// Effectively a reduced MIR [`Body`](rustc_middle::mir::Body).
 #[derive(Clone, Debug, TyEncodable, TyDecodable)]
 pub struct BodyInfo<'tcx> {
     pub arg_count: usize,
