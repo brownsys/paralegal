@@ -26,7 +26,7 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_span::ErrorGuaranteed;
-use rustc_utils::{cache::Cache, PlaceExt};
+use rustc_utils::cache::Cache;
 
 use crate::{
     async_support::*,
