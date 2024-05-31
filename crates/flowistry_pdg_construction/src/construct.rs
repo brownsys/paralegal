@@ -794,19 +794,18 @@ impl<'tcx> GraphConstructor<'tcx> {
     ) -> Vec<(Place<'tcx>, DepNode<'tcx>)> {
         // **POINTER-SENSITIVITY:**
         // If `mutated` involves indirection via dereferences, then resolve it to the direct places it could point to.
-        let aliases = self.aliases(mutated).collect_vec();
+        let aliases = self.aliases(mutated);
 
         // **FIELD-SENSITIVITY:** we do NOT deal with fields on *writes* (in this function),
         // only on *reads* (in `add_input_to_op`).
 
         // For each mutated `dst`:
         aliases
-            .iter()
             .map(|dst| {
                 // Create a destination node for (DST @ CURRENT_LOC).
                 (
-                    *dst,
-                    DepNode::new(*dst, self.make_call_string(location), self.tcx, &self.body),
+                    dst,
+                    DepNode::new(dst, self.make_call_string(location), self.tcx, &self.body),
                 )
             })
             .collect()
