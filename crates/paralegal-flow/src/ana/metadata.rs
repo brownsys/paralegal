@@ -15,7 +15,7 @@ use std::path::Path;
 use std::{fs::File, io::Read, rc::Rc};
 
 use flowistry_pdg_construction::{
-    graph::InternedString, GraphLoader, Asyncness, DepGraph, MemoPdgConstructor, PartialGraph,
+    graph::InternedString, Asyncness, DepGraph, GraphLoader, MemoPdgConstructor, PartialGraph,
 };
 
 use rustc_hash::FxHashMap;
