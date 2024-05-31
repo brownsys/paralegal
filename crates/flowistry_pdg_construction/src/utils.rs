@@ -1,6 +1,7 @@
 use std::{collections::hash_map::Entry, hash::Hash};
 
 use either::Either;
+
 use itertools::Itertools;
 use log::trace;
 use rustc_hash::{FxHashMap, FxHashSet};

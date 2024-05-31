@@ -16,7 +16,7 @@ extern crate rustc_target;
 extern crate rustc_type_ir;
 
 pub use async_support::{determine_async, is_async_trait_fn, Asyncness};
-pub use graph::{Artifact, ArtifactLoader, DepGraph, NoLoader, PartialGraph};
+pub use graph::{Artifact, DepGraph, GraphLoader, NoLoader, PartialGraph};
 pub mod callback;
 pub use crate::construct::MemoPdgConstructor;
 pub use callback::{
@@ -24,10 +24,12 @@ pub use callback::{
 };
 use rustc_middle::ty::{Instance, TyCtxt};
 
+mod approximation;
 mod async_support;
 mod calling_convention;
 mod construct;
 pub mod graph;
+mod local_analysis;
 mod mutation;
 pub mod utils;
 

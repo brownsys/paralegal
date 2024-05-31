@@ -7,7 +7,7 @@ use std::{
     rc::Rc,
 };
 
-use flowistry_pdg::CallString;
+use flowistry_pdg::{CallString, GlobalLocation};
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -24,7 +24,7 @@ use rustc_utils::PlaceExt;
 pub use flowistry_pdg::{RichLocation, SourceUse, TargetUse};
 use serde::{Deserialize, Serialize};
 
-use crate::{construct::TransformCallString, utils::Captures, Asyncness};
+use crate::{utils::Captures, Asyncness};
 
 /// A node in the program dependency graph.
 ///
@@ -403,7 +403,7 @@ impl<'tcx> TransformCallString for PartialGraph<'tcx> {
 
 /// Abstracts over how previously written [`Artifact`]s are retrieved, allowing
 /// the user of this module to chose where to store them.
-pub trait ArtifactLoader<'tcx> {
+pub trait GraphLoader<'tcx> {
     fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>>;
 }
 
@@ -413,20 +413,55 @@ pub type Artifact<'tcx> = FxHashMap<DefIndex, PartialGraph<'tcx>>;
 /// An [`ArtifactLoader`] that always returns `None`.
 pub struct NoLoader;
 
-impl<'tcx> ArtifactLoader<'tcx> for NoLoader {
+impl<'tcx> GraphLoader<'tcx> for NoLoader {
     fn load(&self, _: DefId) -> Option<&PartialGraph<'tcx>> {
         None
     }
 }
 
-impl<'tcx, T: ArtifactLoader<'tcx>> ArtifactLoader<'tcx> for Rc<T> {
+impl<'tcx, T: GraphLoader<'tcx>> GraphLoader<'tcx> for Rc<T> {
     fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
         (**self).load(function)
     }
 }
 
-impl<'tcx, T: ArtifactLoader<'tcx>> ArtifactLoader<'tcx> for Box<T> {
+impl<'tcx, T: GraphLoader<'tcx>> GraphLoader<'tcx> for Box<T> {
     fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
         (**self).load(function)
     }
+}
+
+pub(crate) trait TransformCallString {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self;
+}
+
+impl TransformCallString for CallString {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
+        f(*self)
+    }
+}
+
+impl TransformCallString for DepNode<'_> {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
+        Self {
+            at: f(self.at),
+            ..*self
+        }
+    }
+}
+
+impl TransformCallString for DepEdge {
+    fn transform_call_string(&self, f: impl Fn(CallString) -> CallString) -> Self {
+        Self {
+            at: f(self.at),
+            ..*self
+        }
+    }
+}
+
+pub(crate) fn push_call_string_root<T: TransformCallString>(
+    old: &T,
+    new_root: GlobalLocation,
+) -> T {
+    old.transform_call_string(|c| c.push_front(new_root))
 }

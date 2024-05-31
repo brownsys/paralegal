@@ -15,7 +15,7 @@ use std::path::Path;
 use std::{fs::File, io::Read, rc::Rc};
 
 use flowistry_pdg_construction::{
-    graph::InternedString, ArtifactLoader, Asyncness, DepGraph, MemoPdgConstructor, PartialGraph,
+    graph::InternedString, GraphLoader, Asyncness, DepGraph, MemoPdgConstructor, PartialGraph,
 };
 
 use rustc_hash::FxHashMap;
@@ -62,7 +62,7 @@ pub enum MetadataLoaderError {
 
 use MetadataLoaderError::*;
 
-impl<'tcx> ArtifactLoader<'tcx> for MetadataLoader<'tcx> {
+impl<'tcx> GraphLoader<'tcx> for MetadataLoader<'tcx> {
     fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
         let res = self
             .get_metadata(function.krate)

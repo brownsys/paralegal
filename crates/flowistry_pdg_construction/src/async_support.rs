@@ -15,7 +15,8 @@ use rustc_middle::{
 };
 
 use crate::{
-    construct::{push_call_string_root, CallKind, LocalAnalysis},
+    graph::push_call_string_root,
+    local_analysis::{CallKind, LocalAnalysis},
     utils, PartialGraph,
 };
 
