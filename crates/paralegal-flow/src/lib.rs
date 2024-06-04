@@ -139,7 +139,7 @@ impl rustc_driver::Callbacks for NoopCallbacks {}
 impl Callbacks {
     pub fn run(&self, tcx: TyCtxt) -> anyhow::Result<ProgramDescription> {
         tcx.sess.abort_if_errors();
-        Ok(discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?)
+        discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()
     }
 
     pub fn new(opts: &'static Args) -> Self {
