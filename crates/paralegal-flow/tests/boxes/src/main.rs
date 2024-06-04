@@ -28,11 +28,27 @@ fn modifier() -> usize {
 }
 
 #[paralegal::analyze]
-fn box_mut_ref() {
+fn ref_with_checkpoint() {
     let mut inp = source();
     let r = checkpoint_2(&mut inp);
     ***r += modifier();
     sink(inp);
+}
+
+#[paralegal::analyze]
+fn strong_box_update() {
+    let mut inp = Box::new(source_2());
+    let r = &mut inp;
+    **r = modifier();
+    sink(inp);
+}
+
+#[paralegal::analyze]
+fn strong_ref_in_box_update() {
+    let mut src = source_2();
+    let mut inp = Box::new(&mut src);
+    **inp = modifier();
+    sink(src);
 }
 
 #[paralegal::marker(source_2, return)]
@@ -50,10 +66,19 @@ fn field_ref() {
 }
 
 #[paralegal::analyze]
-fn simple_box_mut_ref() {
+fn ref_mut_box() {
     let mut inp = Box::new(source_2());
     let my_ref = &mut inp;
 
     **my_ref += modifier();
     sink(inp);
+}
+
+#[paralegal::analyze]
+fn box_ref_mut() {
+    let mut src = source_2();
+    let mut inp = Box::new(&mut src);
+
+    **inp += modifier();
+    sink(src);
 }
