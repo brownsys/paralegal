@@ -20,7 +20,7 @@ rustc_utils = { version = "=0.7.4-nightly-2023-08-25", features = [
 ] }
 rustc_plugin = "=0.7.4-nightly-2023-08-25"
 #flowistry = { path = "../flowistry/crates/flowistry", default-features = false }
-flowistry = { git = "https://github.com/brownsys/flowistry", rev = "a2ccfca2e6b5668ffd246eddc6abaf4d6e440a35", default-features = false }
+flowistry = { git = "https://github.com/brownsys/flowistry", rev = "f4f837ee9f416e469d5a059f208c1dbf16481947", default-features = false }
 
 [profile.release]
 debug = true
@@ -33,3 +33,8 @@ debug = true
     "indexical",
 ] }
 "rustc_plugin:0.7.4-nightly-2023-08-25" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "dfcce83759b46ecd585d9d56e5c8e8d0b3df5b3c" }
+
+# "rustc_utils:0.7.4-nightly-2023-08-25" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "e990ded60afc928f76293fb9ad265c58405da1a7", features = [
+#     "indexical",
+# ] }
+# "rustc_plugin:0.7.4-nightly-2023-08-25" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "e990ded60afc928f76293fb9ad265c58405da1a7" }

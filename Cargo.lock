@@ -454,7 +454,7 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 [[package]]
 name = "flowistry"
 version = "0.5.41"
-source = "git+https://github.com/brownsys/flowistry?rev=a2ccfca2e6b5668ffd246eddc6abaf4d6e440a35#a2ccfca2e6b5668ffd246eddc6abaf4d6e440a35"
+source = "git+https://github.com/brownsys/flowistry?rev=f4f837ee9f416e469d5a059f208c1dbf16481947#f4f837ee9f416e469d5a059f208c1dbf16481947"
 dependencies = [
  "anyhow",
  "cfg-if",
