@@ -3,7 +3,7 @@
 extern crate smallvec;
 use thiserror::Error;
 
-use smallvec::SmallVec;
+
 
 use crate::{
     desc::Identifier,
