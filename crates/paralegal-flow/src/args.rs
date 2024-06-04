@@ -12,6 +12,7 @@
 use anyhow::Error;
 use clap::ValueEnum;
 use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
 
 use crate::utils::TinyBitSet;
 use crate::{num_derive, num_traits::FromPrimitive};
@@ -48,7 +49,6 @@ impl TryFrom<ClapArgs> for Args {
             target,
             abort_after_analysis,
             mut anactrl,
-            modelctrl,
             dump,
             marker_control,
             cargo_args,
@@ -97,7 +97,6 @@ impl TryFrom<ClapArgs> for Args {
             target,
             abort_after_analysis,
             anactrl: anactrl.try_into()?,
-            modelctrl,
             dump,
             build_config,
             marker_control,
@@ -123,14 +122,30 @@ pub struct Args {
     marker_control: MarkerControl,
     /// Additional arguments that control the flow analysis specifically
     anactrl: AnalysisCtrl,
-    /// Additional arguments that control the generation and composition of the model
-    modelctrl: ModelCtrl,
     /// Additional arguments that control debug output specifically
     dump: DumpArgs,
     /// Additional configuration for the build process/rustc
     build_config: BuildConfig,
     /// Additional options for cargo
     cargo_args: Vec<String>,
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            verbosity: log::LevelFilter::Info,
+            log_level_config: LogLevelConfig::Disabled,
+            result_path: PathBuf::from(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
+            relaxed: false,
+            target: None,
+            abort_after_analysis: false,
+            marker_control: Default::default(),
+            anactrl: Default::default(),
+            dump: Default::default(),
+            build_config: Default::default(),
+            cargo_args: Vec::new(),
+        }
+    }
 }
 
 /// Arguments as exposed on the command line.
@@ -172,9 +187,6 @@ pub struct ClapArgs {
     /// Additional arguments which control marker assignment and discovery
     #[clap(flatten, next_help_heading = "Marker Control")]
     marker_control: MarkerControl,
-    /// Additional arguments that control the generation and composition of the model
-    #[clap(flatten, next_help_heading = "Model Generation")]
-    modelctrl: ModelCtrl,
     /// Additional arguments that control debug args specifically
     #[clap(flatten)]
     dump: ParseableDumpArgs,
@@ -240,7 +252,7 @@ impl From<ParseableDumpArgs> for DumpArgs {
 /// cli, internally we use the snake-case version of the option as a method on
 /// this type. This is so we can rename the outer UI without breaking code or
 /// even combine options together.
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
 pub struct DumpArgs(TinyBitSet);
 
 impl DumpArgs {
@@ -318,9 +330,6 @@ impl Args {
         &self.anactrl
     }
 
-    pub fn modelctrl(&self) -> &ModelCtrl {
-        &self.modelctrl
-    }
     /// the file to write results to
     pub fn result_path(&self) -> &std::path::Path {
         self.result_path.as_path()
@@ -349,8 +358,8 @@ impl Args {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
-pub struct ModelCtrl {
+#[derive(serde::Serialize, serde::Deserialize, clap::Args, Default)]
+pub struct MarkerControl {
     /// A JSON file from which to load additional annotations. Whereas normally
     /// annotation can only be placed on crate-local items, these can also be
     /// placed on third party items, such as functions from the stdlib.
@@ -364,27 +373,9 @@ pub struct ModelCtrl {
     external_annotations: Option<std::path::PathBuf>,
 }
 
-impl ModelCtrl {
+impl MarkerControl {
     pub fn external_annotations(&self) -> Option<&std::path::Path> {
         self.external_annotations.as_deref()
-    }
-}
-
-/// Arguments which control marker assignment and discovery
-#[derive(serde::Serialize, serde::Deserialize, clap::Args)]
-pub struct MarkerControl {
-    /// Don't mark the outputs of local functions if they are of a marked type.
-    ///
-    /// Be aware that disabling this can cause unsoundness as inline
-    /// construction of such types will not be emitted into the model. A warning
-    /// is however emitted in that case.
-    #[clap(long, env = "PARALEGAL_NO_LOCAL_FUNCTION_TYPE_MARKING")]
-    no_local_function_type_marking: bool,
-}
-
-impl MarkerControl {
-    pub fn local_function_type_marking(&self) -> bool {
-        !self.no_local_function_type_marking
     }
 }
 
@@ -423,6 +414,15 @@ pub struct AnalysisCtrl {
     /// Disables all recursive analysis (both paralegal_flow's inlining as well as
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
+}
+
+impl Default for AnalysisCtrl {
+    fn default() -> Self {
+        Self {
+            analyze: Vec::new(),
+            inlining_depth: InliningDepth::Adaptive,
+        }
+    }
 }
 
 impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
