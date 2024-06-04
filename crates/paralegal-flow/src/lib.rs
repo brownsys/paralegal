@@ -63,7 +63,7 @@ pub mod rust {
 }
 
 use args::{ClapArgs, LogLevelConfig};
-use desc::utils::write_sep;
+use desc::{utils::write_sep, ProgramDescription};
 use rust::*;
 
 use rustc_plugin::CrateFilter;
@@ -94,7 +94,7 @@ pub mod test_utils;
 pub use paralegal_spdg as desc;
 
 pub use crate::ann::db::MarkerCtx;
-pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
+pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, MarkerControl};
 
 use crate::{
     stats::{Stats, TimedStat},
@@ -136,6 +136,21 @@ struct NoopCallbacks {}
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
 
+impl Callbacks {
+    pub fn run(&self, tcx: TyCtxt) -> anyhow::Result<ProgramDescription> {
+        tcx.sess.abort_if_errors();
+        Ok(discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?)
+    }
+
+    pub fn new(opts: &'static Args) -> Self {
+        Self {
+            opts,
+            stats: Default::default(),
+            start: Instant::now(),
+        }
+    }
+}
+
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
         config.override_queries = Some(borrowck_facts::override_queries);
@@ -157,9 +172,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
-                tcx.sess.abort_if_errors();
-                let desc =
-                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
+                let desc = self.run(tcx)?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
 
@@ -361,14 +374,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             "Arguments: {}",
             Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
         );
-        rustc_driver::RunCompiler::new(
-            &compiler_args,
-            &mut Callbacks {
-                opts,
-                stats: Default::default(),
-                start: Instant::now(),
-            },
-        )
-        .run()
+        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks::new(opts)).run()
     }
 }
