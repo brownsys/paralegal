@@ -714,7 +714,7 @@ impl<'tcx> GraphConstructor<'tcx> {
     ) -> Vec<DepNode<'tcx>> {
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
-            .refs_in_projection()
+            .refs_in_projection(self.place_info.body, self.place_info.tcx)
             .map(|(place_ref, _)| Place::from_ref(place_ref, self.tcx));
         let inputs = iter::once(input).chain(provenance);
 
