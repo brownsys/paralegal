@@ -453,7 +453,7 @@ pub struct MarkerDatabase<'tcx> {
     /// Cache whether markers are reachable transitively.
     reachable_markers: Cache<FnResolution<'tcx>, Box<[Identifier]>>,
     /// Configuration options
-    config: &'static MarkerControl,
+    _config: &'static MarkerControl,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
 }
 
@@ -465,7 +465,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             local_annotations: HashMap::default(),
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
-            config: args.marker_control(),
+            _config: args.marker_control(),
             type_markers: Default::default(),
         }
     }
