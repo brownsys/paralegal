@@ -15,7 +15,8 @@ use std::path::Path;
 use std::{fs::File, io::Read, rc::Rc};
 
 use flowistry_pdg_construction::{
-    graph::InternedString, Asyncness, DepGraph, GraphLoader, MemoPdgConstructor, PartialGraph,
+    graph::InternedString, Asyncness, ConstructionErr, DepGraph, GraphLoader, MemoPdgConstructor,
+    PartialGraph,
 };
 
 use rustc_hash::FxHashMap;
@@ -31,7 +32,7 @@ use rustc_middle::{
 };
 use rustc_serialize::{Decodable, Encodable};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
 use thiserror::Error;
 
@@ -63,13 +64,18 @@ pub enum MetadataLoaderError {
 use MetadataLoaderError::*;
 
 impl<'tcx> GraphLoader<'tcx> for MetadataLoader<'tcx> {
-    fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
-        let res = self
-            .get_metadata(function.krate)
-            .ok()?
+    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, ConstructionErr> {
+        let Ok(meta) = self.get_metadata(function.krate) else {
+            return Ok(None);
+        };
+        let res = meta
             .pdgs
-            .get(&function.index);
-        res
+            .get(&function.index)
+            .ok_or(ConstructionErr::CrateExistsButItemIsNotFound { function })?
+            .as_ref()
+            .map_err(Clone::clone)?;
+
+        Ok(Some(res))
     }
 }
 
@@ -99,10 +105,8 @@ impl<'tcx> MetadataLoader<'tcx> {
         let pdgs = emit_targets
             .into_iter()
             .map(|t| {
-                (
-                    t.local_def_index,
-                    (*constructor.construct_root(t).unwrap()).clone(),
-                )
+                let graph = constructor.construct_root(t);
+                (t.local_def_index, graph.map(Clone::clone))
             })
             .collect::<FxHashMap<_, _>>();
         let meta = Metadata::from_pdgs(tcx, pdgs, marker_ctx.db());
@@ -152,13 +156,15 @@ impl<'tcx> MetadataLoader<'tcx> {
     }
 }
 
+pub type PdgMap<'tcx> = FxHashMap<DefIndex, Result<PartialGraph<'tcx>, ConstructionErr>>;
+
 /// Intermediate artifacts stored on disc for every crate.
 ///
 /// Contains PDGs and reduced information about the source code that is needed
 /// downstream.
 #[derive(Clone, Debug, TyEncodable, TyDecodable)]
 pub struct Metadata<'tcx> {
-    pub pdgs: FxHashMap<DefIndex, PartialGraph<'tcx>>,
+    pub pdgs: PdgMap<'tcx>,
     pub bodies: FxHashMap<DefIndex, BodyInfo<'tcx>>,
     pub local_annotations: HashMap<DefIndex, Vec<Annotation>>,
     pub reachable_markers: HashMap<(DefIndex, GenericArgsRef<'tcx>), Box<[InternedString]>>,
@@ -177,12 +183,13 @@ impl<'tcx> Metadata<'tcx> {
     /// record from rustc and return a serializable metadata artifact.
     pub fn from_pdgs(
         tcx: TyCtxt<'tcx>,
-        pdgs: FxHashMap<DefIndex, PartialGraph<'tcx>>,
+        pdgs: PdgMap<'tcx>,
         markers: &MarkerDatabase<'tcx>,
     ) -> Self {
         let mut bodies: FxHashMap<DefIndex, BodyInfo> = Default::default();
         for call_string in pdgs
             .values()
+            .filter_map(|e| e.as_ref().ok())
             .flat_map(|subgraph| subgraph.mentioned_call_string())
         {
             for location in call_string.iter() {
@@ -263,6 +270,8 @@ impl<'tcx> MetadataLoader<'tcx> {
             .pdgs
             .get(&key.index)
             .ok_or(PdgForItemMissing(key))?
+            .as_ref()
+            .map_err(Clone::clone)?
             .get_mono(cs)
             .ok_or(NoGenericsKnownForCallSite(cs))?)
     }
@@ -273,6 +282,8 @@ impl<'tcx> MetadataLoader<'tcx> {
             .pdgs
             .get(&key.index)
             .ok_or(PdgForItemMissing(key))?
+            .as_ref()
+            .map_err(Clone::clone)?
             .to_petgraph())
     }
 
@@ -283,6 +294,8 @@ impl<'tcx> MetadataLoader<'tcx> {
                     .ok()?
                     .pdgs
                     .get(&key.index)?
+                    .as_ref()
+                    .ok()?
                     .asyncness(),
             )
         })()

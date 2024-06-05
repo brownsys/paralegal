@@ -195,11 +195,16 @@ pub enum AsyncDeterminationResult<T> {
 }
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
-    pub(crate) fn try_handle_as_async(&self) -> Option<PartialGraph<'tcx>> {
-        let (generator_fn, location, asyncness) =
-            determine_async(self.tcx(), self.def_id, &self.body)?;
+    pub(crate) fn try_handle_as_async(&self) -> anyhow::Result<Option<PartialGraph<'tcx>>> {
+        let Some((generator_fn, location, asyncness)) =
+            determine_async(self.tcx(), self.def_id, &self.body)
+        else {
+            return Ok(None);
+        };
 
-        let g = self.memo.construct_for(generator_fn)?;
+        let Some(g) = self.memo.construct_for(generator_fn)? else {
+            return Ok(None);
+        };
         let gloc = GlobalLocation {
             function: self.def_id.to_def_id(),
             location: flowistry_pdg::RichLocation::Location(location),
@@ -208,7 +213,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         //let g_generics = std::mem::replace(&mut new_g.graph.generics, self.generic_args());
         new_g.asyncness = asyncness;
         new_g.monos.insert(CallString::single(gloc), new_g.generics);
-        Some(new_g)
+        Ok(Some(new_g))
     }
 
     pub(crate) fn try_poll_call_kind<'b>(

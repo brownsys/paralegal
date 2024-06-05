@@ -20,6 +20,8 @@ use rustc_span::ErrorGuaranteed;
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
+use crate::construct::ConstructionErr;
+
 pub trait Captures<'a> {}
 impl<'a, T: ?Sized> Captures<'a> for T {}
 
@@ -216,7 +218,7 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
 pub fn manufacture_substs_for(
     tcx: TyCtxt<'_>,
     function: DefId,
-) -> Result<&List<GenericArg<'_>>, ErrorGuaranteed> {
+) -> Result<&List<GenericArg<'_>>, ConstructionErr> {
     use rustc_middle::ty::{
         Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
         ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
@@ -245,17 +247,14 @@ pub fn manufacture_substs_for(
                 )))
             }
             GenericParamDefKind::Const { .. } => {
-                return Err(tcx.sess.span_err(
-                    tcx.def_span(param.def_id),
-                    "Cannot use constants as generic parameters in controllers",
-                ))
+                return Err(ConstructionErr::ConstantInGenerics { function });
             }
             GenericParamDefKind::Type { .. } => (),
         };
 
         let param_as_ty = ParamTy::for_def(param);
         let constraints = predicates.predicates.iter().enumerate().rev().filter_map(
-            |(pidx, clause)| {
+            |(_pidx, clause)| {
                 trace!("  Trying clause {clause:?}");
                 let pred = if let Some(trait_ref) = clause.as_trait_clause() {
                     trace!("    is trait clause");
@@ -264,10 +263,7 @@ pub fn manufacture_substs_for(
                         return None;
                     };
                     let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
-                        return Some(Err(tcx.sess.span_err(
-                            tcx.def_span(param.def_id),
-                            format!("Trait ref had binder {trait_ref:?}"),
-                        )));
+                        return Some(Err(ConstructionErr::TraitRefWithBinder { function }));
                     };
                     if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty)
                     {
@@ -284,9 +280,9 @@ pub fn manufacture_substs_for(
                 } else if let Some(pred) = clause.as_projection_clause() {
                     trace!("    is projection clause");
                     let Some(pred) = pred.no_bound_vars() else {
-                        return Some(Err(tcx
-                            .sess
-                            .span_err(predicates.spans[pidx], "Bound vars in predicate")));
+                        return Some(Err(ConstructionErr::BoundVariablesInPredicates {
+                            function: function,
+                        }));
                     };
                     if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
                         trace!("    Bailing because self type is not param type");
@@ -308,10 +304,21 @@ pub fn manufacture_substs_for(
         let mut predicates = constraints.collect::<Result<Vec<_>, _>>()?;
         trace!("  collected predicates {predicates:?}");
         match predicates.len() {
-            0 => predicates.push(Binder::dummy(ExistentialPredicate::Trait(ExistentialTraitRef { def_id: tcx.get_diagnostic_item(rustc_span::sym::Any).expect("The `Any` item is not defined."), args: List::empty() }))),
+            0 => predicates.push(Binder::dummy(ExistentialPredicate::Trait(
+                ExistentialTraitRef {
+                    def_id: tcx
+                        .get_diagnostic_item(rustc_span::sym::Any)
+                        .expect("The `Any` item is not defined."),
+                    args: List::empty(),
+                },
+            ))),
             1 => (),
-            _ =>
-            return Err(tcx.sess.span_err(tcx.def_span(function), format!("Could not create dynamic arguments for this function because more than one predicate were required: {predicates:?}"))),
+            _ => {
+                return Err(ConstructionErr::TooManyPredicatesForSynthesizingGenerics {
+                    function: function,
+                    number: predicates.len() as u32,
+                })
+            }
         };
         let poly_predicate = tcx.mk_poly_existential_predicates_from_iter(predicates.into_iter());
         trace!("  poly predicate {poly_predicate:?}");

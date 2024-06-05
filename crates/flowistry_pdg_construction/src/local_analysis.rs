@@ -1,5 +1,6 @@
 use std::{collections::HashSet, iter, rc::Rc};
 
+use anyhow::anyhow;
 use flowistry::mir::placeinfo::PlaceInfo;
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
@@ -27,6 +28,7 @@ use crate::{
     approximation::ApproximationHandler,
     async_support::*,
     calling_convention::*,
+    construct::ConstructionErr,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
@@ -343,16 +345,21 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         location: Location,
         func: &Operand<'tcx>,
         args: &'b [Operand<'tcx>],
-    ) -> Option<CallHandling<'tcx, 'b>> {
+    ) -> anyhow::Result<Option<CallHandling<'tcx, 'b>>> {
         let tcx = self.tcx();
 
-        let (called_def_id, generic_args) = self.operand_to_def_id(func)?;
+        let (called_def_id, generic_args) = self
+            .operand_to_def_id(func)
+            .ok_or_else(|| anyhow!("operand {func:?} is not of function type"))?;
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
 
         // Monomorphize the called function with the known generic_args.
         let param_env = tcx.param_env_reveal_all_normalized(self.def_id);
         let resolved_fn =
-            utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)?;
+            utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)
+                .ok_or_else(|| {
+                    ConstructionErr::instance_resolution_failed(called_def_id, generic_args)
+                })?;
         trace!("resolved to instance {resolved_fn:?}");
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
@@ -362,11 +369,11 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         if is_non_default_trait_method(tcx, resolved_def_id).is_some() {
             trace!("  bailing because is unresolvable trait method");
-            return None;
+            return Ok(None);
         }
 
         if let Some(handler) = self.can_approximate_async_functions(resolved_def_id) {
-            return Some(CallHandling::ApproxAsyncSM(handler));
+            return Ok(Some(CallHandling::ApproxAsyncSM(handler)));
         };
 
         let call_kind = match self.classify_call_kind(called_def_id, resolved_def_id, args) {
@@ -380,7 +387,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                         InlineMissReason::Async(async_err),
                     )
                 }
-                return None;
+                return Ok(None);
             }
         };
 
@@ -430,14 +437,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             // If a skip was requested then "poll" will not be inlined later so we
             // bail with "None" here and perform the mutations. Otherwise we bail with
             // "Some", knowing that handling "poll" later will handle the mutations.
-            return (!matches!(
+            return Ok((!matches!(
                 &call_changes,
                 Some(CallChanges {
                     skip: SkipCall::Skip,
                     ..
                 })
             ))
-            .then_some(CallHandling::ApproxAsyncFn);
+            .then_some(CallHandling::ApproxAsyncFn));
         }
 
         if matches!(
@@ -448,19 +455,21 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             })
         ) {
             trace!("  Bailing because user callback said to bail");
-            return None;
+            return Ok(None);
         }
-        let Some(descriptor) = self.memo.construct_for(cache_key) else {
+        let Some(descriptor) = self.memo.construct_for(cache_key)? else {
             trace!("  Bailing because cache lookup {cache_key} failed");
-            return None;
+            return Ok(None);
         };
-        Some(CallHandling::Ready {
+        Ok(Some(CallHandling::Ready {
             descriptor,
             calling_convention,
-        })
+        }))
     }
 
-    /// Attempt to inline a call to a function, returning None if call is not inline-able.
+    /// Attempt to inline a call to a function.
+    ///
+    /// The return indicates whether we were successfully able to perform the inlining.
     fn handle_call(
         &self,
         state: &mut InstructionState<'tcx>,
@@ -468,11 +477,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         func: &Operand<'tcx>,
         args: &[Operand<'tcx>],
         destination: Place<'tcx>,
-    ) -> Option<()> {
+    ) -> anyhow::Result<bool> {
         // Note: my comments here will use "child" to refer to the callee and
         // "parent" to refer to the caller, since the words are most visually distinct.
 
-        let preamble = self.determine_call_handling(location, func, args)?;
+        let Some(preamble) = self.determine_call_handling(location, func, args)? else {
+            return Ok(false);
+        };
 
         trace!("Call handling is {}", preamble.as_ref());
 
@@ -489,7 +500,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 );
                 self.modular_mutation_visitor(state)
                     .visit_assign(&destination, &rvalue, location);
-                return Some(());
+                return Ok(true);
             }
             CallHandling::ApproxAsyncSM(handler) => {
                 handler(
@@ -499,7 +510,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     destination,
                     location,
                 );
-                return Some(());
+                return Ok(true);
             }
         };
 
@@ -528,7 +539,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
         }
 
-        Some(())
+        Ok(true)
     }
 
     fn modular_mutation_visitor<'b: 'a>(
@@ -561,24 +572,24 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             ..
         } = &terminator.kind
         {
-            if self
-                .handle_call(state, location, func, args, *destination)
-                .is_none()
-            {
-                trace!("Terminator {:?} failed the preamble", terminator.kind);
-                self.terminator_visitor(state, time)
-                    .visit_terminator(terminator, location)
+            match self.handle_call(state, location, func, args, *destination) {
+                Err(e) => {
+                    self.tcx().sess.warn(e.to_string());
+                }
+                Ok(false) => {
+                    trace!("Terminator {:?} failed the preamble", terminator.kind);
+                }
+                Ok(true) => return,
             }
-        } else {
-            // Fallback: call the visitor
-            self.terminator_visitor(state, time)
-                .visit_terminator(terminator, location)
         }
+        // Fallback: call the visitor
+        self.terminator_visitor(state, time)
+            .visit_terminator(terminator, location)
     }
 
-    pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx> {
-        if let Some(g) = self.try_handle_as_async() {
-            return g;
+    pub(crate) fn construct_partial(&'a self) -> anyhow::Result<PartialGraph<'tcx>> {
+        if let Some(g) = self.try_handle_as_async()? {
+            return Ok(g);
         }
 
         let mut analysis = self
@@ -620,7 +631,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
         }
 
-        final_state
+        Ok(final_state)
     }
 
     /// Determine the type of call-site.

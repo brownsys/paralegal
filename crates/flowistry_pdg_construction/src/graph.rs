@@ -24,7 +24,7 @@ use rustc_utils::PlaceExt;
 pub use flowistry_pdg::{RichLocation, SourceUse, TargetUse};
 use serde::{Deserialize, Serialize};
 
-use crate::{utils::Captures, Asyncness};
+use crate::{construct::ConstructionErr, utils::Captures, Asyncness};
 
 /// A node in the program dependency graph.
 ///
@@ -404,29 +404,39 @@ impl<'tcx> TransformCallString for PartialGraph<'tcx> {
 /// Abstracts over how previously written [`Artifact`]s are retrieved, allowing
 /// the user of this module to chose where to store them.
 pub trait GraphLoader<'tcx> {
-    fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>>;
+    /// Try loading the graph for this function.
+    ///
+    /// This is intended to return `Err` in cases where an expectation is
+    /// violated. For instance if we request a function from a crate that
+    /// *should* have been analyzed or if `function` does not refer to a
+    /// function item.
+    ///
+    /// This should return `Ok(None)` in cases where the target is not expected
+    /// to have it's partial graph present. For instance if `function` refers to
+    /// an item in a crate that was not selected for analysis.
+    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, ConstructionErr>;
 }
 
 /// Intermediate data that gets stored for each crate.
 pub type Artifact<'tcx> = FxHashMap<DefIndex, PartialGraph<'tcx>>;
 
-/// An [`ArtifactLoader`] that always returns `None`.
+/// An [`ArtifactLoader`] that always returns `Ok(None)`.
 pub struct NoLoader;
 
 impl<'tcx> GraphLoader<'tcx> for NoLoader {
-    fn load(&self, _: DefId) -> Option<&PartialGraph<'tcx>> {
-        None
+    fn load(&self, _: DefId) -> Result<Option<&PartialGraph<'tcx>>, ConstructionErr> {
+        Ok(None)
     }
 }
 
 impl<'tcx, T: GraphLoader<'tcx>> GraphLoader<'tcx> for Rc<T> {
-    fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
+    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, ConstructionErr> {
         (**self).load(function)
     }
 }
 
 impl<'tcx, T: GraphLoader<'tcx>> GraphLoader<'tcx> for Box<T> {
-    fn load(&self, function: DefId) -> Option<&PartialGraph<'tcx>> {
+    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, ConstructionErr> {
         (**self).load(function)
     }
 }

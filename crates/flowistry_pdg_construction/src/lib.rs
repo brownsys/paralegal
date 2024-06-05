@@ -16,6 +16,7 @@ extern crate rustc_target;
 extern crate rustc_type_ir;
 
 pub use async_support::{determine_async, is_async_trait_fn, Asyncness};
+pub use construct::ConstructionErr;
 pub use graph::{Artifact, DepGraph, GraphLoader, NoLoader, PartialGraph};
 pub mod callback;
 pub use crate::construct::MemoPdgConstructor;
@@ -36,5 +37,9 @@ pub mod utils;
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.
 pub fn compute_pdg<'tcx>(tcx: TyCtxt<'tcx>, params: Instance<'tcx>) -> DepGraph<'tcx> {
     let constructor = MemoPdgConstructor::new(tcx, NoLoader);
-    constructor.construct_for(params).unwrap().to_petgraph()
+    constructor
+        .construct_for(params)
+        .and_then(|f| f.ok_or(ConstructionErr::Impossible.into()))
+        .unwrap()
+        .to_petgraph()
 }
