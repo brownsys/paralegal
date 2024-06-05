@@ -17,7 +17,7 @@ use rustc_middle::{
 use crate::{
     graph::push_call_string_root,
     local_analysis::{CallKind, LocalAnalysis},
-    utils, PartialGraph,
+    utils, ConstructionErr, PartialGraph,
 };
 
 /// Describe in which way a function is `async`.
@@ -195,7 +195,9 @@ pub enum AsyncDeterminationResult<T> {
 }
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
-    pub(crate) fn try_handle_as_async(&self) -> anyhow::Result<Option<PartialGraph<'tcx>>> {
+    pub(crate) fn try_handle_as_async(
+        &self,
+    ) -> Result<Option<PartialGraph<'tcx>>, Vec<ConstructionErr>> {
         let Some((generator_fn, location, asyncness)) =
             determine_async(self.tcx(), self.def_id, &self.body)
         else {

@@ -28,7 +28,7 @@ use crate::{
     approximation::ApproximationHandler,
     async_support::*,
     calling_convention::*,
-    construct::ConstructionErr,
+    construct::{ConstructionErr, WithConstructionErrors},
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
@@ -345,12 +345,12 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         location: Location,
         func: &Operand<'tcx>,
         args: &'b [Operand<'tcx>],
-    ) -> anyhow::Result<Option<CallHandling<'tcx, 'b>>> {
+    ) -> Result<Option<CallHandling<'tcx, 'b>>, Vec<ConstructionErr>> {
         let tcx = self.tcx();
 
         let (called_def_id, generic_args) = self
             .operand_to_def_id(func)
-            .ok_or_else(|| anyhow!("operand {func:?} is not of function type"))?;
+            .ok_or_else(|| vec![ConstructionErr::operand_is_not_function_type(func)])?;
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
 
         // Monomorphize the called function with the known generic_args.
@@ -358,7 +358,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         let resolved_fn =
             utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)
                 .ok_or_else(|| {
-                    ConstructionErr::instance_resolution_failed(called_def_id, generic_args)
+                    vec![ConstructionErr::instance_resolution_failed(
+                        called_def_id,
+                        generic_args,
+                    )]
                 })?;
         trace!("resolved to instance {resolved_fn:?}");
         let resolved_def_id = resolved_fn.def_id();
@@ -477,7 +480,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         func: &Operand<'tcx>,
         args: &[Operand<'tcx>],
         destination: Place<'tcx>,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, Vec<ConstructionErr>> {
         // Note: my comments here will use "child" to refer to the callee and
         // "parent" to refer to the caller, since the words are most visually distinct.
 
@@ -558,52 +561,29 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         self.root.args
     }
 
-    fn handle_terminator(
-        &self,
-        terminator: &Terminator<'tcx>,
-        state: &mut InstructionState<'tcx>,
-        location: Location,
-        time: Time,
-    ) {
-        if let TerminatorKind::Call {
-            func,
-            args,
-            destination,
-            ..
-        } = &terminator.kind
-        {
-            match self.handle_call(state, location, func, args, *destination) {
-                Err(e) => {
-                    self.tcx().sess.warn(e.to_string());
-                }
-                Ok(false) => {
-                    trace!("Terminator {:?} failed the preamble", terminator.kind);
-                }
-                Ok(true) => return,
-            }
-        }
-        // Fallback: call the visitor
-        self.terminator_visitor(state, time)
-            .visit_terminator(terminator, location)
-    }
-
-    pub(crate) fn construct_partial(&'a self) -> anyhow::Result<PartialGraph<'tcx>> {
+    pub(crate) fn construct_partial(&'a self) -> Result<PartialGraph<'tcx>, Vec<ConstructionErr>> {
         if let Some(g) = self.try_handle_as_async()? {
             return Ok(g);
         }
 
-        let mut analysis = self
+        let mut analysis = WithConstructionErrors::new(self)
             .into_engine(self.tcx(), &self.body)
             .iterate_to_fixpoint();
 
-        let mut final_state = PartialGraph::new(
+        if !analysis.analysis.errors.is_empty() {
+            return Err(analysis.analysis.errors.into_iter().collect());
+        }
+
+        let mut final_state = WithConstructionErrors::new(PartialGraph::new(
             Asyncness::No,
             self.generic_args(),
             self.def_id.to_def_id(),
             self.body.arg_count,
-        );
+        ));
 
         analysis.visit_reachable_with(&self.body, &mut final_state);
+
+        let mut final_state = final_state.into_result()?;
 
         let all_returns = self.body.all_returns().map(|ret| ret.block).collect_vec();
         let mut analysis = analysis.into_results_cursor(&self.body);
@@ -669,10 +649,45 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
+impl<'tcx, 'a> WithConstructionErrors<&'_ LocalAnalysis<'tcx, 'a>> {
+    fn handle_terminator(
+        &mut self,
+        terminator: &Terminator<'tcx>,
+        state: &mut InstructionState<'tcx>,
+        location: Location,
+        time: Time,
+    ) {
+        if let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &terminator.kind
+        {
+            match self
+                .inner
+                .handle_call(state, location, func, args, *destination)
+            {
+                Err(e) => {
+                    self.errors.extend(e);
+                }
+                Ok(false) => {
+                    trace!("Terminator {:?} failed the preamble", terminator.kind);
+                }
+                Ok(true) => return,
+            }
+        }
+        // Fallback: call the visitor
+        self.inner
+            .terminator_visitor(state, time)
+            .visit_terminator(terminator, location)
+    }
+}
+
+impl<'tcx, 'a> df::AnalysisDomain<'tcx> for WithConstructionErrors<&'a LocalAnalysis<'tcx, 'a>> {
     type Domain = InstructionState<'tcx>;
 
-    const NAME: &'static str = "LocalDGPConstruction";
+    const NAME: &'static str = "LocalPdgConstruction";
 
     fn bottom_value(&self, _body: &Body<'tcx>) -> Self::Domain {
         InstructionState::default()
@@ -681,14 +696,15 @@ impl<'tcx, 'a> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
 }
 
-impl<'a, 'tcx> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
+impl<'a, 'tcx> df::Analysis<'tcx> for WithConstructionErrors<&'a LocalAnalysis<'tcx, 'a>> {
     fn apply_statement_effect(
         &mut self,
         state: &mut Self::Domain,
         statement: &Statement<'tcx>,
         location: Location,
     ) {
-        self.modular_mutation_visitor(state)
+        self.inner
+            .modular_mutation_visitor(state)
             .visit_statement(statement, location)
     }
 

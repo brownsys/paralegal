@@ -39,7 +39,8 @@ pub fn compute_pdg<'tcx>(tcx: TyCtxt<'tcx>, params: Instance<'tcx>) -> DepGraph<
     let constructor = MemoPdgConstructor::new(tcx, NoLoader);
     constructor
         .construct_for(params)
-        .and_then(|f| f.ok_or(ConstructionErr::Impossible.into()))
+        .unwrap()
+        .ok_or(ConstructionErr::Impossible)
         .unwrap()
         .to_petgraph()
 }

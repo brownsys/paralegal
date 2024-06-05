@@ -15,15 +15,18 @@ use either::Either;
 
 use flowistry_pdg::{CallString, GlobalLocation};
 
+use itertools::Itertools;
 use log::trace;
 use petgraph::graph::DiGraph;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_macros::{Decodable, Encodable};
 use rustc_middle::{
-    mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
+    mir::{
+        visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue, Terminator, TerminatorKind,
+    },
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
 use rustc_mir_dataflow::{AnalysisDomain, Results, ResultsVisitor};
@@ -53,7 +56,7 @@ pub struct MemoPdgConstructor<'tcx> {
     pub(crate) loader: Box<dyn GraphLoader<'tcx> + 'tcx>,
 }
 
-#[derive(Debug, thiserror::Error, Encodable, Decodable, Clone)]
+#[derive(Debug, thiserror::Error, Encodable, Decodable, Clone, Hash, Eq, PartialEq)]
 pub enum ConstructionErr {
     // Would prefer to make `generics` `GenericArgsRef<'tcx>` but the `Error`
     // implementation only allows `'static` types.
@@ -67,7 +70,7 @@ pub enum ConstructionErr {
     RustcReportedError,
     #[error("crate exists but item is not found {function:?}")]
     CrateExistsButItemIsNotFound { function: DefId },
-    #[error("could not create generic arguments for {function:?} because too mah predicates were present ({number})")]
+    #[error("could not create generic arguments for {function:?} because too many predicates were present ({number})")]
     TooManyPredicatesForSynthesizingGenerics { function: DefId, number: u32 },
     #[error("found bound variables in predicates of {function:?}")]
     BoundVariablesInPredicates { function: DefId },
@@ -75,6 +78,8 @@ pub enum ConstructionErr {
     TraitRefWithBinder { function: DefId },
     #[error("cannot use constants as generic parameters in controllers")]
     ConstantInGenerics { function: DefId },
+    #[error("operand is not function type {op}")]
+    OperandIsNotFunctionType { op: String },
 }
 
 impl ConstructionErr {
@@ -82,6 +87,12 @@ impl ConstructionErr {
         Self::InstanceResolutionFailed {
             function,
             generics: format!("{generics:?}"),
+        }
+    }
+
+    pub fn operand_is_not_function_type(op: &Operand) -> Self {
+        Self::OperandIsNotFunctionType {
+            op: format!("{op:?}"),
         }
     }
 }
@@ -121,8 +132,9 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub fn construct_root<'a>(
         &'a self,
         function: LocalDefId,
-    ) -> Result<&'a PartialGraph<'tcx>, ConstructionErr> {
-        let generics = manufacture_substs_for(self.tcx, function.to_def_id())?;
+    ) -> Result<&'a PartialGraph<'tcx>, Vec<ConstructionErr>> {
+        let generics =
+            manufacture_substs_for(self.tcx, function.to_def_id()).map_err(|i| vec![i])?;
         let resolution = try_resolve_function(
             self.tcx,
             function.to_def_id(),
@@ -130,26 +142,31 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             generics,
         )
         .ok_or_else(|| {
-            ConstructionErr::instance_resolution_failed(function.to_def_id(), generics)
+            vec![ConstructionErr::instance_resolution_failed(
+                function.to_def_id(),
+                generics,
+            )]
         })?;
         self.construct_for(resolution)
-            .and_then(|f| f.ok_or(ConstructionErr::Impossible))
+            .and_then(|f| f.ok_or(vec![ConstructionErr::Impossible]))
     }
 
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> Result<Option<&'a PartialGraph<'tcx>>, ConstructionErr> {
+    ) -> Result<Option<&'a PartialGraph<'tcx>>, Vec<ConstructionErr>> {
         let def_id = resolution.def_id();
         let generics = resolution.args;
         if let Some(local) = def_id.as_local() {
-            Ok(self.pdg_cache.get_maybe_recursive((local, generics), |_| {
-                let g = LocalAnalysis::new(self, resolution)
-                    .construct_partial()
-                    .unwrap();
-                g.check_invariants();
-                g
-            }))
+            self.pdg_cache
+                .get_maybe_recursive((local, generics), |_| {
+                    let g = LocalAnalysis::new(self, resolution).construct_partial()?;
+                    g.check_invariants();
+                    Ok(g)
+                })
+                .map(Result::as_ref)
+                .transpose()
+                .map_err(Clone::clone)
         } else {
             self.loader.load(def_id)
         }
@@ -166,7 +183,10 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
     /// Construct a final PDG for this function. Same as
     /// [`Self::construct_root`] this instantiates all generics as `dyn`.
-    pub fn construct_graph(&self, function: LocalDefId) -> Result<DepGraph<'tcx>, ConstructionErr> {
+    pub fn construct_graph(
+        &self,
+        function: LocalDefId,
+    ) -> Result<DepGraph<'tcx>, Vec<ConstructionErr>> {
         let _args = manufacture_substs_for(self.tcx, function.to_def_id())
             .map_err(|_| anyhow!("rustc error"));
         let g = self.construct_root(function)?.to_petgraph();
@@ -174,19 +194,45 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     }
 }
 
-impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>>
-    for PartialGraph<'tcx>
+pub(crate) struct WithConstructionErrors<A> {
+    pub(crate) inner: A,
+    pub errors: FxHashSet<ConstructionErr>,
+}
+
+impl<A> WithConstructionErrors<A> {
+    pub fn new(inner: A) -> Self {
+        Self {
+            inner,
+            errors: Default::default(),
+        }
+    }
+
+    pub fn into_result(self) -> Result<A, Vec<ConstructionErr>> {
+        if self.errors.is_empty() {
+            Ok(self.inner)
+        } else {
+            Err(self.errors.into_iter().collect())
+        }
+    }
+}
+
+type DfResults<'mir, 'tcx> = Results<'tcx, DfAna<'mir, 'tcx>>;
+
+type DfAna<'mir, 'tcx> = WithConstructionErrors<&'mir LocalAnalysis<'tcx, 'mir>>;
+
+impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, DfResults<'mir, 'tcx>>
+    for WithConstructionErrors<PartialGraph<'tcx>>
 {
-    type FlowState = <&'mir LocalAnalysis<'tcx, 'mir> as AnalysisDomain<'tcx>>::Domain;
+    type FlowState = <DfAna<'mir, 'tcx> as AnalysisDomain<'tcx>>::Domain;
 
     fn visit_statement_before_primary_effect(
         &mut self,
-        results: &Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>,
+        results: &DfResults<'mir, 'tcx>,
         state: &Self::FlowState,
         statement: &'mir rustc_middle::mir::Statement<'tcx>,
         location: Location,
     ) {
-        let mut vis = self.modular_mutation_visitor(results, state);
+        let mut vis = self.inner.modular_mutation_visitor(results, state);
 
         vis.visit_statement(statement, location)
     }
@@ -209,14 +255,14 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, &'mir LocalAnalysis<'t
     /// call site.
     fn visit_terminator_before_primary_effect(
         &mut self,
-        results: &Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>,
+        results: &DfResults<'mir, 'tcx>,
         state: &Self::FlowState,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
         if let TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
             if let Some(place) = discr.place() {
-                self.register_mutation(
+                self.inner.register_mutation(
                     results,
                     state,
                     Inputs::Unresolved {
@@ -230,17 +276,19 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, &'mir LocalAnalysis<'t
             return;
         }
 
-        match self.handle_as_inline(results, state, terminator, location) {
+        match self
+            .inner
+            .handle_as_inline(results, state, terminator, location)
+        {
             Ok(false) => (),
             Ok(true) => return,
-            Err(e) => {
-                results.analysis.tcx().sess.warn(e.to_string());
-            }
+            Err(e) => self.errors.extend(e),
         }
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis =
-            ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
-                self.register_mutation(
+        let mut arg_vis = ModularMutationVisitor::new(
+            &results.analysis.inner.place_info,
+            move |location, mutation| {
+                self.inner.register_mutation(
                     results,
                     state,
                     Inputs::Unresolved {
@@ -250,20 +298,21 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, &'mir LocalAnalysis<'t
                     location,
                     mutation.mutation_reason,
                 )
-            });
+            },
+        );
         arg_vis.set_time(Time::Before);
         arg_vis.visit_terminator(terminator, location);
     }
 
     fn visit_terminator_after_primary_effect(
         &mut self,
-        results: &Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>,
-        state: &<&'mir LocalAnalysis<'tcx, 'mir> as AnalysisDomain<'tcx>>::Domain,
+        results: &DfResults<'mir, 'tcx>,
+        state: &Self::FlowState,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
-            let constructor = results.analysis;
+            let constructor = results.analysis.inner;
 
             if matches!(
                 constructor.determine_call_handling(location, func, args),
@@ -274,8 +323,35 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, &'mir LocalAnalysis<'t
         }
 
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis =
-            ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
+        let mut arg_vis = ModularMutationVisitor::new(
+            &results.analysis.inner.place_info,
+            move |location, mutation| {
+                self.inner.register_mutation(
+                    results,
+                    state,
+                    Inputs::Unresolved {
+                        places: mutation.inputs,
+                    },
+                    Either::Left(mutation.mutated),
+                    location,
+                    mutation.mutation_reason,
+                )
+            },
+        );
+        arg_vis.set_time(Time::After);
+        arg_vis.visit_terminator(terminator, location);
+    }
+}
+
+impl<'tcx> PartialGraph<'tcx> {
+    fn modular_mutation_visitor<'a, 'mir>(
+        &'a mut self,
+        results: &'a DfResults<'mir, 'tcx>,
+        state: &'a InstructionState<'tcx>,
+    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
+        ModularMutationVisitor::new(
+            &results.analysis.inner.place_info,
+            move |location, mutation| {
                 self.register_mutation(
                     results,
                     state,
@@ -286,40 +362,18 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, Results<'tcx, &'mir LocalAnalysis<'t
                     location,
                     mutation.mutation_reason,
                 )
-            });
-        arg_vis.set_time(Time::After);
-        arg_vis.visit_terminator(terminator, location);
-    }
-}
-
-impl<'tcx> PartialGraph<'tcx> {
-    fn modular_mutation_visitor<'a, 'mir>(
-        &'a mut self,
-        results: &'a Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>,
-        state: &'a InstructionState<'tcx>,
-    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
-        ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
-            self.register_mutation(
-                results,
-                state,
-                Inputs::Unresolved {
-                    places: mutation.inputs,
-                },
-                Either::Left(mutation.mutated),
-                location,
-                mutation.mutation_reason,
-            )
-        })
+            },
+        )
     }
 
     /// returns whether we were able to successfully handle this as inline
     fn handle_as_inline<'a>(
         &mut self,
-        results: &Results<'tcx, &'a LocalAnalysis<'tcx, 'a>>,
-        state: &<&'a LocalAnalysis<'tcx, 'a> as AnalysisDomain<'tcx>>::Domain,
+        results: &DfResults<'a, 'tcx>,
+        state: &'a InstructionState<'tcx>,
         terminator: &Terminator<'tcx>,
         location: Location,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, Vec<ConstructionErr>> {
         let TerminatorKind::Call {
             func,
             args,
@@ -329,7 +383,7 @@ impl<'tcx> PartialGraph<'tcx> {
         else {
             return Ok(false);
         };
-        let constructor = results.analysis;
+        let constructor = results.analysis.inner;
         let gloc = GlobalLocation {
             location: location.into(),
             function: constructor.def_id.to_def_id(),
@@ -434,7 +488,7 @@ impl<'tcx> PartialGraph<'tcx> {
 
     fn register_mutation<'a>(
         &mut self,
-        results: &Results<'tcx, &'a LocalAnalysis<'tcx, 'a>>,
+        results: &DfResults<'a, 'tcx>,
         state: &InstructionState<'tcx>,
         inputs: Inputs<'tcx>,
         mutated: Either<Place<'tcx>, DepNode<'tcx>>,
@@ -442,7 +496,7 @@ impl<'tcx> PartialGraph<'tcx> {
         target_use: TargetUse,
     ) {
         trace!("Registering mutation to {mutated:?} with inputs {inputs:?} at {location:?}");
-        let constructor = results.analysis;
+        let constructor = results.analysis.inner;
         let ctrl_inputs = constructor.find_control_inputs(location);
 
         trace!("  Found control inputs {ctrl_inputs:?}");
@@ -468,8 +522,7 @@ impl<'tcx> PartialGraph<'tcx> {
 
         let outputs = match mutated {
             Either::Right(node) => vec![node],
-            Either::Left(place) => results
-                .analysis
+            Either::Left(place) => constructor
                 .find_outputs(place, location)
                 .into_iter()
                 .map(|t| t.1)
@@ -504,7 +557,8 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-type PdgCache<'tcx> = Rc<Cache<(LocalDefId, GenericArgsRef<'tcx>), PartialGraph<'tcx>>>;
+type PdgCache<'tcx> =
+    Rc<Cache<(LocalDefId, GenericArgsRef<'tcx>), Result<PartialGraph<'tcx>, Vec<ConstructionErr>>>>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {

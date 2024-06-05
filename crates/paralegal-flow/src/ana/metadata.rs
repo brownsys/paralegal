@@ -11,7 +11,7 @@ use crate::{
     Args, DefId, HashMap, MarkerCtx,
 };
 
-use std::path::Path;
+use std::{fmt::write, path::Path};
 use std::{fs::File, io::Read, rc::Rc};
 
 use flowistry_pdg_construction::{
@@ -64,14 +64,14 @@ pub enum MetadataLoaderError {
 use MetadataLoaderError::*;
 
 impl<'tcx> GraphLoader<'tcx> for MetadataLoader<'tcx> {
-    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, ConstructionErr> {
+    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, Vec<ConstructionErr>> {
         let Ok(meta) = self.get_metadata(function.krate) else {
             return Ok(None);
         };
         let res = meta
             .pdgs
             .get(&function.index)
-            .ok_or(ConstructionErr::CrateExistsButItemIsNotFound { function })?
+            .ok_or_else(|| vec![ConstructionErr::CrateExistsButItemIsNotFound { function }])?
             .as_ref()
             .map_err(Clone::clone)?;
 
@@ -156,7 +156,22 @@ impl<'tcx> MetadataLoader<'tcx> {
     }
 }
 
-pub type PdgMap<'tcx> = FxHashMap<DefIndex, Result<PartialGraph<'tcx>, ConstructionErr>>;
+#[derive(Debug)]
+struct ConstructionErrors(Vec<ConstructionErr>);
+
+impl std::error::Error for ConstructionErrors {}
+
+impl std::fmt::Display for ConstructionErrors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for e in self.0.iter() {
+            e.fmt(f)?;
+            f.write_str(", ")?;
+        }
+        Ok(())
+    }
+}
+
+pub type PdgMap<'tcx> = FxHashMap<DefIndex, Result<PartialGraph<'tcx>, Vec<ConstructionErr>>>;
 
 /// Intermediate artifacts stored on disc for every crate.
 ///
@@ -257,6 +272,12 @@ impl<'tcx> MetadataLoader<'tcx> {
         Ok(meta)
     }
 
+    pub fn get_partial_graph(&self, key: DefId) -> Result<&PartialGraph<'tcx>> {
+        let meta = self.get_metadata(key.krate)?;
+        let result = meta.pdgs.get(&key.index).ok_or(PdgForItemMissing(key))?;
+        Ok(result.as_ref().map_err(|e| ConstructionErrors(e.clone()))?)
+    }
+
     pub fn get_body_info(&self, key: DefId) -> Result<&BodyInfo<'tcx>> {
         let meta = self.get_metadata(key.krate)?;
         let res = meta.bodies.get(&key.index).ok_or(NoSuchItemInCate(key));
@@ -265,26 +286,14 @@ impl<'tcx> MetadataLoader<'tcx> {
 
     pub fn get_mono(&self, cs: CallString) -> Result<GenericArgsRef<'tcx>> {
         let key = cs.root().function;
-        let meta = self.get_metadata(key.krate)?;
-        Ok(meta
-            .pdgs
-            .get(&key.index)
-            .ok_or(PdgForItemMissing(key))?
-            .as_ref()
-            .map_err(Clone::clone)?
+        Ok(self
+            .get_partial_graph(key)?
             .get_mono(cs)
             .ok_or(NoGenericsKnownForCallSite(cs))?)
     }
 
     pub fn get_pdg(&self, key: DefId) -> Result<DepGraph<'tcx>> {
-        Ok(self
-            .get_metadata(key.krate)?
-            .pdgs
-            .get(&key.index)
-            .ok_or(PdgForItemMissing(key))?
-            .as_ref()
-            .map_err(Clone::clone)?
-            .to_petgraph())
+        Ok(self.get_partial_graph(key)?.to_petgraph())
     }
 
     pub fn get_asyncness(&self, key: DefId) -> Asyncness {
