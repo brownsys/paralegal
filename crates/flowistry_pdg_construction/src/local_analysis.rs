@@ -1,6 +1,5 @@
 use std::{collections::HashSet, iter, rc::Rc};
 
-use anyhow::anyhow;
 use flowistry::mir::placeinfo::PlaceInfo;
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
@@ -15,7 +14,7 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
         Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArg, GenericArgsRef, Instance, List, TyCtxt},
+    ty::{GenericArg, GenericArgKind, GenericArgsRef, Instance, List, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 
@@ -355,14 +354,20 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         // Monomorphize the called function with the known generic_args.
         let param_env = tcx.param_env_reveal_all_normalized(self.def_id);
-        let resolved_fn =
+        let Some(resolved_fn) =
             utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)
-                .ok_or_else(|| {
-                    vec![ConstructionErr::instance_resolution_failed(
-                        called_def_id,
-                        generic_args,
-                    )]
-                })?;
+        else {
+            if let Some(d) = generic_args.iter().find(|arg| matches!(arg.unpack(), GenericArgKind::Type(t) if matches!(t.kind(), TyKind::Dynamic(..)))) {
+                self.tcx().sess.span_warn(self.tcx().def_span(called_def_id), format!("could not resolve instance due to dynamic argument: {d:?}"));
+                return Ok(None);
+            } else {
+                return Err(
+                vec![ConstructionErr::instance_resolution_failed(
+                    called_def_id,
+                    generic_args,
+                )]);
+            }
+        };
         trace!("resolved to instance {resolved_fn:?}");
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
