@@ -18,6 +18,7 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 
+use rustc_span::Span;
 use rustc_utils::{
     mir::{borrowck_facts, control_dependencies::ControlDependencies},
     BodyExt, PlaceExt,
@@ -344,7 +345,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         location: Location,
         func: &Operand<'tcx>,
         args: &'b [Operand<'tcx>],
-    ) -> Result<Option<CallHandling<'tcx, 'b>>, Vec<ConstructionErr>> {
+        span: Span,
+    ) -> Result<Option<CallHandling<'tcx, 'b>>, Vec<ConstructionErr<'tcx>>> {
         let tcx = self.tcx();
 
         let (called_def_id, generic_args) = self
@@ -365,6 +367,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 vec![ConstructionErr::instance_resolution_failed(
                     called_def_id,
                     generic_args,
+                    span
                 )]);
             }
         };
@@ -384,18 +387,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return Ok(Some(CallHandling::ApproxAsyncSM(handler)));
         };
 
-        let call_kind = match self.classify_call_kind(called_def_id, resolved_def_id, args) {
+        let call_kind = match self.classify_call_kind(called_def_id, resolved_def_id, args, span) {
             Ok(cc) => cc,
             Err(async_err) => {
-                if let Some(cb) = self.call_change_callback() {
-                    cb.on_inline_miss(
-                        resolved_fn,
-                        location,
-                        self.root,
-                        InlineMissReason::Async(async_err),
-                    )
-                }
-                return Ok(None);
+                return Err(vec![async_err]);
             }
         };
 
@@ -485,11 +480,12 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         func: &Operand<'tcx>,
         args: &[Operand<'tcx>],
         destination: Place<'tcx>,
-    ) -> Result<bool, Vec<ConstructionErr>> {
+        span: Span,
+    ) -> Result<bool, Vec<ConstructionErr<'tcx>>> {
         // Note: my comments here will use "child" to refer to the callee and
         // "parent" to refer to the caller, since the words are most visually distinct.
 
-        let Some(preamble) = self.determine_call_handling(location, func, args)? else {
+        let Some(preamble) = self.determine_call_handling(location, func, args, span)? else {
             return Ok(false);
         };
 
@@ -566,7 +562,9 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         self.root.args
     }
 
-    pub(crate) fn construct_partial(&'a self) -> Result<PartialGraph<'tcx>, Vec<ConstructionErr>> {
+    pub(crate) fn construct_partial(
+        &'a self,
+    ) -> Result<PartialGraph<'tcx>, Vec<ConstructionErr<'tcx>>> {
         if let Some(g) = self.try_handle_as_async()? {
             return Ok(g);
         }
@@ -629,8 +627,9 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         def_id: DefId,
         resolved_def_id: DefId,
         original_args: &'b [Operand<'tcx>],
-    ) -> Result<CallKind<'tcx>, String> {
-        match self.try_poll_call_kind(def_id, original_args) {
+        span: Span,
+    ) -> Result<CallKind<'tcx>, ConstructionErr<'tcx>> {
+        match self.try_poll_call_kind(def_id, original_args, span) {
             AsyncDeterminationResult::Resolved(r) => Ok(r),
             AsyncDeterminationResult::NotAsync => Ok(self
                 .try_indirect_call_kind(resolved_def_id)
@@ -654,7 +653,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> WithConstructionErrors<&'_ LocalAnalysis<'tcx, 'a>> {
+impl<'tcx, 'a> WithConstructionErrors<'tcx, &'_ LocalAnalysis<'tcx, 'a>> {
     fn handle_terminator(
         &mut self,
         terminator: &Terminator<'tcx>,
@@ -669,10 +668,14 @@ impl<'tcx, 'a> WithConstructionErrors<&'_ LocalAnalysis<'tcx, 'a>> {
             ..
         } = &terminator.kind
         {
-            match self
-                .inner
-                .handle_call(state, location, func, args, *destination)
-            {
+            match self.inner.handle_call(
+                state,
+                location,
+                func,
+                args,
+                *destination,
+                terminator.source_info.span,
+            ) {
                 Err(e) => {
                     self.errors.extend(e);
                 }
@@ -689,7 +692,9 @@ impl<'tcx, 'a> WithConstructionErrors<&'_ LocalAnalysis<'tcx, 'a>> {
     }
 }
 
-impl<'tcx, 'a> df::AnalysisDomain<'tcx> for WithConstructionErrors<&'a LocalAnalysis<'tcx, 'a>> {
+impl<'tcx, 'a> df::AnalysisDomain<'tcx>
+    for WithConstructionErrors<'tcx, &'a LocalAnalysis<'tcx, 'a>>
+{
     type Domain = InstructionState<'tcx>;
 
     const NAME: &'static str = "LocalPdgConstruction";
@@ -701,7 +706,7 @@ impl<'tcx, 'a> df::AnalysisDomain<'tcx> for WithConstructionErrors<&'a LocalAnal
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
 }
 
-impl<'a, 'tcx> df::Analysis<'tcx> for WithConstructionErrors<&'a LocalAnalysis<'tcx, 'a>> {
+impl<'a, 'tcx> df::Analysis<'tcx> for WithConstructionErrors<'tcx, &'a LocalAnalysis<'tcx, 'a>> {
     fn apply_statement_effect(
         &mut self,
         state: &mut Self::Domain,

@@ -1,20 +1,22 @@
-use std::rc::Rc;
+use std::{borrow::Cow, fmt::Display, rc::Rc};
 
 use either::Either;
 use flowistry_pdg::{CallString, GlobalLocation};
 use itertools::Itertools;
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::{DefId, LocalDefId};
-use rustc_macros::{Decodable, Encodable};
+use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
+        AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, SourceInfo, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
+use rustc_span::Span;
 
 use crate::{
+    construct::EmittableError,
     graph::push_call_string_root,
     local_analysis::{CallKind, LocalAnalysis},
     utils, ConstructionErr, PartialGraph,
@@ -188,16 +190,96 @@ pub fn determine_async<'tcx>(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AsyncDeterminationResult<T> {
+pub enum AsyncDeterminationResult<'tcx, T> {
     Resolved(T),
-    Unresolvable(String),
+    Unresolvable(ConstructionErr<'tcx>),
     NotAsync,
+}
+
+#[derive(Debug, Encodable, Decodable, Clone, Hash, Eq, PartialEq)]
+pub enum OperandShapeViolation {
+    IsNotAPlace,
+    IsNotLocal,
+    HasNoAssignments,
+    WrongNumberOfAssignments(u16),
+}
+
+impl Display for OperandShapeViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use OperandShapeViolation::*;
+        if let WrongNumberOfAssignments(n) = self {
+            return write!(f, "wrong number of assignments, expected 1, got {n}");
+        };
+        let str = match self {
+            IsNotAPlace => "is not a place",
+            IsNotLocal => "is not local",
+            HasNoAssignments => "is never assigned",
+            WrongNumberOfAssignments(..) => unreachable!(),
+        };
+        f.write_str(str)
+    }
+}
+
+#[derive(Debug, Encodable, Decodable, Clone, Hash, Eq, PartialEq)]
+pub enum AsyncResolutionErr {
+    WrongOperandShape {
+        span: Span,
+        reason: OperandShapeViolation,
+    },
+    PinnedAssignmentIsNotACall {
+        span: Span,
+    },
+    AssignmentToPinNewIsNotAStatement {
+        span: Span,
+    },
+    AssignmentToAliasOfPinNewInputIsNotACall {
+        span: Span,
+    },
+    AssignmentToIntoFutureInputIsNotACall {
+        span: Span,
+    },
+    ChaseTargetIsNotAFunction {
+        span: Span,
+    },
+}
+
+impl<'tcx> EmittableError<'tcx> for AsyncResolutionErr {
+    fn span(&self, _tcx: TyCtxt<'tcx>) -> Option<Span> {
+        use AsyncResolutionErr::*;
+        match self {
+            WrongOperandShape { span, .. }
+            | PinnedAssignmentIsNotACall { span }
+            | AssignmentToAliasOfPinNewInputIsNotACall { span }
+            | AssignmentToIntoFutureInputIsNotACall { span }
+            | ChaseTargetIsNotAFunction { span }
+            | AssignmentToPinNewIsNotAStatement { span } => Some(*span),
+        }
+    }
+
+    fn msg(&self, _tcx: TyCtxt<'tcx>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use AsyncResolutionErr::*;
+        if let WrongOperandShape { reason, .. } = self {
+            return write!(f, "operator has an unexpected shape: {reason}");
+        }
+        f.write_str(match self {
+            PinnedAssignmentIsNotACall { .. } => "pinned assignment is not a call",
+            AssignmentToPinNewIsNotAStatement { .. } => "assignment to Pin::new is not a statement",
+            AssignmentToAliasOfPinNewInputIsNotACall { .. } => {
+                "assignment to Pin::new input is not a call"
+            }
+            AssignmentToIntoFutureInputIsNotACall { .. } => {
+                "assignment to into_future input is not a call"
+            }
+            ChaseTargetIsNotAFunction { .. } => "chase target is not a function",
+            WrongOperandShape { .. } => unreachable!(),
+        })
+    }
 }
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn try_handle_as_async(
         &self,
-    ) -> Result<Option<PartialGraph<'tcx>>, Vec<ConstructionErr>> {
+    ) -> Result<Option<PartialGraph<'tcx>>, Vec<ConstructionErr<'tcx>>> {
         let Some((generator_fn, location, asyncness)) =
             determine_async(self.tcx(), self.def_id, &self.body)
         else {
@@ -222,10 +304,11 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &'b self,
         def_id: DefId,
         original_args: &'b [Operand<'tcx>],
-    ) -> AsyncDeterminationResult<CallKind<'tcx>> {
+        span: Span,
+    ) -> AsyncDeterminationResult<'tcx, CallKind<'tcx>> {
         let lang_items = self.tcx().lang_items();
         if lang_items.future_poll_fn() == Some(def_id) {
-            match self.find_async_args(original_args) {
+            match self.find_async_args(original_args, span) {
                 Ok((fun, loc, args)) => {
                     AsyncDeterminationResult::Resolved(CallKind::AsyncPoll(fun, loc, args))
                 }
@@ -240,26 +323,42 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     fn find_async_args<'b>(
         &'b self,
         args: &'b [Operand<'tcx>],
-    ) -> Result<(Instance<'tcx>, Location, Place<'tcx>), String> {
-        macro_rules! let_assert {
-            ($p:pat = $e:expr, $($arg:tt)*) => {
-                let $p = $e else {
-                    let msg = format!($($arg)*);
-                    return Err(format!("Abandoning attempt to handle async because pattern {} could not be matched to {:?}: {}", stringify!($p), $e, msg));
-                };
-            }
+        call_span: Span,
+    ) -> Result<(Instance<'tcx>, Location, Place<'tcx>), ConstructionErr<'tcx>> {
+        macro_rules! async_err {
+            ($msg:expr) => {
+                return Err(ConstructionErr::AsyncResolutionErr($msg))
+            };
         }
-        let get_def_for_op = |op: &Operand<'tcx>| -> Result<Location, String> {
-            let_assert!(Some(place) = op.place(), "Arg is not a place");
+        macro_rules! let_assert {
+            ($p:pat = $e:expr, $msg:expr) => {
+                let $p = $e else {
+                    async_err!($msg);
+                };
+            };
+        }
+        let get_def_for_op = |op: &Operand<'tcx>| -> Result<Location, ConstructionErr> {
+            let mk_err = |reason| AsyncResolutionErr::WrongOperandShape {
+                span: call_span,
+                reason,
+            };
+            let_assert!(
+                Some(place) = op.place(),
+                mk_err(OperandShapeViolation::IsNotAPlace)
+            );
             let_assert!(
                 Some(local) = place.as_local(),
-                "Place {place:?} is not a local"
+                mk_err(OperandShapeViolation::IsNotLocal)
             );
             let_assert!(
                 Some(locs) = &self.body_assignments.get(&local),
-                "Local has no assignments"
+                mk_err(OperandShapeViolation::HasNoAssignments)
             );
-            assert!(locs.len() == 1);
+            if locs.len() != 1 {
+                async_err!(mk_err(OperandShapeViolation::WrongNumberOfAssignments(
+                    locs.len() as u16,
+                )));
+            }
             Ok(locs[0])
         };
 
@@ -271,7 +370,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 },
                 ..
             }) = &self.body.stmt_at(get_def_for_op(&args[0])?),
-            "Pinned assignment is not a call"
+            AsyncResolutionErr::PinnedAssignmentIsNotACall { span: call_span }
         );
         debug_assert!(new_pin_args.len() == 1);
 
@@ -286,7 +385,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             kind: StatementKind::Assign(box (_, Rvalue::Use(future2))),
             ..
           }) = &self.body.stmt_at(get_def_for_op(&Operand::Move(future))?),
-          "Assignment to pin::new input is not a statement"
+          AsyncResolutionErr::AssignmentToPinNewIsNotAStatement { span: call_span }
         );
 
         let_assert!(
@@ -297,7 +396,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 },
                 ..
             }) = &self.body.stmt_at(get_def_for_op(future2)?),
-            "Assignment to alias of pin::new input is not a call"
+            AsyncResolutionErr::AssignmentToAliasOfPinNewInputIsNotACall { span: call_span }
         );
 
         let mut chase_target = Err(&into_future_args[0]);
@@ -325,17 +424,23 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                         ),
                     )) => Ok((*def_id, *generic_args, *lhs, async_fn_call_loc)),
                     StatementKind::Assign(box (_, Rvalue::Use(target))) => {
-                        let (op, generics) = self
-                            .operand_to_def_id(target)
-                            .ok_or_else(|| "Nope".to_string())?;
+                        let Some((op, generics)) = self.operand_to_def_id(target) else {
+                            async_err!(AsyncResolutionErr::ChaseTargetIsNotAFunction {
+                                span: call_span
+                            })
+                        };
                         Ok((op, generics, target.place().unwrap(), async_fn_call_loc))
                     }
                     _ => {
-                        panic!("Assignment to into_future input is not a call: {stmt:?}");
+                        async_err!(AsyncResolutionErr::AssignmentToIntoFutureInputIsNotACall {
+                            span: call_span,
+                        });
                     }
                 },
                 _ => {
-                    panic!("Assignment to into_future input is not a call: {stmt:?}");
+                    async_err!(AsyncResolutionErr::AssignmentToIntoFutureInputIsNotACall {
+                        span: call_span,
+                    });
                 }
             };
         }
@@ -348,7 +453,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.tcx().param_env_reveal_all_normalized(self.def_id),
             generics,
         )
-        .ok_or("Resolving function failed")?;
+        .ok_or_else(|| ConstructionErr::instance_resolution_failed(op, generics, call_span))?;
 
         Ok((resolution, async_fn_call_loc, calling_convention))
     }

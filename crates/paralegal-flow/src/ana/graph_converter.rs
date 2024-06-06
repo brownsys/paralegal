@@ -13,15 +13,16 @@ use rustc_middle::{
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 use super::{
-    default_index, metadata::BodyInfo, path_for_item, src_loc_for_span, RustcInstructionKind,
-    SPDGGenerator,
+    default_index,
+    metadata::{BodyInfo, MetadataLoaderError},
+    path_for_item, src_loc_for_span, RustcInstructionKind, SPDGGenerator,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     utils::try_monomorphize,
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason,
+    CallChangeCallback, CallChanges, CallInfo, EmittableError, InlineMissReason,
     SkipCall::Skip,
 };
 use petgraph::{
@@ -66,7 +67,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         target: &'a FnToAnalyze,
     ) -> Result<Self> {
         let local_def_id = target.def_id;
-        let dep_graph = Self::create_flowistry_graph(generator, local_def_id)?;
+        let dep_graph = Self::create_flowistry_graph(generator, local_def_id).map_err(|e| {
+            e.emit(generator.tcx);
+            anyhow!("construction error")
+        })?;
 
         if generator.opts.dbg().dump_flowistry_pdg() {
             dep_graph.generate_graphviz(format!(
@@ -332,7 +336,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn create_flowistry_graph(
         generator: &SPDGGenerator<'tcx>,
         def_id: LocalDefId,
-    ) -> Result<DepGraph<'tcx>> {
+    ) -> Result<DepGraph<'tcx>, MetadataLoaderError<'tcx>> {
         generator.metadata_loader.get_pdg(def_id.to_def_id())
     }
 

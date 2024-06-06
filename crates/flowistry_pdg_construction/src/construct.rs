@@ -8,7 +8,7 @@
 //!    [`InstructionState`] at each instruction in the procedure.
 //! 2. [`PartialGraph`] implements [`ResultsVisitor`] over the analysis result
 
-use std::rc::Rc;
+use std::{borrow::Cow, fmt::Display, rc::Rc};
 
 use anyhow::anyhow;
 use either::Either;
@@ -22,7 +22,7 @@ use petgraph::graph::DiGraph;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
-use rustc_macros::{Decodable, Encodable};
+use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
         visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue, Terminator, TerminatorKind,
@@ -30,6 +30,7 @@ use rustc_middle::{
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
 use rustc_mir_dataflow::{AnalysisDomain, Results, ResultsVisitor};
+use rustc_span::Span;
 use rustc_utils::cache::Cache;
 
 use crate::{
@@ -56,37 +57,139 @@ pub struct MemoPdgConstructor<'tcx> {
     pub(crate) loader: Box<dyn GraphLoader<'tcx> + 'tcx>,
 }
 
-#[derive(Debug, thiserror::Error, Encodable, Decodable, Clone, Hash, Eq, PartialEq)]
-pub enum ConstructionErr {
-    // Would prefer to make `generics` `GenericArgsRef<'tcx>` but the `Error`
-    // implementation only allows `'static` types.
-    #[error("failed to resolve an instance for {function:?} with generic arguments {generics}")]
-    InstanceResolutionFailed { function: DefId, generics: String },
-    #[error("entered impossible state")]
+#[derive(Debug, TyEncodable, TyDecodable, Clone, Hash, Eq, PartialEq)]
+pub enum ConstructionErr<'tcx> {
+    InstanceResolutionFailed {
+        function: DefId,
+        generics: GenericArgsRef<'tcx>,
+        span: Span,
+    },
     Impossible,
-    #[error("failed to load external function {function:?}")]
-    FailedLoadingExternalFunction { function: DefId },
-    #[error("failed with rustc error")]
+    FailedLoadingExternalFunction {
+        function: DefId,
+        span: Span,
+    },
     RustcReportedError,
-    #[error("crate exists but item is not found {function:?}")]
-    CrateExistsButItemIsNotFound { function: DefId },
-    #[error("could not create generic arguments for {function:?} because too many predicates were present ({number})")]
-    TooManyPredicatesForSynthesizingGenerics { function: DefId, number: u32 },
-    #[error("found bound variables in predicates of {function:?}")]
-    BoundVariablesInPredicates { function: DefId },
-    #[error("has trait ref with binder {function:?}")]
-    TraitRefWithBinder { function: DefId },
-    #[error("cannot use constants as generic parameters in controllers")]
-    ConstantInGenerics { function: DefId },
-    #[error("operand is not function type {op}")]
-    OperandIsNotFunctionType { op: String },
+    CrateExistsButItemIsNotFound {
+        function: DefId,
+    },
+    TooManyPredicatesForSynthesizingGenerics {
+        function: DefId,
+        number: u32,
+    },
+    BoundVariablesInPredicates {
+        function: DefId,
+    },
+    TraitRefWithBinder {
+        function: DefId,
+    },
+    ConstantInGenerics {
+        function: DefId,
+    },
+    OperandIsNotFunctionType {
+        op: String,
+    },
+    AsyncResolutionErr(AsyncResolutionErr),
 }
 
-impl ConstructionErr {
-    pub fn instance_resolution_failed(function: DefId, generics: GenericArgsRef) -> Self {
+pub trait EmittableError<'tcx> {
+    fn span(&self, _tcx: TyCtxt<'tcx>) -> Option<Span> {
+        None
+    }
+    fn msg(&self, tcx: TyCtxt<'tcx>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+
+    fn emit(&self, tcx: TyCtxt<'tcx>) {
+        default_emit_error(self, tcx)
+    }
+}
+
+pub fn default_emit_error<'tcx>(e: &(impl EmittableError<'tcx> + ?Sized), tcx: TyCtxt<'tcx>) {
+    struct FmtWithTcx<'tcx, A> {
+        tcx: TyCtxt<'tcx>,
+        inner: A,
+    }
+    impl<'tcx, A: EmittableError<'tcx> + ?Sized> Display for FmtWithTcx<'tcx, &'_ A> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.inner.msg(self.tcx, f)
+        }
+    }
+
+    let msg = format!("{}", FmtWithTcx { tcx, inner: e });
+    if let Some(span) = e.span(tcx) {
+        tcx.sess.span_err(span, msg);
+    } else {
+        tcx.sess.err(msg);
+    }
+}
+
+impl<'tcx> EmittableError<'tcx> for ConstructionErr<'tcx> {
+    fn span(&self, tcx: TyCtxt<'tcx>) -> Option<Span> {
+        use ConstructionErr::*;
+        match self {
+            AsyncResolutionErr(e) => e.span(tcx),
+            InstanceResolutionFailed { span, .. } | FailedLoadingExternalFunction { span, .. } => {
+                Some(*span)
+            }
+            BoundVariablesInPredicates { function }
+            | TraitRefWithBinder { function }
+            | ConstantInGenerics { function } => Some(tcx.def_span(*function)),
+            _ => None,
+        }
+    }
+
+    fn msg(&self, tcx: TyCtxt, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use ConstructionErr::*;
+        match self {
+            InstanceResolutionFailed {
+                function, generics, ..
+            } => write!(
+                f,
+                "could not resolve instance for {} with generics {generics:?}",
+                tcx.def_path_debug_str(*function)
+            ),
+            Impossible => f.write_str("internal compiler error, this state should be impossible"),
+            FailedLoadingExternalFunction { function, .. } => write!(
+                f,
+                "failed loading external function {}",
+                tcx.def_path_debug_str(*function)
+            ),
+            RustcReportedError => f.write_str("see previously reported errors"),
+            CrateExistsButItemIsNotFound { function } => write!(
+                f,
+                "found a crate for item {}, but could not find a PDG for it",
+                tcx.def_path_debug_str(*function)
+            ),
+            TooManyPredicatesForSynthesizingGenerics { number, .. } => write!(
+                f,
+                "only one predicate can be synthesized to a `dyn`, found {number}"
+            ),
+            BoundVariablesInPredicates { .. } => {
+                f.write_str("bound variables in predicates are not supported")
+            }
+            TraitRefWithBinder { .. } => {
+                f.write_str("trait refs for `dyn` synthesis cannot have binders")
+            }
+            ConstantInGenerics { .. } => {
+                f.write_str("constants in generics for are not supported for analysis entrypoints")
+            }
+            OperandIsNotFunctionType { op } => {
+                write!(f, "operand {op} is not of function type")
+            }
+            AsyncResolutionErr(e) => e.msg(tcx, f),
+        }
+    }
+}
+
+impl<'tcx> ConstructionErr<'tcx> {
+    pub fn instance_resolution_failed(
+        function: DefId,
+        generics: GenericArgsRef<'tcx>,
+        span: Span,
+    ) -> Self {
         Self::InstanceResolutionFailed {
             function,
-            generics: format!("{generics:?}"),
+            generics,
+            span,
         }
     }
 
@@ -132,7 +235,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub fn construct_root<'a>(
         &'a self,
         function: LocalDefId,
-    ) -> Result<&'a PartialGraph<'tcx>, Vec<ConstructionErr>> {
+    ) -> Result<&'a PartialGraph<'tcx>, Vec<ConstructionErr<'tcx>>> {
         let generics =
             manufacture_substs_for(self.tcx, function.to_def_id()).map_err(|i| vec![i])?;
         let resolution = try_resolve_function(
@@ -145,6 +248,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             vec![ConstructionErr::instance_resolution_failed(
                 function.to_def_id(),
                 generics,
+                self.tcx.def_span(function),
             )]
         })?;
         self.construct_for(resolution)
@@ -154,7 +258,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> Result<Option<&'a PartialGraph<'tcx>>, Vec<ConstructionErr>> {
+    ) -> Result<Option<&'a PartialGraph<'tcx>>, Vec<ConstructionErr<'tcx>>> {
         let def_id = resolution.def_id();
         let generics = resolution.args;
         if let Some(local) = def_id.as_local() {
@@ -186,7 +290,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub fn construct_graph(
         &self,
         function: LocalDefId,
-    ) -> Result<DepGraph<'tcx>, Vec<ConstructionErr>> {
+    ) -> Result<DepGraph<'tcx>, Vec<ConstructionErr<'tcx>>> {
         let _args = manufacture_substs_for(self.tcx, function.to_def_id())
             .map_err(|_| anyhow!("rustc error"));
         let g = self.construct_root(function)?.to_petgraph();
@@ -194,12 +298,12 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     }
 }
 
-pub(crate) struct WithConstructionErrors<A> {
+pub(crate) struct WithConstructionErrors<'tcx, A> {
     pub(crate) inner: A,
-    pub errors: FxHashSet<ConstructionErr>,
+    pub errors: FxHashSet<ConstructionErr<'tcx>>,
 }
 
-impl<A> WithConstructionErrors<A> {
+impl<'tcx, A> WithConstructionErrors<'tcx, A> {
     pub fn new(inner: A) -> Self {
         Self {
             inner,
@@ -207,7 +311,7 @@ impl<A> WithConstructionErrors<A> {
         }
     }
 
-    pub fn into_result(self) -> Result<A, Vec<ConstructionErr>> {
+    pub fn into_result(self) -> Result<A, Vec<ConstructionErr<'tcx>>> {
         if self.errors.is_empty() {
             Ok(self.inner)
         } else {
@@ -218,10 +322,10 @@ impl<A> WithConstructionErrors<A> {
 
 type DfResults<'mir, 'tcx> = Results<'tcx, DfAna<'mir, 'tcx>>;
 
-type DfAna<'mir, 'tcx> = WithConstructionErrors<&'mir LocalAnalysis<'tcx, 'mir>>;
+type DfAna<'mir, 'tcx> = WithConstructionErrors<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>;
 
 impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, DfResults<'mir, 'tcx>>
-    for WithConstructionErrors<PartialGraph<'tcx>>
+    for WithConstructionErrors<'tcx, PartialGraph<'tcx>>
 {
     type FlowState = <DfAna<'mir, 'tcx> as AnalysisDomain<'tcx>>::Domain;
 
@@ -315,7 +419,12 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, DfResults<'mir, 'tcx>>
             let constructor = results.analysis.inner;
 
             if matches!(
-                constructor.determine_call_handling(location, func, args),
+                constructor.determine_call_handling(
+                    location,
+                    func,
+                    args,
+                    terminator.source_info.span
+                ),
                 Ok(Some(CallHandling::Ready { .. }))
             ) {
                 return;
@@ -373,7 +482,7 @@ impl<'tcx> PartialGraph<'tcx> {
         state: &'a InstructionState<'tcx>,
         terminator: &Terminator<'tcx>,
         location: Location,
-    ) -> Result<bool, Vec<ConstructionErr>> {
+    ) -> Result<bool, Vec<ConstructionErr<'tcx>>> {
         let TerminatorKind::Call {
             func,
             args,
@@ -389,7 +498,13 @@ impl<'tcx> PartialGraph<'tcx> {
             function: constructor.def_id.to_def_id(),
         };
 
-        let Some(handling) = constructor.determine_call_handling(location, func, args)? else {
+        let Some(handling) = constructor.determine_call_handling(
+            location,
+            func,
+            args,
+            terminator.source_info.span,
+        )?
+        else {
             return Ok(false);
         };
 
@@ -557,8 +672,12 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-type PdgCache<'tcx> =
-    Rc<Cache<(LocalDefId, GenericArgsRef<'tcx>), Result<PartialGraph<'tcx>, Vec<ConstructionErr>>>>;
+type PdgCache<'tcx> = Rc<
+    Cache<
+        (LocalDefId, GenericArgsRef<'tcx>),
+        Result<PartialGraph<'tcx>, Vec<ConstructionErr<'tcx>>>,
+    >,
+>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {

@@ -11,12 +11,12 @@ use crate::{
     Args, DefId, HashMap, MarkerCtx,
 };
 
-use std::{fmt::write, path::Path};
+use std::path::Path;
 use std::{fs::File, io::Read, rc::Rc};
 
 use flowistry_pdg_construction::{
-    graph::InternedString, Asyncness, ConstructionErr, DepGraph, GraphLoader, MemoPdgConstructor,
-    PartialGraph,
+    default_emit_error, graph::InternedString, Asyncness, ConstructionErr, DepGraph,
+    EmittableError, GraphLoader, MemoPdgConstructor, PartialGraph,
 };
 
 use rustc_hash::FxHashMap;
@@ -32,9 +32,7 @@ use rustc_middle::{
 };
 use rustc_serialize::{Decodable, Encodable};
 
-use anyhow::{anyhow, Result};
 use rustc_utils::{cache::Cache, mir::borrowck_facts};
-use thiserror::Error;
 
 use super::{
     encoder::{ParalegalDecoder, ParalegalEncoder},
@@ -49,22 +47,56 @@ pub struct MetadataLoader<'tcx> {
 }
 
 /// The types of errors that can arise from interacting with the [`MetadataLoader`].
-#[derive(Debug, Error)]
-pub enum MetadataLoaderError {
-    #[error("no pdg for item {:?}", .0)]
+#[derive(Debug)]
+pub enum MetadataLoaderError<'tcx> {
     PdgForItemMissing(DefId),
-    #[error("no metadata for crate {}", tls::with(|tcx| tcx.crate_name(*.0)))]
     MetadataForCrateMissing(CrateNum),
-    #[error("no generics known for call site {0}")]
     NoGenericsKnownForCallSite(CallString),
-    #[error("no metadata for item {:?} in crate {}", .0, tls::with(|tcx| tcx.crate_name(.0.krate)))]
     NoSuchItemInCate(DefId),
+    ConstructionErrors(Vec<ConstructionErr<'tcx>>),
+}
+
+impl<'tcx> EmittableError<'tcx> for MetadataLoaderError<'tcx> {
+    fn msg(&self, tcx: TyCtxt<'tcx>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use MetadataLoaderError::*;
+        match self {
+            PdgForItemMissing(def) => {
+                write!(f, "found no pdg for item {}", tcx.def_path_debug_str(*def)).into()
+            }
+            MetadataForCrateMissing(krate) => {
+                write!(f, "no metadata found for crate {}", tcx.crate_name(*krate)).into()
+            }
+            NoGenericsKnownForCallSite(cs) => {
+                write!(f, "no generics known for call site {cs}").into()
+            }
+            NoSuchItemInCate(it) => write!(
+                f,
+                "no such item {} found in crate {}",
+                tcx.def_path_debug_str(*it),
+                tcx.crate_name(it.krate)
+            ),
+            ConstructionErrors(e) => f.write_str("construction errors"),
+        }
+    }
+
+    fn emit(&self, tcx: TyCtxt<'tcx>) {
+        if let MetadataLoaderError::ConstructionErrors(e) = self {
+            for e in e {
+                e.emit(tcx);
+            }
+            return;
+        }
+        default_emit_error(self, tcx)
+    }
 }
 
 use MetadataLoaderError::*;
 
 impl<'tcx> GraphLoader<'tcx> for MetadataLoader<'tcx> {
-    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, Vec<ConstructionErr>> {
+    fn load(
+        &self,
+        function: DefId,
+    ) -> Result<Option<&PartialGraph<'tcx>>, Vec<ConstructionErr<'tcx>>> {
         let Ok(meta) = self.get_metadata(function.krate) else {
             return Ok(None);
         };
@@ -157,21 +189,9 @@ impl<'tcx> MetadataLoader<'tcx> {
 }
 
 #[derive(Debug)]
-struct ConstructionErrors(Vec<ConstructionErr>);
+struct ConstructionErrors<'tcx>(Vec<ConstructionErr<'tcx>>);
 
-impl std::error::Error for ConstructionErrors {}
-
-impl std::fmt::Display for ConstructionErrors {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for e in self.0.iter() {
-            e.fmt(f)?;
-            f.write_str(", ")?;
-        }
-        Ok(())
-    }
-}
-
-pub type PdgMap<'tcx> = FxHashMap<DefIndex, Result<PartialGraph<'tcx>, Vec<ConstructionErr>>>;
+pub type PdgMap<'tcx> = FxHashMap<DefIndex, Result<PartialGraph<'tcx>, Vec<ConstructionErr<'tcx>>>>;
 
 /// Intermediate artifacts stored on disc for every crate.
 ///
@@ -249,7 +269,10 @@ impl<'tcx> MetadataLoader<'tcx> {
         })
     }
 
-    pub fn get_metadata(&self, key: CrateNum) -> Result<&Metadata<'tcx>> {
+    pub fn get_metadata(
+        &self,
+        key: CrateNum,
+    ) -> Result<&Metadata<'tcx>, MetadataLoaderError<'tcx>> {
         let meta = self
             .cache
             .get(key, |_| {
@@ -272,19 +295,27 @@ impl<'tcx> MetadataLoader<'tcx> {
         Ok(meta)
     }
 
-    pub fn get_partial_graph(&self, key: DefId) -> Result<&PartialGraph<'tcx>> {
+    pub fn get_partial_graph(
+        &self,
+        key: DefId,
+    ) -> Result<&PartialGraph<'tcx>, MetadataLoaderError<'tcx>> {
         let meta = self.get_metadata(key.krate)?;
         let result = meta.pdgs.get(&key.index).ok_or(PdgForItemMissing(key))?;
-        Ok(result.as_ref().map_err(|e| ConstructionErrors(e.clone()))?)
+        Ok(result
+            .as_ref()
+            .map_err(|e| MetadataLoaderError::ConstructionErrors(e.clone()))?)
     }
 
-    pub fn get_body_info(&self, key: DefId) -> Result<&BodyInfo<'tcx>> {
+    pub fn get_body_info(&self, key: DefId) -> Result<&BodyInfo<'tcx>, MetadataLoaderError<'tcx>> {
         let meta = self.get_metadata(key.krate)?;
         let res = meta.bodies.get(&key.index).ok_or(NoSuchItemInCate(key));
         Ok(res?)
     }
 
-    pub fn get_mono(&self, cs: CallString) -> Result<GenericArgsRef<'tcx>> {
+    pub fn get_mono(
+        &self,
+        cs: CallString,
+    ) -> Result<GenericArgsRef<'tcx>, MetadataLoaderError<'tcx>> {
         let key = cs.root().function;
         Ok(self
             .get_partial_graph(key)?
@@ -292,7 +323,7 @@ impl<'tcx> MetadataLoader<'tcx> {
             .ok_or(NoGenericsKnownForCallSite(cs))?)
     }
 
-    pub fn get_pdg(&self, key: DefId) -> Result<DepGraph<'tcx>> {
+    pub fn get_pdg(&self, key: DefId) -> Result<DepGraph<'tcx>, MetadataLoaderError<'tcx>> {
         Ok(self.get_partial_graph(key)?.to_petgraph())
     }
 

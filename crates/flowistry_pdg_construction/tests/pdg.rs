@@ -3,6 +3,7 @@
 extern crate either;
 extern crate rustc_hir;
 extern crate rustc_middle;
+extern crate rustc_span;
 
 use std::collections::HashSet;
 
@@ -17,6 +18,7 @@ use rustc_middle::{
     mir::{Terminator, TerminatorKind},
     ty::TyCtxt,
 };
+use rustc_span::Symbol;
 use rustc_utils::{mir::borrowck_facts, source_map::find_bodies::find_bodies};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
@@ -780,4 +782,61 @@ pdg_test! {
             t.method()
         }
     },
+}
+
+pdg_test! {
+  spawn_and_loop_await,
+  {
+    use std::future::Future;
+    use std::task::{Poll, Context};
+    use std::pin::Pin;
+
+    struct JoinHandle<T>(Box<dyn Future<Output=T>>);
+
+    impl<T> Future for JoinHandle<T> {
+      type Output = T;
+      fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.map_unchecked_mut(|p| p.0.as_mut()).poll(cx)
+      }
+    }
+
+    pub fn spawn<F>(future: F) -> JoinHandle<F::Output>
+    where
+      F: Future + Send + 'static,
+      F::Output: Send + 'static,
+    {
+      JoinHandle(Box::new(future))
+    }
+
+    pub async fn main() {
+      let mut tasks = vec![];
+      for i in [0,1] {
+        let task: JoinHandle<_> = spawn(async move {
+          println!("{i}");
+          Ok::<_, String>(0)
+        });
+        tasks.push(task);
+      }
+
+      for h in tasks {
+        if let Err(e) = h.await {
+          panic!("{e}")
+        }
+      }
+    }
+  },
+  |tcx, params| {
+      params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
+        let name = tcx.opt_item_name(info.callee.def_id());
+        let name2 = tcx.opt_parent(info.callee.def_id()).and_then(|c| tcx.opt_item_name(c));
+        let is_spawn = |name: Option<&Symbol>| name.map_or(false, |n| n.as_str().contains("spawn"));
+        let mut changes = CallChanges::default();
+        if is_spawn(name.as_ref()) || is_spawn(name2.as_ref())
+        {
+          changes = changes.with_skip(SkipCall::Skip);
+        };
+        changes
+    }));
+  },
+  (i -> h)
 }

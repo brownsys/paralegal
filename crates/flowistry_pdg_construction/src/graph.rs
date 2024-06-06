@@ -401,7 +401,7 @@ impl<'tcx> TransformCallString for PartialGraph<'tcx> {
     }
 }
 
-pub type GraphLoaderError = Vec<ConstructionErr>;
+pub type GraphLoaderError<'tcx> = Vec<ConstructionErr<'tcx>>;
 
 /// Abstracts over how previously written [`Artifact`]s are retrieved, allowing
 /// the user of this module to chose where to store them.
@@ -416,7 +416,7 @@ pub trait GraphLoader<'tcx> {
     /// This should return `Ok(None)` in cases where the target is not expected
     /// to have it's partial graph present. For instance if `function` refers to
     /// an item in a crate that was not selected for analysis.
-    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, GraphLoaderError>;
+    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, GraphLoaderError<'tcx>>;
 }
 
 /// Intermediate data that gets stored for each crate.
@@ -426,19 +426,19 @@ pub type Artifact<'tcx> = FxHashMap<DefIndex, PartialGraph<'tcx>>;
 pub struct NoLoader;
 
 impl<'tcx> GraphLoader<'tcx> for NoLoader {
-    fn load(&self, _: DefId) -> Result<Option<&PartialGraph<'tcx>>, GraphLoaderError> {
+    fn load(&self, _: DefId) -> Result<Option<&PartialGraph<'tcx>>, GraphLoaderError<'tcx>> {
         Ok(None)
     }
 }
 
 impl<'tcx, T: GraphLoader<'tcx>> GraphLoader<'tcx> for Rc<T> {
-    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, GraphLoaderError> {
+    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, GraphLoaderError<'tcx>> {
         (**self).load(function)
     }
 }
 
 impl<'tcx, T: GraphLoader<'tcx>> GraphLoader<'tcx> for Box<T> {
-    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, GraphLoaderError> {
+    fn load(&self, function: DefId) -> Result<Option<&PartialGraph<'tcx>>, GraphLoaderError<'tcx>> {
         (**self).load(function)
     }
 }

@@ -3,6 +3,8 @@
 use flowistry_pdg::{rustc_portable::Location, CallString};
 use rustc_middle::ty::Instance;
 
+use crate::ConstructionErr;
+
 pub trait CallChangeCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges;
 
@@ -33,8 +35,8 @@ impl<'tcx> CallChangeCallback<'tcx> for CallChangeCallbackFn<'tcx> {
 }
 
 #[derive(Debug)]
-pub enum InlineMissReason {
-    Async(String),
+pub enum InlineMissReason<'tcx> {
+    Async(ConstructionErr<'tcx>),
 }
 
 impl Default for CallChanges {
