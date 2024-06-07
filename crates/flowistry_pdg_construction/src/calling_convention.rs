@@ -107,7 +107,6 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
                     (closure_arg.place()?, &child.projection[..])
                 } else {
                     let tuple_arg = tupled_arguments.place()?;
-                    let _projection = child.projection.to_vec();
                     let field = FieldIdx::from_usize(child.local.as_usize() - 2);
                     let field_ty = tuple_arg.ty(parent_body, tcx).field_ty(tcx, field);
                     (
