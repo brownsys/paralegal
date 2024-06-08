@@ -8,21 +8,20 @@
 //!    [`InstructionState`] at each instruction in the procedure.
 //! 2. [`PartialGraph`] implements [`ResultsVisitor`] over the analysis result
 
-use std::{borrow::Cow, fmt::Display, rc::Rc};
+use std::{fmt::Display, rc::Rc};
 
 use anyhow::anyhow;
 use either::Either;
 
 use flowistry_pdg::{CallString, GlobalLocation};
 
-use itertools::Itertools;
 use log::trace;
 use petgraph::graph::DiGraph;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
-use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
+use rustc_macros::{TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
         visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue, Terminator, TerminatorKind,

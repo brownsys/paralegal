@@ -32,8 +32,7 @@ use crate::{
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
-    Asyncness, CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor,
-    SkipCall,
+    Asyncness, CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
 };
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]

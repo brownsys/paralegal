@@ -28,7 +28,7 @@ use rustc_middle::{
         BasicBlock, BasicBlockData, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind,
         Location, Statement, Terminator, TerminatorKind,
     },
-    ty::{tls, EarlyBinder, GenericArgsRef, Ty, TyCtxt},
+    ty::{EarlyBinder, GenericArgsRef, Ty, TyCtxt},
 };
 use rustc_serialize::{Decodable, Encodable};
 
@@ -61,13 +61,13 @@ impl<'tcx> EmittableError<'tcx> for MetadataLoaderError<'tcx> {
         use MetadataLoaderError::*;
         match self {
             PdgForItemMissing(def) => {
-                write!(f, "found no pdg for item {}", tcx.def_path_debug_str(*def)).into()
+                write!(f, "found no pdg for item {}", tcx.def_path_debug_str(*def))
             }
             MetadataForCrateMissing(krate) => {
-                write!(f, "no metadata found for crate {}", tcx.crate_name(*krate)).into()
+                write!(f, "no metadata found for crate {}", tcx.crate_name(*krate))
             }
             NoGenericsKnownForCallSite(cs) => {
-                write!(f, "no generics known for call site {cs}").into()
+                write!(f, "no generics known for call site {cs}")
             }
             NoSuchItemInCate(it) => write!(
                 f,
@@ -75,7 +75,7 @@ impl<'tcx> EmittableError<'tcx> for MetadataLoaderError<'tcx> {
                 tcx.def_path_debug_str(*it),
                 tcx.crate_name(it.krate)
             ),
-            ConstructionErrors(e) => f.write_str("construction errors"),
+            ConstructionErrors(_e) => f.write_str("construction errors"),
         }
     }
 
@@ -301,15 +301,15 @@ impl<'tcx> MetadataLoader<'tcx> {
     ) -> Result<&PartialGraph<'tcx>, MetadataLoaderError<'tcx>> {
         let meta = self.get_metadata(key.krate)?;
         let result = meta.pdgs.get(&key.index).ok_or(PdgForItemMissing(key))?;
-        Ok(result
+        result
             .as_ref()
-            .map_err(|e| MetadataLoaderError::ConstructionErrors(e.clone()))?)
+            .map_err(|e| MetadataLoaderError::ConstructionErrors(e.clone()))
     }
 
     pub fn get_body_info(&self, key: DefId) -> Result<&BodyInfo<'tcx>, MetadataLoaderError<'tcx>> {
         let meta = self.get_metadata(key.krate)?;
         let res = meta.bodies.get(&key.index).ok_or(NoSuchItemInCate(key));
-        Ok(res?)
+        res
     }
 
     pub fn get_mono(
@@ -317,10 +317,9 @@ impl<'tcx> MetadataLoader<'tcx> {
         cs: CallString,
     ) -> Result<GenericArgsRef<'tcx>, MetadataLoaderError<'tcx>> {
         let key = cs.root().function;
-        Ok(self
-            .get_partial_graph(key)?
+        self.get_partial_graph(key)?
             .get_mono(cs)
-            .ok_or(NoGenericsKnownForCallSite(cs))?)
+            .ok_or(NoGenericsKnownForCallSite(cs))
     }
 
     pub fn get_pdg(&self, key: DefId) -> Result<DepGraph<'tcx>, MetadataLoaderError<'tcx>> {

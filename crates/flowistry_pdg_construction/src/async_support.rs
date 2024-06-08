@@ -1,14 +1,14 @@
-use std::{borrow::Cow, fmt::Display, rc::Rc};
+use std::{fmt::Display, rc::Rc};
 
 use either::Either;
 use flowistry_pdg::{CallString, GlobalLocation};
 use itertools::Itertools;
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::{DefId, LocalDefId};
-use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
+use rustc_macros::{Decodable, Encodable};
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, SourceInfo, Statement,
+        AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{GenericArgsRef, Instance, TyCtxt},

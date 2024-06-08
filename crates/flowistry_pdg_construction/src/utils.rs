@@ -16,7 +16,7 @@ use rustc_middle::{
         self, EarlyBinder, GenericArg, GenericArgsRef, Instance, List, ParamEnv, Ty, TyCtxt, TyKind,
     },
 };
-use rustc_span::ErrorGuaranteed;
+
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
@@ -281,7 +281,7 @@ pub fn manufacture_substs_for(
                     trace!("    is projection clause");
                     let Some(pred) = pred.no_bound_vars() else {
                         return Some(Err(ConstructionErr::BoundVariablesInPredicates {
-                            function: function,
+                            function,
                         }));
                     };
                     if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
@@ -315,7 +315,7 @@ pub fn manufacture_substs_for(
             1 => (),
             _ => {
                 return Err(ConstructionErr::TooManyPredicatesForSynthesizingGenerics {
-                    function: function,
+                    function,
                     number: predicates.len() as u32,
                 })
             }
