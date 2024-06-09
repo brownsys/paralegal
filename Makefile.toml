@@ -48,8 +48,6 @@ stage them and rerun the script until no more errors occur.
 dependencies = ["format-all", "clippy-all"]
 
 [tasks.analyzer-tests]
-description = "Low-level tests for the PDG emitted by the analyzer specifically."
-command = "cargo"
 args = [
     "test",
     "-p",
@@ -63,9 +61,13 @@ args = [
     "--test",
     "new_alias_analysis_tests",
     "--test",
+    "boxes",
+    "--test",
     "async_tests",
     "--no-fail-fast",
 ]
+description = "Low-level tests for the PDG emitted by the analyzer specifically."
+command = "cargo"
 
 [tasks.policy-framework-tests]
 description = "Tests related to the correctness of the policy framework."
