@@ -154,6 +154,7 @@ impl Default for Args {
             dump: Default::default(),
             build_config: Default::default(),
             cargo_args: Vec::new(),
+            attach_to_debugger: None,
         }
     }
 }
