@@ -62,7 +62,7 @@ pub mod rust {
     pub use mir::Location;
 }
 
-use args::{ClapArgs, LogLevelConfig};
+use args::{ClapArgs, Debugger, LogLevelConfig};
 use desc::{utils::write_sep, ProgramDescription};
 use rust::*;
 
@@ -370,10 +370,37 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             "-Zcrate-attr=register_tool(paralegal_flow)".into(),
         ]);
 
+        if let Some(dbg) = opts.attach_to_debugger() {
+            dbg.attach()
+        }
+
         debug!(
             "Arguments: {}",
             Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
         );
         rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks::new(opts)).run()
+    }
+}
+
+impl Debugger {
+    fn attach(self) {
+        use std::process::{id, Command};
+        use std::thread::sleep;
+        use std::time::Duration;
+
+        match self {
+            Debugger::CodeLldb => {
+                let url = format!(
+                    "vscode://vadimcn.vscode-lldb/launch/config?{{'request':'attach','pid':{}}}",
+                    id()
+                );
+                Command::new("code")
+                    .arg("--open-url")
+                    .arg(url)
+                    .output()
+                    .unwrap();
+                sleep(Duration::from_millis(1000));
+            }
+        }
     }
 }

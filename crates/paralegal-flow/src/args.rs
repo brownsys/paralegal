@@ -53,6 +53,7 @@ impl TryFrom<ClapArgs> for Args {
             marker_control,
             cargo_args,
             trace,
+            attach_to_debugger,
         } = value;
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
@@ -101,8 +102,15 @@ impl TryFrom<ClapArgs> for Args {
             build_config,
             marker_control,
             cargo_args,
+            attach_to_debugger,
         })
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, clap::ValueEnum, Clone, Copy)]
+pub enum Debugger {
+    /// The CodeLLDB debugger. Learn more at <https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md>.
+    CodeLldb,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -114,10 +122,12 @@ pub struct Args {
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
     relaxed: bool,
-
+    /// Target a specific package
     target: Option<String>,
     /// Abort the compilation after finishing the analysis
     abort_after_analysis: bool,
+    /// Make the compiler attach to a debugger
+    attach_to_debugger: Option<Debugger>,
     /// Additional arguments on marker assignment and discovery
     marker_control: MarkerControl,
     /// Additional arguments that control the flow analysis specifically
@@ -175,12 +185,15 @@ pub struct ClapArgs {
     /// Emit warnings instead of aborting the analysis on sanity checks
     #[clap(long, env = "PARALEGAL_RELAXED")]
     relaxed: bool,
-
+    /// Run paralegal only on this crate
     #[clap(long, env = "PARALEGAL_TARGET")]
     target: Option<String>,
     /// Abort the compilation after finishing the analysis
     #[clap(long, env)]
     abort_after_analysis: bool,
+    /// Attach to a debugger before running the analyses
+    #[clap(long)]
+    attach_to_debugger: Option<Debugger>,
     /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis")]
     anactrl: ClapAnalysisCtrl,
@@ -355,6 +368,10 @@ impl Args {
 
     pub fn cargo_args(&self) -> &[String] {
         &self.cargo_args
+    }
+
+    pub fn attach_to_debugger(&self) -> Option<Debugger> {
+        self.attach_to_debugger
     }
 }
 
