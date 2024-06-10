@@ -4,7 +4,7 @@ use std::{collections::hash_map::RandomState, sync::Arc};
 
 use helpers::{Result, Test};
 use paralegal_policy::{
-    assert_error, assert_warning, Context, Diagnostics, EdgeSelection, NodeExt,
+    assert_error, assert_warning, Context, Diagnostics, EdgeSelection, NodeExt, NodeQueries,
 };
 use paralegal_spdg::{GlobalNode, Identifier};
 
@@ -126,6 +126,47 @@ fn support_calling_async_trait_0_1_53() -> Result<()> {
     let mut test = Test::new(CALLING_ASYNC_TRAIT_CODE)?;
     test.with_dep(["async-trait@=0.1.53"]);
     test.run(calling_async_trait_policy)
+}
+
+#[test]
+fn call_async_trait_single_inline() -> Result<()> {
+    let mut test = Test::new(stringify!(
+        #[paralegal::marker(marked, return)]
+        fn apply_marker<T>(i: T) -> T {
+            i
+        }
+
+        struct Ctx;
+        #[async_trait::async_trait(?Send)]
+        trait Trait {
+            async fn transform(&self, i: usize) -> usize;
+        }
+
+        #[async_trait::async_trait(?Send)]
+        impl Trait for Ctx {
+            async fn transform(&self, i: usize) -> usize {
+                apply_marker(i)
+            }
+        }
+
+        #[paralegal::analyze]
+        async fn main() {
+            assert_eq!(Ctx.transform(0).await, 0);
+        }
+    ))?;
+    test.with_dep(["async-trait@=0.1.53"]);
+    test.run(|ctx| {
+        let marked = ctx
+            .marked_nodes(Identifier::new_intern("marked"))
+            .collect::<Box<_>>();
+        assert!(!marked.is_empty());
+        for src in marked.iter() {
+            for sink in marked.iter() {
+                assert!(src == sink || !src.flows_to(*sink, &ctx, EdgeSelection::Data));
+            }
+        }
+        Ok(())
+    })
 }
 
 #[test]
