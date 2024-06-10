@@ -128,8 +128,7 @@ fn support_calling_async_trait_0_1_53() -> Result<()> {
     test.run(calling_async_trait_policy)
 }
 
-#[test]
-fn call_async_trait_single_inline() -> Result<()> {
+fn call_async_trait_single_inline_with_version(v: &str) -> Result<()> {
     let mut test = Test::new(stringify!(
         #[paralegal::marker(marked, return)]
         fn apply_marker<T>(i: T) -> T {
@@ -154,7 +153,7 @@ fn call_async_trait_single_inline() -> Result<()> {
             assert_eq!(Ctx.transform(0).await, 0);
         }
     ))?;
-    test.with_dep(["async-trait@=0.1.53"]);
+    test.with_dep([v]);
     test.run(|ctx| {
         let marked = ctx
             .marked_nodes(Identifier::new_intern("marked"))
@@ -167,6 +166,16 @@ fn call_async_trait_single_inline() -> Result<()> {
         }
         Ok(())
     })
+}
+
+#[test]
+fn call_async_trait_single_inline_0_1_53() -> Result<()> {
+    call_async_trait_single_inline_with_version("async_trait@=0.1.53")
+}
+
+#[test]
+fn call_async_trait_single_inline_latest() -> Result<()> {
+    call_async_trait_single_inline_with_version("async_trait")
 }
 
 #[test]
