@@ -130,10 +130,12 @@ impl<'tcx> MetadataLoader<'tcx> {
         let emit_targets = collector.emit_target_collector;
         let marker_ctx: MarkerCtx = collector.marker_ctx.into();
         let mut constructor = MemoPdgConstructor::new(tcx, self.clone());
-        constructor.with_call_change_callback(MyCallback {
-            tcx,
-            judge: InlineJudge::new(marker_ctx.clone(), tcx, args.anactrl()),
-        });
+        constructor
+            .with_call_change_callback(MyCallback {
+                tcx,
+                judge: InlineJudge::new(marker_ctx.clone(), tcx, args.anactrl()),
+            })
+            .with_dump_mir(args.dbg().dump_mir());
         let pdgs = emit_targets
             .into_iter()
             .map(|t| {
