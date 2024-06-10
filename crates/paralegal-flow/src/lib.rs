@@ -58,18 +58,6 @@ use rustc_driver::Compilation;
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 
-use paralegal_spdg as desc;
-
-use crate::{
-    ana::{MetadataLoader, SPDGGenerator},
-    ann::db::MarkerCtx,
-    args::{AnalysisCtrl, Args, ClapArgs, LogLevelConfig},
-    consts::INTERMEDIATE_ARTIFACT_EXT,
-    desc::utils::write_sep,
-    stats::{Stats, TimedStat},
-    utils::Print,
-};
-
 use anyhow::{anyhow, Context as _, Result};
 use either::Either;
 // This import is sort of special because it comes from the private rustc
@@ -86,6 +74,17 @@ mod utils;
 mod consts;
 #[cfg(feature = "test")]
 pub mod test_utils;
+
+pub use paralegal_spdg as desc;
+
+pub use crate::ann::db::MarkerCtx;
+
+use ana::{MetadataLoader, SPDGGenerator};
+use args::{AnalysisCtrl, Args, ClapArgs, Debugger, LogLevelConfig};
+use consts::INTERMEDIATE_ARTIFACT_EXT;
+use desc::utils::write_sep;
+use stats::{Stats, TimedStat};
+use utils::Print;
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -190,6 +189,15 @@ impl Callbacks {
 struct NoopCallbacks {}
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
+
+impl Callbacks {
+    pub fn new(opts: &'static Args) -> Self {
+        Self {
+            opts,
+            stats: Default::default(),
+        }
+    }
+}
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
@@ -392,17 +400,37 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             "-Zcrate-attr=register_tool(paralegal_flow)".into(),
         ]);
 
+        if let Some(dbg) = opts.attach_to_debugger() {
+            dbg.attach()
+        }
+
         debug!(
             "Arguments: {}",
             Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
         );
-        rustc_driver::RunCompiler::new(
-            &compiler_args,
-            &mut Callbacks {
-                opts,
-                stats: Default::default(),
-            },
-        )
-        .run()
+        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks::new(opts)).run()
+    }
+}
+
+impl Debugger {
+    fn attach(self) {
+        use std::process::{id, Command};
+        use std::thread::sleep;
+        use std::time::Duration;
+
+        match self {
+            Debugger::CodeLldb => {
+                let url = format!(
+                    "vscode://vadimcn.vscode-lldb/launch/config?{{'request':'attach','pid':{}}}",
+                    id()
+                );
+                Command::new("code")
+                    .arg("--open-url")
+                    .arg(url)
+                    .output()
+                    .unwrap();
+                sleep(Duration::from_millis(1000));
+            }
+        }
     }
 }

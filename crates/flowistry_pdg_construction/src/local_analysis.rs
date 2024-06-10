@@ -212,7 +212,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     ) -> Vec<DepNode<'tcx>> {
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
-            .refs_in_projection()
+            .refs_in_projection(&self.body, self.tcx())
             .map(|(place_ref, _)| Place::from_ref(place_ref, self.tcx()));
         let inputs = iter::once(input).chain(provenance);
 

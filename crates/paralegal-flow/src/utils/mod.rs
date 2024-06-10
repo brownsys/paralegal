@@ -422,29 +422,10 @@ impl<'tcx> Overlap<'tcx> {
 /// Extension trait for [`Place`]s so we can implement methods on them. [`Self`]
 /// is only ever supposed to be instantiated as [`Place`].
 pub trait PlaceExt<'tcx> {
-    /// Constructs a set of places that are ref/deref/field un-layerings of the
-    /// input place.
-    ///
-    /// The ordering is starting with the place itself, then successively removing
-    /// layers until only the local is left. E.g. `provenance_of(_1.foo.bar) ==
-    /// [_1.foo.bar, _1.foo, _1]`
-    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>; 2]>;
-
     fn simple_overlaps(self, other: Place<'tcx>) -> Overlap<'tcx>;
 }
 
 impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
-    fn provenance(self, tcx: TyCtxt<'tcx>) -> SmallVec<[Place<'tcx>; 2]> {
-        use rustc_utils::PlaceExt;
-        let mut refs: SmallVec<_> = self
-            .refs_in_projection()
-            .map(|(ptr, _)| Place::from_ref(ptr, tcx))
-            .chain([self])
-            .collect();
-        refs.reverse();
-        refs
-    }
-
     fn simple_overlaps(self, other: Place<'tcx>) -> Overlap<'tcx> {
         if self.local != other.local
             || self

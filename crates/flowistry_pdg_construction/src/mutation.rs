@@ -234,7 +234,7 @@ where
             // reference, except for the provenance of reborrows.
             Rvalue::Ref(_, _, place) => {
                 let inputs = place
-                    .refs_in_projection()
+                    .refs_in_projection(self.place_info.body, self.place_info.tcx)
                     .map(|(place_ref, _)| (Place::from_ref(place_ref, tcx), None))
                     .collect::<Vec<_>>();
                 (self.f)(

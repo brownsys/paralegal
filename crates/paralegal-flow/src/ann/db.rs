@@ -388,17 +388,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             )
         };
 
-        let include_type_markers =
-            self.0.config.local_function_type_marking() || !function.def_id().is_local();
-        direct_markers.chain(
-            if include_type_markers {
-                get_type_markers()
-            } else {
-                None
-            }
-            .into_iter()
-            .flatten(),
-        )
+        direct_markers.chain(get_type_markers().into_iter().flatten())
     }
 
     /// Iterate over all discovered annotations, whether local or external
@@ -436,7 +426,7 @@ pub struct MarkerDatabase<'tcx> {
     /// Cache whether markers are reachable transitively.
     pub(crate) reachable_markers: Cache<Instance<'tcx>, Box<[InternedString]>>,
     /// Configuration options
-    config: &'static MarkerControl,
+    _config: &'static MarkerControl,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     loader: Rc<MetadataLoader<'tcx>>,
 }
@@ -449,7 +439,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             local_annotations: HashMap::default(),
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
-            config: args.marker_control(),
+            _config: args.marker_control(),
             type_markers: Default::default(),
             loader,
         }
@@ -505,7 +495,7 @@ type RawExternalMarkers = HashMap<String, Vec<crate::ann::MarkerAnnotation>>;
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.
 fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
-    if let Some(annotation_file) = opts.modelctrl().external_annotations() {
+    if let Some(annotation_file) = opts.marker_control().external_annotations() {
         let from_toml: RawExternalMarkers = toml::from_str(
             &std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
                 panic!(
