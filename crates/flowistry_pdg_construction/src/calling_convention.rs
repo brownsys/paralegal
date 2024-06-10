@@ -66,24 +66,26 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
     ) -> Option<(Place<'tcx>, &[PlaceElem<'tcx>])> {
         let result = match self {
             // Async return must be handled special, because it gets wrapped in `Poll::Ready`
-            Self::Async { .. } if child.local == RETURN_PLACE => {
-                let in_poll = destination.project_deeper(
-                    &[PlaceElem::Downcast(None, async_info.poll_ready_variant_idx)],
-                    tcx,
-                );
-                let field_idx = async_info.poll_ready_field_idx;
-                let child_inner_return_type = in_poll
-                    .ty(parent_body.local_decls(), tcx)
-                    .field_ty(tcx, field_idx);
-                (
-                    in_poll.project_deeper(
-                        &[PlaceElem::Field(field_idx, child_inner_return_type)],
+            _ if child.local == RETURN_PLACE => match self {
+                Self::Async { .. } => {
+                    let in_poll = destination.project_deeper(
+                        &[PlaceElem::Downcast(None, async_info.poll_ready_variant_idx)],
                         tcx,
-                    ),
-                    &child.projection[..],
-                )
-            }
-            _ if child.local == RETURN_PLACE => (destination, &child.projection[..]),
+                    );
+                    let field_idx = async_info.poll_ready_field_idx;
+                    let child_inner_return_type = in_poll
+                        .ty(parent_body.local_decls(), tcx)
+                        .field_ty(tcx, field_idx);
+                    (
+                        in_poll.project_deeper(
+                            &[PlaceElem::Field(field_idx, child_inner_return_type)],
+                            tcx,
+                        ),
+                        &child.projection[..],
+                    )
+                }
+                _ => (destination, &child.projection[..]),
+            },
             // Map arguments to the argument array
             Self::Direct(args) => (
                 args[child.local.as_usize() - 1].place()?,
