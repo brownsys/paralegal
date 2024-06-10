@@ -4,8 +4,6 @@ extern crate smallvec;
 use rustc_target::spec::abi::Abi;
 use thiserror::Error;
 
-
-
 use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};
 
 pub use flowistry_pdg_construction::utils::is_non_default_trait_method;
