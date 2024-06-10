@@ -4,7 +4,7 @@ extern crate smallvec;
 use rustc_target::spec::abi::Abi;
 use thiserror::Error;
 
-use smallvec::SmallVec;
+
 
 use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};
 
