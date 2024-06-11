@@ -4,6 +4,8 @@
 //! [`CollectingVisitor`](crate::discover::CollectingVisitor) and then calling
 //! [`analyze`](SPDGGenerator::analyze).
 
+use std::rc::Rc;
+
 use crate::{
     ann::{Annotation, MarkerAnnotation},
     desc::*,
@@ -12,9 +14,9 @@ use crate::{
     DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
 };
 
-use std::rc::Rc;
-
 use anyhow::Result;
+
+use flowistry_pdg_construction::MemoPdgConstructor;
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
@@ -39,6 +41,7 @@ pub struct SPDGGenerator<'tcx> {
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
     marker_ctx: MarkerCtx<'tcx>,
+    constructor: MemoPdgConstructor<'tcx>,
     metadata_loader: Rc<MetadataLoader<'tcx>>,
 }
 
@@ -47,6 +50,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         marker_ctx: MarkerCtx<'tcx>,
         opts: &'static crate::Args,
         tcx: TyCtxt<'tcx>,
+        constructor: MemoPdgConstructor<'tcx>,
         metadata_loader: Rc<MetadataLoader<'tcx>>,
     ) -> Self {
         Self {
@@ -54,6 +58,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             opts,
             tcx,
             metadata_loader,
+            constructor,
         }
     }
 

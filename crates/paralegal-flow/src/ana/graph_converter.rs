@@ -14,12 +14,13 @@ use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 use super::{
     default_index,
-    metadata::{BodyInfo, Error},
+    metadata::{AsyncStatus, BodyInfo, Error},
     path_for_item, src_loc_for_span, RustcInstructionKind, SPDGGenerator,
 };
 use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
+    determine_async,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     utils::try_monomorphize,
     CallChangeCallback, CallChanges, CallInfo, EmittableError, InlineMissReason,
@@ -332,12 +333,22 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     /// Create an initial flowistry graph for the function identified by
-    /// `local_def_id`.
+    /// `def_id`.
     fn create_flowistry_graph(
         generator: &SPDGGenerator<'tcx>,
         def_id: LocalDefId,
     ) -> Result<DepGraph<'tcx>, Error<'tcx>> {
-        generator.metadata_loader.get_pdg(def_id.to_def_id())
+        // We only demand a local def id to ensure that this is always called in
+        // the same crate.
+        let def_id = def_id.to_def_id();
+        Ok(match generator.metadata_loader.get_asyncness(def_id) {
+            AsyncStatus::NotAsync => generator.metadata_loader.get_partial_graph(def_id),
+            AsyncStatus::Async {
+                generator_id,
+                asyncness: _,
+            } => generator.metadata_loader.get_partial_graph(generator_id),
+        }?
+        .to_petgraph())
     }
 
     /// Consume the generator and compile the [`SPDG`].

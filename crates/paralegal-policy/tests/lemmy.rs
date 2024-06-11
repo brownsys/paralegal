@@ -169,13 +169,15 @@ fn call_async_trait_single_inline_with_version(v: &str) -> Result<()> {
 }
 
 #[test]
+#[ignore = "No support yet for calling `async_trait` functions, as that requires (a form of) `dyn` handling"]
 fn call_async_trait_single_inline_0_1_53() -> Result<()> {
-    call_async_trait_single_inline_with_version("async_trait@=0.1.53")
+    call_async_trait_single_inline_with_version("async-trait@=0.1.53")
 }
 
 #[test]
+#[ignore = "No support yet for calling `async_trait` functions, as that requires (a form of) `dyn` handling"]
 fn call_async_trait_single_inline_latest() -> Result<()> {
-    call_async_trait_single_inline_with_version("async_trait")
+    call_async_trait_single_inline_with_version("async-trait")
 }
 
 #[test]

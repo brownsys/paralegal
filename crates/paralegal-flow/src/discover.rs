@@ -127,6 +127,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
         _s: Span,
         id: LocalDefId,
     ) {
+        self.emit_target_collector.push(id);
         match &kind {
             FnKind::ItemFn(name, _, _) | FnKind::Method(name, _) => {
                 if self.should_analyze_function(id) {
@@ -135,7 +136,6 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
                         def_id: id,
                     });
                 }
-                self.emit_target_collector.push(id)
             }
             _ => (),
         }

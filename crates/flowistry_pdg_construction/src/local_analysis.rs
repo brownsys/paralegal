@@ -32,7 +32,7 @@ use crate::{
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
-    Asyncness, CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
+    AsyncType, CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
 };
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]
@@ -563,13 +563,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         self.root.args
     }
 
-    pub(crate) fn construct_partial(
-        &'a self,
-    ) -> Result<PartialGraph<'tcx>, Vec<Error<'tcx>>> {
-        if let Some(g) = self.try_handle_as_async()? {
-            return Ok(g);
-        }
-
+    pub(crate) fn construct_partial(&'a self) -> Result<PartialGraph<'tcx>, Vec<Error<'tcx>>> {
         let mut analysis = WithConstructionErrors::new(self)
             .into_engine(self.tcx(), &self.body)
             .iterate_to_fixpoint();
@@ -579,7 +573,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         }
 
         let mut final_state = WithConstructionErrors::new(PartialGraph::new(
-            Asyncness::No,
             self.generic_args(),
             self.def_id.to_def_id(),
             self.body.arg_count,

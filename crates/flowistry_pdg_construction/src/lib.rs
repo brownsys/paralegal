@@ -15,7 +15,7 @@ extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
-pub use async_support::{determine_async, is_async_trait_fn, Asyncness};
+pub use async_support::{determine_async, is_async_trait_fn, AsyncType};
 pub use construct::Error;
 pub use graph::{Artifact, DepGraph, GraphLoader, NoLoader, PartialGraph};
 pub mod callback;

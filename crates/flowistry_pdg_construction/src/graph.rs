@@ -14,7 +14,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, DefIndex};
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
-    mir::{Body, Place},
+    mir::{Body, Location, Place},
     ty::{GenericArgsRef, TyCtxt},
 };
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
@@ -24,7 +24,7 @@ use rustc_utils::PlaceExt;
 pub use flowistry_pdg::{RichLocation, SourceUse, TargetUse};
 use serde::{Deserialize, Serialize};
 
-use crate::{construct::Error, utils::Captures, Asyncness};
+use crate::{construct::Error, utils::Captures, AsyncType};
 
 /// A node in the program dependency graph.
 ///
@@ -292,7 +292,6 @@ pub struct PartialGraph<'tcx> {
     pub(crate) edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
     pub(crate) monos: FxHashMap<CallString, GenericArgsRef<'tcx>>,
     pub(crate) generics: GenericArgsRef<'tcx>,
-    pub(crate) asyncness: Asyncness,
     def_id: DefId,
     arg_count: usize,
 }
@@ -316,22 +315,12 @@ impl<'tcx> PartialGraph<'tcx> {
         }
     }
 
-    pub fn asyncness(&self) -> Asyncness {
-        self.asyncness
-    }
-
-    pub fn new(
-        asyncness: Asyncness,
-        generics: GenericArgsRef<'tcx>,
-        def_id: DefId,
-        arg_count: usize,
-    ) -> Self {
+    pub fn new(generics: GenericArgsRef<'tcx>, def_id: DefId, arg_count: usize) -> Self {
         Self {
             nodes: Default::default(),
             edges: Default::default(),
             monos: Default::default(),
             generics,
-            asyncness,
             def_id,
             arg_count,
         }
@@ -377,7 +366,6 @@ impl<'tcx> TransformCallString for PartialGraph<'tcx> {
         let recurse_node = |n: &DepNode<'tcx>| n.transform_call_string(&f);
         Self {
             generics: self.generics,
-            asyncness: self.asyncness,
             nodes: self.nodes.iter().map(recurse_node).collect(),
             edges: self
                 .edges

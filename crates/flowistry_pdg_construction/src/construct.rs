@@ -8,7 +8,7 @@
 //!    [`InstructionState`] at each instruction in the procedure.
 //! 2. [`PartialGraph`] implements [`ResultsVisitor`] over the analysis result
 
-use std::{fmt::Display, rc::Rc};
+use std::{borrow::Cow, fmt::Display, rc::Rc};
 
 use anyhow::anyhow;
 use either::Either;
@@ -26,11 +26,11 @@ use rustc_middle::{
     mir::{
         visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue, Terminator, TerminatorKind,
     },
-    ty::{GenericArgsRef, Instance, TyCtxt},
+    ty::{GenericArgsRef, Instance, ParamEnv, TyCtxt},
 };
 use rustc_mir_dataflow::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_span::Span;
-use rustc_utils::cache::Cache;
+use rustc_utils::{cache::Cache, mir::borrowck_facts};
 
 use crate::{
     async_support::*,
@@ -39,7 +39,7 @@ use crate::{
     },
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{manufacture_substs_for, try_resolve_function},
+    utils::{manufacture_substs_for, try_monomorphize, try_resolve_function},
     CallChangeCallback, GraphLoader,
 };
 

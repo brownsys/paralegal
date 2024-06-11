@@ -17,9 +17,8 @@ use rustc_span::Span;
 
 use crate::{
     construct::EmittableError,
-    graph::push_call_string_root,
     local_analysis::{CallKind, LocalAnalysis},
-    utils, Error, PartialGraph,
+    utils, Error,
 };
 
 /// Describe in which way a function is `async`.
@@ -27,16 +26,9 @@ use crate::{
 /// Critically distinguishes between a normal `async fn` and an
 /// `#[async_trait]`.
 #[derive(Debug, Clone, Copy, Decodable, Encodable)]
-pub enum Asyncness {
-    No,
-    AsyncFn,
-    AsyncTrait,
-}
-
-impl Asyncness {
-    pub fn is_async(self) -> bool {
-        !matches!(self, Asyncness::No)
-    }
+pub enum AsyncType {
+    Fn,
+    Trait,
 }
 
 /// Stores ids that are needed to construct projections around async functions.
@@ -174,13 +166,13 @@ pub fn determine_async<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
     body: &Body<'tcx>,
-) -> Option<(Instance<'tcx>, Location, Asyncness)> {
+) -> Option<(Instance<'tcx>, Location, AsyncType)> {
     let ((generator_def_id, args, loc), asyncness) = if tcx.asyncness(def_id).is_async() {
-        (get_async_generator(body), Asyncness::AsyncFn)
+        (get_async_generator(body), AsyncType::Fn)
     } else {
         (
             try_as_async_trait_function(tcx, def_id.to_def_id(), body)?,
-            Asyncness::AsyncTrait,
+            AsyncType::Trait,
         )
     };
     let param_env = tcx.param_env_reveal_all_normalized(def_id);
@@ -277,29 +269,6 @@ impl<'tcx> EmittableError<'tcx> for AsyncResolutionErr {
 }
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
-    pub(crate) fn try_handle_as_async(
-        &self,
-    ) -> Result<Option<PartialGraph<'tcx>>, Vec<Error<'tcx>>> {
-        let Some((generator_fn, location, asyncness)) =
-            determine_async(self.tcx(), self.def_id, &self.body)
-        else {
-            return Ok(None);
-        };
-
-        let Some(g) = self.memo.construct_for(generator_fn)? else {
-            return Ok(None);
-        };
-        let gloc = GlobalLocation {
-            function: self.def_id.to_def_id(),
-            location: flowistry_pdg::RichLocation::Location(location),
-        };
-        let mut new_g = push_call_string_root(g, gloc);
-        //let g_generics = std::mem::replace(&mut new_g.graph.generics, self.generic_args());
-        new_g.asyncness = asyncness;
-        new_g.monos.insert(CallString::single(gloc), new_g.generics);
-        Ok(Some(new_g))
-    }
-
     pub(crate) fn try_poll_call_kind<'b>(
         &'b self,
         def_id: DefId,

@@ -14,15 +14,16 @@ use crate::{
 use std::path::Path;
 use std::{fs::File, io::Read, rc::Rc};
 
+use construct::determine_async;
 use flowistry_pdg_construction::{
-    self as construct, default_emit_error, graph::InternedString, Asyncness, DepGraph,
+    self as construct, default_emit_error, graph::InternedString, AsyncType, DepGraph,
     EmittableError, GraphLoader, MemoPdgConstructor, PartialGraph,
 };
 
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{CrateNum, DefIndex, LocalDefId, LOCAL_CRATE};
 use rustc_index::IndexVec;
-use rustc_macros::{TyDecodable, TyEncodable};
+use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{
         BasicBlock, BasicBlockData, HasLocalDecls, Local, LocalDecl, LocalDecls, LocalKind,
@@ -107,7 +108,7 @@ impl<'tcx> GraphLoader<'tcx> for MetadataLoader<'tcx> {
             .as_ref()
             .map_err(Clone::clone)?;
 
-        Ok(Some(res))
+        Ok(Some(&res.graph))
     }
 }
 
@@ -123,7 +124,7 @@ impl<'tcx> MetadataLoader<'tcx> {
         self: Rc<Self>,
         args: &'static Args,
         path: impl AsRef<Path>,
-    ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>) {
+    ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>, MemoPdgConstructor<'tcx>) {
         let tcx = self.tcx;
         let mut collector = CollectingVisitor::new(tcx, args, self.clone());
         collector.run();
@@ -143,8 +144,23 @@ impl<'tcx> MetadataLoader<'tcx> {
                 //     return None;
                 // }
                 println!("Constructing for {:?}", tcx.def_path_str(t));
-                let graph = constructor.construct_root(t);
-                Some((t.local_def_index, graph.map(Clone::clone)))
+                let graph = constructor.construct_root(t).map(|graph| {
+                    let body = borrowck_facts::get_body_with_borrowck_facts(tcx, t);
+                    // MONOMORPHIZATION: normally we need to monomorphize the
+                    // body, but here we don't because generics can't change
+                    // whether a function has async structure.
+                    let async_status = determine_async(tcx, t, &body.body)
+                        .map(|(inst, _loc, asyncness)| AsyncStatus::Async {
+                            generator_id: inst.def_id().index,
+                            asyncness,
+                        })
+                        .unwrap_or(AsyncStatus::NotAsync);
+                    PdgInfo {
+                        graph: graph.clone(),
+                        async_status,
+                    }
+                });
+                Some((t.local_def_index, graph))
             })
             .collect::<FxHashMap<_, _>>();
         let meta = Metadata::from_pdgs(tcx, pdgs, marker_ctx.db());
@@ -152,7 +168,7 @@ impl<'tcx> MetadataLoader<'tcx> {
         debug!("Writing metadata to {}", path.display());
         meta.write(path, tcx);
         self.cache.get(LOCAL_CRATE, |_| Some(meta));
-        (collector.functions_to_analyze, marker_ctx)
+        (collector.functions_to_analyze, marker_ctx, constructor)
     }
 
     pub fn get_annotations(&self, key: DefId) -> &[Annotation] {
@@ -194,11 +210,41 @@ impl<'tcx> MetadataLoader<'tcx> {
     }
 }
 
-#[derive(Debug)]
-struct ConstructionErrors<'tcx>(Vec<Error<'tcx>>);
+#[derive(Clone, Debug, TyEncodable, TyDecodable)]
+pub struct PdgInfo<'tcx> {
+    pub graph: PartialGraph<'tcx>,
+    pub async_status: AsyncStatus<DefIndex>,
+}
 
-pub type PdgMap<'tcx> =
-    FxHashMap<DefIndex, Result<PartialGraph<'tcx>, Vec<construct::Error<'tcx>>>>;
+#[derive(Clone, Copy, Debug, Encodable, Decodable)]
+pub enum AsyncStatus<Def> {
+    NotAsync,
+    Async {
+        generator_id: Def,
+        asyncness: AsyncType,
+    },
+}
+
+impl<Def> AsyncStatus<Def> {
+    pub fn is_async(&self) -> bool {
+        matches!(self, Self::Async { .. })
+    }
+
+    fn map_index<D>(&self, f: impl FnOnce(&Def) -> D) -> AsyncStatus<D> {
+        match self {
+            Self::NotAsync => AsyncStatus::NotAsync,
+            Self::Async {
+                generator_id,
+                asyncness,
+            } => AsyncStatus::Async {
+                generator_id: f(generator_id),
+                asyncness: *asyncness,
+            },
+        }
+    }
+}
+
+pub type PdgMap<'tcx> = FxHashMap<DefIndex, Result<PdgInfo<'tcx>, Vec<construct::Error<'tcx>>>>;
 
 /// Intermediate artifacts stored on disc for every crate.
 ///
@@ -232,7 +278,7 @@ impl<'tcx> Metadata<'tcx> {
         for call_string in pdgs
             .values()
             .filter_map(|e| e.as_ref().ok())
-            .flat_map(|subgraph| subgraph.mentioned_call_string())
+            .flat_map(|subgraph| subgraph.graph.mentioned_call_string())
         {
             for location in call_string.iter() {
                 if let Some(local) = location.function.as_local() {
@@ -305,6 +351,7 @@ impl<'tcx> MetadataLoader<'tcx> {
         result
             .as_ref()
             .map_err(|e| Error::ConstructionErrors(e.clone()))
+            .map(|e| &e.graph)
     }
 
     pub fn get_body_info(&self, key: DefId) -> Result<&BodyInfo<'tcx>, Error<'tcx>> {
@@ -320,11 +367,7 @@ impl<'tcx> MetadataLoader<'tcx> {
             .ok_or(NoGenericsKnownForCallSite(cs))
     }
 
-    pub fn get_pdg(&self, key: DefId) -> Result<DepGraph<'tcx>, Error<'tcx>> {
-        Ok(self.get_partial_graph(key)?.to_petgraph())
-    }
-
-    pub fn get_asyncness(&self, key: DefId) -> Asyncness {
+    pub fn get_asyncness(&self, key: DefId) -> AsyncStatus<DefId> {
         (|| {
             Some(
                 self.get_metadata(key.krate)
@@ -333,10 +376,14 @@ impl<'tcx> MetadataLoader<'tcx> {
                     .get(&key.index)?
                     .as_ref()
                     .ok()?
-                    .asyncness(),
+                    .async_status
+                    .map_index(|i| DefId {
+                        krate: key.krate,
+                        index: *i,
+                    }),
             )
         })()
-        .unwrap_or(Asyncness::No)
+        .unwrap_or(AsyncStatus::NotAsync)
     }
 }
 

@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
-    time::SystemTime,
+    time::{Duration, Instant, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
 use anyhow::anyhow;
@@ -34,14 +34,16 @@ lazy_static::lazy_static! {
 
 fn temporary_directory(to_hash: &impl Hash) -> Result<PathBuf> {
     let tmpdir = env::temp_dir();
-    let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
     let mut hasher = DefaultHasher::new();
-    secs.hash(&mut hasher);
     to_hash.hash(&mut hasher);
+    let t = SystemTime::now().duration_since(UNIX_EPOCH)?;
+    t.hash(&mut hasher);
     let hash = hasher.finish();
     let short_hash = hash % 0x1_000_000;
     let path = tmpdir.join(format!("test-crate-{short_hash:06x}"));
-    fs::create_dir(&path)?;
+    if !path.exists() {
+        fs::create_dir(&path)?;
+    }
     Ok(path)
 }
 
@@ -70,6 +72,16 @@ impl Test {
     pub fn new(code: impl Into<String>) -> Result<Self> {
         let code = code.into();
         let tempdir = temporary_directory(&code)?;
+        for entry in fs::read_dir(&tempdir)? {
+            let f = entry?;
+            let typ = f.file_type()?;
+            if typ.is_dir() {
+                fs::remove_dir_all(f.path())?;
+            } else if typ.is_file() {
+                fs::remove_file(f.path())?;
+            }
+        }
+        println!("Running in {}", tempdir.display());
         Ok(Self {
             code,
             external_ann_file_name: tempdir.join("external_annotations.toml"),
