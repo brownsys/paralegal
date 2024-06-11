@@ -14,7 +14,7 @@ use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 use super::{
     default_index,
-    metadata::{BodyInfo, MetadataLoaderError},
+    metadata::{BodyInfo, Error},
     path_for_item, src_loc_for_span, RustcInstructionKind, SPDGGenerator,
 };
 use anyhow::{anyhow, Result};
@@ -336,7 +336,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn create_flowistry_graph(
         generator: &SPDGGenerator<'tcx>,
         def_id: LocalDefId,
-    ) -> Result<DepGraph<'tcx>, MetadataLoaderError<'tcx>> {
+    ) -> Result<DepGraph<'tcx>, Error<'tcx>> {
         generator.metadata_loader.get_pdg(def_id.to_def_id())
     }
 

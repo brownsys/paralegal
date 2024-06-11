@@ -28,7 +28,7 @@ use crate::{
     approximation::ApproximationHandler,
     async_support::*,
     calling_convention::*,
-    construct::{ConstructionErr, WithConstructionErrors},
+    construct::{Error, WithConstructionErrors},
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
@@ -345,12 +345,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         func: &Operand<'tcx>,
         args: &'b [Operand<'tcx>],
         span: Span,
-    ) -> Result<Option<CallHandling<'tcx, 'b>>, Vec<ConstructionErr<'tcx>>> {
+    ) -> Result<Option<CallHandling<'tcx, 'b>>, Vec<Error<'tcx>>> {
         let tcx = self.tcx();
+
+        trace!("Considering call at {location:?} in {:?}", self.def_id);
 
         let (called_def_id, generic_args) = self
             .operand_to_def_id(func)
-            .ok_or_else(|| vec![ConstructionErr::operand_is_not_function_type(func)])?;
+            .ok_or_else(|| vec![Error::operand_is_not_function_type(func)])?;
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
 
         // Monomorphize the called function with the known generic_args.
@@ -363,7 +365,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 return Ok(None);
             } else {
                 return Err(
-                vec![ConstructionErr::instance_resolution_failed(
+                vec![Error::instance_resolution_failed(
                     called_def_id,
                     generic_args,
                     span
@@ -480,7 +482,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         args: &[Operand<'tcx>],
         destination: Place<'tcx>,
         span: Span,
-    ) -> Result<bool, Vec<ConstructionErr<'tcx>>> {
+    ) -> Result<bool, Vec<Error<'tcx>>> {
         // Note: my comments here will use "child" to refer to the callee and
         // "parent" to refer to the caller, since the words are most visually distinct.
 
@@ -563,7 +565,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
     pub(crate) fn construct_partial(
         &'a self,
-    ) -> Result<PartialGraph<'tcx>, Vec<ConstructionErr<'tcx>>> {
+    ) -> Result<PartialGraph<'tcx>, Vec<Error<'tcx>>> {
         if let Some(g) = self.try_handle_as_async()? {
             return Ok(g);
         }
@@ -627,7 +629,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         resolved_def_id: DefId,
         original_args: &'b [Operand<'tcx>],
         span: Span,
-    ) -> Result<CallKind<'tcx>, ConstructionErr<'tcx>> {
+    ) -> Result<CallKind<'tcx>, Error<'tcx>> {
         match self.try_poll_call_kind(def_id, original_args, span) {
             AsyncDeterminationResult::Resolved(r) => Ok(r),
             AsyncDeterminationResult::NotAsync => Ok(self

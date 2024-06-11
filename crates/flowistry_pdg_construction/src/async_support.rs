@@ -19,7 +19,7 @@ use crate::{
     construct::EmittableError,
     graph::push_call_string_root,
     local_analysis::{CallKind, LocalAnalysis},
-    utils, ConstructionErr, PartialGraph,
+    utils, Error, PartialGraph,
 };
 
 /// Describe in which way a function is `async`.
@@ -192,7 +192,7 @@ pub fn determine_async<'tcx>(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsyncDeterminationResult<'tcx, T> {
     Resolved(T),
-    Unresolvable(ConstructionErr<'tcx>),
+    Unresolvable(Error<'tcx>),
     NotAsync,
 }
 
@@ -279,7 +279,7 @@ impl<'tcx> EmittableError<'tcx> for AsyncResolutionErr {
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn try_handle_as_async(
         &self,
-    ) -> Result<Option<PartialGraph<'tcx>>, Vec<ConstructionErr<'tcx>>> {
+    ) -> Result<Option<PartialGraph<'tcx>>, Vec<Error<'tcx>>> {
         let Some((generator_fn, location, asyncness)) =
             determine_async(self.tcx(), self.def_id, &self.body)
         else {
@@ -324,10 +324,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &'b self,
         args: &'b [Operand<'tcx>],
         call_span: Span,
-    ) -> Result<(Instance<'tcx>, Location, Place<'tcx>), ConstructionErr<'tcx>> {
+    ) -> Result<(Instance<'tcx>, Location, Place<'tcx>), Error<'tcx>> {
         macro_rules! async_err {
             ($msg:expr) => {
-                return Err(ConstructionErr::AsyncResolutionErr($msg))
+                return Err(Error::AsyncResolutionErr($msg))
             };
         }
         macro_rules! let_assert {
@@ -337,7 +337,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 };
             };
         }
-        let get_def_for_op = |op: &Operand<'tcx>| -> Result<Location, ConstructionErr> {
+        let get_def_for_op = |op: &Operand<'tcx>| -> Result<Location, Error> {
             let mk_err = |reason| AsyncResolutionErr::WrongOperandShape {
                 span: call_span,
                 reason,
@@ -453,7 +453,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.tcx().param_env_reveal_all_normalized(self.def_id),
             generics,
         )
-        .ok_or_else(|| ConstructionErr::instance_resolution_failed(op, generics, call_span))?;
+        .ok_or_else(|| Error::instance_resolution_failed(op, generics, call_span))?;
 
         Ok((resolution, async_fn_call_loc, calling_convention))
     }

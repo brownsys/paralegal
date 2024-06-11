@@ -20,7 +20,7 @@ use rustc_middle::{
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
-use crate::construct::ConstructionErr;
+use crate::construct::Error;
 
 pub trait Captures<'a> {}
 impl<'a, T: ?Sized> Captures<'a> for T {}
@@ -218,7 +218,7 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
 pub fn manufacture_substs_for(
     tcx: TyCtxt<'_>,
     function: DefId,
-) -> Result<&List<GenericArg<'_>>, ConstructionErr> {
+) -> Result<&List<GenericArg<'_>>, Error> {
     use rustc_middle::ty::{
         Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
         ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
@@ -247,7 +247,7 @@ pub fn manufacture_substs_for(
                 )))
             }
             GenericParamDefKind::Const { .. } => {
-                return Err(ConstructionErr::ConstantInGenerics { function });
+                return Err(Error::ConstantInGenerics { function });
             }
             GenericParamDefKind::Type { .. } => (),
         };
@@ -263,7 +263,7 @@ pub fn manufacture_substs_for(
                         return None;
                     };
                     let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
-                        return Some(Err(ConstructionErr::TraitRefWithBinder { function }));
+                        return Some(Err(Error::TraitRefWithBinder { function }));
                     };
                     if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty)
                     {
@@ -280,9 +280,7 @@ pub fn manufacture_substs_for(
                 } else if let Some(pred) = clause.as_projection_clause() {
                     trace!("    is projection clause");
                     let Some(pred) = pred.no_bound_vars() else {
-                        return Some(Err(ConstructionErr::BoundVariablesInPredicates {
-                            function,
-                        }));
+                        return Some(Err(Error::BoundVariablesInPredicates { function }));
                     };
                     if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
                         trace!("    Bailing because self type is not param type");
@@ -314,7 +312,7 @@ pub fn manufacture_substs_for(
             ))),
             1 => (),
             _ => {
-                return Err(ConstructionErr::TooManyPredicatesForSynthesizingGenerics {
+                return Err(Error::TooManyPredicatesForSynthesizingGenerics {
                     function,
                     number: predicates.len() as u32,
                 })

@@ -57,7 +57,7 @@ pub struct MemoPdgConstructor<'tcx> {
 }
 
 #[derive(Debug, TyEncodable, TyDecodable, Clone, Hash, Eq, PartialEq)]
-pub enum ConstructionErr<'tcx> {
+pub enum Error<'tcx> {
     InstanceResolutionFailed {
         function: DefId,
         generics: GenericArgsRef<'tcx>,
@@ -121,9 +121,9 @@ pub fn default_emit_error<'tcx>(e: &(impl EmittableError<'tcx> + ?Sized), tcx: T
     }
 }
 
-impl<'tcx> EmittableError<'tcx> for ConstructionErr<'tcx> {
+impl<'tcx> EmittableError<'tcx> for Error<'tcx> {
     fn span(&self, tcx: TyCtxt<'tcx>) -> Option<Span> {
-        use ConstructionErr::*;
+        use Error::*;
         match self {
             AsyncResolutionErr(e) => e.span(tcx),
             InstanceResolutionFailed { span, .. } | FailedLoadingExternalFunction { span, .. } => {
@@ -137,7 +137,7 @@ impl<'tcx> EmittableError<'tcx> for ConstructionErr<'tcx> {
     }
 
     fn msg(&self, tcx: TyCtxt, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use ConstructionErr::*;
+        use Error::*;
         match self {
             InstanceResolutionFailed {
                 function, generics, ..
@@ -179,7 +179,7 @@ impl<'tcx> EmittableError<'tcx> for ConstructionErr<'tcx> {
     }
 }
 
-impl<'tcx> ConstructionErr<'tcx> {
+impl<'tcx> Error<'tcx> {
     pub fn instance_resolution_failed(
         function: DefId,
         generics: GenericArgsRef<'tcx>,
@@ -234,7 +234,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub fn construct_root<'a>(
         &'a self,
         function: LocalDefId,
-    ) -> Result<&'a PartialGraph<'tcx>, Vec<ConstructionErr<'tcx>>> {
+    ) -> Result<&'a PartialGraph<'tcx>, Vec<Error<'tcx>>> {
         let generics =
             manufacture_substs_for(self.tcx, function.to_def_id()).map_err(|i| vec![i])?;
         let resolution = try_resolve_function(
@@ -244,20 +244,20 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             generics,
         )
         .ok_or_else(|| {
-            vec![ConstructionErr::instance_resolution_failed(
+            vec![Error::instance_resolution_failed(
                 function.to_def_id(),
                 generics,
                 self.tcx.def_span(function),
             )]
         })?;
         self.construct_for(resolution)
-            .and_then(|f| f.ok_or(vec![ConstructionErr::Impossible]))
+            .and_then(|f| f.ok_or(vec![Error::Impossible]))
     }
 
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> Result<Option<&'a PartialGraph<'tcx>>, Vec<ConstructionErr<'tcx>>> {
+    ) -> Result<Option<&'a PartialGraph<'tcx>>, Vec<Error<'tcx>>> {
         let def_id = resolution.def_id();
         let generics = resolution.args;
         if let Some(local) = def_id.as_local() {
@@ -289,7 +289,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub fn construct_graph(
         &self,
         function: LocalDefId,
-    ) -> Result<DepGraph<'tcx>, Vec<ConstructionErr<'tcx>>> {
+    ) -> Result<DepGraph<'tcx>, Vec<Error<'tcx>>> {
         let _args = manufacture_substs_for(self.tcx, function.to_def_id())
             .map_err(|_| anyhow!("rustc error"));
         let g = self.construct_root(function)?.to_petgraph();
@@ -299,7 +299,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
 pub(crate) struct WithConstructionErrors<'tcx, A> {
     pub(crate) inner: A,
-    pub errors: FxHashSet<ConstructionErr<'tcx>>,
+    pub errors: FxHashSet<Error<'tcx>>,
 }
 
 impl<'tcx, A> WithConstructionErrors<'tcx, A> {
@@ -310,7 +310,7 @@ impl<'tcx, A> WithConstructionErrors<'tcx, A> {
         }
     }
 
-    pub fn into_result(self) -> Result<A, Vec<ConstructionErr<'tcx>>> {
+    pub fn into_result(self) -> Result<A, Vec<Error<'tcx>>> {
         if self.errors.is_empty() {
             Ok(self.inner)
         } else {
@@ -481,7 +481,7 @@ impl<'tcx> PartialGraph<'tcx> {
         state: &'a InstructionState<'tcx>,
         terminator: &Terminator<'tcx>,
         location: Location,
-    ) -> Result<bool, Vec<ConstructionErr<'tcx>>> {
+    ) -> Result<bool, Vec<Error<'tcx>>> {
         let TerminatorKind::Call {
             func,
             args,
@@ -671,12 +671,8 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-type PdgCache<'tcx> = Rc<
-    Cache<
-        (LocalDefId, GenericArgsRef<'tcx>),
-        Result<PartialGraph<'tcx>, Vec<ConstructionErr<'tcx>>>,
-    >,
->;
+type PdgCache<'tcx> =
+    Rc<Cache<(LocalDefId, GenericArgsRef<'tcx>), Result<PartialGraph<'tcx>, Vec<Error<'tcx>>>>>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {

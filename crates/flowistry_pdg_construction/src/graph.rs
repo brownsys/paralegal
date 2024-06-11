@@ -24,7 +24,7 @@ use rustc_utils::PlaceExt;
 pub use flowistry_pdg::{RichLocation, SourceUse, TargetUse};
 use serde::{Deserialize, Serialize};
 
-use crate::{construct::ConstructionErr, utils::Captures, Asyncness};
+use crate::{construct::Error, utils::Captures, Asyncness};
 
 /// A node in the program dependency graph.
 ///
@@ -401,7 +401,7 @@ impl<'tcx> TransformCallString for PartialGraph<'tcx> {
     }
 }
 
-pub type GraphLoaderError<'tcx> = Vec<ConstructionErr<'tcx>>;
+pub type GraphLoaderError<'tcx> = Vec<Error<'tcx>>;
 
 /// Abstracts over how previously written [`Artifact`]s are retrieved, allowing
 /// the user of this module to chose where to store them.
