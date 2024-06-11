@@ -19,7 +19,9 @@ pub use async_support::{determine_async, is_async_trait_fn, AsyncType};
 pub use construct::Error;
 pub use graph::{Artifact, DepGraph, GraphLoader, NoLoader, PartialGraph};
 pub mod callback;
-pub use crate::construct::{default_emit_error, EmittableError, MemoPdgConstructor};
+pub use crate::construct::{
+    default_emit_error, EmittableError, MemoPdgConstructor, UnwrapEmittable,
+};
 pub use callback::{
     CallChangeCallback, CallChangeCallbackFn, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };

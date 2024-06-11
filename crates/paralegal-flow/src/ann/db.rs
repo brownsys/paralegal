@@ -183,6 +183,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
     fn compute_reachable_markers(&self, res: Instance<'tcx>) -> Box<[InternedString]> {
+        let tcx = self.tcx();
         trace!("Computing reachable markers for {res:?}");
         let Some(local) = res.def_id().as_local() else {
             trace!("  Is not local");
@@ -192,17 +193,21 @@ impl<'tcx> MarkerCtx<'tcx> {
             trace!("  Is marked");
             return Box::new([]);
         }
-        let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
+        let Some(body) = tcx.body_for_def_id_default_policy(local) else {
             trace!("  Cannot find body");
             return Box::new([]);
         };
-        let mono_body = try_monomorphize(
+        let Ok(mono_body) = try_monomorphize(
             res,
-            self.tcx(),
-            self.tcx().param_env_reveal_all_normalized(local),
+            tcx,
+            tcx.param_env_reveal_all_normalized(local),
             &body.body,
-        );
-        if let Some((async_fn, ..)) = determine_async(self.tcx(), local, &mono_body) {
+            tcx.def_span(res.def_id()),
+        ) else {
+            trace!("  monomorphization error");
+            return Box::new([]);
+        };
+        if let Some((async_fn, ..)) = determine_async(tcx, local, &mono_body) {
             return self.get_reachable_markers(async_fn).into();
         }
         mono_body

@@ -69,7 +69,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
         root: Instance<'tcx>,
-    ) -> LocalAnalysis<'tcx, 'a> {
+    ) -> Result<LocalAnalysis<'tcx, 'a>, Error<'tcx>> {
         let tcx = memo.tcx;
         let def_id = root.def_id().expect_local();
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
@@ -78,7 +78,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         //     Some(cx) => cx.param_env,
         //     None => ParamEnv::reveal_all(),
         // };
-        let body = try_monomorphize(root, tcx, param_env, &body_with_facts.body);
+        let body = try_monomorphize(
+            root,
+            tcx,
+            param_env,
+            &body_with_facts.body,
+            tcx.def_span(root.def_id()),
+        )?;
 
         if memo.dump_mir {
             use std::io::Write;
@@ -96,7 +102,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let body_assignments = utils::find_body_assignments(&body);
 
-        LocalAnalysis {
+        Ok(LocalAnalysis {
             memo,
             root,
             body_with_facts,
@@ -106,7 +112,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             start_loc,
             def_id,
             body_assignments,
-        }
+        })
     }
 
     fn make_dep_node(

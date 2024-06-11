@@ -20,11 +20,11 @@ use super::{
 use anyhow::{anyhow, Result};
 use either::Either;
 use flowistry_pdg_construction::{
-    determine_async,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     utils::try_monomorphize,
     CallChangeCallback, CallChanges, CallInfo, EmittableError, InlineMissReason,
     SkipCall::Skip,
+    UnwrapEmittable,
 };
 use petgraph::{
     visit::{IntoNodeReferences, NodeIndexable, NodeRef},
@@ -227,7 +227,8 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         &self,
         at: CallString,
         place: mir::PlaceRef<'tcx>,
-    ) -> Option<mir::tcx::PlaceTy<'tcx>> {
+        span: rustc_span::Span,
+    ) -> Result<Option<mir::tcx::PlaceTy<'tcx>>, Error<'tcx>> {
         let tcx = self.tcx();
         let body = self
             .generator
@@ -240,7 +241,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // from the base place.
         let place = if self.entrypoint_is_async() && place.local.as_u32() == 1 && at.len() == 2 {
             if place.projection.is_empty() {
-                return None;
+                return Ok(None);
             }
             // in the case of targeting the top-level async closure (e.g. async args)
             // we'll keep the first projection.
@@ -267,9 +268,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         )
         .unwrap()
         .unwrap();
-        let resolution = try_monomorphize(instance, tcx, ty::ParamEnv::reveal_all(), &raw_ty);
+        let resolution = try_monomorphize(instance, tcx, ty::ParamEnv::reveal_all(), &raw_ty, span)
+            .map_err(|e| Error::ConstructionErrors(vec![e]))?;
         //println!("Resolved to {resolution:?}");
-        Some(resolution)
+        Ok(Some(resolution))
     }
 
     /// Fetch annotations item identified by this `id`.
@@ -307,7 +309,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn handle_node_types(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
         let i = self.new_node_for(old_node);
 
-        let Some(place_ty) = self.determine_place_type(weight.at, weight.place.as_ref()) else {
+        let Some(place_ty) = self
+            .determine_place_type(weight.at, weight.place.as_ref(), weight.span)
+            .unwrap_emittable(self.tcx())
+        else {
             return;
         };
         // Restore after fixing https://github.com/brownsys/paralegal/issues/138
@@ -315,7 +320,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let deep = true;
         let mut node_types = self.type_is_marked(place_ty, deep).collect::<HashSet<_>>();
         for (p, _) in weight.place.iter_projections() {
-            if let Some(place_ty) = self.determine_place_type(weight.at, p) {
+            if let Some(place_ty) = self
+                .determine_place_type(weight.at, p, weight.span)
+                .unwrap_emittable(self.tcx())
+            {
                 node_types.extend(self.type_is_marked(place_ty, false));
             }
         }

@@ -1,4 +1,4 @@
-use std::{collections::hash_map::Entry, hash::Hash};
+use std::{collections::hash_map::Entry, fmt::Debug, hash::Hash};
 
 use either::Either;
 
@@ -17,6 +17,7 @@ use rustc_middle::{
     },
 };
 
+use rustc_span::Span;
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
@@ -58,15 +59,21 @@ pub fn try_monomorphize<'tcx, 'a, T>(
     tcx: TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
     t: &'a T,
-) -> T
+    span: Span,
+) -> Result<T, Error<'tcx>>
 where
-    T: TypeFoldable<TyCtxt<'tcx>> + Clone,
+    T: TypeFoldable<TyCtxt<'tcx>> + Clone + Debug,
 {
-    inst.subst_mir_and_normalize_erasing_regions(
+    inst.try_subst_mir_and_normalize_erasing_regions(
         tcx,
         param_env,
         EarlyBinder::bind(tcx.erase_regions(t.clone())),
     )
+    .map_err(|e| Error::NormalizationError {
+        instance: inst,
+        span,
+        error: format!("{e:?}"),
+    })
 }
 
 /// Attempt to interpret this type as a statically determinable function and its

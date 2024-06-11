@@ -26,7 +26,9 @@ use rustc_middle::{
     mir::{
         visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue, Terminator, TerminatorKind,
     },
-    ty::{GenericArgsRef, Instance, ParamEnv, TyCtxt},
+    ty::{
+        normalize_erasing_regions::NormalizationError, GenericArgsRef, Instance, ParamEnv, TyCtxt,
+    },
 };
 use rustc_mir_dataflow::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_span::Span;
@@ -89,6 +91,11 @@ pub enum Error<'tcx> {
         op: String,
     },
     AsyncResolutionErr(AsyncResolutionErr),
+    NormalizationError {
+        instance: Instance<'tcx>,
+        span: Span,
+        error: String,
+    },
 }
 
 pub trait EmittableError<'tcx> {
@@ -99,6 +106,24 @@ pub trait EmittableError<'tcx> {
 
     fn emit(&self, tcx: TyCtxt<'tcx>) {
         default_emit_error(self, tcx)
+    }
+}
+
+pub trait UnwrapEmittable<'tcx> {
+    type Inner;
+    fn unwrap_emittable(self, tcx: TyCtxt<'tcx>) -> Self::Inner;
+}
+
+impl<'tcx, T, E: EmittableError<'tcx>> UnwrapEmittable<'tcx> for Result<T, E> {
+    type Inner = T;
+    fn unwrap_emittable(self, tcx: TyCtxt<'tcx>) -> Self::Inner {
+        match self {
+            Result::Ok(inner) => inner,
+            Result::Err(e) => {
+                default_emit_error(&e, tcx);
+                panic!("unwrap")
+            }
+        }
     }
 }
 
@@ -126,9 +151,9 @@ impl<'tcx> EmittableError<'tcx> for Error<'tcx> {
         use Error::*;
         match self {
             AsyncResolutionErr(e) => e.span(tcx),
-            InstanceResolutionFailed { span, .. } | FailedLoadingExternalFunction { span, .. } => {
-                Some(*span)
-            }
+            InstanceResolutionFailed { span, .. }
+            | FailedLoadingExternalFunction { span, .. }
+            | NormalizationError { span, .. } => Some(*span),
             BoundVariablesInPredicates { function }
             | TraitRefWithBinder { function }
             | ConstantInGenerics { function } => Some(tcx.def_span(*function)),
@@ -175,6 +200,12 @@ impl<'tcx> EmittableError<'tcx> for Error<'tcx> {
                 write!(f, "operand {op} is not of function type")
             }
             AsyncResolutionErr(e) => e.msg(tcx, f),
+            NormalizationError {
+                instance, error, ..
+            } => write!(
+                f,
+                "failed to normalize with instance {instance:?} because {error}"
+            ),
         }
     }
 }
@@ -263,7 +294,9 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         if let Some(local) = def_id.as_local() {
             self.pdg_cache
                 .get_maybe_recursive((local, generics), |_| {
-                    let g = LocalAnalysis::new(self, resolution).construct_partial()?;
+                    let g = LocalAnalysis::new(self, resolution)
+                        .map_err(|e| vec![e])?
+                        .construct_partial()?;
                     g.check_invariants();
                     Ok(g)
                 })
