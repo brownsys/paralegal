@@ -292,17 +292,30 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         let def_id = resolution.def_id();
         let generics = resolution.args;
         if let Some(local) = def_id.as_local() {
-            self.pdg_cache
+            let r = self
+                .pdg_cache
                 .get_maybe_recursive((local, generics), |_| {
                     let g = LocalAnalysis::new(self, resolution)
                         .map_err(|e| vec![e])?
                         .construct_partial()?;
+                    trace!(
+                        "Computed new for {} {generics:?}",
+                        self.tcx.def_path_str(local)
+                    );
                     g.check_invariants();
                     Ok(g)
                 })
                 .map(Result::as_ref)
                 .transpose()
-                .map_err(Clone::clone)
+                .map_err(Clone::clone)?;
+            if let Some(g) = r {
+                trace!(
+                    "Found pdg for {} with {:?}",
+                    self.tcx.def_path_str(local),
+                    g.generics
+                )
+            };
+            Ok(r)
         } else {
             self.loader.load(def_id)
         }
@@ -583,6 +596,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 &constructor.body,
                 constructor.def_id.to_def_id(),
                 *destination,
+                Some(child_src.place.ty(child_descriptor, constructor.tcx())),
             ) {
                 self.register_mutation(
                     results,
@@ -611,6 +625,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 &constructor.body,
                 constructor.def_id.to_def_id(),
                 *destination,
+                Some(child_dst.place.ty(child_descriptor, constructor.tcx())),
             ) {
                 self.register_mutation(
                     results,

@@ -3,7 +3,7 @@ use log::trace;
 use rustc_abi::FieldIdx;
 
 use rustc_middle::{
-    mir::{Body, HasLocalDecls, Operand, Place, PlaceElem, RETURN_PLACE},
+    mir::{tcx::PlaceTy, Body, HasLocalDecls, Operand, Place, PlaceElem, RETURN_PLACE},
     ty::TyCtxt,
 };
 
@@ -41,6 +41,7 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
         parent_body: &Body<'tcx>,
         parent_def_id: DefId,
         destination: Place<'tcx>,
+        target_ty: Option<PlaceTy<'tcx>>,
     ) -> Option<Place<'tcx>> {
         trace!("  Translating child place: {child:?}");
         let (parent_place, child_projection) =
@@ -53,6 +54,7 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
             tcx,
             parent_body,
             parent_def_id,
+            target_ty,
         ))
     }
 

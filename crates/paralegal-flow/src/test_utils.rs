@@ -5,9 +5,10 @@ extern crate rustc_middle;
 extern crate rustc_span;
 
 use crate::{
+    args::{Args, ClapArgs},
     desc::{Identifier, ProgramDescription},
     utils::Print,
-    HashSet,
+    Callbacks, HashSet,
 };
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -19,12 +20,14 @@ use paralegal_spdg::{
     DefInfo, EdgeInfo, Endpoint, Node, SPDG,
 };
 
-use flowistry_pdg::CallString;
+use clap::Parser;
+use flowistry_pdg::{rustc_portable::LocalDefId, CallString};
 use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
 use petgraph::visit::{NodeRef as _, Visitable};
 use petgraph::Direction;
+use rustc_utils::test_utils::{DUMMY_FILE, DUMMY_FILE_NAME, DUMMY_MOD_NAME};
 use std::path::Path;
 
 lazy_static! {
@@ -167,6 +170,63 @@ macro_rules! define_flow_test_template {
     };
 }
 
+lazy_static! {
+    static ref OPTS: Args = Default::default();
+}
+
+pub struct InlineTestBuilder {
+    ctrl_name: String,
+    input: String,
+}
+
+impl InlineTestBuilder {
+    pub fn new(input: impl Into<String>) -> Self {
+        Self {
+            input: input.into(),
+            ctrl_name: "main".into(),
+        }
+    }
+
+    pub fn check(&self, check: impl FnOnce(CtrlRef) + Send) {
+        #[derive(clap::Parser)]
+        struct TopLevelArgs {
+            #[clap(flatten)]
+            args: ClapArgs,
+        }
+
+        // TODO make this --analyze work
+        let args = Args::try_from(
+            TopLevelArgs::parse_from([
+                "".into(),
+                "--analyze".into(),
+                format!("{}::{}", DUMMY_MOD_NAME, self.ctrl_name),
+            ])
+            .args,
+        )
+        .unwrap();
+
+        args.setup_logging();
+
+        rustc_utils::test_utils::compile_with_args(
+            &self.input,
+            [
+                "--cfg",
+                "paralegal",
+                "-Zcrate-attr=feature(register_tool)",
+                "-Zcrate-attr=register_tool(paralegal_flow)",
+            ],
+            move |tcx| {
+                let mut memo = Callbacks::new(Box::leak(Box::new(args)));
+                memo.persist_metadata = false;
+                let pdg = memo.run_compilation(tcx).unwrap().unwrap();
+                let graph = PreFrg::from_description(pdg);
+                let cref = graph.ctrl(&self.ctrl_name);
+                check(cref)
+            },
+        )
+    }
+}
+
 pub trait HasGraph<'g>: Sized + Copy {
     fn graph(self) -> &'g PreFrg;
 
@@ -267,13 +327,17 @@ impl PreFrg {
                 crate::consts::FLOW_GRAPH_OUT_NAME
             ))
             .unwrap();
-            let name_map = desc
-                .def_info
-                .iter()
-                .map(|(def_id, info)| (info.name, *def_id))
-                .into_group_map();
-            Self { desc, name_map }
+            Self::from_description(desc)
         })
+    }
+
+    pub fn from_description(desc: ProgramDescription) -> Self {
+        let name_map = desc
+            .def_info
+            .iter()
+            .map(|(def_id, info)| (info.name, *def_id))
+            .into_group_map();
+        Self { desc, name_map }
     }
 }
 

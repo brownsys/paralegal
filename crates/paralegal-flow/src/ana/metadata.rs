@@ -62,7 +62,7 @@ impl<'tcx> EmittableError<'tcx> for Error<'tcx> {
         use Error::*;
         match self {
             PdgForItemMissing(def) => {
-                write!(f, "found no pdg for item {}", tcx.def_path_debug_str(*def))
+                write!(f, "found no pdg for item {}", tcx.def_path_str(*def))
             }
             MetadataForCrateMissing(krate) => {
                 write!(f, "no metadata found for crate {}", tcx.crate_name(*krate))
@@ -123,7 +123,7 @@ impl<'tcx> MetadataLoader<'tcx> {
     pub fn collect_and_emit_metadata(
         self: Rc<Self>,
         args: &'static Args,
-        path: impl AsRef<Path>,
+        path: Option<impl AsRef<Path>>,
     ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>, MemoPdgConstructor<'tcx>) {
         let tcx = self.tcx;
         let mut collector = CollectingVisitor::new(tcx, args, self.clone());
@@ -140,7 +140,7 @@ impl<'tcx> MetadataLoader<'tcx> {
         let pdgs = emit_targets
             .into_iter()
             .filter_map(|t| {
-                // if tcx.def_path_str(t) != "lemmy_api_crud::match_websocket_operation_crud" {
+                // if tcx.def_path_str(t) != "<lemmy_apub::activity_lists::PersonInboxActivities as std::clone::Clone>::clone" {
                 //     return None;
                 // }
                 println!("Constructing for {:?}", tcx.def_path_str(t));
@@ -164,9 +164,11 @@ impl<'tcx> MetadataLoader<'tcx> {
             })
             .collect::<FxHashMap<_, _>>();
         let meta = Metadata::from_pdgs(tcx, pdgs, marker_ctx.db());
-        let path = path.as_ref();
-        debug!("Writing metadata to {}", path.display());
-        meta.write(path, tcx);
+        if let Some(path) = path {
+            let path = path.as_ref();
+            debug!("Writing metadata to {}", path.display());
+            meta.write(path, tcx);
+        }
         self.cache.get(LOCAL_CRATE, |_| Some(meta));
         (collector.functions_to_analyze, marker_ctx, constructor)
     }

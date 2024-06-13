@@ -49,6 +49,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::{fmt::Display, time::Instant};
 
+use desc::ProgramDescription;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_middle::ty;
 use rustc_span::Symbol;
@@ -114,6 +115,7 @@ struct ArgWrapper {
 struct Callbacks {
     opts: &'static Args,
     stats: Stats,
+    persist_metadata: bool,
 }
 
 /// Create the name of the file in which to store intermediate artifacts.
@@ -147,22 +149,7 @@ fn intermediate_out_file_path(tcx: TyCtxt) -> Result<PathBuf> {
 
 impl Callbacks {
     fn in_context(&mut self, tcx: TyCtxt) -> Result<Compilation> {
-        tcx.sess.abort_if_errors();
-
-        let loader = MetadataLoader::new(tcx);
-
-        let intermediate_out_file = intermediate_out_file_path(tcx)?;
-
-        let (analysis_targets, mctx, constructor) = loader
-            .clone()
-            .collect_and_emit_metadata(self.opts, intermediate_out_file);
-        tcx.sess.abort_if_errors();
-
-        let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, constructor, loader);
-
-        let compilation = if !analysis_targets.is_empty() {
-            let desc = gen.analyze(analysis_targets)?;
-
+        let compilation = if let Some(desc) = self.run_compilation(tcx)? {
             if self.opts.dbg().dump_spdg() {
                 let out = std::fs::File::create("call-only-flow.gv").unwrap();
                 paralegal_spdg::dot::dump(&desc, out).unwrap();
@@ -184,6 +171,26 @@ impl Callbacks {
         };
         Ok(compilation)
     }
+
+    fn run_compilation(&self, tcx: TyCtxt) -> Result<Option<ProgramDescription>> {
+        tcx.sess.abort_if_errors();
+
+        let loader = MetadataLoader::new(tcx);
+
+        let (analysis_targets, mctx, constructor) = loader.clone().collect_and_emit_metadata(
+            self.opts,
+            self.persist_metadata
+                .then(|| intermediate_out_file_path(tcx))
+                .transpose()?,
+        );
+        tcx.sess.abort_if_errors();
+
+        let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, constructor, loader);
+
+        (!analysis_targets.is_empty())
+            .then(|| gen.analyze(analysis_targets))
+            .transpose()
+    }
 }
 
 struct NoopCallbacks {}
@@ -195,6 +202,7 @@ impl Callbacks {
         Self {
             opts,
             stats: Default::default(),
+            persist_metadata: true,
         }
     }
 }
@@ -379,18 +387,8 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
 
         debug!("Is target, compiling");
 
-        let lvl = plugin_args.verbosity();
-        // //let lvl = log::LevelFilter::Debug;
-        simple_logger::SimpleLogger::new()
-            .with_level(lvl)
-            .with_module_level("flowistry", lvl)
-            .with_module_level("rustc_utils", log::LevelFilter::Error)
-            .without_timestamps()
-            .init()
-            .unwrap();
-        if matches!(*plugin_args.direct_debug(), LogLevelConfig::Targeted(..)) {
-            log::set_max_level(log::LevelFilter::Warn);
-        }
+        plugin_args.setup_logging();
+
         let opts = Box::leak(Box::new(plugin_args));
 
         compiler_args.extend([

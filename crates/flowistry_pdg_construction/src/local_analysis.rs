@@ -11,8 +11,8 @@ use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
-        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
+        PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
     ty::{GenericArg, GenericArgKind, GenericArgsRef, Instance, List, TyCtxt, TyKind},
 };
@@ -31,8 +31,8 @@ use crate::{
     construct::{Error, WithConstructionErrors},
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
-    AsyncType, CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
+    utils::{self, is_async, is_non_default_trait_method, try_monomorphize, SimpleTyEquiv},
+    CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
 };
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]
@@ -196,11 +196,21 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.tcx(),
             &self.body_with_facts.body,
             self.def_id.to_def_id(),
+            None,
         );
-        self.place_info.aliases(place_retyped).iter().map(|alias| {
+        self.place_info.aliases(place_retyped).iter().map(move |alias| {
             let mut projection = alias.projection.to_vec();
             projection.extend(&place.projection[place_retyped.projection.len()..]);
-            Place::make(alias.local, &projection, self.tcx())
+            let p = Place::make(alias.local, &projection, self.tcx());
+            let t1 = place.ty(&self.body, self.tcx());
+            let t2 = p.ty(&self.body, self.tcx());
+            if !t1.equiv(&t2) {
+                let p1_str = format!("{place:?}");
+                let p2_str = format!("{p:?}");
+            let l = p1_str.len().max(p2_str.len());
+                panic!("Retyping in {} failed to produce an equivalent type.\n  Src {p1_str:l$} : {t1:?}\n  Dst {p2_str:l$} : {t2:?}", self.tcx().def_path_str(self.def_id))
+            }
+            p
         })
     }
 
@@ -354,7 +364,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     ) -> Result<Option<CallHandling<'tcx, 'b>>, Vec<Error<'tcx>>> {
         let tcx = self.tcx();
 
-        trace!("Considering call at {location:?} in {:?}", self.def_id);
+        println!(
+            "Considering call at {location:?} in {:?}",
+            self.tcx().def_path_str(self.def_id)
+        );
 
         let (called_def_id, generic_args) = self
             .operand_to_def_id(func)
@@ -378,7 +391,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 )]);
             }
         };
-        trace!("resolved to instance {resolved_fn:?}");
+        println!("resolved to instance {resolved_fn:?}");
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
@@ -527,16 +540,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let parentable_dsts = child_constructor.parentable_dsts();
         let parent_body = &self.body;
-        let translate_to_parent = |child: Place<'tcx>| -> Option<Place<'tcx>> {
-            calling_convention.translate_to_parent(
-                child,
-                self.async_info(),
-                self.tcx(),
-                parent_body,
-                self.def_id.to_def_id(),
-                destination,
-            )
-        };
 
         // For each destination node CHILD that is parentable to PLACE,
         // add an edge from CHILD -> PLACE.
@@ -545,7 +548,15 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
         for (child_dst, _) in parentable_dsts {
-            if let Some(parent_place) = translate_to_parent(child_dst.place) {
+            if let Some(parent_place) = calling_convention.translate_to_parent(
+                child_dst.place,
+                self.async_info(),
+                self.tcx(),
+                parent_body,
+                self.def_id.to_def_id(),
+                destination,
+                Some(child_dst.place.ty(child_constructor, self.tcx())),
+            ) {
                 self.apply_mutation(state, location, parent_place);
             }
         }
@@ -582,6 +593,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.generic_args(),
             self.def_id.to_def_id(),
             self.body.arg_count,
+            self.body.local_decls(),
         ));
 
         analysis.visit_reachable_with(&self.body, &mut final_state);

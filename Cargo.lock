@@ -1111,14 +1111,6 @@ checksum = "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76"
 [[package]]
 name = "rustc_plugin"
 version = "0.7.4-nightly-2023-08-25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1348edfa020dbe4807a4d99272332dadcbbedff6b587accb95faefe20d2c7129"
-replace = "rustc_plugin 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=aa83f5740fa7eb5b8e3e1ee417b29536e87cc864)"
-
-[[package]]
-name = "rustc_plugin"
-version = "0.7.4-nightly-2023-08-25"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=aa83f5740fa7eb5b8e3e1ee417b29536e87cc864#aa83f5740fa7eb5b8e3e1ee417b29536e87cc864"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1129,6 +1121,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc_plugin"
+version = "0.7.4-nightly-2023-08-25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1348edfa020dbe4807a4d99272332dadcbbedff6b587accb95faefe20d2c7129"
+replace = "rustc_plugin 0.7.4-nightly-2023-08-25"
+
+[[package]]
 name = "rustc_tools_util"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1137,14 +1136,6 @@ checksum = "b3c5a95edfa0c893236ae4778bb7c4752760e4c0d245e19b5eff33c5aa5eb9dc"
 [[package]]
 name = "rustc_utils"
 version = "0.7.4-nightly-2023-08-25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09428c7086894369685cca54a516acc0f0ab6d0e5a628c094ba83bfddaf1aedf"
-replace = "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=aa83f5740fa7eb5b8e3e1ee417b29536e87cc864)"
-
-[[package]]
-name = "rustc_utils"
-version = "0.7.4-nightly-2023-08-25"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=aa83f5740fa7eb5b8e3e1ee417b29536e87cc864#aa83f5740fa7eb5b8e3e1ee417b29536e87cc864"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -1153,6 +1144,13 @@ dependencies = [
  "log",
  "textwrap",
 ]
+
+[[package]]
+name = "rustc_utils"
+version = "0.7.4-nightly-2023-08-25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09428c7086894369685cca54a516acc0f0ab6d0e5a628c094ba83bfddaf1aedf"
+replace = "rustc_utils 0.7.4-nightly-2023-08-25"
 
 [[package]]
 name = "rustix"

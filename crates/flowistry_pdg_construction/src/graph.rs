@@ -12,9 +12,10 @@ use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, DefIndex};
+use rustc_index::IndexVec;
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
-    mir::{Body, Location, Place},
+    mir::{Body, HasLocalDecls, Local, LocalDecl, LocalDecls, Location, Place},
     ty::{GenericArgsRef, TyCtxt},
 };
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
@@ -294,6 +295,13 @@ pub struct PartialGraph<'tcx> {
     pub(crate) generics: GenericArgsRef<'tcx>,
     def_id: DefId,
     arg_count: usize,
+    local_decls: IndexVec<Local, LocalDecl<'tcx>>,
+}
+
+impl<'tcx> HasLocalDecls<'tcx> for PartialGraph<'tcx> {
+    fn local_decls(&self) -> &LocalDecls<'tcx> {
+        &self.local_decls
+    }
 }
 
 impl<'tcx> PartialGraph<'tcx> {
@@ -315,7 +323,12 @@ impl<'tcx> PartialGraph<'tcx> {
         }
     }
 
-    pub fn new(generics: GenericArgsRef<'tcx>, def_id: DefId, arg_count: usize) -> Self {
+    pub fn new(
+        generics: GenericArgsRef<'tcx>,
+        def_id: DefId,
+        arg_count: usize,
+        local_decls: &LocalDecls<'tcx>,
+    ) -> Self {
         Self {
             nodes: Default::default(),
             edges: Default::default(),
@@ -323,6 +336,7 @@ impl<'tcx> PartialGraph<'tcx> {
             generics,
             def_id,
             arg_count,
+            local_decls: local_decls.to_owned(),
         }
     }
 
@@ -332,8 +346,10 @@ impl<'tcx> PartialGraph<'tcx> {
         self.edges
             .iter()
             .map(|(src, _, _)| *src)
+            .filter(|n| n.at.leaf().location.is_start())
             .filter_map(move |a| Some((a, as_arg(&a, self.def_id, self.arg_count)?)))
-            .filter(|(node, _)| node.at.leaf().location.is_start())
+            .collect::<FxHashSet<_>>()
+            .into_iter()
     }
 
     pub(crate) fn parentable_dsts<'a>(
@@ -342,8 +358,10 @@ impl<'tcx> PartialGraph<'tcx> {
         self.edges
             .iter()
             .map(|(_, dst, _)| *dst)
+            .filter(|n| n.at.leaf().location.is_end())
             .filter_map(move |a| Some((a, as_arg(&a, self.def_id, self.arg_count)?)))
-            .filter(|node| node.0.at.leaf().location.is_end())
+            .collect::<FxHashSet<_>>()
+            .into_iter()
     }
 }
 
@@ -385,6 +403,7 @@ impl<'tcx> TransformCallString for PartialGraph<'tcx> {
                 .collect(),
             def_id: self.def_id,
             arg_count: self.arg_count,
+            local_decls: self.local_decls.to_owned(),
         }
     }
 }

@@ -13,7 +13,8 @@ use rustc_middle::{
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        self, EarlyBinder, GenericArg, GenericArgsRef, Instance, List, ParamEnv, Ty, TyCtxt, TyKind,
+        self, BoundVariableKind, EarlyBinder, GenericArg, GenericArgKind, GenericArgsRef, Instance,
+        List, ParamEnv, Region, Ty, TyCtxt, TyKind,
     },
 };
 
@@ -90,11 +91,13 @@ pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(DefId, Gener
     }
 }
 
+/// If `target_ty` is supplied checks that the final type is the same as `target_ty`.
 pub(crate) fn retype_place<'tcx>(
     orig: Place<'tcx>,
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
     def_id: DefId,
+    target_ty: Option<PlaceTy<'tcx>>,
 ) -> Place<'tcx> {
     trace!("Retyping {orig:?} in context of {def_id:?}");
 
@@ -106,23 +109,24 @@ pub(crate) fn retype_place<'tcx>(
             ty.ty.kind(),
             TyKind::Alias(..) | TyKind::Param(..) | TyKind::Bound(..) | TyKind::Placeholder(..)
         ) {
+            trace!("Breaking on param-like type {:?}", ty.ty);
             break;
         }
 
-        // Don't continue if we reach a private field
-        if let ProjectionElem::Field(field, _) = elem {
-            if let Some(adt_def) = ty.ty.ty_adt_def() {
-                let field = adt_def
-                    .all_fields()
-                    .nth(field.as_usize())
-                    .unwrap_or_else(|| {
-                        panic!("ADT for {:?} does not have field {field:?}", ty.ty);
-                    });
-                if !field.vis.is_accessible_from(def_id, tcx) {
-                    break;
-                }
-            }
-        }
+        // // Don't continue if we reach a private field
+        // if let ProjectionElem::Field(field, _) = elem {
+        //     if let Some(adt_def) = ty.ty.ty_adt_def() {
+        //         let field = adt_def
+        //             .all_fields()
+        //             .nth(field.as_usize())
+        //             .unwrap_or_else(|| {
+        //                 panic!("ADT for {:?} does not have field {field:?}", ty.ty);
+        //             });
+        //         if !field.vis.is_accessible_from(def_id, tcx) {
+        //             break;
+        //         }
+        //     }
+        // }
 
         trace!(
             "    Projecting {:?}.{new_projection:?} : {:?} with {elem:?}",
@@ -152,10 +156,168 @@ pub(crate) fn retype_place<'tcx>(
         };
         new_projection.push(elem);
     }
-
     let p = Place::make(orig.local, &new_projection, tcx);
+
+    if let Some(target_ty) = target_ty {
+        if !ty.equiv(&target_ty) {
+            let p1_str = format!("{orig:?}");
+            let p2_str = format!("{p:?}");
+            let l = p1_str.len().max(p2_str.len());
+            panic!("Retyping in {} failed to produce an equivalent type.\n  Src {p1_str:l$} : {target_ty:?}\n  Dst {p2_str:l$} : {ty:?}", tcx.def_path_str(def_id))
+        }
+    }
+
     trace!("    Final translation: {p:?}");
     p
+}
+
+pub trait SimpleTyEquiv {
+    fn equiv(&self, other: &Self) -> bool;
+}
+
+impl<'tcx> SimpleTyEquiv for Ty<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.kind().equiv(other.kind())
+    }
+}
+
+impl<'tcx, T: SimpleTyEquiv> SimpleTyEquiv for [T] {
+    fn equiv(&self, other: &Self) -> bool {
+        self.iter().zip(other.iter()).all(|(a, b)| a.equiv(b))
+    }
+}
+
+impl<T: SimpleTyEquiv> SimpleTyEquiv for ty::List<T> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.as_slice().equiv(other.as_slice())
+    }
+}
+
+impl<'tcx> SimpleTyEquiv for GenericArg<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        match (&self.unpack(), &other.unpack()) {
+            (GenericArgKind::Const(a), GenericArgKind::Const(b)) => a == b,
+            (GenericArgKind::Lifetime(a), GenericArgKind::Lifetime(b)) => a.equiv(b),
+            (GenericArgKind::Type(a), GenericArgKind::Type(b)) => a.equiv(b),
+            _ => false,
+        }
+    }
+}
+
+impl<'tcx> SimpleTyEquiv for Region<'tcx> {
+    fn equiv(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl<'tcx, T: SimpleTyEquiv> SimpleTyEquiv for ty::Binder<'tcx, T> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.bound_vars().equiv(other.bound_vars())
+            && self
+                .as_ref()
+                .skip_binder()
+                .equiv(other.as_ref().skip_binder())
+    }
+}
+
+impl SimpleTyEquiv for BoundVariableKind {
+    fn equiv(&self, other: &Self) -> bool {
+        self == other
+    }
+}
+
+impl<'tcx> SimpleTyEquiv for ty::TypeAndMut<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.mutbl == other.mutbl && self.ty.equiv(&other.ty)
+    }
+}
+
+impl<'tcx> SimpleTyEquiv for ty::FnSig<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        let Self {
+            inputs_and_output,
+            c_variadic,
+            unsafety,
+            abi,
+        } = *self;
+        inputs_and_output.equiv(other.inputs_and_output)
+            && c_variadic == other.c_variadic
+            && unsafety == other.unsafety
+            && abi == other.abi
+    }
+}
+
+impl<T: SimpleTyEquiv + ?Sized> SimpleTyEquiv for &T {
+    fn equiv(&self, other: &Self) -> bool {
+        (*self).equiv(*other)
+    }
+}
+
+impl<'tcx> SimpleTyEquiv for ty::AliasTy<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.def_id == other.def_id && self.args.equiv(other.args)
+    }
+}
+
+impl<'tcx> SimpleTyEquiv for ty::ExistentialPredicate<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        self == other
+    }
+}
+
+fn is_wildcard(t: &TyKind<'_>) -> bool {
+    matches!(
+        t,
+        TyKind::Param(..) | TyKind::Alias(..) | TyKind::Bound(..) | TyKind::Placeholder(..)
+    )
+}
+
+impl<'tcx> SimpleTyEquiv for TyKind<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        use rustc_type_ir::TyKind::*;
+        match (self, other) {
+            _ if is_wildcard(self) || is_wildcard(other) => true,
+            (Int(a_i), Int(b_i)) => a_i == b_i,
+            (Uint(a_u), Uint(b_u)) => a_u == b_u,
+            (Float(a_f), Float(b_f)) => a_f == b_f,
+            (Adt(a_d, a_s), Adt(b_d, b_s)) => a_d == b_d && a_s.equiv(b_s),
+            (Foreign(a_d), Foreign(b_d)) => a_d == b_d,
+            (Array(a_t, a_c), Array(b_t, b_c)) => a_t.equiv(b_t) && a_c == b_c,
+            (Slice(a_t), Slice(b_t)) => a_t.equiv(b_t),
+            (RawPtr(a_t), RawPtr(b_t)) => a_t.equiv(b_t),
+            (Ref(a_r, a_t, a_m), Ref(b_r, b_t, b_m)) => {
+                a_r.equiv(b_r) && a_t.equiv(b_t) && a_m == b_m
+            }
+            (FnDef(a_d, a_s), FnDef(b_d, b_s)) => a_d == b_d && a_s.equiv(b_s),
+            (FnPtr(a_s), FnPtr(b_s)) => a_s.equiv(b_s),
+            (Dynamic(a_p, a_r, a_repr), Dynamic(b_p, b_r, b_repr)) => {
+                a_p.equiv(b_p) && a_r.equiv(b_r) && a_repr == b_repr
+            }
+            (Closure(a_d, a_s), Closure(b_d, b_s)) => a_d == b_d && a_s.equiv(b_s),
+            (Generator(a_d, a_s, a_m), Generator(b_d, b_s, b_m)) => {
+                a_d == b_d && a_s.equiv(b_s) && a_m == b_m
+            }
+            (GeneratorWitness(a_g), GeneratorWitness(b_g)) => a_g.equiv(b_g),
+            (GeneratorWitnessMIR(a_d, a_s), GeneratorWitnessMIR(b_d, b_s)) => {
+                a_d == b_d && a_s.equiv(b_s)
+            }
+            (Tuple(a_t), Tuple(b_t)) => a_t.equiv(b_t),
+            (Alias(a_i, a_p), Alias(b_i, b_p)) => a_i == b_i && a_p.equiv(b_p),
+            (Param(a_p), Param(b_p)) => a_p == b_p,
+            (Bound(a_d, a_b), Bound(b_d, b_b)) => a_d == b_d && a_b == b_b,
+            (Placeholder(a_p), Placeholder(b_p)) => a_p == b_p,
+            (Infer(_a_t), Infer(_b_t)) => unreachable!(),
+            (Error(a_e), Error(b_e)) => a_e == b_e,
+            (Bool, Bool) | (Char, Char) | (Str, Str) | (Never, Never) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<'tcx> SimpleTyEquiv for PlaceTy<'tcx> {
+    fn equiv(&self, other: &Self) -> bool {
+        self.variant_index == other.variant_index && self.ty.equiv(&other.ty)
+    }
 }
 
 pub(crate) fn hashset_join<T: Hash + Eq + PartialEq + Clone>(
