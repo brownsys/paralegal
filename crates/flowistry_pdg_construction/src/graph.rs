@@ -346,7 +346,7 @@ impl<'tcx> PartialGraph<'tcx> {
         self.edges
             .iter()
             .map(|(src, _, _)| *src)
-            .filter(|n| n.at.leaf().location.is_start())
+            .filter(|n| n.at.len() == 1 && n.at.leaf().location.is_start())
             .filter_map(move |a| Some((a, as_arg(&a, self.def_id, self.arg_count)?)))
             .collect::<FxHashSet<_>>()
             .into_iter()
@@ -358,7 +358,7 @@ impl<'tcx> PartialGraph<'tcx> {
         self.edges
             .iter()
             .map(|(_, dst, _)| *dst)
-            .filter(|n| n.at.leaf().location.is_end())
+            .filter(|n| n.at.len() == 1 && n.at.leaf().location.is_end())
             .filter_map(move |a| Some((a, as_arg(&a, self.def_id, self.arg_count)?)))
             .collect::<FxHashSet<_>>()
             .into_iter()

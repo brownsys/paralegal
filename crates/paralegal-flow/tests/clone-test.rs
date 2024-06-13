@@ -43,8 +43,14 @@ fn clone_test_2() {
 
         #[derive(Clone)]
         pub struct Vote {
-            pub(crate) to: Vec<Url>,
+            pub(crate) to: Vec<VoteUrl>,
         }
+
+        #[derive(Clone)]
+        struct VoteUrl(String);
+
+        #[derive(Clone)]
+        struct TombstoneUrl(String);
 
         #[derive(Clone)]
         pub struct AnnounceActivity {
@@ -52,7 +58,7 @@ fn clone_test_2() {
         }
         #[derive(Clone)]
         pub struct Tombstone {
-            pub(crate) id: Url,
+            pub(crate) id: TombstoneUrl,
         }
 
         #[derive(Clone)]
@@ -66,9 +72,7 @@ fn clone_test_2() {
             Delete(Delete),
         }
 
-        fn main() {
-            let v = AnnouncableActivities::Vote(Vote { to: vec![] }).clone();
-        }
+        fn main() {}
     ))
     .check(|_g| {})
 }

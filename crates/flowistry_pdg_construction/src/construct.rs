@@ -585,6 +585,8 @@ impl<'tcx> PartialGraph<'tcx> {
 
         let child_graph = push_call_string_root(child_descriptor, gloc);
 
+        trace!("Child graph has generics {:?}", child_descriptor.generics);
+
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
         trace!("PARENT -> CHILD EDGES:");
