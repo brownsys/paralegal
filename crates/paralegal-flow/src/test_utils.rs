@@ -167,6 +167,59 @@ macro_rules! define_flow_test_template {
     };
 }
 
+pub struct InlineTestBuilder {
+    ctrl_name: String,
+    input: String,
+}
+
+impl InlineTestBuilder {
+    pub fn new(input: impl Into<String>) -> Self {
+        Self {
+            input: input.into(),
+            ctrl_name: "main".into(),
+        }
+    }
+
+    pub fn check(&self, check: impl FnOnce(CtrlRef) + Send) {
+        #[derive(clap::Parser)]
+        struct TopLevelArgs {
+            #[clap(flatten)]
+            args: ClapArgs,
+        }
+
+        // TODO make this --analyze work
+        let args = Args::try_from(
+            TopLevelArgs::parse_from([
+                "".into(),
+                "--analyze".into(),
+                format!("{}::{}", DUMMY_MOD_NAME, self.ctrl_name),
+            ])
+            .args,
+        )
+        .unwrap();
+
+        args.setup_logging();
+
+        rustc_utils::test_utils::compile_with_args(
+            &self.input,
+            [
+                "--cfg",
+                "paralegal",
+                "-Zcrate-attr=feature(register_tool)",
+                "-Zcrate-attr=register_tool(paralegal_flow)",
+            ],
+            move |tcx| {
+                let mut memo = Callbacks::new(Box::leak(Box::new(args)));
+                memo.persist_metadata = false;
+                let pdg = memo.run_compilation(tcx).unwrap().unwrap();
+                let graph = PreFrg::from_description(pdg);
+                let cref = graph.ctrl(&self.ctrl_name);
+                check(cref)
+            },
+        )
+    }
+}
+
 pub trait HasGraph<'g>: Sized + Copy {
     fn graph(self) -> &'g PreFrg;
 
