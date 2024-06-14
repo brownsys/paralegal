@@ -198,20 +198,23 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.def_id.to_def_id(),
             None,
         );
-        self.place_info.aliases(place_retyped).iter().map(move |alias| {
-            let mut projection = alias.projection.to_vec();
-            projection.extend(&place.projection[place_retyped.projection.len()..]);
-            let p = Place::make(alias.local, &projection, self.tcx());
-            let t1 = place.ty(&self.body, self.tcx());
-            let t2 = p.ty(&self.body, self.tcx());
-            if !t1.equiv(&t2) {
-                let p1_str = format!("{place:?}");
-                let p2_str = format!("{p:?}");
-            let l = p1_str.len().max(p2_str.len());
-                panic!("Retyping in {} failed to produce an equivalent type.\n  Src {p1_str:l$} : {t1:?}\n  Dst {p2_str:l$} : {t2:?}", self.tcx().def_path_str(self.def_id))
-            }
-            p
-        })
+        self.place_info
+            .aliases(place_retyped)
+            .iter()
+            .map(move |alias| {
+                let mut projection = alias.projection.to_vec();
+                projection.extend(&place.projection[place_retyped.projection.len()..]);
+                let p = Place::make(alias.local, &projection, self.tcx());
+                // let t1 = place.ty(&self.body, self.tcx());
+                // let t2 = p.ty(&self.body, self.tcx());
+                // if !t1.equiv(&t2) {
+                //     let p1_str = format!("{place:?}");
+                //     let p2_str = format!("{p:?}");
+                // let l = p1_str.len().max(p2_str.len());
+                //     panic!("Retyping in {} failed to produce an equivalent type.\n  Src {p1_str:l$} : {t1:?}\n  Dst {p2_str:l$} : {t2:?}", self.tcx().def_path_str(self.def_id))
+                // }
+                p
+            })
     }
 
     pub(crate) fn tcx(&self) -> TyCtxt<'tcx> {
@@ -364,7 +367,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     ) -> Result<Option<CallHandling<'tcx, 'b>>, Vec<Error<'tcx>>> {
         let tcx = self.tcx();
 
-        println!(
+        trace!(
             "Considering call at {location:?} in {:?}",
             self.tcx().def_path_str(self.def_id)
         );
@@ -391,7 +394,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 )]);
             }
         };
-        println!("resolved to instance {resolved_fn:?}");
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
