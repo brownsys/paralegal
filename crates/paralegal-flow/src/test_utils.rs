@@ -167,12 +167,25 @@ macro_rules! define_flow_test_template {
     };
 }
 
+/// Builder for running test cases against a string of source code.
+///
+/// Start with [`InlineTestBuilder::new`], compile and run the test case with
+/// [`InlineTestBuilder::check`].
 pub struct InlineTestBuilder {
     ctrl_name: String,
     input: String,
 }
 
 impl InlineTestBuilder {
+    /// Constructor.
+    ///
+    /// Note that this test builder does not support specifying dependencies,
+    /// including the `paralegal` library. As such use raw annotations like
+    /// `#[paralegal_flow::marker(...)]`.
+    ///
+    /// By default a `main` function is used as the analysis target (even
+    /// without an `analyze` annotation). Use
+    /// [`InlineTestBuilder::with_entrypoint`] to use a different function.
     pub fn new(input: impl Into<String>) -> Self {
         Self {
             input: input.into(),
@@ -180,6 +193,16 @@ impl InlineTestBuilder {
         }
     }
 
+    /// Chose a function as analysis entrypoint. Overwrites any previous choice
+    /// without warning.
+    pub fn with_entrypoint(&mut self, name: impl into<String>) -> &mut Self {
+        self.ctrl_name = name.into();
+        self
+    }
+
+    /// Compile the code, select the [`CtrlRef`] corresponding to the configured
+    /// entrypoint and hand it to the `check` function which should contain the
+    /// test predicate.
     pub fn check(&self, check: impl FnOnce(CtrlRef) + Send) {
         #[derive(clap::Parser)]
         struct TopLevelArgs {
@@ -200,23 +223,22 @@ impl InlineTestBuilder {
 
         args.setup_logging();
 
-        rustc_utils::test_utils::compile_with_args(
-            &self.input,
-            [
+        rustc_utils::test_utils::CompileBuilder::new(&self.input)
+            .with_args([
                 "--cfg",
                 "paralegal",
                 "-Zcrate-attr=feature(register_tool)",
                 "-Zcrate-attr=register_tool(paralegal_flow)",
-            ],
-            move |tcx| {
+            ])
+            .compile(move |result| {
+                let tcx = result.tcx;
                 let mut memo = Callbacks::new(Box::leak(Box::new(args)));
                 memo.persist_metadata = false;
                 let pdg = memo.run_compilation(tcx).unwrap().unwrap();
                 let graph = PreFrg::from_description(pdg);
                 let cref = graph.ctrl(&self.ctrl_name);
                 check(cref)
-            },
-        )
+            });
     }
 }
 
