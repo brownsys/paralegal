@@ -363,6 +363,17 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         }
         let opts = Box::leak(Box::new(plugin_args));
 
+        const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
+        if let Ok(debugger) = std::env::var(RERUN_VAR) {
+            info!("Restarting with debugger '{debugger}'");
+            let mut dsplit = debugger.split(' ');
+            let mut cmd = std::process::Command::new(dsplit.next().unwrap());
+            cmd.args(dsplit)
+                .args(std::env::args())
+                .env_remove(RERUN_VAR);
+            std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
+        }
+
         compiler_args.extend([
             "--cfg".into(),
             "paralegal".into(),
