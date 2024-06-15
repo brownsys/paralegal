@@ -374,6 +374,23 @@ impl Args {
     pub fn attach_to_debugger(&self) -> Option<Debugger> {
         self.attach_to_debugger
     }
+
+    pub fn setup_logging(&self) {
+        let lvl = self.verbosity();
+        // //let lvl = log::LevelFilter::Debug;
+        if simple_logger::SimpleLogger::new()
+            .with_level(lvl)
+            .with_module_level("flowistry", lvl)
+            .with_module_level("rustc_utils", log::LevelFilter::Error)
+            .without_timestamps()
+            .init()
+            .is_ok()
+        {
+            if matches!(*self.direct_debug(), LogLevelConfig::Targeted(..)) {
+                log::set_max_level(log::LevelFilter::Warn);
+            }
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args, Default)]

@@ -195,7 +195,7 @@ impl InlineTestBuilder {
 
     /// Chose a function as analysis entrypoint. Overwrites any previous choice
     /// without warning.
-    pub fn with_entrypoint(&mut self, name: impl into<String>) -> &mut Self {
+    pub fn with_entrypoint(&mut self, name: impl Into<String>) -> &mut Self {
         self.ctrl_name = name.into();
         self
     }
@@ -204,18 +204,23 @@ impl InlineTestBuilder {
     /// entrypoint and hand it to the `check` function which should contain the
     /// test predicate.
     pub fn check(&self, check: impl FnOnce(CtrlRef) + Send) {
+        use clap::Parser;
+
         #[derive(clap::Parser)]
         struct TopLevelArgs {
             #[clap(flatten)]
-            args: ClapArgs,
+            args: crate::ClapArgs,
         }
 
-        // TODO make this --analyze work
-        let args = Args::try_from(
+        let args = crate::Args::try_from(
             TopLevelArgs::parse_from([
                 "".into(),
                 "--analyze".into(),
-                format!("{}::{}", DUMMY_MOD_NAME, self.ctrl_name),
+                format!(
+                    "{}::{}",
+                    rustc_utils::test_utils::DUMMY_MOD_NAME,
+                    self.ctrl_name
+                ),
             ])
             .args,
         )
@@ -224,17 +229,20 @@ impl InlineTestBuilder {
         args.setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
-            .with_args([
-                "--cfg",
-                "paralegal",
-                "-Zcrate-attr=feature(register_tool)",
-                "-Zcrate-attr=register_tool(paralegal_flow)",
-            ])
+            .with_args(
+                [
+                    "--cfg",
+                    "paralegal",
+                    "-Zcrate-attr=feature(register_tool)",
+                    "-Zcrate-attr=register_tool(paralegal_flow)",
+                ]
+                .into_iter()
+                .map(ToOwned::to_owned),
+            )
             .compile(move |result| {
                 let tcx = result.tcx;
-                let mut memo = Callbacks::new(Box::leak(Box::new(args)));
-                memo.persist_metadata = false;
-                let pdg = memo.run_compilation(tcx).unwrap().unwrap();
+                let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
+                let pdg = memo.run(tcx).unwrap();
                 let graph = PreFrg::from_description(pdg);
                 let cref = graph.ctrl(&self.ctrl_name);
                 check(cref)
@@ -339,13 +347,17 @@ impl PreFrg {
                 crate::consts::FLOW_GRAPH_OUT_NAME
             ))
             .unwrap();
-            let name_map = desc
-                .def_info
-                .iter()
-                .map(|(def_id, info)| (info.name, *def_id))
-                .into_group_map();
-            Self { desc, name_map }
+            Self::from_description(desc)
         })
+    }
+
+    pub fn from_description(desc: ProgramDescription) -> Self {
+        let name_map = desc
+            .def_info
+            .iter()
+            .map(|(def_id, info)| (info.name, *def_id))
+            .into_group_map();
+        Self { desc, name_map }
     }
 }
 

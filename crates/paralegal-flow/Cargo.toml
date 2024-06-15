@@ -59,6 +59,7 @@ chrono = "0.4"
 
 [dev-dependencies]
 paralegal-flow = { path = ".", features = ["test"] }
+rustc_utils = { workspace = true, features = ["test"] }
 
 [[bin]]
 name = "cargo-paralegal-flow"
