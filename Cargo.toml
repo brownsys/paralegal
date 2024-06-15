@@ -31,5 +31,6 @@ debug = true
 
 "rustc_utils:0.7.4-nightly-2023-08-25" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "d4fefb5c0344cdf4812b4877d5b03cb19a2c4672", features = [
     "indexical",
+    "test",
 ] }
 "rustc_plugin:0.7.4-nightly-2023-08-25" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "d4fefb5c0344cdf4812b4877d5b03cb19a2c4672" }
