@@ -27,10 +27,13 @@ flowistry = { git = "https://github.com/brownsys/flowistry", rev = "b9210041eb84
 debug = true
 
 [replace]
-"rustc_utils:0.7.4-nightly-2023-08-25" = { path = "../rustc_plugin/crates/rustc_utils" }
-"rustc_plugin:0.7.4-nightly-2023-08-25" = { path = "../rustc_plugin/crates/rustc_plugin" }
+# "rustc_utils:0.7.4-nightly-2023-08-25" = { path = "../rustc_plugin/crates/rustc_utils" }
+# "rustc_plugin:0.7.4-nightly-2023-08-25" = { path = "../rustc_plugin/crates/rustc_plugin" }
 
-# "rustc_utils:0.7.4-nightly-2023-08-25" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "aa83f5740fa7eb5b8e3e1ee417b29536e87cc864", features = [
-#     "indexical",
-# ] }
-# "rustc_plugin:0.7.4-nightly-2023-08-25" = { git = "https://github.com/JustusAdam/rustc_plugin", rev = "aa83f5740fa7eb5b8e3e1ee417b29536e87cc864" }
+[replace."rustc_utils:0.7.4-nightly-2023-08-25"]
+git = "https://github.com/JustusAdam/rustc_plugin"
+rev = "d4fefb5c0344cdf4812b4877d5b03cb19a2c4672"
+
+[replace."rustc_plugin:0.7.4-nightly-2023-08-25"]
+git = "https://github.com/JustusAdam/rustc_plugin"
+rev = "d4fefb5c0344cdf4812b4877d5b03cb19a2c4672"
