@@ -8,7 +8,7 @@ use crate::{
     args::{Args, ClapArgs},
     desc::{Identifier, ProgramDescription},
     utils::Print,
-    Callbacks, HashSet,
+    Callbacks, HashSet, PARALEGAL_RUSTC_FLAGS,
 };
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -208,16 +208,7 @@ impl InlineTestBuilder {
         args.setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
-            .with_args(
-                [
-                    "--cfg",
-                    "paralegal",
-                    "-Zcrate-attr=feature(register_tool)",
-                    "-Zcrate-attr=register_tool(paralegal_flow)",
-                ]
-                .into_iter()
-                .map(ToOwned::to_owned),
-            )
+            .with_args(PARALEGAL_RUSTC_FLAGS.iter().copied().map(ToOwned::to_owned))
             .compile(move |CompileResult { tcx }| {
                 let mut memo = Callbacks::new(Box::leak(Box::new(args)));
                 memo.persist_metadata = false;

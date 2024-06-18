@@ -253,6 +253,13 @@ fn add_to_rustflags(new: impl IntoIterator<Item = String>) -> Result<(), std::en
     Ok(())
 }
 
+pub const PARALEGAL_RUSTC_FLAGS: [&str; 4] = [
+    "--cfg",
+    "paralegal",
+    "-Zcrate-attr=feature(register_tool)",
+    "-Zcrate-attr=register_tool(paralegal_flow)",
+];
+
 impl rustc_plugin::RustcPlugin for DfppPlugin {
     type Args = Args;
 
@@ -403,12 +410,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
         }
 
-        compiler_args.extend([
-            "--cfg".into(),
-            "paralegal".into(),
-            "-Zcrate-attr=feature(register_tool)".into(),
-            "-Zcrate-attr=register_tool(paralegal_flow)".into(),
-        ]);
+        compiler_args.extend(PARALEGAL_RUSTC_FLAGS.iter().copied().map(ToOwned::to_owned));
 
         if let Some(dbg) = opts.attach_to_debugger() {
             dbg.attach()
