@@ -381,6 +381,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 .into_iter()
                 .map(|(k, v)| (k, Types(v.into())))
                 .collect(),
+            statistics: Default::default(),
         }
     }
 

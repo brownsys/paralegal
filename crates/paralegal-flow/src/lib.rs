@@ -157,6 +157,7 @@ impl Callbacks {
 
             let ser = Instant::now();
             desc.canonical_write(self.opts.result_path()).unwrap();
+            println!("Wrote graph to {}", self.opts.result_path().display());
             self.stats
                 .record_timed(TimedStat::Serialization, ser.elapsed());
 
@@ -167,6 +168,7 @@ impl Callbacks {
                 rustc_driver::Compilation::Continue
             }
         } else {
+            println!("No compilation artifact");
             rustc_driver::Compilation::Continue
         };
         Ok(compilation)
