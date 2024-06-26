@@ -17,7 +17,9 @@ use rustc_middle::{
     mir::{Terminator, TerminatorKind},
     ty::TyCtxt,
 };
-use rustc_utils::{mir::borrowck_facts, source_map::find_bodies::find_bodies};
+use rustc_utils::{
+    mir::borrowck_facts, source_map::find_bodies::find_bodies, test_utils::CompileResult,
+};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)
@@ -36,7 +38,7 @@ fn pdg(
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
-    rustc_utils::test_utils::compile(input, move |tcx| {
+    rustc_utils::test_utils::CompileBuilder::new(input).compile(move |CompileResult { tcx }| {
         let def_id = get_main(tcx);
         let params = configure(tcx, PdgParams::new(tcx, def_id).unwrap());
         let pdg = flowistry_pdg_construction::compute_pdg(params);

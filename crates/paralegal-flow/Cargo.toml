@@ -9,7 +9,7 @@ description = "Extractor for precise semantic PDGs from rust code."
 rustc_private = true
 
 [features]
-test = []
+test = ["rustc_utils/test"]
 
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }

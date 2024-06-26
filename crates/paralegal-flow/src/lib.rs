@@ -350,17 +350,8 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
-        let lvl = plugin_args.verbosity();
-        // //let lvl = log::LevelFilter::Debug;
-        simple_logger::SimpleLogger::new()
-            .with_level(lvl)
-            //.with_module_level("flowistry", lvl)
-            .with_module_level("rustc_utils", log::LevelFilter::Error)
-            .init()
-            .unwrap();
-        if matches!(*plugin_args.direct_debug(), LogLevelConfig::Targeted(..)) {
-            log::set_max_level(log::LevelFilter::Warn);
-        }
+        plugin_args.setup_logging();
+
         let opts = Box::leak(Box::new(plugin_args));
 
         const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
