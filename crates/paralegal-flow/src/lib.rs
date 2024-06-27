@@ -394,23 +394,20 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
-        debug!("Is target, compiling");
-
         plugin_args.setup_logging();
 
-        let opts = Box::leak(Box::new(plugin_args));
-
-        const RERUN_VAR: &str = "RERUN_WITH_DEBUGGER";
+        const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
         if let Ok(debugger) = std::env::var(RERUN_VAR) {
-            println!("Restarting with debugger '{debugger}'");
+            info!("Restarting with debugger '{debugger}'");
             let mut dsplit = debugger.split(' ');
             let mut cmd = std::process::Command::new(dsplit.next().unwrap());
             cmd.args(dsplit)
                 .args(std::env::args())
                 .env_remove(RERUN_VAR);
-            println!("{cmd:?}");
             std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
         }
+
+        let opts = Box::leak(Box::new(plugin_args));
 
         compiler_args.extend(PARALEGAL_RUSTC_FLAGS.iter().copied().map(ToOwned::to_owned));
 
