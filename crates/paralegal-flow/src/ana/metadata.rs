@@ -16,8 +16,8 @@ use std::{fs::File, io::Read, rc::Rc};
 
 use construct::determine_async;
 use flowistry_pdg_construction::{
-    self as construct, default_emit_error, graph::InternedString, AsyncType, DepGraph,
-    EmittableError, GraphLoader, MemoPdgConstructor, PartialGraph,
+    self as construct, default_emit_error, graph::InternedString, AsyncType, EmittableError,
+    GraphLoader, MemoPdgConstructor, PartialGraph,
 };
 
 use rustc_hash::FxHashMap;

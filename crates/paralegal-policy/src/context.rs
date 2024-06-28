@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 use std::vec;
 use std::{io::Write, process::exit, sync::Arc};
 
-use paralegal_spdg::rustc_portable::defid_as_local;
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
@@ -628,7 +627,7 @@ impl Context {
                         self.desc
                             .def_info
                             .iter()
-                            .filter(|(did, _)| self.desc.analyzed_spans.contains_key(&did))
+                            .filter(|(did, _)| self.desc.analyzed_spans.contains_key(did))
                             .map(|(_, i)| (&i.src_info, matches!(i.kind, DefKind::Type)))
                     })
                     .into_iter()

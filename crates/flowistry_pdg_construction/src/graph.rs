@@ -16,7 +16,7 @@ use rustc_hir::def_id::{DefId, DefIndex};
 use rustc_index::IndexVec;
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
-    mir::{Body, HasLocalDecls, Local, LocalDecl, LocalDecls, Location, Place},
+    mir::{Body, HasLocalDecls, Local, LocalDecl, LocalDecls, Place},
     ty::{GenericArgsRef, TyCtxt},
 };
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
@@ -26,7 +26,7 @@ use rustc_utils::PlaceExt;
 pub use flowistry_pdg::{RichLocation, SourceUse, TargetUse};
 use serde::{Deserialize, Serialize};
 
-use crate::{construct::Error, utils::Captures, AsyncType};
+use crate::{construct::Error, utils::Captures};
 
 /// A node in the program dependency graph.
 ///

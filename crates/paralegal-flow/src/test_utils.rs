@@ -5,7 +5,6 @@ extern crate rustc_middle;
 extern crate rustc_span;
 
 use crate::{
-    args::{Args, ClapArgs},
     desc::{Identifier, ProgramDescription},
     utils::Print,
     Callbacks, HashSet, PARALEGAL_RUSTC_FLAGS,
@@ -27,7 +26,7 @@ use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, I
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
 use petgraph::visit::{NodeRef as _, Visitable};
 use petgraph::Direction;
-use rustc_utils::test_utils::{CompileResult, DUMMY_MOD_NAME};
+use rustc_utils::test_utils::CompileResult;
 use std::path::Path;
 
 lazy_static! {
