@@ -28,16 +28,32 @@ define_test!(without_return: ctrl -> {
     assert!(src.output().flows_to_data(&dest));
 });
 
-define_test!(with_return: ctrl -> {
-    let src_fn = ctrl.function("source");
-    let src = ctrl.call_site(&src_fn);
-    let ctrl = ctrl.ctrl("with_return");
-    let dest_fn = ctrl.function("receiver");
-    let dest_sink = ctrl.call_site(&dest_fn);
-    let dest = dest_sink.input().nth(0).unwrap();
+#[test]
+fn with_return() {
+    InlineTestBuilder::new(stringify!(
+        #[paralegal_flow::marker(hello, return)]
+        fn source() -> i32 {
+            0
+        }
+        fn callee(x: i32) -> i32 {
+            source()
+        }
+        #[paralegal_flow::marker(there, arguments = [0])]
+        fn receiver(x: i32) {}
 
-    assert!(src.output().flows_to_data(&dest));
-});
+        fn main(x: i32) {
+            receiver(callee(x));
+        }
+    )).check(|ctrl| {
+        let src_fn = ctrl.function("source");
+        let src = ctrl.call_site(&src_fn);
+        let dest_fn = ctrl.function("receiver");
+        let dest_sink = ctrl.call_site(&dest_fn);
+        let dest = dest_sink.input().nth(0).unwrap();
+
+        assert!(src.output().flows_to_data(&dest));
+    })
+}
 
 define_test!(on_mut_var: ctrl -> {
     let src_fn = ctrl.function("source");

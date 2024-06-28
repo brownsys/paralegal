@@ -587,10 +587,12 @@ impl<'tcx> PartialGraph<'tcx> {
 
         trace!("Child graph has generics {:?}", child_descriptor.generics);
 
+        let is_root = |n: CallString| n.len() == 2;
+
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
         trace!("PARENT -> CHILD EDGES:");
-        for (child_src, _kind) in child_graph.parentable_srcs() {
+        for (child_src, _kind) in child_graph.parentable_srcs(is_root) {
             if let Some(parent_place) = calling_convention.translate_to_parent(
                 child_src.place,
                 constructor.async_info(),
@@ -619,7 +621,7 @@ impl<'tcx> PartialGraph<'tcx> {
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
-        for (child_dst, kind) in child_graph.parentable_dsts() {
+        for (child_dst, kind) in child_graph.parentable_dsts(is_root) {
             if let Some(parent_place) = calling_convention.translate_to_parent(
                 child_dst.place,
                 constructor.async_info(),

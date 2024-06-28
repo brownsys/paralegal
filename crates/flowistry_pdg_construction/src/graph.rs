@@ -10,6 +10,7 @@ use std::{
 use flowistry_pdg::{CallString, GlobalLocation};
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, DefIndex};
 use rustc_index::IndexVec;
@@ -340,28 +341,43 @@ impl<'tcx> PartialGraph<'tcx> {
         }
     }
 
+    /// Returns the set of source places that the parent can access (write to)
+    ///
+    /// Parameterized by a `is_at_root` function which returns whether a given
+    /// call string refers to a location in the outermost function. This is
+    /// necessary, because consumers of [`PartialGraph`] manipulate the call
+    /// string and as such we cannot assume that `.len() == 1` necessarily refers
+    /// to a root location. (TODO we probably should maintain that invariant)
     pub(crate) fn parentable_srcs<'a>(
         &'a self,
-    ) -> impl Iterator<Item = (DepNode<'tcx>, Option<u8>)> + 'a {
+        is_at_root: impl Fn(CallString) -> bool,
+    ) -> FxHashSet<(DepNode<'tcx>, Option<u8>)> {
         self.edges
             .iter()
             .map(|(src, _, _)| *src)
-            .filter(|n| n.at.len() == 1 && n.at.leaf().location.is_start())
+            .filter(|n| is_at_root(n.at) && n.at.leaf().location.is_start())
             .filter_map(move |a| Some((a, as_arg(&a, self.def_id, self.arg_count)?)))
-            .collect::<FxHashSet<_>>()
-            .into_iter()
+            .collect()
     }
 
+    /// Returns the set of destination places that the parent can access (read
+    /// from)
+    ///
+    /// Parameterized by a `is_at_root` function which returns whether a given
+    /// call string refers to a location in the outermost function. This is
+    /// necessary, because consumers of [`PartialGraph`] manipulate the call
+    /// string and as such we cannot assume that `.len() == 1` necessarily refers
+    /// to a root location. (TODO we probably should maintain that invariant)
     pub(crate) fn parentable_dsts<'a>(
         &'a self,
-    ) -> impl Iterator<Item = (DepNode<'tcx>, Option<u8>)> + 'a {
+        is_at_root: impl Fn(CallString) -> bool,
+    ) -> FxHashSet<(DepNode<'tcx>, Option<u8>)> {
         self.edges
             .iter()
             .map(|(_, dst, _)| *dst)
-            .filter(|n| n.at.len() == 1 && n.at.leaf().location.is_end())
+            .filter(|n| is_at_root(n.at) && n.at.leaf().location.is_end())
             .filter_map(move |a| Some((a, as_arg(&a, self.def_id, self.arg_count)?)))
-            .collect::<FxHashSet<_>>()
-            .into_iter()
+            .collect()
     }
 }
 

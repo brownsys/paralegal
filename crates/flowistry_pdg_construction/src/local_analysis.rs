@@ -540,7 +540,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
         };
 
-        let parentable_dsts = child_constructor.parentable_dsts();
+        let parentable_dsts = child_constructor.parentable_dsts(|n| n.len() == 1);
         let parent_body = &self.body;
 
         // For each destination node CHILD that is parentable to PLACE,
