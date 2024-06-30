@@ -143,7 +143,7 @@ impl crate::Context {
             .map(|i| (i.controller_id(), i.local_node()))
             .into_group_map();
 
-        let mut trace = Trace::new(self.config.always_happens_before_tracing);
+        let mut trace = Trace::new(self.config.lock().unwrap().always_happens_before_tracing);
 
         let select_data = |e: <&SPDGImpl as IntoEdgeReferences>::EdgeRef| e.weight().is_data();
 

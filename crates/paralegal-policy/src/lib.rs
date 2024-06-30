@@ -49,8 +49,6 @@
 
 #![warn(missing_docs)]
 
-extern crate core;
-
 use anyhow::{ensure, Result};
 pub use paralegal_spdg;
 use paralegal_spdg::utils::TruncatedHumanTime;
@@ -276,7 +274,6 @@ impl GraphLocation {
 }
 
 /// Configuration for the framework
-#[derive(Clone, Debug)]
 pub struct Config {
     /// How much information to retain for error messages in `always_happens_before`
     pub always_happens_before_tracing: algo::ahb::TraceLevel,
@@ -284,11 +281,7 @@ pub struct Config {
     /// `EdgeSelection::Data` or whether to use a new DFS every time.
     pub use_flows_to_index: bool,
     /// Where to write output to
-    pub get_output_writer: fn() -> Box<dyn std::io::Write>,
-}
-
-fn default_output() -> Box<dyn std::io::Write> {
-    Box::new(std::io::stdout())
+    pub output_writer: Box<dyn std::io::Write + Send>,
 }
 
 impl Default for Config {
@@ -296,7 +289,7 @@ impl Default for Config {
         Config {
             always_happens_before_tracing: algo::ahb::TraceLevel::StartAndEnd,
             use_flows_to_index: false,
-            get_output_writer: default_output,
+            output_writer: Box::new(std::io::stdout()),
         }
     }
 }

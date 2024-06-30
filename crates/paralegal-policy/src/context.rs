@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::BufReader;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use std::vec;
 use std::{io::Write, process::exit, sync::Arc};
@@ -99,14 +100,13 @@ fn bfs_iter<
 /// [`Self::emit_diagnostics`]. If you used
 /// [`super::GraphLocation::with_context`] this will be done automatically for
 /// you.
-#[derive(Debug)]
 pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: Option<FlowsTo>,
     pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
-    pub(crate) config: Arc<super::Config>,
+    pub(crate) config: Arc<Mutex<super::Config>>,
     pub(crate) stats: ContextStats,
 }
 
@@ -142,7 +142,7 @@ impl Context {
             flows_to,
             diagnostics: Default::default(),
             name_map,
-            config: Arc::new(config),
+            config: Arc::new(Mutex::new(config)),
             stats: ContextStats {
                 pdg_construction: None,
                 precomputation: start.elapsed(),
@@ -259,7 +259,8 @@ impl Context {
 
     /// Dispatch and drain all queued diagnostics without aborting the program.
     pub fn emit_diagnostics(&self) -> std::io::Result<bool> {
-        self.diagnostics.emit((self.config.get_output_writer)())
+        self.diagnostics
+            .emit(&mut self.config.lock().unwrap().output_writer)
     }
 
     /// Returns all nodes that are in any of the PDGs
