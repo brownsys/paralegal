@@ -181,7 +181,7 @@ impl<'tcx> SimpleTyEquiv for Ty<'tcx> {
     }
 }
 
-impl<'tcx, T: SimpleTyEquiv> SimpleTyEquiv for [T] {
+impl<T: SimpleTyEquiv> SimpleTyEquiv for [T] {
     fn equiv(&self, other: &Self) -> bool {
         self.iter().zip(other.iter()).all(|(a, b)| a.equiv(b))
     }
@@ -397,8 +397,8 @@ pub fn manufacture_substs_for(
     function: DefId,
 ) -> Result<&List<GenericArg<'_>>, Error> {
     use rustc_middle::ty::{
-        Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
-        ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
+        BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection, ExistentialTraitRef,
+        GenericParamDefKind, ImplPolarity, ParamTy, TraitPredicate,
     };
 
     trace!("Manufacturing for {function:?}");

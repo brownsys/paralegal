@@ -179,7 +179,7 @@ impl Callbacks {
 
         let loader = MetadataLoader::new(tcx);
 
-        let (analysis_targets, mctx, constructor) = loader.clone().collect_and_emit_metadata(
+        let (analysis_targets, mctx) = loader.clone().collect_and_emit_metadata(
             self.opts,
             self.persist_metadata
                 .then(|| intermediate_out_file_path(tcx))
@@ -187,7 +187,7 @@ impl Callbacks {
         );
         tcx.sess.abort_if_errors();
 
-        let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, constructor, loader);
+        let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, loader);
 
         (!analysis_targets.is_empty())
             .then(|| gen.analyze(analysis_targets))

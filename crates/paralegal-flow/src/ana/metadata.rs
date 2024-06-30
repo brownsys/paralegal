@@ -124,7 +124,7 @@ impl<'tcx> MetadataLoader<'tcx> {
         self: Rc<Self>,
         args: &'static Args,
         path: Option<impl AsRef<Path>>,
-    ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>, MemoPdgConstructor<'tcx>) {
+    ) -> (Vec<FnToAnalyze>, MarkerCtx<'tcx>) {
         let tcx = self.tcx;
         let mut collector = CollectingVisitor::new(tcx, args, self.clone());
         collector.run();
@@ -139,10 +139,7 @@ impl<'tcx> MetadataLoader<'tcx> {
             .with_dump_mir(args.dbg().dump_mir());
         let pdgs = emit_targets
             .into_iter()
-            .filter_map(|t| {
-                // if tcx.def_path_str(t) != "<lemmy_apub::activity_lists::PersonInboxActivities as std::clone::Clone>::clone" {
-                //     return None;
-                // }
+            .map(|t| {
                 println!("Constructing for {:?}", tcx.def_path_str(t));
                 let graph = constructor.construct_root(t).map(|graph| {
                     let body = borrowck_facts::get_body_with_borrowck_facts(tcx, t);
@@ -160,7 +157,7 @@ impl<'tcx> MetadataLoader<'tcx> {
                         async_status,
                     }
                 });
-                Some((t.local_def_index, graph))
+                (t.local_def_index, graph)
             })
             .collect::<FxHashMap<_, _>>();
         let meta = Metadata::from_pdgs(tcx, pdgs, marker_ctx.db());
@@ -170,7 +167,7 @@ impl<'tcx> MetadataLoader<'tcx> {
             meta.write(path, tcx);
         }
         self.cache.get(LOCAL_CRATE, |_| Some(meta));
-        (collector.functions_to_analyze, marker_ctx, constructor)
+        (collector.functions_to_analyze, marker_ctx)
     }
 
     pub fn get_annotations(&self, key: DefId) -> &[Annotation] {
