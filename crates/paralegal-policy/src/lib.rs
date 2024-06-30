@@ -245,7 +245,7 @@ impl GraphLocation {
         let start = Instant::now();
         let result = prop(ctx.clone())?;
 
-        let success = ctx.emit_diagnostics(std::io::stdout())?;
+        let success = ctx.emit_diagnostics()?;
         Ok(PolicyReturn {
             success,
             result,
@@ -283,6 +283,12 @@ pub struct Config {
     /// Whether tho precompute an index for `flows_to` queries with
     /// `EdgeSelection::Data` or whether to use a new DFS every time.
     pub use_flows_to_index: bool,
+    /// Where to write output to
+    pub get_output_writer: fn() -> Box<dyn std::io::Write>,
+}
+
+fn default_output() -> Box<dyn std::io::Write> {
+    Box::new(std::io::stdout())
 }
 
 impl Default for Config {
@@ -290,6 +296,7 @@ impl Default for Config {
         Config {
             always_happens_before_tracing: algo::ahb::TraceLevel::StartAndEnd,
             use_flows_to_index: false,
+            get_output_writer: default_output,
         }
     }
 }

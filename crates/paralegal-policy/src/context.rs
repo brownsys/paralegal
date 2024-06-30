@@ -258,8 +258,8 @@ impl Context {
     }
 
     /// Dispatch and drain all queued diagnostics without aborting the program.
-    pub fn emit_diagnostics(&self, w: impl Write) -> std::io::Result<bool> {
-        self.diagnostics.emit(w)
+    pub fn emit_diagnostics(&self) -> std::io::Result<bool> {
+        self.diagnostics.emit((self.config.get_output_writer)())
     }
 
     /// Returns all nodes that are in any of the PDGs
