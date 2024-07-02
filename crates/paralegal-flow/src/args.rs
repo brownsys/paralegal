@@ -387,10 +387,9 @@ impl Args {
             .without_timestamps()
             .init()
             .is_ok()
+            && matches!(*self.direct_debug(), LogLevelConfig::Targeted(..))
         {
-            if matches!(*self.direct_debug(), LogLevelConfig::Targeted(..)) {
-                log::set_max_level(log::LevelFilter::Warn);
-            }
+            log::set_max_level(log::LevelFilter::Warn);
         }
     }
 }

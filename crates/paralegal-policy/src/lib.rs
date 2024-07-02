@@ -49,8 +49,6 @@
 
 #![warn(missing_docs)]
 
-extern crate core;
-
 use anyhow::{ensure, Result};
 pub use paralegal_spdg;
 use paralegal_spdg::utils::TruncatedHumanTime;
@@ -245,7 +243,7 @@ impl GraphLocation {
         let start = Instant::now();
         let result = prop(ctx.clone())?;
 
-        let success = ctx.emit_diagnostics(std::io::stdout())?;
+        let success = ctx.emit_diagnostics()?;
         Ok(PolicyReturn {
             success,
             result,
@@ -276,13 +274,14 @@ impl GraphLocation {
 }
 
 /// Configuration for the framework
-#[derive(Clone, Debug)]
 pub struct Config {
     /// How much information to retain for error messages in `always_happens_before`
     pub always_happens_before_tracing: algo::ahb::TraceLevel,
     /// Whether tho precompute an index for `flows_to` queries with
     /// `EdgeSelection::Data` or whether to use a new DFS every time.
     pub use_flows_to_index: bool,
+    /// Where to write output to
+    pub output_writer: Box<dyn std::io::Write + Send>,
 }
 
 impl Default for Config {
@@ -290,6 +289,7 @@ impl Default for Config {
         Config {
             always_happens_before_tracing: algo::ahb::TraceLevel::StartAndEnd,
             use_flows_to_index: false,
+            output_writer: Box::new(std::io::stdout()),
         }
     }
 }

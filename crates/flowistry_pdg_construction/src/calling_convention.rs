@@ -33,6 +33,7 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn translate_to_parent(
         &self,
         child: Place<'tcx>,

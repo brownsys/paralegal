@@ -193,7 +193,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     //
                     // Also yikes. This should have better detection of whether
                     // a place is (part of) a function return
-                    let mut in_edges = graph.graph.edges_directed(old_node, Direction::Incoming);
+                    let mut in_edges = graph
+                        .graph
+                        .edges_directed(old_node, Direction::Incoming)
+                        .filter(|e| e.weight().kind == DepEdgeKind::Data);
                     let needs_return_markers = in_edges.clone().next().is_none()
                         || in_edges.any(|e| {
                             let at = e.weight().at;
@@ -381,6 +384,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 .into_iter()
                 .map(|(k, v)| (k, Types(v.into())))
                 .collect(),
+            statistics: Default::default(),
         }
     }
 
@@ -496,6 +500,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 }
 
+#[cfg(debug_assertions)]
 fn assert_edge_location_invariant<'tcx>(
     tcx: TyCtxt<'tcx>,
     at: CallString,

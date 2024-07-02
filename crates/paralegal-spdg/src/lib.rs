@@ -348,6 +348,23 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
+
+    /// INFO: Not implemented, always 0
+    pub rustc_time: Duration,
+    /// INFO: Not implemented, always 0
+    pub marker_annotation_count: u32,
+    /// INFO: Not implemented, always 0
+    pub dedup_functions: u32,
+    /// INFO: Not implemented, always 0
+    pub dedup_locs: u32,
+    /// INFO: Not implemented, always 0
+    pub seen_locs: u32,
+    /// INFO: Not implemented, always 0
+    pub seen_functions: u32,
+    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    /// INFO: Not implemented, always emtpy
+    pub analyzed_spans: HashMap<DefId, Span>,
 }
 
 /// Metadata about a type
@@ -817,9 +834,11 @@ pub struct SPDG {
     /// that this contains multiple types for a single node, because it hold
     /// top-level types and subtypes that may be marked.
     pub type_assigns: HashMap<Node, Types>,
+    /// INFO: Not Implemented, always zero
+    pub statistics: SPDGStats,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 /// Statistics about the code that produced an SPDG
 pub struct SPDGStats {
     /// The number of unique lines of code we generated a PDG for. This means

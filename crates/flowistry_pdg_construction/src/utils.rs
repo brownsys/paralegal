@@ -13,8 +13,8 @@ use rustc_middle::{
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        self, BoundVariableKind, EarlyBinder, GenericArg, GenericArgKind, GenericArgsRef, Instance,
-        List, ParamEnv, Region, Ty, TyCtxt, TyKind,
+        self, Binder, BoundVariableKind, EarlyBinder, GenericArg, GenericArgKind, GenericArgsRef,
+        Instance, List, ParamEnv, Region, Ty, TyCtxt, TyKind,
     },
 };
 
@@ -181,7 +181,7 @@ impl<'tcx> SimpleTyEquiv for Ty<'tcx> {
     }
 }
 
-impl<'tcx, T: SimpleTyEquiv> SimpleTyEquiv for [T] {
+impl<T: SimpleTyEquiv> SimpleTyEquiv for [T] {
     fn equiv(&self, other: &Self) -> bool {
         self.iter().zip(other.iter()).all(|(a, b)| a.equiv(b))
     }
@@ -269,6 +269,14 @@ fn is_wildcard(t: &TyKind<'_>) -> bool {
     matches!(
         t,
         TyKind::Param(..) | TyKind::Alias(..) | TyKind::Bound(..) | TyKind::Placeholder(..)
+    ) || matches!(t,
+        TyKind::Dynamic(pred, _, _) if matches!(
+            pred.first().copied().and_then(Binder::no_bound_vars),
+            Some(ty::ExistentialPredicate::Trait(tref))
+            if tref.def_id == ty::tls::with(|tcx| tcx
+                .get_diagnostic_item(rustc_span::sym::Any)
+                .expect("The `Any` item is not defined."))
+        )
     )
 }
 
@@ -389,8 +397,8 @@ pub fn manufacture_substs_for(
     function: DefId,
 ) -> Result<&List<GenericArg<'_>>, Error> {
     use rustc_middle::ty::{
-        Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
-        ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
+        BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection, ExistentialTraitRef,
+        GenericParamDefKind, ImplPolarity, ParamTy, TraitPredicate,
     };
 
     trace!("Manufacturing for {function:?}");

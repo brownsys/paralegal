@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::BufReader;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use std::vec;
 use std::{io::Write, process::exit, sync::Arc};
@@ -5,9 +9,9 @@ use std::{io::Write, process::exit, sync::Arc};
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
-    CallString, DisplayNode, Endpoint, GlobalNode, HashMap, HashSet, Identifier, InstructionInfo,
-    IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo, ProgramDescription, SPDGImpl,
-    Span, TypeId, SPDG,
+    CallString, DefKind, DisplayNode, Endpoint, GlobalNode, HashMap, HashSet, Identifier,
+    InstructionInfo, IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo,
+    ProgramDescription, SPDGImpl, Span, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, Result};
@@ -96,14 +100,13 @@ fn bfs_iter<
 /// [`Self::emit_diagnostics`]. If you used
 /// [`super::GraphLocation::with_context`] this will be done automatically for
 /// you.
-#[derive(Debug)]
 pub struct Context {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: Option<FlowsTo>,
     pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
-    pub(crate) config: Arc<super::Config>,
+    pub(crate) config: Arc<Mutex<super::Config>>,
     pub(crate) stats: ContextStats,
 }
 
@@ -139,7 +142,7 @@ impl Context {
             flows_to,
             diagnostics: Default::default(),
             name_map,
-            config: Arc::new(config),
+            config: Arc::new(Mutex::new(config)),
             stats: ContextStats {
                 pdg_construction: None,
                 precomputation: start.elapsed(),
@@ -255,8 +258,9 @@ impl Context {
     }
 
     /// Dispatch and drain all queued diagnostics without aborting the program.
-    pub fn emit_diagnostics(&self, w: impl Write) -> std::io::Result<bool> {
-        self.diagnostics.emit(w)
+    pub fn emit_diagnostics(&self) -> std::io::Result<bool> {
+        self.diagnostics
+            .emit(&mut self.config.lock().unwrap().output_writer)
     }
 
     /// Returns all nodes that are in any of the PDGs
@@ -605,55 +609,53 @@ impl Context {
         node.get_location(self)
     }
 
-    // #[doc(hidden)]
-    // pub fn write_analyzed_code(
-    //     &self,
-    //     mut out: impl Write,
-    //     include_signatures: bool,
-    // ) -> std::io::Result<()> {
-    //     let ordered_span_set = self
-    //         .desc
-    //         .analyzed_spans
-    //         .values()
-    //         .zip(std::iter::repeat(true))
-    //         .chain(
-    //             include_signatures
-    //                 .then(|| {
-    //                     self.desc
-    //                         .def_info
-    //                         .iter()
-    //                         .filter(|(did, _)| {
-    //                             !matches!(defid_as_local(**did), Some(local)
-    //                                 if self.desc.analyzed_spans.contains_key(&local)
-    //                             )
-    //                         })
-    //                         .map(|(_, i)| (&i.src_info, matches!(i.kind, DefKind::Type)))
-    //                 })
-    //                 .into_iter()
-    //                 .flatten(),
-    //         )
-    //         .collect::<BTreeMap<_, _>>();
-    //     let mut current_file = None;
-    //     for (s, is_complete) in ordered_span_set {
-    //         if Some(&s.source_file.file_path) != current_file {
-    //             writeln!(out, "// {}", s.source_file.file_path)?;
-    //             current_file = Some(&s.source_file.file_path);
-    //         }
-    //         let file = BufReader::new(File::open(&s.source_file.abs_file_path).unwrap());
-    //         for l in file
-    //             .lines()
-    //             .skip(s.start.line as usize - 1)
-    //             .take((s.end.line - s.start.line + 1) as usize)
-    //         {
-    //             writeln!(out, "{}", l.unwrap()).unwrap()
-    //         }
-    //         if !is_complete {
-    //             writeln!(out, "unreachable!() }}")?;
-    //         }
-    //     }
+    #[doc(hidden)]
+    pub fn write_analyzed_code(
+        &self,
+        mut out: impl Write,
+        include_signatures: bool,
+    ) -> std::io::Result<()> {
+        use std::io::BufRead;
 
-    //     Ok(())
-    // }
+        let ordered_span_set = self
+            .desc
+            .analyzed_spans
+            .values()
+            .zip(std::iter::repeat(true))
+            .chain(
+                include_signatures
+                    .then(|| {
+                        self.desc
+                            .def_info
+                            .iter()
+                            .filter(|(did, _)| self.desc.analyzed_spans.contains_key(did))
+                            .map(|(_, i)| (&i.src_info, matches!(i.kind, DefKind::Type)))
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
+            .collect::<BTreeMap<_, _>>();
+        let mut current_file = None;
+        for (s, is_complete) in ordered_span_set {
+            if Some(&s.source_file.file_path) != current_file {
+                writeln!(out, "// {}", s.source_file.file_path)?;
+                current_file = Some(&s.source_file.file_path);
+            }
+            let file = BufReader::new(File::open(&s.source_file.abs_file_path).unwrap());
+            for l in file
+                .lines()
+                .skip(s.start.line as usize - 1)
+                .take((s.end.line - s.start.line + 1) as usize)
+            {
+                writeln!(out, "{}", l.unwrap()).unwrap()
+            }
+            if !is_complete {
+                writeln!(out, "unreachable!() }}")?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Context queries conveniently accessible on nodes

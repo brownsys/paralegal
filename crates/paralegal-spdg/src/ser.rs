@@ -47,7 +47,8 @@ impl ProgramDescription {
     /// Read `self` using the configured serialization format
     pub fn canonical_read(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let in_file = File::open(path)?;
+        let in_file = File::open(path)
+            .with_context(|| format!("Reading PDG file from {}", path.display()))?;
         cfg_if! {
             if #[cfg(feature = "binenc")] {
                 let read = bincode::deserialize_from(

@@ -31,7 +31,7 @@ use crate::{
     construct::{Error, WithConstructionErrors},
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, is_async, is_non_default_trait_method, try_monomorphize, SimpleTyEquiv},
+    utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
     CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
 };
 
@@ -540,7 +540,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
         };
 
-        let parentable_dsts = child_constructor.parentable_dsts();
+        let parentable_dsts = child_constructor.parentable_dsts(|n| n.len() == 1);
         let parent_body = &self.body;
 
         // For each destination node CHILD that is parentable to PLACE,

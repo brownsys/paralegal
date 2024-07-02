@@ -1,7 +1,7 @@
 use std::{fmt::Display, rc::Rc};
 
 use either::Either;
-use flowistry_pdg::{CallString, GlobalLocation};
+
 use itertools::Itertools;
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::{DefId, LocalDefId};

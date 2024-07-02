@@ -8,7 +8,7 @@
 //!    [`InstructionState`] at each instruction in the procedure.
 //! 2. [`PartialGraph`] implements [`ResultsVisitor`] over the analysis result
 
-use std::{borrow::Cow, fmt::Display, rc::Rc};
+use std::{fmt::Display, rc::Rc};
 
 use anyhow::anyhow;
 use either::Either;
@@ -26,13 +26,11 @@ use rustc_middle::{
     mir::{
         visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue, Terminator, TerminatorKind,
     },
-    ty::{
-        normalize_erasing_regions::NormalizationError, GenericArgsRef, Instance, ParamEnv, TyCtxt,
-    },
+    ty::{GenericArgsRef, Instance, TyCtxt},
 };
 use rustc_mir_dataflow::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_span::Span;
-use rustc_utils::{cache::Cache, mir::borrowck_facts};
+use rustc_utils::cache::Cache;
 
 use crate::{
     async_support::*,
@@ -41,7 +39,7 @@ use crate::{
     },
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{manufacture_substs_for, try_monomorphize, try_resolve_function},
+    utils::{manufacture_substs_for, try_resolve_function},
     CallChangeCallback, GraphLoader,
 };
 
@@ -587,10 +585,12 @@ impl<'tcx> PartialGraph<'tcx> {
 
         trace!("Child graph has generics {:?}", child_descriptor.generics);
 
+        let is_root = |n: CallString| n.len() == 2;
+
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
         trace!("PARENT -> CHILD EDGES:");
-        for (child_src, _kind) in child_graph.parentable_srcs() {
+        for (child_src, _kind) in child_graph.parentable_srcs(is_root) {
             if let Some(parent_place) = calling_convention.translate_to_parent(
                 child_src.place,
                 constructor.async_info(),
@@ -619,7 +619,7 @@ impl<'tcx> PartialGraph<'tcx> {
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
-        for (child_dst, kind) in child_graph.parentable_dsts() {
+        for (child_dst, kind) in child_graph.parentable_dsts(is_root) {
             if let Some(parent_place) = calling_convention.translate_to_parent(
                 child_dst.place,
                 constructor.async_info(),

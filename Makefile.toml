@@ -74,7 +74,7 @@ command = "cargo"
 [tasks.policy-framework-tests]
 description = "Tests related to the correctness of the policy framework."
 command = "cargo"
-args = ["test", "-p", "paralegal-policy", "--lib"]
+args = ["test", "-p", "paralegal-policy"]
 
 [tasks.guide-project]
 description = "Build and run the policy from the guide."

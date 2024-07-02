@@ -157,6 +157,7 @@ impl Callbacks {
 
             let ser = Instant::now();
             desc.canonical_write(self.opts.result_path()).unwrap();
+            println!("Wrote graph to {}", self.opts.result_path().display());
             self.stats
                 .record_timed(TimedStat::Serialization, ser.elapsed());
 
@@ -167,6 +168,7 @@ impl Callbacks {
                 rustc_driver::Compilation::Continue
             }
         } else {
+            println!("No compilation artifact");
             rustc_driver::Compilation::Continue
         };
         Ok(compilation)
@@ -177,7 +179,7 @@ impl Callbacks {
 
         let loader = MetadataLoader::new(tcx);
 
-        let (analysis_targets, mctx, constructor) = loader.clone().collect_and_emit_metadata(
+        let (analysis_targets, mctx) = loader.clone().collect_and_emit_metadata(
             self.opts,
             self.persist_metadata
                 .then(|| intermediate_out_file_path(tcx))
@@ -185,7 +187,7 @@ impl Callbacks {
         );
         tcx.sess.abort_if_errors();
 
-        let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, constructor, loader);
+        let mut gen = SPDGGenerator::new(mctx, self.opts, tcx, loader);
 
         (!analysis_targets.is_empty())
             .then(|| gen.analyze(analysis_targets))
@@ -252,6 +254,13 @@ fn add_to_rustflags(new: impl IntoIterator<Item = String>) -> Result<(), std::en
     std::env::set_var(CARGO_ENCODED_RUSTFLAGS, prior.join("\x1f"));
     Ok(())
 }
+
+pub const PARALEGAL_RUSTC_FLAGS: [&str; 4] = [
+    "--cfg",
+    "paralegal",
+    "-Zcrate-attr=feature(register_tool)",
+    "-Zcrate-attr=register_tool(paralegal_flow)",
+];
 
 impl rustc_plugin::RustcPlugin for DfppPlugin {
     type Args = Args;
@@ -385,30 +394,22 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
-        debug!("Is target, compiling");
-
         plugin_args.setup_logging();
 
-        let opts = Box::leak(Box::new(plugin_args));
-
-        const RERUN_VAR: &str = "RERUN_WITH_DEBUGGER";
+        const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
         if let Ok(debugger) = std::env::var(RERUN_VAR) {
-            println!("Restarting with debugger '{debugger}'");
+            info!("Restarting with debugger '{debugger}'");
             let mut dsplit = debugger.split(' ');
             let mut cmd = std::process::Command::new(dsplit.next().unwrap());
             cmd.args(dsplit)
                 .args(std::env::args())
                 .env_remove(RERUN_VAR);
-            println!("{cmd:?}");
             std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
         }
 
-        compiler_args.extend([
-            "--cfg".into(),
-            "paralegal".into(),
-            "-Zcrate-attr=feature(register_tool)".into(),
-            "-Zcrate-attr=register_tool(paralegal_flow)".into(),
-        ]);
+        let opts = Box::leak(Box::new(plugin_args));
+
+        compiler_args.extend(PARALEGAL_RUSTC_FLAGS.iter().copied().map(ToOwned::to_owned));
 
         if let Some(dbg) = opts.attach_to_debugger() {
             dbg.attach()

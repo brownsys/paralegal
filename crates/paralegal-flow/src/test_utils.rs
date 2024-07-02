@@ -5,10 +5,9 @@ extern crate rustc_middle;
 extern crate rustc_span;
 
 use crate::{
-    args::{Args, ClapArgs},
     desc::{Identifier, ProgramDescription},
     utils::Print,
-    Callbacks, HashSet,
+    Callbacks, HashSet, PARALEGAL_RUSTC_FLAGS,
 };
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -27,7 +26,7 @@ use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, I
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
 use petgraph::visit::{NodeRef as _, Visitable};
 use petgraph::Direction;
-use rustc_utils::test_utils::{CompileResult, DUMMY_MOD_NAME};
+use rustc_utils::test_utils::CompileResult;
 use std::path::Path;
 
 lazy_static! {
@@ -170,16 +169,25 @@ macro_rules! define_flow_test_template {
     };
 }
 
-lazy_static! {
-    static ref OPTS: Args = Default::default();
-}
-
+/// Builder for running test cases against a string of source code.
+///
+/// Start with [`InlineTestBuilder::new`], compile and run the test case with
+/// [`InlineTestBuilder::check`].
 pub struct InlineTestBuilder {
     ctrl_name: String,
     input: String,
 }
 
 impl InlineTestBuilder {
+    /// Constructor.
+    ///
+    /// Note that this test builder does not support specifying dependencies,
+    /// including the `paralegal` library. As such use raw annotations like
+    /// `#[paralegal_flow::marker(...)]`.
+    ///
+    /// By default a `main` function is used as the analysis target (even
+    /// without an `analyze` annotation). Use
+    /// [`InlineTestBuilder::with_entrypoint`] to use a different function.
     pub fn new(input: impl Into<String>) -> Self {
         Self {
             input: input.into(),
@@ -187,19 +195,34 @@ impl InlineTestBuilder {
         }
     }
 
+    /// Chose a function as analysis entrypoint. Overwrites any previous choice
+    /// without warning.
+    pub fn with_entrypoint(&mut self, name: impl Into<String>) -> &mut Self {
+        self.ctrl_name = name.into();
+        self
+    }
+
+    /// Compile the code, select the [`CtrlRef`] corresponding to the configured
+    /// entrypoint and hand it to the `check` function which should contain the
+    /// test predicate.
     pub fn check(&self, check: impl FnOnce(CtrlRef) + Send) {
+        use clap::Parser;
+
         #[derive(clap::Parser)]
         struct TopLevelArgs {
             #[clap(flatten)]
-            args: ClapArgs,
+            args: crate::ClapArgs,
         }
 
-        // TODO make this --analyze work
-        let args = Args::try_from(
+        let args = crate::Args::try_from(
             TopLevelArgs::parse_from([
                 "".into(),
                 "--analyze".into(),
-                format!("{}::{}", DUMMY_MOD_NAME, self.ctrl_name),
+                format!(
+                    "{}::{}",
+                    rustc_utils::test_utils::DUMMY_MOD_NAME,
+                    self.ctrl_name
+                ),
             ])
             .args,
         )
@@ -208,16 +231,7 @@ impl InlineTestBuilder {
         args.setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
-            .with_args(
-                [
-                    "--cfg",
-                    "paralegal",
-                    "-Zcrate-attr=feature(register_tool)",
-                    "-Zcrate-attr=register_tool(paralegal_flow)",
-                ]
-                .into_iter()
-                .map(ToOwned::to_owned),
-            )
+            .with_args(PARALEGAL_RUSTC_FLAGS.iter().copied().map(ToOwned::to_owned))
             .compile(move |CompileResult { tcx }| {
                 let mut memo = Callbacks::new(Box::leak(Box::new(args)));
                 memo.persist_metadata = false;
@@ -225,7 +239,7 @@ impl InlineTestBuilder {
                 let graph = PreFrg::from_description(pdg);
                 let cref = graph.ctrl(&self.ctrl_name);
                 check(cref)
-            })
+            });
     }
 }
 
