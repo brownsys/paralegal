@@ -68,7 +68,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 if let Some(local) = def_id.as_local() {
                     Some(FnToAnalyze {
                         def_id: local,
-                        name: tcx.opt_item_ident(def_id).unwrap(),
+                        name: tcx.opt_item_ident(def_id).expect("analysis target does not have a name"),
                     })
                 } else {
                     tcx.sess.span_err(tcx.def_span(def_id), "found an external function as analysis target. Analysis targets are required to be local.");

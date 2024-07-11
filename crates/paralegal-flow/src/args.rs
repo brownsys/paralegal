@@ -444,7 +444,7 @@ struct ClapAnalysisCtrl {
     unconstrained_depth: bool,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Default)]
 pub struct AnalysisCtrl {
     /// Target this function as analysis target. Command line version of
     /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
@@ -454,15 +454,6 @@ pub struct AnalysisCtrl {
     /// Disables all recursive analysis (both paralegal_flow's inlining as well as
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
-}
-
-impl Default for AnalysisCtrl {
-    fn default() -> Self {
-        Self {
-            analyze: Vec::new(),
-            inlining_depth: InliningDepth::Adaptive,
-        }
-    }
 }
 
 impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
@@ -498,6 +489,12 @@ pub enum InliningDepth {
     Shallow,
     /// Inline so long as markers are reachable
     Adaptive,
+}
+
+impl Default for InliningDepth {
+    fn default() -> Self {
+        Self::Adaptive
+    }
 }
 
 impl AnalysisCtrl {
