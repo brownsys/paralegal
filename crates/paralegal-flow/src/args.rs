@@ -550,8 +550,8 @@ pub struct BuildConfig {
     pub dep: crate::HashMap<String, DepConfig>,
     /// Overrides what is reported if this tool is called like `rustc
     /// --version`. This is sometimes needed when crates attempt to detect the
-    /// rust version being used. 
-    /// 
+    /// rust version being used.
+    ///
     /// Set this to "inherent" to use the rustc version that paralegal will be
     /// using internally.
     pub imitate_compiler: Option<String>,

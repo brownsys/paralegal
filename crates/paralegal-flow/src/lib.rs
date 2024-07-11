@@ -81,7 +81,7 @@ pub use paralegal_spdg as desc;
 pub use crate::ann::db::MarkerCtx;
 
 use ana::{MetadataLoader, SPDGGenerator};
-use args::{get_build_config, AnalysisCtrl, Args, BuildConfig, ClapArgs, Debugger, LogLevelConfig};
+use args::{AnalysisCtrl, Args, ClapArgs, Debugger, LogLevelConfig};
 use consts::INTERMEDIATE_ARTIFACT_EXT;
 use desc::utils::write_sep;
 use stats::{Stats, TimedStat};
