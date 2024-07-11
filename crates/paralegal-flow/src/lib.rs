@@ -81,7 +81,7 @@ pub use paralegal_spdg as desc;
 pub use crate::ann::db::MarkerCtx;
 
 use ana::{MetadataLoader, SPDGGenerator};
-use args::{AnalysisCtrl, Args, ClapArgs, Debugger, LogLevelConfig};
+use args::{get_build_config, AnalysisCtrl, Args, BuildConfig, ClapArgs, Debugger, LogLevelConfig};
 use consts::INTERMEDIATE_ARTIFACT_EXT;
 use desc::utils::write_sep;
 use stats::{Stats, TimedStat};
@@ -271,6 +271,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
 
     fn driver_name(&self) -> std::borrow::Cow<'static, str> {
         "paralegal-flow".into()
+    }
+
+    fn reported_driver_version(&self) -> Cow<'static, str> {
+        env!("RUSTC_VERSION").into()
     }
 
     fn args(

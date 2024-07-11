@@ -66,17 +66,12 @@ impl TryFrom<ClapArgs> for Args {
             .iter()
             .flat_map(|s| s.split(',').map(ToOwned::to_owned))
             .collect();
+        let build_config = get_build_config()?;
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_ANALYZE")? {
             anactrl
                 .analyze
                 .extend(from_env.split(',').map(ToOwned::to_owned));
         }
-        let build_config_file = std::path::Path::new("Paralegal.toml");
-        let build_config = if build_config_file.exists() {
-            toml::from_str(&std::fs::read_to_string(build_config_file)?)?
-        } else {
-            Default::default()
-        };
         let log_level_config = match debug_target {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
             _ => LogLevelConfig::Disabled,
@@ -105,6 +100,15 @@ impl TryFrom<ClapArgs> for Args {
             attach_to_debugger,
         })
     }
+}
+
+pub fn get_build_config() -> Result<BuildConfig, Error> {
+    let build_config_file = std::path::Path::new("Paralegal.toml");
+    Ok(if build_config_file.exists() {
+        toml::from_str(&std::fs::read_to_string(build_config_file)?)?
+    } else {
+        Default::default()
+    })
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::ValueEnum, Clone, Copy)]
@@ -544,4 +548,11 @@ pub struct DepConfig {
 pub struct BuildConfig {
     /// Dependency specific configuration
     pub dep: crate::HashMap<String, DepConfig>,
+    /// Overrides what is reported if this tool is called like `rustc
+    /// --version`. This is sometimes needed when crates attempt to detect the
+    /// rust version being used. 
+    /// 
+    /// Set this to "inherent" to use the rustc version that paralegal will be
+    /// using internally.
+    pub imitate_compiler: Option<String>,
 }
