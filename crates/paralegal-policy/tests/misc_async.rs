@@ -55,3 +55,20 @@ on_argument = [1]
         Ok(())
     })
 }
+
+#[test]
+#[ignore = "https://github.com/brownsys/paralegal/issues/159"]
+fn oneshot_channel() -> Result<()> {
+    let mut test = Test::new(stringify!(
+        #[paralegal::analyze]
+        async fn main() {
+            let (_, receiver) = tokio::sync::oneshot::channel();
+
+            receiver.await.unwrap()
+        }
+    ))?;
+
+    test.with_dep(["tokio", "--features", "sync"]);
+
+    test.run(|_ctx| Ok(()))
+}

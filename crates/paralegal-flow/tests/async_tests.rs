@@ -259,3 +259,135 @@ define_test!(markers: graph -> {
     assert!(!output.is_empty());
     assert!(input.flows_to_data(&output));
 });
+
+#[test]
+fn await_on_generic() {
+    InlineTestBuilder::new(stringify!(
+        use std::{
+            future::{Future},
+            task::{Context, Poll},
+            pin::Pin
+        };
+        struct AFuture;
+
+        impl Future for AFuture {
+            type Output = usize;
+            fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+                unimplemented!()
+            }
+        }
+
+        trait Trait {
+            fn method(&mut self) -> AFuture;
+        }
+
+        async fn main<T: Trait>(mut t: T) -> usize {
+            t.method().await
+        }
+    ))
+    .check(|_ctrl| {})
+}
+
+#[test]
+fn await_with_inner_generic() {
+    InlineTestBuilder::new(stringify!(
+        use std::{
+            future::{Future},
+            task::{Context, Poll},
+            pin::Pin,
+        };
+        struct AFuture<'a, T: ?Sized>(&'a mut T);
+
+        impl<'a, T> Future for AFuture<'a, T> {
+            type Output = usize;
+            fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+                unimplemented!()
+            }
+        }
+
+        trait Trait {
+            fn method(&mut self) -> AFuture<'_, Self> {
+                AFuture(self)
+            }
+        }
+
+        async fn main<T: Trait>(mut t: T) -> usize {
+            t.method().await
+        }
+    ))
+    .check(|_ctrl| {})
+}
+
+#[test]
+#[ignore = "https://github.com/brownsys/paralegal/issues/159"]
+fn await_with_inner_generic_constrained() {
+    InlineTestBuilder::new(stringify!(
+        use std::{
+            future::{Future},
+            task::{Context, Poll},
+            pin::Pin,
+        };
+        struct AFuture<'a, T: ?Sized>(&'a mut T);
+
+        impl<'a, T: Trait + Unpin + ?Sized> Future for AFuture<'a, T> {
+            type Output = usize;
+            fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+                unimplemented!()
+            }
+        }
+
+        trait Trait: Send + Unpin + 'static {
+            fn method(&mut self) -> AFuture<'_, Self>
+            where
+                Self: Unpin + Sized,
+            {
+                AFuture(self)
+            }
+        }
+
+        async fn main<T: Trait>(mut t: T) -> usize {
+            t.method().await
+        }
+    ))
+    .check(|_ctrl| {})
+}
+
+#[test]
+fn async_through_another_layer() {
+    InlineTestBuilder::new(stringify!(
+        async fn maker(x: u32, y: u32) -> u32 {
+            x
+        }
+
+        fn get_async(x: u32, y: u32) -> impl std::future::Future<Output = u32> {
+            maker(y, x)
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn mark_source<T>(t: T) -> T {
+            t
+        }
+
+        #[paralegal_flow::marker(source_2, return)]
+        fn mark_source_2<T>(t: T) -> T {
+            t
+        }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(t: T) {}
+
+        async fn main() {
+            let src = mark_source(1);
+            let src2 = mark_source_2(2);
+            sink(get_async(src, src2).await)
+        }
+    ))
+    .check(|ctrl| {
+        assert!(!ctrl
+            .marked(Identifier::new_intern("source"))
+            .flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+        assert!(ctrl
+            .marked(Identifier::new_intern("source_2"))
+            .flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+    })
+}
