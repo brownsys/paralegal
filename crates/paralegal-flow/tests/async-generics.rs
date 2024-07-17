@@ -59,7 +59,7 @@ fn await_with_inner_generic() {
 }
 
 #[test]
-fn await_with_inner_generic_wrapped() {
+fn await_with_inner_generic_constrained() {
     InlineTestBuilder::new(stringify!(
         use std::{
             future::{Future},
