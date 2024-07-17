@@ -351,3 +351,43 @@ fn await_with_inner_generic_constrained() {
     ))
     .check(|_ctrl| {})
 }
+
+#[test]
+fn async_through_another_layer() {
+    InlineTestBuilder::new(stringify!(
+        async fn maker(x: u32, y: u32) -> u32 {
+            x
+        }
+
+        fn get_async(x: u32, y: u32) -> impl std::future::Future<Output = u32> {
+            maker(y, x)
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn mark_source<T>(t: T) -> T {
+            t
+        }
+
+        #[paralegal_flow::marker(source_2, return)]
+        fn mark_source_2<T>(t: T) -> T {
+            t
+        }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(t: T) {}
+
+        async fn main() {
+            let src = mark_source(1);
+            let src2 = mark_source_2(2);
+            sink(get_async(src, src2).await)
+        }
+    ))
+    .check(|ctrl| {
+        assert!(!ctrl
+            .marked(Identifier::new_intern("source"))
+            .flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+        assert!(ctrl
+            .marked(Identifier::new_intern("source_2"))
+            .flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+    })
+}
