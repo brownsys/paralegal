@@ -19,89 +19,26 @@ use rustc_span::ErrorGuaranteed;
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
-pub enum FnResolution<'tcx> {
-    Final(ty::Instance<'tcx>),
-    Partial(DefId),
+pub trait Captures<'a> {}
+impl<'a, T: ?Sized> Captures<'a> for T {}
+
+/// An async check that does not crash if called on closures.
+pub fn is_async(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    !tcx.is_closure(def_id) && tcx.asyncness(def_id).is_async()
 }
 
-impl<'tcx> PartialOrd for FnResolution<'tcx> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<'tcx> Ord for FnResolution<'tcx> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        use FnResolution::*;
-        match (self, other) {
-            (Final(_), Partial(_)) => std::cmp::Ordering::Greater,
-            (Partial(_), Final(_)) => std::cmp::Ordering::Less,
-            (Partial(slf), Partial(otr)) => slf.cmp(otr),
-            (Final(slf), Final(otr)) => match slf.def.cmp(&otr.def) {
-                std::cmp::Ordering::Equal => slf.args.cmp(otr.args),
-                result => result,
-            },
-        }
-    }
-}
-
-impl<'tcx> FnResolution<'tcx> {
-    pub fn def_id(self) -> DefId {
-        match self {
-            FnResolution::Final(f) => f.def_id(),
-            FnResolution::Partial(p) => p,
-        }
-    }
-}
-
-impl<'tcx> std::fmt::Display for FnResolution<'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FnResolution::Final(sub) => std::fmt::Debug::fmt(sub, f),
-            FnResolution::Partial(p) => std::fmt::Debug::fmt(p, f),
-        }
-    }
-}
-
-/// Try and normalize the provided generics.
-///
-/// The purpose of this function is to test whether resolving these generics
-/// will return an error. We need this because [`ty::Instance::resolve`] fails
-/// with a hard error when this normalization fails (even though it returns
-/// [`Result`]). However legitimate situations can arise in the code where this
-/// normalization fails for which we want to report warnings but carry on with
-/// the analysis which a hard error doesn't allow us to do.
-fn test_generics_normalization<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
-    args: &'tcx ty::List<ty::GenericArg<'tcx>>,
-) -> Result<(), ty::normalize_erasing_regions::NormalizationError<'tcx>> {
-    tcx.try_normalize_erasing_regions(param_env, args)
-        .map(|_| ())
-}
-
+/// Resolve the `def_id` item to an instance.
 pub fn try_resolve_function<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     param_env: ParamEnv<'tcx>,
     args: GenericArgsRef<'tcx>,
-) -> FnResolution<'tcx> {
+) -> Option<Instance<'tcx>> {
     let param_env = param_env.with_reveal_all_normalized(tcx);
-    let make_opt = || {
-        if let Err(e) = test_generics_normalization(tcx, param_env, args) {
-            debug!("Normalization failed: {e:?}");
-            return None;
-        }
-        Instance::resolve(tcx, param_env, def_id, args).unwrap()
-    };
-
-    match make_opt() {
-        Some(inst) => FnResolution::Final(inst),
-        None => FnResolution::Partial(def_id),
-    }
+    Instance::resolve(tcx, param_env, def_id, args).unwrap()
 }
 
+/// Returns the default implementation of this method if it is a trait method.
 pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId> {
     let assoc_item = tcx.opt_associated_item(function)?;
     if assoc_item.container != ty::AssocItemContainer::TraitContainer
@@ -112,23 +49,16 @@ pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId
     assoc_item.trait_item_def_id
 }
 
-impl<'tcx> FnResolution<'tcx> {
-    pub fn try_monomorphize<'a, T>(
-        self,
-        tcx: TyCtxt<'tcx>,
-        param_env: ParamEnv<'tcx>,
-        t: &'a T,
-    ) -> Cow<'a, T>
-    where
-        T: TypeFoldable<TyCtxt<'tcx>> + Clone,
-    {
-        match self {
-            FnResolution::Partial(_) => Cow::Borrowed(t),
-            FnResolution::Final(inst) => Cow::Owned(inst.subst_mir_and_normalize_erasing_regions(
-                tcx,
-                param_env,
-                EarlyBinder::bind(tcx.erase_regions(t.clone())),
-            )),
+/// Attempt to interpret this type as a statically determinable function and its
+/// generic arguments.
+pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+    let ty = ty_resolve(ty, tcx);
+    match ty.kind() {
+        TyKind::FnDef(def_id, generic_args) => Some((*def_id, generic_args)),
+        TyKind::Generator(def_id, generic_args, _) => Some((*def_id, generic_args)),
+        ty => {
+            trace!("Bailing from handle_call because func is literal with type: {ty:?}");
+            None
         }
     }
 }

@@ -12,10 +12,11 @@ use rustc_middle::{
     ty::{GenericArgsRef, TyCtxt},
 };
 
-use crate::construct::{CallKind, PartialGraph};
-
-use super::construct::GraphConstructor;
-use super::utils::{self, FnResolution};
+use super::{
+    construct::{CallKind, GraphConstructor},
+    graph::PartialGraph,
+    utils::{self, FnResolution},
+};
 
 /// Stores ids that are needed to construct projections around async functions.
 pub(crate) struct AsyncInfo {

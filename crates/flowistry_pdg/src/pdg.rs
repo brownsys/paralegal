@@ -76,8 +76,8 @@ impl From<Location> for RichLocation {
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct GlobalLocation {
     /// The function containing the location.
-    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::LocalDefId"))]
-    pub function: LocalDefId,
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    pub function: DefId,
 
     /// The location of an instruction in the function, or the function's start.
     pub location: RichLocation,
@@ -151,6 +151,10 @@ impl CallString {
     pub fn push(self, loc: GlobalLocation) -> Self {
         let string = self.0.iter().copied().chain(Some(loc)).collect();
         CallString::new(string)
+    }
+
+    pub fn push_front(self, loc: GlobalLocation) -> Self {
+        CallString::new([loc].into_iter().chain(self.0.iter().copied()).collect())
     }
 
     pub fn is_at_root(self) -> bool {
