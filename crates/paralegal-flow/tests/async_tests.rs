@@ -384,11 +384,11 @@ fn async_through_another_layer() {
         }
     ))
     .check(|ctrl| {
-        assert!(!ctrl
-            .marked(Identifier::new_intern("source"))
-            .flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
-        assert!(ctrl
-            .marked(Identifier::new_intern("source_2"))
-            .flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+        let sources = ctrl.marked(Identifier::new_intern("source"));
+        let sinks = ctrl.marked(Identifier::new_intern("source_2"));
+        assert!(!sources.is_empty());
+        assert!(!sinks.is_empty());
+        assert!(!sources.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+        assert!(sinks.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
     })
 }
