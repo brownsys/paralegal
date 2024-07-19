@@ -289,6 +289,7 @@ fn await_on_generic() {
 }
 
 #[test]
+#[ignore = "https://github.com/brownsys/paralegal/issues/159"]
 fn await_with_inner_generic() {
     InlineTestBuilder::new(stringify!(
         use std::{
