@@ -15,6 +15,7 @@ extern crate rustc_type_ir;
 
 use self::graph::DepGraph;
 pub use async_support::{determine_async, is_async_trait_fn, match_async_trait_assign};
+use rustc_hir::def_id::LocalDefId;
 pub mod callback;
 pub use crate::construct::MemoPdgConstructor;
 pub use callback::{
@@ -32,7 +33,7 @@ mod mutation;
 pub mod utils;
 
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.
-pub fn compute_pdg<'tcx>(tcx: TyCtxt<'tcx>, params: Instance<'tcx>) -> DepGraph<'tcx> {
+pub fn compute_pdg<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> DepGraph<'tcx> {
     let constructor = MemoPdgConstructor::new(tcx);
-    constructor.construct_for(params).unwrap().to_petgraph()
+    constructor.construct_graph(def_id)
 }

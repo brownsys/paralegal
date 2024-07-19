@@ -102,9 +102,9 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         &'a self,
         resolution: Instance<'tcx>,
     ) -> Option<&'a PartialGraph<'tcx>> {
-        let def_id = resolution.def_id();
+        let def_id = resolution.def_id().expect_local();
         let generics = resolution.args;
-        self.pdg_cache.get_maybe_recursive(resolution, |_| {
+        self.pdg_cache.get_maybe_recursive((def_id, generics), |_| {
             let g = LocalAnalysis::new(self, resolution).construct_partial();
             trace!(
                 "Computed new for {} {generics:?}",
@@ -116,7 +116,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     }
 
     /// Has a PDG been constructed for this instance before?
-    pub fn is_in_cache(&self, resolution: Instance<'tcx>) -> bool {
+    pub fn is_in_cache(&self, resolution: PdgCacheKey<'tcx>) -> bool {
         self.pdg_cache.is_in_cache(&resolution)
     }
 
@@ -465,7 +465,8 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-type PdgCache<'tcx> = Rc<Cache<Instance<'tcx>, PartialGraph<'tcx>>>;
+pub type PdgCacheKey<'tcx> = (LocalDefId, GenericArgsRef<'tcx>);
+pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, PartialGraph<'tcx>>>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {

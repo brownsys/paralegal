@@ -28,6 +28,7 @@ use crate::{
     approximation::ApproximationHandler,
     async_support::*,
     calling_convention::*,
+    construct::PdgCacheKey,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
@@ -64,6 +65,10 @@ pub(crate) struct LocalAnalysis<'tcx, 'a> {
 }
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
+    pub fn local_def_id(&self) -> LocalDefId {
+        self.root.def_id().expect_local()
+    }
+
     /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution` in a given `calling_context`.
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
@@ -172,7 +177,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
     pub(crate) fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
         CallString::single(GlobalLocation {
-            function: self.root.def_id().expect_local(),
+            function: self.local_def_id(),
             location: location.into(),
         })
     }
@@ -421,7 +426,12 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         // Recursively generate the PDG for the child function.
 
-        let cache_key = resolved_fn;
+        if !resolved_fn.def_id().is_local() {
+            trace!("  bailing because function is not local");
+            return None;
+        }
+        let local_def_id = resolved_fn.def_id().as_local()?;
+        let cache_key = (local_def_id, resolved_fn.args);
 
         let is_cached = self.memo.is_in_cache(cache_key);
 
@@ -474,8 +484,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             trace!("  Bailing because user callback said to bail");
             return None;
         }
-        let Some(descriptor) = self.memo.construct_for(cache_key) else {
-            trace!("  Bailing because cache lookup {cache_key} failed");
+        let Some(descriptor) = self.memo.construct_for(resolved_fn) else {
+            trace!("  Bailing because cache lookup {cache_key:?} failed");
             return None;
         };
         Some(CallHandling::Ready {

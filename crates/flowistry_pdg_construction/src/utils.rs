@@ -73,7 +73,7 @@ where
     .map_err(|e| {
         tcx.sess.span_err(
             span,
-            "failed to monomorphize with instance {inst:?} due to {e:?}",
+            format!("failed to monomorphize with instance {inst:?} due to {e:?}"),
         )
     })
 }

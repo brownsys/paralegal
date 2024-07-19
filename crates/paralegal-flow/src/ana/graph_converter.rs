@@ -69,10 +69,7 @@ pub struct GraphConverter<'tcx, 'a, C> {
     marker_assignments: HashMap<Node, HashSet<Identifier>>,
     call_string_resolver: call_string_resolver::CallStringResolver<'tcx>,
     stats: SPDGStats,
-    place_info_cache: PlaceInfoCache<'tcx>,
 }
-
-pub type PlaceInfoCache<'tcx> = Rc<Cache<LocalDefId, PlaceInfo<'tcx>>>;
 
 impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     /// Initialize a new converter by creating an initial PDG using flowistry.
@@ -80,7 +77,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         generator: &'a SPDGGenerator<'tcx>,
         known_def_ids: &'a mut C,
         target: &'a FnToAnalyze,
-        place_info_cache: PlaceInfoCache<'tcx>,
     ) -> Result<Self> {
         let local_def_id = target.def_id;
         let start = Instant::now();
@@ -108,7 +104,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             marker_assignments: Default::default(),
             call_string_resolver: CallStringResolver::new(generator.tcx, local_def_id),
             stats,
-            place_info_cache,
         })
     }
 
@@ -154,16 +149,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
-    fn place_info(&self, def_id: LocalDefId) -> &PlaceInfo<'tcx> {
-        self.place_info_cache.get(def_id, |_| {
-            PlaceInfo::build(
-                self.tcx(),
-                def_id.to_def_id(),
-                self.tcx().body_for_def_id(def_id).unwrap(),
-            )
-        })
-    }
-
     /// Find direct annotations on this node and register them in the marker map.
     fn node_annotations(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
         let leaf_loc = weight.at.leaf();
@@ -195,7 +180,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             RichLocation::Location(loc) => {
                 let crate::Either::Right(
                     term @ mir::Terminator {
-                        kind: mir::TerminatorKind::Call { destination, .. },
+                        kind: mir::TerminatorKind::Call { .. },
                         ..
                     },
                 ) = body.stmt_at(loc)
@@ -369,12 +354,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         local_def_id: LocalDefId,
     ) -> Result<(DepGraph<'tcx>, SPDGStats)> {
         let tcx = generator.tcx;
-        let opts = generator.opts;
         // TODO: I don't like that I have to do that here. Clean this up
         let target = determine_async(tcx, local_def_id, &tcx.body_for_def_id(local_def_id)?.body)
             .map_or(local_def_id, |res| res.0.def_id().expect_local());
 
-        let flowistry_time = Instant::now();
         let pdg = generator.pdg_constructor.construct_graph(target);
 
         Ok((pdg, Default::default()))

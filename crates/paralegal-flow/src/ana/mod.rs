@@ -35,7 +35,7 @@ mod inline_judge;
 
 use graph_converter::GraphConverter;
 
-use self::{graph_converter::PlaceInfoCache, inline_judge::InlineJudge};
+use self::inline_judge::InlineJudge;
 
 /// Read-only database of information the analysis needs.
 ///
@@ -45,7 +45,6 @@ pub struct SPDGGenerator<'tcx> {
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
     stats: Stats,
-    place_info_cache: PlaceInfoCache<'tcx>,
     pdg_constructor: MemoPdgConstructor<'tcx>,
 }
 
@@ -70,7 +69,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             opts,
             tcx,
             stats,
-            place_info_cache: Default::default(),
         }
     }
 
@@ -91,12 +89,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         info!("Handling target {}", self.tcx.def_path_str(target.def_id));
         let local_def_id = target.def_id;
 
-        let converter = GraphConverter::new_with_flowistry(
-            self,
-            known_def_ids,
-            target,
-            self.place_info_cache.clone(),
-        )?;
+        let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
         let spdg = converter.make_spdg();
 
         Ok((local_def_id, spdg))
