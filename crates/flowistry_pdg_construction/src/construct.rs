@@ -1,43 +1,33 @@
-use std::{borrow::Cow, collections::HashSet, iter, rc::Rc};
+use std::rc::Rc;
 
-use df::{fmt::DebugWithContext, Analysis, AnalysisDomain, Results, ResultsVisitor};
+use df::{AnalysisDomain, Results, ResultsVisitor};
 use either::Either;
-use flowistry::mir::placeinfo::PlaceInfo;
-use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
-use itertools::Itertools;
-use log::{debug, log_enabled, trace, Level};
+
+use flowistry_pdg::{CallString, GlobalLocation};
+
+use log::trace;
 use petgraph::graph::DiGraph;
 
-use rustc_abi::VariantIdx;
-use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceConflictBias};
-use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_hash::FxHashMap;
+use rustc_hir::def_id::LocalDefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
-    mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
-        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
-    },
-    ty::{GenericArg, GenericArgsRef, Instance, List, ParamEnv, TyCtxt, TyKind},
+    mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
+    ty::{GenericArgsRef, Instance, TyCtxt},
 };
 use rustc_mir_dataflow::{self as df};
-use rustc_span::ErrorGuaranteed;
-use rustc_utils::{
-    cache::Cache,
-    mir::{borrowck_facts, control_dependencies::ControlDependencies},
-    BodyExt, PlaceExt,
-};
+
+use rustc_utils::cache::Cache;
 
 use crate::{
     async_support::*,
-    calling_convention::*,
     graph::{
         push_call_string_root, DepEdge, DepGraph, DepNode, PartialGraph, SourceUse, TargetUse,
     },
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, is_non_default_trait_method, manufacture_substs_for, try_resolve_function},
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
+    utils::{manufacture_substs_for, try_resolve_function},
+    CallChangeCallback,
 };
 
 /// A memoizing constructor of PDGs.

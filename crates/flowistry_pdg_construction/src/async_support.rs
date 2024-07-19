@@ -13,7 +13,6 @@ use rustc_middle::{
 };
 
 use super::{
-    graph::PartialGraph,
     local_analysis::{CallKind, LocalAnalysis},
     utils,
 };

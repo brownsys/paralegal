@@ -62,7 +62,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         };
         let mut operands = IndexVec::new();
         operands.push(op.clone());
-        let TyKind::Adt(adt_id, generics) = destination.ty(&self.mono_body, self.tcx()).ty.kind() else {
+        let TyKind::Adt(adt_id, generics) = destination.ty(&self.mono_body, self.tcx()).ty.kind()
+        else {
             unreachable!()
         };
         assert_eq!(adt_id.did(), lang_items.pin_type().unwrap());

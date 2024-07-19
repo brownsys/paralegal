@@ -28,7 +28,6 @@ use crate::{
     approximation::ApproximationHandler,
     async_support::*,
     calling_convention::*,
-    construct::PdgCacheKey,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_non_default_trait_method, try_monomorphize},

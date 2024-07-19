@@ -20,7 +20,7 @@ use rustc_hir::{
 };
 use rustc_middle::{
     mir::{self, Location, Place, ProjectionElem},
-    ty::{self, normalize_erasing_regions::NormalizationError, Instance},
+    ty::{self, Instance},
 };
 use rustc_span::{symbol::Ident, Span as RustSpan, Span};
 use rustc_target::spec::abi::Abi;

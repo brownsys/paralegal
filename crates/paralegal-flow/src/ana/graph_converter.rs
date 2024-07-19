@@ -1,15 +1,10 @@
-use std::{
-    cell::RefCell,
-    fmt::Display,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{rc::Rc, time::Instant};
 
 use self::call_string_resolver::CallStringResolver;
 use super::{default_index, path_for_item, src_loc_for_span, SPDGGenerator};
 use crate::{
-    ana::inline_judge::InlineJudge, ann::MarkerAnnotation, desc::*, discover::FnToAnalyze,
-    stats::TimedStat, utils::*, HashMap, HashSet, MarkerCtx,
+    ann::MarkerAnnotation, desc::*, discover::FnToAnalyze, stats::TimedStat, utils::*, HashMap,
+    HashSet, MarkerCtx,
 };
 use flowistry_pdg::SourceUse;
 use flowistry_pdg_construction::{
@@ -17,11 +12,8 @@ use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, match_async_trait_assign,
     utils::try_monomorphize,
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason,
-    SkipCall::Skip,
 };
 use paralegal_spdg::{Node, SPDGStats};
-use rustc_utils::cache::Cache;
 
 use rustc_hir::{
     def,
@@ -32,9 +24,9 @@ use rustc_middle::{
     ty::{self, TyCtxt},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use either::Either;
-use flowistry::mir::placeinfo::PlaceInfo;
+
 use petgraph::{
     visit::{IntoNodeReferences, NodeIndexable, NodeRef},
     Direction,
@@ -595,7 +587,7 @@ mod call_string_resolver {
     use flowistry_pdg_construction::utils::{
         manufacture_substs_for, try_monomorphize, try_resolve_function,
     };
-    use rustc_middle::ty::{Instance, ParamEnv};
+    use rustc_middle::ty::Instance;
     use rustc_utils::cache::Cache;
 
     use crate::{Either, TyCtxt};

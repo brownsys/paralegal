@@ -8,7 +8,7 @@ use hir::{
 };
 use rustc_ast as ast;
 use rustc_hir::{self as hir, def_id::DefId};
-use rustc_middle::ty::{self, fast_reject::SimplifiedType, FloatTy, IntTy, TyCtxt, UintTy};
+use rustc_middle::ty::{fast_reject::SimplifiedType, FloatTy, IntTy, TyCtxt, UintTy};
 use rustc_span::Symbol;
 
 #[derive(Debug, Clone, Copy)]

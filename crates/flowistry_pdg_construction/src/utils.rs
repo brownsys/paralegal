@@ -1,12 +1,10 @@
-use std::{
-    borrow::Cow, collections::hash_map::Entry, hash::Hash, ops::Deref, ptr::addr_of, sync::OnceLock,
-};
+use std::{collections::hash_map::Entry, hash::Hash};
 
 use either::Either;
-use flowistry_pdg::rustc_portable::LocalDefId;
+
 use itertools::Itertools;
-use log::{debug, trace};
-use rustc_borrowck::consumers::BodyWithBorrowckFacts;
+use log::trace;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -21,8 +19,7 @@ use rustc_middle::{
 };
 use rustc_span::{ErrorGuaranteed, Span};
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
-use rustc_utils::{cache::Cache, mir, BodyExt, PlaceExt};
-use std::cell::OnceCell;
+use rustc_utils::{BodyExt, PlaceExt};
 
 pub trait Captures<'a> {}
 impl<'a, T: ?Sized> Captures<'a> for T {}

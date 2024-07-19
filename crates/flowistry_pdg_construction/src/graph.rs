@@ -1,18 +1,17 @@
 //! The representation of the PDG.
 
 use std::{
-    fmt::{self, Display},
+    fmt::{self},
     hash::Hash,
     path::Path,
-    rc::Rc,
 };
 
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 
-use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::{DefId, DefIndex, LocalDefId};
+use rustc_hash::FxHashSet;
+use rustc_hir::def_id::LocalDefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{Body, HasLocalDecls, Local, LocalDecl, LocalDecls, Place},

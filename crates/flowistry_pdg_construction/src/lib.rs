@@ -21,7 +21,7 @@ pub use crate::construct::MemoPdgConstructor;
 pub use callback::{
     CallChangeCallback, CallChangeCallbackFn, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
-use rustc_middle::ty::{Instance, TyCtxt};
+use rustc_middle::ty::TyCtxt;
 
 mod approximation;
 mod async_support;

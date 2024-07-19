@@ -13,7 +13,7 @@ use crate::{
     HashMap, HashSet, LogLevelConfig, MarkerCtx,
 };
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use either::Either;
@@ -23,11 +23,8 @@ use flowistry_pdg_construction::{
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
-use rustc_hir::{
-    self as hir, def,
-    def_id::{DefId, LocalDefId},
-};
-use rustc_middle::ty::{self, TyCtxt};
+use rustc_hir::{self as hir, def, def_id::DefId};
+use rustc_middle::ty::TyCtxt;
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan, Symbol};
 
 mod graph_converter;
