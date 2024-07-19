@@ -10,7 +10,7 @@ use flowistry_pdg::SourceUse;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, match_async_trait_assign,
-    utils::try_monomorphize,
+    utils::{try_monomorphize, try_resolve_function, type_as_fn},
 };
 use paralegal_spdg::{Node, SPDGStats};
 
@@ -171,7 +171,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             RichLocation::Location(loc) => {
                 let crate::Either::Right(
                     term @ mir::Terminator {
-                        kind: mir::TerminatorKind::Call { .. },
+                        kind: mir::TerminatorKind::Call { func, .. },
                         ..
                     },
                 ) = body.stmt_at(loc)
@@ -180,17 +180,19 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 };
                 let res = self.call_string_resolver.resolve(weight.at);
                 let param_env = self.tcx().param_env(res.def_id());
-                let f = try_monomorphize(res, self.tcx(), param_env, term, term.source_info.span)
-                    .unwrap()
-                    .as_instance_and_args(self.tcx())
-                    .unwrap_or_else(|err| {
-                        self.tcx().sess.span_fatal(
-                            weight.span,
-                            format!("resolution of {:?} in {res} failed with {err}", term.kind),
-                        )
-                    })
-                    .0;
-                self.known_def_ids.extend(Some(f.def_id()));
+                let func =
+                    try_monomorphize(res, self.tcx(), param_env, func, term.source_info.span)
+                        .unwrap();
+                let (inst, args) =
+                    type_as_fn(self.tcx(), ty_of_const(func.constant().unwrap())).unwrap();
+                let f = try_resolve_function(
+                    self.tcx(),
+                    inst,
+                    self.tcx().param_env(leaf_loc.function),
+                    args,
+                )
+                .map_or(inst, |i| i.def_id());
+                self.known_def_ids.extend(Some(f));
 
                 // Question: Could a function with no input produce an
                 // output that has aliases? E.g. could some place, where the
@@ -214,7 +216,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     });
 
                 if needs_return_markers {
-                    self.register_annotations_for_function(node, f.def_id(), |ann| {
+                    self.register_annotations_for_function(node, f, |ann| {
                         ann.refinement.on_return()
                     });
                 }
@@ -223,7 +225,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     let SourceUse::Argument(arg) = e.weight().source_use else {
                         continue;
                     };
-                    self.register_annotations_for_function(node, f.def_id(), |ann| {
+                    self.register_annotations_for_function(node, f, |ann| {
                         ann.refinement.on_argument().contains(arg as u32).unwrap()
                     });
                 }

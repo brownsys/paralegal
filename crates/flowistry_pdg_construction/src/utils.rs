@@ -6,7 +6,7 @@ use itertools::Itertools;
 use log::trace;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::DefId;
+use rustc_hir::def_id::{self, DefId};
 use rustc_middle::{
     mir::{
         tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,
@@ -80,8 +80,9 @@ where
 pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(DefId, GenericArgsRef<'tcx>)> {
     let ty = ty_resolve(ty, tcx);
     match ty.kind() {
-        TyKind::FnDef(def_id, generic_args) => Some((*def_id, generic_args)),
-        TyKind::Generator(def_id, generic_args, _) => Some((*def_id, generic_args)),
+        TyKind::FnDef(def_id, generic_args)
+        | TyKind::Generator(def_id, generic_args, _)
+        | TyKind::Closure(def_id, generic_args) => Some((*def_id, generic_args)),
         ty => {
             trace!("Bailing from handle_call because func is literal with type: {ty:?}");
             None

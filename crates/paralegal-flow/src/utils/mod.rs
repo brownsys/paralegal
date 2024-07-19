@@ -2,6 +2,7 @@
 
 extern crate smallvec;
 use flowistry_pdg::RichLocation;
+use flowistry_pdg_construction::utils::type_as_fn;
 use thiserror::Error;
 
 use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};
@@ -19,8 +20,8 @@ use rustc_hir::{
     BodyId,
 };
 use rustc_middle::{
-    mir::{self, Location, Place, ProjectionElem},
-    ty::{self, Instance},
+    mir::{self, Constant, Location, Place, ProjectionElem},
+    ty::{self, Instance, Ty},
 };
 use rustc_span::{symbol::Ident, Span as RustSpan, Span};
 use rustc_target::spec::abi::Abi;
@@ -331,6 +332,14 @@ pub enum AsFnAndArgsErr<'tcx> {
     InstanceTooUnspecific,
 }
 
+pub fn ty_of_const<'tcx>(c: &Constant<'tcx>) -> Ty<'tcx> {
+    match c.literal {
+        mir::ConstantKind::Val(_, ty) => ty,
+        mir::ConstantKind::Ty(cst) => cst.ty(),
+        mir::ConstantKind::Unevaluated { .. } => unreachable!(),
+    }
+}
+
 impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
     fn as_instance_and_args(
         &self,
@@ -346,17 +355,13 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
         else {
             return Err(AsFnAndArgsErr::NotAFunctionCall);
         };
-        let ty = match &func.constant().ok_or(AsFnAndArgsErr::NotAConstant)?.literal {
-            mir::ConstantKind::Val(_, ty) => *ty,
-            mir::ConstantKind::Ty(cst) => cst.ty(),
-            mir::ConstantKind::Unevaluated { .. } => unreachable!(),
-        };
-        let (ty::FnDef(defid, gargs) | ty::Closure(defid, gargs)) = ty.kind() else {
+        let ty = ty_of_const(func.constant().ok_or(AsFnAndArgsErr::NotAConstant)?);
+        let Some((def_id, gargs)) = type_as_fn(tcx, ty) else {
             return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
         };
         let _ = test_generics_normalization(tcx, gargs)
             .map_err(|e| AsFnAndArgsErr::NormalizationError(format!("{e:?}")))?;
-        let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
+        let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), def_id, gargs)
             .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
             .ok_or(AsFnAndArgsErr::InstanceTooUnspecific)?;
         Ok((
