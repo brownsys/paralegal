@@ -383,7 +383,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
 
         // Monomorphize the called function with the known generic_args.
-        let param_env = tcx.param_env_reveal_all_normalized(self.def_id);
+        let param_env = tcx.param_env(self.def_id);
         let Some(resolved_fn) =
             utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)
         else {
@@ -391,7 +391,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 self.tcx().sess.span_warn(self.tcx().def_span(called_def_id), format!("could not resolve instance due to dynamic argument: {d:?}"));
                 return None;
             } else {
-                tcx.sess.span_err(span, "instance resolution failed due to unknown reason");
+                tcx.sess.span_err(span, "instance resolution failed: too unspecific");
                 return None;
             }
         };

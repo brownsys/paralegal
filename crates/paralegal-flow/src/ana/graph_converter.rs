@@ -179,7 +179,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     return;
                 };
                 let res = self.call_string_resolver.resolve(weight.at);
-                let param_env = self.tcx().param_env_reveal_all_normalized(res.def_id());
+                let param_env = self.tcx().param_env(res.def_id());
                 let f = try_monomorphize(res, self.tcx(), param_env, term, term.source_info.span)
                     .unwrap()
                     .as_instance_and_args(self.tcx())

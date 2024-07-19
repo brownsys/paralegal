@@ -20,7 +20,10 @@ use crate::{
     },
     Either, HashMap, HashSet,
 };
-use flowistry_pdg_construction::{determine_async, utils::try_monomorphize};
+use flowistry_pdg_construction::{
+    determine_async,
+    utils::{try_monomorphize, try_resolve_function},
+};
 use paralegal_spdg::Identifier;
 use rustc_utils::cache::Cache;
 
@@ -268,7 +271,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                 && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
                 trace!("    fits opaque type");
                 Either::Left(self.get_reachable_and_self_markers(
-                    ty::Instance::expect_resolve(self.tcx(), ty::ParamEnv::reveal_all(), *closure_fn, substs)
+                    try_resolve_function(self.tcx(), *closure_fn, ty::ParamEnv::reveal_all(), substs).unwrap()
                 ))
             } else {
                 Either::Right(std::iter::empty())
