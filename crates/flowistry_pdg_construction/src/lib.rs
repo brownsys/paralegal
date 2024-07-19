@@ -33,7 +33,7 @@ mod mutation;
 pub mod utils;
 
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.
-pub fn compute_pdg<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> DepGraph<'tcx> {
+pub fn compute_pdg(tcx: TyCtxt<'_>, def_id: LocalDefId) -> DepGraph<'_> {
     let constructor = MemoPdgConstructor::new(tcx);
     constructor.construct_graph(def_id)
 }

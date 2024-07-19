@@ -359,7 +359,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
         let Some((def_id, gargs)) = type_as_fn(tcx, ty) else {
             return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
         };
-        let _ = test_generics_normalization(tcx, gargs)
+        test_generics_normalization(tcx, gargs)
             .map_err(|e| AsFnAndArgsErr::NormalizationError(format!("{e:?}")))?;
         let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), def_id, gargs)
             .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?

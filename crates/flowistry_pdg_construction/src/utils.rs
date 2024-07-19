@@ -6,7 +6,7 @@ use itertools::Itertools;
 use log::trace;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::{self, DefId};
+use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
         tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,
@@ -214,10 +214,10 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     }
 }
 
-pub fn manufacture_substs_for<'tcx>(
-    tcx: TyCtxt<'tcx>,
+pub fn manufacture_substs_for(
+    tcx: TyCtxt<'_>,
     function: DefId,
-) -> Result<GenericArgsRef<'tcx>, ErrorGuaranteed> {
+) -> Result<GenericArgsRef<'_>, ErrorGuaranteed> {
     use rustc_middle::ty::{
         BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection, ExistentialTraitRef,
         GenericParamDefKind, ImplPolarity, ParamTy, TraitPredicate,
