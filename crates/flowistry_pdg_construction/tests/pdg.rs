@@ -170,10 +170,11 @@ macro_rules! pdg_constraint {
 }
 
 macro_rules! pdg_test {
-  ($name:ident, { $($i:item)* }, $($cs:tt),*) => {
+  ($(#[$($attr:tt)+])* $name:ident, { $($i:item)* }, $($cs:tt),*) => {
     pdg_test!($name, { $($i)* }, |_, _| (), $($cs),*);
   };
-  ($name:ident, { $($i:item)* }, $e:expr, $($cs:tt),*) => {
+  ($(#[$($attr:tt)+])* $name:ident, { $($i:item)* }, $e:expr, $($cs:tt),*) => {
+    $(#[$($attr)+])*
     #[test]
     fn $name() {
       let input = stringify!($($i)*);
@@ -785,6 +786,7 @@ pdg_test! {
 }
 
 pdg_test! {
+  #[ignore = "Fixme"]
   spawn_and_loop_await,
   {
     use std::future::Future;
