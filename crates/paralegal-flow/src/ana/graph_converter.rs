@@ -8,7 +8,6 @@ use crate::{
 };
 use flowistry_pdg::SourceUse;
 use flowistry_pdg_construction::{
-    determine_async,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, match_async_trait_assign,
     utils::try_monomorphize,
@@ -180,17 +179,17 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     return;
                 };
                 let res = self.call_string_resolver.resolve(weight.at);
-                let f = try_monomorphize(
-                    res,
-                    self.tcx(),
-                    self.tcx().param_env(res.def_id()),
-                    term,
-                    term.source_info.span,
-                )
-                .unwrap()
-                .as_instance_and_args(self.tcx())
-                .unwrap()
-                .0;
+                let param_env = self.tcx().param_env_reveal_all_normalized(res.def_id());
+                let f = try_monomorphize(res, self.tcx(), param_env, term, term.source_info.span)
+                    .unwrap()
+                    .as_instance_and_args(self.tcx())
+                    .unwrap_or_else(|err| {
+                        self.tcx().sess.span_fatal(
+                            weight.span,
+                            format!("resolution of {:?} in {res} failed with {err}", term.kind),
+                        )
+                    })
+                    .0;
                 self.known_def_ids.extend(Some(f.def_id()));
 
                 // Question: Could a function with no input produce an
@@ -345,12 +344,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         generator: &SPDGGenerator<'tcx>,
         local_def_id: LocalDefId,
     ) -> Result<(DepGraph<'tcx>, SPDGStats)> {
-        let tcx = generator.tcx;
-        // TODO: I don't like that I have to do that here. Clean this up
-        let target = determine_async(tcx, local_def_id, &tcx.body_for_def_id(local_def_id)?.body)
-            .map_or(local_def_id, |res| res.0.def_id().expect_local());
-
-        let pdg = generator.pdg_constructor.construct_graph(target);
+        let pdg = generator.pdg_constructor.construct_graph(local_def_id);
 
         Ok((pdg, Default::default()))
     }

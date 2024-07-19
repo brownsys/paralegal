@@ -73,22 +73,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
     /// Construct the intermediate PDG for this function. Instantiates any
     /// generic arguments as `dyn <constraints>`.
-    ///
-    /// Additionally if this is an `async fn` or `#[async_trait]` it will inline
-    /// the closure as though the function were called with `poll`.
     pub fn construct_root<'a>(&'a self, function: LocalDefId) -> &'a PartialGraph<'tcx> {
-        if let Some((generator, _loc, _ty)) = determine_async(
-            self.tcx,
-            function,
-            &get_body_with_borrowck_facts(self.tcx, function).body,
-        ) {
-            // TODO remap arguments
-
-            // Note that this deliberately does not register this result in the
-            // cache for `function`. This is because when this async fn is
-            // called somewhere we don't want to use this "fake inlined" version.
-            return self.construct_root(generator.def_id().expect_local());
-        }
         let generics = manufacture_substs_for(self.tcx, function.to_def_id())
             .map_err(|i| vec![i])
             .unwrap();
@@ -127,7 +112,29 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
     /// Construct a final PDG for this function. Same as
     /// [`Self::construct_root`] this instantiates all generics as `dyn`.
+    ///
+    /// Additionally if this is an `async fn` or `#[async_trait]` it will inline
+    /// the closure as though the function were called with `poll`.
     pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
+        if let Some((generator, loc, _ty)) = determine_async(
+            self.tcx,
+            function,
+            &get_body_with_borrowck_facts(self.tcx, function).body,
+        ) {
+            // TODO remap arguments
+
+            // Note that this deliberately register this result in a separate
+            // cache. This is because when this async fn is called somewhere we
+            // don't want to use this "fake inlined" version.
+            return push_call_string_root(
+                self.construct_root(generator.def_id().expect_local()),
+                GlobalLocation {
+                    function,
+                    location: flowistry_pdg::RichLocation::Location(loc),
+                },
+            )
+            .to_petgraph();
+        }
         self.construct_root(function).to_petgraph()
     }
 }

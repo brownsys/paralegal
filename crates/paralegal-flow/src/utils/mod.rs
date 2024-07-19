@@ -327,7 +327,7 @@ pub enum AsFnAndArgsErr<'tcx> {
     InstanceResolutionErr,
     #[error("could not normalize generics {0}")]
     NormalizationError(String),
-    #[error("instance to unspecific")]
+    #[error("instance too unspecific")]
     InstanceTooUnspecific,
 }
 
