@@ -830,7 +830,7 @@ pub struct SPDG {
     pub statistics: SPDGStats,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 /// Statistics about the code that produced an SPDG
 pub struct SPDGStats {
     /// The number of unique lines of code we generated a PDG for. This means

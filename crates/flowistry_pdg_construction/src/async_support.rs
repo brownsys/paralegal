@@ -9,14 +9,24 @@ use rustc_middle::{
         AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::{GenericArgsRef, TyCtxt},
+    ty::{GenericArgsRef, Instance, TyCtxt},
 };
 
 use super::{
-    construct::{CallKind, GraphConstructor},
     graph::PartialGraph,
-    utils::{self, FnResolution},
+    local_analysis::{CallKind, LocalAnalysis},
+    utils,
 };
+
+/// Describe in which way a function is `async`.
+///
+/// Critically distinguishes between a normal `async fn` and an
+/// `#[async_trait]`.
+#[derive(Debug, Clone, Copy)]
+pub enum AsyncType {
+    Fn,
+    Trait,
+}
 
 /// Stores ids that are needed to construct projections around async functions.
 pub(crate) struct AsyncInfo {
@@ -144,20 +154,28 @@ fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (LocalDefId, GenericArgsRef<'
     (def_id.expect_local(), generic_args, location)
 }
 
+/// Try to interpret this function as an async function.
+///
+/// If this is an async function it returns the [`Instance`] of the generator,
+/// the location where the generator is bound and the type of [`Asyncness`]
+/// which in this case is guaranteed to satisfy [`Asyncness::is_async`].
 pub fn determine_async<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
     body: &Body<'tcx>,
-) -> Option<(FnResolution<'tcx>, Location)> {
-    let (generator_def_id, args, loc) = if tcx.asyncness(def_id).is_async() {
-        get_async_generator(body)
+) -> Option<(Instance<'tcx>, Location, AsyncType)> {
+    let ((generator_def_id, args, loc), asyncness) = if tcx.asyncness(def_id).is_async() {
+        (get_async_generator(body), AsyncType::Fn)
     } else {
-        try_as_async_trait_function(tcx, def_id.to_def_id(), body)?
+        (
+            try_as_async_trait_function(tcx, def_id.to_def_id(), body)?,
+            AsyncType::Trait,
+        )
     };
     let param_env = tcx.param_env_reveal_all_normalized(def_id);
     let generator_fn =
-        utils::try_resolve_function(tcx, generator_def_id.to_def_id(), param_env, args);
-    Some((generator_fn, loc))
+        utils::try_resolve_function(tcx, generator_def_id.to_def_id(), param_env, args)?;
+    Some((generator_fn, loc, asyncness))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,29 +185,13 @@ pub enum AsyncDeterminationResult<T> {
     NotAsync,
 }
 
-impl<'tcx> GraphConstructor<'tcx> {
-    pub(crate) fn try_handle_as_async(&self) -> Option<PartialGraph<'tcx>> {
-        let (generator_fn, location) = determine_async(self.tcx, self.def_id, &self.body)?;
-
-        let calling_context = self.calling_context_for(generator_fn.def_id(), location);
-        let params = self.pdg_params_for_call(generator_fn);
-        Some(
-            GraphConstructor::new(
-                params,
-                Some(calling_context),
-                self.async_info.clone(),
-                &self.pdg_cache,
-            )
-            .construct_partial(),
-        )
-    }
-
+impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
     pub(crate) fn try_poll_call_kind<'a>(
         &'a self,
         def_id: DefId,
         original_args: &'a [Operand<'tcx>],
     ) -> AsyncDeterminationResult<CallKind<'tcx>> {
-        let lang_items = self.tcx.lang_items();
+        let lang_items = self.tcx().lang_items();
         if lang_items.future_poll_fn() == Some(def_id) {
             match self.find_async_args(original_args) {
                 Ok((fun, loc, args)) => {
@@ -206,7 +208,7 @@ impl<'tcx> GraphConstructor<'tcx> {
     fn find_async_args<'a>(
         &'a self,
         args: &'a [Operand<'tcx>],
-    ) -> Result<(FnResolution<'tcx>, Location, Place<'tcx>), String> {
+    ) -> Result<(Instance<'tcx>, Location, Place<'tcx>), String> {
         macro_rules! let_assert {
             ($p:pat = $e:expr, $($arg:tt)*) => {
                 let $p = $e else {
@@ -236,13 +238,13 @@ impl<'tcx> GraphConstructor<'tcx> {
                     ..
                 },
                 ..
-            }) = &self.body.stmt_at(get_def_for_op(&args[0])?),
+            }) = &self.mono_body.stmt_at(get_def_for_op(&args[0])?),
             "Pinned assignment is not a call"
         );
         debug_assert!(new_pin_args.len() == 1);
 
         let future_aliases = self
-            .aliases(self.tcx.mk_place_deref(new_pin_args[0].place().unwrap()))
+            .aliases(self.tcx().mk_place_deref(new_pin_args[0].place().unwrap()))
             .collect_vec();
         debug_assert!(future_aliases.len() == 1);
         let future = *future_aliases.first().unwrap();
@@ -251,7 +253,7 @@ impl<'tcx> GraphConstructor<'tcx> {
           Either::Left(Statement {
             kind: StatementKind::Assign(box (_, Rvalue::Use(future2))),
             ..
-          }) = &self.body.stmt_at(get_def_for_op(&Operand::Move(future))?),
+          }) = &self.mono_body.stmt_at(get_def_for_op(&Operand::Move(future))?),
           "Assignment to pin::new input is not a statement"
         );
 
@@ -262,7 +264,7 @@ impl<'tcx> GraphConstructor<'tcx> {
                     ..
                 },
                 ..
-            }) = &self.body.stmt_at(get_def_for_op(future2)?),
+            }) = &self.mono_body.stmt_at(get_def_for_op(future2)?),
             "Assignment to alias of pin::new input is not a call"
         );
 
@@ -270,7 +272,7 @@ impl<'tcx> GraphConstructor<'tcx> {
 
         while let Err(target) = chase_target {
             let async_fn_call_loc = get_def_for_op(target)?;
-            let stmt = &self.body.stmt_at(async_fn_call_loc);
+            let stmt = &self.mono_body.stmt_at(async_fn_call_loc);
             chase_target = match stmt {
                 Either::Right(Terminator {
                     kind:
@@ -309,11 +311,12 @@ impl<'tcx> GraphConstructor<'tcx> {
         let (op, generics, calling_convention, async_fn_call_loc) = chase_target.unwrap();
 
         let resolution = utils::try_resolve_function(
-            self.tcx,
+            self.tcx(),
             op,
-            self.tcx.param_env_reveal_all_normalized(self.def_id),
+            self.tcx().param_env_reveal_all_normalized(self.def_id),
             generics,
-        );
+        )
+        .ok_or_else(|| "Instance resolution failed".to_string())?;
 
         Ok((resolution, async_fn_call_loc, calling_convention))
     }

@@ -23,49 +23,27 @@ extern crate petgraph;
 extern crate num_derive;
 extern crate num_traits;
 
-pub extern crate rustc_index;
+extern crate rustc_abi;
+extern crate rustc_arena;
+extern crate rustc_ast;
+extern crate rustc_borrowck;
+extern crate rustc_data_structures;
+extern crate rustc_driver;
+extern crate rustc_hir;
+extern crate rustc_index;
+extern crate rustc_interface;
+extern crate rustc_middle;
+extern crate rustc_mir_dataflow;
+extern crate rustc_query_system;
 extern crate rustc_serialize;
-
-pub mod rust {
-    //! Exposes the rustc external crates (this mod is just to tidy things up).
-    pub extern crate rustc_abi;
-    pub extern crate rustc_arena;
-    pub extern crate rustc_ast;
-    pub extern crate rustc_borrowck;
-    pub extern crate rustc_data_structures;
-    pub extern crate rustc_driver;
-    pub extern crate rustc_hir;
-    pub extern crate rustc_interface;
-    pub extern crate rustc_middle;
-    pub extern crate rustc_mir_dataflow;
-    pub extern crate rustc_query_system;
-    pub extern crate rustc_serialize;
-    pub extern crate rustc_span;
-    pub extern crate rustc_target;
-    pub extern crate rustc_type_ir;
-    pub use super::rustc_index;
-    pub use rustc_type_ir::sty;
-
-    pub use rustc_ast as ast;
-    pub mod mir {
-        pub use super::rustc_abi::FieldIdx as Field;
-        pub use super::rustc_middle::mir::*;
-    }
-    pub use rustc_hir as hir;
-    pub use rustc_middle::ty;
-
-    pub use rustc_middle::dep_graph::DepGraph;
-    pub use ty::TyCtxt;
-
-    pub use hir::def_id::{DefId, LocalDefId};
-    pub use hir::BodyId;
-    pub use mir::Location;
-}
+extern crate rustc_span;
+extern crate rustc_target;
+extern crate rustc_type_ir;
 
 use args::{ClapArgs, Debugger, LogLevelConfig};
 use desc::{utils::write_sep, ProgramDescription};
-use rust::*;
 
+use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
@@ -128,8 +106,8 @@ struct ArgWrapper {
 
 struct Callbacks {
     opts: &'static Args,
-    stats: Stats,
     start: Instant,
+    stats: Stats,
 }
 
 struct NoopCallbacks {}

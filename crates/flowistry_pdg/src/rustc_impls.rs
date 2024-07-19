@@ -77,7 +77,7 @@ impl From<DefIndex> for def_id::DefIndex {
 impl fmt::Display for GlobalLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         tls::with_opt(|opt_tcx| match opt_tcx {
-            Some(tcx) => match tcx.opt_item_name(self.function) {
+            Some(tcx) => match tcx.opt_item_name(self.function.to_def_id()) {
                 Some(name) => name.fmt(f),
                 None => write!(f, "<closure>"),
             },

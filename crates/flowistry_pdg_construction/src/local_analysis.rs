@@ -28,7 +28,6 @@ use crate::{
     approximation::ApproximationHandler,
     async_support::*,
     calling_convention::*,
-    construct::{Error, WithConstructionErrors},
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
@@ -56,7 +55,7 @@ pub(crate) struct LocalAnalysis<'tcx, 'a> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
     pub(super) root: Instance<'tcx>,
     body_with_facts: &'tcx BodyWithBorrowckFacts<'tcx>,
-    pub(crate) body: Body<'tcx>,
+    pub(crate) mono_body: Body<'tcx>,
     pub(crate) def_id: LocalDefId,
     pub(crate) place_info: PlaceInfo<'tcx>,
     control_dependencies: ControlDependencies<BasicBlock>,
@@ -69,7 +68,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
         root: Instance<'tcx>,
-    ) -> Result<LocalAnalysis<'tcx, 'a>, Error<'tcx>> {
+    ) -> LocalAnalysis<'tcx, 'a> {
         let tcx = memo.tcx;
         let def_id = root.def_id().expect_local();
         let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
@@ -84,7 +83,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             param_env,
             &body_with_facts.body,
             tcx.def_span(root.def_id()),
-        )?;
+        )
+        .unwrap();
 
         if memo.dump_mir {
             use std::io::Write;
@@ -102,17 +102,17 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let body_assignments = utils::find_body_assignments(&body);
 
-        Ok(LocalAnalysis {
+        LocalAnalysis {
             memo,
             root,
             body_with_facts,
-            body,
+            mono_body: body,
             place_info,
             control_dependencies,
             start_loc,
             def_id,
             body_assignments,
-        })
+        }
     }
 
     fn make_dep_node(
@@ -124,7 +124,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             place,
             self.make_call_string(location),
             self.tcx(),
-            &self.body,
+            &self.mono_body,
+            self.place_info.children(place).iter().any(|p| *p != place),
         )
     }
 
@@ -137,11 +138,11 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         while let Some(block) = block_queue.pop() {
             if let Some(ctrl_deps) = self.control_dependencies.dependent_on(block) {
                 for dep in ctrl_deps.iter() {
-                    let ctrl_loc = self.body.terminator_loc(dep);
+                    let ctrl_loc = self.mono_body.terminator_loc(dep);
                     let Terminator {
                         kind: TerminatorKind::SwitchInt { discr, .. },
                         ..
-                    } = self.body.basic_blocks[dep].terminator()
+                    } = self.mono_body.basic_blocks[dep].terminator()
                     else {
                         if blocks_seen.insert(dep) {
                             block_queue.push(dep);
@@ -171,7 +172,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
     pub(crate) fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
         CallString::single(GlobalLocation {
-            function: self.root.def_id(),
+            function: self.root.def_id().expect_local(),
             location: location.into(),
         })
     }
@@ -229,7 +230,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     ) -> Vec<DepNode<'tcx>> {
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
-            .refs_in_projection(&self.body, self.tcx())
+            .refs_in_projection(&self.mono_body, self.tcx())
             .map(|(place_ref, _)| Place::from_ref(place_ref, self.tcx()));
         let inputs = iter::once(input).chain(provenance);
 
@@ -245,7 +246,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     .iter()
                     .map(|(k, locs)| (*k, locs))
                     .filter(move |(place, _)| {
-                        if place.is_indirect() && place.is_arg(&self.body) {
+                        if place.is_indirect() && place.is_arg(&self.mono_body) {
                             // HACK: `places_conflict` seems to consider it a bug is `borrow_place`
                             // includes a dereference, which should only happen if `borrow_place`
                             // is an argument. So we special case that condition and just compare for local equality.
@@ -257,7 +258,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                             if let Some((PlaceElem::Deref, rest)) = place.projection.split_last() {
                                 let mut new_place = place;
                                 new_place.projection = self.tcx().mk_place_elems(rest);
-                                if new_place.ty(&self.body, self.tcx()).ty.is_box() {
+                                if new_place.ty(&self.mono_body, self.tcx()).ty.is_box() {
                                     if new_place.is_indirect() {
                                         // TODO might be unsound: We assume that if
                                         // there are other indirections in here,
@@ -270,7 +271,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                             }
                             places_conflict(
                                 self.tcx(),
-                                &self.body,
+                                &self.mono_body,
                                 place,
                                 alias,
                                 PlaceConflictBias::Overlap,
@@ -280,7 +281,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
                 // Special case: if the `alias` is an un-mutated argument, then include it as a conflict
                 // coming from the special start location.
-                let alias_last_mut = if alias.is_arg(&self.body) {
+                let alias_last_mut = if alias.is_arg(&self.mono_body) {
                     Some((alias, &self.start_loc))
                 } else {
                     None
@@ -348,7 +349,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &self,
         func: &Operand<'tcx>,
     ) -> Option<(DefId, &'tcx List<GenericArg<'tcx>>)> {
-        let ty = func.ty(&self.body, self.tcx());
+        let ty = func.ty(&self.mono_body, self.tcx());
         utils::type_as_fn(self.tcx(), ty)
     }
 
@@ -362,7 +363,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         func: &Operand<'tcx>,
         args: &'b [Operand<'tcx>],
         span: Span,
-    ) -> Result<Option<CallHandling<'tcx, 'b>>, Vec<Error<'tcx>>> {
+    ) -> Option<CallHandling<'tcx, 'b>> {
         let tcx = self.tcx();
 
         trace!(
@@ -370,9 +371,11 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.tcx().def_path_str(self.def_id)
         );
 
-        let (called_def_id, generic_args) = self
-            .operand_to_def_id(func)
-            .ok_or_else(|| vec![Error::operand_is_not_function_type(func)])?;
+        let Some((called_def_id, generic_args)) = self.operand_to_def_id(func) else {
+            tcx.sess
+                .span_err(span, "Operand is cannot be interpreted as function");
+            return None;
+        };
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
 
         // Monomorphize the called function with the known generic_args.
@@ -382,14 +385,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         else {
             if let Some(d) = generic_args.iter().find(|arg| matches!(arg.unpack(), GenericArgKind::Type(t) if matches!(t.kind(), TyKind::Dynamic(..)))) {
                 self.tcx().sess.span_warn(self.tcx().def_span(called_def_id), format!("could not resolve instance due to dynamic argument: {d:?}"));
-                return Ok(None);
+                return None;
             } else {
-                return Err(
-                vec![Error::instance_resolution_failed(
-                    called_def_id,
-                    generic_args,
-                    span
-                )]);
+                tcx.sess.span_err(span, "instance resolution failed due to unknown reason");
+                return None;
             }
         };
         let resolved_def_id = resolved_fn.def_id();
@@ -400,19 +399,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         if is_non_default_trait_method(tcx, resolved_def_id).is_some() {
             trace!("  bailing because is unresolvable trait method");
-            return Ok(None);
+            return None;
         }
 
         if let Some(handler) = self.can_approximate_async_functions(resolved_def_id) {
-            return Ok(Some(CallHandling::ApproxAsyncSM(handler)));
+            return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
-        let call_kind = match self.classify_call_kind(called_def_id, resolved_def_id, args, span) {
-            Ok(cc) => cc,
-            Err(async_err) => {
-                return Err(vec![async_err]);
-            }
-        };
+        let call_kind = self.classify_call_kind(called_def_id, resolved_def_id, args, span);
 
         let calling_convention = CallingConvention::from_call_kind(&call_kind, args);
 
@@ -460,14 +454,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             // If a skip was requested then "poll" will not be inlined later so we
             // bail with "None" here and perform the mutations. Otherwise we bail with
             // "Some", knowing that handling "poll" later will handle the mutations.
-            return Ok((!matches!(
+            return (!matches!(
                 &call_changes,
                 Some(CallChanges {
                     skip: SkipCall::Skip,
                     ..
                 })
             ))
-            .then_some(CallHandling::ApproxAsyncFn));
+            .then_some(CallHandling::ApproxAsyncFn);
         }
 
         if matches!(
@@ -478,16 +472,16 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             })
         ) {
             trace!("  Bailing because user callback said to bail");
-            return Ok(None);
+            return None;
         }
-        let Some(descriptor) = self.memo.construct_for(cache_key)? else {
+        let Some(descriptor) = self.memo.construct_for(cache_key) else {
             trace!("  Bailing because cache lookup {cache_key} failed");
-            return Ok(None);
+            return None;
         };
-        Ok(Some(CallHandling::Ready {
+        Some(CallHandling::Ready {
             descriptor,
             calling_convention,
-        }))
+        })
     }
 
     /// Attempt to inline a call to a function.
@@ -505,7 +499,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         // Note: my comments here will use "child" to refer to the callee and
         // "parent" to refer to the caller, since the words are most visually distinct.
 
-        let Some(preamble) = self.determine_call_handling(location, func, args, span)? else {
+        let Some(preamble) = self.determine_call_handling(location, func, args, span) else {
             return false;
         };
 
@@ -539,7 +533,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         };
 
         let parentable_dsts = child_constructor.parentable_dsts(|n| n.len() == 1);
-        let parent_body = &self.body;
+        let parent_body = &self.mono_body;
 
         // For each destination node CHILD that is parentable to PLACE,
         // add an edge from CHILD -> PLACE.
@@ -579,35 +573,33 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         self.root.args
     }
 
-    pub(crate) fn construct_partial(&'a self) -> Result<PartialGraph<'tcx>, Vec<Error<'tcx>>> {
-        let mut analysis = WithConstructionErrors::new(self)
-            .into_engine(self.tcx(), &self.body)
+    pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx> {
+        let mut analysis = self
+            .into_engine(self.tcx(), &self.mono_body)
             .iterate_to_fixpoint();
 
-        if !analysis.analysis.errors.is_empty() {
-            return Err(analysis.analysis.errors.into_iter().collect());
-        }
-
-        let mut final_state = WithConstructionErrors::new(PartialGraph::new(
+        let mut final_state = PartialGraph::new(
             self.generic_args(),
-            self.def_id.to_def_id(),
-            self.body.arg_count,
-            self.body.local_decls(),
-        ));
+            self.def_id,
+            self.mono_body.arg_count,
+            self.mono_body.local_decls(),
+        );
 
-        analysis.visit_reachable_with(&self.body, &mut final_state);
+        analysis.visit_reachable_with(&self.mono_body, &mut final_state);
 
-        let mut final_state = final_state.into_result()?;
-
-        let all_returns = self.body.all_returns().map(|ret| ret.block).collect_vec();
-        let mut analysis = analysis.into_results_cursor(&self.body);
+        let all_returns = self
+            .mono_body
+            .all_returns()
+            .map(|ret| ret.block)
+            .collect_vec();
+        let mut analysis = analysis.into_results_cursor(&self.mono_body);
         for block in all_returns {
             analysis.seek_to_block_end(block);
             let return_state = analysis.get();
             for (place, locations) in &return_state.last_mutation {
                 let ret_kind = if place.local == RETURN_PLACE {
                     TargetUse::Return
-                } else if let Some(num) = other_as_arg(*place, &self.body) {
+                } else if let Some(num) = other_as_arg(*place, &self.mono_body) {
                     TargetUse::MutArg(num)
                 } else {
                     continue;
@@ -616,7 +608,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     let src = self.make_dep_node(*place, *location);
                     let dst = self.make_dep_node(*place, RichLocation::End);
                     let edge = DepEdge::data(
-                        self.make_call_string(self.body.terminator_loc(block)),
+                        self.make_call_string(self.mono_body.terminator_loc(block)),
                         SourceUse::Operand,
                         ret_kind,
                     );
@@ -625,7 +617,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
         }
 
-        Ok(final_state)
+        final_state
     }
 
     /// Determine the type of call-site.
@@ -639,13 +631,15 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         resolved_def_id: DefId,
         original_args: &'b [Operand<'tcx>],
         span: Span,
-    ) -> Result<CallKind<'tcx>, Error<'tcx>> {
-        match self.try_poll_call_kind(def_id, original_args, span) {
-            AsyncDeterminationResult::Resolved(r) => Ok(r),
-            AsyncDeterminationResult::NotAsync => Ok(self
+    ) -> CallKind<'tcx> {
+        match self.try_poll_call_kind(def_id, original_args) {
+            AsyncDeterminationResult::Resolved(r) => r,
+            AsyncDeterminationResult::NotAsync => self
                 .try_indirect_call_kind(resolved_def_id)
-                .unwrap_or(CallKind::Direct)),
-            AsyncDeterminationResult::Unresolvable(reason) => Err(reason),
+                .unwrap_or(CallKind::Direct),
+            AsyncDeterminationResult::Unresolvable(reason) => {
+                self.tcx().sess.span_fatal(span, reason)
+            }
         }
     }
 
@@ -666,7 +660,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     fn handle_terminator(
-        &mut self,
+        &self,
         terminator: &Terminator<'tcx>,
         state: &mut InstructionState<'tcx>,
         location: Location,
@@ -679,7 +673,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             ..
         } = &terminator.kind
         {
-            match self.handle_call(
+            if self.handle_call(
                 state,
                 location,
                 func,
@@ -687,13 +681,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 *destination,
                 terminator.source_info.span,
             ) {
-                Err(e) => {
-                    self.errors.extend(e);
-                }
-                Ok(false) => {
-                    trace!("Terminator {:?} failed the preamble", terminator.kind);
-                }
-                Ok(true) => return,
+                return;
             }
         }
         // Fallback: call the visitor
@@ -702,7 +690,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> df::AnalysisDomain<'tcx> for LocalAnalysis<'tcx, 'a> {
+impl<'tcx, 'a> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
     type Domain = InstructionState<'tcx>;
 
     const NAME: &'static str = "LocalPdgConstruction";
@@ -714,7 +702,7 @@ impl<'tcx, 'a> df::AnalysisDomain<'tcx> for LocalAnalysis<'tcx, 'a> {
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
 }
 
-impl<'a, 'tcx> df::Analysis<'tcx> for LocalAnalysis<'tcx, 'a> {
+impl<'a, 'tcx> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
     fn apply_statement_effect(
         &mut self,
         state: &mut Self::Domain,

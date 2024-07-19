@@ -1,18 +1,3 @@
-use crate::{
-    ana::inline_judge::InlineJudge,
-    ann::MarkerAnnotation,
-    desc::*,
-    discover::FnToAnalyze,
-    rust::{hir::def, *},
-    stats::TimedStat,
-    utils::*,
-    DefId, HashMap, HashSet, MarkerCtx,
-};
-use flowistry::mir::placeinfo::PlaceInfo;
-use flowistry_pdg::SourceUse;
-use paralegal_spdg::{Node, SPDGStats};
-use rustc_utils::cache::Cache;
-
 use std::{
     cell::RefCell,
     fmt::Display,
@@ -21,17 +6,35 @@ use std::{
 };
 
 use self::call_string_resolver::CallStringResolver;
-
 use super::{default_index, path_for_item, src_loc_for_span, SPDGGenerator};
-use anyhow::{anyhow, Result};
-use either::Either;
+use crate::{
+    ana::inline_judge::InlineJudge, ann::MarkerAnnotation, desc::*, discover::FnToAnalyze,
+    stats::TimedStat, utils::*, HashMap, HashSet, MarkerCtx,
+};
+use flowistry_pdg::SourceUse;
 use flowistry_pdg_construction::{
     determine_async,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
-    is_async_trait_fn, match_async_trait_assign, CallChangeCallback, CallChanges, CallInfo,
-    InlineMissReason, PdgParams,
+    is_async_trait_fn, match_async_trait_assign,
+    utils::try_monomorphize,
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason,
     SkipCall::Skip,
 };
+use paralegal_spdg::{Node, SPDGStats};
+use rustc_utils::cache::Cache;
+
+use rustc_hir::{
+    def,
+    def_id::{DefId, LocalDefId},
+};
+use rustc_middle::{
+    mir,
+    ty::{self, TyCtxt},
+};
+
+use anyhow::{anyhow, Result};
+use either::Either;
+use flowistry::mir::placeinfo::PlaceInfo;
 use petgraph::{
     visit::{IntoNodeReferences, NodeIndexable, NodeRef},
     Direction,
@@ -79,7 +82,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         target: &'a FnToAnalyze,
         place_info_cache: PlaceInfoCache<'tcx>,
     ) -> Result<Self> {
-        let local_def_id = target.def_id.expect_local();
+        let local_def_id = target.def_id;
         let start = Instant::now();
         let (dep_graph, stats) = Self::create_flowistry_graph(generator, local_def_id)?;
         generator
@@ -190,71 +193,63 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 });
             }
             RichLocation::Location(loc) => {
-                let stmt_at_loc = body.stmt_at(loc);
-                if let crate::Either::Right(
+                let crate::Either::Right(
                     term @ mir::Terminator {
                         kind: mir::TerminatorKind::Call { destination, .. },
                         ..
                     },
-                ) = stmt_at_loc
-                {
-                    let res = self.call_string_resolver.resolve(weight.at);
-                    let (fun, ..) = res
-                        .try_monomorphize(self.tcx(), self.tcx().param_env(res.def_id()), term)
-                        .as_instance_and_args(self.tcx())
-                        .unwrap();
-                    self.known_def_ids.extend(Some(fun.def_id()));
+                ) = body.stmt_at(loc)
+                else {
+                    return;
+                };
+                let res = self.call_string_resolver.resolve(weight.at);
+                let f = try_monomorphize(
+                    res,
+                    self.tcx(),
+                    self.tcx().param_env(res.def_id()),
+                    term,
+                    term.source_info.span,
+                )
+                .unwrap()
+                .as_instance_and_args(self.tcx())
+                .unwrap()
+                .0;
+                self.known_def_ids.extend(Some(f.def_id()));
 
-                    // Question: Could a function with no input produce an
-                    // output that has aliases? E.g. could some place, where the
-                    // local portion isn't the local from the destination of
-                    // this function call be affected/modified by this call? If
-                    // so, that location would also need to have this marker
-                    // attached
-                    let needs_return_markers = weight.place.local == destination.local
-                        || graph
-                            .graph
-                            .edges_directed(old_node, Direction::Incoming)
-                            .any(|e| {
-                                if weight.at != e.weight().at {
-                                    // Incoming edges are either from our operation or from control flow
-                                    let at = e.weight().at;
-                                    debug_assert!(
-                                        at.leaf().function == leaf_loc.function
-                                            && if let RichLocation::Location(loc) =
-                                                at.leaf().location
-                                            {
-                                                matches!(
-                                                    body.stmt_at(loc),
-                                                    Either::Right(mir::Terminator {
-                                                        kind: mir::TerminatorKind::SwitchInt { .. },
-                                                        ..
-                                                    })
-                                                )
-                                            } else {
-                                                false
-                                            }
-                                    );
-                                    false
-                                } else {
-                                    e.weight().target_use.is_return()
-                                }
-                            });
+                // Question: Could a function with no input produce an
+                // output that has aliases? E.g. could some place, where the
+                // local portion isn't the local from the destination of
+                // this function call be affected/modified by this call? If
+                // so, that location would also need to have this marker
+                // attached
+                //
+                // Also yikes. This should have better detection of whether
+                // a place is (part of) a function return
+                let mut in_edges = graph
+                    .graph
+                    .edges_directed(old_node, Direction::Incoming)
+                    .filter(|e| e.weight().kind == DepEdgeKind::Data);
+                let needs_return_markers = in_edges.clone().next().is_none()
+                    || in_edges.any(|e| {
+                        let at = e.weight().at;
+                        #[cfg(debug_assertions)]
+                        assert_edge_location_invariant(self.tcx(), at, body, weight.at);
+                        weight.at == at && e.weight().target_use.is_return()
+                    });
 
-                    if needs_return_markers {
-                        self.register_annotations_for_function(node, fun.def_id(), |ann| {
-                            ann.refinement.on_return()
-                        });
-                    }
+                if needs_return_markers {
+                    self.register_annotations_for_function(node, f.def_id(), |ann| {
+                        ann.refinement.on_return()
+                    });
+                }
 
-                    for e in graph.graph.edges_directed(old_node, Direction::Outgoing) {
-                        let SourceUse::Argument(arg) = e.weight().source_use else {
-                            continue;
-                        };
-                        self.register_annotations_for_function(node, fun.def_id(), |ann| {
-                            ann.refinement.on_argument().contains(arg as u32).unwrap()
-                        });
-                    }
+                for e in graph.graph.edges_directed(old_node, Direction::Outgoing) {
+                    let SourceUse::Argument(arg) = e.weight().source_use else {
+                        continue;
+                    };
+                    self.register_annotations_for_function(node, f.def_id(), |ann| {
+                        ann.refinement.on_argument().contains(arg as u32).unwrap()
+                    });
                 }
             }
             _ => (),
@@ -266,6 +261,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         &self,
         at: CallString,
         place: mir::PlaceRef<'tcx>,
+        span: rustc_span::Span,
     ) -> Option<mir::tcx::PlaceTy<'tcx>> {
         let tcx = self.tcx();
         let locations = at.iter_from_root().collect::<Vec<_>>();
@@ -302,7 +298,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // Thread through each caller to recover generic arguments
         let body = tcx.body_for_def_id(last.function).unwrap();
         let raw_ty = place.ty(&body.body, tcx);
-        Some(*resolution.try_monomorphize(tcx, ty::ParamEnv::reveal_all(), &raw_ty))
+        Some(try_monomorphize(resolution, tcx, ty::ParamEnv::reveal_all(), &raw_ty, span).unwrap())
     }
 
     /// Fetch annotations item identified by this `id`.
@@ -339,14 +335,17 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     fn handle_node_types(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
         let i = self.new_node_for(old_node);
 
-        let Some(place_ty) = self.determine_place_type(weight.at, weight.place.as_ref()) else {
+        let Some(place_ty) =
+            self.determine_place_type(weight.at, weight.place.as_ref(), weight.span)
+        else {
             return;
         };
-        let place_info = self.place_info(weight.at.leaf().function);
-        let deep = !place_info.children(weight.place).is_empty();
+        // Restore after fixing https://github.com/brownsys/paralegal/issues/138
+        //let deep = !weight.is_split;
+        let deep = true;
         let mut node_types = self.type_is_marked(place_ty, deep).collect::<HashSet<_>>();
         for (p, _) in weight.place.iter_projections() {
-            if let Some(place_ty) = self.determine_place_type(weight.at, p) {
+            if let Some(place_ty) = self.determine_place_type(weight.at, p, weight.span) {
                 node_types.extend(self.type_is_marked(place_ty, false));
             }
         }
@@ -371,54 +370,14 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     ) -> Result<(DepGraph<'tcx>, SPDGStats)> {
         let tcx = generator.tcx;
         let opts = generator.opts;
-        let stat_wrap = Rc::new(RefCell::new((
-            SPDGStats {
-                unique_functions: 0,
-                unique_locs: 0,
-                analyzed_functions: 0,
-                analyzed_locs: 0,
-                inlinings_performed: 0,
-                construction_time: Duration::ZERO,
-                conversion_time: Duration::ZERO,
-            },
-            Default::default(),
-        )));
         // TODO: I don't like that I have to do that here. Clean this up
         let target = determine_async(tcx, local_def_id, &tcx.body_for_def_id(local_def_id)?.body)
             .map_or(local_def_id, |res| res.0.def_id().expect_local());
-        // Make sure we count outselves
-        record_inlining(&stat_wrap, tcx, target, false);
-        let stat_wrap_copy = stat_wrap.clone();
-        let judge = generator.inline_judge.clone();
-        let params = PdgParams::new(tcx, local_def_id)
-            .map_err(|_| anyhow!("unable to contruct PDG for {local_def_id:?}"))?
-            .with_call_change_callback(MyCallback {
-                judge,
-                stat_wrap,
-                tcx,
-            })
-            .with_dump_mir(generator.opts.dbg().dump_mir());
 
-        if opts.dbg().dump_mir() {
-            let mut file = std::fs::File::create(format!(
-                "{}.mir",
-                tcx.def_path_str(local_def_id.to_def_id())
-            ))?;
-            mir::pretty::write_mir_fn(
-                tcx,
-                &tcx.body_for_def_id_default_policy(local_def_id)
-                    .ok_or_else(|| anyhow!("Body not found"))?
-                    .body,
-                &mut |_, _| Ok(()),
-                &mut file,
-            )?
-        }
         let flowistry_time = Instant::now();
-        let pdg = flowistry_pdg_construction::compute_pdg(params);
-        let (mut stats, _) = Rc::into_inner(stat_wrap_copy).unwrap().into_inner();
-        stats.construction_time = flowistry_time.elapsed();
+        let pdg = generator.pdg_constructor.construct_graph(target);
 
-        Ok((pdg, stats))
+        Ok((pdg, Default::default()))
     }
 
     /// Consume the generator and compile the [`SPDG`].
@@ -568,99 +527,43 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 }
 
-struct MyCallback<'tcx> {
-    judge: InlineJudge<'tcx>,
-    stat_wrap: StatStracker,
+#[cfg(debug_assertions)]
+fn assert_edge_location_invariant<'tcx>(
     tcx: TyCtxt<'tcx>,
-}
-
-impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges {
-        let mut changes = CallChanges::default();
-
-        let mut skip = true;
-
-        if is_non_default_trait_method(self.tcx, info.callee.def_id()).is_some() {
-            self.tcx.sess.span_warn(
-                self.tcx.def_span(info.callee.def_id()),
-                "Skipping analysis of unresolvable trait method.",
-            );
-        } else if self.judge.should_inline(&info) {
-            skip = false;
-        };
-
-        if skip {
-            changes = changes.with_skip(Skip);
-        } else {
-            record_inlining(
-                &self.stat_wrap,
-                self.tcx,
-                info.callee.def_id().expect_local(),
-                info.is_cached,
-            )
-        }
-        changes
-    }
-
-    fn on_inline_miss(
-        &self,
-        resolution: FnResolution<'tcx>,
-        loc: Location,
-        parent: FnResolution<'tcx>,
-        call_string: Option<CallString>,
-        reason: InlineMissReason,
-    ) {
-        let body = self
-            .tcx
-            .body_for_def_id(parent.def_id().expect_local())
-            .unwrap();
-        let span = body
-            .body
-            .stmt_at(loc)
-            .either(|s| s.source_info.span, |t| t.source_info.span);
-        let markers_reachable = self.judge.marker_ctx().get_reachable_markers(resolution);
-        self.tcx.sess.span_err(
-            span,
-            format!(
-                "Could not inline this function call in {:?}, at {} because {reason:?}. {}",
-                parent.def_id(),
-                call_string.map_or("root".to_owned(), |c| c.to_string()),
-                Print(|f| if markers_reachable.is_empty() {
-                    f.write_str("No markers are reachable")
-                } else {
-                    f.write_str("Markers ")?;
-                    write_sep(f, ", ", markers_reachable.iter(), Display::fmt)?;
-                    f.write_str(" are reachable")
-                })
-            ),
-        );
-    }
-}
-
-type StatStracker = Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>;
-
-fn record_inlining(tracker: &StatStracker, tcx: TyCtxt<'_>, def_id: LocalDefId, is_in_cache: bool) {
-    let mut borrow = tracker.borrow_mut();
-    let (stats, loc_set) = &mut *borrow;
-    stats.inlinings_performed += 1;
-    let is_new = loc_set.insert(def_id);
-
-    if !is_new || is_in_cache {
+    at: CallString,
+    body: &mir::Body<'tcx>,
+    location: CallString,
+) {
+    // Normal case. The edge is introduced where the operation happens
+    if location == at {
         return;
     }
-
-    let src_map = tcx.sess.source_map();
-    let span = body_span(&tcx.body_for_def_id(def_id).unwrap().body);
-    let (_, start_line, _, end_line, _) = src_map.span_to_location_info(span);
-    let body_lines = (end_line - start_line + 1) as u32;
-    if is_new {
-        stats.unique_functions += 1;
-        stats.unique_locs += body_lines;
+    // Control flow case. The edge is introduced at the `switchInt`
+    if let RichLocation::Location(loc) = at.leaf().location {
+        if at.leaf().function == location.leaf().function
+            && matches!(
+                body.stmt_at(loc),
+                Either::Right(mir::Terminator {
+                    kind: mir::TerminatorKind::SwitchInt { .. },
+                    ..
+                })
+            )
+        {
+            return;
+        }
     }
-    if !is_in_cache {
-        stats.analyzed_functions += 1;
-        stats.analyzed_locs += body_lines;
-    }
+    let mut msg = tcx.sess.struct_span_fatal(
+        (body, at.leaf().location).span(tcx),
+        format!(
+            "This operation is performed in a different location: {}",
+            at
+        ),
+    );
+    msg.span_note(
+        (body, location.leaf().location).span(tcx),
+        format!("Expected to originate here: {}", at),
+    );
+    msg.emit()
 }
 
 /// Find the statement at this location or fail.
@@ -706,7 +609,10 @@ mod call_string_resolver {
     //! internal invariants of the resolver.
 
     use flowistry_pdg::{rustc_portable::LocalDefId, CallString};
-    use flowistry_pdg_construction::{try_resolve_function, FnResolution};
+    use flowistry_pdg_construction::utils::{
+        manufacture_substs_for, try_monomorphize, try_resolve_function,
+    };
+    use rustc_middle::ty::{Instance, ParamEnv};
     use rustc_utils::cache::Cache;
 
     use crate::{Either, TyCtxt};
@@ -718,7 +624,7 @@ mod call_string_resolver {
     /// Only valid for a single controller. Each controller should initialize a
     /// new resolver.
     pub struct CallStringResolver<'tcx> {
-        cache: Cache<CallString, FnResolution<'tcx>>,
+        cache: Cache<CallString, Instance<'tcx>>,
         tcx: TyCtxt<'tcx>,
         entrypoint_is_async: bool,
     }
@@ -730,17 +636,21 @@ mod call_string_resolver {
         ///
         /// Unlike `Self::resolve_internal` this can be called on any valid
         /// [`CallString`].
-        pub fn resolve(&self, cs: CallString) -> FnResolution<'tcx> {
+        pub fn resolve(&self, cs: CallString) -> Instance<'tcx> {
             let (this, opt_prior_loc) = cs.pop();
             if let Some(prior_loc) = opt_prior_loc {
-                if prior_loc.len() == 1 && self.entrypoint_is_async {
-                    FnResolution::Partial(this.function.to_def_id())
-                } else {
-                    self.resolve_internal(prior_loc)
+                if prior_loc.len() != 1 || !self.entrypoint_is_async {
+                    return self.resolve_internal(prior_loc);
                 }
-            } else {
-                FnResolution::Partial(this.function.to_def_id())
             }
+            let def_id = this.function;
+            try_resolve_function(
+                self.tcx,
+                def_id.to_def_id(),
+                self.tcx.param_env(def_id),
+                manufacture_substs_for(self.tcx, def_id.to_def_id()).unwrap(),
+            )
+            .unwrap()
         }
 
         pub fn new(tcx: TyCtxt<'tcx>, entrypoint: LocalDefId) -> Self {
@@ -757,7 +667,7 @@ mod call_string_resolver {
         /// This function is internal because it panics if `cs.leaf().location`
         /// is not either a function call or a statement where an async closure
         /// is created and assigned.
-        fn resolve_internal(&self, cs: CallString) -> FnResolution<'tcx> {
+        fn resolve_internal(&self, cs: CallString) -> Instance<'tcx> {
             *self.cache.get(cs, |_| {
                 let this = cs.leaf();
                 let prior = self.resolve(cs);
@@ -768,14 +678,20 @@ mod call_string_resolver {
                 let param_env = tcx.param_env_reveal_all_normalized(prior.def_id());
                 let normalized = map_either(
                     base_stmt,
-                    |stmt| prior.try_monomorphize(tcx, param_env, stmt),
-                    |term| prior.try_monomorphize(tcx, param_env, term),
+                    |stmt| {
+                        try_monomorphize(prior, tcx, param_env, stmt, stmt.source_info.span)
+                            .unwrap()
+                    },
+                    |term| {
+                        try_monomorphize(prior, tcx, param_env, term, term.source_info.span)
+                            .unwrap()
+                    },
                 );
                 let res = match normalized {
-                    Either::Right(term) => term.as_ref().as_instance_and_args(tcx).unwrap().0,
+                    Either::Right(term) => term.as_instance_and_args(tcx).unwrap().0,
                     Either::Left(stmt) => {
-                        let (def_id, generics) = match_async_trait_assign(stmt.as_ref()).unwrap();
-                        try_resolve_function(tcx, def_id, param_env, generics)
+                        let (def_id, generics) = match_async_trait_assign(&stmt).unwrap();
+                        try_resolve_function(tcx, def_id, param_env, generics).unwrap()
                     }
                 };
                 res

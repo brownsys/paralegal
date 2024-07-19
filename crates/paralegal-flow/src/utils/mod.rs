@@ -1,32 +1,29 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
+use flowistry_pdg::RichLocation;
 use thiserror::Error;
 
-use crate::{
-    desc::Identifier,
-    rust::{
-        ast,
-        hir::{
-            self,
-            def::Res,
-            def_id::{DefId, LocalDefId},
-            hir_id::HirId,
-            BodyId,
-        },
-        mir::{self, Location, Place, ProjectionElem},
-        rustc_borrowck::consumers::BodyWithBorrowckFacts,
-        rustc_data_structures::intern::Interned,
-        rustc_span::Span as RustSpan,
-        rustc_span::{symbol::Ident, Span},
-        rustc_target::spec::abi::Abi,
-        ty,
-    },
-    rustc_span::ErrorGuaranteed,
-    Either, Symbol, TyCtxt,
-};
-pub use flowistry_pdg_construction::{is_non_default_trait_method, FnResolution};
+use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};
+pub use flowistry_pdg_construction::utils::is_non_default_trait_method;
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
+
+use rustc_ast as ast;
+use rustc_borrowck::consumers::BodyWithBorrowckFacts;
+use rustc_data_structures::intern::Interned;
+use rustc_hir::{
+    self as hir,
+    def::Res,
+    def_id::{DefId, LocalDefId},
+    hir_id::HirId,
+    BodyId,
+};
+use rustc_middle::{
+    mir::{self, Location, Place, ProjectionElem},
+    ty::{self, normalize_erasing_regions::NormalizationError, Instance},
+};
+use rustc_span::{symbol::Ident, Span as RustSpan, Span};
+use rustc_target::spec::abi::Abi;
 
 use std::{cmp::Ordering, hash::Hash};
 
@@ -206,7 +203,7 @@ impl<'tcx> DfppBodyExt<'tcx> for mir::Body<'tcx> {
     }
 }
 
-pub trait FnResolutionExt<'tcx> {
+pub trait InstanceExt<'tcx> {
     /// Get the most precise type signature we can for this function, erase any
     /// regions and discharge binders.
     ///
@@ -217,15 +214,15 @@ pub trait FnResolutionExt<'tcx> {
     fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed>;
 }
 
-impl<'tcx> FnResolutionExt<'tcx> for FnResolution<'tcx> {
+impl<'tcx> InstanceExt<'tcx> for Instance<'tcx> {
     fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed> {
         let sess = tcx.sess;
         let def_id = self.def_id();
         let def_span = tcx.def_span(def_id);
         let fn_kind = FunctionKind::for_def_id(tcx, def_id)?;
-        let late_bound_sig = match (self, fn_kind) {
-            (FnResolution::Final(sub), FunctionKind::Generator) => {
-                let gen = sub.args.as_generator();
+        let late_bound_sig = match fn_kind {
+            FunctionKind::Generator => {
+                let gen = self.args.as_generator();
                 ty::Binder::dummy(ty::FnSig {
                     inputs_and_output: tcx.mk_type_list(&[gen.resume_ty(), gen.return_ty()]),
                     c_variadic: false,
@@ -233,41 +230,8 @@ impl<'tcx> FnResolutionExt<'tcx> for FnResolution<'tcx> {
                     abi: Abi::Rust,
                 })
             }
-            (FnResolution::Final(sub), FunctionKind::Closure) => sub.args.as_closure().sig(),
-            (FnResolution::Final(sub), FunctionKind::Plain) => {
-                sub.ty(tcx, ty::ParamEnv::reveal_all()).fn_sig(tcx)
-            }
-            (FnResolution::Partial(_), FunctionKind::Closure) => {
-                if let Some(local) = def_id.as_local() {
-                    sess.span_warn(
-                        def_span,
-                        "Precise variable instantiation for \
-                            closure not known, using user type annotation.",
-                    );
-                    let sig = tcx.closure_user_provided_sig(local);
-                    Ok(sig.value)
-                } else {
-                    Err(sess.span_err(
-                        def_span,
-                        format!(
-                            "Could not determine type signature for external closure {def_id:?}"
-                        ),
-                    ))
-                }?
-            }
-            (FnResolution::Partial(_), FunctionKind::Generator) => Err(sess.span_err(
-                def_span,
-                format!(
-                    "Cannot determine signature of generator {def_id:?} without monomorphization"
-                ),
-            ))?,
-            (FnResolution::Partial(_), FunctionKind::Plain) => {
-                let sig = tcx.fn_sig(def_id);
-                sig.no_bound_vars().unwrap_or_else(|| {
-                        sess.span_warn(def_span, format!("Cannot discharge bound variables for {sig:?}, they will not be considered by the analysis"));
-                        sig.skip_binder()
-                    })
-            }
+            FunctionKind::Closure => self.args.as_closure().sig(),
+            FunctionKind::Plain => self.ty(tcx, ty::ParamEnv::reveal_all()).fn_sig(tcx),
         };
         Ok(tcx
             .try_normalize_erasing_late_bound_regions(ty::ParamEnv::reveal_all(), late_bound_sig)
@@ -346,14 +310,7 @@ pub trait AsFnAndArgs<'tcx> {
     fn as_instance_and_args(
         &self,
         tcx: TyCtxt<'tcx>,
-    ) -> Result<
-        (
-            FnResolution<'tcx>,
-            SimplifiedArguments<'tcx>,
-            mir::Place<'tcx>,
-        ),
-        AsFnAndArgsErr<'tcx>,
-    >;
+    ) -> Result<(Instance<'tcx>, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>>;
 }
 
 #[derive(Debug, Error)]
@@ -366,22 +323,20 @@ pub enum AsFnAndArgsErr<'tcx> {
     NotValueLevelConstant(ty::Const<'tcx>),
     #[error("terminator is not a `Call`")]
     NotAFunctionCall,
-    #[error("function instance could not be resolved")]
+    #[error("function instance resolution errored")]
     InstanceResolutionErr,
+    #[error("could not normalize generics {0}")]
+    NormalizationError(String),
+    #[error("instance to unspecific")]
+    InstanceTooUnspecific,
 }
 
 impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
     fn as_instance_and_args(
         &self,
         tcx: TyCtxt<'tcx>,
-    ) -> Result<
-        (
-            FnResolution<'tcx>,
-            SimplifiedArguments<'tcx>,
-            mir::Place<'tcx>,
-        ),
-        AsFnAndArgsErr<'tcx>,
-    > {
+    ) -> Result<(Instance<'tcx>, SimplifiedArguments<'tcx>, mir::Place<'tcx>), AsFnAndArgsErr<'tcx>>
+    {
         let mir::TerminatorKind::Call {
             func,
             args,
@@ -399,21 +354,11 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
         let (ty::FnDef(defid, gargs) | ty::Closure(defid, gargs)) = ty.kind() else {
             return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
         };
-        let instance = match test_generics_normalization(tcx, gargs) {
-            Err(e) => {
-                tcx.sess.span_warn(
-                    self.source_info.span,
-                    format!(
-                        "Could not resolve instance for this call due to {e:?}, \
-                        using partial resolution."
-                    ),
-                );
-                FnResolution::Partial(*defid)
-            }
-            Ok(_) => ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
-                .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
-                .map_or(FnResolution::Partial(*defid), FnResolution::Final),
-        };
+        let _ = test_generics_normalization(tcx, gargs)
+            .map_err(|e| AsFnAndArgsErr::NormalizationError(format!("{e:?}")))?;
+        let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), *defid, gargs)
+            .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
+            .ok_or(AsFnAndArgsErr::InstanceTooUnspecific)?;
         Ok((
             instance,
             args.iter().map(|a| a.place()).collect(),
@@ -843,6 +788,16 @@ impl<'tcx> Spanned<'tcx> for (&mir::Body<'tcx>, mir::Location) {
         self.0
             .stmt_at(self.1)
             .either(|e| e.span(tcx), |e| e.span(tcx))
+    }
+}
+
+impl<'tcx> Spanned<'tcx> for (&mir::Body<'tcx>, RichLocation) {
+    fn span(&self, tcx: TyCtxt<'tcx>) -> RustSpan {
+        let (body, loc) = self;
+        match loc {
+            RichLocation::Location(loc) => (*body, *loc).span(tcx),
+            RichLocation::End | RichLocation::Start => body.span,
+        }
     }
 }
 

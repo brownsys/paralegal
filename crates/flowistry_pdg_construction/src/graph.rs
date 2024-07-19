@@ -7,18 +7,18 @@ use std::{
     rc::Rc,
 };
 
-use flowistry_pdg::{CallString, GlobalLocation};
+use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::{DefId, DefIndex};
+use rustc_hir::def_id::{DefId, DefIndex, LocalDefId};
 use rustc_index::IndexVec;
-use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     mir::{Body, HasLocalDecls, Local, LocalDecl, LocalDecls, Place},
     ty::{GenericArgsRef, TyCtxt},
 };
+use rustc_span::Span;
 use rustc_utils::PlaceExt;
 
 pub use flowistry_pdg::{SourceUse, TargetUse};
@@ -41,6 +41,9 @@ pub struct DepNode<'tcx> {
     /// This is cached as an interned string on [`DepNode`] because to compute it later,
     /// we would have to regenerate the entire monomorphized body for a given place.
     pub(crate) place_pretty: Option<Intern<String>>,
+    /// Does the PDG track subplaces of this place?
+    pub is_split: bool,
+    pub span: Span,
 }
 
 impl PartialEq for DepNode<'_> {
@@ -52,8 +55,15 @@ impl PartialEq for DepNode<'_> {
             place,
             at,
             place_pretty: _,
+            span,
+            is_split,
         } = *self;
-        (place, at).eq(&(other.place, other.at))
+        let eq = (place, at).eq(&(other.place, other.at));
+        if eq {
+            debug_assert_eq!(span, other.span);
+            debug_assert_eq!(is_split, other.is_split);
+        }
+        eq
     }
 }
 
@@ -68,6 +78,8 @@ impl Hash for DepNode<'_> {
             place,
             at,
             place_pretty: _,
+            span: _,
+            is_split: _,
         } = self;
         (place, at).hash(state)
     }
@@ -78,11 +90,29 @@ impl<'tcx> DepNode<'tcx> {
     ///
     /// The `tcx` and `body` arguments are used to precompute a pretty string
     /// representation of the [`DepNode`].
-    pub fn new(place: Place<'tcx>, at: CallString, tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> Self {
+    pub fn new(
+        place: Place<'tcx>,
+        at: CallString,
+        tcx: TyCtxt<'tcx>,
+        body: &Body<'tcx>,
+        is_split: bool,
+    ) -> Self {
+        let i = at.leaf();
+        let span = match i.location {
+            RichLocation::Location(loc) => {
+                let expanded_span = body
+                    .stmt_at(loc)
+                    .either(|s| s.source_info.span, |t| t.source_info.span);
+                tcx.sess.source_map().stmt_span(expanded_span, body.span)
+            }
+            RichLocation::Start | RichLocation::End => tcx.def_span(i.function),
+        };
         DepNode {
             place,
             at,
             place_pretty: place.to_string(tcx, body).map(Intern::new),
+            span,
+            is_split,
         }
     }
 }
@@ -202,12 +232,12 @@ impl<'tcx> DepGraph<'tcx> {
     }
 }
 
-#[derive(Debug, Clone, TyDecodable, TyEncodable)]
+#[derive(Debug, Clone)]
 pub struct PartialGraph<'tcx> {
     pub(crate) nodes: FxHashSet<DepNode<'tcx>>,
     pub(crate) edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
     pub(crate) generics: GenericArgsRef<'tcx>,
-    def_id: DefId,
+    def_id: LocalDefId,
     arg_count: usize,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
 }
@@ -231,7 +261,7 @@ impl<'tcx> PartialGraph<'tcx> {
 
     pub fn new(
         generics: GenericArgsRef<'tcx>,
-        def_id: DefId,
+        def_id: LocalDefId,
         arg_count: usize,
         local_decls: &LocalDecls<'tcx>,
     ) -> Self {
@@ -285,7 +315,7 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-fn as_arg(node: &DepNode<'_>, def_id: DefId, arg_count: usize) -> Option<Option<u8>> {
+fn as_arg(node: &DepNode<'_>, def_id: LocalDefId, arg_count: usize) -> Option<Option<u8>> {
     if node.at.leaf().function != def_id {
         return None;
     }

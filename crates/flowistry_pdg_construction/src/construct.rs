@@ -18,11 +18,10 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, Location, Operand, Place, PlaceElem,
         Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GeneratorArgsRef, GenericArg, Instance, List, ParamEnv, TyCtxt, TyKind},
+    ty::{GenericArg, GenericArgsRef, Instance, List, ParamEnv, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df};
 use rustc_span::ErrorGuaranteed;
-use rustc_ty_utils::instance;
 use rustc_utils::{
     cache::Cache,
     mir::{borrowck_facts, control_dependencies::ControlDependencies},
@@ -37,8 +36,7 @@ use crate::{
     },
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    try_resolve_function,
-    utils::{self, is_non_default_trait_method, manufacture_substs_for},
+    utils::{self, is_non_default_trait_method, manufacture_substs_for, try_resolve_function},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
 };
 
@@ -85,93 +83,56 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
     /// Construct the intermediate PDG for this function. Instantiates any
     /// generic arguments as `dyn <constraints>`.
-    pub fn construct_root<'a>(
-        &'a self,
-        function: LocalDefId,
-    ) -> Result<&'a PartialGraph<'tcx>, Vec<Error<'tcx>>> {
-        let generics =
-            manufacture_substs_for(self.tcx, function.to_def_id()).map_err(|i| vec![i])?;
+    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> &'a PartialGraph<'tcx> {
+        let generics = manufacture_substs_for(self.tcx, function.to_def_id())
+            .map_err(|i| vec![i])
+            .unwrap();
         let resolution = try_resolve_function(
             self.tcx,
             function.to_def_id(),
             self.tcx.param_env_reveal_all_normalized(function),
             generics,
         )
-        .ok_or_else(|| {
-            vec![Error::instance_resolution_failed(
-                function.to_def_id(),
-                generics,
-                self.tcx.def_span(function),
-            )]
-        })?;
-        self.construct_for(resolution)
-            .and_then(|f| f.ok_or(vec![Error::Impossible]))
+        .unwrap();
+
+        self.construct_for(resolution).unwrap()
     }
 
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> Result<Option<&'a PartialGraph<'tcx>>, Vec<Error<'tcx>>> {
+    ) -> Option<&'a PartialGraph<'tcx>> {
         let def_id = resolution.def_id();
         let generics = resolution.args;
-        if let Some(local) = def_id.as_local() {
-            let r = self
-                .pdg_cache
-                .get_maybe_recursive((local, generics), |_| {
-                    let g = LocalAnalysis::new(self, resolution)
-                        .map_err(|e| vec![e])?
-                        .construct_partial()?;
-                    trace!(
-                        "Computed new for {} {generics:?}",
-                        self.tcx.def_path_str(local)
-                    );
-                    g.check_invariants();
-                    Ok(g)
-                })
-                .map(Result::as_ref)
-                .transpose()
-                .map_err(Clone::clone)?;
-            if let Some(g) = r {
-                trace!(
-                    "Found pdg for {} with {:?}",
-                    self.tcx.def_path_str(local),
-                    g.generics
-                )
-            };
-            Ok(r)
-        } else {
-            self.loader.load(def_id)
-        }
+        self.pdg_cache.get_maybe_recursive(resolution, |_| {
+            let g = LocalAnalysis::new(self, resolution).construct_partial();
+            trace!(
+                "Computed new for {} {generics:?}",
+                self.tcx.def_path_str(def_id)
+            );
+            g.check_invariants();
+            g
+        })
     }
 
     /// Has a PDG been constructed for this instance before?
     pub fn is_in_cache(&self, resolution: Instance<'tcx>) -> bool {
-        if let Some(local) = resolution.def_id().as_local() {
-            self.pdg_cache.is_in_cache(&(local, resolution.args))
-        } else {
-            matches!(self.loader.load(resolution.def_id()), Ok(Some(_)))
-        }
+        self.pdg_cache.is_in_cache(&resolution)
     }
 
     /// Construct a final PDG for this function. Same as
     /// [`Self::construct_root`] this instantiates all generics as `dyn`.
-    pub fn construct_graph(
-        &self,
-        function: LocalDefId,
-    ) -> Result<DepGraph<'tcx>, Vec<Error<'tcx>>> {
-        let _args = manufacture_substs_for(self.tcx, function.to_def_id())
-            .map_err(|_| anyhow!("rustc error"));
-        let g = self.construct_root(function)?.to_petgraph();
-        Ok(g)
+    pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
+        self.construct_root(function).to_petgraph()
     }
 }
 
-type LocalAnalysisResults<'tcx, 'mir> = Results<'tcx, LocalAnalysis<'tcx, 'mir>>;
+type LocalAnalysisResults<'tcx, 'mir> = Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>;
 
 impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
     for PartialGraph<'tcx>
 {
-    type FlowState = <LocalAnalysis<'tcx, 'mir> as AnalysisDomain<'tcx>>::Domain;
+    type FlowState = <&'mir LocalAnalysis<'tcx, 'mir> as AnalysisDomain<'tcx>>::Domain;
 
     fn visit_statement_before_primary_effect(
         &mut self,
@@ -210,7 +171,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
     ) {
         if let TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
             if let Some(place) = discr.place() {
-                self.inner.register_mutation(
+                self.register_mutation(
                     results,
                     state,
                     Inputs::Unresolved {
@@ -224,19 +185,13 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
             return;
         }
 
-        match self
-            .inner
-            .handle_as_inline(results, state, terminator, location)
-        {
-            Ok(false) => (),
-            Ok(true) => return,
-            Err(e) => self.errors.extend(e),
+        if self.handle_as_inline(results, state, terminator, location) {
+            return;
         }
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis = ModularMutationVisitor::new(
-            &results.analysis.inner.place_info,
-            move |location, mutation| {
-                self.inner.register_mutation(
+        let mut arg_vis =
+            ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
+                self.register_mutation(
                     results,
                     state,
                     Inputs::Unresolved {
@@ -246,8 +201,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
                     location,
                     mutation.mutation_reason,
                 )
-            },
-        );
+            });
         arg_vis.set_time(Time::Before);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -260,7 +214,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
         location: Location,
     ) {
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
-            let constructor = results.analysis.inner;
+            let constructor = results.analysis;
 
             if matches!(
                 constructor.determine_call_handling(
@@ -269,17 +223,16 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
                     args,
                     terminator.source_info.span
                 ),
-                Ok(Some(CallHandling::Ready { .. }))
+                Some(CallHandling::Ready { .. })
             ) {
                 return;
             }
         }
 
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis = ModularMutationVisitor::new(
-            &results.analysis.inner.place_info,
-            move |location, mutation| {
-                self.inner.register_mutation(
+        let mut arg_vis =
+            ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
+                self.register_mutation(
                     results,
                     state,
                     Inputs::Unresolved {
@@ -289,8 +242,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
                     location,
                     mutation.mutation_reason,
                 )
-            },
-        );
+            });
         arg_vis.set_time(Time::After);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -302,21 +254,18 @@ impl<'tcx> PartialGraph<'tcx> {
         results: &'a LocalAnalysisResults<'tcx, 'mir>,
         state: &'a InstructionState<'tcx>,
     ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
-        ModularMutationVisitor::new(
-            &results.analysis.inner.place_info,
-            move |location, mutation| {
-                self.register_mutation(
-                    results,
-                    state,
-                    Inputs::Unresolved {
-                        places: mutation.inputs,
-                    },
-                    Either::Left(mutation.mutated),
-                    location,
-                    mutation.mutation_reason,
-                )
-            },
-        )
+        ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
+            self.register_mutation(
+                results,
+                state,
+                Inputs::Unresolved {
+                    places: mutation.inputs,
+                },
+                Either::Left(mutation.mutated),
+                location,
+                mutation.mutation_reason,
+            )
+        })
     }
 
     /// returns whether we were able to successfully handle this as inline
@@ -326,7 +275,7 @@ impl<'tcx> PartialGraph<'tcx> {
         state: &'a InstructionState<'tcx>,
         terminator: &Terminator<'tcx>,
         location: Location,
-    ) -> Option<()> {
+    ) -> bool {
         let TerminatorKind::Call {
             func,
             args,
@@ -334,22 +283,18 @@ impl<'tcx> PartialGraph<'tcx> {
             ..
         } = &terminator.kind
         else {
-            return None;
+            return false;
         };
-        let constructor = results.analysis.inner;
+        let constructor = &results.analysis;
         let gloc = GlobalLocation {
             location: location.into(),
-            function: constructor.def_id.to_def_id(),
+            function: constructor.def_id,
         };
 
-        let Some(handling) = constructor.determine_call_handling(
-            location,
-            func,
-            args,
-            terminator.source_info.span,
-        )?
+        let Some(handling) =
+            constructor.determine_call_handling(location, func, args, terminator.source_info.span)
         else {
-            return Ok(false);
+            return false;
         };
 
         let (child_descriptor, calling_convention) = match handling {
@@ -368,7 +313,7 @@ impl<'tcx> PartialGraph<'tcx> {
                     &rvalue,
                     location,
                 );
-                return Some(());
+                return false;
             }
             CallHandling::ApproxAsyncSM(how) => {
                 how(
@@ -378,7 +323,7 @@ impl<'tcx> PartialGraph<'tcx> {
                     *destination,
                     location,
                 );
-                return Some(());
+                return false;
             }
         };
 
@@ -396,7 +341,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 child_src.place,
                 constructor.async_info(),
                 constructor.tcx(),
-                &constructor.body,
+                &constructor.mono_body,
                 constructor.def_id.to_def_id(),
                 *destination,
             ) {
@@ -424,7 +369,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 child_dst.place,
                 constructor.async_info(),
                 constructor.tcx(),
-                &constructor.body,
+                &constructor.mono_body,
                 constructor.def_id.to_def_id(),
                 *destination,
             ) {
@@ -443,20 +388,7 @@ impl<'tcx> PartialGraph<'tcx> {
         }
         self.nodes.extend(child_graph.nodes);
         self.edges.extend(child_graph.edges);
-        Some(())
-    }
-}
-
-fn as_arg<'tcx>(node: &DepNode<'tcx>, def_id: LocalDefId, body: &Body<'tcx>) -> Option<Option<u8>> {
-    if node.at.leaf().function != def_id {
-        return None;
-    }
-    if node.place.local == RETURN_PLACE {
-        Some(None)
-    } else if node.place.is_arg(body) {
-        Some(Some(node.place.local.as_u32() as u8 - 1))
-    } else {
-        None
+        true
     }
 }
 
@@ -471,7 +403,7 @@ impl<'tcx> PartialGraph<'tcx> {
         target_use: TargetUse,
     ) {
         trace!("Registering mutation to {mutated:?} with inputs {inputs:?} at {location:?}");
-        let constructor = results.analysis.0;
+        let constructor = &results.analysis;
         let ctrl_inputs = constructor.find_control_inputs(location);
 
         trace!("  Found control inputs {ctrl_inputs:?}");
@@ -499,8 +431,7 @@ impl<'tcx> PartialGraph<'tcx> {
             Either::Right(node) => vec![node],
             Either::Left(place) => results
                 .analysis
-                .0
-                .find_outputs(state, place, location)
+                .find_outputs(place, location)
                 .into_iter()
                 .map(|t| t.1)
                 .collect(),
@@ -534,7 +465,7 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-type PdgCache<'tcx> = Rc<Cache<(LocalDefId, GenericArgsRef<'tcx>), PartialGraph<'tcx>>>;
+type PdgCache<'tcx> = Rc<Cache<Instance<'tcx>, PartialGraph<'tcx>>>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {

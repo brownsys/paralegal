@@ -1,9 +1,12 @@
-use std::{borrow::Cow, collections::hash_map::Entry, hash::Hash};
+use std::{
+    borrow::Cow, collections::hash_map::Entry, hash::Hash, ops::Deref, ptr::addr_of, sync::OnceLock,
+};
 
 use either::Either;
 use flowistry_pdg::rustc_portable::LocalDefId;
 use itertools::Itertools;
 use log::{debug, trace};
+use rustc_borrowck::consumers::BodyWithBorrowckFacts;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -12,12 +15,14 @@ use rustc_middle::{
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        self, EarlyBinder, GenericArg, GenericArgsRef, Instance, List, ParamEnv, Ty, TyCtxt, TyKind,
+        self, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance, List, ParamEnv, Region,
+        Ty, TyCtxt, TyKind,
     },
 };
-use rustc_span::ErrorGuaranteed;
+use rustc_span::{ErrorGuaranteed, Span};
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
-use rustc_utils::{BodyExt, PlaceExt};
+use rustc_utils::{cache::Cache, mir, BodyExt, PlaceExt};
+use std::cell::OnceCell;
 
 pub trait Captures<'a> {}
 impl<'a, T: ?Sized> Captures<'a> for T {}
@@ -47,6 +52,30 @@ pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId
         return None;
     }
     assoc_item.trait_item_def_id
+}
+
+/// The "canonical" way we monomorphize
+pub fn try_monomorphize<'tcx, 'a, T>(
+    inst: Instance<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    param_env: ParamEnv<'tcx>,
+    t: &'a T,
+    span: Span,
+) -> Result<T, ErrorGuaranteed>
+where
+    T: TypeFoldable<TyCtxt<'tcx>> + Clone + std::fmt::Debug,
+{
+    inst.try_subst_mir_and_normalize_erasing_regions(
+        tcx,
+        param_env,
+        EarlyBinder::bind(tcx.erase_regions(t.clone())),
+    )
+    .map_err(|e| {
+        tcx.sess.span_err(
+            span,
+            "failed to monomorphize with instance {inst:?} due to {e:?}",
+        )
+    })
 }
 
 /// Attempt to interpret this type as a statically determinable function and its
@@ -187,17 +216,22 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     }
 }
 
-pub fn manufacture_substs_for(
-    tcx: TyCtxt<'_>,
-    function: LocalDefId,
-) -> Result<&List<GenericArg<'_>>, ErrorGuaranteed> {
+pub fn manufacture_substs_for<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    function: DefId,
+) -> Result<GenericArgsRef<'tcx>, ErrorGuaranteed> {
     use rustc_middle::ty::{
-        Binder, BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection,
-        ExistentialTraitRef, GenericParamDefKind, ImplPolarity, ParamTy, Region, TraitPredicate,
+        BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection, ExistentialTraitRef,
+        GenericParamDefKind, ImplPolarity, ParamTy, TraitPredicate,
     };
 
+    trace!("Manufacturing for {function:?}");
+
     let generics = tcx.generics_of(function);
+    trace!("Found generics {generics:?}");
     let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
+    trace!("Found predicates {predicates:?}");
+    let lang_items = tcx.lang_items();
     let types = (0..generics.count()).map(|gidx| {
         let param = generics.param_at(gidx, tcx);
         if let Some(default_val) = param.default_value(tcx) {
@@ -208,7 +242,7 @@ pub fn manufacture_substs_for(
             GenericParamDefKind::Lifetime => {
                 return Ok(GenericArg::from(Region::new_free(
                     tcx,
-                    function.to_def_id(),
+                    function,
                     BoundRegionKind::BrAnon(None),
                 )))
             }
@@ -236,11 +270,23 @@ pub fn manufacture_substs_for(
                 if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
                     return None;
                 };
+                if Some(trait_ref.def_id) == lang_items.sized_trait()
+                    || tcx.trait_is_auto(trait_ref.def_id)
+                {
+                    trace!("    bailing because trait is auto trait");
+                    return None;
+                }
                 Some(ExistentialPredicate::Trait(
                     ExistentialTraitRef::erase_self_ty(tcx, trait_ref),
                 ))
             } else if let Some(pred) = clause.as_projection_clause() {
-                let pred = pred.no_bound_vars()?;
+                trace!("    is projection clause");
+                let Some(pred) = pred.no_bound_vars() else {
+                    return Some(Err(tcx.sess.span_err(
+                        tcx.def_span(param.def_id),
+                        "Predicate has a bound variable",
+                    )));
+                };
                 if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
                     return None;
                 };
@@ -253,10 +299,34 @@ pub fn manufacture_substs_for(
 
             Some(Ok(Binder::dummy(pred)))
         });
+        let mut predicates = constraints.collect::<Result<Vec<_>, _>>()?;
+        trace!("  collected predicates {predicates:?}");
+        match predicates.len() {
+            0 => predicates.push(Binder::dummy(ExistentialPredicate::Trait(
+                ExistentialTraitRef {
+                    def_id: tcx
+                        .get_diagnostic_item(rustc_span::sym::Any)
+                        .expect("The `Any` item is not defined."),
+                    args: List::empty(),
+                },
+            ))),
+            1 => (),
+            _ => {
+                return Err(tcx.sess.span_err(
+                    tcx.def_span(param.def_id),
+                    format!(
+                        "can only synthesize a trait object for one non-auto trait, got {}",
+                        predicates.len()
+                    ),
+                ));
+            }
+        };
+        let poly_predicate = tcx.mk_poly_existential_predicates_from_iter(predicates.into_iter());
+        trace!("  poly predicate {poly_predicate:?}");
         let ty = Ty::new_dynamic(
             tcx,
-            tcx.mk_poly_existential_predicates_from_iter(constraints)?,
-            Region::new_free(tcx, function.to_def_id(), BoundRegionKind::BrAnon(None)),
+            poly_predicate,
+            Region::new_free(tcx, function, BoundRegionKind::BrAnon(None)),
             DynKind::Dyn,
         );
         Ok(GenericArg::from(ty))
