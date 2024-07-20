@@ -23,6 +23,8 @@ flowistry_pdg = { version = "0.1.0", path = "../flowistry_pdg", features = [
 ] }
 #flowistry = { path = "../../../flowistry/crates/flowistry", default-features = false }
 flowistry = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+strum = { workspace = true }
 
 [dev-dependencies]
 rustc_utils = { workspace = true, features = ["indexical", "test"] }

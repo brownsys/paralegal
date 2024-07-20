@@ -4,6 +4,8 @@ extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
 
+use hir::def_id::DefId;
+
 use crate::{
     desc::{Identifier, ProgramDescription},
     HashSet,
@@ -13,7 +15,6 @@ use std::hash::{Hash, Hasher};
 use std::process::Command;
 
 use paralegal_spdg::{
-    rustc_portable::DefId,
     traverse::{generic_flows_to, EdgeSelection},
     DefInfo, EdgeInfo, Node, SPDG,
 };
@@ -330,7 +331,7 @@ pub trait HasGraph<'g>: Sized + Copy {
 #[derive(Debug)]
 pub struct PreFrg {
     pub desc: ProgramDescription,
-    pub name_map: crate::HashMap<Identifier, Vec<crate::DefId>>,
+    pub name_map: crate::HashMap<Identifier, Vec<DefId>>,
 }
 
 impl<'g> HasGraph<'g> for &'g PreFrg {

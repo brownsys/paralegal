@@ -132,7 +132,7 @@ fn simple_monomorphization() -> Result<()> {
 
         #[paralegal::analyze]
         fn unconnected() {
-            Receiver.target(Donator.source())
+            Donator.target(Receiver.source())
         }
     ))?;
     test.run(|ctx| {
@@ -146,7 +146,7 @@ fn simple_monomorphization() -> Result<()> {
                 .filter(|n| n.controller_id() == ctx.id())
                 .collect();
 
-            let expect_connect = ctx.current().name.as_str() != "connected";
+            let expect_connect = ctx.current().name.as_str() == "connected";
 
             assert_error!(
                 ctx,
@@ -260,6 +260,77 @@ fn markers_on_generic_calls() -> Result<()> {
                 ctx.node_note(src, format!("This is a target {}", src.describe(&ctx)));
             }
         });
+        Ok(())
+    })
+}
+
+#[test]
+fn finding_utc_now() -> Result<()> {
+    let mut test = Test::new(stringify!(
+        use sled::Db;
+        use chrono::Utc;
+        use thiserror::Error;
+
+        #[derive(Error, Debug)]
+        pub enum AppError {
+            #[error("Sled db error: {}", .0)]
+            SledError(#[from] sled::Error),
+            #[error(transparent)]
+            Utf8Error(#[from] std::str::Utf8Error),
+        }
+
+        pub async fn clear_invalid(db: &Db, tree_name: &str) -> Result<(), AppError> {
+            // let tree = db.open_tree(tree_name)?;
+            // for i in tree.iter() {
+            //     let (k, _) = i?;
+            //     let k_str = std::str::from_utf8(&k)?;
+            // let time_stamp = k_str
+            //     .split_once('_')
+            //     .and_then(|s| i64::from_str_radix(s.0, 16).ok());
+            let time_stamp = Some(0_i64);
+            if let Some(time_stamp) = time_stamp {
+                if time_stamp < Utc::now().timestamp() {
+                    panic!()
+                    //tree.remove(k)?;
+                }
+            }
+            //}
+            Ok(())
+        }
+
+        #[paralegal::analyze]
+        pub async fn user_chron_job() -> ! {
+            let db = sled::Config::default().open().unwrap();
+            loop {
+                //sleep_seconds(600).await;
+                clear_invalid(&db, "dummy").await.unwrap()
+                //sleep_seconds(3600 * 4).await;
+            }
+        }
+    ))?;
+    test.with_external_annotations(
+        "
+        [[\"chrono::Utc::now\"]]
+        marker = \"time\"
+        on_return = true
+        ",
+    )
+    .with_dep([
+        "chrono@0.4.38",
+        "--no-default-features",
+        "--features",
+        "clock",
+    ])
+    .with_dep(["sled@0.34.7"])
+    .with_dep(["thiserror@1"]);
+    test.run(|ctx| {
+        assert_error!(
+            ctx,
+            ctx.marked_nodes(Identifier::new_intern("time"))
+                .next()
+                .is_some(),
+            "No time found"
+        );
         Ok(())
     })
 }
