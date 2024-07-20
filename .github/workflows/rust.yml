@@ -38,6 +38,14 @@ jobs:
         run: rustup run stable cargo install --force --debug cargo-make
       - name: Build
         run: cargo make install
+      - name: PDG tests
+        run: cargo test -p flowistry_pdg_construction
+      - name: Flow tests
+        run: cargo test -p paralegal-flow
+      - name: policy tests
+        run: cargo test -p paralegal-policy
+      - name: policy lib tests
+        run: cargo test --lib -p paralegal-policy
       - name: Run tests
         run: cargo make ci-tests
 
