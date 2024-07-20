@@ -3,7 +3,6 @@ use std::{
     collections::hash_map::DefaultHasher,
     env,
     ffi::{OsStr, OsString},
-    fmt::format,
     fs::{self, File},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
