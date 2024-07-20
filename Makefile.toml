@@ -48,7 +48,7 @@ stage them and rerun the script until no more errors occur.
 dependencies = ["format-all", "clippy-all"]
 
 [tasks.cargo-tests]
-description = "Low-level tests for the PDG emitted by the analyzer specifically."
+description = "Tests discoverable to cargo"
 command = "cargo"
 args = ["test"]
 

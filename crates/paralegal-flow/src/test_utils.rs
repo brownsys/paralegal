@@ -4,6 +4,8 @@ extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
 
+use hir::def_id::DefId;
+
 use crate::{
     desc::{Identifier, ProgramDescription},
     HashSet,
@@ -13,7 +15,6 @@ use std::hash::{Hash, Hasher};
 use std::process::Command;
 
 use paralegal_spdg::{
-    rustc_portable::DefId,
     traverse::{generic_flows_to, EdgeSelection},
     DefInfo, EdgeInfo, Node, SPDG,
 };
@@ -167,6 +168,89 @@ macro_rules! define_flow_test_template {
     };
 }
 
+/// Builder for running test cases against a string of source code.
+///
+/// Start with [`InlineTestBuilder::new`], compile and run the test case with
+/// [`InlineTestBuilder::check`].
+pub struct InlineTestBuilder {
+    ctrl_name: String,
+    input: String,
+}
+
+impl InlineTestBuilder {
+    /// Constructor.
+    ///
+    /// Note that this test builder does not support specifying dependencies,
+    /// including the `paralegal` library. As such use raw annotations like
+    /// `#[paralegal_flow::marker(...)]`.
+    ///
+    /// By default a `main` function is used as the analysis target (even
+    /// without an `analyze` annotation). Use
+    /// [`InlineTestBuilder::with_entrypoint`] to use a different function.
+    pub fn new(input: impl Into<String>) -> Self {
+        Self {
+            input: input.into(),
+            ctrl_name: "main".into(),
+        }
+    }
+
+    /// Chose a function as analysis entrypoint. Overwrites any previous choice
+    /// without warning.
+    pub fn with_entrypoint(&mut self, name: impl Into<String>) -> &mut Self {
+        self.ctrl_name = name.into();
+        self
+    }
+
+    /// Compile the code, select the [`CtrlRef`] corresponding to the configured
+    /// entrypoint and hand it to the `check` function which should contain the
+    /// test predicate.
+    pub fn check(&self, check: impl FnOnce(CtrlRef) + Send) {
+        use clap::Parser;
+
+        #[derive(clap::Parser)]
+        struct TopLevelArgs {
+            #[clap(flatten)]
+            args: crate::ClapArgs,
+        }
+
+        let args = crate::Args::try_from(
+            TopLevelArgs::parse_from([
+                "".into(),
+                "--analyze".into(),
+                format!(
+                    "{}::{}",
+                    rustc_utils::test_utils::DUMMY_MOD_NAME,
+                    self.ctrl_name
+                ),
+            ])
+            .args,
+        )
+        .unwrap();
+
+        args.setup_logging();
+
+        rustc_utils::test_utils::CompileBuilder::new(&self.input)
+            .with_args(
+                [
+                    "--cfg",
+                    "paralegal",
+                    "-Zcrate-attr=feature(register_tool)",
+                    "-Zcrate-attr=register_tool(paralegal_flow)",
+                ]
+                .into_iter()
+                .map(ToOwned::to_owned),
+            )
+            .compile(move |result| {
+                let tcx = result.tcx;
+                let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
+                let pdg = memo.run(tcx).unwrap();
+                let graph = PreFrg::from_description(pdg);
+                let cref = graph.ctrl(&self.ctrl_name);
+                check(cref)
+            });
+    }
+}
+
 pub trait HasGraph<'g>: Sized + Copy {
     fn graph(self) -> &'g PreFrg;
 
@@ -247,7 +331,7 @@ pub trait HasGraph<'g>: Sized + Copy {
 #[derive(Debug)]
 pub struct PreFrg {
     pub desc: ProgramDescription,
-    pub name_map: crate::HashMap<Identifier, Vec<crate::DefId>>,
+    pub name_map: crate::HashMap<Identifier, Vec<DefId>>,
 }
 
 impl<'g> HasGraph<'g> for &'g PreFrg {
@@ -264,13 +348,17 @@ impl PreFrg {
                 crate::consts::FLOW_GRAPH_OUT_NAME
             ))
             .unwrap();
-            let name_map = desc
-                .def_info
-                .iter()
-                .map(|(def_id, info)| (info.name, *def_id))
-                .into_group_map();
-            Self { desc, name_map }
+            Self::from_description(desc)
         })
+    }
+
+    pub fn from_description(desc: ProgramDescription) -> Self {
+        let name_map = desc
+            .def_info
+            .iter()
+            .map(|(def_id, info)| (info.name, *def_id))
+            .into_group_map();
+        Self { desc, name_map }
     }
 }
 

@@ -12,14 +12,15 @@ use super::{
     ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind, VerificationHash,
 };
 use crate::{
-    consts,
-    rust::*,
-    utils,
+    consts, utils,
     utils::{write_sep, Print, TinyBitSet},
     Symbol,
 };
-use ast::{token, tokenstream};
 use paralegal_spdg::Identifier;
+
+use rustc_ast::{self as ast, token, tokenstream};
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::TyCtxt;
 use token::*;
 use tokenstream::*;
 

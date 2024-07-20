@@ -23,49 +23,27 @@ extern crate petgraph;
 extern crate num_derive;
 extern crate num_traits;
 
-pub extern crate rustc_index;
+extern crate rustc_abi;
+extern crate rustc_arena;
+extern crate rustc_ast;
+extern crate rustc_borrowck;
+extern crate rustc_data_structures;
+extern crate rustc_driver;
+extern crate rustc_hir;
+extern crate rustc_index;
+extern crate rustc_interface;
+extern crate rustc_middle;
+extern crate rustc_mir_dataflow;
+extern crate rustc_query_system;
 extern crate rustc_serialize;
+extern crate rustc_span;
+extern crate rustc_target;
+extern crate rustc_type_ir;
 
-pub mod rust {
-    //! Exposes the rustc external crates (this mod is just to tidy things up).
-    pub extern crate rustc_abi;
-    pub extern crate rustc_arena;
-    pub extern crate rustc_ast;
-    pub extern crate rustc_borrowck;
-    pub extern crate rustc_data_structures;
-    pub extern crate rustc_driver;
-    pub extern crate rustc_hir;
-    pub extern crate rustc_interface;
-    pub extern crate rustc_middle;
-    pub extern crate rustc_mir_dataflow;
-    pub extern crate rustc_query_system;
-    pub extern crate rustc_serialize;
-    pub extern crate rustc_span;
-    pub extern crate rustc_target;
-    pub extern crate rustc_type_ir;
-    pub use super::rustc_index;
-    pub use rustc_type_ir::sty;
+use args::{ClapArgs, Debugger, LogLevelConfig};
+use desc::{utils::write_sep, ProgramDescription};
 
-    pub use rustc_ast as ast;
-    pub mod mir {
-        pub use super::rustc_abi::FieldIdx as Field;
-        pub use super::rustc_middle::mir::*;
-    }
-    pub use rustc_hir as hir;
-    pub use rustc_middle::ty;
-
-    pub use rustc_middle::dep_graph::DepGraph;
-    pub use ty::TyCtxt;
-
-    pub use hir::def_id::{DefId, LocalDefId};
-    pub use hir::BodyId;
-    pub use mir::Location;
-}
-
-use args::{ClapArgs, LogLevelConfig};
-use desc::utils::write_sep;
-use rust::*;
-
+use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
 pub use std::collections::{HashMap, HashSet};
@@ -94,7 +72,7 @@ pub mod test_utils;
 pub use paralegal_spdg as desc;
 
 pub use crate::ann::db::MarkerCtx;
-pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, ModelCtrl};
+pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, MarkerControl};
 
 use crate::{
     stats::{Stats, TimedStat},
@@ -128,13 +106,28 @@ struct ArgWrapper {
 
 struct Callbacks {
     opts: &'static Args,
-    stats: Stats,
     start: Instant,
+    stats: Stats,
 }
 
 struct NoopCallbacks {}
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
+
+impl Callbacks {
+    pub fn run(&self, tcx: TyCtxt) -> anyhow::Result<ProgramDescription> {
+        tcx.sess.abort_if_errors();
+        discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()
+    }
+
+    pub fn new(opts: &'static Args) -> Self {
+        Self {
+            opts,
+            stats: Default::default(),
+            start: Instant::now(),
+        }
+    }
+}
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
@@ -157,9 +150,7 @@ impl rustc_driver::Callbacks for Callbacks {
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
-                tcx.sess.abort_if_errors();
-                let desc =
-                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
+                let desc = self.run(tcx)?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
 
@@ -337,18 +328,20 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
         }
 
-        let lvl = plugin_args.verbosity();
-        // //let lvl = log::LevelFilter::Debug;
-        simple_logger::SimpleLogger::new()
-            .with_level(lvl)
-            //.with_module_level("flowistry", lvl)
-            .with_module_level("rustc_utils", log::LevelFilter::Error)
-            .init()
-            .unwrap();
-        if matches!(*plugin_args.direct_debug(), LogLevelConfig::Targeted(..)) {
-            log::set_max_level(log::LevelFilter::Warn);
-        }
+        plugin_args.setup_logging();
+
         let opts = Box::leak(Box::new(plugin_args));
+
+        const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
+        if let Ok(debugger) = std::env::var(RERUN_VAR) {
+            info!("Restarting with debugger '{debugger}'");
+            let mut dsplit = debugger.split(' ');
+            let mut cmd = std::process::Command::new(dsplit.next().unwrap());
+            cmd.args(dsplit)
+                .args(std::env::args())
+                .env_remove(RERUN_VAR);
+            std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
+        }
 
         compiler_args.extend([
             "--cfg".into(),
@@ -357,18 +350,37 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             "-Zcrate-attr=register_tool(paralegal_flow)".into(),
         ]);
 
+        if let Some(dbg) = opts.attach_to_debugger() {
+            dbg.attach()
+        }
+
         debug!(
             "Arguments: {}",
             Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
         );
-        rustc_driver::RunCompiler::new(
-            &compiler_args,
-            &mut Callbacks {
-                opts,
-                stats: Default::default(),
-                start: Instant::now(),
-            },
-        )
-        .run()
+        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks::new(opts)).run()
+    }
+}
+
+impl Debugger {
+    fn attach(self) {
+        use std::process::{id, Command};
+        use std::thread::sleep;
+        use std::time::Duration;
+
+        match self {
+            Debugger::CodeLldb => {
+                let url = format!(
+                    "vscode://vadimcn.vscode-lldb/launch/config?{{'request':'attach','pid':{}}}",
+                    id()
+                );
+                Command::new("code")
+                    .arg("--open-url")
+                    .arg(url)
+                    .output()
+                    .unwrap();
+                sleep(Duration::from_millis(1000));
+            }
+        }
     }
 }

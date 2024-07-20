@@ -3,16 +3,14 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
-use crate::{
-    ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, rust::*, stats::Stats, utils::*,
-};
+use crate::{ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, stats::Stats, utils::*};
 
-use hir::{
-    def_id::DefId,
+use rustc_hir::{
+    def_id::LocalDefId,
     intravisit::{self, FnKind},
     BodyId,
 };
-use rustc_middle::hir::nested_filter::OnlyBodies;
+use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
 use anyhow::Result;
@@ -45,7 +43,7 @@ pub struct CollectingVisitor<'tcx> {
 /// [`CollectingVisitor::handle_target`].
 pub struct FnToAnalyze {
     pub name: Ident,
-    pub def_id: DefId,
+    pub def_id: LocalDefId,
 }
 
 impl FnToAnalyze {
@@ -68,7 +66,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                     return None;
                 }
                 Some(FnToAnalyze {
-                    def_id,
+                    def_id: def_id.as_local()?,
                     name: tcx.opt_item_ident(def_id).unwrap(),
                 })
             })
@@ -138,7 +136,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
             {
                 self.functions_to_analyze.push(FnToAnalyze {
                     name: *name,
-                    def_id: id.to_def_id(),
+                    def_id: id,
                 });
             }
             _ => (),

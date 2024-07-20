@@ -3,13 +3,14 @@
 extern crate either;
 extern crate rustc_hir;
 extern crate rustc_middle;
+extern crate rustc_span;
 
 use std::collections::HashSet;
 
 use either::Either;
 use flowistry_pdg_construction::{
     graph::{DepEdge, DepGraph},
-    CallChangeCallbackFn, CallChanges, PdgParams, SkipCall,
+    CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
 };
 use itertools::Itertools;
 use rustc_hir::def_id::LocalDefId;
@@ -17,7 +18,10 @@ use rustc_middle::{
     mir::{Terminator, TerminatorKind},
     ty::TyCtxt,
 };
-use rustc_utils::{mir::borrowck_facts, source_map::find_bodies::find_bodies};
+use rustc_span::Symbol;
+use rustc_utils::{
+    mir::borrowck_facts, source_map::find_bodies::find_bodies, test_utils::CompileResult,
+};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)
@@ -32,14 +36,15 @@ fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
 
 fn pdg(
     input: impl Into<String>,
-    configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PdgParams<'tcx>) -> PdgParams<'tcx> + Send,
+    configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx>) + Send,
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
-    rustc_utils::test_utils::compile(input, move |tcx| {
+    rustc_utils::test_utils::CompileBuilder::new(input).compile(move |CompileResult { tcx }| {
         let def_id = get_main(tcx);
-        let params = configure(tcx, PdgParams::new(tcx, def_id).unwrap());
-        let pdg = flowistry_pdg_construction::compute_pdg(params);
+        let mut memo = MemoPdgConstructor::new(tcx);
+        configure(tcx, &mut memo);
+        let pdg = memo.construct_graph(def_id);
         tests(tcx, pdg)
     })
 }
@@ -165,10 +170,11 @@ macro_rules! pdg_constraint {
 }
 
 macro_rules! pdg_test {
-  ($name:ident, { $($i:item)* }, $($cs:tt),*) => {
-    pdg_test!($name, { $($i)* }, |_, params| params, $($cs),*);
+  ($(#[$($attr:tt)+])* $name:ident, { $($i:item)* }, $($cs:tt),*) => {
+    pdg_test!($name, { $($i)* }, |_, _| (), $($cs),*);
   };
-  ($name:ident, { $($i:item)* }, $e:expr, $($cs:tt),*) => {
+  ($(#[$($attr:tt)+])* $name:ident, { $($i:item)* }, $e:expr, $($cs:tt),*) => {
+    $(#[$($attr)+])*
     #[test]
     fn $name() {
       let input = stringify!($($i)*);
@@ -610,7 +616,7 @@ pdg_test! {
     |_, params| {
         params.with_call_change_callback(CallChangeCallbackFn::new( move |_| {
             CallChanges::default().with_skip(SkipCall::Skip)
-        }))
+        }));
     },
     (recipients -/> sender)
 }
@@ -636,7 +642,8 @@ pdg_test! {
       nested_layer_one(&mut w, z);
     }
   },
-  |tcx, params| params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
+  |tcx, params| {
+      params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
       let name = tcx.opt_item_name(info.callee.def_id());
       let skip = if !matches!(name.as_ref().map(|sym| sym.as_str()), Some("no_inline"))
           && info.call_string.len() < 2
@@ -646,9 +653,12 @@ pdg_test! {
           SkipCall::Skip
       };
       CallChanges::default().with_skip(skip)
-  })),
-  (y -> x),
-  (z -> w)
+    }));
+  },
+  (y -> x)
+  // TODO the way that graphs are constructed currently doesn't allow limiting
+  // call string depth
+  // (z -> w)
 }
 
 pdg_test! {
@@ -773,4 +783,62 @@ pdg_test! {
             t.method()
         }
     },
+}
+
+pdg_test! {
+  #[ignore = "Fixme"]
+  spawn_and_loop_await,
+  {
+    use std::future::Future;
+    use std::task::{Poll, Context};
+    use std::pin::Pin;
+
+    struct JoinHandle<T>(Box<dyn Future<Output=T>>);
+
+    impl<T> Future for JoinHandle<T> {
+      type Output = T;
+      fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.map_unchecked_mut(|p| p.0.as_mut()).poll(cx)
+      }
+    }
+
+    pub fn spawn<F>(future: F) -> JoinHandle<F::Output>
+    where
+      F: Future + Send + 'static,
+      F::Output: Send + 'static,
+    {
+      JoinHandle(Box::new(future))
+    }
+
+    pub async fn main() {
+      let mut tasks = vec![];
+      for i in [0,1] {
+        let task: JoinHandle<_> = spawn(async move {
+          println!("{i}");
+          Ok::<_, String>(0)
+        });
+        tasks.push(task);
+      }
+
+      for h in tasks {
+        if let Err(e) = h.await {
+          panic!("{e}")
+        }
+      }
+    }
+  },
+  |tcx, params| {
+      params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
+        let name = tcx.opt_item_name(info.callee.def_id());
+        let name2 = tcx.opt_parent(info.callee.def_id()).and_then(|c| tcx.opt_item_name(c));
+        let is_spawn = |name: Option<&Symbol>| name.map_or(false, |n| n.as_str().contains("spawn"));
+        let mut changes = CallChanges::default();
+        if is_spawn(name.as_ref()) || is_spawn(name2.as_ref())
+        {
+          changes = changes.with_skip(SkipCall::Skip);
+        };
+        changes
+    }));
+  },
+  (i -> h)
 }

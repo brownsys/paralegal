@@ -8,26 +8,31 @@ use crate::{
     ann::{Annotation, MarkerAnnotation},
     desc::*,
     discover::FnToAnalyze,
-    rust::{hir::def, *},
     stats::{Stats, TimedStat},
     utils::*,
-    DefId, HashMap, HashSet, LogLevelConfig, MarkerCtx, Symbol,
+    HashMap, HashSet, LogLevelConfig, MarkerCtx,
 };
 
 use std::time::Instant;
 
 use anyhow::Result;
 use either::Either;
+use flowistry_pdg_construction::{
+    CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
+};
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
-use rustc_span::{FileNameDisplayPreference, Span as RustSpan};
+
+use rustc_hir::{self as hir, def, def_id::DefId};
+use rustc_middle::ty::TyCtxt;
+use rustc_span::{FileNameDisplayPreference, Span as RustSpan, Symbol};
 
 mod graph_converter;
 mod inline_judge;
 
 use graph_converter::GraphConverter;
 
-use self::{graph_converter::PlaceInfoCache, inline_judge::InlineJudge};
+use self::inline_judge::InlineJudge;
 
 /// Read-only database of information the analysis needs.
 ///
@@ -37,7 +42,7 @@ pub struct SPDGGenerator<'tcx> {
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
     stats: Stats,
-    place_info_cache: PlaceInfoCache<'tcx>,
+    pdg_constructor: MemoPdgConstructor<'tcx>,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
@@ -47,12 +52,20 @@ impl<'tcx> SPDGGenerator<'tcx> {
         tcx: TyCtxt<'tcx>,
         stats: Stats,
     ) -> Self {
+        let inline_judge = InlineJudge::new(marker_ctx, tcx, opts.anactrl());
+        let mut pdg_constructor = MemoPdgConstructor::new(tcx);
+        pdg_constructor
+            .with_call_change_callback(MyCallback {
+                judge: inline_judge.clone(),
+                tcx,
+            })
+            .with_dump_mir(opts.dbg().dump_mir());
         Self {
-            inline_judge: InlineJudge::new(marker_ctx, tcx, opts.anactrl()),
+            inline_judge,
+            pdg_constructor,
             opts,
             tcx,
             stats,
-            place_info_cache: Default::default(),
         }
     }
 
@@ -71,14 +84,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
         known_def_ids: &mut impl Extend<DefId>,
     ) -> Result<(Endpoint, SPDG)> {
         info!("Handling target {}", self.tcx.def_path_str(target.def_id));
-        let local_def_id = target.def_id.expect_local();
+        let local_def_id = target.def_id;
 
-        let converter = GraphConverter::new_with_flowistry(
-            self,
-            known_def_ids,
-            target,
-            self.place_info_cache.clone(),
-        )?;
+        let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
         let spdg = converter.make_spdg();
 
         Ok((local_def_id, spdg))
@@ -433,3 +441,98 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
         f()
     }
 }
+
+struct MyCallback<'tcx> {
+    judge: InlineJudge<'tcx>,
+    // stat_wrap: StatStracker,
+    tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
+    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges {
+        let mut changes = CallChanges::default();
+
+        let mut skip = true;
+
+        if is_non_default_trait_method(self.tcx, info.callee.def_id()).is_some() {
+            self.tcx.sess.span_warn(
+                self.tcx.def_span(info.callee.def_id()),
+                "Skipping analysis of unresolvable trait method.",
+            );
+        } else if self.judge.should_inline(&info) {
+            skip = false;
+        };
+
+        if skip {
+            changes = changes.with_skip(SkipCall::Skip);
+        } else {
+            // record_inlining(
+            //     &self.stat_wrap,
+            //     self.tcx,
+            //     info.callee.def_id().expect_local(),
+            //     info.is_cached,
+            // )
+        }
+        changes
+    }
+
+    // fn on_inline_miss(
+    //     &self,
+    //     resolution: FnResolution<'tcx>,
+    //     loc: Location,
+    //     parent: FnResolution<'tcx>,
+    //     call_string: Option<CallString>,
+    //     reason: InlineMissReason,
+    // ) {
+    //     let body = self
+    //         .tcx
+    //         .body_for_def_id(parent.def_id().expect_local())
+    //         .unwrap();
+    //     let span = body
+    //         .body
+    //         .stmt_at(loc)
+    //         .either(|s| s.source_info.span, |t| t.source_info.span);
+    //     let markers_reachable = self.judge.marker_ctx().get_reachable_markers(resolution);
+    //     self.tcx.sess.span_err(
+    //         span,
+    //         format!(
+    //             "Could not inline this function call in {:?}, at {} because {reason:?}. {}",
+    //             parent.def_id(),
+    //             call_string.map_or("root".to_owned(), |c| c.to_string()),
+    //             Print(|f| if markers_reachable.is_empty() {
+    //                 f.write_str("No markers are reachable")
+    //             } else {
+    //                 f.write_str("Markers ")?;
+    //                 write_sep(f, ", ", markers_reachable.iter(), Display::fmt)?;
+    //                 f.write_str(" are reachable")
+    //             })
+    //         ),
+    //     );
+    // }
+}
+
+//type StatStracker = Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>;
+
+// fn record_inlining(tracker: &StatStracker, tcx: TyCtxt<'_>, def_id: LocalDefId, is_in_cache: bool) {
+//     let mut borrow = tracker.borrow_mut();
+//     let (stats, loc_set) = &mut *borrow;
+//     stats.inlinings_performed += 1;
+//     let is_new = loc_set.insert(def_id);
+
+//     if !is_new || is_in_cache {
+//         return;
+//     }
+
+//     let src_map = tcx.sess.source_map();
+//     let span = body_span(&tcx.body_for_def_id(def_id).unwrap().body);
+//     let (_, start_line, _, end_line, _) = src_map.span_to_location_info(span);
+//     let body_lines = (end_line - start_line + 1) as u32;
+//     if is_new {
+//         stats.unique_functions += 1;
+//         stats.unique_locs += body_lines;
+//     }
+//     if !is_in_cache {
+//         stats.analyzed_functions += 1;
+//         stats.analyzed_locs += body_lines;
+//     }
+// }
