@@ -57,6 +57,7 @@ description = "Build and run the policy from the guide."
 cwd = "guide/deletion-policy"
 command = "cargo"
 args = ["run"]
+dependencies = ["install"]
 
 [tasks.doc-check]
 dependencies = [
