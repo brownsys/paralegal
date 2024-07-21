@@ -33,10 +33,12 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
           key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-      - name: Install cargo-make
-        run: rustup run stable cargo install --force --debug cargo-make
-      - name: Run tests
-        run: cargo-make make ci-tests
+      - name: Flowistry Tests
+        run: cargo test -p flowistry_pdg -p flowistry_pdg_construction
+      - name: Paralegal flow tests
+        run: cargo test -p paralegal-flow -p paralegal-spdg
+      - name: Paralegal Policy Tests
+        run: cargo test -p paralegal-policy
 
   format-check:
     name: Format Control
