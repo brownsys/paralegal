@@ -48,9 +48,19 @@ stage them and rerun the script until no more errors occur.
 dependencies = ["format-all", "clippy-all"]
 
 [tasks.cargo-tests]
-description = "Tests discoverable to cargo"
+dependencies = ["flowistry-tests", "paralegal-flow-tests", "policy-tests"]
+
+[tasks.flowistry-tests]
 command = "cargo"
-args = ["test"]
+args = ["-pflowistry_pdg", "-pflowistry_pdg_construction"]
+
+[tasks.paralegal-flow-tests]
+command = "cargo"
+args = ["-pparalegal-flow", "-pparalegal-spdg"]
+
+[tasks.policy-tests]
+command = "cargo"
+args = ["-pparalegal-policy"]
 
 [tasks.guide-project]
 description = "Build and run the policy from the guide."
