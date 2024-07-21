@@ -52,15 +52,15 @@ dependencies = ["flowistry-tests", "paralegal-flow-tests", "policy-tests"]
 
 [tasks.flowistry-tests]
 command = "cargo"
-args = ["-pflowistry_pdg", "-pflowistry_pdg_construction"]
+args = ["test", "-pflowistry_pdg", "-pflowistry_pdg_construction"]
 
 [tasks.paralegal-flow-tests]
 command = "cargo"
-args = ["-pparalegal-flow", "-pparalegal-spdg"]
+args = ["test", "-pparalegal-flow", "-pparalegal-spdg"]
 
 [tasks.policy-tests]
 command = "cargo"
-args = ["-pparalegal-policy"]
+args = ["test", "-pparalegal-policy"]
 
 [tasks.guide-project]
 description = "Build and run the policy from the guide."
