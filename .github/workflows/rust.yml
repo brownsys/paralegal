@@ -36,7 +36,7 @@ jobs:
       - name: Install cargo-make
         run: rustup run stable cargo install --force --debug cargo-make
       - name: Run tests
-        run: cargo make ci-tests
+        run: cargo-make make ci-tests
 
   format-check:
     name: Format Control
