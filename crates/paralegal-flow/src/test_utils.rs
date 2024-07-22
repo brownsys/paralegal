@@ -246,7 +246,7 @@ impl InlineTestBuilder {
                 let pdg = memo.run(tcx).unwrap();
                 let graph = PreFrg::from_description(pdg);
                 let cref = graph.ctrl(&self.ctrl_name);
-                check(cref)
+                check(cref);
             });
     }
 }
@@ -345,7 +345,7 @@ impl PreFrg {
         use_rustc(|| {
             let desc = ProgramDescription::canonical_read(format!(
                 "{dir}/{}",
-                crate::consts::FLOW_GRAPH_OUT_NAME
+                paralegal_spdg::FLOW_GRAPH_OUT_NAME
             ))
             .unwrap();
             Self::from_description(desc)

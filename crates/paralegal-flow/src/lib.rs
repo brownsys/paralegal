@@ -65,7 +65,6 @@ mod stats;
 //mod sah;
 #[macro_use]
 pub mod utils;
-pub mod consts;
 #[cfg(feature = "test")]
 pub mod test_utils;
 

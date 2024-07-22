@@ -2,13 +2,17 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Disable incremental computation. Has no benefit in CI, as the builds are
+  # always fresh. Substantially reduces disk usage (17GB -> 6GB as of writing
+  # this)
+  CARGO_INCREMENTAL: false
 
 jobs:
   compiler-tests:
@@ -17,93 +21,86 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    # just triggers rustup to download the toolchain
-    - name: Cache Toolchain
-      uses: actions/cache@v3
-      with:
-        path: ~/.rustup
-        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Cache Dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-    - name: Install cargo-make
-      run: rustup run stable cargo install --force --debug cargo-make
-    - name: Build
-      run: cargo make install
-    - name: Run tests
-      run: cargo make pdg-tests
+      - uses: actions/checkout@v3
+      - name: Cache Toolchain
+        uses: actions/cache@v3
+        with:
+          path: ~/.rustup
+          key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Cache Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Install cargo-make
+        run: rustup run stable cargo install --force --debug cargo-make
+      - name: Run tests
+        run: cargo make ci-tests
 
   format-check:
     name: Format Control
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    # just triggers rustup to download the toolchain
-    - name: Cache Toolchain
-      uses: actions/cache@v3
-      with:
-        path: ~/.rustup
-        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Install cargo-make
-      run: rustup run stable cargo install --force --debug cargo-make
-    - name: Run checks
-      run: cargo make format-check-all
+      - uses: actions/checkout@v3
+      - name: Cache Toolchain
+        uses: actions/cache@v3
+        with:
+          path: ~/.rustup
+          key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Install cargo-make
+        run: rustup run stable cargo install --force --debug cargo-make
+      - name: Run checks
+        run: cargo make format-check-all
 
   linting:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Cache Toolchain
-      uses: actions/cache@v3
-      with:
-        path: ~/.rustup
-        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Cache Dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-    - name: Install cargo-make
-      run: rustup run stable cargo install --force --debug cargo-make
-    - name: Here come the complaints
-      run: cargo make clippy-check-all
+      - uses: actions/checkout@v3
+      - name: Cache Toolchain
+        uses: actions/cache@v3
+        with:
+          path: ~/.rustup
+          key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Cache Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Install cargo-make
+        run: rustup run stable cargo install --force --debug cargo-make
+      - name: Here come the complaints
+        run: cargo make clippy-check-all
 
   documentation:
     name: Documentation Test
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Cache Toolchain
-      uses: actions/cache@v3
-      with:
-        path: ~/.rustup
-        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
-    - name: Cache Dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-    - name: Install cargo-make
-      run: rustup run stable cargo install --force --debug cargo-make
-    - name: Here come the complaints
-      run: cargo make doc-check
+      - uses: actions/checkout@v3
+      - name: Cache Toolchain
+        uses: actions/cache@v3
+        with:
+          path: ~/.rustup
+          key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Cache Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Install cargo-make
+        run: rustup run stable cargo install --force --debug cargo-make
+      - name: Here come the complaints
+        run: cargo make doc-check
