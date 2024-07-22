@@ -29,9 +29,9 @@ debug = true
 [replace."rustc_utils:0.7.4-nightly-2023-08-25"]
 # path = "../rustc_plugin/crates/rustc_utils"
 git = "https://github.com/JustusAdam/rustc_plugin"
-rev = "094d1bd2e483edd968e402fe0a84cc6d2ce75882"
+rev = "da742667ec1c62e85fab41fb15634f648345469c"
 
 [replace."rustc_plugin:0.7.4-nightly-2023-08-25"]
 # path = "../rustc_plugin/crates/rustc_plugin"
 git = "https://github.com/JustusAdam/rustc_plugin"
-rev = "094d1bd2e483edd968e402fe0a84cc6d2ce75882"
+rev = "da742667ec1c62e85fab41fb15634f648345469c"
