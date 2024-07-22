@@ -9,7 +9,7 @@ use rustc_middle::{
         AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::{GenericArgsRef, Instance, TyCtxt},
+    ty::{GenericArgsRef, ImplSubject, Instance, TyCtxt},
 };
 
 use super::{
@@ -184,14 +184,23 @@ pub enum AsyncDeterminationResult<T> {
     NotAsync,
 }
 
+fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
+    let result = tcx.generator_is_async(instance.def_id());
+    println!("Instance {instance:?}, result: {result}");
+    result
+}
+
 impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
     pub(crate) fn try_poll_call_kind<'a>(
         &'a self,
         def_id: DefId,
+        resolved_fn: Instance<'tcx>,
         original_args: &'a [Operand<'tcx>],
     ) -> AsyncDeterminationResult<CallKind<'tcx>> {
         let lang_items = self.tcx().lang_items();
-        if lang_items.future_poll_fn() == Some(def_id) {
+        if lang_items.future_poll_fn() == Some(def_id)
+            && is_async_fn_or_block(self.tcx(), resolved_fn)
+        {
             match self.find_async_args(original_args) {
                 Ok((fun, loc, args)) => {
                     AsyncDeterminationResult::Resolved(CallKind::AsyncPoll(fun, loc, args))

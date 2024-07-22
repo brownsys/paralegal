@@ -410,7 +410,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
-        let call_kind = self.classify_call_kind(called_def_id, resolved_def_id, args, span);
+        let call_kind = self.classify_call_kind(called_def_id, resolved_fn, args, span);
 
         let calling_convention = CallingConvention::from_call_kind(&call_kind, args);
 
@@ -637,14 +637,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     fn classify_call_kind<'b>(
         &'b self,
         def_id: DefId,
-        resolved_def_id: DefId,
+        resolved_fn: Instance<'tcx>,
         original_args: &'b [Operand<'tcx>],
         span: Span,
     ) -> CallKind<'tcx> {
-        match self.try_poll_call_kind(def_id, original_args) {
+        match self.try_poll_call_kind(def_id, resolved_fn, original_args) {
             AsyncDeterminationResult::Resolved(r) => r,
             AsyncDeterminationResult::NotAsync => self
-                .try_indirect_call_kind(resolved_def_id)
+                .try_indirect_call_kind(resolved_fn.def_id())
                 .unwrap_or(CallKind::Direct),
             AsyncDeterminationResult::Unresolvable(reason) => {
                 self.tcx().sess.span_fatal(span, reason)
