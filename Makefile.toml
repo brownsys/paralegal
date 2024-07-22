@@ -48,7 +48,9 @@ stage them and rerun the script until no more errors occur.
 dependencies = ["format-all", "clippy-all"]
 
 [tasks.cargo-tests]
-dependencies = ["flowistry-tests", "paralegal-flow-tests", "policy-tests"]
+command = "cargo"
+args = ["test"]
+#dependencies = ["flowistry-tests", "paralegal-flow-tests", "policy-tests"]
 
 [tasks.flowistry-tests]
 command = "cargo"
