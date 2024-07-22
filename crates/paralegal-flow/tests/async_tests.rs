@@ -261,7 +261,7 @@ define_test!(markers: graph -> {
 });
 
 #[test]
-fn await_on_generic() {
+fn selector_await_on_generic() {
     InlineTestBuilder::new(stringify!(
         use std::{
             future::{Future},
@@ -354,7 +354,7 @@ fn await_with_inner_generic_constrained() {
 }
 
 #[test]
-fn async_through_another_layer() {
+fn selector_async_through_another_layer() {
     InlineTestBuilder::new(stringify!(
         async fn maker(x: u32, y: u32) -> u32 {
             x

@@ -35,6 +35,10 @@ jobs:
           key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - name: Flowistry Tests
         run: cargo test -p flowistry_pdg -p flowistry_pdg_construction
+      - name: Async through another layer standalone
+        run: cargo test --test async_tests -- selector_async_through_another_layer
+      - name: Racing tests together
+        run: cargo test --test async_tests -- selector
       - name: Paralegal flow tests
         run: cargo test -p paralegal-flow -p paralegal-spdg
       - name: Paralegal Policy Tests
