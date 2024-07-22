@@ -12,7 +12,7 @@ use super::{
     ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind, VerificationHash,
 };
 use crate::{
-    consts, utils,
+    utils,
     utils::{write_sep, Print, TinyBitSet},
     Symbol,
 };
@@ -27,6 +27,28 @@ use tokenstream::*;
 pub extern crate nom;
 
 use nom::{error::Error, Parser};
+
+pub struct Symbols {
+    /// The symbol `arguments` which we use for refinement in a `#[paralegal_flow::marker(...)]`
+    /// annotation.
+    arg_sym: Symbol,
+    /// The symbol `return` which we use for refinement in a `#[paralegal_flow::marker(...)]`
+    /// annotation.
+    return_sym: Symbol,
+    /// The symbol `verification_hash` which we use for refinement in a
+    /// `#[paralegal_flow::exception(...)]` annotation.
+    verification_hash_sym: Symbol,
+}
+
+impl Default for Symbols {
+    fn default() -> Self {
+        Self {
+            arg_sym: Symbol::intern("arguments"),
+            return_sym: Symbol::intern("return"),
+            verification_hash_sym: Symbol::intern("verification_hash"),
+        }
+    }
+}
 
 /// Just a newtype-wrapper for `CursorRef` so we can implement traits on it
 /// (specifically [`nom::InputLength`]).
@@ -248,14 +270,17 @@ pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<De
 }
 
 /// Parser for an [`ExceptionAnnotation`]
-pub(crate) fn match_exception(ann: &rustc_ast::AttrArgs) -> Result<ExceptionAnnotation, String> {
+pub(crate) fn match_exception(
+    symbols: &Symbols,
+    ann: &rustc_ast::AttrArgs,
+) -> Result<ExceptionAnnotation, String> {
     use rustc_ast::*;
     match ann {
         ast::AttrArgs::Delimited(dargs) => {
             let p = |i| {
                 let (i, verification_hash) = nom::combinator::opt(nom::sequence::preceded(
                     nom::sequence::tuple((
-                        assert_identifier(*consts::VERIFICATION_HASH_SYM),
+                        assert_identifier(symbols.verification_hash_sym),
                         assert_token(TokenKind::Eq),
                     )),
                     lit(token::LitKind::Str, |s| {
@@ -278,21 +303,21 @@ pub(crate) fn match_exception(ann: &rustc_ast::AttrArgs) -> Result<ExceptionAnno
 /// Is not guaranteed to consume the entire input if does not match. You may
 /// want to call [`nom::combinator::eof`] afterwards to guarantee all input has
 /// been consumed.
-fn refinements_parser(i: I) -> R<MarkerRefinement> {
+fn refinements_parser<'a>(symbols: &Symbols, i: I<'a>) -> R<'a, MarkerRefinement> {
     nom::combinator::map_res(
         // nom::multi::separated_list0(
         //     assert_token(TokenKind::Comma),
         nom::branch::alt((
             nom::sequence::preceded(
                 nom::sequence::tuple((
-                    assert_identifier(*consts::ARG_SYM),
+                    assert_identifier(symbols.arg_sym),
                     assert_token(TokenKind::Eq),
                 )),
                 nom::combinator::map(tiny_bitset, MarkerRefinementKind::Argument),
             ),
             nom::combinator::value(
                 MarkerRefinementKind::Return,
-                assert_identifier(*consts::RETURN_SYM),
+                assert_identifier(symbols.return_sym),
             ),
         )),
         //),
@@ -305,7 +330,10 @@ fn refinements_parser(i: I) -> R<MarkerRefinement> {
 }
 
 /// Parser for a [`LabelAnnotation`]
-pub(crate) fn ann_match_fn(ann: &rustc_ast::AttrArgs) -> Result<MarkerAnnotation, String> {
+pub(crate) fn ann_match_fn(
+    symbols: &Symbols,
+    ann: &rustc_ast::AttrArgs,
+) -> Result<MarkerAnnotation, String> {
     use rustc_ast::*;
     use token::*;
     match ann {
@@ -313,7 +341,8 @@ pub(crate) fn ann_match_fn(ann: &rustc_ast::AttrArgs) -> Result<MarkerAnnotation
             let p = |i| {
                 let (i, label) = identifier(i)?;
                 let (i, cont) = nom::combinator::opt(assert_token(TokenKind::Comma))(i)?;
-                let (i, refinement) = nom::combinator::cond(cont.is_some(), refinements_parser)(i)?;
+                let (i, refinement) =
+                    nom::combinator::cond(cont.is_some(), |c| refinements_parser(symbols, c))(i)?;
                 let (_, _) = nom::combinator::eof(i)?;
                 Ok(MarkerAnnotation {
                     marker: Identifier::new(label),

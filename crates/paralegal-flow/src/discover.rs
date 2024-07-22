@@ -3,7 +3,9 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
-use crate::{ana::SPDGGenerator, ann::db::MarkerDatabase, consts, desc::*, stats::Stats, utils::*};
+use crate::{
+    ana::SPDGGenerator, ann::db::MarkerDatabase, desc::*, stats::Stats, sym_vec, utils::*,
+};
 
 use rustc_hir::{
     def_id::LocalDefId,
@@ -37,6 +39,9 @@ pub struct CollectingVisitor<'tcx> {
     stats: Stats,
 
     pub marker_ctx: MarkerDatabase<'tcx>,
+    /// This will match the annotation `#[paralegal_flow::analyze]` when using
+    /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
+    analyze_marker: AttrMatchT,
 }
 
 /// A function we will be targeting to analyze with
@@ -77,6 +82,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             functions_to_analyze,
             marker_ctx: MarkerDatabase::init(tcx, opts),
             stats,
+            analyze_marker: sym_vec!["paralegal_flow", "analyze"],
         }
     }
 
@@ -102,7 +108,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             .hir()
             .attrs(self.tcx.local_def_id_to_hir_id(ident))
             .iter()
-            .any(|a| a.matches_path(&consts::ANALYZE_MARKER))
+            .any(|a| a.matches_path(&self.analyze_marker))
     }
 }
 

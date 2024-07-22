@@ -5,7 +5,6 @@ extern crate rustc_middle;
 extern crate rustc_span;
 
 use hir::def_id::DefId;
-use rustc_utils::mir::borrowck_facts;
 
 use crate::{
     desc::{Identifier, ProgramDescription},
@@ -230,6 +229,11 @@ impl InlineTestBuilder {
 
         args.setup_logging();
 
+        println!(
+            "Starting test from thread {:?}",
+            std::thread::current().id()
+        );
+
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(
                 [
@@ -242,20 +246,12 @@ impl InlineTestBuilder {
                 .map(ToOwned::to_owned),
             )
             .compile(move |result| {
-                println!(
-                    "MIR cache before test has {} entries",
-                    borrowck_facts::MIR_BODIES.with(|b| b.len())
-                );
                 let tcx = result.tcx;
                 let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
                 let pdg = memo.run(tcx).unwrap();
                 let graph = PreFrg::from_description(pdg);
                 let cref = graph.ctrl(&self.ctrl_name);
                 check(cref);
-                println!(
-                    "MIR cache after test has {} entries",
-                    borrowck_facts::MIR_BODIES.with(|b| b.len())
-                );
             });
     }
 }
@@ -354,7 +350,7 @@ impl PreFrg {
         use_rustc(|| {
             let desc = ProgramDescription::canonical_read(format!(
                 "{dir}/{}",
-                crate::consts::FLOW_GRAPH_OUT_NAME
+                paralegal_spdg::FLOW_GRAPH_OUT_NAME
             ))
             .unwrap();
             Self::from_description(desc)
