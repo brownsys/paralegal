@@ -35,12 +35,16 @@ jobs:
           key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
       - name: Flowistry Tests
         run: cargo test -p flowistry_pdg -p flowistry_pdg_construction
+      - name: Report disk usage
+        run: "du -h -d 1 target | sort -h"
       - name: Racing tests together
         run: cargo test --test async_tests -- selector
+      - name: Report disk usage
+        run: "du -h -d 1 target | sort -h"
       - name: Paralegal flow tests
         run: cargo test -p paralegal-flow -p paralegal-spdg
       - name: Report disk usage
-        run: "du -h | sort -h"
+        run: "du -h -d 1 target | sort -h"
       - name: Paralegal Policy Tests
         run: cargo test -p paralegal-policy
 
