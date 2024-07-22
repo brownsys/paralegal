@@ -41,6 +41,8 @@ jobs:
         run: cargo test --test async_tests -- selector
       - name: Paralegal flow tests
         run: cargo test -p paralegal-flow -p paralegal-spdg
+      - name: Report disk usage
+        run: "du -sh | sort -h"
       - name: Paralegal Policy Tests
         run: cargo test -p paralegal-policy
 
