@@ -229,11 +229,6 @@ impl InlineTestBuilder {
 
         args.setup_logging();
 
-        println!(
-            "Starting test from thread {:?}",
-            std::thread::current().id()
-        );
-
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(
                 [

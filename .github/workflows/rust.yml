@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Disable incremental computation. Has no benefit in CI, as the builds are
+  # always fresh. Substantially reduces disk usage (17GB -> 6GB as of writing
+  # this)
   CARGO_INCREMENTAL: false
 
 jobs:
