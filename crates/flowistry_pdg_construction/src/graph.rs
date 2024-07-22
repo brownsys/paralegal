@@ -223,8 +223,8 @@ impl<'tcx> DepGraph<'tcx> {
             dot::Dot::with_attr_getters(
                 &self.graph,
                 &[],
-                &|_, _| format!("fontname=\"Courier New\""),
-                &|_, (_, _)| format!("fontname=\"Courier New\",shape=box")
+                &|_, _| "fontname=\"Courier New\"".to_string(),
+                &|_, (_, _)| "fontname=\"Courier New\",shape=box".to_string(),
             )
         );
         rustc_utils::mir::body::run_dot(path.as_ref(), graph_dot.into_bytes())
