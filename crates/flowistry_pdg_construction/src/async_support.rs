@@ -6,11 +6,12 @@ use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
+        AggregateKind, BasicBlock, Body, LocalKind, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
+use rustc_utils::OperandExt;
 
 use super::{
     local_analysis::{CallKind, LocalAnalysis},
@@ -289,51 +290,42 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
             "Assignment to alias of pin::new input is not a call"
         );
 
-        let mut chase_target = Err(&into_future_args[0]);
-
-        while let Err(target) = chase_target {
-            let async_fn_call_loc = get_def_for_op(target)?;
-            let stmt = &self.mono_body.stmt_at(async_fn_call_loc);
-            chase_target = match stmt {
-                Either::Right(Terminator {
-                    kind:
-                        TerminatorKind::Call {
-                            func, destination, ..
-                        },
-                    ..
-                }) => {
-                    let (op, generics) = self.operand_to_def_id(func).unwrap();
-                    Ok((Some(op), generics, *destination, async_fn_call_loc))
+        let target = &into_future_args[0];
+        let creation_loc = get_def_for_op(target)?;
+        let stmt = &self.mono_body.stmt_at(creation_loc);
+        let (op, generics, generator_data) = match stmt {
+            Either::Right(Terminator {
+                kind:
+                    TerminatorKind::Call {
+                        func, destination, ..
+                    },
+                ..
+            }) => {
+                let (op, generics) = self.operand_to_def_id(func).unwrap();
+                (Some(op), generics, *destination)
+            }
+            Either::Left(Statement { kind, .. }) => match kind {
+                StatementKind::Assign(box (
+                    lhs,
+                    Rvalue::Aggregate(box AggregateKind::Generator(def_id, generic_args, _), _args),
+                )) => {
+                    assert!(self.tcx().generator_is_async(*def_id));
+                    (None, *generic_args, *lhs)
                 }
-                Either::Left(Statement { kind, .. }) => match kind {
-                    StatementKind::Assign(box (
-                        lhs,
-                        Rvalue::Aggregate(
-                            box AggregateKind::Generator(def_id, generic_args, _),
-                            _args,
-                        ),
-                    )) => {
-                        assert!(self.tcx().generator_is_async(*def_id));
-                        Ok((None, *generic_args, *lhs, async_fn_call_loc))
-                    }
-                    // StatementKind::Assign(box (_, Rvalue::Use(target))) => {
-                    //     let (op, generics) = self
-                    //         .operand_to_def_id(target)
-                    //         .ok_or_else(|| "Nope".to_string())?;
-                    //     Ok((None, generics, target.place().unwrap(), async_fn_call_loc))
-                    // }
-                    StatementKind::Assign(box (_, Rvalue::Use(target))) => Err(target),
-                    _ => {
-                        panic!("Assignment to into_future input is not a call: {stmt:?}");
-                    }
-                },
+                StatementKind::Assign(box (_, Rvalue::Use(target))) => {
+                    let (op, generics) = self
+                        .operand_to_def_id(target)
+                        .ok_or_else(|| "Nope".to_string())?;
+                    (None, generics, target.place().unwrap())
+                }
                 _ => {
                     panic!("Assignment to into_future input is not a call: {stmt:?}");
                 }
-            };
-        }
-
-        let (op, generics, generator_data, creation_loc) = chase_target.unwrap();
+            },
+            _ => {
+                panic!("Assignment to into_future input is not a call: {stmt:?}");
+            }
+        };
 
         let async_fn_parent = op
             .map(|def_id| {
