@@ -287,6 +287,39 @@ fn await_on_generic() {
     ))
     .check(|_ctrl| {})
 }
+#[test]
+fn await_with_inner_generic_sanity() {
+    InlineTestBuilder::new(stringify!(
+        use std::{
+            future::{Future},
+            task::{Context, Poll},
+            pin::Pin,
+        };
+        struct AFuture<'a, T: ?Sized>(&'a mut T);
+
+        impl<'a, T> Future for AFuture<'a, T> {
+            type Output = usize;
+            fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+                unimplemented!()
+            }
+        }
+
+        trait Trait {
+            fn method(&mut self) -> AFuture<'_, Self> {
+                AFuture(self)
+            }
+        }
+
+        struct Impl;
+
+        impl Trait for Impl {}
+
+        async fn main(mut t: Impl) -> usize {
+            t.method().await
+        }
+    ))
+    .check(|_ctrl| {})
+}
 
 #[test]
 fn await_with_inner_generic() {
@@ -298,7 +331,7 @@ fn await_with_inner_generic() {
         };
         struct AFuture<'a, T: ?Sized>(&'a mut T);
 
-        impl<'a, T> Future for AFuture<'a, T> {
+        impl<'a, T: ?Sized> Future for AFuture<'a, T> {
             type Output = usize;
             fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
                 unimplemented!()

@@ -387,13 +387,41 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         let Some(resolved_fn) =
             utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)
         else {
-            if let Some(d) = generic_args.iter().find(|arg| matches!(arg.unpack(), GenericArgKind::Type(t) if matches!(t.kind(), TyKind::Dynamic(..)))) {
-                self.tcx().sess.span_warn(self.tcx().def_span(called_def_id), format!("could not resolve instance due to dynamic argument: {d:?}"));
-                return None;
+            let dynamics = generic_args.iter()
+                .flat_map(|g| g.walk())
+                .filter(|arg| matches!(arg.unpack(), GenericArgKind::Type(t) if matches!(t.kind(), TyKind::Dynamic(..))))
+                .collect::<Box<[_]>>();
+            let mut msg = format!(
+                "instance resolution for call to function {} failed.",
+                tcx.def_path_str(called_def_id)
+            );
+            if !dynamics.is_empty() {
+                use std::fmt::Write;
+                write!(msg, " Dynamic arguments ").unwrap();
+                let mut first = true;
+                for dyn_ in dynamics.iter() {
+                    if !first {
+                        write!(msg, ", ").unwrap();
+                    }
+                    first = false;
+                    write!(msg, "`{dyn_}`").unwrap();
+                }
+                write!(
+                    msg,
+                    " were found.\n\
+                    These may have been injected by Paralegal to instantiate generics \n\
+                    at the entrypoint (location of #[paralegal::analyze]).\n\
+                    A likely reason why this may cause this resolution to fail is if the\n\
+                    method or function this attempts to resolve has a `Sized` constraint.\n\
+                    Such a constraint can be implicit if this is a type variable in a\n\
+                    trait definition and no refutation (`?Sized` constraint) is present."
+                )
+                .unwrap();
+                self.tcx().sess.span_warn(span, msg);
             } else {
-                tcx.sess.span_err(span, "instance resolution failed: too unspecific");
-                return None;
+                self.tcx().sess.span_err(span, msg);
             }
+            return None;
         };
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {

@@ -9,7 +9,7 @@ use rustc_middle::{
         AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::{GenericArgsRef, ImplSubject, Instance, TyCtxt},
+    ty::{GenericArgsRef, Instance, TyCtxt},
 };
 
 use super::{
@@ -312,7 +312,10 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
                             box AggregateKind::Generator(def_id, generic_args, _),
                             _args,
                         ),
-                    )) => Ok((None, *generic_args, *lhs, async_fn_call_loc)),
+                    )) => {
+                        assert!(self.tcx().generator_is_async(*def_id));
+                        Ok((None, *generic_args, *lhs, async_fn_call_loc))
+                    }
                     // StatementKind::Assign(box (_, Rvalue::Use(target))) => {
                     //     let (op, generics) = self
                     //         .operand_to_def_id(target)
