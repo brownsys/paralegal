@@ -24,7 +24,7 @@ impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
         args: &'a [Operand<'tcx>],
     ) -> CallingConvention<'tcx, 'a> {
         match kind {
-            CallKind::AsyncPoll(_, _, ctx) => CallingConvention::Async(*ctx),
+            CallKind::AsyncPoll(poll) => CallingConvention::Async(poll.generator_data),
             CallKind::Direct => CallingConvention::Direct(args),
             CallKind::Indirect => CallingConvention::Indirect {
                 closure_arg: &args[0],

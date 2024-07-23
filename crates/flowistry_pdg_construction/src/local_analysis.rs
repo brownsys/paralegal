@@ -439,7 +439,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 callee: resolved_fn,
                 call_string: self.make_call_string(location),
                 is_cached,
-                async_parent: if let CallKind::AsyncPoll(resolution, _loc, _) = call_kind {
+                async_parent: if let CallKind::AsyncPoll(poll) = call_kind {
                     // Special case for async. We ask for skipping not on the closure, but
                     // on the "async" function that created it. This is needed for
                     // consistency in skipping. Normally, when "poll" is inlined, mutations
@@ -448,7 +448,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     // those mutations to occur. To ensure this we always ask for the
                     // "CallChanges" on the creator so that both creator and closure have
                     // the same view of whether they are inlined or "Skip"ped.
-                    Some(resolution)
+                    poll.async_fn_parent
                 } else {
                     None
                 },
@@ -747,7 +747,7 @@ pub enum CallKind<'tcx> {
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
     Indirect,
     /// A poll to an async function, like `f.await`.
-    AsyncPoll(Instance<'tcx>, Location, Place<'tcx>),
+    AsyncPoll(AsyncPoll<'tcx>),
 }
 
 #[derive(strum::AsRefStr)]
