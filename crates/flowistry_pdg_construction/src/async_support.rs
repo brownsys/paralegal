@@ -27,6 +27,19 @@ pub enum AsyncType {
     Trait,
 }
 
+/// Context for a call to [`Future::poll`](std::future::Future::poll), when
+/// called on a future created via an `async fn` or an async block.
+pub struct AsyncFnPollEnv<'tcx> {
+    /// If the generator came from an `async fn`, then this is that function. If
+    /// it is from an async block, this is `None`.
+    pub async_fn_parent: Option<Instance<'tcx>>,
+    /// Where was the `async fn` called, or where was the async block created.
+    pub creation_loc: Location,
+    /// A place which carries the runtime value representing the generator in
+    /// the caller.
+    pub generator_data: Place<'tcx>,
+}
+
 /// Stores ids that are needed to construct projections around async functions.
 pub(crate) struct AsyncInfo {
     pub poll_ready_variant_idx: VariantIdx,
@@ -184,18 +197,34 @@ pub enum AsyncDeterminationResult<T> {
     NotAsync,
 }
 
+/// Does this instance refer to an `async fn` or `async {}`.
+fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
+    // It turns out that the `DefId` of the [`poll`](std::future::Future::poll)
+    // impl for an `async fn` or async block is the same as the `DefId` of the
+    // generator itself. That means after resolution (e.g. on the `Instance`) we
+    // only need to call `tcx.generator_is_async`.
+    tcx.generator_is_async(instance.def_id())
+}
+
 impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
+    /// Checks whether the function call, described by the unresolved `def_id`
+    /// and the resolved instance `resolved_fn` is a call to [`<T as
+    /// Future>::poll`](std::future::Future::poll) where `T` is the type of an
+    /// `async fn` or `async {}` created generator.
+    ///
+    /// Resolves the original arguments that constituted the generator.
     pub(crate) fn try_poll_call_kind<'a>(
         &'a self,
         def_id: DefId,
+        resolved_fn: Instance<'tcx>,
         original_args: &'a [Operand<'tcx>],
     ) -> AsyncDeterminationResult<CallKind<'tcx>> {
         let lang_items = self.tcx().lang_items();
-        if lang_items.future_poll_fn() == Some(def_id) {
+        if lang_items.future_poll_fn() == Some(def_id)
+            && is_async_fn_or_block(self.tcx(), resolved_fn)
+        {
             match self.find_async_args(original_args) {
-                Ok((fun, loc, args)) => {
-                    AsyncDeterminationResult::Resolved(CallKind::AsyncPoll(fun, loc, args))
-                }
+                Ok(poll) => AsyncDeterminationResult::Resolved(CallKind::AsyncPoll(poll)),
                 Err(str) => AsyncDeterminationResult::Unresolvable(str),
             }
         } else {
@@ -207,12 +236,18 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
     fn find_async_args<'a>(
         &'a self,
         args: &'a [Operand<'tcx>],
-    ) -> Result<(Instance<'tcx>, Location, Place<'tcx>), String> {
+    ) -> Result<AsyncFnPollEnv<'tcx>, String> {
         macro_rules! let_assert {
             ($p:pat = $e:expr, $($arg:tt)*) => {
                 let $p = $e else {
                     let msg = format!($($arg)*);
-                    return Err(format!("Abandoning attempt to handle async because pattern {} could not be matched to {:?}: {}", stringify!($p), $e, msg));
+                    return Err(format!(
+                        "Abandoning attempt to handle async because pattern {} (line {}) could not be matched to {:?}: {}",
+                        stringify!($p),
+                        line!(),
+                        $e,
+                        msg
+                    ));
                 };
             }
         }
@@ -267,56 +302,60 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
             "Assignment to alias of pin::new input is not a call"
         );
 
-        let mut chase_target = Err(&into_future_args[0]);
-
-        while let Err(target) = chase_target {
-            let async_fn_call_loc = get_def_for_op(target)?;
-            let stmt = &self.mono_body.stmt_at(async_fn_call_loc);
-            chase_target = match stmt {
-                Either::Right(Terminator {
-                    kind:
-                        TerminatorKind::Call {
-                            func, destination, ..
-                        },
-                    ..
-                }) => {
-                    let (op, generics) = self.operand_to_def_id(func).unwrap();
-                    Ok((op, generics, *destination, async_fn_call_loc))
+        let target = &into_future_args[0];
+        let creation_loc = get_def_for_op(target)?;
+        let stmt = &self.mono_body.stmt_at(creation_loc);
+        let (op, generics, generator_data) = match stmt {
+            Either::Right(Terminator {
+                kind:
+                    TerminatorKind::Call {
+                        func, destination, ..
+                    },
+                ..
+            }) => {
+                let (op, generics) = self.operand_to_def_id(func).unwrap();
+                (Some(op), generics, *destination)
+            }
+            Either::Left(Statement { kind, .. }) => match kind {
+                StatementKind::Assign(box (
+                    lhs,
+                    Rvalue::Aggregate(box AggregateKind::Generator(def_id, generic_args, _), _args),
+                )) => {
+                    assert!(self.tcx().generator_is_async(*def_id));
+                    (None, *generic_args, *lhs)
                 }
-                Either::Left(Statement { kind, .. }) => match kind {
-                    StatementKind::Assign(box (
-                        lhs,
-                        Rvalue::Aggregate(
-                            box AggregateKind::Generator(def_id, generic_args, _),
-                            _args,
-                        ),
-                    )) => Ok((*def_id, *generic_args, *lhs, async_fn_call_loc)),
-                    StatementKind::Assign(box (_, Rvalue::Use(target))) => {
-                        let (op, generics) = self
-                            .operand_to_def_id(target)
-                            .ok_or_else(|| "Nope".to_string())?;
-                        Ok((op, generics, target.place().unwrap(), async_fn_call_loc))
-                    }
-                    _ => {
-                        panic!("Assignment to into_future input is not a call: {stmt:?}");
-                    }
-                },
+                StatementKind::Assign(box (_, Rvalue::Use(target))) => {
+                    let generics = self
+                        .operand_to_def_id(target)
+                        .ok_or_else(|| "Nope".to_string())?
+                        .1;
+                    (None, generics, target.place().unwrap())
+                }
                 _ => {
                     panic!("Assignment to into_future input is not a call: {stmt:?}");
                 }
-            };
-        }
+            },
+            _ => {
+                panic!("Assignment to into_future input is not a call: {stmt:?}");
+            }
+        };
 
-        let (op, generics, calling_convention, async_fn_call_loc) = chase_target.unwrap();
+        let async_fn_parent = op
+            .map(|def_id| {
+                utils::try_resolve_function(
+                    self.tcx(),
+                    def_id,
+                    self.tcx().param_env_reveal_all_normalized(self.def_id),
+                    generics,
+                )
+                .ok_or_else(|| "Instance resolution failed".to_string())
+            })
+            .transpose()?;
 
-        let resolution = utils::try_resolve_function(
-            self.tcx(),
-            op,
-            self.tcx().param_env_reveal_all_normalized(self.def_id),
-            generics,
-        )
-        .ok_or_else(|| "Instance resolution failed".to_string())?;
-
-        Ok((resolution, async_fn_call_loc, calling_convention))
+        Ok(AsyncFnPollEnv {
+            async_fn_parent,
+            creation_loc,
+            generator_data,
+        })
     }
 }

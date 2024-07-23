@@ -287,10 +287,8 @@ fn await_on_generic() {
     ))
     .check(|_ctrl| {})
 }
-
 #[test]
-#[ignore = "https://github.com/brownsys/paralegal/issues/159"]
-fn await_with_inner_generic() {
+fn await_with_inner_generic_sanity() {
     InlineTestBuilder::new(stringify!(
         use std::{
             future::{Future},
@@ -312,6 +310,40 @@ fn await_with_inner_generic() {
             }
         }
 
+        struct Impl;
+
+        impl Trait for Impl {}
+
+        async fn main(mut t: Impl) -> usize {
+            t.method().await
+        }
+    ))
+    .check(|_ctrl| {})
+}
+
+#[test]
+fn await_with_inner_generic() {
+    InlineTestBuilder::new(stringify!(
+        use std::{
+            future::{Future},
+            task::{Context, Poll},
+            pin::Pin,
+        };
+        struct AFuture<'a, T: ?Sized>(&'a mut T);
+
+        impl<'a, T: ?Sized> Future for AFuture<'a, T> {
+            type Output = usize;
+            fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+                unimplemented!()
+            }
+        }
+
+        trait Trait {
+            fn method(&mut self) -> AFuture<'_, Self> {
+                AFuture(self)
+            }
+        }
+
         async fn main<T: Trait>(mut t: T) -> usize {
             t.method().await
         }
@@ -320,7 +352,6 @@ fn await_with_inner_generic() {
 }
 
 #[test]
-#[ignore = "https://github.com/brownsys/paralegal/issues/159"]
 fn await_with_inner_generic_constrained() {
     InlineTestBuilder::new(stringify!(
         use std::{
@@ -390,5 +421,116 @@ fn async_through_another_layer() {
         assert!(!sinks.is_empty());
         assert!(!sources.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
         assert!(sinks.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+    })
+}
+
+#[test]
+#[ignore = "https://github.com/brownsys/paralegal/issues/138"]
+fn field_precision_at_future_creation() {
+    InlineTestBuilder::new(stringify!(
+        use std::{
+            future::Future,
+            task::{Context, Poll},
+            pin::Pin,
+        };
+
+        struct MyFuture(u32);
+
+        impl MyFuture {
+            fn new(x: u32, y: u32) -> Self {
+                MyFuture(x)
+            }
+        }
+
+        impl Future for MyFuture {
+            type Output = u32;
+            fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+                Poll::Ready(self.0)
+            }
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn mark_source<T>(t: T) -> T {
+            t
+        }
+
+        #[paralegal_flow::marker(source_2, return)]
+        fn mark_source_2<T>(t: T) -> T {
+            t
+        }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(t: T) {}
+
+        async fn main() {
+            let src = mark_source(1);
+            let src2 = mark_source_2(2);
+            sink(MyFuture::new(src, src2).await)
+        }
+
+    ))
+    .check(|ctrl| {
+        let sources = ctrl.marked(Identifier::new_intern("source"));
+        let sinks = ctrl.marked(Identifier::new_intern("source_2"));
+        assert!(!sources.is_empty());
+        assert!(!sinks.is_empty());
+        // Ignored until https://github.com/brownsys/paralegal/issues/138 is fixed
+        // assert!(!sources.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+        // assert!(sinks.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+    })
+}
+
+#[test]
+fn field_precision_at_future_consumption() {
+    InlineTestBuilder::new(stringify!(
+        use std::{
+            future::Future,
+            task::{Context, Poll},
+            pin::Pin,
+        };
+
+        struct MyFuture(u32, u32);
+
+        impl MyFuture {
+            fn new(x: u32, y: u32) -> Self {
+                MyFuture(x, y)
+            }
+        }
+
+        impl Future for MyFuture {
+            type Output = u32;
+            fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+                Poll::Ready(self.0)
+            }
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn mark_source<T>(t: T) -> T {
+            t
+        }
+
+        #[paralegal_flow::marker(source_2, return)]
+        fn mark_source_2<T>(t: T) -> T {
+            t
+        }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(t: T) {}
+
+        async fn main() {
+            let src = mark_source(1);
+            let src2 = mark_source_2(2);
+            sink(MyFuture::new(src, src2).await)
+        }
+
+    ))
+    .check(|ctrl| {
+        let sources = ctrl.marked(Identifier::new_intern("source"));
+        let sinks = ctrl.marked(Identifier::new_intern("source_2"));
+        assert!(!sources.is_empty());
+        assert!(!sinks.is_empty());
+        // Ignored until https://github.com/brownsys/paralegal/issues/138 is fixed
+        // assert!(!sources.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+        // assert!(sinks.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
     })
 }

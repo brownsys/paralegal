@@ -387,13 +387,41 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         let Some(resolved_fn) =
             utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)
         else {
-            if let Some(d) = generic_args.iter().find(|arg| matches!(arg.unpack(), GenericArgKind::Type(t) if matches!(t.kind(), TyKind::Dynamic(..)))) {
-                self.tcx().sess.span_warn(self.tcx().def_span(called_def_id), format!("could not resolve instance due to dynamic argument: {d:?}"));
-                return None;
+            let dynamics = generic_args.iter()
+                .flat_map(|g| g.walk())
+                .filter(|arg| matches!(arg.unpack(), GenericArgKind::Type(t) if matches!(t.kind(), TyKind::Dynamic(..))))
+                .collect::<Box<[_]>>();
+            let mut msg = format!(
+                "instance resolution for call to function {} failed.",
+                tcx.def_path_str(called_def_id)
+            );
+            if !dynamics.is_empty() {
+                use std::fmt::Write;
+                write!(msg, " Dynamic arguments ").unwrap();
+                let mut first = true;
+                for dyn_ in dynamics.iter() {
+                    if !first {
+                        write!(msg, ", ").unwrap();
+                    }
+                    first = false;
+                    write!(msg, "`{dyn_}`").unwrap();
+                }
+                write!(
+                    msg,
+                    " were found.\n\
+                    These may have been injected by Paralegal to instantiate generics \n\
+                    at the entrypoint (location of #[paralegal::analyze]).\n\
+                    A likely reason why this may cause this resolution to fail is if the\n\
+                    method or function this attempts to resolve has a `Sized` constraint.\n\
+                    Such a constraint can be implicit if this is a type variable in a\n\
+                    trait definition and no refutation (`?Sized` constraint) is present."
+                )
+                .unwrap();
+                self.tcx().sess.span_warn(span, msg);
             } else {
-                tcx.sess.span_err(span, "instance resolution failed: too unspecific");
-                return None;
+                self.tcx().sess.span_err(span, msg);
             }
+            return None;
         };
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
@@ -410,7 +438,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
-        let call_kind = self.classify_call_kind(called_def_id, resolved_def_id, args, span);
+        let call_kind = self.classify_call_kind(called_def_id, resolved_fn, args, span);
 
         let calling_convention = CallingConvention::from_call_kind(&call_kind, args);
 
@@ -439,7 +467,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 callee: resolved_fn,
                 call_string: self.make_call_string(location),
                 is_cached,
-                async_parent: if let CallKind::AsyncPoll(resolution, _loc, _) = call_kind {
+                async_parent: if let CallKind::AsyncPoll(poll) = call_kind {
                     // Special case for async. We ask for skipping not on the closure, but
                     // on the "async" function that created it. This is needed for
                     // consistency in skipping. Normally, when "poll" is inlined, mutations
@@ -448,7 +476,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     // those mutations to occur. To ensure this we always ask for the
                     // "CallChanges" on the creator so that both creator and closure have
                     // the same view of whether they are inlined or "Skip"ped.
-                    Some(resolution)
+                    poll.async_fn_parent
                 } else {
                     None
                 },
@@ -637,14 +665,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     fn classify_call_kind<'b>(
         &'b self,
         def_id: DefId,
-        resolved_def_id: DefId,
+        resolved_fn: Instance<'tcx>,
         original_args: &'b [Operand<'tcx>],
         span: Span,
     ) -> CallKind<'tcx> {
-        match self.try_poll_call_kind(def_id, original_args) {
+        match self.try_poll_call_kind(def_id, resolved_fn, original_args) {
             AsyncDeterminationResult::Resolved(r) => r,
             AsyncDeterminationResult::NotAsync => self
-                .try_indirect_call_kind(resolved_def_id)
+                .try_indirect_call_kind(resolved_fn.def_id())
                 .unwrap_or(CallKind::Direct),
             AsyncDeterminationResult::Unresolvable(reason) => {
                 self.tcx().sess.span_fatal(span, reason)
@@ -747,7 +775,7 @@ pub enum CallKind<'tcx> {
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
     Indirect,
     /// A poll to an async function, like `f.await`.
-    AsyncPoll(Instance<'tcx>, Location, Place<'tcx>),
+    AsyncPoll(AsyncFnPollEnv<'tcx>),
 }
 
 #[derive(strum::AsRefStr)]
