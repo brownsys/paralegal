@@ -6,12 +6,11 @@ use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, Body, LocalKind, Location, Operand, Place, Rvalue, Statement,
+        AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
-use rustc_utils::OperandExt;
 
 use super::{
     local_analysis::{CallKind, LocalAnalysis},
@@ -235,7 +234,13 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
             ($p:pat = $e:expr, $($arg:tt)*) => {
                 let $p = $e else {
                     let msg = format!($($arg)*);
-                    return Err(format!("Abandoning attempt to handle async because pattern {} could not be matched to {:?}: {}", stringify!($p), $e, msg));
+                    return Err(format!(
+                        "Abandoning attempt to handle async because pattern {} (line {}) could not be matched to {:?}: {}",
+                        stringify!($p),
+                        line!(),
+                        $e,
+                        msg
+                    ));
                 };
             }
         }
@@ -313,9 +318,10 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
                     (None, *generic_args, *lhs)
                 }
                 StatementKind::Assign(box (_, Rvalue::Use(target))) => {
-                    let (op, generics) = self
+                    let generics = self
                         .operand_to_def_id(target)
-                        .ok_or_else(|| "Nope".to_string())?;
+                        .ok_or_else(|| "Nope".to_string())?
+                        .1;
                     (None, generics, target.place().unwrap())
                 }
                 _ => {
