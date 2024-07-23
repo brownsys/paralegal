@@ -27,12 +27,16 @@ pub enum AsyncType {
     Trait,
 }
 
-pub struct AsyncPoll<'tcx> {
+/// Context for a call to [`Future::poll`](std::future::Future::poll), when
+/// called on a future created via an `async fn` or an async block.
+pub struct AsyncFnPollEnv<'tcx> {
     /// If the generator came from an `async fn`, then this is that function. If
     /// it is from an async block, this is `None`.
     pub async_fn_parent: Option<Instance<'tcx>>,
     /// Where was the `async fn` called, or where was the async block created.
     pub creation_loc: Location,
+    /// A place which carries the runtime value representing the generator in
+    /// the caller.
     pub generator_data: Place<'tcx>,
 }
 
@@ -229,7 +233,10 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
     }
     /// Given the arguments to a `Future::poll` call, walk back through the
     /// body to find the original future being polled, and get the arguments to the future.
-    fn find_async_args<'a>(&'a self, args: &'a [Operand<'tcx>]) -> Result<AsyncPoll<'tcx>, String> {
+    fn find_async_args<'a>(
+        &'a self,
+        args: &'a [Operand<'tcx>],
+    ) -> Result<AsyncFnPollEnv<'tcx>, String> {
         macro_rules! let_assert {
             ($p:pat = $e:expr, $($arg:tt)*) => {
                 let $p = $e else {
@@ -345,7 +352,7 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
             })
             .transpose()?;
 
-        Ok(AsyncPoll {
+        Ok(AsyncFnPollEnv {
             async_fn_parent,
             creation_loc,
             generator_data,

@@ -775,7 +775,7 @@ pub enum CallKind<'tcx> {
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
     Indirect,
     /// A poll to an async function, like `f.await`.
-    AsyncPoll(AsyncPoll<'tcx>),
+    AsyncPoll(AsyncFnPollEnv<'tcx>),
 }
 
 #[derive(strum::AsRefStr)]
