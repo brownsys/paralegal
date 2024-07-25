@@ -78,6 +78,15 @@ use crate::{
     utils::Print,
 };
 
+pub const EXTRA_RUSTC_ARGS: &[&str] = &[
+    "--cfg",
+    "paralegal",
+    "-Zcrate-attr=feature(register_tool)",
+    "-Zcrate-attr=register_tool(paralegal_flow)",
+    "-Zalways-encode-mir",
+    "-Znll-facts",
+];
+
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
 
@@ -342,12 +351,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
         }
 
-        compiler_args.extend([
-            "--cfg".into(),
-            "paralegal".into(),
-            "-Zcrate-attr=feature(register_tool)".into(),
-            "-Zcrate-attr=register_tool(paralegal_flow)".into(),
-        ]);
+        compiler_args.extend(EXTRA_RUSTC_ARGS.map(ToString::to_string));
 
         if let Some(dbg) = opts.attach_to_debugger() {
             dbg.attach()

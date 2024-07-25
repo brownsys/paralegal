@@ -8,7 +8,7 @@ use hir::def_id::DefId;
 
 use crate::{
     desc::{Identifier, ProgramDescription},
-    HashSet,
+    HashSet, EXTRA_RUSTC_ARGS,
 };
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -230,16 +230,7 @@ impl InlineTestBuilder {
         args.setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
-            .with_args(
-                [
-                    "--cfg",
-                    "paralegal",
-                    "-Zcrate-attr=feature(register_tool)",
-                    "-Zcrate-attr=register_tool(paralegal_flow)",
-                ]
-                .into_iter()
-                .map(ToOwned::to_owned),
-            )
+            .with_args(EXTRA_RUSTC_ARGS.into_iter().map(ToOwned::to_owned))
             .compile(move |result| {
                 let tcx = result.tcx;
                 let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
