@@ -49,7 +49,7 @@ dependencies = ["format-all", "clippy-all"]
 
 [tasks.cargo-tests]
 command = "cargo"
-args = ["test"]
+args = ["test", "--no-fail-fast"]
 
 [tasks.flowistry-tests]
 command = "cargo"
