@@ -443,7 +443,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         // Recursively generate the PDG for the child function.
 
-        if self.memo.body_cache.is_loadable(resolved_fn.def_id()) {
+        if !self.memo.body_cache.is_loadable(resolved_fn.def_id()) {
             trace!("  bailing because function is not loadable");
             return None;
         }
