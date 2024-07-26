@@ -59,6 +59,13 @@ pub fn load_facts_for_flowistry(
     Ok(unsafe { std::mem::transmute(facts) })
 }
 
+fn strip_delimiters(start: char, end: char, target: &str) -> Result<&str, ParseErr> {
+    let a = target
+        .strip_prefix(start)
+        .ok_or(ParseErr::NotDelimited(start))?;
+    a.strip_suffix(end).ok_or(ParseErr::NotDelimited(end))
+}
+
 fn parse_tab_delimited_file<Ctx, Row: FromTabDelimited<Ctx>>(
     ltab: &Ctx,
     reader: impl BufRead,
@@ -126,10 +133,10 @@ macro_rules! parse_tab_delim_prefix_str {
                 _: &Ctx,
                 inputs: &mut dyn Iterator<Item = &'i str>,
             ) -> Result<Self, ParseErr<'i>> {
+                let s = inputs.next().ok_or(ParseErr::InputExhausted)?;
+                let inner = strip_delimiters('"', '"', s)?;
                 Ok(<$t>::from_u32(
-                    inputs
-                        .next()
-                        .ok_or(ParseErr::InputExhausted)?
+                    inner
                         .strip_prefix($prefix)
                         .ok_or(ParseErr::PrefixNotFound($prefix))?
                         .parse()
@@ -175,15 +182,15 @@ impl FromTabDelimited<LocationTable> for LocationIndexWrapper {
         inputs: &mut dyn Iterator<Item = &'i str>,
     ) -> Result<Self, ParseErr<'i>> {
         let str = inputs.next().ok_or(ParseErr::InputExhausted)?;
+        let str = strip_delimiters('"', '"', str)?;
         let (ty, loc) = str.split_once('(').ok_or(ParseErr::NotDelimited('('))?;
+        let loc = loc.strip_suffix(')').ok_or(ParseErr::NotDelimited(')'))?;
         let loc = loc
             .strip_prefix("bb")
             .ok_or(ParseErr::PrefixNotFound("bb"))?;
         let (bb, stmt) = loc.split_once('[').ok_or(ParseErr::NotDelimited('['))?;
+        let stmt = stmt.strip_suffix(']').ok_or(ParseErr::NotDelimited(']'))?;
         let bb = bb.parse().map_err(ParseErr::NotAnInteger)?;
-        let Some((stmt, "")) = stmt.rsplit_once(']') else {
-            return Err(ParseErr::NotDelimited(']'));
-        };
         let stmt = stmt.parse().map_err(ParseErr::NotAnInteger)?;
         let loc = Location {
             block: BasicBlock::from_u32(bb),
