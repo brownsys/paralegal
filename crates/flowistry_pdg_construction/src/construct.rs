@@ -9,7 +9,7 @@ use flowistry_pdg::{CallString, GlobalLocation};
 
 use df::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_hash::FxHashMap;
-use rustc_hir::def_id::{CrateNum, DefId, LocalDefId};
+use rustc_hir::def_id::{CrateNum, DefId, LocalDefId, LOCAL_CRATE};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
@@ -53,7 +53,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             dump_mir: false,
             async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
             pdg_cache: Default::default(),
-            body_cache: BodyCache::new(tcx, |_| true),
+            body_cache: BodyCache::new(tcx, |krate| krate == LOCAL_CRATE),
         }
     }
 

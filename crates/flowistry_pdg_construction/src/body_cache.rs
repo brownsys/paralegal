@@ -67,6 +67,10 @@ impl<'tcx> BodyCache<'tcx> {
             unsafe { std::mem::transmute(cbody) }
         })
     }
+
+    pub fn is_loadable(&self, key: DefId) -> bool {
+        (self.load_policy)(key.krate)
+    }
 }
 
 fn compute_body_with_borrowck_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {

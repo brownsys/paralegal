@@ -24,7 +24,11 @@ use flowistry_pdg_construction::{
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
-use rustc_hir::{self as hir, def, def_id::DefId};
+use rustc_data_structures::fx::FxHashSet;
+use rustc_hir::{
+    self as hir, def,
+    def_id::{DefId, LOCAL_CRATE},
+};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan, Symbol};
 
@@ -55,12 +59,26 @@ impl<'tcx> SPDGGenerator<'tcx> {
     ) -> Self {
         let inline_judge = InlineJudge::new(marker_ctx, tcx, opts.anactrl());
         let mut pdg_constructor = MemoPdgConstructor::new(tcx);
+        let included_crate_names = opts
+            .anactrl()
+            .included()
+            .iter()
+            .map(|s| Symbol::intern(s))
+            .collect::<HashSet<_>>();
+        let included_crates = tcx
+            .crates(())
+            .iter()
+            .copied()
+            .filter(|cnum| included_crate_names.contains(&tcx.crate_name(*cnum)))
+            .chain(Some(LOCAL_CRATE))
+            .collect::<FxHashSet<_>>();
         pdg_constructor
             .with_call_change_callback(MyCallback {
                 judge: inline_judge.clone(),
                 tcx,
             })
-            .with_dump_mir(opts.dbg().dump_mir());
+            .with_dump_mir(opts.dbg().dump_mir())
+            .with_body_loading_policy(move |krate| included_crates.contains(&krate));
         Self {
             inline_judge,
             pdg_constructor,

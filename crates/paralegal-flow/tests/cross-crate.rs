@@ -10,6 +10,7 @@ const CRATE_DIR: &str = "tests/cross-crate";
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = {
         paralegal_flow_command(CRATE_DIR)
+            .args(["--include", "dependency"])
             .status()
             .unwrap()
             .success()

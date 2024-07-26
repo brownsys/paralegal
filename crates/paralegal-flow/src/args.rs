@@ -436,6 +436,9 @@ struct ClapAnalysisCtrl {
     /// this is used explicitly supply the argument.
     #[clap(long, conflicts_with_all = ["adaptive_depth", "no_cross_function_analysis"])]
     unconstrained_depth: bool,
+    /// Crates that should be recursed into.
+    #[clap(long)]
+    include: Vec<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -448,6 +451,7 @@ pub struct AnalysisCtrl {
     /// Disables all recursive analysis (both paralegal_flow's inlining as well as
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
+    include: Vec<String>,
 }
 
 impl Default for AnalysisCtrl {
@@ -455,6 +459,7 @@ impl Default for AnalysisCtrl {
         Self {
             analyze: Vec::new(),
             inlining_depth: InliningDepth::Adaptive,
+            include: Default::default(),
         }
     }
 }
@@ -467,6 +472,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             no_cross_function_analysis,
             adaptive_depth,
             unconstrained_depth: _,
+            include,
         } = value;
 
         let inlining_depth = if adaptive_depth {
@@ -480,6 +486,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
         Ok(Self {
             analyze,
             inlining_depth,
+            include,
         })
     }
 }
@@ -507,6 +514,10 @@ impl AnalysisCtrl {
 
     pub fn inlining_depth(&self) -> &InliningDepth {
         &self.inlining_depth
+    }
+
+    pub fn included(&self) -> &[String] {
+        &self.include
     }
 }
 
