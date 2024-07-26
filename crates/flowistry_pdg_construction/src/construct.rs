@@ -9,7 +9,7 @@ use log::trace;
 use petgraph::graph::DiGraph;
 
 use rustc_hash::FxHashMap;
-use rustc_hir::def_id::LocalDefId;
+use rustc_hir::def_id::{CrateNum, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
@@ -17,17 +17,18 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df};
 
-use rustc_utils::{cache::Cache, mir::borrowck_facts::get_body_with_borrowck_facts};
+use rustc_utils::cache::Cache;
 
 use crate::{
     async_support::*,
+    body_cache::{self, BodyCache, CachedBody},
     graph::{
         push_call_string_root, DepEdge, DepGraph, DepNode, PartialGraph, SourceUse, TargetUse,
     },
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{manufacture_substs_for, try_resolve_function},
-    CallChangeCallback,
+    CallChangeCallback, FlowistryInput,
 };
 
 /// A memoizing constructor of PDGs.
@@ -40,11 +41,11 @@ pub struct MemoPdgConstructor<'tcx> {
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
     pub(crate) pdg_cache: PdgCache<'tcx>,
+    pub(crate) body_cache: body_cache::BodyCache<'tcx>,
 }
 
 impl<'tcx> MemoPdgConstructor<'tcx> {
-    /// Initialize the constructor, parameterized over an [`ArtifactLoader`] for
-    /// retrieving PDGs of functions from dependencies.
+    /// Initialize the constructor.
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
@@ -52,12 +53,21 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             dump_mir: false,
             async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
             pdg_cache: Default::default(),
+            body_cache: BodyCache::new(tcx, |_| true),
         }
     }
 
     /// Dump the MIR of any function that is visited.
     pub fn with_dump_mir(&mut self, dump_mir: bool) -> &mut Self {
         self.dump_mir = dump_mir;
+        self
+    }
+
+    pub fn with_body_loading_policy(
+        &mut self,
+        policy: impl Fn(CrateNum) -> bool + 'tcx,
+    ) -> &mut Self {
+        self.with_body_loading_policy(policy);
         self
     }
 
@@ -110,17 +120,19 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         self.pdg_cache.is_in_cache(&resolution)
     }
 
+    pub fn get_body(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
+        self.body_cache.get(key)
+    }
+
     /// Construct a final PDG for this function. Same as
     /// [`Self::construct_root`] this instantiates all generics as `dyn`.
     ///
     /// Additionally if this is an `async fn` or `#[async_trait]` it will inline
     /// the closure as though the function were called with `poll`.
     pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
-        if let Some((generator, loc, _ty)) = determine_async(
-            self.tcx,
-            function,
-            &get_body_with_borrowck_facts(self.tcx, function).body,
-        ) {
+        if let Some((generator, loc, _ty)) =
+            determine_async(self.tcx, function, &self.get_body(function).unwrap().body())
+        {
             // TODO remap arguments
 
             // Note that this deliberately register this result in a separate

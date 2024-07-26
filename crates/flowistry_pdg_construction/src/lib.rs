@@ -32,7 +32,7 @@ mod construct;
 pub mod graph;
 mod local_analysis;
 mod mutation;
-mod nll_fact_parser;
+mod nll_facts;
 pub mod utils;
 
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.

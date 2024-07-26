@@ -56,7 +56,7 @@ pub(crate) struct LocalAnalysis<'tcx, 'a> {
     pub(super) root: Instance<'tcx>,
     body_with_facts: &'tcx BodyWithBorrowckFacts<'tcx>,
     pub(crate) mono_body: Body<'tcx>,
-    pub(crate) def_id: LocalDefId,
+    pub(crate) def_id: DefId,
     pub(crate) place_info: PlaceInfo<'tcx>,
     control_dependencies: ControlDependencies<BasicBlock>,
     pub(crate) body_assignments: utils::BodyAssignments,
@@ -72,10 +72,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
         root: Instance<'tcx>,
-    ) -> LocalAnalysis<'tcx, 'a> {
+    ) -> Option<LocalAnalysis<'tcx, 'a>> {
         let tcx = memo.tcx;
-        let def_id = root.def_id().expect_local();
-        let body_with_facts = borrowck_facts::get_body_with_borrowck_facts(tcx, def_id);
+        let def_id = root.def_id();
+        let body_with_facts = self.get_body(def_id)?;
         let param_env = tcx.param_env_reveal_all_normalized(def_id);
         // let param_env = match &calling_context {
         //     Some(cx) => cx.param_env,
@@ -85,8 +85,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             root,
             tcx,
             param_env,
-            &body_with_facts.body,
-            tcx.def_span(root.def_id()),
+            body_with_facts.body(),
+            tcx.def_span(def_id),
         )
         .unwrap();
 
@@ -106,7 +106,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let body_assignments = utils::find_body_assignments(&body);
 
-        LocalAnalysis {
+        Some(LocalAnalysis {
             memo,
             root,
             body_with_facts,
@@ -116,7 +116,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             start_loc,
             def_id,
             body_assignments,
-        }
+        })
     }
 
     fn make_dep_node(

@@ -32,49 +32,29 @@ impl FactTypes for AlmostRustcFacts {
     type Point = LocationIndexWrapper;
 }
 
-type AlmostPoloniusInput = AllFacts<AlmostRustcFacts>;
+pub struct FlowistryFactSelection<F: FactTypes> {
+    pub subset_base: Vec<(
+        <F as FactTypes>::Origin,
+        <F as FactTypes>::Origin,
+        <F as FactTypes>::Point,
+    )>,
+}
 
-pub fn load_tab_delimited_facts(
+type AlmostFlowistryFacts = FlowistryFactSelection<AlmostRustcFacts>;
+pub type FlowistryFacts = FlowistryFactSelection<RustcFacts>;
+
+pub fn load_facts_for_flowistry(
     ltab: &LocationTable,
     facts_dir: &Path,
-) -> std::io::Result<PoloniusInput> {
-    macro_rules! load_facts {
-        ($facts_dir:expr, { $($t:ident,)* }) => {
-            polonius_engine::AllFacts {
-                $(
-                    $t: {
-                        let filename = format!("{}.facts", stringify!($t));
-                        let facts_path = $facts_dir.join(&filename);
-                        let facts_file = std::fs::File::open(facts_path)?;
-                        parse_tab_delimited_file(ltab, BufReader::new(facts_file))?
-                    },
-                )*
-            }
-        }
-    }
-
-    let facts: AlmostPoloniusInput = load_facts! { facts_dir,
-        {
-            loan_issued_at,
-            universal_region,
-            cfg_edge,
-            loan_killed_at,
-            subset_base,
-            loan_invalidated_at,
-            var_defined_at,
-            var_used_at,
-            var_dropped_at,
-            use_of_var_derefs_origin,
-            drop_of_var_derefs_origin,
-            child_path,
-            path_is_var,
-            path_assigned_at_base,
-            path_moved_at_base,
-            path_accessed_at_base,
-            known_placeholder_subset,
-            placeholder,
-        }
+) -> std::io::Result<FlowistryFacts> {
+    let facts = AlmostFlowistryFacts {
+        subset_base: {
+            let facts_path = facts_dir.join("subset_base.facts");
+            let facts_file = std::fs::File::open(facts_path)?;
+            parse_tab_delimited_file(ltab, BufReader::new(facts_file))?
+        },
     };
+
     // Fucking yikes. Rustc exposes all of its fact types, *except*
     // LocationIndex, which prevents me from implementing traits for it. So I am
     // forced to wrap it (with LocationIndexWrapper) and then transmute.
