@@ -36,6 +36,7 @@ extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
 extern crate rustc_query_system;
 extern crate rustc_serialize;
+extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
@@ -43,6 +44,7 @@ extern crate rustc_type_ir;
 use args::{ClapArgs, Debugger, LogLevelConfig};
 use desc::{utils::write_sep, ProgramDescription};
 
+use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
 use log::Level;
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
@@ -139,8 +141,20 @@ impl Callbacks {
 }
 
 impl rustc_driver::Callbacks for Callbacks {
-    fn config(&mut self, config: &mut rustc_interface::Config) {
-        config.override_queries = Some(borrowck_facts::override_queries);
+    // fn config(&mut self, config: &mut rustc_interface::Config) {
+    //     config.override_queries = Some(borrowck_facts::override_queries);
+    // }
+
+    fn after_expansion<'tcx>(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> rustc_driver::Compilation {
+        queries
+            .global_ctxt()
+            .unwrap()
+            .enter(|tcx| dump_mir_and_borrowck_facts(tcx));
+        rustc_driver::Compilation::Continue
     }
 
     // This used to run `after_parsing` but that now makes `tcx.crates()` empty
@@ -148,8 +162,9 @@ impl rustc_driver::Callbacks for Callbacks {
     // `after_expansion` and so far that doesn't seem to break anything, but I'm
     // explaining this here in case that flowistry has some sort of issue with
     // that (when retrieving the MIR bodies for instance)
-    fn after_expansion<'tcx>(
+    fn after_analysis<'tcx>(
         &mut self,
+        _handler: &rustc_session::EarlyErrorHandler,
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {

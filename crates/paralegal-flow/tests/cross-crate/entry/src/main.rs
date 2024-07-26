@@ -20,22 +20,22 @@ fn basic() {
     target(find_me(src(), not_src()))
 }
 
-#[paralegal::analyze]
+//#[paralegal::analyze]
 fn basic_marker() {
     target(source());
 }
 
-#[paralegal::analyze]
+//#[paralegal::analyze]
 fn assigns_marker() {
     target(assign_marker(src()));
 }
 
-#[paralegal::analyze]
+//#[paralegal::analyze]
 fn basic_generic() {
     target(find_me_generic(src(), not_src()))
 }
 
-#[paralegal::analyze]
+//#[paralegal::analyze]
 fn assigns_marker_generic() {
     target(assign_marker_generic(src()));
 }

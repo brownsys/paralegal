@@ -1,13 +1,21 @@
+use std::{fs::File, io::Read, path::PathBuf};
+
 use flowistry::mir::FlowistryInput;
 use polonius_engine::FactTypes;
-use rustc_borrowck::consumers::RustcFacts;
+use rustc_borrowck::consumers::{ConsumerOptions, RustcFacts};
 
-use rustc_hir::def_id::{CrateNum, DefId};
-use rustc_middle::{mir::Body, ty::TyCtxt};
+use rustc_hir::{
+    def_id::{CrateNum, DefId},
+    intravisit,
+};
+use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
+use rustc_middle::{hir::nested_filter::OnlyBodies, mir::Body, ty::TyCtxt};
+use rustc_serialize::{Decodable, Encodable};
 use rustc_utils::{cache::Cache, mir::borrowck_facts::get_body_with_borrowck_facts};
 
-use crate::nll_facts::{self, create_location_table, FlowistryFactSelection, FlowistryFacts};
+use crate::encoder::{ParalegalDecoder, ParalegalEncoder};
 
+#[derive(TyDecodable, TyEncodable, Debug)]
 pub struct CachedBody<'tcx> {
     body: Body<'tcx>,
     input_facts: FlowistryFacts,
@@ -28,6 +36,17 @@ impl<'tcx> FlowistryInput<'tcx> for &'tcx CachedBody<'tcx> {
         &self.input_facts.subset_base
     }
 }
+
+#[derive(Debug, Encodable, Decodable)]
+pub struct FlowistryFacts {
+    pub subset_base: Vec<(
+        <RustcFacts as FactTypes>::Origin,
+        <RustcFacts as FactTypes>::Origin,
+        <RustcFacts as FactTypes>::Point,
+    )>,
+}
+
+pub type LocationIndex = <RustcFacts as FactTypes>::Point;
 
 /// Ensure this cache outlives any flowistry analysis that is performed on the
 /// bodies it returns or risk UB.
@@ -73,40 +92,111 @@ impl<'tcx> BodyCache<'tcx> {
     }
 }
 
-fn compute_body_with_borrowck_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {
-    let body = tcx.optimized_mir(def_id).to_owned();
-    if let Some(local) = def_id.as_local() {
-        let local_facts = get_body_with_borrowck_facts(tcx, local);
-        return CachedBody {
-            body: local_facts.body.clone(),
-            input_facts: FlowistryFactSelection {
-                subset_base: local_facts
-                    .input_facts
-                    .as_ref()
-                    .unwrap()
-                    .subset_base
-                    .clone(),
+struct DumpingVisitor<'tcx> {
+    tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
+    type NestedFilter = OnlyBodies;
+    fn nested_visit_map(&mut self) -> Self::Map {
+        self.tcx.hir()
+    }
+
+    fn visit_fn(
+        &mut self,
+        _: intravisit::FnKind<'tcx>,
+        _: &'tcx rustc_hir::FnDecl<'tcx>,
+        _: rustc_hir::BodyId,
+        _: rustc_span::Span,
+        id: rustc_hir::def_id::LocalDefId,
+    ) {
+        let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
+            self.tcx,
+            id,
+            ConsumerOptions::PoloniusInputFacts,
+        );
+
+        let to_write = CachedBody {
+            body: body_with_facts.body,
+            input_facts: FlowistryFacts {
+                subset_base: body_with_facts.input_facts.unwrap().subset_base,
             },
         };
-    };
 
-    let location_table = create_location_table(&body);
+        let dir = intermediate_out_dir(self.tcx);
+        let path = dir.join(
+            self.tcx
+                .def_path(id.to_def_id())
+                .to_filename_friendly_no_crate(),
+        );
 
-    let paths = tcx.crate_extern_paths(def_id.krate);
+        if !dir.exists() {
+            std::fs::create_dir(dir).unwrap();
+        }
 
-    let Some(nll_facts_dir) = paths.iter().find_map(|path| {
-        let p = path.join("nll-facts");
-        p.exists().then_some(p)
-    }) else {
-        panic!("No facts found at any path tried: {paths:?}");
-    };
+        let mut encoder = ParalegalEncoder::new(path, self.tcx);
 
-    let fact_file_for_item =
-        nll_facts_dir.join(tcx.def_path(def_id).to_filename_friendly_no_crate());
-
-    let facts = nll_facts::load_facts_for_flowistry(&location_table, &fact_file_for_item).unwrap();
-    CachedBody {
-        body,
-        input_facts: facts,
+        to_write.encode(&mut encoder);
+        encoder.finish();
     }
+}
+
+pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt) {
+    let mut vis = DumpingVisitor { tcx };
+    tcx.hir().visit_all_item_likes_in_crate(&mut vis);
+}
+
+const INTERMEDIATE_ARTIFACT_EXT: &str = "bwbf";
+
+fn compute_body_with_borrowck_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {
+    let paths = if def_id.is_local() {
+        vec![intermediate_out_dir(tcx)]
+    } else {
+        tcx.crate_extern_paths(def_id.krate)
+            .iter()
+            .map(|p| p.with_extension(INTERMEDIATE_ARTIFACT_EXT))
+            .collect()
+    };
+    for path in &paths {
+        let path = path.join(tcx.def_path(def_id).to_filename_friendly_no_crate());
+        let Ok(mut file) = File::open(path) else {
+            continue;
+        };
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf).unwrap();
+        let mut decoder = ParalegalDecoder::new(tcx, buf.as_slice());
+        let meta = CachedBody::decode(&mut decoder);
+        return meta;
+    }
+
+    panic!("No facts found at any path tried: {paths:?}");
+}
+
+/// Create the name of the file in which to store intermediate artifacts.
+///
+/// HACK(Justus): `TyCtxt::output_filenames` returns a file stem of
+/// `lib<crate_name>-<hash>`, whereas `OutputFiles::with_extension` returns a file
+/// stem of `<crate_name>-<hash>`. I haven't found a clean way to get the same
+/// name in both places, so i just assume that these two will always have this
+/// relation and prepend the `"lib"` here.
+fn intermediate_out_dir(tcx: TyCtxt) -> PathBuf {
+    let rustc_out_file = tcx
+        .output_filenames(())
+        .with_extension(INTERMEDIATE_ARTIFACT_EXT);
+    let dir = rustc_out_file
+        .parent()
+        .unwrap_or_else(|| panic!("{} has no parent", rustc_out_file.display()));
+    let file = rustc_out_file
+        .file_name()
+        .unwrap_or_else(|| panic!("has no file name"))
+        .to_str()
+        .unwrap_or_else(|| panic!("not utf8"));
+
+    let file = if file.starts_with("lib") {
+        std::borrow::Cow::Borrowed(file)
+    } else {
+        format!("lib{file}").into()
+    };
+
+    dir.join(file.as_ref())
 }
