@@ -43,6 +43,7 @@ extern crate rustc_type_ir;
 use args::{ClapArgs, Debugger, LogLevelConfig};
 use desc::{utils::write_sep, ProgramDescription};
 
+use log::Level;
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 use rustc_utils::mir::borrowck_facts;
@@ -175,6 +176,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 println!("Analysis finished with timing: {}", self.stats);
 
                 anyhow::Ok(if self.opts.abort_after_analysis() {
+                    debug!("Aborting");
                     rustc_driver::Compilation::Stop
                 } else {
                     rustc_driver::Compilation::Continue
@@ -352,6 +354,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         }
 
         compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+        if opts.verbosity() >= Level::Debug {
+            compiler_args.push("-Ztrack-diagnostics".to_string());
+        }
 
         if let Some(dbg) = opts.attach_to_debugger() {
             dbg.attach()
