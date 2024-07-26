@@ -16,7 +16,7 @@ use std::process::Command;
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, EdgeSelection},
-    DefInfo, EdgeInfo, Node, SPDG,
+    DefInfo, EdgeInfo, Node, TypeId, SPDG,
 };
 
 use flowistry_pdg::rustc_portable::LocalDefId;
@@ -265,6 +265,15 @@ pub trait HasGraph<'g>: Sized + Copy {
         )
     }
 
+    fn marked_types(&self, marker: Identifier) -> Vec<TypeId> {
+        self.graph()
+            .desc
+            .type_info
+            .iter()
+            .filter_map(|(id, desc)| desc.markers.contains(&marker).then_some(*id))
+            .collect()
+    }
+
     /// Use [Self::async_function] for async functions
     fn function(self, name: impl AsRef<str>) -> FnRef<'g> {
         let name = Identifier::new_intern(name.as_ref());
@@ -459,6 +468,18 @@ impl<'g> CtrlRef<'g> {
             .type_assigns
             .get(&target)
             .map_or(&[], |t| t.0.as_ref())
+    }
+
+    pub fn nodes_for_type(&self, typ: TypeId) -> NodeRefs {
+        NodeRefs {
+            graph: self,
+            nodes: self
+                .ctrl
+                .type_assigns
+                .iter()
+                .filter_map(|(n, types)| types.0.contains(&typ).then_some(*n))
+                .collect(),
+        }
     }
 }
 
