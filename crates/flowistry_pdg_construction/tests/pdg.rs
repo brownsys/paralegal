@@ -8,7 +8,9 @@ extern crate rustc_span;
 use std::collections::HashSet;
 
 use either::Either;
+use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
+    body_cache::BodyCache,
     graph::{DepEdge, DepGraph},
     CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
 };
@@ -19,9 +21,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 use rustc_span::Symbol;
-use rustc_utils::{
-    mir::borrowck_facts, source_map::find_bodies::find_bodies, test_utils::CompileResult,
-};
+use rustc_utils::{source_map::find_bodies::find_bodies, test_utils::CompileResult};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)
@@ -37,7 +37,7 @@ fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
 fn pdg(
     input: impl Into<String>,
     configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx>) + Send,
-    tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, DepGraph<'tcx>) + Send,
+    tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
     rustc_utils::test_utils::CompileBuilder::new(input).compile(move |CompileResult { tcx }| {
@@ -45,7 +45,7 @@ fn pdg(
         let mut memo = MemoPdgConstructor::new(tcx);
         configure(tcx, &mut memo);
         let pdg = memo.construct_graph(def_id);
-        tests(tcx, pdg)
+        tests(tcx, memo.body_cache(), pdg)
     })
 }
 
@@ -60,6 +60,7 @@ fn viz(g: &DepGraph<'_>) {
 
 fn connects<'tcx>(
     tcx: TyCtxt<'tcx>,
+    body_cache: &BodyCache<'tcx>,
     g: &DepGraph<'tcx>,
     src: &str,
     dst: &str,
@@ -95,13 +96,12 @@ fn connects<'tcx>(
         .edge_indices()
         .filter_map(|edge| {
             let DepEdge { at, .. } = g.graph[edge];
-            let body_with_facts =
-                borrowck_facts::get_body_with_borrowck_facts(tcx, at.leaf().function);
+            let body_with_facts = body_cache.get(at.leaf().function).unwrap();
             let Either::Right(Terminator {
                 kind: TerminatorKind::Call { func, .. },
                 ..
             }) = body_with_facts
-                .body
+                .body()
                 .stmt_at(at.leaf().location.as_location()?)
             else {
                 return None;
@@ -178,11 +178,11 @@ macro_rules! pdg_test {
     #[test]
     fn $name() {
       let input = stringify!($($i)*);
-      pdg(input, $e, |tcx, g| {
+      pdg(input, $e, |_tcx, _cache, g| {
         if std::env::var("VIZ").is_ok() {
             g.generate_graphviz(format!("../../target/{}.pdf", stringify!($name))).unwrap();
         }
-        $(pdg_constraint!($cs, tcx, &g));*
+        $(pdg_constraint!($cs, _tcx, _cache, &g));*
       })
     }
   };

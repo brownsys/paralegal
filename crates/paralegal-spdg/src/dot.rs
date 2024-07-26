@@ -2,7 +2,7 @@
 
 use crate::{Endpoint, GlobalEdge, InstructionKind, Node, ProgramDescription};
 use dot::{CompassPoint, Edges, Id, LabelText, Nodes};
-use flowistry_pdg::rustc_portable::LocalDefId;
+
 use flowistry_pdg::{CallString, RichLocation};
 
 use petgraph::prelude::EdgeRef;

@@ -1,13 +1,11 @@
 use std::{
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader},
     num::ParseIntError,
     path::Path,
 };
 
-use polonius_engine::{AllFacts, Atom, FactTypes};
-use rustc_borrowck::consumers::{
-    BorrowIndex, LocationTable, PoloniusInput, RichLocation, RustcFacts,
-};
+use polonius_engine::{Atom, FactTypes};
+use rustc_borrowck::consumers::{BorrowIndex, LocationTable, RustcFacts};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{self, BasicBlock, Local, Location},
@@ -200,6 +198,7 @@ impl FromTabDelimited<LocationTable> for LocationIndexWrapper {
     }
 }
 
+#[allow(dead_code)]
 struct LocationTableHack {
     num_points: usize,
     statements_before_block: IndexVec<BasicBlock, usize>,

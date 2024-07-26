@@ -5,9 +5,9 @@ use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
 
-use rustc_borrowck::consumers::{places_conflict, BodyWithBorrowckFacts, PlaceConflictBias};
+use rustc_borrowck::consumers::{places_conflict, PlaceConflictBias};
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
@@ -19,10 +19,7 @@ use rustc_middle::{
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 
 use rustc_span::Span;
-use rustc_utils::{
-    mir::{borrowck_facts, control_dependencies::ControlDependencies},
-    BodyExt, PlaceExt,
-};
+use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt, PlaceExt};
 
 use crate::{
     approximation::ApproximationHandler,
@@ -65,10 +62,6 @@ pub(crate) struct LocalAnalysis<'tcx, 'a> {
 }
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
-    pub fn local_def_id(&self) -> LocalDefId {
-        self.root.def_id().expect_local()
-    }
-
     /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution` in a given `calling_context`.
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
@@ -197,7 +190,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         //
         // This is a massive hack bc it's inefficient and I'm not certain that it's sound.
         let place_retyped =
-            utils::retype_place(place, self.tcx(), &self.body_with_facts.body(), self.def_id);
+            utils::retype_place(place, self.tcx(), self.body_with_facts.body(), self.def_id);
         self.place_info
             .aliases(place_retyped)
             .iter()

@@ -13,7 +13,7 @@ use rustc_hir::def_id::{CrateNum, DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
-    ty::{GenericArgsRef, Instance, TyCtxt},
+    ty::{Instance, TyCtxt},
 };
 use rustc_mir_dataflow::{self as df};
 
@@ -67,7 +67,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         &mut self,
         policy: impl Fn(CrateNum) -> bool + 'tcx,
     ) -> &mut Self {
-        self.with_body_loading_policy(policy);
+        self.body_cache.with_set_policy(policy);
         self
     }
 
@@ -126,7 +126,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         if let Some((generator, loc, _ty)) = determine_async(
             self.tcx,
             function,
-            &self.body_cache.get(function.to_def_id()).unwrap().body(),
+            self.body_cache.get(function.to_def_id()).unwrap().body(),
         ) {
             // TODO remap arguments
 

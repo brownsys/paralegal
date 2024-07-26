@@ -615,8 +615,6 @@ impl IntoIterGlobalNodes for GlobalNode {
 pub mod node_cluster {
     use std::ops::Range;
 
-    use flowistry_pdg::rustc_portable::LocalDefId;
-
     use crate::{Endpoint, GlobalNode, IntoIterGlobalNodes, Node};
 
     /// A globally identified set of nodes that are all located in the same

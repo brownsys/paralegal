@@ -16,10 +16,9 @@ use std::process::Command;
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, EdgeSelection},
-    DefInfo, EdgeInfo, Node, SPDG,
+    DefInfo, EdgeInfo, Endpoint, Node, SPDG,
 };
 
-use flowistry_pdg::rustc_portable::LocalDefId;
 use flowistry_pdg::CallString;
 use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
@@ -230,7 +229,7 @@ impl InlineTestBuilder {
         args.setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
-            .with_args(EXTRA_RUSTC_ARGS.into_iter().map(ToOwned::to_owned))
+            .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
             .compile(move |result| {
                 let tcx = result.tcx;
                 let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
@@ -287,7 +286,7 @@ pub trait HasGraph<'g>: Sized + Copy {
         }
     }
 
-    fn ctrl_hashed(self, name: &str) -> LocalDefId {
+    fn ctrl_hashed(self, name: &str) -> Endpoint {
         let candidates = self
             .graph()
             .desc
@@ -356,7 +355,7 @@ impl PreFrg {
 #[derive(Clone)]
 pub struct CtrlRef<'g> {
     graph: &'g PreFrg,
-    id: LocalDefId,
+    id: Endpoint,
     ctrl: &'g SPDG,
 }
 
@@ -404,7 +403,7 @@ impl<'g> CtrlRef<'g> {
         }
     }
 
-    pub fn id(&self) -> LocalDefId {
+    pub fn id(&self) -> Endpoint {
         self.id
     }
     pub fn spdg(&self) -> &'g SPDG {

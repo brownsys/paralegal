@@ -593,7 +593,7 @@ mod call_string_resolver {
     //! This is a separate mod so that we can use encapsulation to preserve the
     //! internal invariants of the resolver.
 
-    use flowistry_pdg::{rustc_portable::LocalDefId, CallString};
+    use flowistry_pdg::CallString;
     use flowistry_pdg_construction::{
         body_cache::BodyCache,
         utils::{manufacture_substs_for, try_monomorphize, try_resolve_function},
@@ -667,7 +667,7 @@ mod call_string_resolver {
 
                 let tcx = self.tcx;
 
-                let base_stmt = super::expect_stmt_at(&self.body_cache, this);
+                let base_stmt = super::expect_stmt_at(self.body_cache, this);
                 let param_env = tcx.param_env_reveal_all_normalized(prior.def_id());
                 let normalized = map_either(
                     base_stmt,

@@ -1,17 +1,12 @@
-use std::cell::RefCell;
-
 use flowistry::mir::FlowistryInput;
-use polonius_engine::{FactTypes, Output};
-use rustc_borrowck::consumers::{BodyWithBorrowckFacts, PoloniusInput, RichLocation, RustcFacts};
-use rustc_hash::FxHashMap;
-use rustc_hir::def_id::{CrateNum, DefId};
-use rustc_middle::{
-    mir::{Body, Location},
-    ty::TyCtxt,
-};
-use rustc_utils::cache::{Cache, CopyCache};
+use polonius_engine::FactTypes;
+use rustc_borrowck::consumers::RustcFacts;
 
-use crate::nll_facts::{self, create_location_table, FlowistryFacts, LocationIndex};
+use rustc_hir::def_id::{CrateNum, DefId};
+use rustc_middle::{mir::Body, ty::TyCtxt};
+use rustc_utils::cache::Cache;
+
+use crate::nll_facts::{self, create_location_table, FlowistryFacts};
 
 pub struct CachedBody<'tcx> {
     body: Body<'tcx>,
@@ -74,7 +69,7 @@ impl<'tcx> BodyCache<'tcx> {
     }
 }
 
-fn compute_body_with_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> CachedBody<'tcx> {
+fn compute_body_with_borrowck_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {
     let body = tcx.optimized_mir(def_id).to_owned();
 
     let location_table = create_location_table(&body);
