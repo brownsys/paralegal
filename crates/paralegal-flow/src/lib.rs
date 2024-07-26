@@ -351,7 +351,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
         }
 
-        compiler_args.extend(EXTRA_RUSTC_ARGS.map(ToString::to_string));
+        compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
 
         if let Some(dbg) = opts.attach_to_debugger() {
             dbg.attach()
