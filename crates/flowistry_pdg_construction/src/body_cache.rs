@@ -11,13 +11,11 @@ use rustc_middle::{
 };
 use rustc_utils::cache::{Cache, CopyCache};
 
-use crate::nll_facts::{
-    self, create_location_table, CompressRichLocation, FlowistryFacts, LocationIndex,
-};
+use crate::nll_facts::{self, create_location_table, FlowistryFacts, LocationIndex};
 
 pub struct CachedBody<'tcx> {
     body: Body<'tcx>,
-    input_facts_subset_base: FlowistryFacts,
+    input_facts: FlowistryFacts,
 }
 
 impl<'tcx> FlowistryInput<'tcx> for &'tcx CachedBody<'tcx> {
@@ -32,7 +30,7 @@ impl<'tcx> FlowistryInput<'tcx> for &'tcx CachedBody<'tcx> {
         <RustcFacts as FactTypes>::Origin,
         <RustcFacts as FactTypes>::Point,
     )] {
-        &self.input_facts_subset_base
+        &self.input_facts.subset_base
     }
 }
 
@@ -56,7 +54,7 @@ impl<'tcx> BodyCache<'tcx> {
     /// Set the policy for which crates should be loaded. It is inadvisable to
     /// change this after starting to call [get](Self::get).
     pub fn with_set_policy(&mut self, policy: impl Fn(CrateNum) -> bool + 'tcx) -> &mut Self {
-        self.load_policy = Bod::new(policy);
+        self.load_policy = Box::new(policy);
         self
     }
 
@@ -96,6 +94,6 @@ fn compute_body_with_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> C
     let facts = nll_facts::load_facts_for_flowistry(&location_table, &fact_file_for_item).unwrap();
     CachedBody {
         body,
-        input_facts_subset_base: facts,
+        input_facts: facts,
     }
 }

@@ -49,7 +49,7 @@ pub use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
 /// The types of identifiers that identify an entrypoint
-pub type Endpoint = LocalDefId;
+pub type Endpoint = DefId;
 /// Identifiers for types
 pub type TypeId = DefId;
 /// Identifiers for functions
@@ -320,7 +320,7 @@ pub type ControllerMap = HashMap<Endpoint, SPDG>;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
     /// Entry points we analyzed and their PDGs
-    #[cfg_attr(feature = "rustc", serde(with = "ser_localdefid_map"))]
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     pub controllers: ControllerMap,
 
@@ -499,7 +499,7 @@ pub fn hash_pls<T: Hash>(t: T) -> u64 {
 
 /// Return type of [`IntoIterGlobalNodes::iter_global_nodes`].
 pub struct GlobalNodeIter<I: IntoIterGlobalNodes> {
-    controller_id: LocalDefId,
+    controller_id: Endpoint,
     iter: I::Iter,
 }
 
@@ -526,7 +526,7 @@ pub trait IntoIterGlobalNodes: Sized + Copy {
     fn iter_nodes(self) -> Self::Iter;
 
     /// The controller id all of these nodes are located in.
-    fn controller_id(self) -> LocalDefId;
+    fn controller_id(self) -> Endpoint;
 
     /// Iterate all nodes as globally identified one's.
     ///
@@ -565,13 +565,13 @@ pub type Node = NodeIndex;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GlobalNode {
     node: Node,
-    controller_id: LocalDefId,
+    controller_id: Endpoint,
 }
 
 impl GlobalNode {
     /// Create a new node with no guarantee that it exists in the SPDG of the
     /// controller.
-    pub fn unsafe_new(ctrl_id: LocalDefId, index: usize) -> Self {
+    pub fn unsafe_new(ctrl_id: Endpoint, index: usize) -> Self {
         GlobalNode {
             controller_id: ctrl_id,
             node: crate::Node::new(index),
@@ -582,7 +582,7 @@ impl GlobalNode {
     /// particular SPDG with it's controller id.
     ///
     /// Meant for internal use only.
-    pub fn from_local_node(ctrl_id: LocalDefId, node: Node) -> Self {
+    pub fn from_local_node(ctrl_id: Endpoint, node: Node) -> Self {
         GlobalNode {
             controller_id: ctrl_id,
             node,
@@ -595,7 +595,7 @@ impl GlobalNode {
     }
 
     /// The identifier for the SPDG this node is contained in
-    pub fn controller_id(self) -> LocalDefId {
+    pub fn controller_id(self) -> Endpoint {
         self.controller_id
     }
 }
@@ -606,7 +606,7 @@ impl IntoIterGlobalNodes for GlobalNode {
         std::iter::once(self.local_node())
     }
 
-    fn controller_id(self) -> LocalDefId {
+    fn controller_id(self) -> Endpoint {
         self.controller_id
     }
 }
@@ -617,7 +617,7 @@ pub mod node_cluster {
 
     use flowistry_pdg::rustc_portable::LocalDefId;
 
-    use crate::{GlobalNode, IntoIterGlobalNodes, Node};
+    use crate::{Endpoint, GlobalNode, IntoIterGlobalNodes, Node};
 
     /// A globally identified set of nodes that are all located in the same
     /// controller.
@@ -626,7 +626,7 @@ pub mod node_cluster {
     /// individual [`GlobalNode`]s
     #[derive(Debug, Hash, Clone)]
     pub struct NodeCluster {
-        controller_id: LocalDefId,
+        controller_id: Endpoint,
         nodes: Box<[Node]>,
     }
 
@@ -665,7 +665,7 @@ pub mod node_cluster {
             self.iter()
         }
 
-        fn controller_id(self) -> LocalDefId {
+        fn controller_id(self) -> Endpoint {
             self.controller_id
         }
     }
@@ -683,7 +683,7 @@ pub mod node_cluster {
 
     impl NodeCluster {
         /// Create a new cluster. This for internal use.
-        pub fn new(controller_id: LocalDefId, nodes: impl IntoIterator<Item = Node>) -> Self {
+        pub fn new(controller_id: Endpoint, nodes: impl IntoIterator<Item = Node>) -> Self {
             Self {
                 controller_id,
                 nodes: nodes.into_iter().collect::<Vec<_>>().into(),
@@ -698,7 +698,7 @@ pub mod node_cluster {
         }
 
         /// Controller that these nodes belong to
-        pub fn controller_id(&self) -> LocalDefId {
+        pub fn controller_id(&self) -> Endpoint {
             self.controller_id
         }
 
@@ -731,12 +731,12 @@ pub use node_cluster::NodeCluster;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GlobalEdge {
     index: EdgeIndex,
-    controller_id: LocalDefId,
+    controller_id: Endpoint,
 }
 
 impl GlobalEdge {
     /// The id of the controller that this edge is located in
-    pub fn controller_id(self) -> LocalDefId {
+    pub fn controller_id(self) -> Endpoint {
         self.controller_id
     }
 }
@@ -812,8 +812,8 @@ pub struct SPDG {
     /// The module path to this controller function
     pub path: Box<[Identifier]>,
     /// The id
-    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::LocalDefId"))]
-    pub id: LocalDefId,
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    pub id: Endpoint,
     /// The PDG
     pub graph: SPDGImpl,
     /// Nodes to which markers are assigned.

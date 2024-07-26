@@ -1,6 +1,6 @@
 use std::{collections::HashSet, iter, rc::Rc};
 
-use flowistry::mir::placeinfo::PlaceInfo;
+use flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
@@ -27,6 +27,7 @@ use rustc_utils::{
 use crate::{
     approximation::ApproximationHandler,
     async_support::*,
+    body_cache::CachedBody,
     calling_convention::*,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
@@ -54,7 +55,7 @@ impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
 pub(crate) struct LocalAnalysis<'tcx, 'a> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
     pub(super) root: Instance<'tcx>,
-    body_with_facts: &'tcx BodyWithBorrowckFacts<'tcx>,
+    body_with_facts: &'tcx CachedBody<'tcx>,
     pub(crate) mono_body: Body<'tcx>,
     pub(crate) def_id: DefId,
     pub(crate) place_info: PlaceInfo<'tcx>,
@@ -75,7 +76,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     ) -> Option<LocalAnalysis<'tcx, 'a>> {
         let tcx = memo.tcx;
         let def_id = root.def_id();
-        let body_with_facts = self.get_body(def_id)?;
+        let body_with_facts = memo.body_cache.get(def_id)?;
         let param_env = tcx.param_env_reveal_all_normalized(def_id);
         // let param_env = match &calling_context {
         //     Some(cx) => cx.param_env,
@@ -98,7 +99,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             debug!("Dumped debug MIR {path}");
         }
 
-        let place_info = PlaceInfo::build(tcx, def_id.to_def_id(), body_with_facts);
+        let place_info = PlaceInfo::build(tcx, def_id, body_with_facts);
         let control_dependencies = body.control_dependencies();
 
         let mut start_loc = FxHashSet::default();
@@ -176,7 +177,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
     pub(crate) fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
         CallString::single(GlobalLocation {
-            function: self.local_def_id(),
+            function: self.def_id,
             location: location.into(),
         })
     }
@@ -195,12 +196,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         // Then we reproject the aliases with the remaining projection, to create {_1.0}.
         //
         // This is a massive hack bc it's inefficient and I'm not certain that it's sound.
-        let place_retyped = utils::retype_place(
-            place,
-            self.tcx(),
-            &self.body_with_facts.body,
-            self.def_id.to_def_id(),
-        );
+        let place_retyped =
+            utils::retype_place(place, self.tcx(), &self.body_with_facts.body(), self.def_id);
         self.place_info
             .aliases(place_retyped)
             .iter()
@@ -457,8 +454,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             trace!("  bailing because function is not local");
             return None;
         }
-        let local_def_id = resolved_fn.def_id().as_local()?;
-        let cache_key = (local_def_id, resolved_fn.args);
+        let cache_key = resolved_fn;
 
         let is_cached = self.memo.is_in_cache(cache_key);
 
@@ -584,7 +580,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 self.async_info(),
                 self.tcx(),
                 parent_body,
-                self.def_id.to_def_id(),
+                self.def_id,
                 destination,
             ) {
                 self.apply_mutation(state, location, parent_place);

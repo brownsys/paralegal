@@ -30,8 +30,6 @@ use crate::{assert_warning, diagnostics::DiagnosticsRecorder};
 /// User-defined PDG markers.
 pub type Marker = Identifier;
 
-/// The type identifying a controller
-pub type ControllerId = LocalDefId;
 /// The type identifying a function that is used in call sites.
 pub type FunctionId = DefId;
 
@@ -39,7 +37,7 @@ pub type FunctionId = DefId;
 pub type MarkableId = GlobalNode;
 
 type MarkerIndex = HashMap<Marker, MarkerTargets>;
-type FlowsTo = HashMap<ControllerId, CtrlFlowsTo>;
+type FlowsTo = HashMap<Endpoint, CtrlFlowsTo>;
 
 /// Collection of entities a particular marker has been applied to
 #[derive(Clone, Debug, Default)]
@@ -68,7 +66,7 @@ fn bfs_iter<
     G: IntoNeighbors + GraphRef + Visitable<NodeId = SPDGNode, Map = <SPDGImpl as Visitable>::Map>,
 >(
     g: G,
-    controller_id: LocalDefId,
+    controller_id: Endpoint,
     start: impl IntoIterator<Item = SPDGNode>,
 ) -> impl Iterator<Item = GlobalNode> {
     let mut discovered = g.visit_map();
@@ -367,7 +365,7 @@ impl Context {
     ///
     /// If the controller with this id does not exist *or* the controller has
     /// fewer than `index` arguments.
-    pub fn controller_argument(&self, ctrl_id: ControllerId, index: u32) -> Option<GlobalNode> {
+    pub fn controller_argument(&self, ctrl_id: Endpoint, index: u32) -> Option<GlobalNode> {
         let ctrl = self.desc.controllers.get(&ctrl_id)?;
         let inner = *ctrl.arguments.get(index as usize)?;
 
@@ -430,10 +428,7 @@ impl Context {
     }
 
     /// Returns all DataSources, DataSinks, and CallSites for a Controller as Nodes.
-    pub fn all_nodes_for_ctrl(
-        &self,
-        ctrl_id: ControllerId,
-    ) -> impl Iterator<Item = GlobalNode> + '_ {
+    pub fn all_nodes_for_ctrl(&self, ctrl_id: Endpoint) -> impl Iterator<Item = GlobalNode> + '_ {
         let ctrl = &self.desc.controllers[&ctrl_id];
         ctrl.graph
             .node_indices()
@@ -443,7 +438,7 @@ impl Context {
     /// Returns an iterator over the data sources within controller `c` that have type `t`.
     pub fn srcs_with_type(
         &self,
-        ctrl_id: ControllerId,
+        ctrl_id: Endpoint,
         t: DefId,
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         self.desc.controllers[&ctrl_id]
@@ -459,7 +454,7 @@ impl Context {
     /// Returns an iterator over all nodes that do not have any influencers of the given edge_type.
     pub fn roots(
         &self,
-        ctrl_id: ControllerId,
+        ctrl_id: Endpoint,
         edge_type: EdgeSelection,
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         let g = &self.desc.controllers[&ctrl_id].graph;
@@ -530,7 +525,7 @@ impl Context {
     }
 
     /// Iterate over all defined controllers
-    pub fn all_controllers(&self) -> impl Iterator<Item = (ControllerId, &SPDG)> {
+    pub fn all_controllers(&self) -> impl Iterator<Item = (Endpoint, &SPDG)> {
         self.desc().controllers.iter().map(|(k, v)| (*k, v))
     }
 

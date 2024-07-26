@@ -8,6 +8,7 @@ use crate::{
 };
 use flowistry_pdg::SourceUse;
 use flowistry_pdg_construction::{
+    body_cache::BodyCache,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, match_async_trait_assign,
     utils::{try_monomorphize, try_resolve_function, type_as_fn},
@@ -25,7 +26,7 @@ use rustc_middle::{
 
 use anyhow::Result;
 use either::Either;
-
+use flowistry::mir::FlowistryInput;
 use petgraph::{
     visit::{IntoNodeReferences, NodeIndexable, NodeRef},
     Direction,
@@ -44,7 +45,7 @@ pub struct GraphConverter<'tcx, 'a, C> {
     /// The flowistry graph we are converting
     dep_graph: Rc<DepGraph<'tcx>>,
     /// Same as the ID stored in self.target, but as a local def id
-    local_def_id: LocalDefId,
+    def_id: DefId,
 
     // Mutable fields
     /// Where we write every [`DefId`] we encounter into.
@@ -58,7 +59,7 @@ pub struct GraphConverter<'tcx, 'a, C> {
     /// The converted graph we are creating
     spdg: SPDGImpl,
     marker_assignments: HashMap<Node, HashSet<Identifier>>,
-    call_string_resolver: call_string_resolver::CallStringResolver<'tcx>,
+    call_string_resolver: call_string_resolver::CallStringResolver<'tcx, 'a>,
     stats: SPDGStats,
 }
 
@@ -83,17 +84,23 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             ))?
         }
 
+        let def_id = local_def_id.to_def_id();
+
         Ok(Self {
             generator,
             known_def_ids,
             target,
             index_map: vec![default_index(); dep_graph.graph.node_bound()].into(),
             dep_graph: dep_graph.into(),
-            local_def_id,
+            def_id,
             types: Default::default(),
             spdg: Default::default(),
             marker_assignments: Default::default(),
-            call_string_resolver: CallStringResolver::new(generator.tcx, local_def_id),
+            call_string_resolver: CallStringResolver::new(
+                generator.tcx,
+                def_id,
+                generator.pdg_constructor.body_cache(),
+            ),
             stats,
         })
     }
@@ -108,7 +115,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
 
     /// Is the top-level function (entrypoint) an `async fn`
     fn entrypoint_is_async(&self) -> bool {
-        entrypoint_is_async(self.tcx(), self.local_def_id)
+        entrypoint_is_async(self.body_cache(), self.tcx(), self.def_id)
     }
 
     /// Insert this node into the converted graph, return it's auto-assigned id
@@ -145,7 +152,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let leaf_loc = weight.at.leaf();
         let node = self.new_node_for(old_node);
 
-        let body = &self.tcx().body_for_def_id(leaf_loc.function).unwrap().body;
+        let body = self.body_cache().get(leaf_loc.function).unwrap().body();
 
         let graph = self.dep_graph.clone();
 
@@ -153,7 +160,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             RichLocation::Start
                 if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
             {
-                let function_id = leaf_loc.function.to_def_id();
+                let function_id = leaf_loc.function;
                 let arg_num = weight.place.local.as_u32() - 1;
                 self.known_def_ids.extend(Some(function_id));
 
@@ -162,7 +169,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 });
             }
             RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
-                let function_id = leaf_loc.function.to_def_id();
+                let function_id = leaf_loc.function;
                 self.known_def_ids.extend(Some(function_id));
                 self.register_annotations_for_function(node, function_id, |ann| {
                     ann.refinement.on_return()
@@ -250,7 +257,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             // The body of a top-level `async` function binds a closure to the
             // return place `_0`. Here we expect are looking at the statement
             // that does this binding.
-            assert!(expect_stmt_at(self.tcx(), *first).is_left());
+            assert!(expect_stmt_at(self.generator.pdg_constructor.body_cache(), *first).is_left());
             rest = tail;
         }
 
@@ -274,8 +281,8 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let resolution = self.call_string_resolver.resolve(at);
 
         // Thread through each caller to recover generic arguments
-        let body = tcx.body_for_def_id(last.function).unwrap();
-        let raw_ty = place.ty(&body.body, tcx);
+        let body = self.body_cache().get(last.function).unwrap();
+        let raw_ty = place.ty(body.body(), tcx);
         Some(try_monomorphize(resolution, tcx, ty::ParamEnv::reveal_all(), &raw_ty, span).unwrap())
     }
 
@@ -362,9 +369,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             .record_timed(TimedStat::Conversion, start.elapsed());
         self.stats.conversion_time = start.elapsed();
         SPDG {
-            path: path_for_item(self.local_def_id.to_def_id(), self.tcx()),
+            path: path_for_item(self.def_id, self.tcx()),
             graph: self.spdg,
-            id: self.local_def_id,
+            id: self.def_id,
             name: Identifier::new(self.target.name()),
             arguments,
             markers: self
@@ -382,6 +389,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         }
     }
 
+    fn body_cache(&self) -> &BodyCache<'tcx> {
+        self.generator.pdg_constructor.body_cache()
+    }
+
     /// This initializes the fields `spdg` and `index_map` and should be called first
     fn make_spdg_impl(&mut self) {
         use petgraph::prelude::*;
@@ -391,7 +402,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
 
         for (i, weight) in input.node_references() {
             let at = weight.at.leaf();
-            let body = &tcx.body_for_def_id(at.function).unwrap().body;
+            let body = self.body_cache().get(at.function).unwrap().body();
 
             let node_span = body.local_decls[weight.place.local].source_info.span;
             self.register_node(
@@ -538,8 +549,11 @@ fn assert_edge_location_invariant<'tcx>(
 }
 
 /// Find the statement at this location or fail.
-fn expect_stmt_at(tcx: TyCtxt, loc: GlobalLocation) -> Either<&mir::Statement, &mir::Terminator> {
-    let body = &tcx.body_for_def_id(loc.function).unwrap().body;
+fn expect_stmt_at<'tcx>(
+    body_cache: &BodyCache<'tcx>,
+    loc: GlobalLocation,
+) -> Either<&'tcx mir::Statement<'tcx>, &'tcx mir::Terminator<'tcx>> {
+    let body = &body_cache.get(loc.function).unwrap().body();
     let RichLocation::Location(loc) = loc.location else {
         unreachable!();
     };
@@ -564,13 +578,13 @@ fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
     Some(id)
 }
 
-fn entrypoint_is_async(tcx: TyCtxt, local_def_id: LocalDefId) -> bool {
-    tcx.asyncness(local_def_id).is_async()
-        || is_async_trait_fn(
-            tcx,
-            local_def_id.to_def_id(),
-            &tcx.body_for_def_id(local_def_id).unwrap().body,
-        )
+fn entrypoint_is_async<'tcx>(
+    body_cache: &BodyCache<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> bool {
+    tcx.asyncness(def_id).is_async()
+        || is_async_trait_fn(tcx, def_id, body_cache.get(def_id).unwrap().body())
 }
 
 mod call_string_resolver {
@@ -580,9 +594,11 @@ mod call_string_resolver {
     //! internal invariants of the resolver.
 
     use flowistry_pdg::{rustc_portable::LocalDefId, CallString};
-    use flowistry_pdg_construction::utils::{
-        manufacture_substs_for, try_monomorphize, try_resolve_function,
+    use flowistry_pdg_construction::{
+        body_cache::BodyCache,
+        utils::{manufacture_substs_for, try_monomorphize, try_resolve_function},
     };
+    use paralegal_spdg::Endpoint;
     use rustc_middle::ty::Instance;
     use rustc_utils::cache::Cache;
 
@@ -594,13 +610,14 @@ mod call_string_resolver {
     ///
     /// Only valid for a single controller. Each controller should initialize a
     /// new resolver.
-    pub struct CallStringResolver<'tcx> {
+    pub struct CallStringResolver<'tcx, 'a> {
         cache: Cache<CallString, Instance<'tcx>>,
         tcx: TyCtxt<'tcx>,
         entrypoint_is_async: bool,
+        body_cache: &'a BodyCache<'tcx>,
     }
 
-    impl<'tcx> CallStringResolver<'tcx> {
+    impl<'tcx, 'a> CallStringResolver<'tcx, 'a> {
         /// Tries to resolve to the monomophized function in which this call
         /// site exists. That is to say that `return.def_id() ==
         /// cs.leaf().function`.
@@ -617,18 +634,23 @@ mod call_string_resolver {
             let def_id = this.function;
             try_resolve_function(
                 self.tcx,
-                def_id.to_def_id(),
+                def_id,
                 self.tcx.param_env(def_id),
-                manufacture_substs_for(self.tcx, def_id.to_def_id()).unwrap(),
+                manufacture_substs_for(self.tcx, def_id).unwrap(),
             )
             .unwrap()
         }
 
-        pub fn new(tcx: TyCtxt<'tcx>, entrypoint: LocalDefId) -> Self {
+        pub fn new(
+            tcx: TyCtxt<'tcx>,
+            entrypoint: Endpoint,
+            body_cache: &'a BodyCache<'tcx>,
+        ) -> Self {
             Self {
                 cache: Default::default(),
                 tcx,
-                entrypoint_is_async: super::entrypoint_is_async(tcx, entrypoint),
+                entrypoint_is_async: super::entrypoint_is_async(body_cache, tcx, entrypoint),
+                body_cache,
             }
         }
 
@@ -645,7 +667,7 @@ mod call_string_resolver {
 
                 let tcx = self.tcx;
 
-                let base_stmt = super::expect_stmt_at(tcx, this);
+                let base_stmt = super::expect_stmt_at(&self.body_cache, this);
                 let param_env = tcx.param_env_reveal_all_normalized(prior.def_id());
                 let normalized = map_either(
                     base_stmt,

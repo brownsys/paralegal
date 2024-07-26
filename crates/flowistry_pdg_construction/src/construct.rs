@@ -1,15 +1,15 @@
 use std::rc::Rc;
 
-use df::{AnalysisDomain, Results, ResultsVisitor};
 use either::Either;
-
-use flowistry_pdg::{CallString, GlobalLocation};
-
+use flowistry::mir::FlowistryInput;
 use log::trace;
 use petgraph::graph::DiGraph;
 
+use flowistry_pdg::{CallString, GlobalLocation};
+
+use df::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_hash::FxHashMap;
-use rustc_hir::def_id::{CrateNum, LocalDefId};
+use rustc_hir::def_id::{CrateNum, DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
@@ -28,7 +28,7 @@ use crate::{
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{manufacture_substs_for, try_resolve_function},
-    CallChangeCallback, FlowistryInput,
+    CallChangeCallback,
 };
 
 /// A memoizing constructor of PDGs.
@@ -102,26 +102,19 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         &'a self,
         resolution: Instance<'tcx>,
     ) -> Option<&'a PartialGraph<'tcx>> {
-        let def_id = resolution.def_id().expect_local();
-        let generics = resolution.args;
-        self.pdg_cache.get_maybe_recursive((def_id, generics), |_| {
-            let g = LocalAnalysis::new(self, resolution).construct_partial();
-            trace!(
-                "Computed new for {} {generics:?}",
-                self.tcx.def_path_str(def_id)
-            );
-            g.check_invariants();
-            g
-        })
+        self.pdg_cache
+            .try_retrieve(resolution, |_| {
+                let g = LocalAnalysis::new(self, resolution)?.construct_partial();
+                trace!("Computed new for {resolution:?}");
+                g.check_invariants();
+                Some(g)
+            })
+            .as_success()
     }
 
     /// Has a PDG been constructed for this instance before?
     pub fn is_in_cache(&self, resolution: PdgCacheKey<'tcx>) -> bool {
         self.pdg_cache.is_in_cache(&resolution)
-    }
-
-    pub fn get_body(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
-        self.body_cache.get(key)
     }
 
     /// Construct a final PDG for this function. Same as
@@ -130,9 +123,11 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     /// Additionally if this is an `async fn` or `#[async_trait]` it will inline
     /// the closure as though the function were called with `poll`.
     pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
-        if let Some((generator, loc, _ty)) =
-            determine_async(self.tcx, function, &self.get_body(function).unwrap().body())
-        {
+        if let Some((generator, loc, _ty)) = determine_async(
+            self.tcx,
+            function,
+            &self.body_cache.get(function.to_def_id()).unwrap().body(),
+        ) {
             // TODO remap arguments
 
             // Note that this deliberately register this result in a separate
@@ -141,13 +136,21 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             return push_call_string_root(
                 self.construct_root(generator.def_id().expect_local()),
                 GlobalLocation {
-                    function,
+                    function: function.to_def_id(),
                     location: flowistry_pdg::RichLocation::Location(loc),
                 },
             )
             .to_petgraph();
         }
         self.construct_root(function).to_petgraph()
+    }
+
+    pub fn body_for_def_id(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
+        self.body_cache.get(key)
+    }
+
+    pub fn body_cache(&self) -> &BodyCache<'tcx> {
+        &self.body_cache
     }
 }
 
@@ -366,7 +369,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 constructor.async_info(),
                 constructor.tcx(),
                 &constructor.mono_body,
-                constructor.def_id.to_def_id(),
+                constructor.def_id,
                 *destination,
             ) {
                 self.register_mutation(
@@ -394,7 +397,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 constructor.async_info(),
                 constructor.tcx(),
                 &constructor.mono_body,
-                constructor.def_id.to_def_id(),
+                constructor.def_id,
                 *destination,
             ) {
                 self.register_mutation(
@@ -489,7 +492,7 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-pub type PdgCacheKey<'tcx> = (LocalDefId, GenericArgsRef<'tcx>);
+pub type PdgCacheKey<'tcx> = Instance<'tcx>;
 pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, PartialGraph<'tcx>>>;
 
 #[derive(Debug)]

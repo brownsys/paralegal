@@ -17,6 +17,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use either::Either;
+use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
 };
@@ -89,7 +90,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
         let spdg = converter.make_spdg();
 
-        Ok((local_def_id, spdg))
+        Ok((local_def_id.to_def_id(), spdg))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -149,7 +150,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let inlined_functions = instruction_info
             .keys()
-            .filter_map(|l| l.function.to_def_id().as_local())
+            .filter_map(|l| l.function.as_local())
             .collect::<HashSet<_>>();
         let analyzed_spans = inlined_functions
             .iter()
@@ -247,7 +248,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
         all_instructions
             .into_iter()
             .map(|i| {
-                let body = &self.tcx.body_for_def_id(i.function).unwrap().body;
+                let body = self
+                    .pdg_constructor
+                    .body_for_def_id(i.function)
+                    .unwrap()
+                    .body();
 
                 let (kind, description) = match i.location {
                     RichLocation::End => (InstructionKind::Return, "start".to_owned()),

@@ -17,10 +17,6 @@ use rustc_mir_dataflow::move_paths::MovePathIndex;
 
 extern crate polonius_engine;
 
-pub trait CompressRichLocation {
-    fn to_index(&self, loc: RichLocation) -> LocationIndex;
-}
-
 #[derive(Debug, Copy, Clone)]
 struct AlmostRustcFacts;
 
