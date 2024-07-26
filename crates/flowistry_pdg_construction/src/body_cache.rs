@@ -4,9 +4,9 @@ use rustc_borrowck::consumers::RustcFacts;
 
 use rustc_hir::def_id::{CrateNum, DefId};
 use rustc_middle::{mir::Body, ty::TyCtxt};
-use rustc_utils::cache::Cache;
+use rustc_utils::{cache::Cache, mir::borrowck_facts::get_body_with_borrowck_facts};
 
-use crate::nll_facts::{self, create_location_table, FlowistryFacts};
+use crate::nll_facts::{self, create_location_table, FlowistryFactSelection, FlowistryFacts};
 
 pub struct CachedBody<'tcx> {
     body: Body<'tcx>,
@@ -71,6 +71,20 @@ impl<'tcx> BodyCache<'tcx> {
 
 fn compute_body_with_borrowck_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {
     let body = tcx.optimized_mir(def_id).to_owned();
+    if let Some(local) = def_id.as_local() {
+        let local_facts = get_body_with_borrowck_facts(tcx, local);
+        return CachedBody {
+            body: local_facts.body.clone(),
+            input_facts: FlowistryFactSelection {
+                subset_base: local_facts
+                    .input_facts
+                    .as_ref()
+                    .unwrap()
+                    .subset_base
+                    .clone(),
+            },
+        };
+    };
 
     let location_table = create_location_table(&body);
 
