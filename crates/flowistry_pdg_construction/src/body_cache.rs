@@ -5,13 +5,13 @@ use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{ConsumerOptions, RustcFacts};
 
 use rustc_hir::{
-    def_id::{CrateNum, DefId},
+    def_id::{CrateNum, DefId, LocalDefId},
     intravisit::{self, nested_filter::NestedFilter},
 };
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     hir::{map::Map, nested_filter::OnlyBodies},
-    mir::{Body, ClearCrossCrate},
+    mir::{Body, ClearCrossCrate, StatementKind},
     ty::TyCtxt,
 };
 use rustc_serialize::{Decodable, Encodable};
@@ -23,6 +23,25 @@ use crate::encoder::{ParalegalDecoder, ParalegalEncoder};
 pub struct CachedBody<'tcx> {
     body: Body<'tcx>,
     input_facts: FlowistryFacts,
+}
+
+impl<'tcx> CachedBody<'tcx> {
+    fn retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Self {
+        let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
+            tcx,
+            local_def_id,
+            ConsumerOptions::PoloniusInputFacts,
+        );
+
+        clean_undecodable_data_from_body(&mut body_with_facts.body);
+
+        Self {
+            body: body_with_facts.body,
+            input_facts: FlowistryFacts {
+                subset_base: body_with_facts.input_facts.unwrap().subset_base,
+            },
+        }
+    }
 }
 
 impl<'tcx> FlowistryInput<'tcx> for &'tcx CachedBody<'tcx> {
@@ -110,6 +129,25 @@ struct DumpingVisitor<'tcx> {
     target_dir: PathBuf,
 }
 
+/// Some data in a [Body] is not crosscrate compatible. Usually because it
+/// involves storing a [LocalDefId]. This function makes sure to sanitize those
+/// out.
+fn clean_undecodable_data_from_body(body: &mut Body) {
+    for scope in body.source_scopes.iter_mut() {
+        scope.local_data = ClearCrossCrate::Clear;
+    }
+
+    for stmt in body
+        .basic_blocks_mut()
+        .iter_mut()
+        .flat_map(|bb| bb.statements.iter_mut())
+    {
+        if matches!(stmt.kind, StatementKind::FakeRead(_)) {
+            stmt.make_nop()
+        }
+    }
+}
+
 impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
     fn nested_visit_map(&mut self) -> Self::Map {
@@ -124,22 +162,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
         _: rustc_span::Span,
         local_def_id: rustc_hir::def_id::LocalDefId,
     ) {
-        let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
-            self.tcx,
-            local_def_id,
-            ConsumerOptions::PoloniusInputFacts,
-        );
-
-        for scope in body_with_facts.body.source_scopes.iter_mut() {
-            scope.local_data = ClearCrossCrate::Clear;
-        }
-
-        let to_write = CachedBody {
-            body: body_with_facts.body,
-            input_facts: FlowistryFacts {
-                subset_base: body_with_facts.input_facts.unwrap().subset_base,
-            },
-        };
+        let to_write = CachedBody::retrieve(self.tcx, local_def_id);
 
         let dir = &self.target_dir;
         let path = dir.join(
