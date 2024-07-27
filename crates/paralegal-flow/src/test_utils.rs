@@ -4,6 +4,7 @@ extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
 
+use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
 use hir::def_id::DefId;
 
 use crate::{
@@ -216,11 +217,7 @@ impl InlineTestBuilder {
             TopLevelArgs::parse_from([
                 "".into(),
                 "--analyze".into(),
-                format!(
-                    "{}::{}",
-                    rustc_utils::test_utils::DUMMY_MOD_NAME,
-                    self.ctrl_name
-                ),
+                format!("crate::{}", self.ctrl_name),
             ])
             .args,
         )
@@ -230,7 +227,9 @@ impl InlineTestBuilder {
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
+            .with_query_override(None)
             .compile(move |result| {
+                dump_mir_and_borrowck_facts(result.tcx);
                 let tcx = result.tcx;
                 let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
                 let pdg = memo.run(tcx).unwrap();

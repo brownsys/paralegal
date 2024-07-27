@@ -21,3 +21,4 @@ flow-graph.json
 *.o
 
 nll-facts/
+*.bwbf

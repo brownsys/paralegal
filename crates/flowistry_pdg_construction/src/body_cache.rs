@@ -6,10 +6,14 @@ use rustc_borrowck::consumers::{ConsumerOptions, RustcFacts};
 
 use rustc_hir::{
     def_id::{CrateNum, DefId},
-    intravisit,
+    intravisit::{self, nested_filter::NestedFilter},
 };
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
-use rustc_middle::{hir::nested_filter::OnlyBodies, mir::Body, ty::TyCtxt};
+use rustc_middle::{
+    hir::{map::Map, nested_filter::OnlyBodies},
+    mir::Body,
+    ty::TyCtxt,
+};
 use rustc_serialize::{Decodable, Encodable};
 use rustc_utils::{cache::Cache, mir::borrowck_facts::get_body_with_borrowck_facts};
 
@@ -92,12 +96,21 @@ impl<'tcx> BodyCache<'tcx> {
     }
 }
 
+struct VisitFilter;
+
+impl<'hir> NestedFilter<'hir> for VisitFilter {
+    type Map = Map<'hir>;
+
+    const INTER: bool = true;
+    const INTRA: bool = true;
+}
+
 struct DumpingVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
 impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
-    type NestedFilter = OnlyBodies;
+    type NestedFilter = VisitFilter;
     fn nested_visit_map(&mut self) -> Self::Map {
         self.tcx.hir()
     }
@@ -134,10 +147,12 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
             std::fs::create_dir(dir).unwrap();
         }
 
-        let mut encoder = ParalegalEncoder::new(path, self.tcx);
+        let mut encoder = ParalegalEncoder::new(&path, self.tcx);
 
         to_write.encode(&mut encoder);
         encoder.finish();
+
+        println!("Wrote bwbf data for function {id:?} to {}", path.display());
     }
 }
 
@@ -169,7 +184,7 @@ fn compute_body_with_borrowck_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBod
         return meta;
     }
 
-    panic!("No facts found at any path tried: {paths:?}");
+    panic!("No facts for {def_id:?} found at any path tried: {paths:?}");
 }
 
 /// Create the name of the file in which to store intermediate artifacts.

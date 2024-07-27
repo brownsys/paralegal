@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::BodyCache,
+    body_cache::{dump_mir_and_borrowck_facts, BodyCache},
     graph::{DepEdge, DepGraph},
     CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
 };
@@ -40,13 +40,16 @@ fn pdg(
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
-    rustc_utils::test_utils::CompileBuilder::new(input).compile(move |CompileResult { tcx }| {
-        let def_id = get_main(tcx);
-        let mut memo = MemoPdgConstructor::new(tcx);
-        configure(tcx, &mut memo);
-        let pdg = memo.construct_graph(def_id);
-        tests(tcx, memo.body_cache(), pdg)
-    })
+    rustc_utils::test_utils::CompileBuilder::new(input)
+        .with_query_override(None)
+        .compile(move |CompileResult { tcx, .. }| {
+            dump_mir_and_borrowck_facts(tcx);
+            let def_id = get_main(tcx);
+            let mut memo = MemoPdgConstructor::new(tcx);
+            configure(tcx, &mut memo);
+            let pdg = memo.construct_graph(def_id);
+            tests(tcx, memo.body_cache(), pdg)
+        })
 }
 
 #[allow(unused)]
