@@ -114,8 +114,10 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
+    let dir = dir.as_ref();
     assert!(Command::new("cargo")
         .arg("clean")
+        .current_dir(dir)
         .status()
         .unwrap()
         .success());
