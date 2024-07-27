@@ -114,6 +114,11 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
+    assert!(Command::new("cargo")
+        .arg("clean")
+        .status()
+        .unwrap()
+        .success());
     paralegal_flow_command(dir)
         .args(["--abort-after-analysis"])
         .args(extra)
