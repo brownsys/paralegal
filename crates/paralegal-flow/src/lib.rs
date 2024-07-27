@@ -118,7 +118,7 @@ struct Callbacks {
     stats: Stats,
 }
 
-struct NoopCallbacks {}
+struct NoopCallbacks;
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
 
@@ -134,6 +134,22 @@ impl Callbacks {
             stats: Default::default(),
             start: Instant::now(),
         }
+    }
+}
+
+struct DumpOnlyCallbacks;
+
+impl rustc_driver::Callbacks for DumpOnlyCallbacks {
+    fn after_expansion<'tcx>(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> rustc_driver::Compilation {
+        queries
+            .global_ctxt()
+            .unwrap()
+            .enter(|tcx| dump_mir_and_borrowck_facts(tcx));
+        rustc_driver::Compilation::Continue
     }
 }
 
@@ -219,6 +235,60 @@ fn add_to_rustflags(new: impl IntoIterator<Item = String>) -> Result<(), std::en
     prior.extend(new);
     std::env::set_var(CARGO_ENCODED_RUSTFLAGS, prior.join("\x1f"));
     Ok(())
+}
+
+enum CrateHandling {
+    JustCompile,
+    CompileAndDump,
+    Analyze,
+}
+
+/// Also adds and additional features required by the Paralegal build config
+fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>) -> CrateHandling {
+    let crate_name = compiler_args
+        .iter()
+        .enumerate()
+        .find_map(|(i, s)| (s == "--crate-name").then_some(i))
+        .and_then(|i| compiler_args.get(i + 1))
+        .cloned();
+
+    if let Some(dep_config) = crate_name
+        .as_ref()
+        .and_then(|s| plugin_args.build_config().dep.get(s))
+    {
+        compiler_args.extend(
+            dep_config
+                .rust_features
+                .iter()
+                .map(|f| format!("-Zcrate-attr=feature({})", f)),
+        );
+    }
+
+    if crate_name
+        .as_ref()
+        .map_or(false, |n| n == "build_script_build")
+    {
+        // This is a build script. No need to analyze
+        CrateHandling::JustCompile
+    } else if {
+        let our_target = plugin_args.target().map(|t| t.replace('-', "_"));
+        crate_name
+            .as_ref()
+            .and_then(|s| our_target.as_ref().map(|t| s == t))
+            .unwrap_or_else(|| std::env::var("CARGO_PRIMARY_PACKAGE").is_ok())
+    } {
+        // This is the --target crate, need to analyze
+        CrateHandling::Analyze
+    } else if crate_name
+        .as_ref()
+        .map_or(false, |n| plugin_args.anactrl().included().contains(n))
+    {
+        // This is in --include's, we need t dump
+        CrateHandling::CompileAndDump
+    } else {
+        // Both analyze and target not set for this crate, just compile it
+        CrateHandling::JustCompile
+    }
 }
 
 impl rustc_plugin::RustcPlugin for DfppPlugin {
@@ -318,71 +388,45 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
 
-        let crate_name = compiler_args
-            .iter()
-            .enumerate()
-            .find_map(|(i, s)| (s == "--crate-name").then_some(i))
-            .and_then(|i| compiler_args.get(i + 1))
-            .cloned();
+        let mut callbacks = match how_to_handle_this_crate(&plugin_args, &mut compiler_args) {
+            CrateHandling::JustCompile => {
+                Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
+            }
+            CrateHandling::CompileAndDump => Box::new(DumpOnlyCallbacks),
+            CrateHandling::Analyze => {
+                plugin_args.setup_logging();
 
-        if let Some(dep_config) = crate_name
-            .as_ref()
-            .and_then(|s| plugin_args.build_config().dep.get(s))
-        {
-            compiler_args.extend(
-                dep_config
-                    .rust_features
-                    .iter()
-                    .map(|f| format!("-Zcrate-attr=feature({})", f)),
-            );
-        }
+                let opts = Box::leak(Box::new(plugin_args));
 
-        let is_primary_package = std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+                const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
+                if let Ok(debugger) = std::env::var(RERUN_VAR) {
+                    info!("Restarting with debugger '{debugger}'");
+                    let mut dsplit = debugger.split(' ');
+                    let mut cmd = std::process::Command::new(dsplit.next().unwrap());
+                    cmd.args(dsplit)
+                        .args(std::env::args())
+                        .env_remove(RERUN_VAR);
+                    std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
+                }
 
-        let our_target = plugin_args.target().map(|t| t.replace('-', "_"));
+                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+                if opts.verbosity() >= Level::Debug {
+                    compiler_args.push("-Ztrack-diagnostics".to_string());
+                }
 
-        let is_target = crate_name
-            .as_ref()
-            .and_then(|s| our_target.as_ref().map(|t| s == t))
-            .unwrap_or(is_primary_package);
+                if let Some(dbg) = opts.attach_to_debugger() {
+                    dbg.attach()
+                }
 
-        let is_build_script = crate_name
-            .as_ref()
-            .map_or(false, |n| n == "build_script_build");
+                debug!(
+                    "Arguments: {}",
+                    Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
+                );
+                Box::new(Callbacks::new(opts))
+            }
+        };
 
-        if !is_target || is_build_script {
-            return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
-        }
-
-        plugin_args.setup_logging();
-
-        let opts = Box::leak(Box::new(plugin_args));
-
-        const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
-        if let Ok(debugger) = std::env::var(RERUN_VAR) {
-            info!("Restarting with debugger '{debugger}'");
-            let mut dsplit = debugger.split(' ');
-            let mut cmd = std::process::Command::new(dsplit.next().unwrap());
-            cmd.args(dsplit)
-                .args(std::env::args())
-                .env_remove(RERUN_VAR);
-            std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
-        }
-
-        compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-        if opts.verbosity() >= Level::Debug {
-            compiler_args.push("-Ztrack-diagnostics".to_string());
-        }
-
-        if let Some(dbg) = opts.attach_to_debugger() {
-            dbg.attach()
-        }
-
-        debug!(
-            "Arguments: {}",
-            Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
-        );
-        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks::new(opts)).run()
+        rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run()
     }
 }
 
