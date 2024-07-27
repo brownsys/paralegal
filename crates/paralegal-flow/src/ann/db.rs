@@ -107,11 +107,13 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// are present an empty slice is returned.
     ///
     /// Query is cached.
-    pub fn local_annotations(&self, def_id: LocalDefId) -> &[Annotation] {
+    pub fn source_annotations(&self, def_id: DefId) -> &[Annotation] {
         self.db()
-            .local_annotations
-            .get(&self.defid_rewrite(def_id.to_def_id()).expect_local())
-            .map_or(&[], |o| o.as_slice())
+            .annotations
+            .get(self.defid_rewrite(def_id), |_| {
+                self.0.retrieve_annotations_for(def_id)
+            })
+            .as_slice()
     }
 
     /// Retrieves any external markers on this item. If there are not such
@@ -129,11 +131,9 @@ impl<'tcx> MarkerCtx<'tcx> {
     ///
     /// Queries are cached/precomputed so calling this repeatedly is cheap.
     pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
-        def_id
-            .as_local()
-            .map(|ldid| self.local_annotations(ldid))
+        self.source_annotations(def_id)
             .into_iter()
-            .flat_map(|anns| anns.iter().flat_map(Annotation::as_marker))
+            .filter_map(Annotation::as_marker)
             .chain(self.external_markers(def_id).iter())
     }
 
@@ -159,8 +159,8 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Are there any local markers on this item?
-    pub fn is_locally_marked(&self, def_id: LocalDefId) -> bool {
-        self.local_annotations(def_id)
+    pub fn is_locally_marked(&self, def_id: DefId) -> bool {
+        self.source_annotations(def_id)
             .iter()
             .any(Annotation::is_marker)
     }
@@ -170,19 +170,25 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// This is in contrast to [`Self::marker_is_reachable`] which also reports
     /// if markers are reachable from the body of this function (if it is one).
     pub fn is_marked<D: IntoDefId + Copy>(&self, did: D) -> bool {
-        matches!(did.into_def_id(self.tcx()).as_local(), Some(ldid) if self.is_locally_marked(ldid))
-            || self.is_externally_marked(did)
+        let defid = did.into_def_id(self.tcx());
+        self.is_locally_marked(defid) || self.is_externally_marked(defid)
     }
 
     /// Return a complete set of local annotations that were discovered.
     ///
     /// Crucially this is a "readout" from the marker cache, which means only
     /// items reachable from the `paralegal_flow::analyze` will end up in this collection.
-    pub fn local_annotations_found(&self) -> Vec<(LocalDefId, &[Annotation])> {
+    pub fn source_annotations_found(&self) -> Vec<(DefId, &[Annotation])> {
         self.db()
-            .local_annotations
+            .annotations
+            .borrow()
             .iter()
-            .map(|(k, v)| (*k, (v.as_slice())))
+            .filter_map(|(k, v)| {
+                let slice = v.as_ref()?.as_slice();
+                // SAFETY: pinned
+                let slice = unsafe { std::mem::transmute(slice) };
+                Some((*k, slice))
+            })
             .collect()
     }
 
@@ -464,13 +470,9 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn all_annotations(
         &self,
     ) -> impl Iterator<Item = (DefId, Either<&Annotation, &MarkerAnnotation>)> {
-        self.0
-            .local_annotations
-            .iter()
-            .flat_map(|(&id, anns)| {
-                anns.iter()
-                    .map(move |ann| (id.to_def_id(), Either::Left(ann)))
-            })
+        self.source_annotations_found()
+            .into_iter()
+            .flat_map(|(key, anns)| anns.iter().map(move |a| (key, Either::Left(a))))
             .chain(
                 self.0
                     .external_annotations
@@ -493,7 +495,7 @@ pub struct MarkerDatabase<'tcx> {
     tcx: TyCtxt<'tcx>,
     /// Cache for parsed local annotations. They are created with
     /// [`MarkerCtx::retrieve_local_annotations_for`].
-    local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
+    annotations: Cache<DefId, Vec<Annotation>>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
     reachable_markers: Cache<Instance<'tcx>, Box<[Identifier]>>,
@@ -509,7 +511,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
     pub fn init(tcx: TyCtxt<'tcx>, args: &'static Args) -> Self {
         Self {
             tcx,
-            local_annotations: HashMap::default(),
+            annotations: Cache::default(),
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
             _config: args.marker_control(),
@@ -520,24 +522,12 @@ impl<'tcx> MarkerDatabase<'tcx> {
     }
 
     /// Retrieve and parse the local annotations for this item.
-    pub fn retrieve_local_annotations_for(&mut self, def_id: LocalDefId) {
+    pub fn retrieve_annotations_for(&self, def_id: DefId) -> Vec<Annotation> {
         let tcx = self.tcx;
-        for a in tcx.get_attrs_unchecked(def_id.to_def_id()) {
-            match self.try_parse_annotation(a) {
-                Ok(anns) => {
-                    let mut anns = anns.peekable();
-                    if anns.peek().is_some() {
-                        self.local_annotations
-                            .entry(def_id)
-                            .or_default()
-                            .extend(anns)
-                    }
-                }
-                Err(e) => {
-                    tcx.sess.span_err(a.span, e);
-                }
-            }
-        }
+        tcx.get_attrs_unchecked(def_id)
+            .iter()
+            .flat_map(|a| self.try_parse_annotation(a).unwrap())
+            .collect()
     }
 
     fn try_parse_annotation(

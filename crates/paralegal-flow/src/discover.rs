@@ -119,14 +119,6 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
         self.tcx.hir()
     }
 
-    /// Check if this id has annotations and if so register them in the marker database.
-    fn visit_id(&mut self, hir_id: rustc_hir::HirId) {
-        if let Some(owner_id) = hir_id.as_owner() {
-            self.marker_ctx
-                .retrieve_local_annotations_for(owner_id.def_id);
-        }
-    }
-
     /// Finds the functions that have been marked as targets.
     fn visit_fn(
         &mut self,
