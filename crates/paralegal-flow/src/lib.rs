@@ -85,8 +85,6 @@ pub const EXTRA_RUSTC_ARGS: &[&str] = &[
     "paralegal",
     "-Zcrate-attr=feature(register_tool)",
     "-Zcrate-attr=register_tool(paralegal_flow)",
-    "-Zalways-encode-mir",
-    "-Znll-facts",
 ];
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
