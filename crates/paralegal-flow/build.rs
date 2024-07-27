@@ -1,3 +1,5 @@
+#![feature(string_remove_matches)]
+
 use std::path::PathBuf;
 use std::process::Command;
 extern crate chrono;
@@ -76,8 +78,7 @@ fn main() {
         .arg("--version")
         .output()
         .unwrap();
-    println!(
-        "cargo:rustc-env=RUSTC_VERSION=\"{}\"",
-        String::from_utf8(rustc_version.stdout).unwrap()
-    );
+    let mut version_str = String::from_utf8(rustc_version.stdout).unwrap();
+    version_str.remove_matches('\n');
+    println!("cargo:rustc-env=RUSTC_VERSION={}", version_str,);
 }

@@ -234,6 +234,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         "paralegal-flow".into()
     }
 
+    fn reported_driver_version(&self) -> std::borrow::Cow<'static, str> {
+        env!("RUSTC_VERSION").into()
+    }
+
     fn args(
         &self,
         _target_dir: &rustc_plugin::Utf8Path,

@@ -72,11 +72,12 @@ impl TryFrom<ClapArgs> for Args {
                 .extend(from_env.split(',').map(ToOwned::to_owned));
         }
         let build_config_file = std::path::Path::new("Paralegal.toml");
-        let build_config = if build_config_file.exists() {
+        let build_config: BuildConfig = if build_config_file.exists() {
             toml::from_str(&std::fs::read_to_string(build_config_file)?)?
         } else {
             Default::default()
         };
+        anactrl.include.extend(build_config.include.iter().cloned());
         let log_level_config = match debug_target {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
             _ => LogLevelConfig::Disabled,
@@ -553,4 +554,5 @@ pub struct DepConfig {
 pub struct BuildConfig {
     /// Dependency specific configuration
     pub dep: crate::HashMap<String, DepConfig>,
+    pub include: Vec<String>,
 }
