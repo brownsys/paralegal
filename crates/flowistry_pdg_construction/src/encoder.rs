@@ -13,7 +13,7 @@ use std::path::Path;
 use rustc_const_eval::interpret::AllocId;
 
 use rustc_hash::FxHashMap;
-use rustc_hir::def_id::{DefId, DefIndex};
+use rustc_hir::def_id::{CrateNum, DefIndex};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
@@ -97,9 +97,9 @@ impl<'tcx> TyEncoder for ParalegalEncoder<'tcx> {
     }
 }
 
-impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for DefId {
+impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for CrateNum {
     fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
-        s.tcx.def_path_hash(*self).encode(s)
+        s.tcx.stable_crate_id(*self).encode(s)
     }
 }
 
@@ -193,12 +193,9 @@ impl<'tcx, 'a> Decoder for ParalegalDecoder<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for DefId {
+impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for CrateNum {
     fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
-        d.tcx
-            .def_path_hash_to_def_id(Decodable::decode(d), &mut || {
-                panic!("Could not translate hash")
-            })
+        d.tcx.stable_crate_id_to_crate_num(Decodable::decode(d))
     }
 }
 
