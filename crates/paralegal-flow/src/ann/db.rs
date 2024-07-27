@@ -21,7 +21,9 @@ use crate::{
     },
     Either, HashMap, HashSet,
 };
+use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
+    body_cache::BodyCache,
     determine_async,
     utils::{try_monomorphize, try_resolve_function},
 };
@@ -249,27 +251,23 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// computes it.
     fn compute_reachable_markers(&self, res: Instance<'tcx>) -> Box<[Identifier]> {
         trace!("Computing reachable markers for {res:?}");
-        let Some(local) = res.def_id().as_local() else {
-            trace!("  Is not local");
-            return Box::new([]);
-        };
         if self.is_marked(res.def_id()) {
             trace!("  Is marked");
             return Box::new([]);
         }
-        let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
+        let Some(body) = self.0.body_cache.get(res.def_id()) else {
             trace!("  Cannot find body");
             return Box::new([]);
         };
         let mono_body = try_monomorphize(
             res,
             self.tcx(),
-            self.tcx().param_env_reveal_all_normalized(local),
-            &body.body,
+            self.tcx().param_env_reveal_all_normalized(res.def_id()),
+            body.body(),
             self.tcx().def_span(res.def_id()),
         )
         .unwrap();
-        if let Some((async_fn, _, _)) = determine_async(self.tcx(), local, &mono_body) {
+        if let Some((async_fn, _, _)) = determine_async(self.tcx(), res.def_id(), &mono_body) {
             return self.get_reachable_markers(async_fn).into();
         }
         mono_body
@@ -504,11 +502,12 @@ pub struct MarkerDatabase<'tcx> {
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     markers: Markers,
     symbols: Symbols,
+    body_cache: Rc<BodyCache<'tcx>>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
     /// Construct a new database, loading external markers.
-    pub fn init(tcx: TyCtxt<'tcx>, args: &'static Args) -> Self {
+    pub fn init(tcx: TyCtxt<'tcx>, args: &'static Args, body_cache: Rc<BodyCache<'tcx>>) -> Self {
         Self {
             tcx,
             annotations: Cache::default(),
@@ -518,6 +517,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             type_markers: Default::default(),
             markers: Markers::default(),
             symbols: Default::default(),
+            body_cache,
         }
     }
 

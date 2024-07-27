@@ -1,4 +1,6 @@
-use flowistry_pdg_construction::CallInfo;
+use std::rc::Rc;
+
+use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 
 use crate::{args::InliningDepth, AnalysisCtrl, MarkerCtx, TyCtxt};
 

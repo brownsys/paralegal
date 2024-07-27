@@ -3,12 +3,16 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
+use std::rc::Rc;
+
 use crate::{
     ana::SPDGGenerator, ann::db::MarkerDatabase, desc::*, stats::Stats, sym_vec, utils::*,
 };
 
+use flowistry_pdg_construction::body_cache::BodyCache;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::{
-    def_id::LocalDefId,
+    def_id::{LocalDefId, LOCAL_CRATE},
     intravisit::{self, FnKind},
     BodyId,
 };
@@ -39,6 +43,7 @@ pub struct CollectingVisitor<'tcx> {
     stats: Stats,
 
     pub marker_ctx: MarkerDatabase<'tcx>,
+    body_cache: Rc<BodyCache<'tcx>>,
     /// This will match the annotation `#[paralegal_flow::analyze]` when using
     /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
     analyze_marker: AttrMatchT,
@@ -76,20 +81,43 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 })
             })
             .collect();
+        let included_crate_names = opts
+            .anactrl()
+            .included()
+            .iter()
+            .map(|s| Symbol::intern(s))
+            .collect::<HashSet<_>>();
+        let included_crates = tcx
+            .crates(())
+            .iter()
+            .copied()
+            .filter(|cnum| included_crate_names.contains(&tcx.crate_name(*cnum)))
+            .chain(Some(LOCAL_CRATE))
+            .collect::<FxHashSet<_>>();
+        let body_cache = Rc::new(BodyCache::new(tcx, move |krate| {
+            included_crates.contains(&krate)
+        }));
         Self {
             tcx,
             opts,
             functions_to_analyze,
-            marker_ctx: MarkerDatabase::init(tcx, opts),
+            marker_ctx: MarkerDatabase::init(tcx, opts, body_cache.clone()),
             stats,
             analyze_marker: sym_vec!["paralegal_flow", "analyze"],
+            body_cache,
         }
     }
 
     /// After running the discovery with `visit_all_item_likes_in_crate`, create
     /// the read-only [`SPDGGenerator`] upon which the analysis will run.
     fn into_generator(self) -> SPDGGenerator<'tcx> {
-        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx, self.stats)
+        SPDGGenerator::new(
+            self.marker_ctx.into(),
+            self.opts,
+            self.tcx,
+            self.stats,
+            self.body_cache,
+        )
     }
 
     /// Driver function. Performs the data collection via visit, then calls

@@ -41,7 +41,7 @@ pub struct MemoPdgConstructor<'tcx> {
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
     pub(crate) pdg_cache: PdgCache<'tcx>,
-    pub(crate) body_cache: body_cache::BodyCache<'tcx>,
+    pub(crate) body_cache: Rc<body_cache::BodyCache<'tcx>>,
 }
 
 impl<'tcx> MemoPdgConstructor<'tcx> {
@@ -53,21 +53,25 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             dump_mir: false,
             async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
             pdg_cache: Default::default(),
-            body_cache: BodyCache::new(tcx, |krate| krate == LOCAL_CRATE),
+            body_cache: Rc::new(BodyCache::new(tcx, |krate| krate == LOCAL_CRATE)),
+        }
+    }
+
+    /// Initialize the constructor.
+    pub fn new_with_cache(tcx: TyCtxt<'tcx>, body_cache: Rc<body_cache::BodyCache<'tcx>>) -> Self {
+        Self {
+            tcx,
+            call_change_callback: None,
+            dump_mir: false,
+            async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
+            pdg_cache: Default::default(),
+            body_cache,
         }
     }
 
     /// Dump the MIR of any function that is visited.
     pub fn with_dump_mir(&mut self, dump_mir: bool) -> &mut Self {
         self.dump_mir = dump_mir;
-        self
-    }
-
-    pub fn with_body_loading_policy(
-        &mut self,
-        policy: impl Fn(CrateNum) -> bool + 'tcx,
-    ) -> &mut Self {
-        self.body_cache.with_set_policy(policy);
         self
     }
 
@@ -125,7 +129,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
         if let Some((generator, loc, _ty)) = determine_async(
             self.tcx,
-            function,
+            function.to_def_id(),
             self.body_cache.get(function.to_def_id()).unwrap().body(),
         ) {
             // TODO remap arguments
@@ -149,7 +153,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         self.body_cache.get(key)
     }
 
-    pub fn body_cache(&self) -> &BodyCache<'tcx> {
+    pub fn body_cache(&self) -> &Rc<BodyCache<'tcx>> {
         &self.body_cache
     }
 }

@@ -13,13 +13,13 @@ use crate::{
     HashMap, HashSet, LogLevelConfig, MarkerCtx,
 };
 
-use std::time::Instant;
+use std::{rc::Rc, time::Instant};
 
 use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
+    body_cache::BodyCache, CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
 };
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
@@ -56,29 +56,16 @@ impl<'tcx> SPDGGenerator<'tcx> {
         opts: &'static crate::Args,
         tcx: TyCtxt<'tcx>,
         stats: Stats,
+        body_cache: Rc<BodyCache<'tcx>>,
     ) -> Self {
+        let mut pdg_constructor = MemoPdgConstructor::new_with_cache(tcx, body_cache);
         let inline_judge = InlineJudge::new(marker_ctx, tcx, opts.anactrl());
-        let mut pdg_constructor = MemoPdgConstructor::new(tcx);
-        let included_crate_names = opts
-            .anactrl()
-            .included()
-            .iter()
-            .map(|s| Symbol::intern(s))
-            .collect::<HashSet<_>>();
-        let included_crates = tcx
-            .crates(())
-            .iter()
-            .copied()
-            .filter(|cnum| included_crate_names.contains(&tcx.crate_name(*cnum)))
-            .chain(Some(LOCAL_CRATE))
-            .collect::<FxHashSet<_>>();
         pdg_constructor
             .with_call_change_callback(MyCallback {
                 judge: inline_judge.clone(),
                 tcx,
             })
-            .with_dump_mir(opts.dbg().dump_mir())
-            .with_body_loading_policy(move |krate| included_crates.contains(&krate));
+            .with_dump_mir(opts.dbg().dump_mir());
         Self {
             inline_judge,
             pdg_constructor,

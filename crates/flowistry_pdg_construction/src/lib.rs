@@ -20,7 +20,7 @@ extern crate rustc_type_ir;
 
 use self::graph::DepGraph;
 pub use async_support::{determine_async, is_async_trait_fn, match_async_trait_assign};
-use rustc_hir::def_id::LocalDefId;
+use rustc_hir::def_id::{LocalDefId, LOCAL_CRATE};
 pub mod callback;
 pub use crate::construct::MemoPdgConstructor;
 pub use callback::{
