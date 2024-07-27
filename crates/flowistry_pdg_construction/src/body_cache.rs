@@ -110,22 +110,22 @@ struct DumpingVisitor<'tcx> {
 }
 
 impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
-    type NestedFilter = VisitFilter;
+    type NestedFilter = OnlyBodies;
     fn nested_visit_map(&mut self) -> Self::Map {
         self.tcx.hir()
     }
 
     fn visit_fn(
         &mut self,
-        _: intravisit::FnKind<'tcx>,
-        _: &'tcx rustc_hir::FnDecl<'tcx>,
-        _: rustc_hir::BodyId,
+        function_kind: intravisit::FnKind<'tcx>,
+        function_declaration: &'tcx rustc_hir::FnDecl<'tcx>,
+        body_id: rustc_hir::BodyId,
         _: rustc_span::Span,
-        id: rustc_hir::def_id::LocalDefId,
+        local_def_id: rustc_hir::def_id::LocalDefId,
     ) {
-        let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
+        let body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
             self.tcx,
-            id,
+            local_def_id,
             ConsumerOptions::PoloniusInputFacts,
         );
 
@@ -139,7 +139,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
         let dir = intermediate_out_dir(self.tcx);
         let path = dir.join(
             self.tcx
-                .def_path(id.to_def_id())
+                .def_path(local_def_id.to_def_id())
                 .to_filename_friendly_no_crate(),
         );
 
@@ -152,7 +152,13 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
         to_write.encode(&mut encoder);
         encoder.finish();
 
-        println!("Wrote bwbf data for function {id:?} to {}", path.display());
+        intravisit::walk_fn(
+            self,
+            function_kind,
+            function_declaration,
+            body_id,
+            local_def_id,
+        )
     }
 }
 

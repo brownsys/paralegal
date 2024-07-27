@@ -53,3 +53,5 @@ struct MarkedZST;
 fn typed_input_zst(w: MarkedZST) {
     consume_any(w)
 }
+
+fn main() {}

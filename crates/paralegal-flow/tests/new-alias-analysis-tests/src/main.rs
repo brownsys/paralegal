@@ -144,3 +144,5 @@ fn no_inlining_overtaint() {
     send_user_data(&ud1);
     send2_user_data(&ud2);
 }
+
+fn main() {}
