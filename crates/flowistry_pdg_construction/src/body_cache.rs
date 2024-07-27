@@ -107,6 +107,7 @@ impl<'hir> NestedFilter<'hir> for VisitFilter {
 
 struct DumpingVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
+    target_dir: PathBuf,
 }
 
 impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
@@ -140,7 +141,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
             },
         };
 
-        let dir = intermediate_out_dir(self.tcx);
+        let dir = &self.target_dir;
         let path = dir.join(
             self.tcx
                 .def_path(local_def_id.to_def_id())
@@ -167,7 +168,10 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 }
 
 pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt) {
-    let mut vis = DumpingVisitor { tcx };
+    let mut vis = DumpingVisitor {
+        tcx,
+        target_dir: intermediate_out_dir(tcx),
+    };
     tcx.hir().visit_all_item_likes_in_crate(&mut vis);
 }
 
