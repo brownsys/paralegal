@@ -33,7 +33,7 @@ use rustc_utils::cache::Cache;
 
 use rustc_ast::Attribute;
 use rustc_hir::def::DefKind;
-use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir,
     ty::{self, Instance, TyCtxt},
@@ -134,7 +134,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// Queries are cached/precomputed so calling this repeatedly is cheap.
     pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
         self.source_annotations(def_id)
-            .into_iter()
+            .iter()
             .filter_map(Annotation::as_marker)
             .chain(self.external_markers(def_id).iter())
     }

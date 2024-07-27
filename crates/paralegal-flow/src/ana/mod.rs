@@ -24,11 +24,7 @@ use flowistry_pdg_construction::{
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
-use rustc_data_structures::fx::FxHashSet;
-use rustc_hir::{
-    self as hir, def,
-    def_id::{DefId, LOCAL_CRATE},
-};
+use rustc_hir::{self as hir, def, def_id::DefId};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan, Symbol};
 
@@ -181,7 +177,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             marker_annotation_count: self
                 .marker_ctx()
                 .all_annotations()
-                .into_iter()
                 .filter_map(|m| m.1.either(Annotation::as_marker, Some))
                 .count() as u32,
             rustc_time: self.stats.get_timed(TimedStat::Rustc),
@@ -267,7 +262,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_type_info(&self) -> TypeInfoMap {
         self.marker_ctx()
             .all_annotations()
-            .into_iter()
             .filter(|(id, _)| def_kind_for_item(*id, self.tcx).is_type())
             .into_grouping_map()
             .fold_with(

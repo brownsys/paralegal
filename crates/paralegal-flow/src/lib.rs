@@ -48,7 +48,7 @@ use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
 use log::Level;
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
-use rustc_utils::mir::borrowck_facts;
+
 pub use std::collections::{HashMap, HashSet};
 use std::{fmt::Display, time::Instant};
 

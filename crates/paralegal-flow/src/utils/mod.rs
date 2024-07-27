@@ -10,7 +10,7 @@ pub use flowistry_pdg_construction::utils::is_non_default_trait_method;
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
 use rustc_ast as ast;
-use rustc_borrowck::consumers::BodyWithBorrowckFacts;
+
 use rustc_data_structures::intern::Interned;
 use rustc_hir::{
     self as hir,

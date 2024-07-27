@@ -15,7 +15,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 use rustc_serialize::{Decodable, Encodable};
-use rustc_utils::{cache::Cache, mir::borrowck_facts::get_body_with_borrowck_facts};
+use rustc_utils::cache::Cache;
 
 use crate::encoder::{ParalegalDecoder, ParalegalEncoder};
 

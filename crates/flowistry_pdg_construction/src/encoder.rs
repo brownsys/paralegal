@@ -11,7 +11,7 @@ use std::num::NonZeroU64;
 use std::path::Path;
 
 use rustc_const_eval::interpret::AllocId;
-use rustc_data_structures::fx::FxIndexSet;
+
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{DefId, DefIndex};
 use rustc_middle::ty::{self, Ty, TyCtxt};
