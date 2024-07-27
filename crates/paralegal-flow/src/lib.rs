@@ -264,30 +264,22 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
         );
     }
 
-    if crate_name
-        .as_ref()
-        .map_or(false, |n| n == "build_script_build")
-    {
-        // This is a build script. No need to analyze
-        CrateHandling::JustCompile
-    } else if {
-        let our_target = plugin_args.target().map(|t| t.replace('-', "_"));
-        crate_name
-            .as_ref()
-            .and_then(|s| our_target.as_ref().map(|t| s == t))
-            .unwrap_or_else(|| std::env::var("CARGO_PRIMARY_PACKAGE").is_ok())
-    } {
-        // This is the --target crate, need to analyze
-        CrateHandling::Analyze
-    } else if crate_name
-        .as_ref()
-        .map_or(false, |n| plugin_args.anactrl().included().contains(n))
-    {
-        // This is in --include's, we need t dump
-        CrateHandling::CompileAndDump
-    } else {
-        // Both analyze and target not set for this crate, just compile it
-        CrateHandling::JustCompile
+    match &crate_name {
+        Some(krate) if krate == "build_script_build" => CrateHandling::JustCompile,
+        Some(krate)
+            if matches!(
+                plugin_args
+                    .target(),
+                    Some(target) if &target.replace('-', "_") == krate
+            ) =>
+        {
+            CrateHandling::Analyze
+        }
+        _ if std::env::var("CARGO_PRIMARY_PACKAGE").is_ok() => CrateHandling::Analyze,
+        Some(krate) if plugin_args.anactrl().included().contains(krate) => {
+            CrateHandling::CompileAndDump
+        }
+        _ => CrateHandling::JustCompile,
     }
 }
 
