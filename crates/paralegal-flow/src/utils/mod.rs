@@ -625,99 +625,6 @@ pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> I
     )
 }
 
-#[derive(Error, Debug)]
-pub enum BodyResolutionError {
-    #[error("not a function-like object")]
-    /// The provided id did not refer to a function-like object.
-    NotAFunction,
-    #[error("body not available")]
-    /// The provided id refers to an external entity and we have no access to
-    /// its body
-    External,
-    /// The function refers to a trait item (not an `impl` item or raw `fn`)
-    #[error("is associated function of trait {0:?}")]
-    IsTraitAssocFn(DefId),
-}
-
-/// Extension trait for [`TyCtxt`]
-pub trait TyCtxtExt<'tcx> {
-    /// Resolve this [`DefId`] to a body. Returns
-    /// [`BodyWithBorrowckFacts`](crate::rust::rustc_borrowck::BodyWithBorrowckFacts),
-    /// because it internally uses flowistry's body resolution
-    /// ([`rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts`]) which
-    /// memoizes its results so this is actually a cheap query.
-    ///
-    /// Returns `None` if the id does not refer to a function or if its body is
-    /// unavailable.
-    fn body_for_def_id(
-        self,
-        local_def_id: LocalDefId,
-    ) -> Result<&'tcx BodyWithBorrowckFacts<'tcx>, BodyResolutionError>;
-
-    /// Essentially the same as [`Self::body_for_def_id`] but handles errors
-    /// according to our default policy which is as follows:
-    ///
-    /// - [`BodyResolutionError::NotAFunction`]: Hard error (panic). We consider
-    ///       this an ICE because calling this method on a non-function `DefId`
-    ///       could indicate errors elsewhere in the compiler.
-    /// - [`BodyResolutionError::External`]: Silent because otherwise we would
-    ///       spam warnings.
-    /// - [`BodyResolutionError::IsTraitAssocFn`]: Warning emitted, because this
-    ///       is probably caused by `dyn`, which we can't resolve even if it's
-    ///       crate-local and that might be surprising.
-    fn body_for_def_id_default_policy(
-        self,
-        local_def_id: LocalDefId,
-    ) -> Option<&'tcx BodyWithBorrowckFacts<'tcx>>;
-}
-
-impl<'tcx> TyCtxtExt<'tcx> for TyCtxt<'tcx> {
-    fn body_for_def_id(
-        self,
-        local_def_id: LocalDefId,
-    ) -> Result<&'tcx BodyWithBorrowckFacts<'tcx>, BodyResolutionError> {
-        let def_kind = self.def_kind(local_def_id);
-        if !def_kind.is_fn_like() {
-            return Err(BodyResolutionError::NotAFunction);
-        }
-        if let Some(trt) = is_non_default_trait_method(self, local_def_id.to_def_id()) {
-            return Err(BodyResolutionError::IsTraitAssocFn(trt));
-        }
-        Ok(rustc_utils::mir::borrowck_facts::get_body_with_borrowck_facts(self, local_def_id))
-    }
-
-    fn body_for_def_id_default_policy(
-        self,
-        local_def_id: LocalDefId,
-    ) -> Option<&'tcx BodyWithBorrowckFacts<'tcx>> {
-        match self.body_for_def_id(local_def_id) {
-            Ok(b) => Some(b),
-            Err(e) => {
-                let sess = self.sess;
-                match e {
-                    BodyResolutionError::External => (),
-                    BodyResolutionError::IsTraitAssocFn(r#trait) => {
-                        sess.struct_span_warn(
-                            self.def_span(local_def_id.to_def_id()),
-                            "cannot analyze this function as it is a trait method with \
-                            no body (probably caused by the use of `dyn`)",
-                        )
-                        .span_note(self.def_span(r#trait), "associated trait")
-                        .emit();
-                    }
-                    BodyResolutionError::NotAFunction => {
-                        sess.span_fatal(
-                            self.def_span(local_def_id.to_def_id()),
-                            "this item is not a function",
-                        );
-                    }
-                };
-                None
-            }
-        }
-    }
-}
-
 /// Conveniently create a vector of [`Symbol`]s. This way you can just write
 /// `sym_vec!["s1", "s2", ...]` and this macro will make sure to call
 /// [`Symbol::intern`]
@@ -809,13 +716,6 @@ impl<'tcx> Spanned<'tcx> for (&mir::Body<'tcx>, RichLocation) {
 impl<'tcx> Spanned<'tcx> for DefId {
     fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
         tcx.def_span(*self)
-    }
-}
-
-impl<'tcx> Spanned<'tcx> for (LocalDefId, mir::Location) {
-    fn span(&self, tcx: TyCtxt<'tcx>) -> Span {
-        let body = tcx.body_for_def_id(self.0).unwrap();
-        (&body.body, self.1).span(tcx)
     }
 }
 

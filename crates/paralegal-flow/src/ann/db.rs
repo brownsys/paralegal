@@ -17,7 +17,7 @@ use crate::{
     sym_vec,
     utils::{
         resolve::expect_resolve_string_to_def_id, AsFnAndArgs, InstanceExt, IntoDefId,
-        MetaItemMatch, TyCtxtExt, TyExt,
+        MetaItemMatch, TyExt,
     },
     Either, HashMap, HashSet,
 };
@@ -524,6 +524,10 @@ impl<'tcx> MarkerDatabase<'tcx> {
     /// Retrieve and parse the local annotations for this item.
     pub fn retrieve_annotations_for(&self, def_id: DefId) -> Vec<Annotation> {
         let tcx = self.tcx;
+        // If you ask for annotations on a generator or closure, rustc crashes.
+        if matches!(tcx.def_kind(def_id), DefKind::Closure | DefKind::Generator) {
+            return vec![];
+        }
         tcx.get_attrs_unchecked(def_id)
             .iter()
             .flat_map(|a| self.try_parse_annotation(a).unwrap())
