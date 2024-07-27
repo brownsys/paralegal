@@ -11,7 +11,7 @@ use rustc_hir::{
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     hir::{map::Map, nested_filter::OnlyBodies},
-    mir::Body,
+    mir::{Body, ClearCrossCrate},
     ty::TyCtxt,
 };
 use rustc_serialize::{Decodable, Encodable};
@@ -123,11 +123,15 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
         _: rustc_span::Span,
         local_def_id: rustc_hir::def_id::LocalDefId,
     ) {
-        let body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
+        let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
             self.tcx,
             local_def_id,
             ConsumerOptions::PoloniusInputFacts,
         );
+
+        for scope in body_with_facts.body.source_scopes.iter_mut() {
+            scope.local_data = ClearCrossCrate::Clear;
+        }
 
         let to_write = CachedBody {
             body: body_with_facts.body,
