@@ -19,6 +19,9 @@ use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
 };
+use rustc_span::{
+    source_map::StableSourceFileId, BytePos, ExternalSource, SpanData, SyntaxContext, DUMMY_SP,
+};
 use rustc_type_ir::{TyDecoder, TyEncoder};
 
 macro_rules! encoder_methods {
@@ -208,5 +211,57 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for DefIndex {
 impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for DefIndex {
     fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
         Self::from_u32(u32::decode(d))
+    }
+}
+
+const TAG_PARTIAL_SPAN: u8 = 0;
+const TAG_VALID_SPAN_FULL: u8 = 1;
+
+impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
+    fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
+        if self.is_dummy() {
+            return TAG_PARTIAL_SPAN.encode(s);
+        }
+        let source_map = s.tcx.sess.source_map();
+        let source_file = source_map.lookup_source_file(self.lo);
+        if !source_file.contains(self.hi) {
+            // Unfortunately, macro expansion still sometimes generates Spans
+            // that malformed in this way.
+            return TAG_PARTIAL_SPAN.encode(s);
+        }
+        TAG_VALID_SPAN_FULL.encode(s);
+        StableSourceFileId::new(&source_file).encode(s);
+
+        let lo = self.lo - source_file.start_pos;
+        let len = self.hi - self.lo;
+        lo.encode(s);
+        len.encode(s);
+    }
+}
+
+impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
+    fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
+        let ctxt = SyntaxContext::decode(d);
+        let tag = u8::decode(d);
+        if tag == TAG_PARTIAL_SPAN {
+            return DUMMY_SP.with_ctxt(ctxt).data();
+        }
+        debug_assert_eq!(tag, TAG_VALID_SPAN_FULL);
+        let id = StableSourceFileId::decode(d);
+        let source_file = d
+            .tcx
+            .sess
+            .source_map()
+            .source_file_by_stable_id(id)
+            .unwrap();
+        let lo = BytePos::decode(d);
+        let len = BytePos::decode(d);
+        let hi = lo + len;
+        SpanData {
+            lo: source_file.start_pos + lo,
+            hi: source_file.start_pos + hi,
+            ctxt,
+            parent: None,
+        }
     }
 }
