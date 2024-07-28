@@ -7,8 +7,8 @@
 //! unimplemented and will cause a crash if you try to stick an `AllocId` into
 //! the Paralegal artifact.
 
-use std::num::NonZeroU64;
 use std::path::Path;
+use std::{num::NonZeroU64, path::PathBuf};
 
 use rustc_const_eval::interpret::AllocId;
 
@@ -19,7 +19,10 @@ use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
 };
-use rustc_span::{source_map::StableSourceFileId, BytePos, SpanData, SyntaxContext, DUMMY_SP};
+use rustc_span::{
+    source_map::StableSourceFileId, BytePos, FileName, RealFileName, Span, SpanData, SyntaxContext,
+    DUMMY_SP,
+};
 use rustc_type_ir::{TyDecoder, TyEncoder};
 
 macro_rules! encoder_methods {
@@ -215,6 +218,12 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for DefIndex {
 const TAG_PARTIAL_SPAN: u8 = 0;
 const TAG_VALID_SPAN_FULL: u8 = 1;
 
+impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for Span {
+    fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
+        self.data().encode(s)
+    }
+}
+
 impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
     fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
         if self.is_dummy() {
@@ -234,6 +243,16 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
         let len = self.hi - self.lo;
         lo.encode(s);
         len.encode(s);
+    }
+}
+
+impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SyntaxContext {
+    fn encode(&self, _: &mut ParalegalEncoder<'tcx>) {}
+}
+
+impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for Span {
+    fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
+        SpanData::decode(d).span()
     }
 }
 
@@ -261,5 +280,11 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
             ctxt,
             parent: None,
         }
+    }
+}
+
+impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SyntaxContext {
+    fn decode(_: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
+        SyntaxContext::root()
     }
 }
