@@ -29,9 +29,11 @@ extern crate rustc_ast;
 extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_interface;
+extern crate rustc_macros;
 extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
 extern crate rustc_query_system;
@@ -41,6 +43,7 @@ extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
+use ann::dump_markers;
 use args::{ClapArgs, Debugger, LogLevelConfig};
 use desc::{utils::write_sep, ProgramDescription};
 
@@ -145,10 +148,10 @@ impl rustc_driver::Callbacks for DumpOnlyCallbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        queries
-            .global_ctxt()
-            .unwrap()
-            .enter(|tcx| dump_mir_and_borrowck_facts(tcx));
+        queries.global_ctxt().unwrap().enter(|tcx| {
+            dump_mir_and_borrowck_facts(tcx);
+            dump_markers(tcx);
+        });
         rustc_driver::Compilation::Continue
     }
 }
@@ -163,10 +166,10 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        queries
-            .global_ctxt()
-            .unwrap()
-            .enter(|tcx| dump_mir_and_borrowck_facts(tcx));
+        queries.global_ctxt().unwrap().enter(|tcx| {
+            dump_mir_and_borrowck_facts(tcx);
+            dump_markers(tcx);
+        });
         rustc_driver::Compilation::Continue
     }
 
@@ -384,7 +387,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             CrateHandling::JustCompile => {
                 Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
             }
-            CrateHandling::CompileAndDump => Box::new(DumpOnlyCallbacks),
+            CrateHandling::CompileAndDump => {
+                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+                Box::new(DumpOnlyCallbacks)
+            }
             CrateHandling::Analyze => {
                 plugin_args.setup_logging();
 

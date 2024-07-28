@@ -1,3 +1,14 @@
+use either::Either;
+use flowistry_pdg_construction::{body_cache::intermediate_out_dir, encoder::ParalegalEncoder};
+use rustc_ast::Attribute;
+use rustc_hash::FxHashMap;
+use rustc_hir::{
+    def_id::DefIndex,
+    intravisit::{self, nested_filter::NestedFilter},
+};
+use rustc_macros::{Decodable, Encodable};
+use rustc_middle::{hir::map::Map, ty::TyCtxt};
+use rustc_serialize::Encodable;
 use serde::{Deserialize, Serialize};
 
 use paralegal_spdg::{rustc_proxies, tiny_bitset_pretty, Identifier, TinyBitSet, TypeId};
@@ -5,13 +16,29 @@ use paralegal_spdg::{rustc_proxies, tiny_bitset_pretty, Identifier, TinyBitSet, 
 pub mod db;
 pub mod parse;
 
+use parse::*;
+
+use crate::{discover::AttrMatchT, sym_vec, utils::MetaItemMatch};
+
 /// Types of annotations we support.
 ///
 /// Usually you'd expect one of those annotation types in any given situation.
 /// For convenience the match methods [`Self::as_marker`], [`Self::as_otype`]
 /// and [`Self::as_exception`] are provided. These are particularly useful in
 /// conjunction with e.g. [`Iterator::filter_map`]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, strum::EnumIs)]
+#[derive(
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    Clone,
+    Deserialize,
+    Serialize,
+    strum::EnumIs,
+    Encodable,
+    Decodable,
+)]
 pub enum Annotation {
     Marker(MarkerAnnotation),
     OType(#[serde(with = "rustc_proxies::DefId")] TypeId),
@@ -46,7 +73,9 @@ impl Annotation {
 
 pub type VerificationHash = u128;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, Encodable, Decodable,
+)]
 pub struct ExceptionAnnotation {
     /// The value of the verification hash we found in the annotation. Is `None`
     /// if there was no verification hash in the annotation.
@@ -54,7 +83,9 @@ pub struct ExceptionAnnotation {
 }
 
 /// A marker annotation and its refinements.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, Encodable, Decodable,
+)]
 pub struct MarkerAnnotation {
     /// The (unchanged) name of the marker as provided by the user
     pub marker: Identifier,
@@ -69,7 +100,9 @@ fn const_false() -> bool {
 /// Refinements in the marker targeting. The default (no refinement provided) is
 /// `on_argument == vec![]` and `on_return == false`, which is also what is
 /// returned from [`Self::empty`].
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize)]
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, Encodable, Decodable,
+)]
 pub struct MarkerRefinement {
     #[serde(default, with = "tiny_bitset_pretty")]
     on_argument: TinyBitSet,
@@ -136,4 +169,112 @@ impl MarkerRefinement {
     pub fn on_self(&self) -> bool {
         self.on_argument.is_empty() && !self.on_return
     }
+}
+
+/// These are pseudo-constants that are used to match annotations. In theory
+/// they never change but they use [`Symbol`] inside, which is only valid so
+/// long as the rustc `SESSION_GLOBALS` are live so we need to calculate them
+/// afresh in `new`.
+struct Markers {
+    /// This will match the annotation `#[paralegal_flow::label(...)]` when using
+    /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
+    label_marker: AttrMatchT,
+    /// This will match the annotation `#[paralegal_flow::marker(...)]` when using
+    /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
+    marker_marker: AttrMatchT,
+    /// This will match the annotation `#[paralegal_flow::output_types(...)]` when using
+    /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
+    otype_marker: AttrMatchT,
+    /// This will match the annotation `#[paralegal_flow::exception(...)]` when using
+    /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
+    exception_marker: AttrMatchT,
+}
+
+impl Default for Markers {
+    fn default() -> Self {
+        Markers {
+            label_marker: sym_vec!["paralegal_flow", "label"],
+            marker_marker: sym_vec!["paralegal_flow", "marker"],
+            otype_marker: sym_vec!["paralegal_flow", "output_types"],
+            exception_marker: sym_vec!["paralegal_flow", "exception"],
+        }
+    }
+}
+
+type MarkerMeta = Vec<(DefIndex, Vec<Annotation>)>;
+
+struct DumpingVisitor<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    annotations: MarkerMeta,
+    markers: Markers,
+    symbols: Symbols,
+}
+
+impl<'hir> NestedFilter<'hir> for VisitFilter {
+    type Map = Map<'hir>;
+
+    const INTER: bool = true;
+    const INTRA: bool = true;
+}
+
+struct VisitFilter;
+
+impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
+    type NestedFilter = VisitFilter;
+
+    fn visit_id(&mut self, hir_id: rustc_hir::HirId) {
+        let Some(owner) = hir_id.as_owner() else {
+            return;
+        };
+        let v: Vec<_> = self
+            .tcx
+            .hir()
+            .attrs(hir_id)
+            .iter()
+            .flat_map(|ann| self.try_parse_annotation(ann).unwrap())
+            .collect();
+        if !v.is_empty() {
+            self.annotations.push((owner.def_id.local_def_index, v));
+        }
+    }
+}
+
+impl<'tcx> DumpingVisitor<'tcx> {
+    fn try_parse_annotation(
+        &self,
+        a: &Attribute,
+    ) -> Result<impl Iterator<Item = Annotation>, String> {
+        let consts = &self.markers;
+        let tcx = self.tcx;
+        use crate::ann::parse::{ann_match_fn, match_exception, otype_ann_match};
+        let one = |a| Either::Left(Some(a));
+        let ann = if let Some(i) = a.match_get_ref(&consts.marker_marker) {
+            one(Annotation::Marker(ann_match_fn(&self.symbols, i)?))
+        } else if let Some(i) = a.match_get_ref(&consts.label_marker) {
+            warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
+            one(Annotation::Marker(ann_match_fn(&self.symbols, i)?))
+        } else if let Some(i) = a.match_get_ref(&consts.otype_marker) {
+            Either::Right(otype_ann_match(i, tcx)?.into_iter().map(Annotation::OType))
+        } else if let Some(i) = a.match_get_ref(&consts.exception_marker) {
+            one(Annotation::Exception(match_exception(&self.symbols, i)?))
+        } else {
+            Either::Left(None)
+        };
+        Ok(ann.into_iter())
+    }
+}
+
+const MARKER_META_EXT: &str = "pmeta";
+
+pub fn dump_markers(tcx: TyCtxt) {
+    let mut vis = DumpingVisitor {
+        tcx,
+        annotations: Default::default(),
+        markers: Markers::default(),
+        symbols: Default::default(),
+    };
+    tcx.hir().visit_all_item_likes_in_crate(&mut vis);
+    let mut encoder = ParalegalEncoder::new(intermediate_out_dir(tcx, MARKER_META_EXT), tcx);
+    vis.annotations.encode(&mut encoder);
+    encoder.finish();
 }

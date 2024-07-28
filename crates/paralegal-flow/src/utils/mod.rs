@@ -10,7 +10,6 @@ pub use flowistry_pdg_construction::utils::is_virtual;
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
 use rustc_ast as ast;
-
 use rustc_data_structures::intern::Interned;
 use rustc_hir::{
     self as hir,
@@ -631,7 +630,7 @@ pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> I
 #[macro_export]
 macro_rules! sym_vec {
     ($($e:expr),*) => {
-        vec![$(Symbol::intern($e)),*]
+        vec![$(rustc_span::Symbol::intern($e)),*]
     };
 }
 

@@ -94,14 +94,21 @@ impl<'tcx> CollectingVisitor<'tcx> {
             .filter(|cnum| included_crate_names.contains(&tcx.crate_name(*cnum)))
             .chain(Some(LOCAL_CRATE))
             .collect::<FxHashSet<_>>();
+        let included_crates_copy = included_crates.clone();
         let body_cache = Rc::new(BodyCache::new(tcx, move |krate| {
             included_crates.contains(&krate)
         }));
+        let marker_ctx = MarkerDatabase::init(
+            tcx,
+            opts,
+            body_cache.clone(),
+            included_crates_copy.into_iter(),
+        );
         Self {
             tcx,
             opts,
             functions_to_analyze,
-            marker_ctx: MarkerDatabase::init(tcx, opts, body_cache.clone()),
+            marker_ctx,
             stats,
             analyze_marker: sym_vec!["paralegal_flow", "analyze"],
             body_cache,

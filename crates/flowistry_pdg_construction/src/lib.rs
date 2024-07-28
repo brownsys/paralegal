@@ -33,7 +33,7 @@ mod async_support;
 pub mod body_cache;
 mod calling_convention;
 mod construct;
-mod encoder;
+pub mod encoder;
 pub mod graph;
 mod local_analysis;
 mod mutation;

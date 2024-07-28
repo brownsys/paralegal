@@ -19,6 +19,11 @@ pub(crate) mod rustc {
     pub use middle::mir;
 }
 
+#[cfg(feature = "rustc")]
+extern crate rustc_macros;
+#[cfg(feature = "rustc")]
+extern crate rustc_serialize;
+
 extern crate strum;
 
 pub use flowistry_pdg::*;
@@ -428,6 +433,20 @@ impl ProgramDescription {
 /// Implemented as an interned string, so identifiers are cheap to reuse.
 #[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Serialize, Deserialize, Copy)]
 pub struct Identifier(Intern<String>);
+
+#[cfg(feature = "rustc")]
+impl<S: rustc_serialize::Encoder> rustc_serialize::Encodable<S> for Identifier {
+    fn encode(&self, s: &mut S) {
+        s.emit_str(self.as_str());
+    }
+}
+
+#[cfg(feature = "rustc")]
+impl<D: rustc_serialize::Decoder> rustc_serialize::Decodable<D> for Identifier {
+    fn decode(d: &mut D) -> Self {
+        Identifier::new_intern(d.read_str())
+    }
+}
 
 impl Identifier {
     /// Intern a new identifier from a rustc [`rustc::span::Symbol`]

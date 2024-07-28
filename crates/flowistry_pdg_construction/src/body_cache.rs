@@ -5,7 +5,7 @@ use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{ConsumerOptions, RustcFacts};
 
 use rustc_hir::{
-    def_id::{CrateNum, DefId, LocalDefId},
+    def_id::{CrateNum, DefId, LocalDefId, LOCAL_CRATE},
     intravisit::{self, nested_filter::NestedFilter},
 };
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
@@ -97,9 +97,7 @@ impl<'tcx> BodyCache<'tcx> {
 
     pub fn get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
         (self.load_policy)(key.krate).then(|| {
-            let cbody = self
-                .cache
-                .get(key, |_| compute_body_with_borrowck_facts(self.tcx, key));
+            let cbody = self.cache.get(key, |_| load_body_and_facts(self.tcx, key));
             // SAFETY: Theoretically this struct may not outlive the body, but
             // to simplify lifetimes flowistry uses 'tcx anywhere. But if we
             // actually try to provide that we're risking race conditions
@@ -113,15 +111,6 @@ impl<'tcx> BodyCache<'tcx> {
     pub fn is_loadable(&self, key: DefId) -> bool {
         (self.load_policy)(key.krate)
     }
-}
-
-struct VisitFilter;
-
-impl<'hir> NestedFilter<'hir> for VisitFilter {
-    type Map = Map<'hir>;
-
-    const INTER: bool = true;
-    const INTRA: bool = true;
 }
 
 struct DumpingVisitor<'tcx> {
@@ -193,22 +182,26 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt) {
     let mut vis = DumpingVisitor {
         tcx,
-        target_dir: intermediate_out_dir(tcx),
+        target_dir: intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT),
     };
     tcx.hir().visit_all_item_likes_in_crate(&mut vis);
 }
 
 const INTERMEDIATE_ARTIFACT_EXT: &str = "bwbf";
 
-fn compute_body_with_borrowck_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {
-    let paths = if def_id.is_local() {
-        vec![intermediate_out_dir(tcx)]
+pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<PathBuf> {
+    if krate == LOCAL_CRATE {
+        vec![intermediate_out_dir(tcx, ext)]
     } else {
-        tcx.crate_extern_paths(def_id.krate)
+        tcx.crate_extern_paths(krate)
             .iter()
-            .map(|p| p.with_extension(INTERMEDIATE_ARTIFACT_EXT))
+            .map(|p| p.with_extension(ext))
             .collect()
-    };
+    }
+}
+
+fn load_body_and_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {
+    let paths = local_or_remote_paths(def_id.krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
     for path in &paths {
         let path = path.join(tcx.def_path(def_id).to_filename_friendly_no_crate());
         let Ok(mut file) = File::open(path) else {
@@ -231,10 +224,8 @@ fn compute_body_with_borrowck_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBod
 /// stem of `<crate_name>-<hash>`. I haven't found a clean way to get the same
 /// name in both places, so i just assume that these two will always have this
 /// relation and prepend the `"lib"` here.
-fn intermediate_out_dir(tcx: TyCtxt) -> PathBuf {
-    let rustc_out_file = tcx
-        .output_filenames(())
-        .with_extension(INTERMEDIATE_ARTIFACT_EXT);
+pub fn intermediate_out_dir(tcx: TyCtxt, ext: &str) -> PathBuf {
+    let rustc_out_file = tcx.output_filenames(()).with_extension(ext);
     let dir = rustc_out_file
         .parent()
         .unwrap_or_else(|| panic!("{} has no parent", rustc_out_file.display()));
