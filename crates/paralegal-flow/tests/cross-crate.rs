@@ -75,3 +75,30 @@ define_test!(assigns_marker_generic: graph -> {
     assert!(sources.flows_to_data(&mark));
     assert!(mark.flows_to_data(&target));
 });
+
+define_test!(backward_simple: graph -> {
+    let sources = graph.marked(Identifier::new_intern("mark"));
+    let targets = graph.marked(Identifier::new_intern("target"));
+    assert!(!sources.is_empty());
+    assert!(!targets.is_empty());
+
+    assert!(sources.flows_to_data(&targets));
+});
+
+define_test!(donation: graph -> {
+    let sources = graph.marked(Identifier::new_intern("source"));
+    let targets = graph.marked(Identifier::new_intern("incoming"));
+    assert!(!sources.is_empty());
+    assert!(!targets.is_empty());
+
+    assert!(sources.flows_to_data(&targets));
+});
+
+define_test!(reception: graph -> {
+    let sources = graph.marked(Identifier::new_intern("mark"));
+    let targets = graph.marked(Identifier::new_intern("target"));
+    assert!(!sources.is_empty());
+    assert!(!targets.is_empty());
+
+    assert!(sources.flows_to_data(&targets));
+});

@@ -1,6 +1,6 @@
 extern crate dependency;
 
-use dependency::{assign_marker, assign_marker_generic, find_me, find_me_generic, source};
+use dependency::*;
 
 #[paralegal::marker(source, return)]
 fn src() -> usize {
@@ -38,6 +38,36 @@ fn basic_generic() {
 #[paralegal::analyze]
 fn assigns_marker_generic() {
     target(assign_marker_generic(src()));
+}
+
+#[paralegal::analyze]
+fn backward_simple() {
+    hof(|inp| target(inp));
+}
+
+#[paralegal::analyze]
+fn donation() {
+    struct D;
+    impl Donator for D {
+        fn donate(&self) -> String {
+            src().to_string()
+        }
+    }
+
+    exercise_donate(&D);
+}
+
+#[paralegal::analyze]
+fn reception() {
+    struct R;
+
+    impl Receiver for R {
+        fn receive(&self, value: String) {
+            target(value.len())
+        }
+    }
+
+    exercise_receive(&R);
 }
 
 fn main() {}

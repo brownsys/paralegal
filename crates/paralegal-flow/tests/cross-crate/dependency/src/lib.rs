@@ -28,3 +28,27 @@ pub fn generic_source<A>() -> A {
 pub fn assign_marker_generic<A>(a: A) -> A {
     taint_it(a)
 }
+
+pub fn hof(f: impl FnOnce(usize)) {
+    let input = generic_source();
+    f(input)
+}
+
+#[paralegal::marker(incoming, arguments = [0])]
+fn accept_donation(i: String) {}
+
+pub trait Donator {
+    fn donate(&self) -> String;
+}
+
+pub fn exercise_donate(d: &impl Donator) {
+    accept_donation(d.donate())
+}
+
+pub trait Receiver {
+    fn receive(&self, value: String);
+}
+
+pub fn exercise_receive(r: &impl Receiver) {
+    r.receive(generic_source())
+}
