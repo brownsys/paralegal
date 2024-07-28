@@ -149,11 +149,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.db()
             .annotations
             .iter()
-            .filter_map(|(k, v)| {
-                let slice = v.as_slice();
-                // SAFETY: pinned
-                Some((*k, slice))
-            })
+            .map(|(k, v)| (*k, v.as_slice()))
             .collect()
     }
 

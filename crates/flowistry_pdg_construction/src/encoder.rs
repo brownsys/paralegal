@@ -19,9 +19,7 @@ use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
 };
-use rustc_span::{
-    source_map::StableSourceFileId, BytePos, ExternalSource, SpanData, SyntaxContext, DUMMY_SP,
-};
+use rustc_span::{source_map::StableSourceFileId, BytePos, SpanData, SyntaxContext, DUMMY_SP};
 use rustc_type_ir::{TyDecoder, TyEncoder};
 
 macro_rules! encoder_methods {
