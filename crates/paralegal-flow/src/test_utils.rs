@@ -8,6 +8,7 @@ use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
 use hir::def_id::DefId;
 
 use crate::{
+    ann::dump_markers,
     desc::{Identifier, ProgramDescription},
     HashSet, EXTRA_RUSTC_ARGS,
 };
@@ -237,6 +238,7 @@ impl InlineTestBuilder {
             .with_query_override(None)
             .compile(move |result| {
                 dump_mir_and_borrowck_facts(result.tcx);
+                dump_markers(result.tcx);
                 let tcx = result.tcx;
                 let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
                 let pdg = memo.run(tcx).unwrap();
