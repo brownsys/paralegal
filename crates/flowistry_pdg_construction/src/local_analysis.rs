@@ -28,7 +28,7 @@ use crate::{
     calling_convention::*,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, is_async, is_non_default_trait_method, try_monomorphize},
+    utils::{self, is_async, is_virtual, try_monomorphize},
     CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
 };
 
@@ -419,7 +419,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             trace!("  `{called}` monomorphized to `{resolved}`",);
         }
 
-        if is_non_default_trait_method(tcx, resolved_def_id).is_some() {
+        if is_virtual(tcx, resolved_def_id) {
             trace!("  bailing because is unresolvable trait method");
             return None;
         }

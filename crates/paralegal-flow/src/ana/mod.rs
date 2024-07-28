@@ -417,7 +417,7 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
 
         let mut skip = true;
 
-        if is_non_default_trait_method(self.tcx, info.callee.def_id()).is_some() {
+        if is_virtual(self.tcx, info.callee.def_id()) {
             self.tcx.sess.span_warn(
                 self.tcx.def_span(info.callee.def_id()),
                 "Skipping analysis of unresolvable trait method.",

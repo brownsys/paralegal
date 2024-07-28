@@ -25,7 +25,7 @@ use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     body_cache::BodyCache,
     determine_async,
-    utils::{try_monomorphize, try_resolve_function},
+    utils::{is_virtual, try_monomorphize, try_resolve_function},
 };
 use paralegal_spdg::Identifier;
 use rustc_span::Symbol;
@@ -253,6 +253,10 @@ impl<'tcx> MarkerCtx<'tcx> {
         trace!("Computing reachable markers for {res:?}");
         if self.is_marked(res.def_id()) {
             trace!("  Is marked");
+            return Box::new([]);
+        }
+        if is_virtual(self.tcx(), res.def_id()) {
+            trace!("  Is virtual");
             return Box::new([]);
         }
         let Some(body) = self.0.body_cache.get(res.def_id()) else {
