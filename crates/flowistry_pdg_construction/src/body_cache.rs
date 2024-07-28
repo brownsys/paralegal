@@ -19,6 +19,8 @@ use rustc_utils::cache::Cache;
 
 use crate::encoder::{ParalegalDecoder, ParalegalEncoder};
 
+/// A mir [`Body`] and all the additional borrow checking facts that our
+/// points-to analysis needs.
 #[derive(TyDecodable, TyEncodable, Debug)]
 pub struct CachedBody<'tcx> {
     body: Body<'tcx>,
@@ -26,6 +28,10 @@ pub struct CachedBody<'tcx> {
 }
 
 impl<'tcx> CachedBody<'tcx> {
+    /// Retrieve a body and the necessary facts for a local item.
+    ///
+    /// Ensure this is called early enough in the compiler
+    /// (like `after_expansion`) so that the body has not been stolen yet.
     fn retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Self {
         let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
             tcx,
@@ -60,6 +66,8 @@ impl<'tcx> FlowistryInput<'tcx> for &'tcx CachedBody<'tcx> {
     }
 }
 
+/// The subset of borrowcheck facts that the points-to analysis (flowistry)
+/// needs.
 #[derive(Debug, Encodable, Decodable)]
 pub struct FlowistryFacts {
     pub subset_base: Vec<(
@@ -71,6 +79,8 @@ pub struct FlowistryFacts {
 
 pub type LocationIndex = <RustcFacts as FactTypes>::Point;
 
+/// Allows loading bodies from previosly written artifacts.
+///
 /// Ensure this cache outlives any flowistry analysis that is performed on the
 /// bodies it returns or risk UB.
 pub struct BodyCache<'tcx> {
@@ -95,6 +105,7 @@ impl<'tcx> BodyCache<'tcx> {
         self
     }
 
+    /// Serve the body from the cache or read it from the disk.
     pub fn get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
         (self.load_policy)(key.krate).then(|| {
             let cbody = self.cache.get(key, |_| load_body_and_facts(self.tcx, key));
@@ -108,11 +119,13 @@ impl<'tcx> BodyCache<'tcx> {
         })
     }
 
+    /// Does the provided policy allow us to load this body from disk.
     pub fn is_loadable(&self, key: DefId) -> bool {
         (self.load_policy)(key.krate)
     }
 }
 
+/// A visitor to collect all bodies in the crate and write them to disk.
 struct DumpingVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     target_dir: PathBuf,
@@ -179,6 +192,12 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
     }
 }
 
+/// A complete visit over the local crate items, collecting all bodies and
+/// calculating the necessary borrowcheck facts to store for later points-to
+/// analysis.
+///
+/// Ensure this gets called early in the compiler before the unoptimmized mir
+/// bodies are stolen.
 pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt) {
     let mut vis = DumpingVisitor {
         tcx,
@@ -189,6 +208,9 @@ pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt) {
 
 const INTERMEDIATE_ARTIFACT_EXT: &str = "bwbf";
 
+/// Get the path where artifacts from this crate would be stored. Unlike
+/// [`TyCtxt::crate_extern_paths`] this function does not crash when supplied
+/// with [`LOCAL_CRATE`].
 pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<PathBuf> {
     if krate == LOCAL_CRATE {
         vec![intermediate_out_dir(tcx, ext)]
@@ -200,6 +222,7 @@ pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<Pat
     }
 }
 
+/// Try to load a [`CachedBody`] for this id.
 fn load_body_and_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {
     let paths = local_or_remote_paths(def_id.krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
     for path in &paths {
