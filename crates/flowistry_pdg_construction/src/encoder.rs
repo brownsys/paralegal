@@ -7,8 +7,8 @@
 //! unimplemented and will cause a crash if you try to stick an `AllocId` into
 //! the Paralegal artifact.
 
+use std::num::NonZeroU64;
 use std::path::Path;
-use std::{num::NonZeroU64, path::PathBuf};
 
 use rustc_const_eval::interpret::AllocId;
 
@@ -19,10 +19,7 @@ use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
 };
-use rustc_span::{
-    source_map::StableSourceFileId, BytePos, FileName, RealFileName, Span, SpanData, SyntaxContext,
-    DUMMY_SP,
-};
+
 use rustc_type_ir::{TyDecoder, TyEncoder};
 
 macro_rules! encoder_methods {
