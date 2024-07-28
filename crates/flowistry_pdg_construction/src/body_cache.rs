@@ -6,11 +6,11 @@ use rustc_borrowck::consumers::{ConsumerOptions, RustcFacts};
 
 use rustc_hir::{
     def_id::{CrateNum, DefId, LocalDefId, LOCAL_CRATE},
-    intravisit::{self, nested_filter::NestedFilter},
+    intravisit::{self},
 };
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
-    hir::{map::Map, nested_filter::OnlyBodies},
+    hir::nested_filter::OnlyBodies,
     mir::{Body, ClearCrossCrate, StatementKind},
     ty::TyCtxt,
 };

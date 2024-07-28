@@ -13,12 +13,7 @@
 use crate::{
     ann::{Annotation, MarkerAnnotation},
     args::{Args, MarkerControl},
-    discover::AttrMatchT,
-    sym_vec,
-    utils::{
-        resolve::expect_resolve_string_to_def_id, AsFnAndArgs, InstanceExt, IntoDefId,
-        MetaItemMatch, TyExt,
-    },
+    utils::{resolve::expect_resolve_string_to_def_id, AsFnAndArgs, InstanceExt, IntoDefId, TyExt},
     Either, HashMap, HashSet,
 };
 use flowistry::mir::FlowistryInput;
@@ -30,7 +25,6 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::Identifier;
 
-use rustc_ast::Attribute;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{def::DefKind, def_id::CrateNum};
@@ -38,13 +32,13 @@ use rustc_middle::{
     mir,
     ty::{self, Instance, TyCtxt},
 };
-use rustc_serialize::{Decodable, Encodable};
-use rustc_span::Symbol;
+use rustc_serialize::Decodable;
+
 use rustc_utils::cache::Cache;
 
 use std::{fs::File, io::Read, rc::Rc};
 
-use super::{parse::Symbols, MarkerMeta, MARKER_META_EXT};
+use super::{MarkerMeta, MARKER_META_EXT};
 
 type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 
@@ -86,7 +80,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.db()
             .annotations
             .get(&self.defid_rewrite(def_id))
-            .map_or(&[], |b| &*b)
+            .map_or(&[], |b| b)
     }
 
     /// Retrieves any external markers on this item. If there are not such

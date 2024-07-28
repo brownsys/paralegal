@@ -13,8 +13,8 @@ use rustc_middle::{
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        self, AssocItem, AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef,
-        Instance, List, ParamEnv, Region, Ty, TyCtxt, TyKind,
+        AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance, List,
+        ParamEnv, Region, Ty, TyCtxt, TyKind,
     },
 };
 use rustc_span::{ErrorGuaranteed, Span};

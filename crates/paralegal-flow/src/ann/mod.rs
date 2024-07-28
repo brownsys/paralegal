@@ -1,7 +1,7 @@
 use either::Either;
 use flowistry_pdg_construction::{body_cache::intermediate_out_dir, encoder::ParalegalEncoder};
 use rustc_ast::Attribute;
-use rustc_hash::FxHashMap;
+
 use rustc_hir::{
     def_id::DefIndex,
     intravisit::{self, nested_filter::NestedFilter},

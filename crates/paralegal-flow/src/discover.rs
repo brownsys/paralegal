@@ -98,12 +98,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
         let body_cache = Rc::new(BodyCache::new(tcx, move |krate| {
             included_crates.contains(&krate)
         }));
-        let marker_ctx = MarkerDatabase::init(
-            tcx,
-            opts,
-            body_cache.clone(),
-            included_crates_copy.into_iter(),
-        );
+        let marker_ctx = MarkerDatabase::init(tcx, opts, body_cache.clone(), included_crates_copy);
         Self {
             tcx,
             opts,
