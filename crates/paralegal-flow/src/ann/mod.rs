@@ -222,6 +222,10 @@ struct VisitFilter;
 impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
     type NestedFilter = VisitFilter;
 
+    fn nested_visit_map(&mut self) -> Self::Map {
+        self.tcx.hir()
+    }
+
     fn visit_id(&mut self, hir_id: rustc_hir::HirId) {
         let Some(owner) = hir_id.as_owner() else {
             return;
@@ -246,7 +250,6 @@ impl<'tcx> DumpingVisitor<'tcx> {
     ) -> Result<impl Iterator<Item = Annotation>, String> {
         let consts = &self.markers;
         let tcx = self.tcx;
-        use crate::ann::parse::{ann_match_fn, match_exception, otype_ann_match};
         let one = |a| Either::Left(Some(a));
         let ann = if let Some(i) = a.match_get_ref(&consts.marker_marker) {
             one(Annotation::Marker(ann_match_fn(&self.symbols, i)?))
