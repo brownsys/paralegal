@@ -571,9 +571,11 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
         let from_toml: RawExternalMarkers = toml::from_str(
             &std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
                 panic!(
-                    "Could not open file {}/{}",
-                    std::env::current_dir().unwrap().display(),
-                    annotation_file.display()
+                    "Could not open file {}",
+                    annotation_file
+                        .canonicalize()
+                        .unwrap_or_else(|_| annotation_file.to_path_buf())
+                        .display()
                 )
             }),
         )
