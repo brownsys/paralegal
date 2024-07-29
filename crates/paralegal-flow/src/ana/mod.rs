@@ -300,11 +300,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
 fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
     let (source_file, start_line, start_col, end_line, end_col) =
         tcx.sess.source_map().span_to_location_info(span);
-    let file_path = source_file
-        .expect("could not find source file")
-        .name
-        .display(FileNameDisplayPreference::Local)
-        .to_string();
+    let file_path = source_file.map_or_else(
+        || "<unknown>".to_string(),
+        |f| f.name.display(FileNameDisplayPreference::Local).to_string(),
+    );
     let abs_file_path = if !file_path.starts_with('/') {
         std::env::current_dir()
             .expect("failed to obtain current working directory")

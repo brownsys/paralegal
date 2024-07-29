@@ -357,9 +357,13 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
         let lo = BytePos::decode(d);
         let len = BytePos::decode(d);
         let hi = lo + len;
+        let lo = source_file.start_pos + lo;
+        let hi = source_file.start_pos + hi;
+        assert!(source_file.contains(lo));
+        assert!(source_file.contains(hi));
         SpanData {
-            lo: source_file.start_pos + lo,
-            hi: source_file.start_pos + hi,
+            lo,
+            hi,
             ctxt,
             parent: None,
         }
