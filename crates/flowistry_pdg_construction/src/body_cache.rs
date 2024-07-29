@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, path::PathBuf};
+use std::path::PathBuf;
 
 use flowistry::mir::FlowistryInput;
 
@@ -14,10 +14,10 @@ use rustc_middle::{
     mir::{Body, ClearCrossCrate, StatementKind},
     ty::TyCtxt,
 };
-use rustc_serialize::{Decodable, Encodable};
+
 use rustc_utils::cache::Cache;
 
-use crate::encoder::{decode_from_file, encode_to_file, ParalegalDecoder, ParalegalEncoder};
+use crate::encoder::{decode_from_file, encode_to_file};
 
 /// A mir [`Body`] and all the additional borrow checking facts that our
 /// points-to analysis needs.
@@ -85,45 +85,29 @@ pub type LocationIndex = <RustcFacts as FactTypes>::Point;
 /// bodies it returns or risk UB.
 pub struct BodyCache<'tcx> {
     tcx: TyCtxt<'tcx>,
-    load_policy: Box<dyn Fn(CrateNum) -> bool + 'tcx>,
     cache: Cache<DefId, CachedBody<'tcx>>,
 }
 
 impl<'tcx> BodyCache<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, policy: impl Fn(CrateNum) -> bool + 'tcx) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
             cache: Default::default(),
-            load_policy: Box::new(policy),
         }
-    }
-
-    /// Set the policy for which crates should be loaded. It is inadvisable to
-    /// change this after starting to call [get](Self::get).
-    pub fn with_set_policy(&mut self, policy: impl Fn(CrateNum) -> bool + 'tcx) -> &mut Self {
-        self.load_policy = Box::new(policy);
-        self
     }
 
     /// Serve the body from the cache or read it from the disk.
     ///
     /// Returns `None` if the policy forbids loading from this crate.
     pub fn get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
-        (self.load_policy)(key.krate).then(|| {
-            let cbody = self.cache.get(key, |_| load_body_and_facts(self.tcx, key));
-            // SAFETY: Theoretically this struct may not outlive the body, but
-            // to simplify lifetimes flowistry uses 'tcx anywhere. But if we
-            // actually try to provide that we're risking race conditions
-            // (because it needs global variables like MIR_BODIES).
-            //
-            // So until we fix flowistry's lifetimes this is good enough.
-            unsafe { std::mem::transmute(cbody) }
-        })
-    }
-
-    /// Does the provided policy allow us to load this body from disk.
-    pub fn is_loadable(&self, key: DefId) -> bool {
-        (self.load_policy)(key.krate)
+        let cbody = self.cache.get(key, |_| load_body_and_facts(self.tcx, key));
+        // SAFETY: Theoretically this struct may not outlive the body, but
+        // to simplify lifetimes flowistry uses 'tcx anywhere. But if we
+        // actually try to provide that we're risking race conditions
+        // (because it needs global variables like MIR_BODIES).
+        //
+        // So until we fix flowistry's lifetimes this is good enough.
+        unsafe { std::mem::transmute(cbody) }
     }
 }
 

@@ -33,46 +33,46 @@ mod inline_judge;
 
 use graph_converter::GraphConverter;
 
-use self::inline_judge::InlineJudge;
+pub use self::inline_judge::InlineJudge;
 
 /// Read-only database of information the analysis needs.
 ///
 /// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
 pub struct SPDGGenerator<'tcx> {
-    pub inline_judge: InlineJudge<'tcx>,
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
     stats: Stats,
     pdg_constructor: MemoPdgConstructor<'tcx>,
+    judge: Rc<InlineJudge<'tcx>>,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
     pub fn new(
-        marker_ctx: MarkerCtx<'tcx>,
+        inline_judge: InlineJudge<'tcx>,
         opts: &'static crate::Args,
         tcx: TyCtxt<'tcx>,
-        stats: Stats,
         body_cache: Rc<BodyCache<'tcx>>,
+        stats: Stats,
     ) -> Self {
+        let judge = Rc::new(inline_judge);
         let mut pdg_constructor = MemoPdgConstructor::new_with_cache(tcx, body_cache);
-        let inline_judge = InlineJudge::new(marker_ctx, tcx, opts.anactrl());
         pdg_constructor
             .with_call_change_callback(MyCallback {
-                judge: inline_judge.clone(),
+                judge: judge.clone(),
                 tcx,
             })
             .with_dump_mir(opts.dbg().dump_mir());
         Self {
-            inline_judge,
             pdg_constructor,
             opts,
             tcx,
             stats,
+            judge,
         }
     }
 
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
-        self.inline_judge.marker_ctx()
+        self.judge.marker_ctx()
     }
 
     /// Perform the analysis for one `#[paralegal_flow::analyze]` annotated function and
@@ -405,7 +405,7 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
 }
 
 struct MyCallback<'tcx> {
-    judge: InlineJudge<'tcx>,
+    judge: Rc<InlineJudge<'tcx>>,
     // stat_wrap: StatStracker,
     tcx: TyCtxt<'tcx>,
 }

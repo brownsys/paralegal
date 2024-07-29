@@ -441,11 +441,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         );
 
         // Recursively generate the PDG for the child function.
-
-        if !self.memo.body_cache.is_loadable(resolved_fn.def_id()) {
-            trace!("  bailing because function is not loadable");
-            return None;
-        }
         let cache_key = resolved_fn;
 
         let is_cached = self.memo.is_in_cache(cache_key);
