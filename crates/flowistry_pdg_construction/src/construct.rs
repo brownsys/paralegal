@@ -160,6 +160,11 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub fn body_cache(&self) -> &Rc<BodyCache<'tcx>> {
         &self.body_cache
     }
+
+    /// Used for testing.
+    pub fn take_call_changes_policy(&mut self) -> Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>> {
+        self.call_change_callback.take()
+    }
 }
 
 type LocalAnalysisResults<'tcx, 'mir> = Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>;
