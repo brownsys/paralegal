@@ -74,7 +74,7 @@ pub fn encode_to_file<'tcx, V: Encodable<ParalegalEncoder<'tcx>>>(
     path: impl AsRef<Path>,
     v: &V,
 ) {
-    let mut encoder = ParalegalEncoder::new(path, self.tcx);
+    let mut encoder = ParalegalEncoder::new(path, tcx);
     v.encode(&mut encoder);
     encoder.finish();
 }
@@ -148,21 +148,17 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
             shorthand_map: Default::default(),
         }
     }
-
-    pub fn new_for_file(tcx: TyCtxt<'tcx>, file: impl AsRef<File>) -> io::Result<Self> {
-        let mut file = File::open(path)?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
-        Ok(Self::new(tcx, buf.as_slice()))
-    }
 }
 
 /// Convenience function that decodes a value from a file.
 pub fn decode_from_file<'tcx, V: for<'a> Decodable<ParalegalDecoder<'tcx, 'a>>>(
     tcx: TyCtxt<'tcx>,
-    file: impl AsRef<File>,
+    path: impl AsRef<Path>,
 ) -> io::Result<V> {
-    let mut decoder = ParalegalDecoder::new_for_file(tcx, file);
+    let mut file = File::open(path)?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    let mut decoder = ParalegalDecoder::new(tcx, buf.as_slice());
     Ok(V::decode(&mut decoder))
 }
 
