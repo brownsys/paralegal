@@ -1,26 +1,27 @@
 use std::rc::Rc;
 
-use df::{AnalysisDomain, Results, ResultsVisitor};
 use either::Either;
-
-use flowistry_pdg::{CallString, GlobalLocation};
-
+use flowistry::mir::FlowistryInput;
 use log::trace;
 use petgraph::graph::DiGraph;
 
+use flowistry_pdg::{CallString, GlobalLocation};
+
+use df::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_hash::FxHashMap;
-use rustc_hir::def_id::LocalDefId;
+use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
-    ty::{GenericArgsRef, Instance, TyCtxt},
+    ty::{Instance, TyCtxt},
 };
 use rustc_mir_dataflow::{self as df};
 
-use rustc_utils::{cache::Cache, mir::borrowck_facts::get_body_with_borrowck_facts};
+use rustc_utils::cache::Cache;
 
 use crate::{
     async_support::*,
+    body_cache::{self, BodyCache, CachedBody},
     graph::{
         push_call_string_root, DepEdge, DepGraph, DepNode, PartialGraph, SourceUse, TargetUse,
     },
@@ -40,11 +41,11 @@ pub struct MemoPdgConstructor<'tcx> {
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
     pub(crate) pdg_cache: PdgCache<'tcx>,
+    pub(crate) body_cache: Rc<body_cache::BodyCache<'tcx>>,
 }
 
 impl<'tcx> MemoPdgConstructor<'tcx> {
-    /// Initialize the constructor, parameterized over an [`ArtifactLoader`] for
-    /// retrieving PDGs of functions from dependencies.
+    /// Initialize the constructor.
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
@@ -52,6 +53,19 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             dump_mir: false,
             async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
             pdg_cache: Default::default(),
+            body_cache: Rc::new(BodyCache::new(tcx)),
+        }
+    }
+
+    /// Initialize the constructor.
+    pub fn new_with_cache(tcx: TyCtxt<'tcx>, body_cache: Rc<body_cache::BodyCache<'tcx>>) -> Self {
+        Self {
+            tcx,
+            call_change_callback: None,
+            dump_mir: false,
+            async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
+            pdg_cache: Default::default(),
+            body_cache,
         }
     }
 
@@ -92,17 +106,14 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         &'a self,
         resolution: Instance<'tcx>,
     ) -> Option<&'a PartialGraph<'tcx>> {
-        let def_id = resolution.def_id().expect_local();
-        let generics = resolution.args;
-        self.pdg_cache.get_maybe_recursive((def_id, generics), |_| {
-            let g = LocalAnalysis::new(self, resolution).construct_partial();
-            trace!(
-                "Computed new for {} {generics:?}",
-                self.tcx.def_path_str(def_id)
-            );
-            g.check_invariants();
-            g
-        })
+        self.pdg_cache
+            .try_retrieve(resolution, |_| {
+                let g = LocalAnalysis::new(self, resolution)?.construct_partial();
+                trace!("Computed new for {resolution:?}");
+                g.check_invariants();
+                Some(g)
+            })
+            .as_success()
     }
 
     /// Has a PDG been constructed for this instance before?
@@ -118,8 +129,8 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
         if let Some((generator, loc, _ty)) = determine_async(
             self.tcx,
-            function,
-            &get_body_with_borrowck_facts(self.tcx, function).body,
+            function.to_def_id(),
+            self.body_cache.get(function.to_def_id()).unwrap().body(),
         ) {
             // TODO remap arguments
 
@@ -129,13 +140,30 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             return push_call_string_root(
                 self.construct_root(generator.def_id().expect_local()),
                 GlobalLocation {
-                    function,
+                    function: function.to_def_id(),
                     location: flowistry_pdg::RichLocation::Location(loc),
                 },
             )
             .to_petgraph();
         }
         self.construct_root(function).to_petgraph()
+    }
+
+    /// Try to retrieve or load a body for this id.
+    ///
+    /// Returns `None` if the loading policy forbids loading from this crate.
+    pub fn body_for_def_id(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
+        self.body_cache.get(key)
+    }
+
+    /// Access to the underlying body cache.
+    pub fn body_cache(&self) -> &Rc<BodyCache<'tcx>> {
+        &self.body_cache
+    }
+
+    /// Used for testing.
+    pub fn take_call_changes_policy(&mut self) -> Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>> {
+        self.call_change_callback.take()
     }
 }
 
@@ -354,7 +382,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 constructor.async_info(),
                 constructor.tcx(),
                 &constructor.mono_body,
-                constructor.def_id.to_def_id(),
+                constructor.def_id,
                 *destination,
             ) {
                 self.register_mutation(
@@ -382,7 +410,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 constructor.async_info(),
                 constructor.tcx(),
                 &constructor.mono_body,
-                constructor.def_id.to_def_id(),
+                constructor.def_id,
                 *destination,
             ) {
                 self.register_mutation(
@@ -477,7 +505,10 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-pub type PdgCacheKey<'tcx> = (LocalDefId, GenericArgsRef<'tcx>);
+/// How we are indexing into [`PdgCache`]
+pub type PdgCacheKey<'tcx> = Instance<'tcx>;
+/// Stores PDG's we have already computed and which we know we can use again
+/// given a certain key.
 pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, PartialGraph<'tcx>>>;
 
 #[derive(Debug)]

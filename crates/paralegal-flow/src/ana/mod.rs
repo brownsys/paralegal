@@ -13,12 +13,13 @@ use crate::{
     HashMap, HashSet, LogLevelConfig, MarkerCtx,
 };
 
-use std::time::Instant;
+use std::{rc::Rc, time::Instant};
 
 use anyhow::Result;
 use either::Either;
+use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
+    body_cache::BodyCache, CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
 };
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
@@ -32,45 +33,46 @@ mod inline_judge;
 
 use graph_converter::GraphConverter;
 
-use self::inline_judge::InlineJudge;
+pub use self::inline_judge::InlineJudge;
 
 /// Read-only database of information the analysis needs.
 ///
 /// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
 pub struct SPDGGenerator<'tcx> {
-    pub inline_judge: InlineJudge<'tcx>,
     pub opts: &'static crate::Args,
     pub tcx: TyCtxt<'tcx>,
     stats: Stats,
     pdg_constructor: MemoPdgConstructor<'tcx>,
+    judge: Rc<InlineJudge<'tcx>>,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
     pub fn new(
-        marker_ctx: MarkerCtx<'tcx>,
+        inline_judge: InlineJudge<'tcx>,
         opts: &'static crate::Args,
         tcx: TyCtxt<'tcx>,
+        body_cache: Rc<BodyCache<'tcx>>,
         stats: Stats,
     ) -> Self {
-        let inline_judge = InlineJudge::new(marker_ctx, tcx, opts.anactrl());
-        let mut pdg_constructor = MemoPdgConstructor::new(tcx);
+        let judge = Rc::new(inline_judge);
+        let mut pdg_constructor = MemoPdgConstructor::new_with_cache(tcx, body_cache);
         pdg_constructor
             .with_call_change_callback(MyCallback {
-                judge: inline_judge.clone(),
+                judge: judge.clone(),
                 tcx,
             })
             .with_dump_mir(opts.dbg().dump_mir());
         Self {
-            inline_judge,
             pdg_constructor,
             opts,
             tcx,
             stats,
+            judge,
         }
     }
 
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
-        self.inline_judge.marker_ctx()
+        self.judge.marker_ctx()
     }
 
     /// Perform the analysis for one `#[paralegal_flow::analyze]` annotated function and
@@ -89,7 +91,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
         let spdg = converter.make_spdg();
 
-        Ok((local_def_id, spdg))
+        Ok((local_def_id.to_def_id(), spdg))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -149,29 +151,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let inlined_functions = instruction_info
             .keys()
-            .filter_map(|l| l.function.to_def_id().as_local())
+            .map(|l| l.function)
             .collect::<HashSet<_>>();
-        let analyzed_spans = inlined_functions
-            .iter()
-            .copied()
-            // Because we now take the functions seen from the marker context
-            // this includes functions where the body is not present (e.g. `dyn`)
-            // so if we fail to retrieve the body in that case it is allowed.
-            //
-            // Prefereably in future we would filter what we get from the marker
-            // context better.
-            .filter_map(|f| {
-                let body = match tcx.body_for_def_id(f) {
-                    Ok(b) => Some(b),
-                    Err(BodyResolutionError::IsTraitAssocFn(_)) => None,
-                    Err(e) => panic!("{e:?}"),
-                }?;
-                let span = body_span(&body.body);
-                Some((f, src_loc_for_span(span, tcx)))
-            })
-            .collect::<HashMap<_, _>>();
 
-        known_def_ids.extend(inlined_functions.iter().map(|f| f.to_def_id()));
+        known_def_ids.extend(&inlined_functions);
 
         let type_info = self.collect_type_info();
         known_def_ids.extend(type_info.keys());
@@ -180,34 +163,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|id| (*id, def_info_for_item(*id, self.marker_ctx(), tcx)))
             .collect();
 
-        let dedup_locs = analyzed_spans.values().map(Span::line_len).sum();
-        let dedup_functions = analyzed_spans.len() as u32;
-
-        let (seen_locs, seen_functions) = if self.opts.anactrl().inlining_depth().is_adaptive() {
-            let mut total_functions = inlined_functions;
-            let mctx = self.marker_ctx();
-            total_functions.extend(
-                mctx.functions_seen()
-                    .into_iter()
-                    .map(|f| f.def_id())
-                    .filter(|f| !mctx.is_marked(f))
-                    .filter_map(|f| f.as_local()),
-            );
-            let mut seen_functions = 0;
-            let locs = total_functions
-                .into_iter()
-                .filter_map(|f| Some(body_span(&tcx.body_for_def_id(f).ok()?.body)))
-                .map(|span| {
-                    seen_functions += 1;
-                    let (_, start_line, _, end_line, _) =
-                        tcx.sess.source_map().span_to_location_info(span);
-                    end_line - start_line + 1
-                })
-                .sum::<usize>() as u32;
-            (locs, seen_functions)
-        } else {
-            (dedup_locs, dedup_functions)
-        };
+        let dedup_locs = 0;
+        let dedup_functions = 0;
+        let seen_locs = 0;
+        let seen_functions = 0;
 
         type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
@@ -225,7 +184,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             dedup_functions,
             seen_functions,
             seen_locs,
-            analyzed_spans,
+            analyzed_spans: Default::default(),
         }
     }
 
@@ -247,7 +206,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
         all_instructions
             .into_iter()
             .map(|i| {
-                let body = &self.tcx.body_for_def_id(i.function).unwrap().body;
+                let body = self
+                    .pdg_constructor
+                    .body_for_def_id(i.function)
+                    .unwrap()
+                    .body();
 
                 let (kind, description) = match i.location {
                     RichLocation::End => (InstructionKind::Return, "start".to_owned()),
@@ -337,11 +300,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
 fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
     let (source_file, start_line, start_col, end_line, end_col) =
         tcx.sess.source_map().span_to_location_info(span);
-    let file_path = source_file
-        .expect("could not find source file")
-        .name
-        .display(FileNameDisplayPreference::Local)
-        .to_string();
+    let file_path = source_file.map_or_else(
+        || "<unknown>".to_string(),
+        |f| f.name.display(FileNameDisplayPreference::Local).to_string(),
+    );
     let abs_file_path = if !file_path.starts_with('/') {
         std::env::current_dir()
             .expect("failed to obtain current working directory")
@@ -443,7 +405,7 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
 }
 
 struct MyCallback<'tcx> {
-    judge: InlineJudge<'tcx>,
+    judge: Rc<InlineJudge<'tcx>>,
     // stat_wrap: StatStracker,
     tcx: TyCtxt<'tcx>,
 }
@@ -454,7 +416,7 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
 
         let mut skip = true;
 
-        if is_non_default_trait_method(self.tcx, info.callee.def_id()).is_some() {
+        if is_virtual(self.tcx, info.callee.def_id()) {
             self.tcx.sess.span_warn(
                 self.tcx.def_span(info.callee.def_id()),
                 "Skipping analysis of unresolvable trait method.",

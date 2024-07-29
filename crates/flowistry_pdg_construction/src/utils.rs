@@ -13,8 +13,8 @@ use rustc_middle::{
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        self, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance, List, ParamEnv, Region,
-        Ty, TyCtxt, TyKind,
+        AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance, List,
+        ParamEnv, Region, Ty, TyCtxt, TyKind,
     },
 };
 use rustc_span::{ErrorGuaranteed, Span};
@@ -40,15 +40,12 @@ pub fn try_resolve_function<'tcx>(
     Instance::resolve(tcx, param_env, def_id, args).unwrap()
 }
 
-/// Returns the default implementation of this method if it is a trait method.
-pub fn is_non_default_trait_method(tcx: TyCtxt, function: DefId) -> Option<DefId> {
-    let assoc_item = tcx.opt_associated_item(function)?;
-    if assoc_item.container != ty::AssocItemContainer::TraitContainer
-        || assoc_item.defaultness(tcx).has_value()
-    {
-        return None;
-    }
-    assoc_item.trait_item_def_id
+/// Returns whether this method is expected to have a body we can analyze.
+pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
+    tcx.opt_associated_item(function)
+        .map_or(false, |assoc_item| {
+            matches!(assoc_item.container, AssocItemContainer::TraitContainer)
+        })
 }
 
 /// The "canonical" way we monomorphize

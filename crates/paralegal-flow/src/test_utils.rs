@@ -4,11 +4,13 @@ extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
 
+use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
 use hir::def_id::DefId;
 
 use crate::{
+    ann::dump_markers,
     desc::{Identifier, ProgramDescription},
-    HashSet,
+    HashSet, EXTRA_RUSTC_ARGS,
 };
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -16,10 +18,9 @@ use std::process::Command;
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, EdgeSelection},
-    DefInfo, EdgeInfo, Node, SPDG,
+    DefInfo, EdgeInfo, Endpoint, Node, SPDG,
 };
 
-use flowistry_pdg::rustc_portable::LocalDefId;
 use flowistry_pdg::CallString;
 use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
@@ -114,6 +115,13 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
+    let dir = dir.as_ref();
+    assert!(Command::new("cargo")
+        .arg("clean")
+        .current_dir(dir)
+        .status()
+        .unwrap()
+        .success());
     paralegal_flow_command(dir)
         .args(["--abort-after-analysis"])
         .args(extra)
@@ -217,11 +225,7 @@ impl InlineTestBuilder {
             TopLevelArgs::parse_from([
                 "".into(),
                 "--analyze".into(),
-                format!(
-                    "{}::{}",
-                    rustc_utils::test_utils::DUMMY_MOD_NAME,
-                    self.ctrl_name
-                ),
+                format!("crate::{}", self.ctrl_name),
             ])
             .args,
         )
@@ -230,17 +234,11 @@ impl InlineTestBuilder {
         args.setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
-            .with_args(
-                [
-                    "--cfg",
-                    "paralegal",
-                    "-Zcrate-attr=feature(register_tool)",
-                    "-Zcrate-attr=register_tool(paralegal_flow)",
-                ]
-                .into_iter()
-                .map(ToOwned::to_owned),
-            )
+            .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
+            .with_query_override(None)
             .compile(move |result| {
+                dump_mir_and_borrowck_facts(result.tcx);
+                dump_markers(result.tcx);
                 let tcx = result.tcx;
                 let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
                 let pdg = memo.run(tcx).unwrap();
@@ -296,7 +294,7 @@ pub trait HasGraph<'g>: Sized + Copy {
         }
     }
 
-    fn ctrl_hashed(self, name: &str) -> LocalDefId {
+    fn ctrl_hashed(self, name: &str) -> Endpoint {
         let candidates = self
             .graph()
             .desc
@@ -365,7 +363,7 @@ impl PreFrg {
 #[derive(Clone)]
 pub struct CtrlRef<'g> {
     graph: &'g PreFrg,
-    id: LocalDefId,
+    id: Endpoint,
     ctrl: &'g SPDG,
 }
 
@@ -413,7 +411,7 @@ impl<'g> CtrlRef<'g> {
         }
     }
 
-    pub fn id(&self) -> LocalDefId {
+    pub fn id(&self) -> Endpoint {
         self.id
     }
     pub fn spdg(&self) -> &'g SPDG {

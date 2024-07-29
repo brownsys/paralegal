@@ -11,7 +11,7 @@ use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 
 use rustc_hash::FxHashSet;
-use rustc_hir::def_id::LocalDefId;
+use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{Body, HasLocalDecls, Local, LocalDecl, LocalDecls, Place},
@@ -236,7 +236,7 @@ pub struct PartialGraph<'tcx> {
     pub(crate) nodes: FxHashSet<DepNode<'tcx>>,
     pub(crate) edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
     pub(crate) generics: GenericArgsRef<'tcx>,
-    def_id: LocalDefId,
+    def_id: DefId,
     arg_count: usize,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
 }
@@ -260,7 +260,7 @@ impl<'tcx> PartialGraph<'tcx> {
 
     pub fn new(
         generics: GenericArgsRef<'tcx>,
-        def_id: LocalDefId,
+        def_id: DefId,
         arg_count: usize,
         local_decls: &LocalDecls<'tcx>,
     ) -> Self {
@@ -314,7 +314,7 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
-fn as_arg(node: &DepNode<'_>, def_id: LocalDefId, arg_count: usize) -> Option<Option<u8>> {
+fn as_arg(node: &DepNode<'_>, def_id: DefId, arg_count: usize) -> Option<Option<u8>> {
     if node.at.leaf().function != def_id {
         return None;
     }

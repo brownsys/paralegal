@@ -173,14 +173,14 @@ fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (LocalDefId, GenericArgsRef<'
 /// which in this case is guaranteed to satisfy [`Asyncness::is_async`].
 pub fn determine_async<'tcx>(
     tcx: TyCtxt<'tcx>,
-    def_id: LocalDefId,
+    def_id: DefId,
     body: &Body<'tcx>,
 ) -> Option<(Instance<'tcx>, Location, AsyncType)> {
     let ((generator_def_id, args, loc), asyncness) = if tcx.asyncness(def_id).is_async() {
         (get_async_generator(body), AsyncType::Fn)
     } else {
         (
-            try_as_async_trait_function(tcx, def_id.to_def_id(), body)?,
+            try_as_async_trait_function(tcx, def_id, body)?,
             AsyncType::Trait,
         )
     };

@@ -82,3 +82,5 @@ fn box_ref_mut() {
     **inp += modifier();
     sink(src);
 }
+
+fn main() {}

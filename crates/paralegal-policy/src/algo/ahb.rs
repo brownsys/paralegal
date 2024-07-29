@@ -5,7 +5,7 @@ use std::{collections::HashSet, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 
-use paralegal_spdg::{GlobalNode, Identifier, Node, SPDGImpl};
+use paralegal_spdg::{Endpoint, GlobalNode, Identifier, Node, SPDGImpl};
 
 use anyhow::{ensure, Result};
 use itertools::Itertools;
@@ -196,7 +196,7 @@ pub enum TraceLevel {
 struct Tracer<'a> {
     tree: Box<[Node]>,
     trace: &'a mut Trace,
-    ctrl_id: LocalDefId,
+    ctrl_id: Endpoint,
 }
 
 enum Trace {
@@ -279,7 +279,7 @@ impl<'a> Tracer<'a> {
         trace: &'a mut Trace,
         node_bound: usize,
         initials: impl IntoIterator<Item = Node>,
-        ctrl_id: LocalDefId,
+        ctrl_id: Endpoint,
     ) -> Self {
         Self {
             tree: if matches!(trace, Trace::None(_)) {

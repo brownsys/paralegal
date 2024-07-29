@@ -95,9 +95,9 @@ use indexmap::IndexMap;
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{GlobalNode, Identifier, Span, SpanCoord, SPDG};
+use paralegal_spdg::{Endpoint, GlobalNode, Identifier, Span, SpanCoord, SPDG};
 
-use crate::{Context, ControllerId, NodeExt};
+use crate::{Context, NodeExt};
 
 /// Check the condition and emit a [`Diagnostics::error`] if it fails.
 #[macro_export]
@@ -169,7 +169,7 @@ impl Severity {
 }
 
 /// Context provided to [`HasDiagnosticsBase::record`].
-type DiagnosticContextStack = Vec<String>;
+type DiagnosticContextStack = Vec<Identifier>;
 
 #[derive(Hash, PartialEq, Eq)]
 /// Representation of a diagnostic message. You should not interact with this
@@ -178,7 +178,6 @@ type DiagnosticContextStack = Vec<String>;
 #[derive(Debug)]
 pub struct Diagnostic {
     context: DiagnosticContextStack,
-    main: DiagnosticPart,
     children: Vec<DiagnosticPart>,
 }
 
@@ -187,7 +186,6 @@ impl Diagnostic {
         for ctx in self.context.iter().rev() {
             write!(w, "{ctx} ")?;
         }
-        self.main.write(w)?;
         for c in &self.children {
             c.write(w)?;
         }
@@ -199,7 +197,7 @@ impl Diagnostic {
 struct DiagnosticPart {
     message: String,
     severity: Severity,
-    span: Option<HighlightedSpan>,
+    span: Option<Box<HighlightedSpan>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -302,13 +300,17 @@ impl DiagnosticPart {
                     } else {
                         line_length_while(&line_content, char::is_whitespace)
                     };
-                    writeln!(
-                        s,
-                        "{tab} {} {}{}",
-                        "|".blue(),
-                        " ".repeat(start),
-                        "^".repeat(end - start).color(coloring)
-                    )?;
+                    let highlight_len = if end < start {
+                        // TODO figure out how this happens
+                        0
+                    } else {
+                        end - start
+                    };
+                    write!(s, "{tab} {} {:start$}", "|".blue(), "")?;
+                    for _ in 0..highlight_len {
+                        write!(s, "{}", "^".color(coloring))?;
+                    }
+                    writeln!(s)?;
                 }
             }
             writeln!(s, "{tab} {}", "|".blue())?;
@@ -350,12 +352,11 @@ impl<'a, A: ?Sized> DiagnosticBuilder<'a, A> {
         DiagnosticBuilder {
             diagnostic: Diagnostic {
                 context: vec![],
-                main: DiagnosticPart {
+                children: vec![DiagnosticPart {
                     message,
                     severity,
-                    span: span.map(Into::into),
-                },
-                children: vec![],
+                    span: span.map(Into::into).map(Box::new),
+                }],
             },
             base,
         }
@@ -370,7 +371,7 @@ impl<'a, A: ?Sized> DiagnosticBuilder<'a, A> {
         self.diagnostic.children.push(DiagnosticPart {
             message: message.into(),
             severity,
-            span: span.map(Into::into),
+            span: span.map(Into::into).map(Box::new),
         });
         self
     }
@@ -785,7 +786,7 @@ impl PolicyContext {
     /// diagnostic context management.
     pub fn named_controller<A>(
         self: Arc<Self>,
-        id: ControllerId,
+        id: Endpoint,
         policy: impl FnOnce(Arc<ControllerContext>) -> A,
     ) -> A {
         policy(Arc::new(ControllerContext {
@@ -802,7 +803,9 @@ impl PolicyContext {
 
 impl HasDiagnosticsBase for PolicyContext {
     fn record(&self, mut diagnostic: Diagnostic) {
-        diagnostic.context.push(format!("[policy: {}]", self.name));
+        diagnostic
+            .context
+            .push(Identifier::new_intern(&format!("[policy: {}]", self.name)));
         self.inner.record(diagnostic)
     }
 
@@ -820,7 +823,7 @@ impl HasDiagnosticsBase for PolicyContext {
 /// See the [module level documentation][self] for more information on
 /// diagnostic context management.
 pub struct ControllerContext {
-    id: ControllerId,
+    id: Endpoint,
     inner: Arc<dyn HasDiagnosticsBase>,
 }
 
@@ -863,7 +866,7 @@ impl ControllerContext {
     }
 
     /// Access the id for the controller of this context
-    pub fn id(&self) -> ControllerId {
+    pub fn id(&self) -> Endpoint {
         self.id
     }
 
@@ -891,7 +894,9 @@ impl ControllerContext {
 impl HasDiagnosticsBase for ControllerContext {
     fn record(&self, mut diagnostic: Diagnostic) {
         let name = self.as_ctx().desc().controllers[&self.id].name;
-        diagnostic.context.push(format!("[controller: {}]", name));
+        diagnostic
+            .context
+            .push(Identifier::new_intern(&format!("[controller: {}]", name)));
         self.inner.record(diagnostic)
     }
 
@@ -943,7 +948,7 @@ impl CombinatorContext {
 
 impl HasDiagnosticsBase for CombinatorContext {
     fn record(&self, mut diagnostic: Diagnostic) {
-        diagnostic.context.push(format!("{}", self.name));
+        diagnostic.context.push(self.name);
         self.inner.record(diagnostic)
     }
 
@@ -974,7 +979,7 @@ impl Context {
     /// diagnostic context management.
     pub fn named_controller<A>(
         self: Arc<Self>,
-        id: ControllerId,
+        id: Endpoint,
         policy: impl FnOnce(Arc<ControllerContext>) -> A,
     ) -> A {
         policy(Arc::new(ControllerContext {
@@ -1023,7 +1028,7 @@ impl DiagnosticsRecorder {
         let mut can_continue = true;
         for (diag, ()) in self.0.lock().unwrap().drain(..) {
             writeln!(w, "{}", DisplayDiagnostic(&diag))?;
-            can_continue &= !diag.main.severity.must_abort();
+            can_continue &= !diag.children.iter().any(|c| c.severity.must_abort());
         }
         Ok(can_continue)
     }

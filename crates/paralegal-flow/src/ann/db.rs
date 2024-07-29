@@ -13,65 +13,34 @@
 use crate::{
     ann::{Annotation, MarkerAnnotation},
     args::{Args, MarkerControl},
-    discover::AttrMatchT,
-    sym_vec,
-    utils::{
-        resolve::expect_resolve_string_to_def_id, AsFnAndArgs, InstanceExt, IntoDefId,
-        MetaItemMatch, TyCtxtExt, TyExt,
-    },
+    utils::{resolve::expect_resolve_string_to_def_id, AsFnAndArgs, InstanceExt, IntoDefId, TyExt},
     Either, HashMap, HashSet,
 };
+use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
+    body_cache::{local_or_remote_paths, BodyCache},
     determine_async,
-    utils::{try_monomorphize, try_resolve_function},
+    encoder::ParalegalDecoder,
+    utils::{is_virtual, try_monomorphize, try_resolve_function},
 };
 use paralegal_spdg::Identifier;
-use rustc_span::Symbol;
-use rustc_utils::cache::Cache;
 
-use rustc_ast::Attribute;
-use rustc_hir::def::DefKind;
-use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_hash::FxHashMap;
+use rustc_hir::def_id::DefId;
+use rustc_hir::{def::DefKind, def_id::CrateNum};
 use rustc_middle::{
     mir,
     ty::{self, Instance, TyCtxt},
 };
+use rustc_serialize::Decodable;
 
-use std::rc::Rc;
+use rustc_utils::cache::Cache;
 
-use super::parse::Symbols;
+use std::{fs::File, io::Read, rc::Rc};
+
+use super::{MarkerMeta, MARKER_META_EXT};
 
 type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
-
-/// These are pseudo-constants that are used to match annotations. In theory
-/// they never change but they use [`Symbol`] inside, which is only valid so
-/// long as the rustc `SESSION_GLOBALS` are live so we need to calculate them
-/// afresh in `new`.
-struct Markers {
-    /// This will match the annotation `#[paralegal_flow::label(...)]` when using
-    /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
-    label_marker: AttrMatchT,
-    /// This will match the annotation `#[paralegal_flow::marker(...)]` when using
-    /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
-    marker_marker: AttrMatchT,
-    /// This will match the annotation `#[paralegal_flow::output_types(...)]` when using
-    /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
-    otype_marker: AttrMatchT,
-    /// This will match the annotation `#[paralegal_flow::exception(...)]` when using
-    /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
-    exception_marker: AttrMatchT,
-}
-
-impl Default for Markers {
-    fn default() -> Self {
-        Markers {
-            label_marker: sym_vec!["paralegal_flow", "label"],
-            marker_marker: sym_vec!["paralegal_flow", "marker"],
-            otype_marker: sym_vec!["paralegal_flow", "output_types"],
-            exception_marker: sym_vec!["paralegal_flow", "exception"],
-        }
-    }
-}
 
 /// The marker context is a database which can be queried as to whether
 /// functions or types carry markers, whether markers are reachable in bodies,
@@ -107,11 +76,11 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// are present an empty slice is returned.
     ///
     /// Query is cached.
-    pub fn local_annotations(&self, def_id: LocalDefId) -> &[Annotation] {
+    pub fn source_annotations(&self, def_id: DefId) -> &[Annotation] {
         self.db()
-            .local_annotations
-            .get(&self.defid_rewrite(def_id.to_def_id()).expect_local())
-            .map_or(&[], |o| o.as_slice())
+            .annotations
+            .get(&self.defid_rewrite(def_id))
+            .map_or(&[], |b| b)
     }
 
     /// Retrieves any external markers on this item. If there are not such
@@ -129,11 +98,9 @@ impl<'tcx> MarkerCtx<'tcx> {
     ///
     /// Queries are cached/precomputed so calling this repeatedly is cheap.
     pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
-        def_id
-            .as_local()
-            .map(|ldid| self.local_annotations(ldid))
-            .into_iter()
-            .flat_map(|anns| anns.iter().flat_map(Annotation::as_marker))
+        self.source_annotations(def_id)
+            .iter()
+            .filter_map(Annotation::as_marker)
             .chain(self.external_markers(def_id).iter())
     }
 
@@ -159,8 +126,8 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Are there any local markers on this item?
-    pub fn is_locally_marked(&self, def_id: LocalDefId) -> bool {
-        self.local_annotations(def_id)
+    pub fn is_locally_marked(&self, def_id: DefId) -> bool {
+        self.source_annotations(def_id)
             .iter()
             .any(Annotation::is_marker)
     }
@@ -170,19 +137,19 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// This is in contrast to [`Self::marker_is_reachable`] which also reports
     /// if markers are reachable from the body of this function (if it is one).
     pub fn is_marked<D: IntoDefId + Copy>(&self, did: D) -> bool {
-        matches!(did.into_def_id(self.tcx()).as_local(), Some(ldid) if self.is_locally_marked(ldid))
-            || self.is_externally_marked(did)
+        let defid = did.into_def_id(self.tcx());
+        self.is_locally_marked(defid) || self.is_externally_marked(defid)
     }
 
     /// Return a complete set of local annotations that were discovered.
     ///
     /// Crucially this is a "readout" from the marker cache, which means only
     /// items reachable from the `paralegal_flow::analyze` will end up in this collection.
-    pub fn local_annotations_found(&self) -> Vec<(LocalDefId, &[Annotation])> {
+    pub fn source_annotations_found(&self) -> Vec<(DefId, &[Annotation])> {
         self.db()
-            .local_annotations
+            .annotations
             .iter()
-            .map(|(k, v)| (*k, (v.as_slice())))
+            .map(|(k, v)| (*k, v.as_slice()))
             .collect()
     }
 
@@ -243,27 +210,27 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// computes it.
     fn compute_reachable_markers(&self, res: Instance<'tcx>) -> Box<[Identifier]> {
         trace!("Computing reachable markers for {res:?}");
-        let Some(local) = res.def_id().as_local() else {
-            trace!("  Is not local");
-            return Box::new([]);
-        };
         if self.is_marked(res.def_id()) {
             trace!("  Is marked");
             return Box::new([]);
         }
-        let Some(body) = self.tcx().body_for_def_id_default_policy(local) else {
+        if is_virtual(self.tcx(), res.def_id()) {
+            trace!("  Is virtual");
+            return Box::new([]);
+        }
+        let Some(body) = self.0.body_cache.get(res.def_id()) else {
             trace!("  Cannot find body");
             return Box::new([]);
         };
         let mono_body = try_monomorphize(
             res,
             self.tcx(),
-            self.tcx().param_env_reveal_all_normalized(local),
-            &body.body,
+            self.tcx().param_env_reveal_all_normalized(res.def_id()),
+            body.body(),
             self.tcx().def_span(res.def_id()),
         )
         .unwrap();
-        if let Some((async_fn, _, _)) = determine_async(self.tcx(), local, &mono_body) {
+        if let Some((async_fn, _, _)) = determine_async(self.tcx(), res.def_id(), &mono_body) {
             return self.get_reachable_markers(async_fn).into();
         }
         mono_body
@@ -464,13 +431,9 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn all_annotations(
         &self,
     ) -> impl Iterator<Item = (DefId, Either<&Annotation, &MarkerAnnotation>)> {
-        self.0
-            .local_annotations
-            .iter()
-            .flat_map(|(&id, anns)| {
-                anns.iter()
-                    .map(move |ann| (id.to_def_id(), Either::Left(ann)))
-            })
+        self.source_annotations_found()
+            .into_iter()
+            .flat_map(|(key, anns)| anns.iter().map(move |a| (key, Either::Left(a))))
             .chain(
                 self.0
                     .external_annotations
@@ -493,75 +456,59 @@ pub struct MarkerDatabase<'tcx> {
     tcx: TyCtxt<'tcx>,
     /// Cache for parsed local annotations. They are created with
     /// [`MarkerCtx::retrieve_local_annotations_for`].
-    local_annotations: HashMap<LocalDefId, Vec<Annotation>>,
+    annotations: FxHashMap<DefId, Vec<Annotation>>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
     reachable_markers: Cache<Instance<'tcx>, Box<[Identifier]>>,
     /// Configuration options
     _config: &'static MarkerControl,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
-    markers: Markers,
-    symbols: Symbols,
+    body_cache: Rc<BodyCache<'tcx>>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
     /// Construct a new database, loading external markers.
-    pub fn init(tcx: TyCtxt<'tcx>, args: &'static Args) -> Self {
+    pub fn init(
+        tcx: TyCtxt<'tcx>,
+        args: &'static Args,
+        body_cache: Rc<BodyCache<'tcx>>,
+        included_crates: impl IntoIterator<Item = CrateNum>,
+    ) -> Self {
         Self {
             tcx,
-            local_annotations: HashMap::default(),
+            annotations: load_annotations(tcx, included_crates),
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
             _config: args.marker_control(),
             type_markers: Default::default(),
-            markers: Markers::default(),
-            symbols: Default::default(),
+            body_cache,
         }
     }
+}
 
-    /// Retrieve and parse the local annotations for this item.
-    pub fn retrieve_local_annotations_for(&mut self, def_id: LocalDefId) {
-        let tcx = self.tcx;
-        for a in tcx.get_attrs_unchecked(def_id.to_def_id()) {
-            match self.try_parse_annotation(a) {
-                Ok(anns) => {
-                    let mut anns = anns.peekable();
-                    if anns.peek().is_some() {
-                        self.local_annotations
-                            .entry(def_id)
-                            .or_default()
-                            .extend(anns)
-                    }
-                }
-                Err(e) => {
-                    tcx.sess.span_err(a.span, e);
-                }
+fn load_annotations(
+    tcx: TyCtxt,
+    included_crates: impl IntoIterator<Item = CrateNum>,
+) -> FxHashMap<DefId, Vec<Annotation>> {
+    included_crates
+        .into_iter()
+        .flat_map(|krate| {
+            let paths = local_or_remote_paths(krate, tcx, MARKER_META_EXT);
+            for path in &paths {
+                let Ok(mut file) = File::open(path) else {
+                    continue;
+                };
+                let mut buf = Vec::new();
+                file.read_to_end(&mut buf).unwrap();
+                let mut decoder = ParalegalDecoder::new(tcx, buf.as_slice());
+                let meta = MarkerMeta::decode(&mut decoder);
+                return meta
+                    .into_iter()
+                    .map(move |(index, v)| (DefId { krate, index }, v));
             }
-        }
-    }
-
-    fn try_parse_annotation(
-        &self,
-        a: &Attribute,
-    ) -> Result<impl Iterator<Item = Annotation>, String> {
-        let consts = &self.markers;
-        let tcx = self.tcx;
-        use crate::ann::parse::{ann_match_fn, match_exception, otype_ann_match};
-        let one = |a| Either::Left(Some(a));
-        let ann = if let Some(i) = a.match_get_ref(&consts.marker_marker) {
-            one(Annotation::Marker(ann_match_fn(&self.symbols, i)?))
-        } else if let Some(i) = a.match_get_ref(&consts.label_marker) {
-            warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
-            one(Annotation::Marker(ann_match_fn(&self.symbols, i)?))
-        } else if let Some(i) = a.match_get_ref(&consts.otype_marker) {
-            Either::Right(otype_ann_match(i, tcx)?.into_iter().map(Annotation::OType))
-        } else if let Some(i) = a.match_get_ref(&consts.exception_marker) {
-            one(Annotation::Exception(match_exception(&self.symbols, i)?))
-        } else {
-            Either::Left(None)
-        };
-        Ok(ann.into_iter())
-    }
+            panic!("No marker metadata fund for crate {krate}, tried paths {paths:?}");
+        })
+        .collect()
 }
 
 type RawExternalMarkers = HashMap<String, Vec<crate::ann::MarkerAnnotation>>;
@@ -573,9 +520,11 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
         let from_toml: RawExternalMarkers = toml::from_str(
             &std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
                 panic!(
-                    "Could not open file {}/{}",
-                    std::env::current_dir().unwrap().display(),
-                    annotation_file.display()
+                    "Could not open file {}",
+                    annotation_file
+                        .canonicalize()
+                        .unwrap_or_else(|_| annotation_file.to_path_buf())
+                        .display()
                 )
             }),
         )
