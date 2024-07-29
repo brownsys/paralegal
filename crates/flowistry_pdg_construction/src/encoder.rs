@@ -7,8 +7,8 @@
 //! unimplemented and will cause a crash if you try to stick an `AllocId` into
 //! the Paralegal artifact.
 
-use std::{num::NonZeroU64, path::PathBuf};
 use std::path::Path;
+use std::{num::NonZeroU64, path::PathBuf};
 
 use rustc_const_eval::interpret::AllocId;
 
@@ -272,14 +272,11 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
         let tag = u8::decode(d);
         if tag == TAG_PARTIAL_SPAN {
             return DUMMY_SP.with_ctxt(ctxt).data();
-        } 
+        }
         debug_assert_eq!(tag, TAG_VALID_SPAN_FULL);
         let crate_num = CrateNum::decode(d);
         let file_name = FileName::decode(d);
-        let source_map = d
-            .tcx
-            .sess
-            .source_map();
+        let source_map = d.tcx.sess.source_map();
         let matching_source_files = source_map
             .files()
             .iter()
@@ -288,20 +285,23 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
                     let before = path_in_real_path(r);
                     let after = path_in_real_path(other);
                     after.ends_with(before)
-                })) 
+                }))
             })
             .cloned()
             .collect::<Box<[_]>>();
         let source_file = match matching_source_files.as_ref() {
             [sf] => {
-                println!("Approximate match succeeded {file_name:?} matches {:?}", sf.name);
+                println!(
+                    "Approximate match succeeded {file_name:?} matches {:?}",
+                    sf.name
+                );
                 sf.clone()
-            },
-            [] => {
-                match &file_name {
-                    FileName::Real(RealFileName::LocalPath(local)) if source_map.file_exists(local) => source_map.load_file(local).unwrap(),
-                    _ => panic!("Could not load file {}", file_name.prefer_local()),
+            }
+            [] => match &file_name {
+                FileName::Real(RealFileName::LocalPath(local)) if source_map.file_exists(local) => {
+                    source_map.load_file(local).unwrap()
                 }
+                _ => panic!("Could not load file {}", file_name.prefer_local()),
             },
             other => {
                 let names = other.iter().map(|f| &f.name).collect::<Vec<_>>();
