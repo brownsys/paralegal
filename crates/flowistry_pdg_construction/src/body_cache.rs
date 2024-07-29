@@ -1,9 +1,9 @@
 use std::{fs::File, io::Read, path::PathBuf};
 
 use flowistry::mir::FlowistryInput;
+
 use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{ConsumerOptions, RustcFacts};
-
 use rustc_hir::{
     def_id::{CrateNum, DefId, LocalDefId, LOCAL_CRATE},
     intravisit::{self},
@@ -17,7 +17,7 @@ use rustc_middle::{
 use rustc_serialize::{Decodable, Encodable};
 use rustc_utils::cache::Cache;
 
-use crate::encoder::{ParalegalDecoder, ParalegalEncoder};
+use crate::encoder::{decode_from_file, encode_to_file, ParalegalDecoder, ParalegalEncoder};
 
 /// A mir [`Body`] and all the additional borrow checking facts that our
 /// points-to analysis needs.
@@ -106,6 +106,8 @@ impl<'tcx> BodyCache<'tcx> {
     }
 
     /// Serve the body from the cache or read it from the disk.
+    ///
+    /// Returns `None` if the policy forbids loading from this crate.
     pub fn get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
         (self.load_policy)(key.krate).then(|| {
             let cbody = self.cache.get(key, |_| load_body_and_facts(self.tcx, key));
@@ -131,7 +133,7 @@ struct DumpingVisitor<'tcx> {
     target_dir: PathBuf,
 }
 
-/// Some data in a [Body] is not crosscrate compatible. Usually because it
+/// Some data in a [Body] is not cross-crate compatible. Usually because it
 /// involves storing a [LocalDefId]. This function makes sure to sanitize those
 /// out.
 fn clean_undecodable_data_from_body(body: &mut Body) {
@@ -177,10 +179,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
             std::fs::create_dir(dir).unwrap();
         }
 
-        let mut encoder = ParalegalEncoder::new(&path, self.tcx);
-
-        to_write.encode(&mut encoder);
-        encoder.finish();
+        encode_to_file(self.tcx, path, &to_write);
 
         intravisit::walk_fn(
             self,
@@ -227,14 +226,9 @@ fn load_body_and_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {
     let paths = local_or_remote_paths(def_id.krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
     for path in &paths {
         let path = path.join(tcx.def_path(def_id).to_filename_friendly_no_crate());
-        let Ok(mut file) = File::open(path) else {
-            continue;
+        if let Ok(data) = decode_from_file(tcx, path) {
+            return data;
         };
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf).unwrap();
-        let mut decoder = ParalegalDecoder::new(tcx, buf.as_slice());
-        let meta = CachedBody::decode(&mut decoder);
-        return meta;
     }
 
     panic!("No facts for {def_id:?} found at any path tried: {paths:?}");

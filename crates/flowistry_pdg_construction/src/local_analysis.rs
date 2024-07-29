@@ -62,7 +62,10 @@ pub(crate) struct LocalAnalysis<'tcx, 'a> {
 }
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
-    /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution` in a given `calling_context`.
+    /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution`
+    /// in a given `calling_context`.
+    ///
+    /// Returns `None`, if we were unable to load the body.
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
         root: Instance<'tcx>,
@@ -71,10 +74,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         let def_id = root.def_id();
         let body_with_facts = memo.body_cache.get(def_id)?;
         let param_env = tcx.param_env_reveal_all_normalized(def_id);
-        // let param_env = match &calling_context {
-        //     Some(cx) => cx.param_env,
-        //     None => ParamEnv::reveal_all(),
-        // };
         let body = try_monomorphize(
             root,
             tcx,

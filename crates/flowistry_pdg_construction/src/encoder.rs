@@ -1,17 +1,31 @@
 //! Readers and writers for the intermediate artifacts we store per crate.
 //!
-//! Most of this code is adapted/copied from `EncodeContext` and `DecodeContext` in
-//! `rustc_metadata`.
+//! Most of this code is adapted/copied from `EncodeContext` and `DecodeContext`
+//! in `rustc_metadata`.
 //!
-//! Note that the methods pertaining to allocations of `AllocId`'s are
-//! unimplemented and will cause a crash if you try to stick an `AllocId` into
-//! the Paralegal artifact.
-
+//! We use a lot of `min_specialization` here to change how `DefId`s, `Span`s
+//! and such are encoded since their default implementations are panics.
+//!
+//! Specifically for `CrateNum` (e.g. `DefId` also), we use stable crate hashes.
+//! These appear to work fine, however I am not sure they are guaranteed to be
+//! stable across different crates. Rustc itself uses an explicit remapping
+//! replying on `CrateMetadataRef`, which we can construct but not use (relevant
+//! functions are hidden).
+//!
+//! The encoding of [`SpanData`] (and thus [`Span`]) is quite heavyweight. We
+//! store the full filename for each span and resolve them with a linear scan
+//! over the `SourceMap`. If we notice this being too slow we can always use a
+//! similar shorthand technique that is used for types.
+//!
+//! Note that we encode `AllocId`s simply as themselves. This is possibly
+//! incorrect but we're not really relying on this information at the moment so
+//! we are not investing in it.
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::Path;
 use std::{num::NonZeroU64, path::PathBuf};
 
 use rustc_const_eval::interpret::AllocId;
-
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{CrateNum, DefIndex};
 use rustc_middle::ty::{self, Ty, TyCtxt};
@@ -19,7 +33,6 @@ use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
 };
-
 use rustc_span::{BytePos, FileName, RealFileName, Span, SpanData, SyntaxContext, DUMMY_SP};
 use rustc_type_ir::{TyDecoder, TyEncoder};
 
@@ -31,6 +44,7 @@ macro_rules! encoder_methods {
     }
 }
 
+/// A structure that implements `TyEncoder` for us.
 pub struct ParalegalEncoder<'tcx> {
     tcx: TyCtxt<'tcx>,
     file_encoder: FileEncoder,
@@ -39,6 +53,7 @@ pub struct ParalegalEncoder<'tcx> {
 }
 
 impl<'tcx> ParalegalEncoder<'tcx> {
+    /// Create a new encoder that will write to the provided file.
     pub fn new(path: impl AsRef<Path>, tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
@@ -53,7 +68,19 @@ impl<'tcx> ParalegalEncoder<'tcx> {
     }
 }
 
-const CLEAR_CROSS_CRATE: bool = false;
+/// Convenience function that encodes some value to a file.
+pub fn encode_to_file<'tcx, V: Encodable<ParalegalEncoder<'tcx>>>(
+    tcx: TyCtxt<'tcx>,
+    path: impl AsRef<Path>,
+    v: &V,
+) {
+    let mut encoder = ParalegalEncoder::new(path, self.tcx);
+    v.encode(&mut encoder);
+    encoder.finish();
+}
+
+/// Whatever can't survive the crossing we need to live without.
+const CLEAR_CROSS_CRATE: bool = true;
 
 impl<'tcx> Encoder for ParalegalEncoder<'tcx> {
     encoder_methods! {
@@ -105,6 +132,7 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for CrateNum {
     }
 }
 
+/// Something that implements `TyDecoder`.
 pub struct ParalegalDecoder<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     mem_decoder: MemDecoder<'a>,
@@ -112,6 +140,7 @@ pub struct ParalegalDecoder<'tcx, 'a> {
 }
 
 impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
+    /// Decode what is in this buffer.
     pub fn new(tcx: TyCtxt<'tcx>, buf: &'a [u8]) -> Self {
         Self {
             tcx,
@@ -119,6 +148,22 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
             shorthand_map: Default::default(),
         }
     }
+
+    pub fn new_for_file(tcx: TyCtxt<'tcx>, file: impl AsRef<File>) -> io::Result<Self> {
+        let mut file = File::open(path)?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+        Ok(Self::new(tcx, buf.as_slice()))
+    }
+}
+
+/// Convenience function that decodes a value from a file.
+pub fn decode_from_file<'tcx, V: for<'a> Decodable<ParalegalDecoder<'tcx, 'a>>>(
+    tcx: TyCtxt<'tcx>,
+    file: impl AsRef<File>,
+) -> io::Result<V> {
+    let mut decoder = ParalegalDecoder::new_for_file(tcx, file);
+    Ok(V::decode(&mut decoder))
 }
 
 impl<'tcx, 'a> TyDecoder for ParalegalDecoder<'tcx, 'a> {
@@ -216,12 +261,16 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for DefIndex {
 const TAG_PARTIAL_SPAN: u8 = 0;
 const TAG_VALID_SPAN_FULL: u8 = 1;
 
+/// We need to overwrite this, because we need it to dispatch to `SpanData`.
 impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for Span {
     fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
         self.data().encode(s)
     }
 }
 
+/// Some of this code is lifted from `EncodeContext`.
+///
+/// However we directly encode file names because that's easier.
 impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
     fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
         if self.is_dummy() {
@@ -249,16 +298,20 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
     }
 }
 
+/// For now this does nothing, simply dropping the context. We don't use it
+/// anyway in our errors.
 impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SyntaxContext {
     fn encode(&self, _: &mut ParalegalEncoder<'tcx>) {}
 }
 
+/// Same as for the [`Encodable`] impl, we need to dispatch to [`SpanData`].
 impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for Span {
     fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
         SpanData::decode(d).span()
     }
 }
 
+/// Which path in a [`RealFileName`] do we care about?
 fn path_in_real_path(r: &RealFileName) -> &PathBuf {
     match r {
         RealFileName::LocalPath(p) => p,
@@ -266,6 +319,9 @@ fn path_in_real_path(r: &RealFileName) -> &PathBuf {
     }
 }
 
+/// Partially uses code similar to `DecodeContext`. But we fully encode file
+/// names. We then map them back by searching the currently loaded files. If the
+/// file we care about is not found there, we try and load its source.
 impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
     fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
         let ctxt = SyntaxContext::decode(d);
@@ -290,13 +346,7 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
             .cloned()
             .collect::<Box<[_]>>();
         let source_file = match matching_source_files.as_ref() {
-            [sf] => {
-                println!(
-                    "Approximate match succeeded {file_name:?} matches {:?}",
-                    sf.name
-                );
-                sf.clone()
-            }
+            [sf] => sf.clone(),
             [] => match &file_name {
                 FileName::Real(RealFileName::LocalPath(local)) if source_map.file_exists(local) => {
                     source_map.load_file(local).unwrap()
@@ -320,6 +370,7 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
     }
 }
 
+/// Always returns [`SyntaxContext::root()`] at the moment.
 impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SyntaxContext {
     fn decode(_: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
         SyntaxContext::root()

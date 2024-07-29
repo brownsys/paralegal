@@ -19,6 +19,3 @@ flow-graph.json
 
 *.mir
 *.o
-
-nll-facts/
-*.bwbf

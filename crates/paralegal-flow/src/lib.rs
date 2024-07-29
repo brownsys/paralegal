@@ -157,10 +157,6 @@ impl rustc_driver::Callbacks for DumpOnlyCallbacks {
 }
 
 impl rustc_driver::Callbacks for Callbacks {
-    // fn config(&mut self, config: &mut rustc_interface::Config) {
-    //     config.override_queries = Some(borrowck_facts::override_queries);
-    // }
-
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,

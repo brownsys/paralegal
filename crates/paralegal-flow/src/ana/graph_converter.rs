@@ -257,7 +257,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             // The body of a top-level `async` function binds a closure to the
             // return place `_0`. Here we expect are looking at the statement
             // that does this binding.
-            assert!(expect_stmt_at(self.generator.pdg_constructor.body_cache(), *first).is_left());
+            assert!(expect_stmt_at(self.body_cache(), *first).is_left());
             rest = tail;
         }
 

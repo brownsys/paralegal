@@ -149,10 +149,14 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         self.construct_root(function).to_petgraph()
     }
 
+    /// Try to retrieve or load a body for this id.
+    ///
+    /// Returns `None` if the loading policy forbids loading from this crate.
     pub fn body_for_def_id(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
         self.body_cache.get(key)
     }
 
+    /// Access to the underlying body cache.
     pub fn body_cache(&self) -> &Rc<BodyCache<'tcx>> {
         &self.body_cache
     }
@@ -496,7 +500,10 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 }
 
+/// How we are indexing into [`PdgCache`]
 pub type PdgCacheKey<'tcx> = Instance<'tcx>;
+/// Stores PDG's we have already computed and which we know we can use again
+/// given a certain key.
 pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, PartialGraph<'tcx>>>;
 
 #[derive(Debug)]

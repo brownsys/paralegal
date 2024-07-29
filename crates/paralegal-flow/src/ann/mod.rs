@@ -269,6 +269,8 @@ impl<'tcx> DumpingVisitor<'tcx> {
 
 const MARKER_META_EXT: &str = "pmeta";
 
+/// A visit over the HIR that collects all the marker annotations we can find
+/// and dumps them out
 pub fn dump_markers(tcx: TyCtxt) {
     let mut vis = DumpingVisitor {
         tcx,
