@@ -14,10 +14,12 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArg, GenericArgKind, GenericArgsRef, Instance, List, TyCtxt, TyKind},
+    ty::{
+        BoundVariableKind, ClauseKind, GenericArg, GenericArgKind, GenericArgsRef, ImplPolarity,
+        Instance, List, ParamEnv, TraitPredicate, TyCtxt, TyKind,
+    },
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
-
 use rustc_span::Span;
 use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt, PlaceExt};
 
@@ -495,13 +497,102 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return None;
         }
         let Some(descriptor) = self.memo.construct_for(resolved_fn) else {
-            trace!("  Bailing because cache lookup {cache_key:?} failed");
+            self.ensure_is_safe_to_approximate(called_def_id, generic_args, resolved_fn);
             return None;
         };
         Some(CallHandling::Ready {
             descriptor,
             calling_convention,
         })
+    }
+
+    fn ensure_is_safe_to_approximate(
+        &self,
+        original_target: DefId,
+        _generic_args: GenericArgsRef<'tcx>,
+        resolved: Instance<'tcx>,
+    ) {
+        let Some(callback) = self.memo.call_change_callback.as_ref() else {
+            return;
+        };
+        let sess = self.tcx().sess;
+        let predicates = self
+            .tcx()
+            .predicates_of(original_target)
+            .instantiate(self.tcx(), resolved.args);
+        for (clause, span) in &predicates {
+            let err = |s: &str| {
+                sess.span_err(
+                    span,
+                    format!("Cannot verify that non-inlined function is safe due to: {s}"),
+                );
+            };
+            let kind = clause.kind();
+            for bound in kind.bound_vars() {
+                match bound {
+                    BoundVariableKind::Ty(t) => err(&format!("bound type {t:?}")),
+                    BoundVariableKind::Const | BoundVariableKind::Region(_) => (),
+                }
+            }
+
+            match kind.skip_binder() {
+                ClauseKind::TypeOutlives(_)
+                | ClauseKind::WellFormed(_)
+                | ClauseKind::ConstArgHasType(..)
+                | ClauseKind::ConstEvaluatable(_)
+                | ClauseKind::RegionOutlives(_) => {
+                    // These predicates do not allow for "code injection" since they do not concern things that can be marked.
+                    ()
+                }
+                ClauseKind::Projection(p) => {
+                    if let Some(t) = p.term.ty() {
+                        if !callback.is_approximation_safe_type(t) {
+                            err(&format!("type {t:?} is not approximation safe"));
+                        }
+                    }
+                }
+                ClauseKind::Trait(TraitPredicate {
+                    polarity: ImplPolarity::Positive,
+                    trait_ref,
+                }) if !self.tcx().trait_is_auto(trait_ref.def_id) => {
+                    let ref_1 = trait_ref.args[0];
+                    let Some(self_ty) = ref_1.as_type() else {
+                        err("expected self type to be type, got {ref_1:?}");
+                        continue;
+                    };
+
+                    if self.tcx().is_fn_trait(trait_ref.def_id) {
+                        let instance = match self_ty.kind() {
+                            TyKind::Closure(id, args) | TyKind::FnDef(id, args) => {
+                                Instance::resolve(self.tcx(), ParamEnv::reveal_all(), *id, args)
+                            }
+                            _ => {
+                                err(&format!(
+                                "fn-trait instance for {self_ty:?} not being a function of closure"
+                            ));
+                                continue;
+                            }
+                        }
+                        .unwrap()
+                        .unwrap();
+                        callback.is_approximation_safe_instance(instance);
+                    } else {
+                        self.tcx().for_each_relevant_impl(
+                            trait_ref.def_id,
+                            self_ty,
+                            |impl_| {
+                                for method in self.tcx().associated_item_def_ids(impl_) {
+                                    if !callback.is_approximation_safe_method(*method) {
+                                        err(&format!("method {method:?} of impl {impl_:?} for {self_ty:?} is not approximation safe"));
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
+                _ => (),
+            }
+        }
     }
 
     /// Attempt to inline a call to a function.

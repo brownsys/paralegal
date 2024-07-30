@@ -1,7 +1,8 @@
-//! CAllbacks to influence graph construction and their supporting types.
+//! Callbacks to influence graph construction and their supporting types.
 
 use flowistry_pdg::{rustc_portable::Location, CallString};
-use rustc_middle::ty::Instance;
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::{self, Instance};
 
 pub trait CallChangeCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges;
@@ -14,6 +15,18 @@ pub trait CallChangeCallback<'tcx> {
         _call_string: Option<CallString>,
         _reason: InlineMissReason,
     ) {
+    }
+
+    fn is_approximation_safe_type(&self, _: ty::Ty<'tcx>) -> bool {
+        true
+    }
+
+    fn is_approximation_safe_method(&self, _: DefId) -> bool {
+        true
+    }
+
+    fn is_approximation_safe_instance(&self, _: Instance<'tcx>) -> bool {
+        true
     }
 }
 

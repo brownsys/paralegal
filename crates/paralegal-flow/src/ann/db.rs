@@ -13,7 +13,10 @@
 use crate::{
     ann::{Annotation, MarkerAnnotation},
     args::{Args, MarkerControl},
-    utils::{resolve::expect_resolve_string_to_def_id, AsFnAndArgs, InstanceExt, IntoDefId, TyExt},
+    utils::{
+        resolve::expect_resolve_string_to_def_id, ty_of_const, FunctionKind, InstanceExt,
+        IntoDefId, TyExt,
+    },
     Either, HashMap, HashSet,
 };
 use flowistry::mir::FlowistryInput;
@@ -21,7 +24,7 @@ use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
     determine_async,
     encoder::ParalegalDecoder,
-    utils::{is_virtual, try_monomorphize, try_resolve_function},
+    utils::{is_virtual, try_monomorphize, try_resolve_function, type_as_fn},
 };
 use paralegal_spdg::Identifier;
 
@@ -30,13 +33,13 @@ use rustc_hir::def_id::DefId;
 use rustc_hir::{def::DefKind, def_id::CrateNum};
 use rustc_middle::{
     mir,
-    ty::{self, Instance, TyCtxt},
+    ty::{self, GenericArgsRef, Instance, TyCtxt},
 };
 use rustc_serialize::Decodable;
 
 use rustc_utils::cache::Cache;
 
-use std::{fs::File, io::Read, rc::Rc};
+use std::{borrow::Cow, fs::File, io::Read, rc::Rc};
 
 use super::{MarkerMeta, MARKER_META_EXT};
 
@@ -170,11 +173,15 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Queries the transitive marker cache.
-    pub fn has_transitive_reachable_markers(&self, res: Instance<'tcx>) -> bool {
+    pub fn has_transitive_reachable_markers(
+        &self,
+        res: impl Into<MaybeMonomorphized<'tcx>>,
+    ) -> bool {
         !self.get_reachable_markers(res).is_empty()
     }
 
-    pub fn get_reachable_markers(&self, res: Instance<'tcx>) -> &[Identifier] {
+    pub fn get_reachable_markers(&self, res: impl Into<MaybeMonomorphized<'tcx>>) -> &[Identifier] {
+        let res = res.into();
         self.db()
             .reachable_markers
             .get_maybe_recursive(res, |_| self.compute_reachable_markers(res))
@@ -183,8 +190,10 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     fn get_reachable_and_self_markers(
         &self,
-        res: Instance<'tcx>,
+        res: impl Into<MaybeMonomorphized<'tcx>>,
     ) -> impl Iterator<Item = Identifier> + '_ {
+        let res = res.into();
+        // TODO this check is wrong. This should either check whether this gets inlined or be removed altogether.
         if res.def_id().is_local() {
             let mut direct_markers = self
                 .combined_markers(res.def_id())
@@ -208,7 +217,7 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
-    fn compute_reachable_markers(&self, res: Instance<'tcx>) -> Box<[Identifier]> {
+    fn compute_reachable_markers(&self, res: MaybeMonomorphized<'tcx>) -> Box<[Identifier]> {
         trace!("Computing reachable markers for {res:?}");
         if self.is_marked(res.def_id()) {
             trace!("  Is marked");
@@ -222,22 +231,32 @@ impl<'tcx> MarkerCtx<'tcx> {
             trace!("  Cannot find body");
             return Box::new([]);
         };
-        let mono_body = try_monomorphize(
-            res,
-            self.tcx(),
-            self.tcx().param_env_reveal_all_normalized(res.def_id()),
-            body.body(),
-            self.tcx().def_span(res.def_id()),
-        )
-        .unwrap();
+        let mono_body = match res {
+            MaybeMonomorphized::Monomorphized(res) => Cow::Owned(
+                try_monomorphize(
+                    res,
+                    self.tcx(),
+                    self.tcx().param_env_reveal_all_normalized(res.def_id()),
+                    body.body(),
+                    self.tcx().def_span(res.def_id()),
+                )
+                .unwrap(),
+            ),
+            MaybeMonomorphized::Plain(_) => Cow::Borrowed(body.body()),
+        };
         if let Some((async_fn, _, _)) = determine_async(self.tcx(), res.def_id(), &mono_body) {
             return self.get_reachable_markers(async_fn).into();
         }
+        let expect_resolve = res.is_monomorphized();
         mono_body
             .basic_blocks
             .iter()
             .flat_map(|bbdat| {
-                self.terminator_reachable_markers(&mono_body.local_decls, bbdat.terminator())
+                self.terminator_reachable_markers(
+                    &mono_body.local_decls,
+                    bbdat.terminator(),
+                    expect_resolve,
+                )
             })
             .collect::<HashSet<_>>()
             .into_iter()
@@ -249,40 +268,53 @@ impl<'tcx> MarkerCtx<'tcx> {
         &self,
         local_decls: &mir::LocalDecls,
         terminator: &mir::Terminator<'tcx>,
+        expect_resolve: bool,
     ) -> impl Iterator<Item = Identifier> + '_ {
+        let mut v = vec![];
         trace!(
             "  Finding reachable markers for terminator {:?}",
             terminator.kind
         );
-        let res = if let Ok((res, _, _)) = terminator.as_instance_and_args(self.tcx()) {
-            trace!(
-                "    Checking function {} for markers",
-                self.tcx().def_path_debug_str(res.def_id())
-            );
-            let transitive_reachable = self.get_reachable_and_self_markers(res).collect::<Vec<_>>();
-            trace!("    Found transitively reachable markers {transitive_reachable:?}");
-
-            // We have to proceed differently than graph construction,
-            // because we are not given the closure function, instead
-            // we are provided the id of the function that creates the
-            // future. As such we can't just monomorphize and traverse,
-            // we have to find the generator first.
-            let others = if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
-                    local_decls[mir::RETURN_PLACE].ty.kind()
-                && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
-                trace!("    fits opaque type");
-                Either::Left(self.get_reachable_and_self_markers(
-                    try_resolve_function(self.tcx(), *closure_fn, ty::ParamEnv::reveal_all(), substs).unwrap()
-                ))
-            } else {
-                Either::Right(std::iter::empty())
-            };
-            Either::Right(transitive_reachable.into_iter().chain(others))
+        let mir::TerminatorKind::Call { func, .. } = &terminator.kind else {
+            return v.into_iter();
+        };
+        let Some(const_) = func.constant() else {
+            return v.into_iter();
+        };
+        let ty = ty_of_const(const_);
+        let Some((def_id, gargs)) = type_as_fn(self.tcx(), ty) else {
+            return v.into_iter();
+        };
+        let res = if expect_resolve {
+            MaybeMonomorphized::Monomorphized(
+                Instance::resolve(self.tcx(), ty::ParamEnv::reveal_all(), def_id, gargs)
+                    .unwrap()
+                    .unwrap(),
+            )
         } else {
-            Either::Left(std::iter::empty())
-        }.into_iter();
-        trace!("  Done with {:?}", terminator.kind);
-        res
+            MaybeMonomorphized::Plain(def_id)
+        };
+        trace!(
+            "    Checking function {} for markers",
+            self.tcx().def_path_debug_str(res.def_id())
+        );
+        v.extend(self.get_reachable_and_self_markers(res));
+
+        // We have to proceed differently than graph construction,
+        // because we are not given the closure function, instead
+        // we are provided the id of the function that creates the
+        // future. As such we can't just monomorphize and traverse,
+        // we have to find the generator first.
+        if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
+                local_decls[mir::RETURN_PLACE].ty.kind()
+            && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
+            trace!("    fits opaque type");
+            v.extend(
+            self.get_reachable_and_self_markers(
+                try_resolve_function(self.tcx(), *closure_fn, ty::ParamEnv::reveal_all(), substs).unwrap()
+            ))
+        };
+        return v.into_iter();
     }
 
     /// All the markers applied to this type and its subtypes.
@@ -403,14 +435,23 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// the type that was marked (if any).
     pub fn all_function_markers<'a>(
         &'a self,
-        function: Instance<'tcx>,
+        function: MaybeMonomorphized<'tcx>,
     ) -> impl Iterator<Item = (&'a MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> {
         // Markers not coming from types, hence the "None"
         let direct_markers = self
             .combined_markers(function.def_id())
             .zip(std::iter::repeat(None));
         let get_type_markers = || {
-            let sig = function.sig(self.tcx()).ok()?;
+            // TODO check soundness, especially for the closures
+            let sig = match function {
+                MaybeMonomorphized::Monomorphized(instance) => instance.sig(self.tcx()).ok(),
+                MaybeMonomorphized::Plain(defid) => {
+                    match FunctionKind::for_def_id(self.tcx(), defid).ok()? {
+                        FunctionKind::Closure | FunctionKind::Generator => None,
+                        _ => Some(self.tcx().fn_sig(defid).skip_binder().skip_binder()),
+                    }
+                }
+            }?;
             let output = sig.output();
             // XXX I'm not entirely sure this is how we should do
             // this. For now I'm calling this "okay" because it's
@@ -442,7 +483,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             )
     }
 
-    pub fn functions_seen(&self) -> Vec<Instance<'tcx>> {
+    pub fn functions_seen(&self) -> Vec<MaybeMonomorphized<'tcx>> {
         let cache = self.0.reachable_markers.borrow();
         cache.keys().copied().collect::<Vec<_>>()
     }
@@ -450,6 +491,44 @@ impl<'tcx> MarkerCtx<'tcx> {
 
 pub type TypeMarkerElem = (DefId, Identifier);
 pub type TypeMarkers = [TypeMarkerElem];
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum MaybeMonomorphized<'tcx> {
+    Monomorphized(Instance<'tcx>),
+    Plain(DefId),
+}
+
+impl<'tcx> MaybeMonomorphized<'tcx> {
+    pub fn def_id(&self) -> DefId {
+        match self {
+            MaybeMonomorphized::Monomorphized(instance) => instance.def_id(),
+            MaybeMonomorphized::Plain(did) => *did,
+        }
+    }
+
+    pub fn args(&self) -> Option<GenericArgsRef<'tcx>> {
+        match self {
+            MaybeMonomorphized::Monomorphized(instance) => Some(instance.args),
+            _ => None,
+        }
+    }
+
+    pub fn is_monomorphized(&self) -> bool {
+        matches!(self, Self::Monomorphized(_))
+    }
+}
+
+impl From<DefId> for MaybeMonomorphized<'_> {
+    fn from(value: DefId) -> Self {
+        Self::Plain(value)
+    }
+}
+
+impl<'tcx> From<Instance<'tcx>> for MaybeMonomorphized<'tcx> {
+    fn from(value: Instance<'tcx>) -> Self {
+        Self::Monomorphized(value)
+    }
+}
 
 /// The structure inside of [`MarkerCtx`].
 pub struct MarkerDatabase<'tcx> {
@@ -459,7 +538,7 @@ pub struct MarkerDatabase<'tcx> {
     annotations: FxHashMap<DefId, Vec<Annotation>>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
-    reachable_markers: Cache<Instance<'tcx>, Box<[Identifier]>>,
+    reachable_markers: Cache<MaybeMonomorphized<'tcx>, Box<[Identifier]>>,
     /// Configuration options
     _config: &'static MarkerControl,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,

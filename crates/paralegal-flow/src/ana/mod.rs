@@ -438,6 +438,24 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
         changes
     }
 
+    fn is_approximation_safe_method(&self, def_id: DefId) -> bool {
+        !self
+            .judge
+            .marker_ctx()
+            .has_transitive_reachable_markers(def_id)
+    }
+
+    fn is_approximation_safe_type(&self, t: rustc_middle::ty::Ty<'tcx>) -> bool {
+        self.judge.marker_ctx().deep_type_markers(t).is_empty()
+    }
+
+    fn is_approximation_safe_instance(&self, instance: rustc_middle::ty::Instance<'tcx>) -> bool {
+        !self
+            .judge
+            .marker_ctx()
+            .has_transitive_reachable_markers(instance)
+    }
+
     // fn on_inline_miss(
     //     &self,
     //     resolution: FnResolution<'tcx>,
