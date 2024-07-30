@@ -2,7 +2,6 @@
 
 use flowistry_pdg::{rustc_portable::Location, CallString};
 
-use rustc_hir::def_id::DefId;
 use rustc_middle::ty::Instance;
 use rustc_span::Span;
 

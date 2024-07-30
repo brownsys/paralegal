@@ -64,36 +64,40 @@ impl<'tcx> InlineJudge<'tcx> {
     pub fn should_inline(&self, info: &CallInfo<'tcx>) -> bool {
         let marker_target = info.async_parent.unwrap_or(info.callee);
         let marker_target_def_id = marker_target.def_id();
-        match self.analysis_control.inlining_depth() {
-            _ if !self.included_crates.contains(&marker_target_def_id.krate)
-                || self.marker_ctx.is_marked(marker_target_def_id) =>
-            {
-                false
-            }
+        let is_marked = self.marker_ctx.is_marked(marker_target_def_id);
+        let should_inline = match self.analysis_control.inlining_depth() {
+            _ if !self.included_crates.contains(&marker_target_def_id.krate) || is_marked => false,
             InliningDepth::Adaptive => self
                 .marker_ctx
                 .has_transitive_reachable_markers(marker_target),
             InliningDepth::Shallow => false,
             InliningDepth::Unconstrained => true,
+        };
+        if !should_inline {
+            //println!("Ensuring approximate safety of {:?}", info.callee);
+            self.ensure_is_safe_to_approximate(resolved, !is_marked)
         }
+        should_inline
     }
 
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
         &self.marker_ctx
     }
 
-    pub fn ensure_is_safe_to_approximate(&self, resolved: Instance<'tcx>) {
+    pub fn ensure_is_safe_to_approximate(&self, resolved: Instance<'tcx>, emit_err: bool) {
         let sess = self.tcx().sess;
         let predicates = self
             .tcx()
             .predicates_of(resolved.def_id())
             .instantiate(self.tcx(), resolved.args);
         for (clause, span) in &predicates {
-            let err = |s: &str| {
-                sess.span_err(
-                    span,
-                    format!("Cannot verify that non-inlined function is safe due to: {s}"),
-                );
+            let err = move |s: &str| {
+                let msg = format!("Cannot verify that non-inlined function is safe due to: {s}");
+                if emit_err {
+                    sess.span_err(span, msg);
+                } else {
+                    sess.span_warn(span, msg);
+                }
             };
             let err_markers = |s: &str, markers: &[Identifier]| {
                 if !markers.is_empty() {

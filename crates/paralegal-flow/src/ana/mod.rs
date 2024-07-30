@@ -426,8 +426,6 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
         };
 
         if skip {
-            println!("Ensuring approximate safety of {:?}", info.callee);
-            self.judge.ensure_is_safe_to_approximate(info.callee);
             changes = changes.with_skip(SkipCall::Skip);
         } else {
             // record_inlining(
