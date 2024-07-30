@@ -58,7 +58,7 @@ fn pdg(
     let _ = env_logger::try_init();
     rustc_utils::test_utils::CompileBuilder::new(input)
         .with_query_override(None)
-        .compile(move |CompileResult { tcx, .. }| {
+        .expect_compile(move |CompileResult { tcx, .. }| {
             dump_mir_and_borrowck_facts(tcx);
             let def_id = get_main(tcx);
             let mut memo = MemoPdgConstructor::new(tcx);

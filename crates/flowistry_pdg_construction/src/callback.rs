@@ -1,6 +1,7 @@
 //! Callbacks to influence graph construction and their supporting types.
 
 use flowistry_pdg::{rustc_portable::Location, CallString};
+use rustc_const_eval::interpret::Operand;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, Instance};
 
@@ -15,18 +16,6 @@ pub trait CallChangeCallback<'tcx> {
         _call_string: Option<CallString>,
         _reason: InlineMissReason,
     ) {
-    }
-
-    fn is_approximation_safe_type(&self, _: ty::Ty<'tcx>) -> bool {
-        true
-    }
-
-    fn is_approximation_safe_method(&self, _: DefId) -> bool {
-        true
-    }
-
-    fn is_approximation_safe_instance(&self, _: Instance<'tcx>) -> bool {
-        true
     }
 }
 
@@ -73,6 +62,8 @@ pub struct CallInfo<'tcx> {
 
     /// Would the PDG for this function be served from the cache.
     pub is_cached: bool,
+
+    pub original_called_fn: DefId,
 }
 
 /// User-provided changes to the default PDG construction behavior for function calls.
