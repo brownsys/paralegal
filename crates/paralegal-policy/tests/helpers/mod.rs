@@ -1,14 +1,11 @@
 #![allow(dead_code)]
 use std::{
-    collections::hash_map::DefaultHasher,
     env,
     ffi::{OsStr, OsString},
     fs::{self, File},
-    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::anyhow;

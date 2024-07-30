@@ -29,23 +29,29 @@ extern crate rustc_ast;
 extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_interface;
+extern crate rustc_macros;
 extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
 extern crate rustc_query_system;
 extern crate rustc_serialize;
+extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
+use ann::dump_markers;
 use args::{ClapArgs, Debugger, LogLevelConfig};
 use desc::{utils::write_sep, ProgramDescription};
 
+use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
+use log::Level;
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
-use rustc_utils::mir::borrowck_facts;
+
 pub use std::collections::{HashMap, HashSet};
 use std::{fmt::Display, time::Instant};
 
@@ -62,7 +68,6 @@ mod args;
 pub mod dbg;
 mod discover;
 mod stats;
-//mod sah;
 #[macro_use]
 pub mod utils;
 #[cfg(feature = "test")]
@@ -77,6 +82,13 @@ use crate::{
     stats::{Stats, TimedStat},
     utils::Print,
 };
+
+pub const EXTRA_RUSTC_ARGS: &[&str] = &[
+    "--cfg",
+    "paralegal",
+    "-Zcrate-attr=feature(register_tool)",
+    "-Zcrate-attr=register_tool(paralegal_flow)",
+];
 
 /// A struct so we can implement [`rustc_plugin::RustcPlugin`]
 pub struct DfppPlugin;
@@ -109,7 +121,7 @@ struct Callbacks {
     stats: Stats,
 }
 
-struct NoopCallbacks {}
+struct NoopCallbacks;
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
 
@@ -128,9 +140,33 @@ impl Callbacks {
     }
 }
 
+struct DumpOnlyCallbacks;
+
+impl rustc_driver::Callbacks for DumpOnlyCallbacks {
+    fn after_expansion<'tcx>(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> rustc_driver::Compilation {
+        queries.global_ctxt().unwrap().enter(|tcx| {
+            dump_mir_and_borrowck_facts(tcx);
+            dump_markers(tcx);
+        });
+        rustc_driver::Compilation::Continue
+    }
+}
+
 impl rustc_driver::Callbacks for Callbacks {
-    fn config(&mut self, config: &mut rustc_interface::Config) {
-        config.override_queries = Some(borrowck_facts::override_queries);
+    fn after_expansion<'tcx>(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> rustc_driver::Compilation {
+        queries.global_ctxt().unwrap().enter(|tcx| {
+            dump_mir_and_borrowck_facts(tcx);
+            dump_markers(tcx);
+        });
+        rustc_driver::Compilation::Continue
     }
 
     // This used to run `after_parsing` but that now makes `tcx.crates()` empty
@@ -138,8 +174,9 @@ impl rustc_driver::Callbacks for Callbacks {
     // `after_expansion` and so far that doesn't seem to break anything, but I'm
     // explaining this here in case that flowistry has some sort of issue with
     // that (when retrieving the MIR bodies for instance)
-    fn after_expansion<'tcx>(
+    fn after_analysis<'tcx>(
         &mut self,
+        _handler: &rustc_session::EarlyErrorHandler,
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
@@ -166,6 +203,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 println!("Analysis finished with timing: {}", self.stats);
 
                 anyhow::Ok(if self.opts.abort_after_analysis() {
+                    debug!("Aborting");
                     rustc_driver::Compilation::Stop
                 } else {
                     rustc_driver::Compilation::Continue
@@ -198,6 +236,52 @@ fn add_to_rustflags(new: impl IntoIterator<Item = String>) -> Result<(), std::en
     Ok(())
 }
 
+enum CrateHandling {
+    JustCompile,
+    CompileAndDump,
+    Analyze,
+}
+
+/// Also adds and additional features required by the Paralegal build config
+fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>) -> CrateHandling {
+    let crate_name = compiler_args
+        .iter()
+        .enumerate()
+        .find_map(|(i, s)| (s == "--crate-name").then_some(i))
+        .and_then(|i| compiler_args.get(i + 1))
+        .cloned();
+
+    if let Some(dep_config) = crate_name
+        .as_ref()
+        .and_then(|s| plugin_args.build_config().dep.get(s))
+    {
+        compiler_args.extend(
+            dep_config
+                .rust_features
+                .iter()
+                .map(|f| format!("-Zcrate-attr=feature({})", f)),
+        );
+    }
+
+    match &crate_name {
+        Some(krate) if krate == "build_script_build" => CrateHandling::JustCompile,
+        Some(krate)
+            if matches!(
+                plugin_args
+                    .target(),
+                    Some(target) if &target.replace('-', "_") == krate
+            ) =>
+        {
+            CrateHandling::Analyze
+        }
+        _ if std::env::var("CARGO_PRIMARY_PACKAGE").is_ok() => CrateHandling::Analyze,
+        Some(krate) if plugin_args.anactrl().included().contains(krate) => {
+            CrateHandling::CompileAndDump
+        }
+        _ => CrateHandling::JustCompile,
+    }
+}
+
 impl rustc_plugin::RustcPlugin for DfppPlugin {
     type Args = Args;
 
@@ -207,6 +291,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
 
     fn driver_name(&self) -> std::borrow::Cow<'static, str> {
         "paralegal-flow".into()
+    }
+
+    fn reported_driver_version(&self) -> std::borrow::Cow<'static, str> {
+        env!("RUSTC_VERSION").into()
     }
 
     fn args(
@@ -291,73 +379,48 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
 
-        let crate_name = compiler_args
-            .iter()
-            .enumerate()
-            .find_map(|(i, s)| (s == "--crate-name").then_some(i))
-            .and_then(|i| compiler_args.get(i + 1))
-            .cloned();
+        let mut callbacks = match how_to_handle_this_crate(&plugin_args, &mut compiler_args) {
+            CrateHandling::JustCompile => {
+                Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
+            }
+            CrateHandling::CompileAndDump => {
+                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+                Box::new(DumpOnlyCallbacks)
+            }
+            CrateHandling::Analyze => {
+                plugin_args.setup_logging();
 
-        if let Some(dep_config) = crate_name
-            .as_ref()
-            .and_then(|s| plugin_args.build_config().dep.get(s))
-        {
-            compiler_args.extend(
-                dep_config
-                    .rust_features
-                    .iter()
-                    .map(|f| format!("-Zcrate-attr=feature({})", f)),
-            );
-        }
+                let opts = Box::leak(Box::new(plugin_args));
 
-        let is_primary_package = std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+                const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
+                if let Ok(debugger) = std::env::var(RERUN_VAR) {
+                    info!("Restarting with debugger '{debugger}'");
+                    let mut dsplit = debugger.split(' ');
+                    let mut cmd = std::process::Command::new(dsplit.next().unwrap());
+                    cmd.args(dsplit)
+                        .args(std::env::args())
+                        .env_remove(RERUN_VAR);
+                    std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
+                }
 
-        let our_target = plugin_args.target().map(|t| t.replace('-', "_"));
+                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+                if opts.verbosity() >= Level::Debug {
+                    compiler_args.push("-Ztrack-diagnostics".to_string());
+                }
 
-        let is_target = crate_name
-            .as_ref()
-            .and_then(|s| our_target.as_ref().map(|t| s == t))
-            .unwrap_or(is_primary_package);
+                if let Some(dbg) = opts.attach_to_debugger() {
+                    dbg.attach()
+                }
 
-        let is_build_script = crate_name
-            .as_ref()
-            .map_or(false, |n| n == "build_script_build");
+                debug!(
+                    "Arguments: {}",
+                    Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
+                );
+                Box::new(Callbacks::new(opts))
+            }
+        };
 
-        if !is_target || is_build_script {
-            return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks {}).run();
-        }
-
-        plugin_args.setup_logging();
-
-        let opts = Box::leak(Box::new(plugin_args));
-
-        const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
-        if let Ok(debugger) = std::env::var(RERUN_VAR) {
-            info!("Restarting with debugger '{debugger}'");
-            let mut dsplit = debugger.split(' ');
-            let mut cmd = std::process::Command::new(dsplit.next().unwrap());
-            cmd.args(dsplit)
-                .args(std::env::args())
-                .env_remove(RERUN_VAR);
-            std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
-        }
-
-        compiler_args.extend([
-            "--cfg".into(),
-            "paralegal".into(),
-            "-Zcrate-attr=feature(register_tool)".into(),
-            "-Zcrate-attr=register_tool(paralegal_flow)".into(),
-        ]);
-
-        if let Some(dbg) = opts.attach_to_debugger() {
-            dbg.attach()
-        }
-
-        debug!(
-            "Arguments: {}",
-            Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
-        );
-        rustc_driver::RunCompiler::new(&compiler_args, &mut Callbacks::new(opts)).run()
+        rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run()
     }
 }
 

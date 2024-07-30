@@ -5,12 +5,14 @@ extern crate rustc_hir;
 extern crate rustc_middle;
 extern crate rustc_span;
 
-use std::collections::HashSet;
+use std::{collections::HashSet, rc::Rc};
 
 use either::Either;
+use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
+    body_cache::{dump_mir_and_borrowck_facts, BodyCache},
     graph::{DepEdge, DepGraph},
-    CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
+    CallChangeCallback, CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
 };
 use itertools::Itertools;
 use rustc_hir::def_id::LocalDefId;
@@ -19,9 +21,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 use rustc_span::Symbol;
-use rustc_utils::{
-    mir::borrowck_facts, source_map::find_bodies::find_bodies, test_utils::CompileResult,
-};
+use rustc_utils::{source_map::find_bodies::find_bodies, test_utils::CompileResult};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)
@@ -34,19 +34,40 @@ fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
         .expect("Missing main")
 }
 
+struct LocalLoadingOnly<'tcx>(Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>);
+
+impl<'tcx> CallChangeCallback<'tcx> for LocalLoadingOnly<'tcx> {
+    fn on_inline(&self, info: flowistry_pdg_construction::CallInfo<'tcx>) -> CallChanges {
+        let is_local = info.callee.def_id().is_local();
+        let mut changes = self
+            .0
+            .as_ref()
+            .map_or_else(CallChanges::default, |cb| cb.on_inline(info));
+        if !is_local {
+            changes = changes.with_skip(SkipCall::Skip);
+        }
+        changes
+    }
+}
+
 fn pdg(
     input: impl Into<String>,
     configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx>) + Send,
-    tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, DepGraph<'tcx>) + Send,
+    tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
-    rustc_utils::test_utils::CompileBuilder::new(input).compile(move |CompileResult { tcx }| {
-        let def_id = get_main(tcx);
-        let mut memo = MemoPdgConstructor::new(tcx);
-        configure(tcx, &mut memo);
-        let pdg = memo.construct_graph(def_id);
-        tests(tcx, pdg)
-    })
+    rustc_utils::test_utils::CompileBuilder::new(input)
+        .with_query_override(None)
+        .compile(move |CompileResult { tcx, .. }| {
+            dump_mir_and_borrowck_facts(tcx);
+            let def_id = get_main(tcx);
+            let mut memo = MemoPdgConstructor::new(tcx);
+            configure(tcx, &mut memo);
+            let policy = memo.take_call_changes_policy();
+            memo.with_call_change_callback(LocalLoadingOnly(policy));
+            let pdg = memo.construct_graph(def_id);
+            tests(tcx, memo.body_cache(), pdg)
+        })
 }
 
 #[allow(unused)]
@@ -60,6 +81,7 @@ fn viz(g: &DepGraph<'_>) {
 
 fn connects<'tcx>(
     tcx: TyCtxt<'tcx>,
+    body_cache: &BodyCache<'tcx>,
     g: &DepGraph<'tcx>,
     src: &str,
     dst: &str,
@@ -95,13 +117,12 @@ fn connects<'tcx>(
         .edge_indices()
         .filter_map(|edge| {
             let DepEdge { at, .. } = g.graph[edge];
-            let body_with_facts =
-                borrowck_facts::get_body_with_borrowck_facts(tcx, at.leaf().function);
+            let body_with_facts = body_cache.get(at.leaf().function).unwrap();
             let Either::Right(Terminator {
                 kind: TerminatorKind::Call { func, .. },
                 ..
             }) = body_with_facts
-                .body
+                .body()
                 .stmt_at(at.leaf().location.as_location()?)
             else {
                 return None;
@@ -178,11 +199,11 @@ macro_rules! pdg_test {
     #[test]
     fn $name() {
       let input = stringify!($($i)*);
-      pdg(input, $e, |tcx, g| {
+      pdg(input, $e, |_tcx, _cache, g| {
         if std::env::var("VIZ").is_ok() {
             g.generate_graphviz(format!("../../target/{}.pdf", stringify!($name))).unwrap();
         }
-        $(pdg_constraint!($cs, tcx, &g));*
+        $(pdg_constraint!($cs, _tcx, _cache, &g));*
       })
     }
   };

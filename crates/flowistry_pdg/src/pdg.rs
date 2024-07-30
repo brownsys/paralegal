@@ -76,8 +76,8 @@ impl From<Location> for RichLocation {
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct GlobalLocation {
     /// The function containing the location.
-    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::LocalDefId"))]
-    pub function: LocalDefId,
+    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    pub function: DefId,
 
     /// The location of an instruction in the function, or the function's start.
     pub location: RichLocation,

@@ -72,11 +72,12 @@ impl TryFrom<ClapArgs> for Args {
                 .extend(from_env.split(',').map(ToOwned::to_owned));
         }
         let build_config_file = std::path::Path::new("Paralegal.toml");
-        let build_config = if build_config_file.exists() {
+        let build_config: BuildConfig = if build_config_file.exists() {
             toml::from_str(&std::fs::read_to_string(build_config_file)?)?
         } else {
             Default::default()
         };
+        anactrl.include.extend(build_config.include.iter().cloned());
         let log_level_config = match debug_target {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
             _ => LogLevelConfig::Disabled,
@@ -436,6 +437,9 @@ struct ClapAnalysisCtrl {
     /// this is used explicitly supply the argument.
     #[clap(long, conflicts_with_all = ["adaptive_depth", "no_cross_function_analysis"])]
     unconstrained_depth: bool,
+    /// Crates that should be recursed into.
+    #[clap(long)]
+    include: Vec<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -448,6 +452,7 @@ pub struct AnalysisCtrl {
     /// Disables all recursive analysis (both paralegal_flow's inlining as well as
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
+    include: Vec<String>,
 }
 
 impl Default for AnalysisCtrl {
@@ -455,6 +460,7 @@ impl Default for AnalysisCtrl {
         Self {
             analyze: Vec::new(),
             inlining_depth: InliningDepth::Adaptive,
+            include: Default::default(),
         }
     }
 }
@@ -467,6 +473,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             no_cross_function_analysis,
             adaptive_depth,
             unconstrained_depth: _,
+            include,
         } = value;
 
         let inlining_depth = if adaptive_depth {
@@ -480,6 +487,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
         Ok(Self {
             analyze,
             inlining_depth,
+            include,
         })
     }
 }
@@ -507,6 +515,10 @@ impl AnalysisCtrl {
 
     pub fn inlining_depth(&self) -> &InliningDepth {
         &self.inlining_depth
+    }
+
+    pub fn included(&self) -> &[String] {
+        &self.include
     }
 }
 
@@ -542,4 +554,5 @@ pub struct DepConfig {
 pub struct BuildConfig {
     /// Dependency specific configuration
     pub dep: crate::HashMap<String, DepConfig>,
+    pub include: Vec<String>,
 }

@@ -3,9 +3,17 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
+use std::rc::Rc;
+
 use crate::{
-    ana::SPDGGenerator, ann::db::MarkerDatabase, desc::*, stats::Stats, sym_vec, utils::*,
+    ana::{InlineJudge, SPDGGenerator},
+    desc::*,
+    stats::Stats,
+    sym_vec,
+    utils::*,
 };
+
+use flowistry_pdg_construction::body_cache::BodyCache;
 
 use rustc_hir::{
     def_id::LocalDefId,
@@ -38,7 +46,9 @@ pub struct CollectingVisitor<'tcx> {
 
     stats: Stats,
 
-    pub marker_ctx: MarkerDatabase<'tcx>,
+    inline_judge: InlineJudge<'tcx>,
+
+    body_cache: Rc<BodyCache<'tcx>>,
     /// This will match the annotation `#[paralegal_flow::analyze]` when using
     /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
     analyze_marker: AttrMatchT,
@@ -76,20 +86,29 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 })
             })
             .collect();
+        let body_cache = Rc::new(BodyCache::new(tcx));
+        let inline_judge = InlineJudge::new(tcx, body_cache.clone(), opts);
         Self {
             tcx,
             opts,
             functions_to_analyze,
-            marker_ctx: MarkerDatabase::init(tcx, opts),
+            inline_judge,
             stats,
             analyze_marker: sym_vec!["paralegal_flow", "analyze"],
+            body_cache,
         }
     }
 
     /// After running the discovery with `visit_all_item_likes_in_crate`, create
     /// the read-only [`SPDGGenerator`] upon which the analysis will run.
     fn into_generator(self) -> SPDGGenerator<'tcx> {
-        SPDGGenerator::new(self.marker_ctx.into(), self.opts, self.tcx, self.stats)
+        SPDGGenerator::new(
+            self.inline_judge,
+            self.opts,
+            self.tcx,
+            self.body_cache,
+            self.stats,
+        )
     }
 
     /// Driver function. Performs the data collection via visit, then calls
@@ -117,14 +136,6 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
 
     fn nested_visit_map(&mut self) -> Self::Map {
         self.tcx.hir()
-    }
-
-    /// Check if this id has annotations and if so register them in the marker database.
-    fn visit_id(&mut self, hir_id: rustc_hir::HirId) {
-        if let Some(owner_id) = hir_id.as_owner() {
-            self.marker_ctx
-                .retrieve_local_annotations_for(owner_id.def_id);
-        }
     }
 
     /// Finds the functions that have been marked as targets.
