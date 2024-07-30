@@ -28,7 +28,7 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::Identifier;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{def::DefKind, def_id::CrateNum};
 use rustc_middle::{
@@ -182,6 +182,18 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     pub fn get_reachable_markers(&self, res: impl Into<MaybeMonomorphized<'tcx>>) -> &[Identifier] {
         let res = res.into();
+        let def_id = res.def_id();
+        if self.is_marked(def_id) {
+            trace!("  Is marked");
+            return &[];
+        }
+        if is_virtual(self.tcx(), def_id) {
+            trace!("  Is virtual");
+            return &[];
+        }
+        if !self.0.included_crates.contains(&def_id.krate) {
+            return &[];
+        }
         self.db()
             .reachable_markers
             .get_maybe_recursive(res, |_| self.compute_reachable_markers(res))
@@ -219,14 +231,6 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// computes it.
     fn compute_reachable_markers(&self, res: MaybeMonomorphized<'tcx>) -> Box<[Identifier]> {
         trace!("Computing reachable markers for {res:?}");
-        if self.is_marked(res.def_id()) {
-            trace!("  Is marked");
-            return Box::new([]);
-        }
-        if is_virtual(self.tcx(), res.def_id()) {
-            trace!("  Is virtual");
-            return Box::new([]);
-        }
         let Some(body) = self.0.body_cache.get(res.def_id()) else {
             trace!("  Cannot find body");
             return Box::new([]);
@@ -543,6 +547,7 @@ pub struct MarkerDatabase<'tcx> {
     _config: &'static MarkerControl,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
+    included_crates: FxHashSet<CrateNum>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
@@ -551,16 +556,17 @@ impl<'tcx> MarkerDatabase<'tcx> {
         tcx: TyCtxt<'tcx>,
         args: &'static Args,
         body_cache: Rc<BodyCache<'tcx>>,
-        included_crates: impl IntoIterator<Item = CrateNum>,
+        included_crates: FxHashSet<CrateNum>,
     ) -> Self {
         Self {
             tcx,
-            annotations: load_annotations(tcx, included_crates),
+            annotations: load_annotations(tcx, included_crates.iter().copied()),
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
             _config: args.marker_control(),
             type_markers: Default::default(),
             body_cache,
+            included_crates,
         }
     }
 }

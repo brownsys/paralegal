@@ -43,7 +43,7 @@ impl<'tcx> InlineJudge<'tcx> {
             .chain(Some(LOCAL_CRATE))
             .collect::<FxHashSet<_>>();
         let marker_ctx =
-            MarkerDatabase::init(tcx, opts, body_cache, included_crates.iter().copied()).into();
+            MarkerDatabase::init(tcx, opts, body_cache, included_crates.clone()).into();
         Self {
             marker_ctx,
             included_crates,
@@ -82,12 +82,11 @@ impl<'tcx> InlineJudge<'tcx> {
         &self.marker_ctx
     }
 
-    pub fn ensure_is_safe_to_approximate(&self, original_target: DefId, resolved: Instance<'tcx>) {
-        println!("Ensuring approximation safety for {resolved:?}");
+    pub fn ensure_is_safe_to_approximate(&self, resolved: Instance<'tcx>) {
         let sess = self.tcx().sess;
         let predicates = self
             .tcx()
-            .predicates_of(original_target)
+            .predicates_of(resolved.def_id())
             .instantiate(self.tcx(), resolved.args);
         for (clause, span) in &predicates {
             let err = |s: &str| {

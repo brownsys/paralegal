@@ -446,7 +446,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let call_changes = self.call_change_callback().map(|callback| {
             let info = CallInfo {
-                original_called_fn: called_def_id,
                 callee: resolved_fn,
                 call_string: self.make_call_string(location),
                 is_cached,
@@ -463,6 +462,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 } else {
                     None
                 },
+                span,
             };
             callback.on_inline(info)
         });

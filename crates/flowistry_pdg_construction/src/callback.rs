@@ -4,6 +4,7 @@ use flowistry_pdg::{rustc_portable::Location, CallString};
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::Instance;
+use rustc_span::Span;
 
 pub trait CallChangeCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges;
@@ -63,7 +64,7 @@ pub struct CallInfo<'tcx> {
     /// Would the PDG for this function be served from the cache.
     pub is_cached: bool,
 
-    pub original_called_fn: DefId,
+    pub span: Span,
 }
 
 /// User-provided changes to the default PDG construction behavior for function calls.
