@@ -1,4 +1,4 @@
-use std::{fmt::Display, rc::Rc};
+use std::rc::Rc;
 
 use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
@@ -122,7 +122,6 @@ impl<'tcx> InlineJudge<'tcx> {
                 | ClauseKind::ConstEvaluatable(_)
                 | ClauseKind::RegionOutlives(_) => {
                     // These predicates do not allow for "code injection" since they do not concern things that can be marked.
-                    ()
                 }
                 ClauseKind::Projection(p) => {
                     if let Some(t) = p.term.ty() {

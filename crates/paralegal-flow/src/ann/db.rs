@@ -314,7 +314,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                 try_resolve_function(self.tcx(), *closure_fn, ty::ParamEnv::reveal_all(), substs).unwrap()
             ))
         };
-        return v.into_iter();
+        v.into_iter()
     }
 
     /// All the markers applied to this type and its subtypes.

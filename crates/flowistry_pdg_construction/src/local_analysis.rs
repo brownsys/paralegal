@@ -14,10 +14,7 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{
-        BoundVariableKind, ClauseKind, GenericArg, GenericArgKind, GenericArgsRef, ImplPolarity,
-        Instance, List, ParamEnv, TraitPredicate, TyCtxt, TyKind,
-    },
+    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::Span;
