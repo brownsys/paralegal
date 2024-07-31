@@ -576,7 +576,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             .flow_models
             .iter()
             .filter_map(|(k, v)| {
-                let res = expect_resolve_string_to_def_id(tcx, &k, args.relaxed());
+                let res = expect_resolve_string_to_def_id(tcx, k, args.relaxed());
                 let res = if args.relaxed() { res? } else { res.unwrap() };
                 Some((res, v))
             })

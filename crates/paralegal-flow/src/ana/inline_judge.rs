@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
-use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
+use rustc_hash::FxHashSet;
+use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc_middle::ty::{
     BoundVariableKind, ClauseKind, ImplPolarity, Instance, ParamEnv, TraitPredicate,
 };
@@ -16,8 +16,6 @@ use crate::{
     args::{FlowModel, InliningDepth},
     AnalysisCtrl, Args, MarkerCtx, TyCtxt,
 };
-
-use super::resolve::expect_resolve_string_to_def_id;
 
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.

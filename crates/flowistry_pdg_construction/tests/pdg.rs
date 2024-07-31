@@ -37,7 +37,7 @@ fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
 struct LocalLoadingOnly<'tcx>(Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>);
 
 impl<'tcx> CallChangeCallback<'tcx> for LocalLoadingOnly<'tcx> {
-    fn on_inline(&self, info: flowistry_pdg_construction::CallInfo<'tcx>) -> CallChanges {
+    fn on_inline(&self, info: flowistry_pdg_construction::CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
         let is_local = info.callee.def_id().is_local();
         let mut changes = self
             .0

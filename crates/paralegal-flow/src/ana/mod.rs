@@ -14,7 +14,7 @@ use crate::{
     HashMap, HashSet, LogLevelConfig, MarkerCtx,
 };
 
-use std::{borrow::Cow, rc::Rc, time::Instant};
+use std::{rc::Rc, time::Instant};
 
 use anyhow::Result;
 use either::Either;
@@ -415,7 +415,7 @@ struct MyCallback<'tcx> {
 
 impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
-        let mut changes = CallChanges::default();
+        let changes = CallChanges::default();
 
         let mut skip = SkipCall::Skip;
 
