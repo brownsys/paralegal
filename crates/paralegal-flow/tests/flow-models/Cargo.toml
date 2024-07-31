@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 #async-std = "1"
 paralegal = { path = "../../../paralegal" }
+tokio = { version = "1", features = ["rt"] }

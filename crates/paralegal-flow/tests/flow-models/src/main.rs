@@ -19,3 +19,10 @@ fn thread_spawn() {
 }
 
 fn main() {}
+
+#[paralegal::analyze]
+async fn async_spawn() {
+    let src = source();
+    let next = tokio::spawn(async move { pass(src) }).await.unwrap();
+    target(next);
+}

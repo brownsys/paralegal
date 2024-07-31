@@ -556,6 +556,8 @@ pub enum FlowModel {
     /// Replaces the result of a call to a higher-order function with a call to
     /// the input closure.
     SubClosure,
+    /// Replaces the result of a higher-order future by an input future.
+    SubFuture,
 }
 
 /// Additional configuration for the build process/rustc

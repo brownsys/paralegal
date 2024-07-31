@@ -430,7 +430,10 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
                 InlineJudgement::UseFlowModel(model) => {
                     // Set in case of errors
                     skip = SkipCall::Skip;
-                    assert!(matches!(model, FlowModel::SubClosure));
+                    assert!(matches!(
+                        model,
+                        FlowModel::SubClosure | FlowModel::SubFuture
+                    ));
                     if let [clj] = &info.arguments {
                         let ty = clj.ty(info.caller_body, self.tcx);
                         let (def_id, args) =
@@ -439,6 +442,15 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
                             .unwrap()
                             .unwrap();
                         assert_eq!(instance.sig(self.tcx).unwrap().inputs().len(), 1);
+                        match model {
+                            FlowModel::SubClosure => {
+                                assert_eq!(
+                                    self.tcx.def_kind(def_id),
+                                    rustc_hir::def::DefKind::Closure
+                                )
+                            }
+                            FlowModel::SubFuture => assert!(self.tcx.generator_is_async(def_id)),
+                        };
                         skip = SkipCall::Replace {
                             instance,
                             calling_convention: CallingConvention::Indirect {

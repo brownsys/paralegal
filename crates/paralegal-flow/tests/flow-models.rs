@@ -30,3 +30,16 @@ define_test!(thread_spawn: graph -> {
     assert!(src.flows_to_data(&pass));
     assert!(pass.flows_to_data(&target));
 });
+
+define_test!(async_spawn: graph -> {
+    let src = graph.marked(Identifier::new_intern("source"));
+    let pass = graph.marked(Identifier::new_intern("pass"));
+    let target = graph.marked(Identifier::new_intern("target"));
+
+    assert!(!src.is_empty());
+    assert!(!pass.is_empty());
+    assert!(!target.is_empty());
+
+    assert!(src.flows_to_data(&pass));
+    assert!(pass.flows_to_data(&target));
+});
