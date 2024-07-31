@@ -12,7 +12,7 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
-    args::{Args, MarkerControl},
+    args::{Args, FlowModel, MarkerControl},
     utils::{
         resolve::expect_resolve_string_to_def_id, ty_of_const, FunctionKind, InstanceExt,
         IntoDefId, TyExt,
@@ -491,6 +491,18 @@ impl<'tcx> MarkerCtx<'tcx> {
         let cache = self.0.reachable_markers.borrow();
         cache.keys().copied().collect::<Vec<_>>()
     }
+
+    pub fn has_flow_model(&self, def_id: DefId) -> Option<&'static FlowModel> {
+        [def_id]
+            .into_iter()
+            .chain(
+                matches!(self.tcx().def_kind(def_id), DefKind::AssocFn)
+                    .then(|| self.tcx().associated_item(def_id).trait_item_def_id)
+                    .flatten(),
+            )
+            .find_map(|def_id| self.0.flow_models.get(&def_id))
+            .copied()
+    }
 }
 
 pub type TypeMarkerElem = (DefId, Identifier);
@@ -548,6 +560,7 @@ pub struct MarkerDatabase<'tcx> {
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
     included_crates: FxHashSet<CrateNum>,
+    flow_models: FxHashMap<DefId, &'static FlowModel>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
@@ -558,6 +571,16 @@ impl<'tcx> MarkerDatabase<'tcx> {
         body_cache: Rc<BodyCache<'tcx>>,
         included_crates: FxHashSet<CrateNum>,
     ) -> Self {
+        let flow_models = args
+            .build_config()
+            .flow_models
+            .iter()
+            .filter_map(|(k, v)| {
+                let res = expect_resolve_string_to_def_id(tcx, &k, args.relaxed());
+                let res = if args.relaxed() { res? } else { res.unwrap() };
+                Some((res, v))
+            })
+            .collect();
         Self {
             tcx,
             annotations: load_annotations(tcx, included_crates.iter().copied()),
@@ -567,6 +590,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             type_markers: Default::default(),
             body_cache,
             included_crates,
+            flow_models,
         }
     }
 }

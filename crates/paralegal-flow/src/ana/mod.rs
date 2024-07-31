@@ -6,6 +6,7 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
+    args::FlowModel,
     desc::*,
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
@@ -13,19 +14,21 @@ use crate::{
     HashMap, HashSet, LogLevelConfig, MarkerCtx,
 };
 
-use std::{rc::Rc, time::Instant};
+use std::{borrow::Cow, rc::Rc, time::Instant};
 
 use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::BodyCache, CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
+    body_cache::BodyCache, calling_convention::CallingConvention, CallChangeCallback, CallChanges,
+    CallInfo, MemoPdgConstructor, SkipCall,
 };
+use inline_judge::InlineJudgement;
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
 use rustc_hir::{self as hir, def, def_id::DefId};
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{Instance, TyCtxt};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan, Symbol};
 
 mod graph_converter;
@@ -411,31 +414,47 @@ struct MyCallback<'tcx> {
 }
 
 impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges {
+    fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
         let mut changes = CallChanges::default();
 
-        let mut skip = true;
+        let mut skip = SkipCall::Skip;
 
         if is_virtual(self.tcx, info.callee.def_id()) {
             self.tcx.sess.span_warn(
                 self.tcx.def_span(info.callee.def_id()),
                 "Skipping analysis of unresolvable trait method.",
             );
-        } else if self.judge.should_inline(&info) {
-            skip = false;
-        };
-
-        if skip {
-            changes = changes.with_skip(SkipCall::Skip);
         } else {
-            // record_inlining(
-            //     &self.stat_wrap,
-            //     self.tcx,
-            //     info.callee.def_id().expect_local(),
-            //     info.is_cached,
-            // )
-        }
-        changes
+            match self.judge.should_inline(&info) {
+                InlineJudgement::NoInline => skip = SkipCall::Skip,
+                InlineJudgement::UseFlowModel(model) => {
+                    // Set in case of errors
+                    skip = SkipCall::Skip;
+                    assert!(matches!(model, FlowModel::SubClosure));
+                    if let [clj] = &info.arguments {
+                        let ty = clj.ty(info.caller_body, self.tcx);
+                        let (def_id, args) =
+                            flowistry_pdg_construction::utils::type_as_fn(self.tcx, ty).unwrap();
+                        let instance = Instance::resolve(self.tcx, info.param_env, def_id, args)
+                            .unwrap()
+                            .unwrap();
+                        assert_eq!(instance.sig(self.tcx).unwrap().inputs().len(), 1);
+                        skip = SkipCall::Replace {
+                            instance,
+                            calling_convention: CallingConvention::Indirect {
+                                closure_arg: clj.clone(),
+                                // This is incorrect, but we only support
+                                // non-argument closures at the moment so this
+                                // will never be used.
+                                tupled_arguments: clj.clone(),
+                            },
+                        };
+                    }
+                }
+                InlineJudgement::Inline => skip = SkipCall::NoSkip,
+            }
+        };
+        changes.with_skip(skip)
     }
     // fn on_inline_miss(
     //     &self,

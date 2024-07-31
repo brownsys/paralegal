@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc_middle::ty::{
     BoundVariableKind, ClauseKind, ImplPolarity, Instance, ParamEnv, TraitPredicate,
@@ -11,8 +11,13 @@ use rustc_span::Symbol;
 use rustc_type_ir::TyKind;
 
 use crate::{
-    ana::Print, ann::db::MarkerDatabase, args::InliningDepth, AnalysisCtrl, Args, MarkerCtx, TyCtxt,
+    ana::Print,
+    ann::db::MarkerDatabase,
+    args::{FlowModel, InliningDepth},
+    AnalysisCtrl, Args, MarkerCtx, TyCtxt,
 };
+
+use super::resolve::expect_resolve_string_to_def_id;
 
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.
@@ -25,6 +30,22 @@ pub struct InlineJudge<'tcx> {
     analysis_control: &'static AnalysisCtrl,
     included_crates: FxHashSet<CrateNum>,
     tcx: TyCtxt<'tcx>,
+}
+
+pub enum InlineJudgement {
+    Inline,
+    UseFlowModel(&'static FlowModel),
+    NoInline,
+}
+
+impl From<bool> for InlineJudgement {
+    fn from(value: bool) -> Self {
+        if value {
+            InlineJudgement::Inline
+        } else {
+            InlineJudgement::NoInline
+        }
+    }
 }
 
 impl<'tcx> InlineJudge<'tcx> {
@@ -61,23 +82,29 @@ impl<'tcx> InlineJudge<'tcx> {
     }
 
     /// Should we perform inlining on this function?
-    pub fn should_inline(&self, info: &CallInfo<'tcx>) -> bool {
+    pub fn should_inline(&self, info: &CallInfo<'tcx, '_>) -> InlineJudgement {
         let marker_target = info.async_parent.unwrap_or(info.callee);
         let marker_target_def_id = marker_target.def_id();
+        if let Some(model) = self.marker_ctx().has_flow_model(marker_target_def_id) {
+            return InlineJudgement::UseFlowModel(model);
+        }
         let is_marked = self.marker_ctx.is_marked(marker_target_def_id);
-        let should_inline = match self.analysis_control.inlining_depth() {
-            _ if !self.included_crates.contains(&marker_target_def_id.krate) || is_marked => false,
+        let judgement = match self.analysis_control.inlining_depth() {
+            _ if !self.included_crates.contains(&marker_target_def_id.krate) || is_marked => {
+                InlineJudgement::NoInline
+            }
             InliningDepth::Adaptive => self
                 .marker_ctx
-                .has_transitive_reachable_markers(marker_target),
-            InliningDepth::Shallow => false,
-            InliningDepth::Unconstrained => true,
+                .has_transitive_reachable_markers(marker_target)
+                .into(),
+            InliningDepth::Shallow => InlineJudgement::NoInline,
+            InliningDepth::Unconstrained => InlineJudgement::Inline,
         };
-        if !should_inline {
+        if !matches!(judgement, InlineJudgement::NoInline) {
             //println!("Ensuring approximate safety of {:?}", info.callee);
-            self.ensure_is_safe_to_approximate(resolved, !is_marked)
+            self.ensure_is_safe_to_approximate(info.callee, !is_marked)
         }
-        should_inline
+        judgement
     }
 
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {

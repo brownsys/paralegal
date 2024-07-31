@@ -2,11 +2,16 @@
 
 use flowistry_pdg::{rustc_portable::Location, CallString};
 
-use rustc_middle::ty::Instance;
+use rustc_middle::{
+    mir::{self, Operand},
+    ty::{Instance, ParamEnv},
+};
 use rustc_span::Span;
 
+use crate::calling_convention::CallingConvention;
+
 pub trait CallChangeCallback<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges;
+    fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx>;
 
     fn on_inline_miss(
         &self,
@@ -20,17 +25,17 @@ pub trait CallChangeCallback<'tcx> {
 }
 
 pub struct CallChangeCallbackFn<'tcx> {
-    f: Box<dyn Fn(CallInfo<'tcx>) -> CallChanges + 'tcx>,
+    f: Box<dyn Fn(CallInfo<'tcx, '_>) -> CallChanges<'tcx> + 'tcx>,
 }
 
 impl<'tcx> CallChangeCallbackFn<'tcx> {
-    pub fn new(f: impl Fn(CallInfo<'tcx>) -> CallChanges + 'tcx) -> Self {
+    pub fn new(f: impl Fn(CallInfo<'tcx, '_>) -> CallChanges<'tcx> + 'tcx) -> Self {
         Self { f: Box::new(f) }
     }
 }
 
 impl<'tcx> CallChangeCallback<'tcx> for CallChangeCallbackFn<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges {
+    fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
         (self.f)(info)
     }
 }
@@ -40,7 +45,7 @@ pub enum InlineMissReason {
     Async(String),
 }
 
-impl Default for CallChanges {
+impl<'tcx> Default for CallChanges<'tcx> {
     fn default() -> Self {
         CallChanges {
             skip: SkipCall::NoSkip,
@@ -49,7 +54,7 @@ impl Default for CallChanges {
 }
 
 /// Information about the function being called.
-pub struct CallInfo<'tcx> {
+pub struct CallInfo<'tcx, 'mir> {
     /// The potentially-monomorphized resolution of the callee.
     pub callee: Instance<'tcx>,
 
@@ -64,29 +69,40 @@ pub struct CallInfo<'tcx> {
     pub is_cached: bool,
 
     pub span: Span,
+
+    pub arguments: &'mir [Operand<'tcx>],
+
+    pub caller_body: &'mir mir::Body<'tcx>,
+    pub param_env: ParamEnv<'tcx>,
 }
 
 /// User-provided changes to the default PDG construction behavior for function calls.
 ///
 /// Construct [`CallChanges`] via [`CallChanges::default`].
 #[derive(Debug)]
-pub struct CallChanges {
-    pub(crate) skip: SkipCall,
+pub struct CallChanges<'tcx> {
+    pub(crate) skip: SkipCall<'tcx>,
 }
 
 /// Whether or not to skip recursing into a function call during PDG construction.
 #[derive(Debug)]
-pub enum SkipCall {
+pub enum SkipCall<'tcx> {
     /// Skip the function, and perform a modular approxmation of its effects.
     Skip,
 
     /// Recurse into the function as normal.
     NoSkip,
+
+    /// Replace with a call to this other function and arguments.
+    Replace {
+        instance: Instance<'tcx>,
+        calling_convention: CallingConvention<'tcx>,
+    },
 }
 
-impl CallChanges {
-    /// Inidicate whether or not to skip recursing into the given function.
-    pub fn with_skip(self, skip: SkipCall) -> Self {
+impl<'tcx> CallChanges<'tcx> {
+    /// Indicate whether or not to skip recursing into the given function.
+    pub fn with_skip(self, skip: SkipCall<'tcx>) -> Self {
         CallChanges { skip }
     }
 }

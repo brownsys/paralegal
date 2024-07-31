@@ -11,6 +11,7 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
@@ -544,15 +545,28 @@ impl DumpArgs {
 /// Dependency specific configuration
 #[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
 pub struct DepConfig {
-    #[serde(default)]
+    #[serde(default, alias = "rust-features")]
     /// Additional rust features to enable
     pub rust_features: Box<[String]>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[serde(tag = "mode", rename_all = "kebab-case")]
+pub enum FlowModel {
+    /// Replaces the result of a call to a higher-order function with a call to
+    /// the input closure.
+    SubClosure,
+}
+
 /// Additional configuration for the build process/rustc
 #[derive(serde::Deserialize, serde::Serialize, Default, Debug)]
+#[serde(rename_all = "kebab-case")]
 pub struct BuildConfig {
     /// Dependency specific configuration
+    #[serde(default)]
     pub dep: crate::HashMap<String, DepConfig>,
+    #[serde(default)]
     pub include: Vec<String>,
+    #[serde(default)]
+    pub flow_models: HashMap<String, FlowModel>,
 }

@@ -1,0 +1,2 @@
+[flow-models."std::thread::spawn"]
+mode = "sub-closure"
