@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AppendConstMessage"],"static":["ALLOWED_FORMAT_SYMBOLS"],"struct":["OnUnimplementedDirective","OnUnimplementedFormatString","OnUnimplementedNote"],"trait":["TypeErrCtxtExt"]};

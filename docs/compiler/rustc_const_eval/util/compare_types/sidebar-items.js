@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_equal_up_to_subtyping","is_subtype"]};

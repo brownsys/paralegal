@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["inclusive_end","inclusive_start"],"struct":["IntervalSet","SparseIntervalMatrix"]};

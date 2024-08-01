@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_mod_impl_wf","enforce_impl_params_are_constrained","provide","report_unused_parameter"],"mod":["min_specialization"]};

@@ -1,0 +1,139 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="A dataflow problem with an arbitrarily complex transfer function."><title>Analysis in rustc_mir_dataflow::framework - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_mir_dataflow" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../../rustc_mir_dataflow/index.html"><img class="rust-logo" src="../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../../rustc_mir_dataflow/index.html"><img class="rust-logo" src="../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">Analysis</a></h2><div class="sidebar-elems"><section><h3><a href="#required-methods">Required Methods</a></h3><ul class="block"><li><a href="#tymethod.apply_call_return_effect">apply_call_return_effect</a></li><li><a href="#tymethod.apply_statement_effect">apply_statement_effect</a></li><li><a href="#tymethod.apply_terminator_effect">apply_terminator_effect</a></li></ul><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.apply_before_statement_effect">apply_before_statement_effect</a></li><li><a href="#method.apply_before_terminator_effect">apply_before_terminator_effect</a></li><li><a href="#method.apply_switch_int_edge_effects">apply_switch_int_edge_effects</a></li><li><a href="#method.into_engine">into_engine</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><h2><a href="index.html">In rustc_mir_dataflow::framework</a></h2></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Trait <a href="../index.html">rustc_mir_dataflow</a>::<wbr><a href="index.html">framework</a>::<wbr><a class="trait" href="#">Analysis</a><button id="copy-path" title="Copy item path to clipboard"><img src="../../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../../src/rustc_mir_dataflow/framework/mod.rs.html#137-247">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><pre class="rust item-decl"><code>pub trait Analysis&lt;'tcx&gt;: <a class="trait" href="trait.AnalysisDomain.html" title="trait rustc_mir_dataflow::framework::AnalysisDomain">AnalysisDomain</a>&lt;'tcx&gt; {
+    // Required methods
+    fn <a href="#tymethod.apply_statement_effect" class="fn">apply_statement_effect</a>(
+        &amp;mut self,
+        state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+        statement: &amp;<a class="struct" href="../../rustc_middle/mir/struct.Statement.html" title="struct rustc_middle::mir::Statement">Statement</a>&lt;'tcx&gt;,
+        location: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.apply_terminator_effect" class="fn">apply_terminator_effect</a>&lt;'mir&gt;(
+        &amp;mut self,
+        state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+        terminator: &amp;'mir <a class="struct" href="../../rustc_middle/mir/terminator/struct.Terminator.html" title="struct rustc_middle::mir::terminator::Terminator">Terminator</a>&lt;'tcx&gt;,
+        location: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>
+    ) -&gt; <a class="enum" href="../../rustc_middle/mir/terminator/enum.TerminatorEdges.html" title="enum rustc_middle::mir::terminator::TerminatorEdges">TerminatorEdges</a>&lt;'mir, 'tcx&gt;;
+<span class="item-spacer"></span>    fn <a href="#tymethod.apply_call_return_effect" class="fn">apply_call_return_effect</a>(
+        &amp;mut self,
+        state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+        block: <a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>,
+        return_places: <a class="enum" href="../../rustc_middle/mir/terminator/enum.CallReturnPlaces.html" title="enum rustc_middle::mir::terminator::CallReturnPlaces">CallReturnPlaces</a>&lt;'_, 'tcx&gt;
+    );
+
+    // Provided methods
+    fn <a href="#method.apply_before_statement_effect" class="fn">apply_before_statement_effect</a>(
+        &amp;mut self,
+        _state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+        _statement: &amp;<a class="struct" href="../../rustc_middle/mir/struct.Statement.html" title="struct rustc_middle::mir::Statement">Statement</a>&lt;'tcx&gt;,
+        _location: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.apply_before_terminator_effect" class="fn">apply_before_terminator_effect</a>(
+        &amp;mut self,
+        _state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+        _terminator: &amp;<a class="struct" href="../../rustc_middle/mir/terminator/struct.Terminator.html" title="struct rustc_middle::mir::terminator::Terminator">Terminator</a>&lt;'tcx&gt;,
+        _location: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.apply_switch_int_edge_effects" class="fn">apply_switch_int_edge_effects</a>(
+        &amp;mut self,
+        _block: <a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>,
+        _discr: &amp;<a class="enum" href="../../rustc_middle/mir/syntax/enum.Operand.html" title="enum rustc_middle::mir::syntax::Operand">Operand</a>&lt;'tcx&gt;,
+        _apply_edge_effects: &amp;mut impl <a class="trait" href="trait.SwitchIntEdgeEffects.html" title="trait rustc_mir_dataflow::framework::SwitchIntEdgeEffects">SwitchIntEdgeEffects</a>&lt;Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>&gt;
+    ) { ... }
+<span class="item-spacer"></span>    fn <a href="#method.into_engine" class="fn">into_engine</a>&lt;'mir&gt;(
+        self,
+        tcx: <a class="struct" href="../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+        body: &amp;'mir <a class="struct" href="../../rustc_middle/mir/struct.Body.html" title="struct rustc_middle::mir::Body">Body</a>&lt;'tcx&gt;
+    ) -&gt; <a class="struct" href="engine/struct.Engine.html" title="struct rustc_mir_dataflow::framework::engine::Engine">Engine</a>&lt;'mir, 'tcx, Self&gt;
+       <span class="where">where Self: <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sized.html" title="trait core::marker::Sized">Sized</a></span> { ... }
+}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>A dataflow problem with an arbitrarily complex transfer function.</p>
+<h2 id="convergence"><a href="#convergence">Convergence</a></h2>
+<p>When implementing this trait directly (not via <a href="trait.GenKillAnalysis.html" title="trait rustc_mir_dataflow::framework::GenKillAnalysis"><code>GenKillAnalysis</code></a>), it’s possible to choose a
+transfer function such that the analysis does not reach fixpoint. To guarantee convergence,
+your transfer functions must maintain the following invariant:</p>
+<blockquote>
+<p>If the dataflow state <strong>before</strong> some point in the program changes to be greater
+than the prior state <strong>before</strong> that point, the dataflow state <strong>after</strong> that point must
+also change to be greater than the prior state <strong>after</strong> that point.</p>
+</blockquote>
+<p>This invariant guarantees that the dataflow state at a given point in the program increases
+monotonically until fixpoint is reached. Note that this monotonicity requirement only applies
+to the same point in the program at different points in time. The dataflow state at a given
+point in the program may or may not be greater than the state at any preceding point.</p>
+</div></details><h2 id="required-methods" class="small-section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.apply_statement_effect" class="method"><a class="src rightside" href="../../src/rustc_mir_dataflow/framework/mod.rs.html#139-144">source</a><h4 class="code-header">fn <a href="#tymethod.apply_statement_effect" class="fn">apply_statement_effect</a>(
+    &amp;mut self,
+    state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+    statement: &amp;<a class="struct" href="../../rustc_middle/mir/struct.Statement.html" title="struct rustc_middle::mir::Statement">Statement</a>&lt;'tcx&gt;,
+    location: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>
+)</h4></section></summary><div class="docblock"><p>Updates the current dataflow state with the effect of evaluating a statement.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.apply_terminator_effect" class="method"><a class="src rightside" href="../../src/rustc_mir_dataflow/framework/mod.rs.html#166-171">source</a><h4 class="code-header">fn <a href="#tymethod.apply_terminator_effect" class="fn">apply_terminator_effect</a>&lt;'mir&gt;(
+    &amp;mut self,
+    state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+    terminator: &amp;'mir <a class="struct" href="../../rustc_middle/mir/terminator/struct.Terminator.html" title="struct rustc_middle::mir::terminator::Terminator">Terminator</a>&lt;'tcx&gt;,
+    location: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>
+) -&gt; <a class="enum" href="../../rustc_middle/mir/terminator/enum.TerminatorEdges.html" title="enum rustc_middle::mir::terminator::TerminatorEdges">TerminatorEdges</a>&lt;'mir, 'tcx&gt;</h4></section></summary><div class="docblock"><p>Updates the current dataflow state with the effect of evaluating a terminator.</p>
+<p>The effect of a successful return from a <code>Call</code> terminator should <strong>not</strong> be accounted for
+in this function. That should go in <code>apply_call_return_effect</code>. For example, in the
+<code>InitializedPlaces</code> analyses, the return place for a function call is not marked as
+initialized here.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="tymethod.apply_call_return_effect" class="method"><a class="src rightside" href="../../src/rustc_mir_dataflow/framework/mod.rs.html#194-199">source</a><h4 class="code-header">fn <a href="#tymethod.apply_call_return_effect" class="fn">apply_call_return_effect</a>(
+    &amp;mut self,
+    state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+    block: <a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>,
+    return_places: <a class="enum" href="../../rustc_middle/mir/terminator/enum.CallReturnPlaces.html" title="enum rustc_middle::mir::terminator::CallReturnPlaces">CallReturnPlaces</a>&lt;'_, 'tcx&gt;
+)</h4></section></summary><div class="docblock"><p>Updates the current dataflow state with the effect of a successful return from a <code>Call</code>
+terminator.</p>
+<p>This is separate from <code>apply_terminator_effect</code> to properly track state across unwind
+edges.</p>
+</div></details></div><h2 id="provided-methods" class="small-section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="method.apply_before_statement_effect" class="method"><a class="src rightside" href="../../src/rustc_mir_dataflow/framework/mod.rs.html#152-158">source</a><h4 class="code-header">fn <a href="#method.apply_before_statement_effect" class="fn">apply_before_statement_effect</a>(
+    &amp;mut self,
+    _state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+    _statement: &amp;<a class="struct" href="../../rustc_middle/mir/struct.Statement.html" title="struct rustc_middle::mir::Statement">Statement</a>&lt;'tcx&gt;,
+    _location: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>
+)</h4></section></summary><div class="docblock"><p>Updates the current dataflow state with an effect that occurs immediately <em>before</em> the
+given statement.</p>
+<p>This method is useful if the consumer of the results of this analysis only needs to observe
+<em>part</em> of the effect of a statement (e.g. for two-phase borrows). As a general rule,
+analyses should not implement this without also implementing <code>apply_statement_effect</code>.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.apply_before_terminator_effect" class="method"><a class="src rightside" href="../../src/rustc_mir_dataflow/framework/mod.rs.html#179-185">source</a><h4 class="code-header">fn <a href="#method.apply_before_terminator_effect" class="fn">apply_before_terminator_effect</a>(
+    &amp;mut self,
+    _state: &amp;mut Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>,
+    _terminator: &amp;<a class="struct" href="../../rustc_middle/mir/terminator/struct.Terminator.html" title="struct rustc_middle::mir::terminator::Terminator">Terminator</a>&lt;'tcx&gt;,
+    _location: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>
+)</h4></section></summary><div class="docblock"><p>Updates the current dataflow state with an effect that occurs immediately <em>before</em> the
+given terminator.</p>
+<p>This method is useful if the consumer of the results of this analysis needs only to observe
+<em>part</em> of the effect of a terminator (e.g. for two-phase borrows). As a general rule,
+analyses should not implement this without also implementing <code>apply_terminator_effect</code>.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.apply_switch_int_edge_effects" class="method"><a class="src rightside" href="../../src/rustc_mir_dataflow/framework/mod.rs.html#214-220">source</a><h4 class="code-header">fn <a href="#method.apply_switch_int_edge_effects" class="fn">apply_switch_int_edge_effects</a>(
+    &amp;mut self,
+    _block: <a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>,
+    _discr: &amp;<a class="enum" href="../../rustc_middle/mir/syntax/enum.Operand.html" title="enum rustc_middle::mir::syntax::Operand">Operand</a>&lt;'tcx&gt;,
+    _apply_edge_effects: &amp;mut impl <a class="trait" href="trait.SwitchIntEdgeEffects.html" title="trait rustc_mir_dataflow::framework::SwitchIntEdgeEffects">SwitchIntEdgeEffects</a>&lt;Self::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>&gt;
+)</h4></section></summary><div class="docblock"><p>Updates the current dataflow state with the effect of taking a particular branch in a
+<code>SwitchInt</code> terminator.</p>
+<p>Unlike the other edge-specific effects, which are allowed to mutate <code>Self::Domain</code>
+directly, overriders of this method must pass a callback to
+<code>SwitchIntEdgeEffects::apply</code>. The callback will be run once for each outgoing edge and
+will have access to the dataflow state that will be propagated along that edge.</p>
+<p>This interface is somewhat more complex than the other visitor-like “effect” methods.
+However, it is both more ergonomic—callers don’t need to recompute or cache information
+about a given <code>SwitchInt</code> terminator for each one of its edges—and more efficient—the
+engine doesn’t need to clone the exit state for a block unless
+<code>SwitchIntEdgeEffects::apply</code> is actually called.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.into_engine" class="method"><a class="src rightside" href="../../src/rustc_mir_dataflow/framework/mod.rs.html#237-246">source</a><h4 class="code-header">fn <a href="#method.into_engine" class="fn">into_engine</a>&lt;'mir&gt;(
+    self,
+    tcx: <a class="struct" href="../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+    body: &amp;'mir <a class="struct" href="../../rustc_middle/mir/struct.Body.html" title="struct rustc_middle::mir::Body">Body</a>&lt;'tcx&gt;
+) -&gt; <a class="struct" href="engine/struct.Engine.html" title="struct rustc_mir_dataflow::framework::engine::Engine">Engine</a>&lt;'mir, 'tcx, Self&gt;<span class="where fmt-newline">where
+    Self: <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sized.html" title="trait core::marker::Sized">Sized</a>,</span></h4></section></summary><div class="docblock"><p>Creates an <code>Engine</code> to find the fixpoint for this dataflow problem.</p>
+<p>You shouldn’t need to override this outside this module, since the combination of the
+default impl and the one for all <code>A: GenKillAnalysis</code> will do the right thing.
+Its purpose is to enable method chaining like so:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">let </span>results = MyAnalysis::new(tcx, body)
+    .into_engine(tcx, body, def_id)
+    .iterate_to_fixpoint()
+    .into_results_cursor(body);</code></pre></div>
+</div></details></div><h2 id="implementors" class="small-section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-Analysis%3C'tcx%3E-for-MaybeTransitiveLiveLocals%3C'a%3E" class="impl"><a class="src rightside" href="../../src/rustc_mir_dataflow/impls/liveness.rs.html#252-318">source</a><a href="#impl-Analysis%3C'tcx%3E-for-MaybeTransitiveLiveLocals%3C'a%3E" class="anchor">§</a><h3 class="code-header">impl&lt;'a, 'tcx&gt; <a class="trait" href="trait.Analysis.html" title="trait rustc_mir_dataflow::framework::Analysis">Analysis</a>&lt;'tcx&gt; for <a class="struct" href="../impls/liveness/struct.MaybeTransitiveLiveLocals.html" title="struct rustc_mir_dataflow::impls::liveness::MaybeTransitiveLiveLocals">MaybeTransitiveLiveLocals</a>&lt;'a&gt;</h3></section><section id="impl-Analysis%3C'tcx%3E-for-A" class="impl"><a class="src rightside" href="../../src/rustc_mir_dataflow/framework/mod.rs.html#331-404">source</a><a href="#impl-Analysis%3C'tcx%3E-for-A" class="anchor">§</a><h3 class="code-header">impl&lt;'tcx, A&gt; <a class="trait" href="trait.Analysis.html" title="trait rustc_mir_dataflow::framework::Analysis">Analysis</a>&lt;'tcx&gt; for A<span class="where fmt-newline">where
+    A: <a class="trait" href="trait.GenKillAnalysis.html" title="trait rustc_mir_dataflow::framework::GenKillAnalysis">GenKillAnalysis</a>&lt;'tcx&gt;,
+    A::<a class="associatedtype" href="trait.AnalysisDomain.html#associatedtype.Domain" title="type rustc_mir_dataflow::framework::AnalysisDomain::Domain">Domain</a>: <a class="trait" href="trait.GenKill.html" title="trait rustc_mir_dataflow::framework::GenKill">GenKill</a>&lt;A::<a class="associatedtype" href="trait.GenKillAnalysis.html#associatedtype.Idx" title="type rustc_mir_dataflow::framework::GenKillAnalysis::Idx">Idx</a>&gt; + <a class="trait" href="trait.BitSetExt.html" title="trait rustc_mir_dataflow::framework::BitSetExt">BitSetExt</a>&lt;A::<a class="associatedtype" href="trait.GenKillAnalysis.html#associatedtype.Idx" title="type rustc_mir_dataflow::framework::GenKillAnalysis::Idx">Idx</a>&gt;,</span></h3></section><section id="impl-Analysis%3C'tcx%3E-for-ValueAnalysisWrapper%3CT%3E" class="impl"><a class="src rightside" href="../../src/rustc_mir_dataflow/value_analysis.rs.html#354-400">source</a><a href="#impl-Analysis%3C'tcx%3E-for-ValueAnalysisWrapper%3CT%3E" class="anchor">§</a><h3 class="code-header">impl&lt;'tcx, T&gt; <a class="trait" href="trait.Analysis.html" title="trait rustc_mir_dataflow::framework::Analysis">Analysis</a>&lt;'tcx&gt; for <a class="struct" href="../value_analysis/struct.ValueAnalysisWrapper.html" title="struct rustc_mir_dataflow::value_analysis::ValueAnalysisWrapper">ValueAnalysisWrapper</a>&lt;T&gt;<span class="where fmt-newline">where
+    T: <a class="trait" href="../value_analysis/trait.ValueAnalysis.html" title="trait rustc_mir_dataflow::value_analysis::ValueAnalysis">ValueAnalysis</a>&lt;'tcx&gt;,</span></h3></section></div><script src="../../implementors/rustc_mir_dataflow/framework/trait.Analysis.js" async></script></section></div></main></body></html>

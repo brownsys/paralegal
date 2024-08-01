@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GeneratorData","GeneratorInteriorOrUpvar"],"fn":["hint_missing_borrow","predicate_constraint","suggest_restriction"],"struct":["AwaitsVisitor","ReplaceImplTraitFolder","ReplaceImplTraitVisitor","ReturnsVisitor"],"trait":["NextTypeParamName","TypeErrCtxtExt"]};

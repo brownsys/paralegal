@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["InsideMacroGuard","RewriteContext"],"trait":["Rewrite"]};

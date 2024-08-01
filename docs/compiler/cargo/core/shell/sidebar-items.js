@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ColorChoice","ShellOut","Stream","TtyWidth","Verbosity"],"mod":["imp"],"struct":["Shell"]};

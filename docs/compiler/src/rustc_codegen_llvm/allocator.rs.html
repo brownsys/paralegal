@@ -1,0 +1,351 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `compiler/rustc_codegen_llvm/src/allocator.rs`."><title>allocator.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_codegen_llvm" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><a class="sub-logo-container" href="../../rustc_codegen_llvm/index.html"><img class="rust-logo" src="../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a>
+<a href="#51" id="51">51</a>
+<a href="#52" id="52">52</a>
+<a href="#53" id="53">53</a>
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><a href="lib.rs.html#61"><span class="kw">crate</span>::attributes</a>;
+<span class="kw">use </span><a href="https://docs.rs/libc/0.2.147/libc/unix/type.c_uint.html">libc::c_uint</a>;
+<span class="kw">use </span>rustc_ast::expand::allocator::{
+    <a href="../../rustc_ast/expand/allocator/fn.alloc_error_handler_name.html">alloc_error_handler_name</a>, <a href="../../rustc_ast/expand/allocator/fn.default_fn_name.html">default_fn_name</a>, <a href="../../rustc_ast/expand/allocator/fn.global_fn_name.html">global_fn_name</a>, <a href="../../rustc_ast/expand/allocator/enum.AllocatorKind.html">AllocatorKind</a>, <a href="../../rustc_ast/expand/allocator/enum.AllocatorTy.html">AllocatorTy</a>,
+    <a href="../../rustc_ast/expand/allocator/static.ALLOCATOR_METHODS.html">ALLOCATOR_METHODS</a>, <a href="../../rustc_ast/expand/allocator/constant.NO_ALLOC_SHIM_IS_UNSTABLE.html">NO_ALLOC_SHIM_IS_UNSTABLE</a>,
+};
+<span class="kw">use </span><a href="../../rustc_middle/macro.bug.html">rustc_middle::bug</a>;
+<span class="kw">use </span><a href="../../rustc_middle/ty/context/struct.TyCtxt.html">rustc_middle::ty::TyCtxt</a>;
+<span class="kw">use </span>rustc_session::config::{<a href="../../rustc_session/config/enum.DebugInfo.html">DebugInfo</a>, <a href="../../rustc_session/config/enum.OomStrategy.html">OomStrategy</a>};
+
+<span class="kw">use </span><a href="lib.rs.html#69"><span class="kw">crate</span>::debuginfo</a>;
+<span class="kw">use </span><span class="kw">crate</span>::llvm::{<a class="self" href="lib.rs.html#77-79">self</a>, <a href="llvm/ffi.rs.html#631">Context</a>, <a href="llvm/ffi.rs.html#21">False</a>, <a href="llvm/ffi.rs.html#628">Module</a>, <a href="llvm/ffi.rs.html#20">True</a>, <a href="llvm/ffi.rs.html#634">Type</a>};
+<span class="kw">use </span><a href="lib.rs.html#400-404"><span class="kw">crate</span>::ModuleLlvm</a>;
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">unsafe fn </span><a href="../../rustc_codegen_llvm/allocator/fn.codegen.html">codegen</a>(
+    tcx: TyCtxt&lt;<span class="lifetime">&#39;_</span>&gt;,
+    module_llvm: <span class="kw-2">&amp;mut </span><a href="lib.rs.html#400-404">ModuleLlvm</a>,
+    module_name: <span class="kw-2">&amp;</span><a href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>,
+    kind: <a href="../../rustc_ast/expand/allocator/enum.AllocatorKind.html">AllocatorKind</a>,
+    alloc_error_handler_kind: <a href="../../rustc_ast/expand/allocator/enum.AllocatorKind.html">AllocatorKind</a>,
+) {
+    <span class="kw">let </span>llcx = <span class="kw-2">&amp;*</span><a href="#17">module_llvm</a>.llcx;
+    <span class="kw">let </span>llmod = <a href="#17">module_llvm</a>.<a href="lib.rs.html#447-449">llmod</a>();
+    <span class="kw">let </span>usize = <span class="kw">match </span><a href="#16">tcx</a>.sess.target.pointer_width {
+        <span class="number">16 </span>=&gt; <a href="llvm/ffi.rs.html#847">llvm::LLVMInt16TypeInContext</a>(<a href="#22">llcx</a>),
+        <span class="number">32 </span>=&gt; <a href="llvm/ffi.rs.html#848">llvm::LLVMInt32TypeInContext</a>(<a href="#22">llcx</a>),
+        <span class="number">64 </span>=&gt; <a href="llvm/ffi.rs.html#849">llvm::LLVMInt64TypeInContext</a>(<a href="#22">llcx</a>),
+        tws =&gt; <a class="macro" href="../../rustc_middle/macro.bug.html">bug!</a>(<span class="string">&quot;Unsupported target word size for int: {}&quot;</span>, tws),
+    };
+    <span class="kw">let </span>i8 = <a href="llvm/ffi.rs.html#846">llvm::LLVMInt8TypeInContext</a>(<a href="#22">llcx</a>);
+    <span class="kw">let </span>i8p = <a href="llvm/ffi.rs.html#878">llvm::LLVMPointerTypeInContext</a>(<a href="#22">llcx</a>, <span class="number">0</span>);
+
+    <span class="kw">if </span>kind == AllocatorKind::Default {
+        <span class="kw">for </span>method <span class="kw">in </span>ALLOCATOR_METHODS {
+            <span class="kw">let </span><span class="kw-2">mut </span>args = Vec::with_capacity(method.inputs.len());
+            <span class="kw">for </span>input <span class="kw">in </span>method.inputs.iter() {
+                <span class="kw">match </span>input.ty {
+                    AllocatorTy::Layout =&gt; {
+                        args.push(usize); <span class="comment">// size
+                        </span>args.push(usize); <span class="comment">// align
+                    </span>}
+                    AllocatorTy::Ptr =&gt; args.push(i8p),
+                    AllocatorTy::Usize =&gt; args.push(usize),
+
+                    AllocatorTy::ResultPtr | AllocatorTy::Unit =&gt; <span class="macro">panic!</span>(<span class="string">&quot;invalid allocator arg&quot;</span>),
+                }
+            }
+            <span class="kw">let </span>output = <span class="kw">match </span>method.output {
+                AllocatorTy::ResultPtr =&gt; <span class="prelude-val">Some</span>(i8p),
+                AllocatorTy::Unit =&gt; <span class="prelude-val">None</span>,
+
+                AllocatorTy::Layout | AllocatorTy::Usize | AllocatorTy::Ptr =&gt; {
+                    <span class="macro">panic!</span>(<span class="string">&quot;invalid allocator output&quot;</span>)
+                }
+            };
+
+            <span class="kw">let </span>from_name = global_fn_name(method.name);
+            <span class="kw">let </span>to_name = default_fn_name(method.name);
+
+            create_wrapper_function(tcx, llcx, llmod, <span class="kw-2">&amp;</span>from_name, <span class="kw-2">&amp;</span>to_name, <span class="kw-2">&amp;</span>args, output, <span class="bool-val">false</span>);
+        }
+    }
+
+    <span class="comment">// rust alloc error handler
+    </span><a href="#101-175">create_wrapper_function</a>(
+        <a href="#16">tcx</a>,
+        <a href="#22">llcx</a>,
+        <a href="#23">llmod</a>,
+        <span class="string">&quot;__rust_alloc_error_handler&quot;</span>,
+        <span class="kw-2">&amp;</span><a href="../../rustc_ast/expand/allocator/fn.alloc_error_handler_name.html">alloc_error_handler_name</a>(<a href="#20">alloc_error_handler_kind</a>),
+        <span class="kw-2">&amp;</span>[<a href="#24">usize</a>, <a href="#24">usize</a>], <span class="comment">// size, align
+        </span><span class="prelude-val">None</span>,
+        <span class="bool-val">true</span>,
+    );
+
+    <span class="comment">// __rust_alloc_error_handler_should_panic
+    </span><span class="kw">let </span>name = OomStrategy::SYMBOL;
+    <span class="kw">let </span>ll_g = <a href="llvm/ffi.rs.html#990-995">llvm::LLVMRustGetOrInsertGlobal</a>(<a href="#23">llmod</a>, <a href="#77">name</a>.as_ptr().cast(), <a href="#77">name</a>.len(), <a href="#30">i8</a>);
+    <span class="kw">if </span>tcx.sess.target.default_hidden_visibility {
+        <a href="llvm/ffi.rs.html#980">llvm::LLVMRustSetVisibility</a>(<a href="#78">ll_g</a>, <a href="llvm/ffi.rs.html#129">llvm::Visibility::Hidden</a>);
+    }
+    <span class="kw">let </span>val = <a href="#16">tcx</a>.sess.opts.unstable_opts.oom.should_panic();
+    <span class="kw">let </span>llval = <a href="llvm/ffi.rs.html#926">llvm::LLVMConstInt</a>(<a href="#30">i8</a>, <a href="#82">val</a> <span class="kw">as </span><a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, <a href="llvm/ffi.rs.html#21">False</a>);
+    <a href="llvm/ffi.rs.html#1001">llvm::LLVMSetInitializer</a>(<a href="#78">ll_g</a>, <a href="#83">llval</a>);
+
+    <span class="kw">let </span>name = <a href="../../rustc_ast/expand/allocator/constant.NO_ALLOC_SHIM_IS_UNSTABLE.html">NO_ALLOC_SHIM_IS_UNSTABLE</a>;
+    <span class="kw">let </span>ll_g = <a href="llvm/ffi.rs.html#990-995">llvm::LLVMRustGetOrInsertGlobal</a>(<a href="#23">llmod</a>, <a href="#86">name</a>.as_ptr().cast(), <a href="#86">name</a>.len(), <a href="#30">i8</a>);
+    <span class="kw">if </span>tcx.sess.target.default_hidden_visibility {
+        <a href="llvm/ffi.rs.html#980">llvm::LLVMRustSetVisibility</a>(<a href="#87">ll_g</a>, <a href="llvm/ffi.rs.html#129">llvm::Visibility::Hidden</a>);
+    }
+    <span class="kw">let </span>llval = <a href="llvm/ffi.rs.html#926">llvm::LLVMConstInt</a>(<a href="#30">i8</a>, <span class="number">0</span>, <a href="llvm/ffi.rs.html#21">False</a>);
+    <a href="llvm/ffi.rs.html#1001">llvm::LLVMSetInitializer</a>(<a href="#87">ll_g</a>, <a href="#91">llval</a>);
+
+    <span class="kw">if </span>tcx.sess.opts.debuginfo != DebugInfo::None {
+        <span class="kw">let </span>dbg_cx = debuginfo::CodegenUnitDebugContext::new(<a href="#23">llmod</a>);
+        <a href="debuginfo/metadata.rs.html#782-896">debuginfo::metadata::build_compile_unit_di_node</a>(<a href="#16">tcx</a>, <a href="#18">module_name</a>, <span class="kw-2">&amp;</span><a href="#95">dbg_cx</a>);
+        <a href="#95">dbg_cx</a>.<a href="debuginfo/mod.rs.html#100-141">finalize</a>(<a href="#16">tcx</a>.sess);
+    }
+}
+
+<span class="kw">fn </span><a href="../../rustc_codegen_llvm/allocator/fn.create_wrapper_function.html">create_wrapper_function</a>(
+    tcx: TyCtxt&lt;<span class="lifetime">&#39;_</span>&gt;,
+    llcx: <span class="kw-2">&amp;</span><a href="llvm/ffi.rs.html#631">Context</a>,
+    llmod: <span class="kw-2">&amp;</span><a href="llvm/ffi.rs.html#628">Module</a>,
+    from_name: <span class="kw-2">&amp;</span><a href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>,
+    to_name: <span class="kw-2">&amp;</span><a href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>,
+    args: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span><a href="llvm/ffi.rs.html#634">Type</a>],
+    output: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><a href="llvm/ffi.rs.html#634">Type</a>&gt;,
+    no_return: <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+) {
+    <span class="kw">unsafe </span>{
+        <span class="kw">let </span>ty = <a href="llvm/ffi.rs.html#859-864">llvm::LLVMFunctionType</a>(
+            <a href="#108">output</a>.unwrap_or_else(|| <a href="llvm/ffi.rs.html#885">llvm::LLVMVoidTypeInContext</a>(<a href="#103">llcx</a>)),
+            <a href="#107">args</a>.as_ptr(),
+            <a href="#107">args</a>.len() <span class="kw">as </span><a href="https://docs.rs/libc/0.2.147/libc/unix/type.c_uint.html">c_uint</a>,
+            <a href="llvm/ffi.rs.html#21">False</a>,
+        );
+        <span class="kw">let </span>llfn = <a href="llvm/ffi.rs.html#1035-1040">llvm::LLVMRustGetOrInsertFunction</a>(
+            <a href="#104">llmod</a>,
+            <a href="#105">from_name</a>.as_ptr().cast(),
+            <a href="#105">from_name</a>.len(),
+            <a href="#112">ty</a>,
+        );
+        <span class="kw">let </span>no_return = <span class="kw">if </span>no_return {
+            <span class="comment">// -&gt; ! DIFlagNoReturn
+            </span><span class="kw">let </span>no_return = <a href="llvm/ffi.rs.html#169">llvm::AttributeKind::NoReturn</a>.<a href="llvm/mod.rs.html#184-186">create_attr</a>(<a href="#103">llcx</a>);
+            <a href="attributes.rs.html#23-27">attributes::apply_to_llfn</a>(<a href="#118">llfn</a>, <a href="llvm/mod.rs.html#110">llvm::AttributePlace::Function</a>, <span class="kw-2">&amp;</span>[<a href="#126">no_return</a>]);
+            <span class="prelude-val">Some</span>(<a href="#126">no_return</a>)
+        } <span class="kw">else </span>{
+            <span class="prelude-val">None
+        </span>};
+
+        <span class="kw">if </span>tcx.sess.target.default_hidden_visibility {
+            <a href="llvm/ffi.rs.html#980">llvm::LLVMRustSetVisibility</a>(<a href="#118">llfn</a>, <a href="llvm/ffi.rs.html#129">llvm::Visibility::Hidden</a>);
+        }
+        <span class="kw">if </span>tcx.sess.must_emit_unwind_tables() {
+            <span class="kw">let </span>uwtable = <a href="attributes.rs.html#98-103">attributes::uwtable_attr</a>(<a href="#103">llcx</a>);
+            <a href="attributes.rs.html#23-27">attributes::apply_to_llfn</a>(<a href="#118">llfn</a>, <a href="llvm/mod.rs.html#110">llvm::AttributePlace::Function</a>, <span class="kw-2">&amp;</span>[<a href="#137">uwtable</a>]);
+        }
+
+        <span class="kw">let </span>callee =
+            <a href="llvm/ffi.rs.html#1035-1040">llvm::LLVMRustGetOrInsertFunction</a>(<a href="#104">llmod</a>, <a href="#106">to_name</a>.as_ptr().cast(), <a href="#106">to_name</a>.len(), <a href="#112">ty</a>);
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(no_return) = <a href="#124">no_return</a> {
+            <span class="comment">// -&gt; ! DIFlagNoReturn
+            </span><a href="attributes.rs.html#23-27">attributes::apply_to_llfn</a>(<a href="#141">callee</a>, <a href="llvm/mod.rs.html#110">llvm::AttributePlace::Function</a>, <span class="kw-2">&amp;</span>[<a href="#143">no_return</a>]);
+        }
+        <a href="llvm/ffi.rs.html#980">llvm::LLVMRustSetVisibility</a>(<a href="#141">callee</a>, <a href="llvm/ffi.rs.html#129">llvm::Visibility::Hidden</a>);
+
+        <span class="kw">let </span>llbb = <a href="llvm/ffi.rs.html#1056-1060">llvm::LLVMAppendBasicBlockInContext</a>(<a href="#103">llcx</a>, <a href="#118">llfn</a>, <span class="string">&quot;entry\0&quot;</span>.as_ptr().cast());
+
+        <span class="kw">let </span>llbuilder = <a href="llvm/ffi.rs.html#1087">llvm::LLVMCreateBuilderInContext</a>(<a href="#103">llcx</a>);
+        <a href="llvm/ffi.rs.html#1088">llvm::LLVMPositionBuilderAtEnd</a>(<a href="#151">llbuilder</a>, <a href="#149">llbb</a>);
+        <span class="kw">let </span>args = <a href="#107">args</a>
+            .iter()
+            .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html">enumerate</a>()
+            .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html">map</a>(|(i, <span class="kw">_</span>)| <a href="llvm/ffi.rs.html#1052">llvm::LLVMGetParam</a>(<a href="#118">llfn</a>, <a href="#156">i</a> <span class="kw">as </span><a href="https://docs.rs/libc/0.2.147/libc/unix/type.c_uint.html">c_uint</a>))
+            .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html">collect</a>::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>ret = <a href="llvm/ffi.rs.html#1485-1493">llvm::LLVMRustBuildCall</a>(
+            <a href="#151">llbuilder</a>,
+            <a href="#112">ty</a>,
+            <a href="#141">callee</a>,
+            <a href="#153">args</a>.as_ptr(),
+            <a href="#153">args</a>.len() <span class="kw">as </span><a href="https://docs.rs/libc/0.2.147/libc/unix/type.c_uint.html">c_uint</a>,
+            [].as_ptr(),
+            <span class="number">0 </span><span class="kw">as </span><a href="https://docs.rs/libc/0.2.147/libc/unix/type.c_uint.html">c_uint</a>,
+        );
+        <a href="llvm/ffi.rs.html#1011">llvm::LLVMSetTailCall</a>(<a href="#158">ret</a>, <a href="llvm/ffi.rs.html#20">True</a>);
+        <span class="kw">if </span>output.is_some() {
+            <a href="llvm/ffi.rs.html#1097">llvm::LLVMBuildRet</a>(<a href="#151">llbuilder</a>, <a href="#158">ret</a>);
+        } <span class="kw">else </span>{
+            <a href="llvm/ffi.rs.html#1096">llvm::LLVMBuildRetVoid</a>(<a href="#151">llbuilder</a>);
+        }
+        <a href="llvm/ffi.rs.html#1090">llvm::LLVMDisposeBuilder</a>(<a href="#151">llbuilder</a>);
+    }
+}
+</code></pre></div></section></main></body></html>

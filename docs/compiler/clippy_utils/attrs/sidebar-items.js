@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BUILTIN_ATTRIBUTES"],"enum":["DeprecationStatus"],"fn":["get_attr","get_unique_attr","is_doc_hidden","is_proc_macro","parse_attrs"],"struct":["LimitStack"]};

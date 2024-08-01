@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["compute_pdg","determine_async","is_async_trait_fn","match_async_trait_assign"],"mod":["approximation","async_support","body_cache","callback","calling_convention","construct","encoder","graph","local_analysis","mutation","utils"],"struct":["MemoPdgConstructor"]};

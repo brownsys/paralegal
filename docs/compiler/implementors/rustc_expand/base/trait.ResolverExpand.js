@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"rustc_resolve":[["impl&lt;'a, 'tcx&gt; <a class=\"trait\" href=\"rustc_expand/base/trait.ResolverExpand.html\" title=\"trait rustc_expand::base::ResolverExpand\">ResolverExpand</a> for <a class=\"struct\" href=\"rustc_resolve/struct.Resolver.html\" title=\"struct rustc_resolve::Resolver\">Resolver</a>&lt;'a, 'tcx&gt;"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

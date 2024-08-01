@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["proxy_index","proxy_struct"],"struct":["BasicBlock","BodyId","CrateNum","DefId","DefIndex","HirId","ItemLocalId","LocalDefId","Location","OwnerId"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["TOOLTIP_INDENT"],"fn":["source_range_no_file","write_document","write_mir_fn_spanview"],"struct":["SpanViewable"]};

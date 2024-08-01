@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AllowCVariadic","AllowPlus","RecoverQPath","RecoverQuestionMark","RecoverReturnSign"],"fn":["can_continue_type_after_non_fn_ident"],"struct":["BoundModifiers"]};

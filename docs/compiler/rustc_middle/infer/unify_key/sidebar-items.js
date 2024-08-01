@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConstVariableOriginKind","ConstVariableValue"],"struct":["ConstVarValue","ConstVariableOrigin","RegionVidKey","UnifiedRegion"],"trait":["ToType"]};

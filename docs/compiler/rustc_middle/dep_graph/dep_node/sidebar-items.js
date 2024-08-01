@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DepKind"],"fn":["dep_kind_from_label_string","make_compile_codegen_unit","make_compile_mono_item"],"macro":["define_dep_nodes","impl_for_typed_def_id"],"mod":["label_strs"],"trait":["DepContext","DepNodeExt","DepNodeParams"],"type":["DepNode"]};

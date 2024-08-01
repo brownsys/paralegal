@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"flowistry_pdg_construction":[["impl&lt;'tcx&gt; TyEncoder for <a class=\"struct\" href=\"flowistry_pdg_construction/encoder/struct.ParalegalEncoder.html\" title=\"struct flowistry_pdg_construction::encoder::ParalegalEncoder\">ParalegalEncoder</a>&lt;'tcx&gt;"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

@@ -1,0 +1,98 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `InstrumentCoverage` MIR pass implementation includes debugging tools and options to help developers understand and/or improve the analysis and instrumentation of a MIR."><title>rustc_mir_transform::coverage::debug - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_mir_transform" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../../../rustc_mir_transform/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../../../rustc_mir_transform/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">Module debug</a></h2><div class="sidebar-elems"><section><ul class="block"><li><a href="#structs">Structs</a></li><li><a href="#constants">Constants</a></li><li><a href="#functions">Functions</a></li></ul></section></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Module <a href="../../index.html">rustc_mir_transform</a>::<wbr><a href="../index.html">coverage</a>::<wbr><a class="mod" href="#">debug</a><button id="copy-path" title="Copy item path to clipboard"><img src="../../../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../../../src/rustc_mir_transform/coverage/debug.rs.html#1-802">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <code>InstrumentCoverage</code> MIR pass implementation includes debugging tools and options
+to help developers understand and/or improve the analysis and instrumentation of a MIR.</p>
+<p>To enable coverage, include the rustc command line option:</p>
+<ul>
+<li><code>-C instrument-coverage</code></li>
+</ul>
+<h3 id="mir-dump-files-with-additional-coveragegraph-graphviz-and-coveragespan-spanview"><a href="#mir-dump-files-with-additional-coveragegraph-graphviz-and-coveragespan-spanview">MIR Dump Files, with additional <code>CoverageGraph</code> graphviz and <code>CoverageSpan</code> spanview</a></h3>
+<p>Additional debugging options include:</p>
+<ul>
+<li>
+<p><code>-Z dump-mir=InstrumentCoverage</code> - Generate <code>.mir</code> files showing the state of the MIR,
+before and after the <code>InstrumentCoverage</code> pass, for each compiled function.</p>
+</li>
+<li>
+<p><code>-Z dump-mir-graphviz</code> - If <code>-Z dump-mir</code> is also enabled for the current MIR node path,
+each MIR dump is accompanied by a before-and-after graphical view of the MIR, in Graphviz
+<code>.dot</code> file format (which can be visually rendered as a graph using any of a number of free
+Graphviz viewers and IDE extensions).</p>
+<p>For the <code>InstrumentCoverage</code> pass, this option also enables generation of an additional
+Graphviz <code>.dot</code> file for each function, rendering the <code>CoverageGraph</code>: the control flow
+graph (CFG) of <code>BasicCoverageBlocks</code> (BCBs), as nodes, internally labeled to show the
+<code>CoverageSpan</code>-based MIR elements each BCB represents (<code>BasicBlock</code>s, <code>Statement</code>s and
+<code>Terminator</code>s), assigned coverage counters and/or expressions, and edge counters, as needed.</p>
+<p>(Note the additional option, <code>-Z graphviz-dark-mode</code>, can be added, to change the rendered
+output from its default black-on-white background to a dark color theme, if desired.)</p>
+</li>
+<li>
+<p><code>-Z dump-mir-spanview</code> - If <code>-Z dump-mir</code> is also enabled for the current MIR node path,
+each MIR dump is accompanied by a before-and-after <code>.html</code> document showing the function’s
+original source code, highlighted by it’s MIR spans, at the <code>statement</code>-level (by default),
+<code>terminator</code> only, or encompassing span for the <code>Terminator</code> plus all <code>Statement</code>s, in each
+<code>block</code> (<code>BasicBlock</code>).</p>
+<p>For the <code>InstrumentCoverage</code> pass, this option also enables generation of an additional
+spanview <code>.html</code> file for each function, showing the aggregated <code>CoverageSpan</code>s that will
+require counters (or counter expressions) for accurate coverage analysis.</p>
+</li>
+</ul>
+<h3 id="debug-logging"><a href="#debug-logging">Debug Logging</a></h3>
+<p>The <code>InstrumentCoverage</code> pass includes debug logging messages at various phases and decision
+points, which can be enabled via environment variable:</p>
+<div class="example-wrap"><pre class="language-shell"><code>RUSTC_LOG=rustc_mir_transform::transform::coverage=debug
+</code></pre></div>
+<p>Other module paths with coverage-related debug logs may also be of interest, particularly for
+debugging the coverage map data, injected as global variables in the LLVM IR (during rustc’s
+code generation pass). For example:</p>
+<div class="example-wrap"><pre class="language-shell"><code>RUSTC_LOG=rustc_mir_transform::transform::coverage,rustc_codegen_ssa::coverageinfo,rustc_codegen_llvm::coverageinfo=debug
+</code></pre></div><h3 id="coverage-debug-options"><a href="#coverage-debug-options">Coverage Debug Options</a></h3>
+<p>Additional debugging options can be enabled using the environment variable:</p>
+<div class="example-wrap"><pre class="language-shell"><code>RUSTC_COVERAGE_DEBUG_OPTIONS=&lt;options&gt;
+</code></pre></div>
+<p>These options are comma-separated, and specified in the format <code>option-name=value</code>. For example:</p>
+<div class="example-wrap"><pre class="language-shell"><code>$ RUSTC_COVERAGE_DEBUG_OPTIONS=counter-format=id+operation,allow-unused-expressions=yes cargo build
+</code></pre></div>
+<p>Coverage debug options include:</p>
+<ul>
+<li>
+<p><code>allow-unused-expressions=yes</code> or <code>no</code> (default: <code>no</code>)</p>
+<p>The <code>InstrumentCoverage</code> algorithms <em>should</em> only create and assign expressions to a
+<code>BasicCoverageBlock</code>, or an incoming edge, if that expression is either (a) required to
+count a <code>CoverageSpan</code>, or (b) a dependency of some other required counter expression.</p>
+<p>If an expression is generated that does not map to a <code>CoverageSpan</code> or dependency, this
+probably indicates there was a bug in the algorithm that creates and assigns counters
+and expressions.</p>
+<p>When this kind of bug is encountered, the rustc compiler will panic by default. Setting:
+<code>allow-unused-expressions=yes</code> will log a warning message instead of panicking (effectively
+ignoring the unused expressions), which may be helpful when debugging the root cause of
+the problem.</p>
+</li>
+<li>
+<p><code>counter-format=&lt;choices&gt;</code>, where <code>&lt;choices&gt;</code> can be any plus-separated combination of <code>id</code>,
+<code>block</code>, and/or <code>operation</code> (default: <code>block+operation</code>)</p>
+<p>This option effects both the <code>CoverageGraph</code> (graphviz <code>.dot</code> files) and debug logging, when
+generating labels for counters and expressions.</p>
+<p>Depending on the values and combinations, counters can be labeled by:</p>
+<ul>
+<li><code>id</code> - counter or expression ID (ascending counter IDs, starting at 1, or descending
+expression IDs, starting at <code>u32:MAX</code>)</li>
+<li><code>block</code> - the <code>BasicCoverageBlock</code> label (for example, <code>bcb0</code>) or edge label (for
+example <code>bcb0-&gt;bcb1</code>), for counters or expressions assigned to count a
+<code>BasicCoverageBlock</code> or edge. Intermediate expressions (not directly associated with
+a BCB or edge) will be labeled by their expression ID, unless <code>operation</code> is also
+specified.</li>
+<li><code>operation</code> - applied to expressions only, labels include the left-hand-side counter
+or expression label (lhs operand), the operator (<code>+</code> or <code>-</code>), and the right-hand-side
+counter or expression (rhs operand). Expression operand labels are generated
+recursively, generating labels with nested operations, enclosed in parentheses
+(for example: <code>bcb2 + (bcb0 - bcb1)</code>).</li>
+</ul>
+</li>
+</ul>
+</div></details><h2 id="structs" class="small-section-header"><a href="#structs">Structs</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.DebugCounter.html" title="struct rustc_mir_transform::coverage::debug::DebugCounter">DebugCounter</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">A non-public support class to <code>DebugCounters</code>.</div></li><li><div class="item-name"><a class="struct" href="struct.DebugCounters.html" title="struct rustc_mir_transform::coverage::debug::DebugCounters">DebugCounters</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">If enabled, this struct maintains a map from <code>BcbCounter</code> IDs (as <code>Operand</code>) to
+the <code>BcbCounter</code> data and optional label (normally, the counter’s associated
+<code>BasicCoverageBlock</code> format string, if any).</div></li><li><div class="item-name"><a class="struct" href="struct.DebugOptions.html" title="struct rustc_mir_transform::coverage::debug::DebugOptions">DebugOptions</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Parses and maintains coverage-specific debug options captured from the environment variable
+“RUSTC_COVERAGE_DEBUG_OPTIONS”, if set.</div></li><li><div class="item-name"><a class="struct" href="struct.ExpressionFormat.html" title="struct rustc_mir_transform::coverage::debug::ExpressionFormat">ExpressionFormat</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.GraphvizData.html" title="struct rustc_mir_transform::coverage::debug::GraphvizData">GraphvizData</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">If enabled, this data structure captures additional debugging information used when generating
+a Graphviz (.dot file) representation of the <code>CoverageGraph</code>, for debugging purposes.</div></li><li><div class="item-name"><a class="struct" href="struct.UsedExpressions.html" title="struct rustc_mir_transform::coverage::debug::UsedExpressions">UsedExpressions</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">If enabled, this struct captures additional data used to track whether expressions were used,
+directly or indirectly, to compute the coverage counts for all <code>CoverageSpan</code>s, and any that are
+<em>not</em> used are retained in the <code>unused_expressions</code> Vec, to be included in debug output (logs
+and/or a <code>CoverageGraph</code> graphviz output).</div></li></ul><h2 id="constants" class="small-section-header"><a href="#constants">Constants</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.NESTED_INDENT.html" title="constant rustc_mir_transform::coverage::debug::NESTED_INDENT">NESTED_INDENT</a></div></li><li><div class="item-name"><a class="constant" href="constant.RUSTC_COVERAGE_DEBUG_OPTIONS.html" title="constant rustc_mir_transform::coverage::debug::RUSTC_COVERAGE_DEBUG_OPTIONS">RUSTC_COVERAGE_DEBUG_OPTIONS</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="small-section-header"><a href="#functions">Functions</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.bcb_to_string_sections.html" title="fn rustc_mir_transform::coverage::debug::bcb_to_string_sections">bcb_to_string_sections</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.bool_option_val.html" title="fn rustc_mir_transform::coverage::debug::bool_option_val">bool_option_val</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.counter_format_option_val.html" title="fn rustc_mir_transform::coverage::debug::counter_format_option_val">counter_format_option_val</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.debug_options.html" title="fn rustc_mir_transform::coverage::debug::debug_options">debug_options</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.dump_coverage_graphviz.html" title="fn rustc_mir_transform::coverage::debug::dump_coverage_graphviz">dump_coverage_graphviz</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Generates the MIR pass coverage-specific graphviz dump file.</div></li><li><div class="item-name"><a class="fn" href="fn.dump_coverage_spanview.html" title="fn rustc_mir_transform::coverage::debug::dump_coverage_spanview">dump_coverage_spanview</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Generates the MIR pass <code>CoverageSpan</code>-specific spanview dump file.</div></li><li><div class="item-name"><a class="fn" href="fn.span_viewables.html" title="fn rustc_mir_transform::coverage::debug::span_viewables">span_viewables</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Converts the computed <code>BasicCoverageBlockData</code>s into <code>SpanViewable</code>s.</div></li></ul></section></div></main></body></html>

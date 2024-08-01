@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Cause"],"fn":["expected_found","relate_args","relate_args_with_variances","relate_type_and_mut","structurally_relate_consts","structurally_relate_tys"],"struct":["GeneratorWitness"],"trait":["Relate","TypeRelation"],"type":["RelateResult"]};

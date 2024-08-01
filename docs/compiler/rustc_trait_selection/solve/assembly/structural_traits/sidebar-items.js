@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["extract_tupled_inputs_and_output_from_callable","instantiate_constituent_tys_for_auto_trait","instantiate_constituent_tys_for_copy_clone_trait","instantiate_constituent_tys_for_sized_trait","predicates_for_object_candidate","replace_erased_lifetimes_with_bound_vars"],"struct":["ReplaceProjectionWith"]};

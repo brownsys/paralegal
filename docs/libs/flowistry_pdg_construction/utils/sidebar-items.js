@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["find_body_assignments","hashmap_join","hashset_join","is_async","is_virtual","manufacture_substs_for","retype_place","try_monomorphize","try_resolve_function","ty_resolve","type_as_fn"],"trait":["Captures"],"type":["BodyAssignments"]};

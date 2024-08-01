@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MESSAGES","PROFILE_STACK"],"fn":["enabled_level","start"],"struct":["Profiler"],"type":["Message"]};

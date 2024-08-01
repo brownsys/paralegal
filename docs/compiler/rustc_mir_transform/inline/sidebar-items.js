@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CALL_PENALTY","INSTR_COST","LANDINGPAD_PENALTY","RESUME_PENALTY","TOP_DOWN_DEPTH_LIMIT"],"fn":["inline","try_instance_mir"],"mod":["cycle"],"struct":["CallSite","CostChecker","Inline","Inliner","Integrator"]};

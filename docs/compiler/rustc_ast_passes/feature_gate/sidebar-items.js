@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_attribute","check_crate","check_incompatible_features","maybe_stage_features"],"macro":["gate_feature_fn","gate_feature_post"],"struct":["PostExpansionVisitor"]};

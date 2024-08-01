@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TypeVariableOriginKind","TypeVariableValue"],"struct":["TypeVariableOrigin","TypeVariableStorage","TypeVariableTable"]};

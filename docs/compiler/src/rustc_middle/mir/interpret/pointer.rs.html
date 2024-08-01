@@ -1,0 +1,649 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `compiler/rustc_middle/src/mir/interpret/pointer.rs`."><title>pointer.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="rustc_middle" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><a class="sub-logo-container" href="../../../../rustc_middle/index.html"><img class="rust-logo" src="../../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a>
+<a href="#51" id="51">51</a>
+<a href="#52" id="52">52</a>
+<a href="#53" id="53">53</a>
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+</pre></div><pre class="rust"><code><span class="kw">use super</span>::{<a href="mod.rs.html#208">AllocId</a>, <a href="error.rs.html#484">InterpResult</a>};
+
+<span class="kw">use </span><a href="../../../../rustc_macros/derive.HashStable.html">rustc_macros::HashStable</a>;
+<span class="kw">use </span>rustc_target::abi::{<a href="../../../../rustc_abi/trait.HasDataLayout.html">HasDataLayout</a>, <a href="../../../../rustc_abi/struct.Size.html">Size</a>};
+
+<span class="kw">use </span><a href="https://doc.rust-lang.org/nightly/alloc/fmt/index.html">std::fmt</a>;
+
+<span class="comment">////////////////////////////////////////////////////////////////////////////////
+// Pointer arithmetic
+////////////////////////////////////////////////////////////////////////////////
+
+</span><span class="kw">pub trait </span><a href="../../../../rustc_middle/mir/interpret/pointer/trait.PointerArithmetic.html">PointerArithmetic</a>: <a href="../../../../rustc_abi/trait.HasDataLayout.html">HasDataLayout</a> {
+    <span class="comment">// These are not supposed to be overridden.
+
+    </span><span class="attr">#[inline(always)]
+    </span><span class="kw">fn </span>pointer_size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="../../../../rustc_abi/struct.Size.html">Size</a> {
+        <a class="self" href="#16">self</a>.<a href="../../../../rustc_abi/trait.HasDataLayout.html">data_layout</a>().pointer_size
+    }
+
+    <span class="attr">#[inline(always)]
+    </span><span class="kw">fn </span>max_size_of_val(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="../../../../rustc_abi/struct.Size.html">Size</a> {
+        Size::from_bytes(<a class="self" href="#21">self</a>.<a href="#36-38">target_isize_max</a>())
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>target_usize_max(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a> {
+        <a class="self" href="#26">self</a>.<a href="#16-18">pointer_size</a>().unsigned_int_max().<a href="https://doc.rust-lang.org/nightly/core/convert/trait.TryInto.html">try_into</a>().unwrap()
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>target_isize_min(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a> {
+        <a class="self" href="#31">self</a>.<a href="#16-18">pointer_size</a>().signed_int_min().<a href="https://doc.rust-lang.org/nightly/core/convert/trait.TryInto.html">try_into</a>().unwrap()
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>target_isize_max(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a> {
+        <a class="self" href="#36">self</a>.<a href="#16-18">pointer_size</a>().signed_int_max().<a href="https://doc.rust-lang.org/nightly/core/convert/trait.TryInto.html">try_into</a>().unwrap()
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>target_usize_to_isize(<span class="kw-2">&amp;</span><span class="self">self</span>, val: <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>) -&gt; <a href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a> {
+        <span class="kw">let </span>val = <a href="#41">val</a> <span class="kw">as </span><a href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>;
+        <span class="comment">// Now wrap-around into the machine_isize range.
+        </span><span class="kw">if </span>val &gt; <span class="self">self</span>.target_isize_max() {
+            <span class="comment">// This can only happen if the ptr size is &lt; 64, so we know max_usize_plus_1 fits into
+            // i64.
+            </span><a class="macro" href="https://doc.rust-lang.org/nightly/core/macro.debug_assert.html">debug_assert!</a>(<span class="self">self</span>.pointer_size().bits() &lt; <span class="number">64</span>);
+            <span class="kw">let </span>max_usize_plus_1 = <span class="number">1u128 </span>&lt;&lt; <a class="self" href="#41">self</a>.<a href="#16-18">pointer_size</a>().bits();
+            <a href="#42">val</a> - i64::try_from(<a href="#48">max_usize_plus_1</a>).unwrap()
+        } <span class="kw">else </span>{
+            <a href="#42">val</a>
+        }
+    }
+
+    <span class="doccomment">/// Helper function: truncate given value-&quot;overflowed flag&quot; pair to pointer size and
+    /// update &quot;overflowed flag&quot; if there was an overflow.
+    /// This should be called by all the other methods before returning!
+    </span><span class="attr">#[inline]
+    </span><span class="kw">fn </span>truncate_to_ptr(<span class="kw-2">&amp;</span><span class="self">self</span>, (val, over): (<a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>)) -&gt; (<a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>) {
+        <span class="kw">let </span>val = u128::from(<a href="#59">val</a>);
+        <span class="kw">let </span>max_ptr_plus_1 = <span class="number">1u128 </span>&lt;&lt; <a class="self" href="#59">self</a>.<a href="#16-18">pointer_size</a>().bits();
+        (u64::try_from(<a href="#60">val</a> % <a href="#61">max_ptr_plus_1</a>).unwrap(), <a href="#59">over</a> || <a href="#60">val</a> &gt;= <a href="#61">max_ptr_plus_1</a>)
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>overflowing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, val: <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, i: <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>) -&gt; (<a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>) {
+        <span class="comment">// We do not need to check if i fits in a machine usize. If it doesn&#39;t,
+        // either the wrapping_add will wrap or res will not fit in a pointer.
+        </span><span class="kw">let </span>res = <a href="#66">val</a>.overflowing_add(<a href="#66">i</a>);
+        <a class="self" href="#66">self</a>.<a href="#59-63">truncate_to_ptr</a>(<a href="#69">res</a>)
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>overflowing_signed_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, val: <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, i: <a href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>) -&gt; (<a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>) {
+        <span class="comment">// We need to make sure that i fits in a machine isize.
+        </span><span class="kw">let </span>n = <a href="#74">i</a>.unsigned_abs();
+        <span class="kw">if </span>i &gt;= <span class="number">0 </span>{
+            <span class="kw">let </span>(val, over) = <a class="self" href="#74">self</a>.<a href="#66-71">overflowing_offset</a>(<a href="#74">val</a>, <a href="#76">n</a>);
+            (<a href="#78">val</a>, <a href="#78">over</a> || <a href="#74">i</a> &gt; <a class="self" href="#74">self</a>.<a href="#36-38">target_isize_max</a>())
+        } <span class="kw">else </span>{
+            <span class="kw">let </span>res = <a href="#74">val</a>.overflowing_sub(<a href="#76">n</a>);
+            <span class="kw">let </span>(val, over) = <a class="self" href="#74">self</a>.<a href="#59-63">truncate_to_ptr</a>(<a href="#81">res</a>);
+            (<a href="#82">val</a>, <a href="#82">over</a> || <a href="#74">i</a> &lt; <a class="self" href="#74">self</a>.<a href="#31-33">target_isize_min</a>())
+        }
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>offset&lt;<span class="lifetime">&#39;tcx</span>&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, val: <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, i: <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>) -&gt; InterpResult&lt;<span class="lifetime">&#39;tcx</span>, <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>&gt; {
+        <span class="kw">let </span>(res, over) = <a class="self" href="#88">self</a>.<a href="#66-71">overflowing_offset</a>(<a href="#88">val</a>, <a href="#88">i</a>);
+        <span class="kw">if </span>over { <a class="macro" href="mod.rs.html#73-75">throw_ub!</a>(PointerArithOverflow) } <span class="kw">else </span>{ <span class="prelude-val">Ok</span>(<a href="#89">res</a>) }
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">fn </span>signed_offset&lt;<span class="lifetime">&#39;tcx</span>&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, val: <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, i: <a href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>) -&gt; InterpResult&lt;<span class="lifetime">&#39;tcx</span>, <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>&gt; {
+        <span class="kw">let </span>(res, over) = <a class="self" href="#94">self</a>.<a href="#74-85">overflowing_signed_offset</a>(<a href="#94">val</a>, <a href="#94">i</a>);
+        <span class="kw">if </span>over { <a class="macro" href="mod.rs.html#73-75">throw_ub!</a>(PointerArithOverflow) } <span class="kw">else </span>{ <span class="prelude-val">Ok</span>(<a href="#95">res</a>) }
+    }
+}
+
+<span class="kw">impl</span>&lt;T: <a href="../../../../rustc_abi/trait.HasDataLayout.html">HasDataLayout</a>&gt; <a href="#12-98">PointerArithmetic</a> <span class="kw">for </span>T {}
+
+<span class="doccomment">/// This trait abstracts over the kind of provenance that is associated with a `Pointer`. It is
+/// mostly opaque; the `Machine` trait extends it with some more operations that also have access to
+/// some global state.
+/// The `Debug` rendering is used to display bare provenance, and for the default impl of `fmt`.
+</span><span class="kw">pub trait </span><a href="../../../../rustc_middle/mir/interpret/pointer/trait.Provenance.html">Provenance</a>: <a href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html">Copy</a> + <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html">fmt::Debug</a> {
+    <span class="doccomment">/// Says whether the `offset` field of `Pointer`s with this provenance is the actual physical address.
+    /// - If `false`, the offset *must* be relative. This means the bytes representing a pointer are
+    ///   different from what the Abstract Machine prescribes, so the interpreter must prevent any
+    ///   operation that would inspect the underlying bytes of a pointer, such as ptr-to-int
+    ///   transmutation. A `ReadPointerAsBytes` error will be raised in such situations.
+    /// - If `true`, the interpreter will permit operations to inspect the underlying bytes of a
+    ///   pointer, and implement ptr-to-int transmutation by stripping provenance.
+    </span><span class="kw">const </span>OFFSET_IS_ADDR: <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>;
+
+    <span class="doccomment">/// Determines how a pointer should be printed.
+    ///
+    /// Default impl is only good for when `OFFSET_IS_ADDR == true`.
+    </span><span class="kw">fn </span>fmt(ptr: <span class="kw-2">&amp;</span>Pointer&lt;<span class="self">Self</span>&gt;, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; <a href="https://doc.rust-lang.org/nightly/core/fmt/type.Result.html">fmt::Result</a>
+    <span class="kw">where
+        </span><span class="self">Self</span>: <a href="https://doc.rust-lang.org/nightly/core/marker/trait.Sized.html">Sized</a>,
+    {
+        <a class="macro" href="https://doc.rust-lang.org/nightly/core/macro.assert.html">assert!</a>(<span class="self">Self</span>::OFFSET_IS_ADDR);
+        <span class="kw">let </span>(prov, addr) = <a href="#119">ptr</a>.<a href="#277-279">into_parts</a>(); <span class="comment">// address is absolute
+        </span><span class="macro">write!</span>(f, <span class="string">&quot;{:#x}&quot;</span>, addr.bytes())<span class="question-mark">?</span>;
+        <span class="kw">if </span>f.alternate() {
+            <span class="macro">write!</span>(f, <span class="string">&quot;{prov:#?}&quot;</span>)<span class="question-mark">?</span>;
+        } <span class="kw">else </span>{
+            <span class="macro">write!</span>(f, <span class="string">&quot;{prov:?}&quot;</span>)<span class="question-mark">?</span>;
+        }
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// If `OFFSET_IS_ADDR == false`, provenance must always be able to
+    /// identify the allocation this ptr points to (i.e., this must return `Some`).
+    /// Otherwise this function is best-effort (but must agree with `Machine::ptr_get_alloc`).
+    /// (Identifying the offset in that allocation, however, is harder -- use `Memory::ptr_get_alloc` for that.)
+    </span><span class="kw">fn </span>get_alloc_id(<span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<a href="mod.rs.html#208">AllocId</a>&gt;;
+
+    <span class="doccomment">/// Defines the &#39;join&#39; of provenance: what happens when doing a pointer load and different bytes have different provenance.
+    </span><span class="kw">fn </span>join(left: <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;, right: <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;;
+}
+
+<span class="kw">impl </span><a href="#106-142">Provenance</a> <span class="kw">for </span><a href="mod.rs.html#208">AllocId</a> {
+    <span class="comment">// With the `AllocId` as provenance, the `offset` is interpreted *relative to the allocation*,
+    // so ptr-to-int casts are not possible (since we do not know the global physical offset).
+    </span><span class="kw">const </span>OFFSET_IS_ADDR: <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a> = <span class="bool-val">false</span>;
+
+    <span class="kw">fn </span>fmt(ptr: <span class="kw-2">&amp;</span>Pointer&lt;<span class="self">Self</span>&gt;, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; <a href="https://doc.rust-lang.org/nightly/core/fmt/type.Result.html">fmt::Result</a> {
+        <span class="comment">// Forward `alternate` flag to `alloc_id` printing.
+        </span><span class="kw">if </span>f.alternate() {
+            <span class="macro">write!</span>(f, <span class="string">&quot;{:#?}&quot;</span>, ptr.provenance)<span class="question-mark">?</span>;
+        } <span class="kw">else </span>{
+            <span class="macro">write!</span>(f, <span class="string">&quot;{:?}&quot;</span>, ptr.provenance)<span class="question-mark">?</span>;
+        }
+        <span class="comment">// Print offset only if it is non-zero.
+        </span><span class="kw">if </span>ptr.offset.bytes() &gt; <span class="number">0 </span>{
+            <span class="macro">write!</span>(f, <span class="string">&quot;+{:#x}&quot;</span>, ptr.offset.bytes())<span class="question-mark">?</span>;
+        }
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">fn </span>get_alloc_id(<span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<a href="mod.rs.html#208">AllocId</a>&gt; {
+        <span class="prelude-val">Some</span>(<a class="self" href="#163">self</a>)
+    }
+
+    <span class="kw">fn </span>join(_left: <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;, _right: <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
+        <a class="macro" href="https://doc.rust-lang.org/nightly/std/macro.panic.html">panic!</a>(<span class="string">&quot;merging provenance is not supported when `OFFSET_IS_ADDR` is false&quot;</span>)
+    }
+}
+
+<span class="doccomment">/// Represents a pointer in the Miri engine.
+///
+/// Pointers are &quot;tagged&quot; with provenance information; typically the `AllocId` they belong to.
+</span><span class="attr">#[derive(Copy, Clone, Eq, PartialEq, TyEncodable, TyDecodable, Hash)]
+#[derive(HashStable)]
+</span><span class="kw">pub struct </span><a href="../../../../rustc_middle/mir/interpret/pointer/struct.Pointer.html">Pointer</a>&lt;Prov = <a href="mod.rs.html#208">AllocId</a>&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) offset: <a href="../../../../rustc_abi/struct.Size.html">Size</a>, <span class="comment">// kept private to avoid accidental misinterpretation (meaning depends on `Prov` type)
+    </span><span class="kw">pub </span>provenance: Prov,
+}
+
+<a class="macro" href="../../../../rustc_index/macro.static_assert_size.html">static_assert_size!</a>(Pointer, <span class="number">16</span>);
+<span class="comment">// `Option&lt;Prov&gt;` pointers are also passed around quite a bit
+// (but not stored in permanent machine state).
+</span><a class="macro" href="../../../../rustc_index/macro.static_assert_size.html">static_assert_size!</a>(Pointer&lt;<span class="prelude-ty">Option</span>&lt;AllocId&gt;&gt;, <span class="number">16</span>);
+
+<span class="comment">// We want the `Debug` output to be readable as it is used by `derive(Debug)` for
+// all the Miri types.
+</span><span class="kw">impl</span>&lt;Prov: <a href="#106-142">Provenance</a>&gt; <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html">fmt::Debug</a> <span class="kw">for </span>Pointer&lt;Prov&gt; {
+    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; <a href="https://doc.rust-lang.org/nightly/core/fmt/type.Result.html">fmt::Result</a> {
+        <a href="#119-132">Provenance::fmt</a>(<a class="self" href="#190">self</a>, <a href="#190">f</a>)
+    }
+}
+
+<span class="kw">impl</span>&lt;Prov: <a href="#106-142">Provenance</a>&gt; <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html">fmt::Debug</a> <span class="kw">for </span>Pointer&lt;<span class="prelude-ty">Option</span>&lt;Prov&gt;&gt; {
+    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; <a href="https://doc.rust-lang.org/nightly/core/fmt/type.Result.html">fmt::Result</a> {
+        <span class="kw">match </span><a class="self" href="#196">self</a>.provenance {
+            <span class="prelude-val">Some</span>(prov) =&gt; <a href="#119-132">Provenance::fmt</a>(<span class="kw-2">&amp;</span>Pointer::new(<a href="#198">prov</a>, <a class="self" href="#196">self</a>.offset), <a href="#196">f</a>),
+            <span class="prelude-val">None </span>=&gt; <a class="macro" href="https://doc.rust-lang.org/nightly/core/macro.write.html">write!</a>(<a href="#196">f</a>, <span class="string">&quot;{:#x}[noalloc]&quot;</span>, <span class="self">self</span>.offset.bytes()),
+        }
+    }
+}
+
+<span class="kw">impl</span>&lt;Prov: <a href="#106-142">Provenance</a>&gt; <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Display.html">fmt::Display</a> <span class="kw">for </span>Pointer&lt;<span class="prelude-ty">Option</span>&lt;Prov&gt;&gt; {
+    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; <a href="https://doc.rust-lang.org/nightly/core/fmt/type.Result.html">fmt::Result</a> {
+        <span class="kw">if </span><span class="self">self</span>.provenance.is_none() &amp;&amp; <span class="self">self</span>.offset.bytes() == <span class="number">0 </span>{
+            <a class="macro" href="https://doc.rust-lang.org/nightly/core/macro.write.html">write!</a>(<a href="#205">f</a>, <span class="string">&quot;null pointer&quot;</span>)
+        } <span class="kw">else </span>{
+            <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html">fmt::Debug::fmt</a>(<a class="self" href="#205">self</a>, <a href="#205">f</a>)
+        }
+    }
+}
+
+<span class="doccomment">/// Produces a `Pointer` that points to the beginning of the `Allocation`.
+</span><span class="kw">impl </span>From&lt;<a href="mod.rs.html#208">AllocId</a>&gt; <span class="kw">for </span><a href="#177-180">Pointer</a> {
+    <span class="attr">#[inline(always)]
+    </span><span class="kw">fn </span>from(alloc_id: <a href="mod.rs.html#208">AllocId</a>) -&gt; <span class="self">Self </span>{
+        Pointer::new(<a href="#217">alloc_id</a>, Size::ZERO)
+    }
+}
+
+<span class="kw">impl</span>&lt;Prov&gt; From&lt;Pointer&lt;Prov&gt;&gt; <span class="kw">for </span>Pointer&lt;<span class="prelude-ty">Option</span>&lt;Prov&gt;&gt; {
+    <span class="attr">#[inline(always)]
+    </span><span class="kw">fn </span>from(ptr: Pointer&lt;Prov&gt;) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>(prov, offset) = <a href="#224">ptr</a>.<a href="#277-279">into_parts</a>();
+        Pointer::new(<span class="prelude-val">Some</span>(<a href="#225">prov</a>), <a href="#225">offset</a>)
+    }
+}
+
+<span class="kw">impl</span>&lt;Prov&gt; Pointer&lt;<span class="prelude-ty">Option</span>&lt;Prov&gt;&gt; {
+    <span class="doccomment">/// Convert this pointer that *might* have a provenance into a pointer that *definitely* has a
+    /// provenance, or an absolute address.
+    ///
+    /// This is rarely what you want; call `ptr_try_get_alloc_id` instead.
+    </span><span class="kw">pub fn </span>into_pointer_or_addr(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Pointer&lt;Prov&gt;, <a href="../../../../rustc_abi/struct.Size.html">Size</a>&gt; {
+        <span class="kw">match </span><a class="self" href="#235">self</a>.provenance {
+            <span class="prelude-val">Some</span>(prov) =&gt; <span class="prelude-val">Ok</span>(Pointer::new(<a href="#237">prov</a>, <a class="self" href="#235">self</a>.offset)),
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<a class="self" href="#235">self</a>.offset),
+        }
+    }
+
+    <span class="doccomment">/// Returns the absolute address the pointer points to.
+    /// Only works if Prov::OFFSET_IS_ADDR is true!
+    </span><span class="kw">pub fn </span>addr(<span class="self">self</span>) -&gt; <a href="../../../../rustc_abi/struct.Size.html">Size</a>
+    <span class="kw">where
+        </span>Prov: <a href="#106-142">Provenance</a>,
+    {
+        <a class="macro" href="https://doc.rust-lang.org/nightly/core/macro.assert.html">assert!</a>(Prov::OFFSET_IS_ADDR);
+        <a class="self" href="#244">self</a>.offset
+    }
+}
+
+<span class="kw">impl</span>&lt;Prov&gt; Pointer&lt;<span class="prelude-ty">Option</span>&lt;Prov&gt;&gt; {
+    <span class="doccomment">/// Creates a pointer to the given address, with invalid provenance (i.e., cannot be used for
+    /// any memory access).
+    </span><span class="attr">#[inline(always)]
+    </span><span class="kw">pub fn </span>from_addr_invalid(addr: <a href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>) -&gt; <span class="self">Self </span>{
+        <a href="#177-180">Pointer</a> { provenance: <span class="prelude-val">None</span>, offset: Size::from_bytes(<a href="#257">addr</a>) }
+    }
+
+    <span class="attr">#[inline(always)]
+    </span><span class="kw">pub fn </span>null() -&gt; <span class="self">Self </span>{
+        Pointer::from_addr_invalid(<span class="number">0</span>)
+    }
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;tcx</span>, Prov&gt; Pointer&lt;Prov&gt; {
+    <span class="attr">#[inline(always)]
+    </span><span class="kw">pub fn </span>new(provenance: Prov, offset: <a href="../../../../rustc_abi/struct.Size.html">Size</a>) -&gt; <span class="self">Self </span>{
+        <a href="#177-180">Pointer</a> { <a href="#269">provenance</a>, <a href="#269">offset</a> }
+    }
+
+    <span class="doccomment">/// Obtain the constituents of this pointer. Not that the meaning of the offset depends on the type `Prov`!
+    /// This function must only be used in the implementation of `Machine::ptr_get_alloc`,
+    /// and when a `Pointer` is taken apart to be stored efficiently in an `Allocation`.
+    </span><span class="attr">#[inline(always)]
+    </span><span class="kw">pub fn </span>into_parts(<span class="self">self</span>) -&gt; (Prov, <a href="../../../../rustc_abi/struct.Size.html">Size</a>) {
+        (<a class="self" href="#277">self</a>.provenance, <a class="self" href="#277">self</a>.offset)
+    }
+
+    <span class="kw">pub fn </span>map_provenance(<span class="self">self</span>, f: <span class="kw">impl </span>FnOnce(Prov) -&gt; Prov) -&gt; <span class="self">Self </span>{
+        <a href="#177-180">Pointer</a> { provenance: <a href="#281">f</a>(<a class="self" href="#281">self</a>.provenance), ..<span class="self"><a href="#281">self</a> </span>}
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">pub fn </span>offset(<span class="self">self</span>, i: <a href="../../../../rustc_abi/struct.Size.html">Size</a>, cx: <span class="kw-2">&amp;</span><span class="kw">impl </span><a href="../../../../rustc_abi/trait.HasDataLayout.html">HasDataLayout</a>) -&gt; InterpResult&lt;<span class="lifetime">&#39;tcx</span>, <span class="self">Self</span>&gt; {
+        <span class="prelude-val">Ok</span>(<a href="#177-180">Pointer</a> {
+            offset: Size::from_bytes(cx.data_layout().offset(<span class="self">self</span>.offset.bytes(), i.bytes())<span class="question-mark">?</span>),
+            ..<span class="self"><a href="#286">self</a>
+        </span>})
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">pub fn </span>overflowing_offset(<span class="self">self</span>, i: <a href="../../../../rustc_abi/struct.Size.html">Size</a>, cx: <span class="kw-2">&amp;</span><span class="kw">impl </span><a href="../../../../rustc_abi/trait.HasDataLayout.html">HasDataLayout</a>) -&gt; (<span class="self">Self</span>, <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>) {
+        <span class="kw">let </span>(res, over) = <a href="#294">cx</a>.<a href="../../../../rustc_abi/trait.HasDataLayout.html">data_layout</a>().<a href="#66-71">overflowing_offset</a>(<a class="self" href="#294">self</a>.offset.bytes(), <a href="#294">i</a>.bytes());
+        <span class="kw">let </span>ptr = <a href="#177-180">Pointer</a> { offset: Size::from_bytes(<a href="#295">res</a>), ..<span class="self"><a href="#294">self</a> </span>};
+        (<a href="#296">ptr</a>, <a href="#295">over</a>)
+    }
+
+    <span class="attr">#[inline(always)]
+    </span><span class="kw">pub fn </span>wrapping_offset(<span class="self">self</span>, i: <a href="../../../../rustc_abi/struct.Size.html">Size</a>, cx: <span class="kw-2">&amp;</span><span class="kw">impl </span><a href="../../../../rustc_abi/trait.HasDataLayout.html">HasDataLayout</a>) -&gt; <span class="self">Self </span>{
+        <a class="self" href="#301">self</a>.<a href="#294-298">overflowing_offset</a>(<a href="#301">i</a>, <a href="#301">cx</a>).<span class="number">0
+    </span>}
+
+    <span class="attr">#[inline]
+    </span><span class="kw">pub fn </span>signed_offset(<span class="self">self</span>, i: <a href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>, cx: <span class="kw-2">&amp;</span><span class="kw">impl </span><a href="../../../../rustc_abi/trait.HasDataLayout.html">HasDataLayout</a>) -&gt; InterpResult&lt;<span class="lifetime">&#39;tcx</span>, <span class="self">Self</span>&gt; {
+        <span class="prelude-val">Ok</span>(<a href="#177-180">Pointer</a> {
+            offset: Size::from_bytes(cx.data_layout().signed_offset(<span class="self">self</span>.offset.bytes(), i)<span class="question-mark">?</span>),
+            ..<span class="self"><a href="#306">self</a>
+        </span>})
+    }
+
+    <span class="attr">#[inline]
+    </span><span class="kw">pub fn </span>overflowing_signed_offset(<span class="self">self</span>, i: <a href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>, cx: <span class="kw-2">&amp;</span><span class="kw">impl </span><a href="../../../../rustc_abi/trait.HasDataLayout.html">HasDataLayout</a>) -&gt; (<span class="self">Self</span>, <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>) {
+        <span class="kw">let </span>(res, over) = <a href="#314">cx</a>.<a href="../../../../rustc_abi/trait.HasDataLayout.html">data_layout</a>().<a href="#74-85">overflowing_signed_offset</a>(<a class="self" href="#314">self</a>.offset.bytes(), <a href="#314">i</a>);
+        <span class="kw">let </span>ptr = <a href="#177-180">Pointer</a> { offset: Size::from_bytes(<a href="#315">res</a>), ..<span class="self"><a href="#314">self</a> </span>};
+        (<a href="#316">ptr</a>, <a href="#315">over</a>)
+    }
+
+    <span class="attr">#[inline(always)]
+    </span><span class="kw">pub fn </span>wrapping_signed_offset(<span class="self">self</span>, i: <a href="https://doc.rust-lang.org/nightly/std/primitive.i64.html">i64</a>, cx: <span class="kw-2">&amp;</span><span class="kw">impl </span><a href="../../../../rustc_abi/trait.HasDataLayout.html">HasDataLayout</a>) -&gt; <span class="self">Self </span>{
+        <a class="self" href="#321">self</a>.<a href="#314-318">overflowing_signed_offset</a>(<a href="#321">i</a>, <a href="#321">cx</a>).<span class="number">0
+    </span>}
+}
+</code></pre></div></section></main></body></html>

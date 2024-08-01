@@ -1,0 +1,383 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `compiler/rustc_mir_build/src/build/expr/as_operand.rs`."><title>as_operand.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="rustc_mir_build" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><a class="sub-logo-container" href="../../../../rustc_mir_build/index.html"><img class="rust-logo" src="../../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a>
+<a href="#51" id="51">51</a>
+<a href="#52" id="52">52</a>
+<a href="#53" id="53">53</a>
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! See docs in build/expr/mod.rs
+
+</span><span class="kw">use </span><a href="category.rs.html#4-17"><span class="kw">crate</span>::build::expr::category::Category</a>;
+<span class="kw">use </span><span class="kw">crate</span>::build::{<a href="../mod.rs.html#408">BlockAnd</a>, <a href="../mod.rs.html#410-413">BlockAndExtension</a>, <a href="../mod.rs.html#162-227">Builder</a>, <a href="../mod.rs.html#390-399">NeedsTemporary</a>};
+<span class="kw">use </span><a href="../../../../rustc_middle/middle/region/index.html">rustc_middle::middle::region</a>;
+<span class="kw">use </span><a href="../../../../rustc_middle/mir/index.html">rustc_middle::mir</a>::<span class="kw-2">*</span>;
+<span class="kw">use </span><a href="../../../../rustc_middle/thir/index.html">rustc_middle::thir</a>::<span class="kw-2">*</span>;
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>, <span class="lifetime">&#39;tcx</span>&gt; Builder&lt;<span class="lifetime">&#39;a</span>, <span class="lifetime">&#39;tcx</span>&gt; {
+    <span class="doccomment">/// Returns an operand suitable for use until the end of the current
+    /// scope expression.
+    ///
+    /// The operand returned from this function will *not be valid*
+    /// after the current enclosing `ExprKind::Scope` has ended, so
+    /// please do *not* return it from functions to avoid bad
+    /// miscompiles.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>as_local_operand(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        block: <a href="../../../../rustc_middle/mir/struct.BasicBlock.html">BasicBlock</a>,
+        expr: <span class="kw-2">&amp;</span>Expr&lt;<span class="lifetime">&#39;tcx</span>&gt;,
+    ) -&gt; BlockAnd&lt;Operand&lt;<span class="lifetime">&#39;tcx</span>&gt;&gt; {
+        <span class="kw">let </span>local_scope = <a class="self" href="#18">self</a>.<a href="../scope.rs.html#897-899">local_scope</a>();
+        <a class="self" href="#18">self</a>.<a href="#99">as_operand</a>(<a href="#19">block</a>, <span class="prelude-val">Some</span>(<a href="#22">local_scope</a>), <a href="#20">expr</a>, LocalInfo::Boring, <a href="../mod.rs.html#398">NeedsTemporary::Maybe</a>)
+    }
+
+    <span class="doccomment">/// Returns an operand suitable for use until the end of the current scope expression and
+    /// suitable also to be passed as function arguments.
+    ///
+    /// The operand returned from this function will *not be valid* after an ExprKind::Scope is
+    /// passed, so please do *not* return it from functions to avoid bad miscompiles. Returns an
+    /// operand suitable for use as a call argument. This is almost always equivalent to
+    /// `as_operand`, except for the particular case of passing values of (potentially) unsized
+    /// types &quot;by value&quot; (see details below).
+    ///
+    /// The operand returned from this function will *not be valid*
+    /// after the current enclosing `ExprKind::Scope` has ended, so
+    /// please do *not* return it from functions to avoid bad
+    /// miscompiles.
+    ///
+    /// # Parameters of unsized types
+    ///
+    /// We tweak the handling of parameters of unsized type slightly to avoid the need to create a
+    /// local variable of unsized type. For example, consider this program:
+    ///
+    /// ```
+    /// #![feature(unsized_locals, unsized_fn_params)]
+    /// # use core::fmt::Debug;
+    /// fn foo(p: dyn Debug) { dbg!(p); }
+    ///
+    /// fn bar(box_p: Box&lt;dyn Debug&gt;) { foo(*box_p); }
+    /// ```
+    ///
+    /// Ordinarily, for sized types, we would compile the call `foo(*p)` like so:
+    ///
+    /// ```ignore (illustrative)
+    /// let tmp0 = *box_p; // tmp0 would be the operand returned by this function call
+    /// foo(tmp0)
+    /// ```
+    ///
+    /// But because the parameter to `foo` is of the unsized type `dyn Debug`, and because it is
+    /// being moved the deref of a box, we compile it slightly differently. The temporary `tmp0`
+    /// that we create *stores the entire box*, and the parameter to the call itself will be
+    /// `*tmp0`:
+    ///
+    /// ```ignore (illustrative)
+    /// let tmp0 = box_p; call foo(*tmp0)
+    /// ```
+    ///
+    /// This way, the temporary `tmp0` that we create has type `Box&lt;dyn Debug&gt;`, which is sized.
+    /// The value passed to the call (`*tmp0`) still has the `dyn Debug` type -- but the way that
+    /// calls are compiled means that this parameter will be passed &quot;by reference&quot;, meaning that we
+    /// will actually provide a pointer to the interior of the box, and not move the `dyn Debug`
+    /// value to the stack.
+    ///
+    /// See #68304 for more details.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>as_local_call_operand(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        block: <a href="../../../../rustc_middle/mir/struct.BasicBlock.html">BasicBlock</a>,
+        expr: <span class="kw-2">&amp;</span>Expr&lt;<span class="lifetime">&#39;tcx</span>&gt;,
+    ) -&gt; BlockAnd&lt;Operand&lt;<span class="lifetime">&#39;tcx</span>&gt;&gt; {
+        <span class="kw">let </span>local_scope = <a class="self" href="#77">self</a>.<a href="../scope.rs.html#897-899">local_scope</a>();
+        <a class="self" href="#77">self</a>.<a href="#143-190">as_call_operand</a>(<a href="#78">block</a>, <span class="prelude-val">Some</span>(<a href="#81">local_scope</a>), <a href="#79">expr</a>)
+    }
+
+    <span class="doccomment">/// Compile `expr` into a value that can be used as an operand.
+    /// If `expr` is a place like `x`, this will introduce a
+    /// temporary `tmp = x`, so that we capture the value of `x` at
+    /// this time.
+    ///
+    /// If we end up needing to create a temporary, then we will use
+    /// `local_info` as its `LocalInfo`, unless `as_temporary`
+    /// has already assigned it a non-`None` `LocalInfo`.
+    /// Normally, you should use `None` for `local_info`
+    ///
+    /// The operand is known to be live until the end of `scope`.
+    ///
+    /// Like `as_local_call_operand`, except that the argument will
+    /// not be valid once `scope` ends.
+    </span><span class="attr">#[instrument(level = <span class="string">&quot;debug&quot;</span>, skip(<span class="self">self</span>, scope))]
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>as_operand(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        <span class="kw-2">mut </span>block: <a href="../../../../rustc_middle/mir/struct.BasicBlock.html">BasicBlock</a>,
+        scope: <span class="prelude-ty">Option</span>&lt;<a href="../../../../rustc_middle/middle/region/struct.Scope.html">region::Scope</a>&gt;,
+        expr: <span class="kw-2">&amp;</span>Expr&lt;<span class="lifetime">&#39;tcx</span>&gt;,
+        local_info: LocalInfo&lt;<span class="lifetime">&#39;tcx</span>&gt;,
+        needs_temporary: <a href="../mod.rs.html#390-399">NeedsTemporary</a>,
+    ) -&gt; BlockAnd&lt;Operand&lt;<span class="lifetime">&#39;tcx</span>&gt;&gt; {
+        <span class="kw">let </span>this = <span class="self">self</span>;
+
+        <span class="kw">if let </span>ExprKind::Scope { region_scope, lint_level, value } = expr.kind {
+            <span class="kw">let </span>source_info = this.source_info(expr.span);
+            <span class="kw">let </span>region_scope = (region_scope, source_info);
+            <span class="kw">return </span>this.in_scope(region_scope, lint_level, |this| {
+                this.as_operand(block, scope, <span class="kw-2">&amp;</span>this.thir[value], local_info, needs_temporary)
+            });
+        }
+
+        <span class="kw">let </span>category = Category::of(<span class="kw-2">&amp;</span>expr.kind).unwrap();
+        <span class="macro">debug!</span>(<span class="question-mark">?</span>category, <span class="question-mark">?</span>expr.kind);
+        <span class="kw">match </span>category {
+            Category::Constant
+                <span class="kw">if </span><span class="macro">matches!</span>(needs_temporary, NeedsTemporary::No)
+                    || !expr.ty.needs_drop(this.tcx, this.param_env) =&gt;
+            {
+                <span class="kw">let </span>constant = this.as_constant(expr);
+                block.and(Operand::Constant(Box::new(constant)))
+            }
+            Category::Constant | Category::Place | Category::Rvalue(..) =&gt; {
+                <span class="kw">let </span>operand = <span class="macro">unpack!</span>(block = this.as_temp(block, scope, expr, Mutability::Mut));
+                <span class="comment">// Overwrite temp local info if we have something more interesting to record.
+                </span><span class="kw">if </span>!<span class="macro">matches!</span>(local_info, LocalInfo::Boring) {
+                    <span class="kw">let </span>decl_info =
+                        this.local_decls[operand].local_info.as_mut().assert_crate_local();
+                    <span class="kw">if let </span>LocalInfo::Boring | LocalInfo::BlockTailTemp(<span class="kw">_</span>) = <span class="kw-2">**</span>decl_info {
+                        <span class="kw-2">**</span>decl_info = local_info;
+                    }
+                }
+                block.and(Operand::Move(Place::from(operand)))
+            }
+        }
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>as_call_operand(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        <span class="kw-2">mut </span>block: <a href="../../../../rustc_middle/mir/struct.BasicBlock.html">BasicBlock</a>,
+        scope: <span class="prelude-ty">Option</span>&lt;<a href="../../../../rustc_middle/middle/region/struct.Scope.html">region::Scope</a>&gt;,
+        expr: <span class="kw-2">&amp;</span>Expr&lt;<span class="lifetime">&#39;tcx</span>&gt;,
+    ) -&gt; BlockAnd&lt;Operand&lt;<span class="lifetime">&#39;tcx</span>&gt;&gt; {
+        <a class="macro" href="https://docs.rs/tracing/0.1.37/tracing/macro.debug.html">debug!</a>(<span class="string">&quot;as_call_operand(block={:?}, expr={:?})&quot;</span>, block, expr);
+        <span class="kw">let </span>this = <a class="self" href="#144">self</a>;
+
+        <span class="kw">if let </span><a href="../../../../rustc_middle/thir/enum.ExprKind.html">ExprKind::Scope</a> { region_scope, lint_level, value } = <a href="#147">expr</a>.kind {
+            <span class="kw">let </span>source_info = <a href="#150">this</a>.<a href="../scope.rs.html#871-873">source_info</a>(<a href="#147">expr</a>.span);
+            <span class="kw">let </span>region_scope = (<a href="#152">region_scope</a>, <a href="#153">source_info</a>);
+            <span class="kw">return </span><a href="#150">this</a>.<a href="../scope.rs.html#562">in_scope</a>(<a href="#154">region_scope</a>, <a href="#152">lint_level</a>, |this| {
+                <a href="#155">this</a>.<a href="#143-190">as_call_operand</a>(<a href="#145">block</a>, <a href="#146">scope</a>, <span class="kw-2">&amp;</span><a href="#155">this</a>.thir[<a href="#152">value</a>])
+            });
+        }
+
+        <span class="kw">let </span>tcx = <a href="#150">this</a>.tcx;
+
+        <span class="kw">if </span>tcx.features().unsized_fn_params {
+            <span class="kw">let </span>ty = <a href="#147">expr</a>.ty;
+            <span class="kw">let </span>param_env = <a href="#150">this</a>.param_env;
+
+            <span class="kw">if </span>!ty.is_sized(tcx, param_env) {
+                <span class="comment">// !sized means !copy, so this is an unsized move
+                </span><a class="macro" href="https://doc.rust-lang.org/nightly/core/macro.assert.html">assert!</a>(!ty.is_copy_modulo_regions(tcx, param_env));
+
+                <span class="comment">// As described above, detect the case where we are passing a value of unsized
+                // type, and that value is coming from the deref of a box.
+                </span><span class="kw">if let </span><a href="../../../../rustc_middle/thir/enum.ExprKind.html">ExprKind::Deref</a> { arg } = <a href="#147">expr</a>.kind {
+                    <span class="comment">// Generate let tmp0 = arg0
+                    </span><span class="kw">let </span>operand = <a class="macro" href="../mod.rs.html#427-438">unpack!</a>(
+                        block = this.as_temp(block, scope, <span class="kw-2">&amp;</span>this.thir[arg], Mutability::Mut)
+                    );
+
+                    <span class="comment">// Return the operand *tmp0 to be used as the call argument
+                    </span><span class="kw">let </span>place = <a href="../../../../rustc_middle/mir/syntax/struct.Place.html">Place</a> {
+                        local: <a href="#174">operand</a>,
+                        projection: <a href="#160">tcx</a>.mk_place_elems(<span class="kw-2">&amp;</span>[PlaceElem::Deref]),
+                    };
+
+                    <span class="kw">return </span><a href="#145">block</a>.<a href="../mod.rs.html#411">and</a>(Operand::Move(<a href="#179">place</a>));
+                }
+            }
+        }
+
+        <a href="#150">this</a>.<a href="#99">as_operand</a>(<a href="#145">block</a>, <a href="#146">scope</a>, <a href="#147">expr</a>, LocalInfo::Boring, <a href="../mod.rs.html#398">NeedsTemporary::Maybe</a>)
+    }
+}
+</code></pre></div></section></main></body></html>

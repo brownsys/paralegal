@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PlaceBase"],"fn":["convert_to_hir_projections_and_truncate_for_capture","enable_precise_capture","find_capture_matching_projections","is_ancestor_or_same_capture","strip_prefix","to_upvars_resolved_place_builder"],"struct":["PlaceBuilder"]};

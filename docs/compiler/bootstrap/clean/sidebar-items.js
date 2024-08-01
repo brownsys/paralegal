@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["clean","clean_default","clean_specific_stage","do_op","rm_rf"],"macro":["clean_crate_tree"],"struct":["CleanAll","Rustc","Std"]};

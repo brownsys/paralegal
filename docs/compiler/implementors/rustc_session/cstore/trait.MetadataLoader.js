@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"rustc_codegen_ssa":[["impl <a class=\"trait\" href=\"rustc_session/cstore/trait.MetadataLoader.html\" title=\"trait rustc_session::cstore::MetadataLoader\">MetadataLoader</a> for <a class=\"struct\" href=\"rustc_codegen_ssa/back/metadata/struct.DefaultMetadataLoader.html\" title=\"struct rustc_codegen_ssa::back::metadata::DefaultMetadataLoader\">DefaultMetadataLoader</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FutureCompatOverlapErrorKind","Inserted","Node","OverlapMode","PotentialSiblings"],"fn":["ancestors","assoc_def","filtered_children","iter_children"],"struct":["Ancestors","Children","FutureCompatOverlapError","Graph","LeafDef"],"trait":["ChildrenExt","GraphExt"]};

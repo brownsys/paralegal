@@ -1,0 +1,305 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/cargo/sources/replaced.rs`."><title>replaced.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><a class="sub-logo-container" href="../../../cargo/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a>
+<a href="#51" id="51">51</a>
+<a href="#52" id="52">52</a>
+<a href="#53" id="53">53</a>
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><a href="../core/source/mod.rs.html#198-210"><span class="kw">crate</span>::core::source::MaybePackage</a>;
+<span class="kw">use </span><span class="kw">crate</span>::core::{<a href="../core/dependency.rs.html#21-23">Dependency</a>, <a href="../core/package.rs.html#53-55">Package</a>, <a href="../core/package_id.rs.html#21-23">PackageId</a>, <a href="../core/source/mod.rs.html#181-194">QueryKind</a>, <a href="../core/source/mod.rs.html#46-177">Source</a>, <a href="../core/source/source_id.rs.html#35-37">SourceId</a>, <a href="../core/summary.rs.html#17-19">Summary</a>};
+<span class="kw">use </span><a href="../util/errors.rs.html#10"><span class="kw">crate</span>::util::errors::CargoResult</a>;
+<span class="kw">use </span><a href="https://doc.rust-lang.org/nightly/core/task/poll/enum.Poll.html">std::task::Poll</a>;
+
+<span class="kw">use </span><a href="https://docs.rs/anyhow/1.0.72/anyhow/trait.Context.html">anyhow::Context</a> <span class="kw">as _</span>;
+
+<span class="doccomment">/// A source that replaces one source with the other. This manages the [source
+/// replacement] feature.
+///
+/// The implementation is merely redirecting from the original to the replacement.
+///
+/// [source replacement]: https://doc.rust-lang.org/nightly/cargo/reference/source-replacement.html
+</span><span class="kw">pub struct </span><a href="../../../cargo/sources/replaced/struct.ReplacedSource.html">ReplacedSource</a>&lt;<span class="lifetime">&#39;cfg</span>&gt; {
+    <span class="doccomment">/// The identifier of the original source.
+    </span>to_replace: <a href="../core/source/source_id.rs.html#35-37">SourceId</a>,
+    <span class="doccomment">/// The identifier of the new replacement source.
+    </span>replace_with: <a href="../core/source/source_id.rs.html#35-37">SourceId</a>,
+    inner: Box&lt;<span class="kw">dyn </span><a href="../core/source/mod.rs.html#46-177">Source</a> + <span class="lifetime">&#39;cfg</span>&gt;,
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;cfg</span>&gt; ReplacedSource&lt;<span class="lifetime">&#39;cfg</span>&gt; {
+    <span class="doccomment">/// Creates a replaced source.
+    ///
+    /// The `src` argument is the new replacement source.
+    </span><span class="kw">pub fn </span>new(
+        to_replace: <a href="../core/source/source_id.rs.html#35-37">SourceId</a>,
+        replace_with: <a href="../core/source/source_id.rs.html#35-37">SourceId</a>,
+        src: Box&lt;<span class="kw">dyn </span><a href="../core/source/mod.rs.html#46-177">Source</a> + <span class="lifetime">&#39;cfg</span>&gt;,
+    ) -&gt; ReplacedSource&lt;<span class="lifetime">&#39;cfg</span>&gt; {
+        <a href="#14-20">ReplacedSource</a> {
+            <a href="#27">to_replace</a>,
+            <a href="#28">replace_with</a>,
+            inner: <a href="#29">src</a>,
+        }
+    }
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;cfg</span>&gt; <a href="../core/source/mod.rs.html#46-177">Source</a> <span class="kw">for </span>ReplacedSource&lt;<span class="lifetime">&#39;cfg</span>&gt; {
+    <span class="kw">fn </span>source_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="../core/source/source_id.rs.html#35-37">SourceId</a> {
+        <a class="self" href="#40">self</a>.to_replace
+    }
+
+    <span class="kw">fn </span>replaced_source_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="../core/source/source_id.rs.html#35-37">SourceId</a> {
+        <a class="self" href="#44">self</a>.replace_with
+    }
+
+    <span class="kw">fn </span>supports_checksums(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a> {
+        <a class="self" href="#48">self</a>.inner.<a href="../core/source/mod.rs.html#57">supports_checksums</a>()
+    }
+
+    <span class="kw">fn </span>requires_precise(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a> {
+        <a class="self" href="#52">self</a>.inner.<a href="../core/source/mod.rs.html#61">requires_precise</a>()
+    }
+
+    <span class="kw">fn </span>query(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        dep: <span class="kw-2">&amp;</span><a href="../core/dependency.rs.html#21-23">Dependency</a>,
+        kind: <a href="../core/source/mod.rs.html#181-194">QueryKind</a>,
+        f: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>FnMut(<a href="../core/summary.rs.html#17-19">Summary</a>),
+    ) -&gt; Poll&lt;CargoResult&lt;()&gt;&gt; {
+        <span class="kw">let </span>(replace_with, to_replace) = (<a class="self" href="#57">self</a>.replace_with, <a class="self" href="#57">self</a>.to_replace);
+        <span class="kw">let </span>dep = <a href="#58">dep</a>.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html">clone</a>().<a href="../core/dependency.rs.html#420-425">map_source</a>(<a href="#62">to_replace</a>, <a href="#62">replace_with</a>);
+
+        <a class="self" href="#57">self</a>.inner
+            .<a href="../core/source/mod.rs.html#70-75">query</a>(<span class="kw-2">&amp;</span><a href="#63">dep</a>, <a href="#59">kind</a>, <span class="kw-2">&amp;mut </span>|summary| {
+                <a href="#60">f</a>(<a href="#66">summary</a>.<a href="../core/summary.rs.html#114-122">map_source</a>(<a href="#62">replace_with</a>, <a href="#62">to_replace</a>))
+            })
+            .map_err(|e| {
+                <a href="#69">e</a>.context(<a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(
+                    <span class="string">&quot;failed to query replaced source {}&quot;</span>,
+                    <span class="self">self</span>.to_replace
+                ))
+            })
+    }
+
+    <span class="kw">fn </span>invalidate_cache(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <a class="self" href="#77">self</a>.inner.<a href="../core/source/mod.rs.html#85">invalidate_cache</a>()
+    }
+
+    <span class="kw">fn </span>set_quiet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, quiet: <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>) {
+        <a class="self" href="#81">self</a>.inner.<a href="../core/source/mod.rs.html#88">set_quiet</a>(<a href="#81">quiet</a>);
+    }
+
+    <span class="kw">fn </span>download(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: <a href="../core/package_id.rs.html#21-23">PackageId</a>) -&gt; CargoResult&lt;<a href="../core/source/mod.rs.html#198-210">MaybePackage</a>&gt; {
+        <span class="kw">let </span>id = <a href="#85">id</a>.<a href="../core/package_id.rs.html#178-180">with_source_id</a>(<a class="self" href="#85">self</a>.replace_with);
+        <span class="kw">let </span>pkg = <span class="self">self
+            </span>.inner
+            .download(id)
+            .with_context(|| <span class="macro">format!</span>(<span class="string">&quot;failed to download replaced source {}&quot;</span>, <span class="self">self</span>.to_replace))<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(<span class="kw">match </span><a href="#87">pkg</a> {
+            <a href="../core/source/mod.rs.html#200">MaybePackage::Ready</a>(pkg) =&gt; {
+                <a href="../core/source/mod.rs.html#200">MaybePackage::Ready</a>(<a href="#92">pkg</a>.<a href="../core/package.rs.html#189-196">map_source</a>(<a class="self" href="#85">self</a>.replace_with, <a class="self" href="#85">self</a>.to_replace))
+            }
+            other @ <a href="../core/source/mod.rs.html#202-209">MaybePackage::Download</a> { .. } =&gt; <a href="#95">other</a>,
+        })
+    }
+
+    <span class="kw">fn </span>finish_download(<span class="kw-2">&amp;mut </span><span class="self">self</span>, id: <a href="../core/package_id.rs.html#21-23">PackageId</a>, data: Vec&lt;<a href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>&gt;) -&gt; CargoResult&lt;<a href="../core/package.rs.html#53-55">Package</a>&gt; {
+        <span class="kw">let </span>id = <a href="#99">id</a>.<a href="../core/package_id.rs.html#178-180">with_source_id</a>(<a class="self" href="#99">self</a>.replace_with);
+        <span class="kw">let </span>pkg = <span class="self">self
+            </span>.inner
+            .finish_download(id, data)
+            .with_context(|| <span class="macro">format!</span>(<span class="string">&quot;failed to download replaced source {}&quot;</span>, <span class="self">self</span>.to_replace))<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(<a href="#101">pkg</a>.<a href="../core/package.rs.html#189-196">map_source</a>(<a class="self" href="#99">self</a>.replace_with, <a class="self" href="#99">self</a>.to_replace))
+    }
+
+    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span><a href="../core/package.rs.html#53-55">Package</a>) -&gt; CargoResult&lt;<a href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html">String</a>&gt; {
+        <a class="self" href="#108">self</a>.inner.<a href="../core/source/mod.rs.html#138">fingerprint</a>(<a href="#108">id</a>)
+    }
+
+    <span class="kw">fn </span>verify(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <a href="../core/package_id.rs.html#21-23">PackageId</a>) -&gt; CargoResult&lt;()&gt; {
+        <span class="kw">let </span>id = <a href="#112">id</a>.<a href="../core/package_id.rs.html#178-180">with_source_id</a>(<a class="self" href="#112">self</a>.replace_with);
+        <a class="self" href="#112">self</a>.inner.<a href="../core/source/mod.rs.html#147-149">verify</a>(<a href="#113">id</a>)
+    }
+
+    <span class="kw">fn </span>describe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html">String</a> {
+        <span class="kw">if </span><span class="self">self</span>.replace_with.is_crates_io() &amp;&amp; <span class="self">self</span>.to_replace.is_crates_io() {
+            <span class="comment">// Built-in source replacement of crates.io for sparse registry or tests
+            // doesn&#39;t need duplicate description (crates.io replacing crates.io).
+            </span><a class="self" href="#117">self</a>.inner.<a href="../core/source/mod.rs.html#153">describe</a>()
+        } <span class="kw">else </span>{
+            <a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(
+                <span class="string">&quot;{} (which is replacing {})&quot;</span>,
+                <span class="self">self</span>.inner.describe(),
+                <span class="self">self</span>.to_replace
+            )
+        }
+    }
+
+    <span class="kw">fn </span>is_replaced(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a> {
+        <span class="bool-val">true
+    </span>}
+
+    <span class="kw">fn </span>add_to_yanked_whitelist(<span class="kw-2">&amp;mut </span><span class="self">self</span>, pkgs: <span class="kw-2">&amp;</span>[<a href="../core/package_id.rs.html#21-23">PackageId</a>]) {
+        <span class="kw">let </span>pkgs = <a href="#135">pkgs</a>
+            .iter()
+            .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html">map</a>(|id| <a href="#138">id</a>.<a href="../core/package_id.rs.html#178-180">with_source_id</a>(<a class="self" href="#135">self</a>.replace_with))
+            .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html">collect</a>::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <a class="self" href="#135">self</a>.inner.<a href="../core/source/mod.rs.html#163">add_to_yanked_whitelist</a>(<span class="kw-2">&amp;</span><a href="#136">pkgs</a>);
+    }
+
+    <span class="kw">fn </span>is_yanked(<span class="kw-2">&amp;mut </span><span class="self">self</span>, pkg: <a href="../core/package_id.rs.html#21-23">PackageId</a>) -&gt; Poll&lt;CargoResult&lt;<a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>&gt;&gt; {
+        <a class="self" href="#143">self</a>.inner.<a href="../core/source/mod.rs.html#167">is_yanked</a>(<a href="#143">pkg</a>)
+    }
+
+    <span class="kw">fn </span>block_until_ready(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; CargoResult&lt;()&gt; {
+        <a class="self" href="#147">self</a>.inner
+            .<a href="../core/source/mod.rs.html#176">block_until_ready</a>()
+            .<a href="https://docs.rs/anyhow/1.0.72/anyhow/trait.Context.html">with_context</a>(|| <a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(<span class="string">&quot;failed to update replaced source {}&quot;</span>, <span class="self">self</span>.to_replace))
+    }
+}
+</code></pre></div></section></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["relate_mir_and_user_args","relate_mir_and_user_ty","type_op_ascribe_user_type_with_span"],"struct":["AscribeUserType"]};

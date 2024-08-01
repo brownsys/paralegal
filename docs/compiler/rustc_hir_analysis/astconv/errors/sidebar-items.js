@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["fn_trait_to_string","prohibit_assoc_ty_binding"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["load"],"static":["DEFAULT_LOCALE_RESOURCE"],"struct":["Registry"]};

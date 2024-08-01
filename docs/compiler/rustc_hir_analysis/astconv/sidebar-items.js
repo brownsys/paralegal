@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConvertedBindingKind","ExplicitLateBound","GenericArgPosition","IsMethodCall","PredicateFilter"],"mod":["bounds","errors","generics","lint","object_safety"],"struct":["ConvertedBinding","GenericArgCountMismatch","GenericArgCountResult","OnlySelfBounds","PathSeg"],"trait":["AstConv","CreateSubstsForGenericArgsCtxt"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_builtin_macro_attribute","warn_on_duplicate_attribute"]};

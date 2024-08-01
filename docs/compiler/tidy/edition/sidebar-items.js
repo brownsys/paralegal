@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check","is_edition_2021"]};

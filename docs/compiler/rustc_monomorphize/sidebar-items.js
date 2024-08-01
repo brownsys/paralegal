@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["custom_coerce_unsize_info","provide"],"mod":["collector","errors","partitioning","polymorphize","util"],"static":["DEFAULT_LOCALE_RESOURCE"]};

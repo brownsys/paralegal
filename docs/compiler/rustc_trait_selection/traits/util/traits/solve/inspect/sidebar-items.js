@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CacheHit","CandidateKind","GoalEvaluationKind"],"struct":["AddedGoalsEvaluation","GoalCandidate","GoalEvaluation","GoalEvaluationStep"]};

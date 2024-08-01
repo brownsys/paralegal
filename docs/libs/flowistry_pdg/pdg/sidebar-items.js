@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RichLocation","SourceUse","TargetUse"],"struct":["CallString","GlobalLocation"],"type":["CallStringInner"]};

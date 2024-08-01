@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BuildManifest","BumpStage0","CollectLicenseMetadata","ExpandYamlAnchors","GenerateCompletions","GenerateCopyright","GenerateWindowsSys","Miri","ReplaceVersionPlaceholder"]};

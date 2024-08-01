@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["anon_const_type_of","check_feature_inherent_assoc_ty","get_path_containing_arg_in_pat","infer_placeholder_type","type_of"],"mod":["opaque"]};

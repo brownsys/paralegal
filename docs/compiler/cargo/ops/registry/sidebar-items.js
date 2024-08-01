@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RegistryCredentialConfig"],"fn":["get_source_id","registry"],"mod":["login","logout","owner","publish","search","yank"],"struct":["RegistrySourceIds"]};

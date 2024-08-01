@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CommentStyle"],"fn":["all_whitespace","beautify_doc_string","gather_comments","may_have_doc_links","split_block_comment_into_lines","trim_whitespace_prefix"],"struct":["Comment"]};

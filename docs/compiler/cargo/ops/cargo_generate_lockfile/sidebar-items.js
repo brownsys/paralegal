@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["generate_lockfile","update_lockfile"],"struct":["UpdateOptions"]};

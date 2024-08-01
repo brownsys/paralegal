@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["DefaultCache","DefaultCacheSelector","SingleCache","SingleCacheSelector","VecCache","VecCacheSelector"],"trait":["CacheSelector","QueryCache"]};

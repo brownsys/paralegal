@@ -1,0 +1,118 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Helper library for writing Cargo credential providers."><title>cargo_credential - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="cargo_credential" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../cargo_credential/index.html"><img class="rust-logo" src="../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../cargo_credential/index.html"><img class="rust-logo" src="../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">Crate cargo_credential</a></h2><div class="sidebar-elems"><ul class="block"><li class="version">Version 1.74.0-nightly	(58eefc33a	2023-08-24)</li><li><a id="all-types" href="all.html">All Items</a></li></ul><section><ul class="block"><li><a href="#modules">Modules</a></li><li><a href="#structs">Structs</a></li><li><a href="#enums">Enums</a></li><li><a href="#constants">Constants</a></li><li><a href="#traits">Traits</a></li><li><a href="#functions">Functions</a></li></ul></section></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Crate <a class="mod" href="#">cargo_credential</a><button id="copy-path" title="Copy item path to clipboard"><img src="../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../src/cargo_credential/lib.rs.html#1-278">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Helper library for writing Cargo credential providers.</p>
+<p>A credential process should have a <code>struct</code> that implements the <code>Credential</code> trait.
+The <code>main</code> function should be called with an instance of that struct, such as:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">fn </span>main() {
+    cargo_credential::main(MyCredential);
+}</code></pre></div>
+<p>While in the <code>perform</code> function, stdin and stdout will be re-attached to the
+active console. This allows credential providers to be interactive if necessary.</p>
+<h3 id="error-handling"><a href="#error-handling">Error handling</a></h3><h4 id="errorurlnotsupported"><a href="#errorurlnotsupported"><code>Error::UrlNotSupported</code></a></h4>
+<p>A credential provider may only support some registry URLs. If this is the case
+and an unsupported index URL is passed to the provider, it should respond with
+<a href="error/enum.Error.html#variant.UrlNotSupported" title="variant cargo_credential::error::Error::UrlNotSupported"><code>Error::UrlNotSupported</code></a>. Other credential providers may be attempted by Cargo.</p>
+<h4 id="errornotfound"><a href="#errornotfound"><code>Error::NotFound</code></a></h4>
+<p>When attempting an <a href="enum.Action.html#variant.Get" title="variant cargo_credential::Action::Get"><code>Action::Get</code></a> or <a href="enum.Action.html#variant.Logout" title="variant cargo_credential::Action::Logout"><code>Action::Logout</code></a>, if a credential can not
+be found, the provider should respond with <a href="error/enum.Error.html#variant.NotFound" title="variant cargo_credential::error::Error::NotFound"><code>Error::NotFound</code></a>. Other credential
+providers may be attempted by Cargo.</p>
+<h4 id="erroroperationnotsupported"><a href="#erroroperationnotsupported"><code>Error::OperationNotSupported</code></a></h4>
+<p>A credential provider might not support all operations. For example if the provider
+only supports <a href="enum.Action.html#variant.Get" title="variant cargo_credential::Action::Get"><code>Action::Get</code></a>, <a href="error/enum.Error.html#variant.OperationNotSupported" title="variant cargo_credential::error::Error::OperationNotSupported"><code>Error::OperationNotSupported</code></a> should be returned
+for all other requests.</p>
+<h4 id="errorother"><a href="#errorother"><code>Error::Other</code></a></h4>
+<p>All other errors go here. The error will be shown to the user in Cargo, including
+the full error chain using <a href="https://doc.rust-lang.org/nightly/core/error/trait.Error.html#method.source" title="method core::error::Error::source"><code>std::error::Error::source</code></a>.</p>
+<h3 id="example"><a href="#example">Example</a></h3>
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="doccomment">//! Example credential provider that stores credentials in a JSON file.
+//! This is not secure
+
+</span><span class="kw">use </span>cargo_credential::{
+    Action, CacheControl, Credential, CredentialResponse, RegistryInfo, Secret,
+};
+<span class="kw">use </span>std::{collections::HashMap, fs::File, io::ErrorKind};
+<span class="kw">type </span>Error = Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync + <span class="lifetime">&#39;static</span>&gt;;
+
+<span class="kw">struct </span>FileCredential;
+
+<span class="kw">impl </span>Credential <span class="kw">for </span>FileCredential {
+    <span class="kw">fn </span>perform(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        registry: <span class="kw-2">&amp;</span>RegistryInfo,
+        action: <span class="kw-2">&amp;</span>Action,
+        _args: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str],
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;CredentialResponse, cargo_credential::Error&gt; {
+        <span class="kw">if </span>registry.index_url != <span class="string">&quot;https://github.com/rust-lang/crates.io-index&quot; </span>{
+            <span class="comment">// Restrict this provider to only work for crates.io. Cargo will skip it and attempt
+            // another provider for any other registry.
+            //
+            // If a provider supports any registry, then this check should be omitted.
+            </span><span class="kw">return </span><span class="prelude-val">Err</span>(cargo_credential::Error::UrlNotSupported);
+        }
+
+        <span class="comment">// `Error::Other` takes a boxed `std::error::Error` type that causes Cargo to show the error.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>creds = FileCredential::read().map_err(cargo_credential::Error::Other)<span class="question-mark">?</span>;
+
+        <span class="kw">match </span>action {
+            Action::Get(<span class="kw">_</span>) =&gt; {
+                <span class="comment">// Cargo requested a token, look it up.
+                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(token) = creds.get(registry.index_url) {
+                    <span class="prelude-val">Ok</span>(CredentialResponse::Get {
+                        token: token.clone(),
+                        cache: CacheControl::Session,
+                        operation_independent: <span class="bool-val">true</span>,
+                    })
+                } <span class="kw">else </span>{
+                    <span class="comment">// Credential providers should respond with `NotFound` when a credential can not be
+                    // found, allowing Cargo to attempt another provider.
+                    </span><span class="prelude-val">Err</span>(cargo_credential::Error::NotFound)
+                }
+            }
+            Action::Login(login_options) =&gt; {
+                <span class="comment">// The token for `cargo login` can come from the `login_options` parameter or i
+                // interactively reading from stdin.
+                //
+                // `cargo_credential::read_token` automatically handles this.
+                </span><span class="kw">let </span>token = cargo_credential::read_token(login_options, registry)<span class="question-mark">?</span>;
+                creds.insert(registry.index_url.to_string(), token);
+
+                FileCredential::write(<span class="kw-2">&amp;</span>creds).map_err(cargo_credential::Error::Other)<span class="question-mark">?</span>;
+
+                <span class="comment">// Credentials were successfully stored.
+                </span><span class="prelude-val">Ok</span>(CredentialResponse::Login)
+            }
+            Action::Logout =&gt; {
+                <span class="kw">if </span>creds.remove(registry.index_url).is_none() {
+                    <span class="comment">// If the user attempts to log out from a registry that has no credentials
+                    // stored, then NotFound is the appropriate error.
+                    </span><span class="prelude-val">Err</span>(cargo_credential::Error::NotFound)
+                } <span class="kw">else </span>{
+                    <span class="comment">// Credentials were successfully erased.
+                    </span><span class="prelude-val">Ok</span>(CredentialResponse::Logout)
+                }
+            }
+            <span class="comment">// If a credential provider doesn&#39;t support a given operation, it should respond with `OperationNotSupported`.
+            </span><span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(cargo_credential::Error::OperationNotSupported),
+        }
+    }
+}
+
+<span class="kw">impl </span>FileCredential {
+    <span class="kw">fn </span>read() -&gt; <span class="prelude-ty">Result</span>&lt;HashMap&lt;String, Secret&lt;String&gt;&gt;, Error&gt; {
+        <span class="kw">match </span>File::open(<span class="string">&quot;cargo-credentials.json&quot;</span>) {
+            <span class="prelude-val">Ok</span>(f) =&gt; <span class="prelude-val">Ok</span>(serde_json::from_reader(f)<span class="question-mark">?</span>),
+            <span class="prelude-val">Err</span>(e) <span class="kw">if </span>e.kind() == ErrorKind::NotFound =&gt; <span class="prelude-val">Ok</span>(HashMap::new()),
+            <span class="prelude-val">Err</span>(e) =&gt; <span class="prelude-val">Err</span>(e)<span class="question-mark">?</span>,
+        }
+    }
+    <span class="kw">fn </span>write(value: <span class="kw-2">&amp;</span>HashMap&lt;String, Secret&lt;String&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+        <span class="kw">let </span>file = File::create(<span class="string">&quot;cargo-credentials.json&quot;</span>)<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(serde_json::to_writer_pretty(file, value)<span class="question-mark">?</span>)
+    }
+}
+
+<span class="kw">fn </span>main() {
+    cargo_credential::main(FileCredential);
+}</code></pre></div>
+</div></details><h2 id="modules" class="small-section-header"><a href="#modules">Modules</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="error/index.html" title="mod cargo_credential::error">error</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="secret/index.html" title="mod cargo_credential::secret">secret</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="stdio/index.html" title="mod cargo_credential::stdio">stdio</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="structs" class="small-section-header"><a href="#structs">Structs</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.CredentialHello.html" title="struct cargo_credential::CredentialHello">CredentialHello</a></div><div class="desc docblock-short">Message sent by the credential helper on startup</div></li><li><div class="item-name"><a class="struct" href="struct.CredentialRequest.html" title="struct cargo_credential::CredentialRequest">CredentialRequest</a></div><div class="desc docblock-short">Message sent by Cargo to the credential helper after the hello</div></li><li><div class="item-name"><a class="struct" href="struct.LoginOptions.html" title="struct cargo_credential::LoginOptions">LoginOptions</a></div></li><li><div class="item-name"><a class="struct" href="struct.RegistryInfo.html" title="struct cargo_credential::RegistryInfo">RegistryInfo</a></div></li><li><div class="item-name"><a class="struct" href="struct.Secret.html" title="struct cargo_credential::Secret">Secret</a></div><div class="desc docblock-short">A wrapper for values that should not be printed.</div></li><li><div class="item-name"><a class="struct" href="struct.UnsupportedCredential.html" title="struct cargo_credential::UnsupportedCredential">UnsupportedCredential</a></div><div class="desc docblock-short">Credential provider that doesn’t support any registries.</div></li></ul><h2 id="enums" class="small-section-header"><a href="#enums">Enums</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.Action.html" title="enum cargo_credential::Action">Action</a></div></li><li><div class="item-name"><a class="enum" href="enum.CacheControl.html" title="enum cargo_credential::CacheControl">CacheControl</a></div></li><li><div class="item-name"><a class="enum" href="enum.CredentialResponse.html" title="enum cargo_credential::CredentialResponse">CredentialResponse</a></div><div class="desc docblock-short">Message sent by the credential helper</div></li><li><div class="item-name"><a class="enum" href="enum.Error.html" title="enum cargo_credential::Error">Error</a></div><div class="desc docblock-short">Credential provider error type.</div></li><li><div class="item-name"><a class="enum" href="enum.Operation.html" title="enum cargo_credential::Operation">Operation</a></div><div class="desc docblock-short">A record of what kind of operation is happening that we should generate a token for.</div></li></ul><h2 id="constants" class="small-section-header"><a href="#constants">Constants</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.PROTOCOL_VERSION_1.html" title="constant cargo_credential::PROTOCOL_VERSION_1">PROTOCOL_VERSION_1</a></div><div class="desc docblock-short">Credential process JSON protocol version. Incrementing
+this version will prevent new credential providers
+from working with older versions of Cargo.</div></li></ul><h2 id="traits" class="small-section-header"><a href="#traits">Traits</a></h2><ul class="item-table"><li><div class="item-name"><a class="trait" href="trait.Credential.html" title="trait cargo_credential::Credential">Credential</a></div></li></ul><h2 id="functions" class="small-section-header"><a href="#functions">Functions</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.doit.html" title="fn cargo_credential::doit">doit</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.main.html" title="fn cargo_credential::main">main</a></div><div class="desc docblock-short">Runs the credential interaction</div></li><li><div class="item-name"><a class="fn" href="fn.read_line.html" title="fn cargo_credential::read_line">read_line</a></div><div class="desc docblock-short">Read a line of text from stdin.</div></li><li><div class="item-name"><a class="fn" href="fn.read_token.html" title="fn cargo_credential::read_token">read_token</a></div><div class="desc docblock-short">Prompt the user for a token.</div></li></ul></section></div></main></body></html>

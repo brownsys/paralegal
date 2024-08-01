@@ -1,0 +1,4 @@
+(function() {var implementors = {
+"rustc_infer":[["impl&lt;'tcx&gt; <a class=\"trait\" href=\"rustc_type_ir/structural_impls/trait.InferCtxtLike.html\" title=\"trait rustc_type_ir::structural_impls::InferCtxtLike\">InferCtxtLike</a>&lt;<a class=\"struct\" href=\"rustc_middle/ty/context/struct.TyCtxt.html\" title=\"struct rustc_middle::ty::context::TyCtxt\">TyCtxt</a>&lt;'tcx&gt;&gt; for <a class=\"struct\" href=\"rustc_infer/infer/struct.InferCtxt.html\" title=\"struct rustc_infer::infer::InferCtxt\">InferCtxt</a>&lt;'tcx&gt;"]],
+"rustc_type_ir":[]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

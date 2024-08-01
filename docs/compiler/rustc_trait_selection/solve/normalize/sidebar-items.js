@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["deeply_normalize","deeply_normalize_with_skipped_universes"],"struct":["NormalizationFolder"]};

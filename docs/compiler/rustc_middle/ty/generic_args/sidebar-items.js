@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CONST_TAG","REGION_TAG","TAG_MASK","TYPE_TAG"],"enum":["GenericArgKind"],"struct":["ArgFolder","EarlyBinder","EarlyBinderIter","GenericArg","IterInstantiated","IterInstantiatedCopied","UserArgs","UserSelfTy"],"type":["GenericArgs","GenericArgsRef"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["provide"],"mod":["abi","assoc","common_traits","consts","errors","implied_bounds","instance","layout","layout_sanity_check","needs_drop","opaque_types","representability","structural_match","ty"],"static":["DEFAULT_LOCALE_RESOURCE"]};

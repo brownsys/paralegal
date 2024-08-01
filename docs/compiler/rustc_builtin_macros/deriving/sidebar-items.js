@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["assert_ty_bounds","call_intrinsic","call_unreachable","inject_impl_of_structural_trait"],"macro":["path_local","path_std","pathvec_std"],"mod":["bounds","clone","debug","decodable","default","encodable","eq","generic","hash","ord","partial_eq","partial_ord"],"struct":["BuiltinDerive"],"type":["BuiltinDeriveFn"]};

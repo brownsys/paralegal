@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DiagnosticArgValue","DiagnosticId","StringPart"],"struct":["Diagnostic","DiagnosticLocation","DiagnosticStyledString","SubDiagnostic","SuggestionsDisabled"],"trait":["AddToDiagnostic","DecorateLint","IntoDiagnosticArg"],"type":["DiagnosticArg","DiagnosticArgName"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AdtKind","Representability"],"struct":["AdtDef","AdtDefData","AdtFlags"]};

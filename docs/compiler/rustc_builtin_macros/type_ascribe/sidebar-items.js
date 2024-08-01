@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["expand_type_ascribe","parse_ascribe"]};

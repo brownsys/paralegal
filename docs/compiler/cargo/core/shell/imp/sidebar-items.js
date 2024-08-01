@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["err_erase_line","stderr_width"]};

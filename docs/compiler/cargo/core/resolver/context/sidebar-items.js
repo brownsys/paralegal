@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SemverCompatibility"],"struct":["Context","PublicDependency"],"type":["Activations","ActivationsKey","ContextAge"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Radix"],"fn":["format","lit_suffix_length","split_suffix"],"struct":["NumericLiteral"]};

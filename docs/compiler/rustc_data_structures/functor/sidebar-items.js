@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["rc"],"trait":["IdFunctor"]};

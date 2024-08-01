@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PREC_CLOSURE","PREC_FORCE_PAREN","PREC_JUMP","PREC_PAREN","PREC_POSTFIX","PREC_PREFIX","PREC_RANGE"],"enum":["AssocOp","ExprPrecedence","Fixity"],"fn":["contains_exterior_struct_lit","needs_par_as_let_scrutinee","prec_let_scrutinee_needs_par"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["NicheBias"],"fn":["format_field_niches","univariant"],"trait":["LayoutCalculator"]};
