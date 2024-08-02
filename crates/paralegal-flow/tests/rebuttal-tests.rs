@@ -110,10 +110,10 @@ fn plume_policy_exists_quantifier() {
             }
         }
     };
-    InlineTestBuilder::new(SIMPLE_BUG).check(policy(false, "simple bug"));
-    InlineTestBuilder::new(CORRECT).check(policy(true, "correct"));
-    InlineTestBuilder::new(EXISTENTIAL_MISS).check(policy(true, "existential fail"));
-    InlineTestBuilder::new(FORALL_FAIL).check(policy(true, "Forall false-positive"));
+    InlineTestBuilder::new(SIMPLE_BUG).check_ctrl(policy(false, "simple bug"));
+    InlineTestBuilder::new(CORRECT).check_ctrl(policy(true, "correct"));
+    InlineTestBuilder::new(EXISTENTIAL_MISS).check_ctrl(policy(true, "existential fail"));
+    InlineTestBuilder::new(FORALL_FAIL).check_ctrl(policy(true, "Forall false-positive"));
 }
 
 #[test]
@@ -132,8 +132,8 @@ fn plume_policy_forall_quantifier() {
             }
         }
     };
-    InlineTestBuilder::new(SIMPLE_BUG).check(policy(false, "bug"));
-    InlineTestBuilder::new(CORRECT).check(policy(true, "correct"));
-    InlineTestBuilder::new(EXISTENTIAL_MISS).check(policy(false, "existential bug"));
-    InlineTestBuilder::new(FORALL_FAIL).check(policy(false, "forall false-positive"));
+    InlineTestBuilder::new(SIMPLE_BUG).check_ctrl(policy(false, "bug"));
+    InlineTestBuilder::new(CORRECT).check_ctrl(policy(true, "correct"));
+    InlineTestBuilder::new(EXISTENTIAL_MISS).check_ctrl(policy(false, "existential bug"));
+    InlineTestBuilder::new(FORALL_FAIL).check_ctrl(policy(false, "forall false-positive"));
 }
