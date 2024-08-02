@@ -1,3 +1,8 @@
+//! These tests check that replacement models work.
+//!
+//! At the moment it only checks that replacing `std::thread::spawn(f)` being
+//! replaced by `f()` and analogous for `tokio::spawn` works.
+
 #![feature(rustc_private)]
 
 #[macro_use]

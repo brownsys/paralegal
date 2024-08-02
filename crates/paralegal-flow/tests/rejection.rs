@@ -1,3 +1,12 @@
+//! These tests check that we only approximate functions by type signature if
+//! that is sound with respect ot markers.
+//!
+//! Specifically if a function is parameterized by a trait and we have decided
+//! to approximate it, then we check that all methods on the instantiation of
+//! that trait have no reachable markers.
+//!
+//! It also checks that we allow approximation if no such markers are reachable.
+
 use paralegal_flow::test_utils::InlineTestBuilder;
 
 #[test]
