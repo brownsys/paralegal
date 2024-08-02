@@ -28,7 +28,7 @@ use crate::{
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_virtual, try_monomorphize},
-    CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]
@@ -417,11 +417,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             trace!("  `{called}` monomorphized to `{resolved}`",);
         }
 
-        if is_virtual(tcx, resolved_def_id) {
-            trace!("  bailing because is unresolvable trait method");
-            return None;
-        }
-
         if let Some(handler) = self.can_approximate_async_functions(resolved_def_id) {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
@@ -506,7 +501,21 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             _ => CallingConvention::from_call_kind(&call_kind, args),
         };
         let Some(descriptor) = self.memo.construct_for(resolved_fn) else {
-            return None;
+            if is_virtual(tcx, resolved_def_id) {
+                trace!("  bailing because is unresolvable trait method");
+                if let Some(callback) = self.call_change_callback() {
+                    callback.on_inline_miss(
+                        resolved_fn,
+                        param_env,
+                        location,
+                        self.root,
+                        InlineMissReason::TraitMethod,
+                        span,
+                    );
+                }
+                return None;
+            }
+            unreachable!();
         };
         Some(CallHandling::Ready {
             descriptor,

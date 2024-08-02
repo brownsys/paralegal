@@ -88,3 +88,24 @@ fn allow_trait() {
     ))
     .check_ctrl(|_| ())
 }
+
+#[test]
+fn reject_type() {
+    InlineTestBuilder::new(stringify!(
+        #[paralegal_flow::marker(target)]
+        struct M;
+
+        struct Iter;
+
+        impl Iterator for Iter {
+            type Item = M;
+
+            fn next(&mut self) -> Option<M> { None }
+        }
+
+        fn main() {
+            [M].into_iter().chain(Iter);
+        }
+    ))
+    .expect_fail_compile()
+}

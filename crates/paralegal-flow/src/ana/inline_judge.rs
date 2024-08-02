@@ -30,6 +30,7 @@ pub struct InlineJudge<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
+#[derive(strum::AsRefStr)]
 pub enum InlineJudgement {
     Inline,
     UseFlowModel(&'static FlowModel),
@@ -99,9 +100,10 @@ impl<'tcx> InlineJudge<'tcx> {
             InliningDepth::Unconstrained => InlineJudgement::Inline,
         };
         if matches!(judgement, InlineJudgement::NoInline) {
-            //println!("Ensuring approximate safety of {:?}", info.callee);
-            self.ensure_is_safe_to_approximate(info.callee, info.span, !is_marked)
+            println!("Ensuring approximate safety of {:?}", info.callee);
+            self.ensure_is_safe_to_approximate(info.param_env, info.callee, info.span, !is_marked)
         }
+        println!("Judgement for {:?} is {}", info.callee, judgement.as_ref());
         judgement
     }
 
@@ -111,6 +113,7 @@ impl<'tcx> InlineJudge<'tcx> {
 
     pub fn ensure_is_safe_to_approximate(
         &self,
+        param_env: ParamEnv<'tcx>,
         resolved: Instance<'tcx>,
         call_span: Span,
         emit_err: bool,
@@ -161,7 +164,10 @@ impl<'tcx> InlineJudge<'tcx> {
                     // These predicates do not allow for "code injection" since they do not concern things that can be marked.
                 }
                 ClauseKind::Projection(p) => {
+                    // ProjectionPredicate(AliasTy { args: [Iter], def_id:  IntoIterator::Item }, Term::Ty(<std::array::IntoIter<M, 1> as std::iter::Iterator>::Item))
+                    println!("Found projection {p:?}");
                     if let Some(t) = p.term.ty() {
+                        let t = self.tcx.normalize_erasing_regions(param_env, t);
                         let markers = self.marker_ctx().deep_type_markers(t);
                         if !markers.is_empty() {
                             let markers = markers.iter().map(|t| t.1).collect::<Box<_>>();

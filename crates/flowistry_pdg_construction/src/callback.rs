@@ -16,10 +16,11 @@ pub trait CallChangeCallback<'tcx> {
     fn on_inline_miss(
         &self,
         _resolution: Instance<'tcx>,
+        _param_env: ParamEnv<'tcx>,
         _loc: Location,
         _under_analysis: Instance<'tcx>,
-        _call_string: Option<CallString>,
         _reason: InlineMissReason,
+        _call_span: Span,
     ) {
     }
 }
@@ -43,6 +44,7 @@ impl<'tcx> CallChangeCallback<'tcx> for CallChangeCallbackFn<'tcx> {
 #[derive(Debug)]
 pub enum InlineMissReason {
     Async(String),
+    TraitMethod,
 }
 
 impl<'tcx> Default for CallChanges<'tcx> {
