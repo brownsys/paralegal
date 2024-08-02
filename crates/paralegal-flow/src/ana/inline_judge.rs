@@ -7,7 +7,7 @@ use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc_middle::ty::{
     BoundVariableKind, ClauseKind, ImplPolarity, Instance, ParamEnv, TraitPredicate,
 };
-use rustc_span::Symbol;
+use rustc_span::{Span, Symbol};
 use rustc_type_ir::TyKind;
 
 use crate::{
@@ -98,9 +98,9 @@ impl<'tcx> InlineJudge<'tcx> {
             InliningDepth::Shallow => InlineJudgement::NoInline,
             InliningDepth::Unconstrained => InlineJudgement::Inline,
         };
-        if !matches!(judgement, InlineJudgement::NoInline) {
+        if matches!(judgement, InlineJudgement::NoInline) {
             //println!("Ensuring approximate safety of {:?}", info.callee);
-            self.ensure_is_safe_to_approximate(info.callee, !is_marked)
+            self.ensure_is_safe_to_approximate(info.callee, info.span, !is_marked)
         }
         judgement
     }
@@ -109,7 +109,12 @@ impl<'tcx> InlineJudge<'tcx> {
         &self.marker_ctx
     }
 
-    pub fn ensure_is_safe_to_approximate(&self, resolved: Instance<'tcx>, emit_err: bool) {
+    pub fn ensure_is_safe_to_approximate(
+        &self,
+        resolved: Instance<'tcx>,
+        call_span: Span,
+        emit_err: bool,
+    ) {
         let sess = self.tcx().sess;
         let predicates = self
             .tcx()
@@ -119,9 +124,13 @@ impl<'tcx> InlineJudge<'tcx> {
             let err = move |s: &str| {
                 let msg = format!("Cannot verify that non-inlined function is safe due to: {s}");
                 if emit_err {
-                    sess.span_err(span, msg);
+                    let mut diagnostic = sess.struct_span_err(span, msg);
+                    diagnostic.span_note(call_span, "Called from here");
+                    diagnostic.emit();
                 } else {
-                    sess.span_warn(span, msg);
+                    let mut diagnostic = sess.struct_span_warn(span, msg);
+                    diagnostic.span_note(call_span, "Called from here");
+                    diagnostic.emit();
                 }
             };
             let err_markers = |s: &str, markers: &[Identifier]| {
