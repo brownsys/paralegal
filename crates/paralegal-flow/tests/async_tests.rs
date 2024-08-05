@@ -285,7 +285,7 @@ fn await_on_generic() {
             t.method().await
         }
     ))
-    .check(|_ctrl| {})
+    .check_ctrl(|_ctrl| {})
 }
 #[test]
 fn await_with_inner_generic_sanity() {
@@ -318,7 +318,7 @@ fn await_with_inner_generic_sanity() {
             t.method().await
         }
     ))
-    .check(|_ctrl| {})
+    .check_ctrl(|_ctrl| {})
 }
 
 #[test]
@@ -348,7 +348,7 @@ fn await_with_inner_generic() {
             t.method().await
         }
     ))
-    .check(|_ctrl| {})
+    .check_ctrl(|_ctrl| {})
 }
 
 #[test]
@@ -381,7 +381,7 @@ fn await_with_inner_generic_constrained() {
             t.method().await
         }
     ))
-    .check(|_ctrl| {})
+    .check_ctrl(|_ctrl| {})
 }
 
 #[test]
@@ -414,7 +414,7 @@ fn async_through_another_layer() {
             sink(get_async(src, src2).await)
         }
     ))
-    .check(|ctrl| {
+    .check_ctrl(|ctrl| {
         let sources = ctrl.marked(Identifier::new_intern("source"));
         let sinks = ctrl.marked(Identifier::new_intern("source_2"));
         assert!(!sources.is_empty());
@@ -469,7 +469,7 @@ fn field_precision_at_future_creation() {
         }
 
     ))
-    .check(|ctrl| {
+    .check_ctrl(|ctrl| {
         let sources = ctrl.marked(Identifier::new_intern("source"));
         let sinks = ctrl.marked(Identifier::new_intern("source_2"));
         assert!(!sources.is_empty());
@@ -524,7 +524,7 @@ fn field_precision_at_future_consumption() {
         }
 
     ))
-    .check(|ctrl| {
+    .check_ctrl(|ctrl| {
         let sources = ctrl.marked(Identifier::new_intern("source"));
         let sinks = ctrl.marked(Identifier::new_intern("source_2"));
         assert!(!sources.is_empty());

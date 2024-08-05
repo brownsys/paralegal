@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use flowistry_pdg::rustc_portable::DefId;
 use log::trace;
 use rustc_abi::FieldIdx;
@@ -9,26 +11,27 @@ use rustc_middle::{
 
 use crate::{async_support::AsyncInfo, local_analysis::CallKind, utils};
 
-pub enum CallingConvention<'tcx, 'a> {
-    Direct(&'a [Operand<'tcx>]),
+#[derive(Debug)]
+pub enum CallingConvention<'tcx> {
+    Direct(Box<[Operand<'tcx>]>),
     Indirect {
-        closure_arg: &'a Operand<'tcx>,
-        tupled_arguments: &'a Operand<'tcx>,
+        closure_arg: Operand<'tcx>,
+        tupled_arguments: Operand<'tcx>,
     },
     Async(Place<'tcx>),
 }
 
-impl<'tcx, 'a> CallingConvention<'tcx, 'a> {
+impl<'tcx> CallingConvention<'tcx> {
     pub fn from_call_kind(
         kind: &CallKind<'tcx>,
-        args: &'a [Operand<'tcx>],
-    ) -> CallingConvention<'tcx, 'a> {
+        args: Cow<'_, [Operand<'tcx>]>,
+    ) -> CallingConvention<'tcx> {
         match kind {
             CallKind::AsyncPoll(poll) => CallingConvention::Async(poll.generator_data),
-            CallKind::Direct => CallingConvention::Direct(args),
+            CallKind::Direct => CallingConvention::Direct(args.into()),
             CallKind::Indirect => CallingConvention::Indirect {
-                closure_arg: &args[0],
-                tupled_arguments: &args[1],
+                closure_arg: args[0].clone(),
+                tupled_arguments: args[1].clone(),
             },
         }
     }

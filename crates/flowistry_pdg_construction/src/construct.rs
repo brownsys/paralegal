@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{borrow::Cow, rc::Rc};
 
 use either::Either;
 use flowistry::mir::FlowistryInput;
@@ -259,8 +259,8 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
             if matches!(
                 constructor.determine_call_handling(
                     location,
-                    func,
-                    args,
+                    Cow::Borrowed(func),
+                    Cow::Borrowed(args),
                     terminator.source_info.span
                 ),
                 Some(CallHandling::Ready { .. })
@@ -331,9 +331,12 @@ impl<'tcx> PartialGraph<'tcx> {
             function: constructor.def_id,
         };
 
-        let Some(handling) =
-            constructor.determine_call_handling(location, func, args, terminator.source_info.span)
-        else {
+        let Some(handling) = constructor.determine_call_handling(
+            location,
+            Cow::Borrowed(func),
+            Cow::Borrowed(args),
+            terminator.source_info.span,
+        ) else {
             return false;
         };
 
