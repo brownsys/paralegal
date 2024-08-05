@@ -420,8 +420,6 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
         let changes = CallChanges::default();
 
-        let mut skip = SkipCall::Skip;
-
         let skip = match self.judge.should_inline(&info) {
             InlineJudgement::NoInline => SkipCall::Skip,
             InlineJudgement::UseFlowModel(model) => {
