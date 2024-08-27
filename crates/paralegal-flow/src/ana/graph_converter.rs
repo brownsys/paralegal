@@ -70,7 +70,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         known_def_ids: &'a mut C,
         target: &'a FnToAnalyze,
     ) -> Result<Self> {
-        println!("Starting analysis for {:?}", target.def_id);
         let local_def_id = target.def_id;
         let start = Instant::now();
         let (dep_graph, stats) = Self::create_flowistry_graph(generator, local_def_id)?;
