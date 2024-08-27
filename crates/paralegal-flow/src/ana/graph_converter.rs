@@ -152,7 +152,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let leaf_loc = weight.at.leaf();
         let node = self.new_node_for(old_node);
 
-        let body = self.body_cache().get(leaf_loc.function).unwrap().body();
+        let body = self.body_cache().get(leaf_loc.function).body();
 
         let graph = self.dep_graph.clone();
 
@@ -281,7 +281,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         let resolution = self.call_string_resolver.resolve(at);
 
         // Thread through each caller to recover generic arguments
-        let body = self.body_cache().get(last.function).unwrap();
+        let body = self.body_cache().get(last.function);
         let raw_ty = place.ty(body.body(), tcx);
         Some(try_monomorphize(resolution, tcx, ty::ParamEnv::reveal_all(), &raw_ty, span).unwrap())
     }
@@ -402,7 +402,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
 
         for (i, weight) in input.node_references() {
             let at = weight.at.leaf();
-            let body = self.body_cache().get(at.function).unwrap().body();
+            let body = self.body_cache().get(at.function).body();
 
             let node_span = body.local_decls[weight.place.local].source_info.span;
             self.register_node(
@@ -553,7 +553,7 @@ fn expect_stmt_at<'tcx>(
     body_cache: &BodyCache<'tcx>,
     loc: GlobalLocation,
 ) -> Either<&'tcx mir::Statement<'tcx>, &'tcx mir::Terminator<'tcx>> {
-    let body = &body_cache.get(loc.function).unwrap().body();
+    let body = &body_cache.get(loc.function).body();
     let RichLocation::Location(loc) = loc.location else {
         unreachable!();
     };
@@ -584,7 +584,7 @@ fn entrypoint_is_async<'tcx>(
     def_id: DefId,
 ) -> bool {
     tcx.asyncness(def_id).is_async()
-        || is_async_trait_fn(tcx, def_id, body_cache.get(def_id).unwrap().body())
+        || is_async_trait_fn(tcx, def_id, body_cache.get(def_id).body())
 }
 
 mod call_string_resolver {

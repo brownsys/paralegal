@@ -99,7 +99,7 @@ impl<'tcx> BodyCache<'tcx> {
     /// Serve the body from the cache or read it from the disk.
     ///
     /// Returns `None` if the policy forbids loading from this crate.
-    pub fn get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
+    pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
         let cbody = self.cache.get(key, |_| load_body_and_facts(self.tcx, key));
         // SAFETY: Theoretically this struct may not outlive the body, but
         // to simplify lifetimes flowistry uses 'tcx anywhere. But if we
