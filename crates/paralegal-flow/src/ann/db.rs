@@ -231,7 +231,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// computes it.
     fn compute_reachable_markers(&self, res: MaybeMonomorphized<'tcx>) -> Box<[Identifier]> {
         trace!("Computing reachable markers for {res:?}");
-        let body= self.0.body_cache.get(res.def_id());
+        let body = self.0.body_cache.get(res.def_id());
         let mono_body = match res {
             MaybeMonomorphized::Monomorphized(res) => Cow::Owned(
                 try_monomorphize(
@@ -292,12 +292,12 @@ impl<'tcx> MarkerCtx<'tcx> {
             else {
                 if self.0.config.relaxed() {
                     self.tcx().sess.span_warn(
-                        terminator.source_info.span, 
+                        terminator.source_info.span,
                         format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
                     );
                 } else {
                     self.tcx().sess.span_err(
-                        terminator.source_info.span, 
+                        terminator.source_info.span,
                         format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
                     );
                 }
