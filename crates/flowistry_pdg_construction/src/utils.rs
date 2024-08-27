@@ -41,13 +41,19 @@ pub fn try_resolve_function<'tcx>(
 }
 
 /// Returns whether this method is expected to have a body we can analyze.
+///
+/// Specifically this returns `true` if `function` refers to an associated item
+/// of a trait which has *no* default value.
+///
+/// Note: While you are supposed to call this whit a `function` that refers to a
+/// function, it will not crash if it refers to a type or constant instead.
 pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
     tcx.opt_associated_item(function)
         .map_or(false, |assoc_item| {
             matches!(
                 assoc_item.container,
                 AssocItemContainer::TraitContainer
-                if matches!(
+                if !matches!(
                     assoc_item.defaultness(tcx),
                     Defaultness::Default { has_value: true })
             )

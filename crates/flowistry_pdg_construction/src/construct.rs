@@ -100,13 +100,17 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         .unwrap();
 
         self.construct_for(resolution)
+            .expect("Invariant broken, entrypoint cannot have been recursive.")
     }
 
+    /// Construct a  graph for this instance of return it from the cache.
+    ///
+    /// Returns `None` if this is a recursive call trying to construct the graph again.
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> &'a PartialGraph<'tcx> {
-        self.pdg_cache.get(resolution, |_| {
+    ) -> Option<&'a PartialGraph<'tcx>> {
+        self.pdg_cache.get_maybe_recursive(resolution, |_| {
             let g = LocalAnalysis::new(self, resolution).construct_partial();
             trace!("Computed new for {resolution:?}");
             g.check_invariants();

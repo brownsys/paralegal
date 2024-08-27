@@ -514,7 +514,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
             return None;
         }
-        let descriptor = self.memo.construct_for(resolved_fn);
+        let Some(descriptor) = self.memo.construct_for(resolved_fn) else {
+            trace!("  Bailing because of recursion.");
+            return None;
+        };
 
         Some(CallHandling::Ready {
             descriptor,
