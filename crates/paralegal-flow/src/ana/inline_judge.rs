@@ -31,11 +31,15 @@ pub struct InlineJudge<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
+/// Describes the type of inlining to perform
 #[derive(strum::AsRefStr)]
 pub enum InlineJudgement {
+    /// Construct a graph for the called function and merge it
     Inline,
+    /// Use a flow model to abstract the call
     UseFlowModel(&'static FlowModel),
-    NoInline,
+    /// Abstract the call via type signature
+    AbstractViaType,
 }
 
 impl From<bool> for InlineJudgement {
@@ -43,7 +47,7 @@ impl From<bool> for InlineJudgement {
         if value {
             InlineJudgement::Inline
         } else {
-            InlineJudgement::NoInline
+            InlineJudgement::AbstractViaType
         }
     }
 }
@@ -91,16 +95,16 @@ impl<'tcx> InlineJudge<'tcx> {
         let is_marked = self.marker_ctx.is_marked(marker_target_def_id);
         let judgement = match self.opts.anactrl().inlining_depth() {
             _ if !self.included_crates.contains(&marker_target_def_id.krate) || is_marked => {
-                InlineJudgement::NoInline
+                InlineJudgement::AbstractViaType
             }
             InliningDepth::Adaptive => self
                 .marker_ctx
                 .has_transitive_reachable_markers(marker_target)
                 .into(),
-            InliningDepth::Shallow => InlineJudgement::NoInline,
+            InliningDepth::Shallow => InlineJudgement::AbstractViaType,
             InliningDepth::Unconstrained => InlineJudgement::Inline,
         };
-        if matches!(judgement, InlineJudgement::NoInline) {
+        if matches!(judgement, InlineJudgement::AbstractViaType) {
             let emit_err = !(is_marked || self.opts.relaxed());
             self.ensure_is_safe_to_approximate(info.param_env, info.callee, info.span, emit_err)
         }
@@ -130,16 +134,27 @@ impl<'tcx> InlineJudge<'tcx> {
     }
 }
 
+/// A check for the abstraction safety of a given instance.
+///
+/// It looks at each trait predicate on the function and how they are
+/// instantiated, then checks the methods defined on those traits and whether
+/// they may attach markers. Each time a potential marker is found a diagnostic
+/// message is emitted.
+///
+/// The main entrypoint is [`Self::check`].
 struct SafetyChecker<'tcx> {
     tcx: TyCtxt<'tcx>,
+    /// Emit errors if `true`, otherwise emit warnings
     emit_err: bool,
     param_env: ParamEnv<'tcx>,
+    /// Instance under scrutiny
     resolved: Instance<'tcx>,
     call_span: Span,
     marker_ctx: MarkerCtx<'tcx>,
 }
 
 impl<'tcx> SafetyChecker<'tcx> {
+    /// Emit an error or a warning with some preformatted messaging.
     fn err(&self, s: &str, span: Span) {
         let sess = self.tcx.sess;
         let msg = format!("Cannot verify that non-inlined function is safe due to: {s}");
@@ -154,6 +169,7 @@ impl<'tcx> SafetyChecker<'tcx> {
         }
     }
 
+    /// Emit an error that mentions the `markers` found
     fn err_markers(&self, s: &str, markers: &[Identifier], span: Span) {
         if !markers.is_empty() {
             self.err(
@@ -276,6 +292,7 @@ impl<'tcx> SafetyChecker<'tcx> {
         }
     }
 
+    /// Main entry point for the check
     fn check(&self) {
         self.tcx
             .predicates_of(self.resolved.def_id())

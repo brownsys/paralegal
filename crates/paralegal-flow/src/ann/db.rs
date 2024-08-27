@@ -517,6 +517,10 @@ impl<'tcx> MarkerCtx<'tcx> {
 pub type TypeMarkerElem = (DefId, Identifier);
 pub type TypeMarkers = [TypeMarkerElem];
 
+/// Either we have an [`Instance`] or a [`DefId`] if we weren't able to resolve
+/// the generics.
+///
+/// This is only used so that we can reuse the code that finds reachable markers.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum MaybeMonomorphized<'tcx> {
     Monomorphized(Instance<'tcx>),

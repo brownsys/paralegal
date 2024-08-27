@@ -417,7 +417,7 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
         let changes = CallChanges::default();
 
         let skip = match self.judge.should_inline(&info) {
-            InlineJudgement::NoInline => SkipCall::Skip,
+            InlineJudgement::AbstractViaType => SkipCall::Skip,
             InlineJudgement::UseFlowModel(model) => {
                 // Set in case of errors
                 assert!(matches!(
