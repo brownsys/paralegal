@@ -68,10 +68,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
         root: Instance<'tcx>,
-    ) -> Option<LocalAnalysis<'tcx, 'a>> {
+    ) -> LocalAnalysis<'tcx, 'a> {
         let tcx = memo.tcx;
         let def_id = root.def_id();
-        let body_with_facts = memo.body_cache.get(def_id)?;
+        let body_with_facts = memo.body_cache.get(def_id);
         let param_env = tcx.param_env_reveal_all_normalized(def_id);
         let body = try_monomorphize(
             root,
@@ -98,7 +98,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let body_assignments = utils::find_body_assignments(&body);
 
-        Some(LocalAnalysis {
+        LocalAnalysis {
             memo,
             root,
             body_with_facts,
@@ -108,7 +108,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             start_loc,
             def_id,
             body_assignments,
-        })
+        }
     }
 
     fn make_dep_node(
@@ -500,23 +500,22 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
             _ => CallingConvention::from_call_kind(&call_kind, args),
         };
-        let Some(descriptor) = self.memo.construct_for(resolved_fn) else {
-            if is_virtual(tcx, resolved_def_id) {
-                trace!("  bailing because is unresolvable trait method");
-                if let Some(callback) = self.call_change_callback() {
-                    callback.on_inline_miss(
-                        resolved_fn,
-                        param_env,
-                        location,
-                        self.root,
-                        InlineMissReason::TraitMethod,
-                        span,
-                    );
-                }
-                return None;
+        if is_virtual(tcx, resolved_def_id) {
+            trace!("  bailing because is unresolvable trait method");
+            if let Some(callback) = self.call_change_callback() {
+                callback.on_inline_miss(
+                    resolved_fn,
+                    param_env,
+                    location,
+                    self.root,
+                    InlineMissReason::TraitMethod,
+                    span,
+                );
             }
-            unreachable!();
-        };
+            return None;
+        }
+        let descriptor = self.memo.construct_for(resolved_fn);
+
         Some(CallHandling::Ready {
             descriptor,
             calling_convention,

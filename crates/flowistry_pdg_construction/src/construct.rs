@@ -99,21 +99,19 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         )
         .unwrap();
 
-        self.construct_for(resolution).unwrap()
+        self.construct_for(resolution)
     }
 
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> Option<&'a PartialGraph<'tcx>> {
-        self.pdg_cache
-            .try_retrieve(resolution, |_| {
-                let g = LocalAnalysis::new(self, resolution)?.construct_partial();
-                trace!("Computed new for {resolution:?}");
-                g.check_invariants();
-                Some(g)
-            })
-            .as_success()
+    ) -> &'a PartialGraph<'tcx> {
+        self.pdg_cache.get(resolution, |_| {
+            let g = LocalAnalysis::new(self, resolution).construct_partial();
+            trace!("Computed new for {resolution:?}");
+            g.check_invariants();
+            g
+        })
     }
 
     /// Has a PDG been constructed for this instance before?
@@ -130,7 +128,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         if let Some((generator, loc, _ty)) = determine_async(
             self.tcx,
             function.to_def_id(),
-            self.body_cache.get(function.to_def_id()).unwrap().body(),
+            self.body_cache.get(function.to_def_id()).body(),
         ) {
             // TODO remap arguments
 
@@ -152,7 +150,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     /// Try to retrieve or load a body for this id.
     ///
     /// Returns `None` if the loading policy forbids loading from this crate.
-    pub fn body_for_def_id(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
+    pub fn body_for_def_id(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
         self.body_cache.get(key)
     }
 

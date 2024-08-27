@@ -3,13 +3,10 @@ use std::rc::Rc;
 use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
 use rustc_hash::FxHashSet;
-use rustc_hir::{
-    def::DefKind,
-    def_id::{CrateNum, DefId, LOCAL_CRATE},
-};
+use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc_middle::ty::{
     AssocKind, BoundVariableKind, Clause, ClauseKind, ImplPolarity, Instance, ParamEnv,
-    ProjectionPredicate, TraitPredicate, Ty,
+    ProjectionPredicate, TraitPredicate,
 };
 use rustc_span::{Span, Symbol};
 use rustc_type_ir::TyKind;
@@ -18,7 +15,7 @@ use crate::{
     ana::Print,
     ann::db::MarkerDatabase,
     args::{FlowModel, InliningDepth},
-    AnalysisCtrl, Args, MarkerCtx, TyCtxt,
+    Args, MarkerCtx, TyCtxt,
 };
 
 /// The interpretation of marker placement as it pertains to inlining and inline
@@ -29,7 +26,7 @@ use crate::{
 /// options have been set.
 pub struct InlineJudge<'tcx> {
     marker_ctx: MarkerCtx<'tcx>,
-    analysis_control: &'static AnalysisCtrl,
+    opts: &'static Args,
     included_crates: FxHashSet<CrateNum>,
     tcx: TyCtxt<'tcx>,
 }
@@ -71,7 +68,7 @@ impl<'tcx> InlineJudge<'tcx> {
         Self {
             marker_ctx,
             included_crates,
-            analysis_control: opts.anactrl(),
+            opts,
             tcx,
         }
     }
@@ -92,7 +89,7 @@ impl<'tcx> InlineJudge<'tcx> {
             return InlineJudgement::UseFlowModel(model);
         }
         let is_marked = self.marker_ctx.is_marked(marker_target_def_id);
-        let judgement = match self.analysis_control.inlining_depth() {
+        let judgement = match self.opts.anactrl().inlining_depth() {
             _ if !self.included_crates.contains(&marker_target_def_id.krate) || is_marked => {
                 InlineJudgement::NoInline
             }
@@ -104,10 +101,9 @@ impl<'tcx> InlineJudge<'tcx> {
             InliningDepth::Unconstrained => InlineJudgement::Inline,
         };
         if matches!(judgement, InlineJudgement::NoInline) {
-            println!("Ensuring approximate safety of {:?}", info.callee);
-            self.ensure_is_safe_to_approximate(info.param_env, info.callee, info.span, !is_marked)
+            let emit_err = !(is_marked || self.opts.relaxed());
+            self.ensure_is_safe_to_approximate(info.param_env, info.callee, info.span, emit_err)
         }
-        println!("Judgement for {:?} is {}", info.callee, judgement.as_ref());
         judgement
     }
 
@@ -186,54 +182,61 @@ impl<'tcx> SafetyChecker<'tcx> {
     }
 
     fn check_trait_predicate(&self, predicate: &TraitPredicate<'tcx>, span: Span) {
-        match predicate {
-            TraitPredicate {
-                polarity: ImplPolarity::Positive,
-                trait_ref,
-            } if !self.tcx.trait_is_auto(trait_ref.def_id) => {
-                let ref_1 = trait_ref.args[0];
-                let Some(self_ty) = ref_1.as_type() else {
-                    self.err("expected self type to be type, got {ref_1:?}", span);
-                    return;
-                };
+        let TraitPredicate {
+            polarity: ImplPolarity::Positive,
+            trait_ref,
+        } = predicate
+        else {
+            return;
+        };
+        // Auto traits are built-in and have no methods to check
+        if self.tcx.trait_is_auto(trait_ref.def_id) {
+            return;
+        }
 
-                if self.tcx.is_fn_trait(trait_ref.def_id) {
-                    let instance = match self_ty.kind() {
-                        TyKind::Closure(id, args) | TyKind::FnDef(id, args) => {
-                            Instance::resolve(self.tcx, ParamEnv::reveal_all(), *id, args)
-                        }
-                        _ => {
-                            self.err(
-                                &format!(
-                                "fn-trait instance for {self_ty:?} not being a function of closure"
-                            ),
-                                span,
-                            );
-                            return;
-                        }
-                    }
-                    .unwrap()
-                    .unwrap();
-                    let markers = self.marker_ctx.get_reachable_markers(instance);
-                    if !markers.is_empty() {
-                        self.err_markers(
-                            &format!("closure {instance:?} is not approximation safe"),
-                            markers,
-                            span,
-                        );
-                    }
-                } else {
-                    self.tcx
-                        .for_each_relevant_impl(trait_ref.def_id, self_ty, |r#impl| {
-                            self.check_impl(r#impl, self_ty, span)
-                        })
+        let Some(self_ty) = trait_ref.args[0].as_type() else {
+            self.err("expected self type to be type, got {ref_1:?}", span);
+            return;
+        };
+
+        if self.tcx.is_fn_trait(trait_ref.def_id) {
+            let instance = match self_ty.kind() {
+                TyKind::Closure(id, args) | TyKind::FnDef(id, args) => {
+                    Instance::resolve(self.tcx, ParamEnv::reveal_all(), *id, args)
+                }
+                TyKind::FnPtr(_) => {
+                    self.err(&format!("unresolvable function pointer {self_ty:?}"), span);
+                    return;
+                }
+                _ => {
+                    self.err(
+                        &format!(
+                            "fn-trait instance for {self_ty:?} not being a function or closure"
+                        ),
+                        span,
+                    );
+                    return;
                 }
             }
-            _ => (),
+            .unwrap()
+            .unwrap();
+            let markers = self.marker_ctx.get_reachable_markers(instance);
+            if !markers.is_empty() {
+                self.err_markers(
+                    &format!("closure {instance:?} is not approximation safe"),
+                    markers,
+                    span,
+                );
+            }
+        } else {
+            self.tcx
+                .for_each_relevant_impl(trait_ref.def_id, self_ty, |r#impl| {
+                    self.check_impl(r#impl, span)
+                })
         }
     }
 
-    fn check_impl(&self, r#impl: DefId, self_ty: Ty<'tcx>, span: Span) {
+    fn check_impl(&self, r#impl: DefId, span: Span) {
         for item in self.tcx.associated_items(r#impl).in_definition_order() {
             // NOTE: We don't need to check markers on types here, because they
             // will be checked if there is a method that produces (or consumes)
@@ -274,12 +277,10 @@ impl<'tcx> SafetyChecker<'tcx> {
     }
 
     fn check(&self) {
-        let predicates = self
-            .tcx
+        self.tcx
             .predicates_of(self.resolved.def_id())
-            .instantiate(self.tcx, self.resolved.args);
-        for (clause, span) in &predicates {
-            self.check_predicate(clause, span)
-        }
+            .instantiate(self.tcx, self.resolved.args)
+            .into_iter()
+            .for_each(|(clause, span)| self.check_predicate(clause, span));
     }
 }

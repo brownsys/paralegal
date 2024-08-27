@@ -6,7 +6,7 @@ use itertools::Itertools;
 use log::trace;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::DefId;
+use rustc_hir::{def_id::DefId, Defaultness};
 use rustc_middle::{
     mir::{
         tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,
@@ -44,7 +44,13 @@ pub fn try_resolve_function<'tcx>(
 pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
     tcx.opt_associated_item(function)
         .map_or(false, |assoc_item| {
-            matches!(assoc_item.container, AssocItemContainer::TraitContainer)
+            matches!(
+                assoc_item.container,
+                AssocItemContainer::TraitContainer
+                if matches!(
+                    assoc_item.defaultness(tcx),
+                    Defaultness::Default { has_value: true })
+            )
         })
 }
 

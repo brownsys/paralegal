@@ -212,11 +212,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         all_instructions
             .into_iter()
             .map(|i| {
-                let body = self
-                    .pdg_constructor
-                    .body_for_def_id(i.function)
-                    .unwrap()
-                    .body();
+                let body = self.pdg_constructor.body_for_def_id(i.function).body();
 
                 let (kind, description) = match i.location {
                     RichLocation::End => (InstructionKind::Return, "start".to_owned()),

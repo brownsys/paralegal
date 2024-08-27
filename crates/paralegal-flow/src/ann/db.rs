@@ -12,7 +12,7 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
-    args::{Args, FlowModel, MarkerControl},
+    args::{Args, FlowModel},
     utils::{
         resolve::expect_resolve_string_to_def_id, ty_of_const, FunctionKind, InstanceExt,
         IntoDefId, TyExt,
@@ -231,10 +231,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// computes it.
     fn compute_reachable_markers(&self, res: MaybeMonomorphized<'tcx>) -> Box<[Identifier]> {
         trace!("Computing reachable markers for {res:?}");
-        let Some(body) = self.0.body_cache.get(res.def_id()) else {
-            trace!("  Cannot find body");
-            return Box::new([]);
-        };
+        let body= self.0.body_cache.get(res.def_id());
         let mono_body = match res {
             MaybeMonomorphized::Monomorphized(res) => Cow::Owned(
                 try_monomorphize(
@@ -290,11 +287,23 @@ impl<'tcx> MarkerCtx<'tcx> {
             return v.into_iter();
         };
         let res = if expect_resolve {
-            MaybeMonomorphized::Monomorphized(
-                Instance::resolve(self.tcx(), ty::ParamEnv::reveal_all(), def_id, gargs)
-                    .unwrap()
-                    .unwrap(),
-            )
+            let Some(instance) =
+                Instance::resolve(self.tcx(), ty::ParamEnv::reveal_all(), def_id, gargs).unwrap()
+            else {
+                if self.0.config.relaxed() {
+                    self.tcx().sess.span_warn(
+                        terminator.source_info.span, 
+                        format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
+                    );
+                } else {
+                    self.tcx().sess.span_err(
+                        terminator.source_info.span, 
+                        format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
+                    );
+                }
+                return v.into_iter();
+            };
+            MaybeMonomorphized::Monomorphized(instance)
         } else {
             MaybeMonomorphized::Plain(def_id)
         };
@@ -362,7 +371,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             .type_markers
             .get_maybe_recursive(key, |key| {
                 use ty::*;
-                let mut markers = self.shallow_type_markers(key).collect::<Vec<_>>();
+                let mut markers = self.shallow_type_markers(key).collect::<FxHashSet<_>>();
                 match key.kind() {
                     Bool
                     | Char
@@ -404,7 +413,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                         .sess
                         .fatal(format!("Did not expect this type here {key:?}")),
                 }
-                markers.as_slice().into()
+                markers.into_iter().collect()
             })
             .map_or(&[], Box::as_ref)
     }
@@ -556,7 +565,7 @@ pub struct MarkerDatabase<'tcx> {
     /// Cache whether markers are reachable transitively.
     reachable_markers: Cache<MaybeMonomorphized<'tcx>, Box<[Identifier]>>,
     /// Configuration options
-    _config: &'static MarkerControl,
+    config: &'static Args,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
     included_crates: FxHashSet<CrateNum>,
@@ -586,7 +595,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             annotations: load_annotations(tcx, included_crates.iter().copied()),
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
-            _config: args.marker_control(),
+            config: args,
             type_markers: Default::default(),
             body_cache,
             included_crates,

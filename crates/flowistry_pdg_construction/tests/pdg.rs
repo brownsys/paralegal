@@ -117,7 +117,7 @@ fn connects<'tcx>(
         .edge_indices()
         .filter_map(|edge| {
             let DepEdge { at, .. } = g.graph[edge];
-            let body_with_facts = body_cache.get(at.leaf().function).unwrap();
+            let body_with_facts = body_cache.get(at.leaf().function);
             let Either::Right(Terminator {
                 kind: TerminatorKind::Call { func, .. },
                 ..
