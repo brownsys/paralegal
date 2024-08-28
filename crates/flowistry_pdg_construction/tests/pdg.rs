@@ -37,7 +37,7 @@ fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
 struct LocalLoadingOnly<'tcx>(Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>);
 
 impl<'tcx> CallChangeCallback<'tcx> for LocalLoadingOnly<'tcx> {
-    fn on_inline(&self, info: flowistry_pdg_construction::CallInfo<'tcx>) -> CallChanges {
+    fn on_inline(&self, info: flowistry_pdg_construction::CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
         let is_local = info.callee.def_id().is_local();
         let mut changes = self
             .0
@@ -58,7 +58,7 @@ fn pdg(
     let _ = env_logger::try_init();
     rustc_utils::test_utils::CompileBuilder::new(input)
         .with_query_override(None)
-        .compile(move |CompileResult { tcx, .. }| {
+        .expect_compile(move |CompileResult { tcx, .. }| {
             dump_mir_and_borrowck_facts(tcx);
             let def_id = get_main(tcx);
             let mut memo = MemoPdgConstructor::new(tcx);
@@ -117,7 +117,7 @@ fn connects<'tcx>(
         .edge_indices()
         .filter_map(|edge| {
             let DepEdge { at, .. } = g.graph[edge];
-            let body_with_facts = body_cache.get(at.leaf().function).unwrap();
+            let body_with_facts = body_cache.get(at.leaf().function);
             let Either::Right(Terminator {
                 kind: TerminatorKind::Call { func, .. },
                 ..

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, iter, rc::Rc};
+use std::{borrow::Cow, collections::HashSet, iter, rc::Rc};
 
 use flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
@@ -14,10 +14,9 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArg, GenericArgKind, GenericArgsRef, Instance, List, TyCtxt, TyKind},
+    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
-
 use rustc_span::Span;
 use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt, PlaceExt};
 
@@ -29,7 +28,7 @@ use crate::{
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{self, is_async, is_virtual, try_monomorphize},
-    CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]
@@ -69,10 +68,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
         root: Instance<'tcx>,
-    ) -> Option<LocalAnalysis<'tcx, 'a>> {
+    ) -> LocalAnalysis<'tcx, 'a> {
         let tcx = memo.tcx;
         let def_id = root.def_id();
-        let body_with_facts = memo.body_cache.get(def_id)?;
+        let body_with_facts = memo.body_cache.get(def_id);
         let param_env = tcx.param_env_reveal_all_normalized(def_id);
         let body = try_monomorphize(
             root,
@@ -99,7 +98,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let body_assignments = utils::find_body_assignments(&body);
 
-        Some(LocalAnalysis {
+        LocalAnalysis {
             memo,
             root,
             body_with_facts,
@@ -109,7 +108,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             start_loc,
             def_id,
             body_assignments,
-        })
+        }
     }
 
     fn make_dep_node(
@@ -341,7 +340,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn operand_to_def_id(
         &self,
         func: &Operand<'tcx>,
-    ) -> Option<(DefId, &'tcx List<GenericArg<'tcx>>)> {
+    ) -> Option<(DefId, GenericArgsRef<'tcx>)> {
         let ty = func.ty(&self.mono_body, self.tcx());
         utils::type_as_fn(self.tcx(), ty)
     }
@@ -353,8 +352,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     pub(crate) fn determine_call_handling<'b>(
         &'b self,
         location: Location,
-        func: &Operand<'tcx>,
-        args: &'b [Operand<'tcx>],
+        func: Cow<'_, Operand<'tcx>>,
+        args: Cow<'b, [Operand<'tcx>]>,
         span: Span,
     ) -> Option<CallHandling<'tcx, 'b>> {
         let tcx = self.tcx();
@@ -364,7 +363,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.tcx().def_path_str(self.def_id)
         );
 
-        let Some((called_def_id, generic_args)) = self.operand_to_def_id(func) else {
+        let Some((called_def_id, generic_args)) = self.operand_to_def_id(&func) else {
             tcx.sess
                 .span_err(span, "Operand is cannot be interpreted as function");
             return None;
@@ -373,7 +372,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         // Monomorphize the called function with the known generic_args.
         let param_env = tcx.param_env(self.def_id);
-        let Some(resolved_fn) =
+        let Some(mut resolved_fn) =
             utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)
         else {
             let dynamics = generic_args.iter()
@@ -418,18 +417,11 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             trace!("  `{called}` monomorphized to `{resolved}`",);
         }
 
-        if is_virtual(tcx, resolved_def_id) {
-            trace!("  bailing because is unresolvable trait method");
-            return None;
-        }
-
         if let Some(handler) = self.can_approximate_async_functions(resolved_def_id) {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
-        let call_kind = self.classify_call_kind(called_def_id, resolved_fn, args, span);
-
-        let calling_convention = CallingConvention::from_call_kind(&call_kind, args);
+        let call_kind = self.classify_call_kind(called_def_id, resolved_fn, &args, span);
 
         trace!(
             "  Handling call! with kind {}",
@@ -450,7 +442,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 callee: resolved_fn,
                 call_string: self.make_call_string(location),
                 is_cached,
-                async_parent: if let CallKind::AsyncPoll(poll) = call_kind {
+                async_parent: if let CallKind::AsyncPoll(poll) = &call_kind {
                     // Special case for async. We ask for skipping not on the closure, but
                     // on the "async" function that created it. This is needed for
                     // consistency in skipping. Normally, when "poll" is inlined, mutations
@@ -463,6 +455,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 } else {
                     None
                 },
+                span,
+                arguments: &args,
+                caller_body: &self.mono_body,
+                param_env,
             };
             callback.on_inline(info)
         });
@@ -484,20 +480,45 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             .then_some(CallHandling::ApproxAsyncFn);
         }
 
-        if matches!(
-            call_changes,
+        let calling_convention = match call_changes {
             Some(CallChanges {
                 skip: SkipCall::Skip,
-                ..
-            })
-        ) {
-            trace!("  Bailing because user callback said to bail");
+            }) => {
+                trace!("  Bailing because user callback said to bail");
+                return None;
+            }
+            Some(CallChanges {
+                skip:
+                    SkipCall::Replace {
+                        instance,
+                        calling_convention,
+                    },
+            }) => {
+                trace!("  Replacing call as instructed by user");
+                resolved_fn = instance;
+                calling_convention
+            }
+            _ => CallingConvention::from_call_kind(&call_kind, args),
+        };
+        if is_virtual(tcx, resolved_def_id) {
+            trace!("  bailing because is unresolvable trait method");
+            if let Some(callback) = self.call_change_callback() {
+                callback.on_inline_miss(
+                    resolved_fn,
+                    param_env,
+                    location,
+                    self.root,
+                    InlineMissReason::TraitMethod,
+                    span,
+                );
+            }
             return None;
         }
         let Some(descriptor) = self.memo.construct_for(resolved_fn) else {
-            trace!("  Bailing because cache lookup {cache_key:?} failed");
+            trace!("  Bailing because of recursion.");
             return None;
         };
+
         Some(CallHandling::Ready {
             descriptor,
             calling_convention,
@@ -519,7 +540,9 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         // Note: my comments here will use "child" to refer to the callee and
         // "parent" to refer to the caller, since the words are most visually distinct.
 
-        let Some(preamble) = self.determine_call_handling(location, func, args, span) else {
+        let Some(preamble) =
+            self.determine_call_handling(location, Cow::Borrowed(func), Cow::Borrowed(args), span)
+        else {
             return false;
         };
 
@@ -765,7 +788,7 @@ pub enum CallKind<'tcx> {
 pub(crate) enum CallHandling<'tcx, 'a> {
     ApproxAsyncFn,
     Ready {
-        calling_convention: CallingConvention<'tcx, 'a>,
+        calling_convention: CallingConvention<'tcx>,
         descriptor: &'a PartialGraph<'tcx>,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),

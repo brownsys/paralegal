@@ -26,7 +26,7 @@ fn clone_nesting() {
             let v2 = Opt::Filled(AnEnum::Var1(0)).clone();
         }
     ))
-    .check(|_ctr| {})
+    .check_ctrl(|_ctr| {})
 }
 
 #[test]
@@ -74,5 +74,5 @@ fn clone_test_2() {
 
         fn main() {}
     ))
-    .check(|_g| {})
+    .check_ctrl(|_g| {})
 }

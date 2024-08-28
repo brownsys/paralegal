@@ -21,7 +21,7 @@ fn trait_instance_entry_point_test() {
         }
     ))
     .with_entrypoint("<crate::MyStruct as std::clone::Clone>::clone")
-    .compile(|graph| {
+    .run(|graph| {
         assert!(graph
             .desc
             .controllers

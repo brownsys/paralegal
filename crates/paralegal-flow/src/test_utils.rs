@@ -6,6 +6,7 @@ extern crate rustc_span;
 
 use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
 use hir::def_id::DefId;
+use rustc_interface::interface;
 
 use crate::{
     ann::dump_markers,
@@ -13,9 +14,12 @@ use crate::{
     utils::Print,
     HashSet, EXTRA_RUSTC_ARGS,
 };
-use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::process::Command;
+use std::{
+    fmt::{Debug, Formatter},
+    sync::Once,
+};
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, EdgeSelection},
@@ -211,7 +215,24 @@ impl InlineTestBuilder {
         self
     }
 
-    pub fn compile(&self, callback: impl FnOnce(PreFrg) + Send) {
+    pub fn expect_fail_compile(&self) {
+        let reached = Once::new();
+        let res = self.run(|_| reached.call_once(|| ()));
+        assert!(res.is_err(), "the compiler existed successfully");
+    }
+
+    /// Compile the code, select the [`CtrlRef`] corresponding to the configured
+    /// entrypoint and hand it to the `check` function which should contain the
+    /// test predicate.
+    pub fn check_ctrl(&self, check: impl FnOnce(CtrlRef) + Send) {
+        self.run(|graph| {
+            let cref = graph.ctrl(&self.ctrl_name);
+            check(cref);
+        })
+        .unwrap()
+    }
+
+    pub fn run(&self, f: impl FnOnce(PreFrg) + Send) -> interface::Result<()> {
         use clap::Parser;
 
         #[derive(clap::Parser)]
@@ -242,8 +263,8 @@ impl InlineTestBuilder {
                 let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
                 let pdg = memo.run(tcx).unwrap();
                 let graph = PreFrg::from_description(pdg);
-                callback(graph)
-            });
+                f(graph)
+            })
     }
 
     /// Compile the code, select the [`CtrlRef`] corresponding to the configured

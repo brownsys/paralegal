@@ -6,6 +6,7 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
+    args::FlowModel,
     desc::*,
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
@@ -19,13 +20,18 @@ use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::BodyCache, CallChangeCallback, CallChanges, CallInfo, MemoPdgConstructor, SkipCall,
+    body_cache::BodyCache, calling_convention::CallingConvention, CallChangeCallback, CallChanges,
+    CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
+use inline_judge::InlineJudgement;
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
 use rustc_hir::{self as hir, def, def_id::DefId};
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::{
+    mir::Location,
+    ty::{Instance, ParamEnv, TyCtxt},
+};
 use rustc_span::{FileNameDisplayPreference, Span as RustSpan, Symbol};
 
 mod graph_converter;
@@ -206,11 +212,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         all_instructions
             .into_iter()
             .map(|i| {
-                let body = self
-                    .pdg_constructor
-                    .body_for_def_id(i.function)
-                    .unwrap()
-                    .body();
+                let body = self.pdg_constructor.body_for_def_id(i.function).body();
 
                 let (kind, description) = match i.location {
                     RichLocation::End => (InstructionKind::Return, "start".to_owned()),
@@ -411,66 +413,61 @@ struct MyCallback<'tcx> {
 }
 
 impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx>) -> CallChanges {
-        let mut changes = CallChanges::default();
+    fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
+        let changes = CallChanges::default();
 
-        let mut skip = true;
-
-        if is_virtual(self.tcx, info.callee.def_id()) {
-            self.tcx.sess.span_warn(
-                self.tcx.def_span(info.callee.def_id()),
-                "Skipping analysis of unresolvable trait method.",
-            );
-        } else if self.judge.should_inline(&info) {
-            skip = false;
+        let skip = match self.judge.should_inline(&info) {
+            InlineJudgement::AbstractViaType => SkipCall::Skip,
+            InlineJudgement::UseFlowModel(model) => {
+                // Set in case of errors
+                assert!(matches!(
+                    model,
+                    FlowModel::SubClosure | FlowModel::SubFuture
+                ));
+                if let [clj] = &info.arguments {
+                    let ty = clj.ty(info.caller_body, self.tcx);
+                    let (def_id, args) =
+                        flowistry_pdg_construction::utils::type_as_fn(self.tcx, ty).unwrap();
+                    let instance = Instance::resolve(self.tcx, info.param_env, def_id, args)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(instance.sig(self.tcx).unwrap().inputs().len(), 1);
+                    match model {
+                        FlowModel::SubClosure => {
+                            assert_eq!(self.tcx.def_kind(def_id), rustc_hir::def::DefKind::Closure)
+                        }
+                        FlowModel::SubFuture => assert!(self.tcx.generator_is_async(def_id)),
+                    };
+                    SkipCall::Replace {
+                        instance,
+                        calling_convention: CallingConvention::Indirect {
+                            closure_arg: clj.clone(),
+                            // This is incorrect, but we only support
+                            // non-argument closures at the moment so this
+                            // will never be used.
+                            tupled_arguments: clj.clone(),
+                        },
+                    }
+                } else {
+                    SkipCall::Skip
+                }
+            }
+            InlineJudgement::Inline => SkipCall::NoSkip,
         };
-
-        if skip {
-            changes = changes.with_skip(SkipCall::Skip);
-        } else {
-            // record_inlining(
-            //     &self.stat_wrap,
-            //     self.tcx,
-            //     info.callee.def_id().expect_local(),
-            //     info.is_cached,
-            // )
-        }
-        changes
+        changes.with_skip(skip)
     }
-
-    // fn on_inline_miss(
-    //     &self,
-    //     resolution: FnResolution<'tcx>,
-    //     loc: Location,
-    //     parent: FnResolution<'tcx>,
-    //     call_string: Option<CallString>,
-    //     reason: InlineMissReason,
-    // ) {
-    //     let body = self
-    //         .tcx
-    //         .body_for_def_id(parent.def_id().expect_local())
-    //         .unwrap();
-    //     let span = body
-    //         .body
-    //         .stmt_at(loc)
-    //         .either(|s| s.source_info.span, |t| t.source_info.span);
-    //     let markers_reachable = self.judge.marker_ctx().get_reachable_markers(resolution);
-    //     self.tcx.sess.span_err(
-    //         span,
-    //         format!(
-    //             "Could not inline this function call in {:?}, at {} because {reason:?}. {}",
-    //             parent.def_id(),
-    //             call_string.map_or("root".to_owned(), |c| c.to_string()),
-    //             Print(|f| if markers_reachable.is_empty() {
-    //                 f.write_str("No markers are reachable")
-    //             } else {
-    //                 f.write_str("Markers ")?;
-    //                 write_sep(f, ", ", markers_reachable.iter(), Display::fmt)?;
-    //                 f.write_str(" are reachable")
-    //             })
-    //         ),
-    //     );
-    // }
+    fn on_inline_miss(
+        &self,
+        resolution: Instance<'tcx>,
+        param_env: ParamEnv<'tcx>,
+        _loc: Location,
+        _parent: Instance<'tcx>,
+        _reason: InlineMissReason,
+        call_span: rustc_span::Span,
+    ) {
+        self.judge
+            .ensure_is_safe_to_approximate(param_env, resolution, call_span, false);
+    }
 }
 
 //type StatStracker = Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>;

@@ -253,14 +253,14 @@ impl<'tcx> InstanceExt<'tcx> for Instance<'tcx> {
 /// request their signature differently. Thus we factor that determination out
 /// into this enum.
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum FunctionKind {
+pub enum FunctionKind {
     Closure,
     Generator,
     Plain,
 }
 
 impl FunctionKind {
-    fn for_def_id(tcx: TyCtxt, def_id: DefId) -> Result<Self, ErrorGuaranteed> {
+    pub fn for_def_id(tcx: TyCtxt, def_id: DefId) -> Result<Self, ErrorGuaranteed> {
         if tcx.generator_kind(def_id).is_some() {
             Ok(Self::Generator)
         } else if tcx.is_closure(def_id) {

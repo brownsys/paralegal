@@ -45,7 +45,7 @@ fn with_return() {
             receiver(callee(x));
         }
     ))
-    .check(|ctrl| {
+    .check_ctrl(|ctrl| {
         let src_fn = ctrl.function("source");
         let src = ctrl.call_site(&src_fn);
         let dest_fn = ctrl.function("receiver");
