@@ -32,6 +32,26 @@ fn trait_instance_entry_point_test() {
 }
 
 #[test]
+fn qualified_type_without_trait() {
+    InlineTestBuilder::new(stringify!(
+        struct MyStruct {}
+
+        impl MyStruct {
+            fn method(&self) {}
+        }
+    ))
+    .with_entrypoint("<crate::MyStruct>::method")
+    .run(|graph| {
+        assert!(graph
+            .desc
+            .controllers
+            .values()
+            .any(|v| v.name.as_str() == "method"))
+    })
+    .unwrap()
+}
+
+#[test]
 fn reject_arguments() {
     InlineTestBuilder::new(stringify!(
         struct MyStruct<T>(Vec<T>);

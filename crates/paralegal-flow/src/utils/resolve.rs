@@ -72,36 +72,39 @@ impl Res {
     }
 }
 
+fn as_primitive_ty(name: Symbol) -> Option<SimplifiedType> {
+    match name.as_str() {
+        "bool" => Some(SimplifiedType::Bool),
+        "char" => Some(SimplifiedType::Char),
+        "str" => Some(SimplifiedType::Str),
+        "array" => Some(SimplifiedType::Array),
+        "slice" => Some(SimplifiedType::Slice),
+        "const_ptr" => Some(SimplifiedType::Ptr(Mutability::Not)),
+        "mut_ptr" => Some(SimplifiedType::Ptr(Mutability::Mut)),
+        "isize" => Some(SimplifiedType::Int(IntTy::Isize)),
+        "i8" => Some(SimplifiedType::Int(IntTy::I8)),
+        "i16" => Some(SimplifiedType::Int(IntTy::I16)),
+        "i32" => Some(SimplifiedType::Int(IntTy::I32)),
+        "i64" => Some(SimplifiedType::Int(IntTy::I64)),
+        "i128" => Some(SimplifiedType::Int(IntTy::I128)),
+        "usize" => Some(SimplifiedType::Uint(UintTy::Usize)),
+        "u8" => Some(SimplifiedType::Uint(UintTy::U8)),
+        "u16" => Some(SimplifiedType::Uint(UintTy::U16)),
+        "u32" => Some(SimplifiedType::Uint(UintTy::U32)),
+        "u64" => Some(SimplifiedType::Uint(UintTy::U64)),
+        "u128" => Some(SimplifiedType::Uint(UintTy::U128)),
+        "f32" => Some(SimplifiedType::Float(FloatTy::F32)),
+        "f64" => Some(SimplifiedType::Float(FloatTy::F64)),
+        _ => None,
+    }
+}
+
 fn find_primitive_impls<'tcx>(
     tcx: TyCtxt<'tcx>,
     name: Symbol,
 ) -> impl Iterator<Item = DefId> + 'tcx {
-    let ty = match name.as_str() {
-        "bool" => SimplifiedType::Bool,
-        "char" => SimplifiedType::Char,
-        "str" => SimplifiedType::Str,
-        "array" => SimplifiedType::Array,
-        "slice" => SimplifiedType::Slice,
-        // FIXME: rustdoc documents these two using just `pointer`.
-        //
-        // Maybe this is something we should do here too.
-        "const_ptr" => SimplifiedType::Ptr(Mutability::Not),
-        "mut_ptr" => SimplifiedType::Ptr(Mutability::Mut),
-        "isize" => SimplifiedType::Int(IntTy::Isize),
-        "i8" => SimplifiedType::Int(IntTy::I8),
-        "i16" => SimplifiedType::Int(IntTy::I16),
-        "i32" => SimplifiedType::Int(IntTy::I32),
-        "i64" => SimplifiedType::Int(IntTy::I64),
-        "i128" => SimplifiedType::Int(IntTy::I128),
-        "usize" => SimplifiedType::Uint(UintTy::Usize),
-        "u8" => SimplifiedType::Uint(UintTy::U8),
-        "u16" => SimplifiedType::Uint(UintTy::U16),
-        "u32" => SimplifiedType::Uint(UintTy::U32),
-        "u64" => SimplifiedType::Uint(UintTy::U64),
-        "u128" => SimplifiedType::Uint(UintTy::U128),
-        "f32" => SimplifiedType::Float(FloatTy::F32),
-        "f64" => SimplifiedType::Float(FloatTy::F64),
-        _ => return [].iter().copied(),
+    let Some(ty) = as_primitive_ty(name) else {
+        return [].iter().copied();
     };
 
     tcx.incoherent_impls(ty).iter().copied()
@@ -239,17 +242,30 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
     }
 }
 
-fn convert_to_simplified_type(tcx: TyCtxt, t: &Ty) -> Result<SimplifiedType> {
-    match &t.kind {
-        TyKind::Path(qslf, path) => {
-            let res = def_path_res(tcx, qslf.as_deref(), &path.segments)?;
-            Ok(SimplifiedType::Adt(res.def_id()))
-        }
-        _ => Err(ResolutionError::UnsupportedType(t.clone())),
-    }
-}
-
-/// Lifted from `clippy_utils`
+/// Main algorithm lifted from `clippy_utils`. I've made additions so this can
+/// handle some qualified paths.
+///
+/// ## Caveats
+///
+/// Resolution is a rabbit hole that is easy to get lost in. To avoid spending
+/// inordinate amounts of time on this, I have eschewed some features and
+/// niceties that didn't seem pressing. What follows is a numbered list of such
+/// features. Each index in this list is later mentioned in code comments at
+/// locations that are likely the best place to get started for implementing the
+/// issue in question.
+///
+/// 1. All local paths must start with `crate`. If the path has only one segment
+///    this function assumes it is a primitive type and tries to resolve it as
+///    such. E.g. you need to do `crate::MyStruct::method` and `<crate::MyStruct
+///    as std::clone::Clone>::clone`.
+/// 3. Generics are not supported. If you want to reference a path like
+///    `<std::vec::Vec<T> as std::iter::Extend>::extend`, simply don't add the
+///    `<T>`. Note though that you need to ensure that there is only one
+///    matching method in this case. If the generics would be needed to
+///    disambiguate the instances, one of them is instead returned
+///    non-deterministically.
+/// 2. It probably cannot resolve a qualified path if the base is a primitive
+///    type. E.g. `usize::abs_diff` resolves but `<usize>::abs_diff` does not.
 pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) -> Result<Res> {
     let no_generics_supported = |segment: &PathSegment| {
         if segment.args.is_some() {
@@ -261,12 +277,14 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
     let (starts, path): (_, &[PathSegment]) = match qself {
         None => match path {
             [primitive] => {
+                /* Start here for issue 1 */
                 let sym = primitive.ident.name;
                 return PrimTy::from_name(sym)
                     .map(Res::PrimTy)
                     .ok_or(ResolutionError::CannotResolvePrimitiveType(sym));
             }
             [base, ref path @ ..] => {
+                /* This is relevant for issue 2 */
                 no_generics_supported(base);
                 let base_name = base.ident.name;
                 let local_crate =
@@ -288,15 +306,18 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
         },
         Some(slf) => (
             if slf.position == 0 {
-                Box::new(
-                    tcx.incoherent_impls(convert_to_simplified_type(tcx, &slf.ty)?)
-                        .into_iter()
-                        .copied(),
-                ) as Box<_>
+                /* this is relevant for 3 */
+                let TyKind::Path(qslf, pth) = &slf.ty.kind else {
+                    return Err(ResolutionError::UnsupportedType((*slf.ty).clone()));
+                };
+                let ty = def_path_res(tcx, qslf.as_deref(), &pth.segments)?;
+                let impls = tcx.inherent_impls(ty.def_id());
+                Box::new(impls.into_iter().copied()) as Box<_>
             } else {
                 let r#trait = def_path_res(tcx, None, &path[..slf.position])?;
                 let r#type = resolve_ty(tcx, &slf.ty)?;
                 let mut impls = vec![];
+                /* This is relevant for issue 2 */
                 tcx.for_each_relevant_impl(r#trait.def_id(), r#type, |i| impls.push(i));
                 Box::new(impls.into_iter()) as Box<_>
             },
