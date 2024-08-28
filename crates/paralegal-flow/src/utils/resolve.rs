@@ -17,8 +17,9 @@ use rustc_hir::{self as hir, def_id::DefId};
 use rustc_middle::{
     middle::resolve_bound_vars::ResolveBoundVars,
     ty::{
-        self, fast_reject::SimplifiedType, FloatTy, GenericArg, Instance, IntTy, ParamEnv, TyCtxt,
-        UintTy,
+        self,
+        fast_reject::{self, simplify_type, SimplifiedType},
+        FloatTy, GenericArg, Instance, IntTy, ParamEnv, TyCtxt, UintTy,
     },
 };
 use rustc_parse::new_parser_from_source_str;
@@ -45,6 +46,8 @@ pub enum ResolutionError {
     UnsupportedType(Ty),
 }
 
+pub type Result<T> = std::result::Result<T, ResolutionError>;
+
 #[derive(Clone, Debug)]
 pub enum SearchSpace {
     InherentImpl,
@@ -52,7 +55,7 @@ pub enum SearchSpace {
 }
 
 impl Res {
-    fn from_def_res(res: def::Res) -> Result<Self, ResolutionError> {
+    fn from_def_res(res: def::Res) -> Result<Self> {
         match res {
             def::Res::Def(k, i) => Ok(Res::Def(k, i)),
             def::Res::PrimTy(t) => Ok(Res::PrimTy(t)),
@@ -147,11 +150,7 @@ pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -
     }
 }
 
-fn item_child_by_name(
-    tcx: TyCtxt<'_>,
-    def_id: DefId,
-    name: Symbol,
-) -> Option<Result<Res, ResolutionError>> {
+fn item_child_by_name(tcx: TyCtxt<'_>, def_id: DefId, name: Symbol) -> Option<Result<Res>> {
     if let Some(local_id) = def_id.as_local() {
         local_item_children_by_name(tcx, local_id, name)
     } else {
@@ -163,7 +162,7 @@ fn non_local_item_children_by_name(
     tcx: TyCtxt<'_>,
     def_id: DefId,
     name: Symbol,
-) -> Option<Result<Res, ResolutionError>> {
+) -> Option<Result<Res>> {
     match tcx.def_kind(def_id) {
         DefKind::Mod | DefKind::Enum | DefKind::Trait => tcx
             .module_children(def_id)
@@ -184,7 +183,7 @@ fn local_item_children_by_name(
     tcx: TyCtxt<'_>,
     local_id: LocalDefId,
     name: Symbol,
-) -> Option<Result<Res, ResolutionError>> {
+) -> Option<Result<Res>> {
     let hir = tcx.hir();
 
     let root_mod;
@@ -226,7 +225,7 @@ fn find_crates(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = DefId> + '
         .map(CrateNum::as_def_id)
 }
 
-fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>, ResolutionError> {
+fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
     match &t.kind {
         TyKind::Path(qslf, pth) => {
             let adt = def_path_res(tcx, qslf.as_deref(), pth.segments.as_slice())?;
@@ -240,12 +239,25 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>, Resolutio
     }
 }
 
+fn convert_to_simplified_type(tcx: TyCtxt, t: &Ty) -> Result<SimplifiedType> {
+    match &t.kind {
+        TyKind::Path(qslf, path) => {
+            let res = def_path_res(tcx, qslf.as_deref(), &path.segments)?;
+            Ok(SimplifiedType::Adt(res.def_id()))
+        }
+        _ => Err(ResolutionError::UnsupportedType(t.clone())),
+    }
+}
+
 /// Lifted from `clippy_utils`
-pub fn def_path_res(
-    tcx: TyCtxt,
-    qself: Option<&QSelf>,
-    path: &[PathSegment],
-) -> Result<Res, ResolutionError> {
+pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) -> Result<Res> {
+    let no_generics_supported = |segment: &PathSegment| {
+        if segment.args.is_some() {
+            tcx.sess.err(format!(
+                "Generics are not supported in this position: {segment:?}"
+            ));
+        }
+    };
     let (starts, path): (_, &[PathSegment]) = match qself {
         None => match path {
             [primitive] => {
@@ -255,6 +267,7 @@ pub fn def_path_res(
                     .ok_or(ResolutionError::CannotResolvePrimitiveType(sym));
             }
             [base, ref path @ ..] => {
+                no_generics_supported(base);
                 let base_name = base.ident.name;
                 let local_crate =
                     if tcx.crate_name(LOCAL_CRATE) == base_name || base_name.as_str() == "crate" {
@@ -264,8 +277,8 @@ pub fn def_path_res(
                     };
                 (
                     Box::new(
-                        find_primitive_impls(tcx, base.ident.name)
-                            .chain(find_crates(tcx, base.ident.name))
+                        find_primitive_impls(tcx, base_name)
+                            .chain(find_crates(tcx, base_name))
                             .chain(local_crate),
                     ) as Box<dyn Iterator<Item = DefId>>,
                     path,
@@ -274,8 +287,13 @@ pub fn def_path_res(
             [] => return Err(ResolutionError::PathIsEmpty),
         },
         Some(slf) => (
-            {
-                // handle position == 0
+            if slf.position == 0 {
+                Box::new(
+                    tcx.incoherent_impls(convert_to_simplified_type(tcx, &slf.ty)?)
+                        .into_iter()
+                        .copied(),
+                ) as Box<_>
+            } else {
                 let r#trait = def_path_res(tcx, None, &path[..slf.position])?;
                 let r#type = resolve_ty(tcx, &slf.ty)?;
                 let mut impls = vec![];
@@ -292,6 +310,7 @@ pub fn def_path_res(
             .iter()
             // for each segment, find the child item
             .try_fold(Res::Def(tcx.def_kind(first), first), |res, segment| {
+                no_generics_supported(segment);
                 let segment = segment.ident.name;
                 let def_id = res.def_id();
                 if let Some(item) = item_child_by_name(tcx, def_id, segment) {
