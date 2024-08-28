@@ -253,7 +253,8 @@ pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<De
                 .into_iter()
                 .map(|strs| {
                     let segment_vec = strs.iter().map(AsRef::as_ref).collect::<Vec<&str>>();
-                    Ok(utils::resolve::def_path_res(tcx, &segment_vec)
+                    let res : Result<utils::resolve::Res, utils::resolve::ResolutionError> = unimplemented!() /* utils::resolve::def_path_res(tcx, &segment_vec) */;
+                    Ok(res
                         .map_err(|err| {
                             format!(
                                 "Could not resolve {}: {err:?}",
