@@ -266,16 +266,6 @@ impl InlineTestBuilder {
                 f(graph)
             })
     }
-
-    /// Compile the code, select the [`CtrlRef`] corresponding to the configured
-    /// entrypoint and hand it to the `check` function which should contain the
-    /// test predicate.
-    pub fn check(&self, check: impl FnOnce(CtrlRef) + Send) {
-        self.compile(|graph| {
-            let cref = graph.ctrl(&self.ctrl_name);
-            check(cref);
-        })
-    }
 }
 
 pub trait HasGraph<'g>: Sized + Copy {

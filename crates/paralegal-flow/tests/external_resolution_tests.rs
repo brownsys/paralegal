@@ -6,7 +6,7 @@ fn basic_external_entrypoint_test() {
         fn target() {}
     ))
     .with_entrypoint("crate::target")
-    .check(|_| {});
+    .check_ctrl(|_| {});
 }
 
 #[test]
@@ -28,4 +28,20 @@ fn trait_instance_entry_point_test() {
             .values()
             .any(|v| v.name.as_str() == "clone"))
     })
+    .unwrap()
+}
+
+#[test]
+fn reject_arguments() {
+    InlineTestBuilder::new(stringify!(
+        struct MyStruct<T>(Vec<T>);
+
+        impl Clone for MyStruct<usize> {
+            fn clone(&self) -> Self {
+                MyStruct(self.0.clone())
+            }
+        }
+    ))
+    .with_entrypoint("<crate::MyStruct<usize> as std::clone::Clone>::clone")
+    .expect_fail_compile()
 }
