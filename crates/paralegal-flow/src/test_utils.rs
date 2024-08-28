@@ -10,6 +10,7 @@ use hir::def_id::DefId;
 use crate::{
     ann::dump_markers,
     desc::{Identifier, ProgramDescription},
+    utils::Print,
     HashSet, EXTRA_RUSTC_ARGS,
 };
 use std::fmt::{Debug, Formatter};
@@ -18,6 +19,7 @@ use std::process::Command;
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, EdgeSelection},
+    utils::write_sep,
     DefInfo, EdgeInfo, Endpoint, Node, TypeId, SPDG,
 };
 
@@ -209,10 +211,7 @@ impl InlineTestBuilder {
         self
     }
 
-    /// Compile the code, select the [`CtrlRef`] corresponding to the configured
-    /// entrypoint and hand it to the `check` function which should contain the
-    /// test predicate.
-    pub fn check(&self, check: impl FnOnce(CtrlRef) + Send) {
+    pub fn compile(&self, callback: impl FnOnce(PreFrg) + Send) {
         use clap::Parser;
 
         #[derive(clap::Parser)]
@@ -225,7 +224,7 @@ impl InlineTestBuilder {
             TopLevelArgs::parse_from([
                 "".into(),
                 "--analyze".into(),
-                format!("crate::{}", self.ctrl_name),
+                format!("{}", self.ctrl_name),
             ])
             .args,
         )
@@ -243,9 +242,18 @@ impl InlineTestBuilder {
                 let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
                 let pdg = memo.run(tcx).unwrap();
                 let graph = PreFrg::from_description(pdg);
-                let cref = graph.ctrl(&self.ctrl_name);
-                check(cref);
+                callback(graph)
             });
+    }
+
+    /// Compile the code, select the [`CtrlRef`] corresponding to the configured
+    /// entrypoint and hand it to the `check` function which should contain the
+    /// test predicate.
+    pub fn check(&self, check: impl FnOnce(CtrlRef) + Send) {
+        self.compile(|graph| {
+            let cref = graph.ctrl(&self.ctrl_name);
+            check(cref);
+        })
     }
 }
 
@@ -304,6 +312,7 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 
     fn ctrl_hashed(self, name: &str) -> Endpoint {
+        let name = name.strip_prefix("crate::").unwrap_or(name);
         let candidates = self
             .graph()
             .desc
@@ -313,7 +322,14 @@ pub trait HasGraph<'g>: Sized + Copy {
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
         match candidates.as_slice() {
-            [] => panic!("Could not find controller '{name}'"),
+            [] => panic!(
+                "Could not find controller '{name}'. Known controllers are {}",
+                Print(|fmt| {
+                    write_sep(fmt, ", ", self.graph().desc.controllers.values(), |c, f| {
+                        f.write_str(c.name.as_str())
+                    })
+                })
+            ),
             [ctrl] => *ctrl,
             more => panic!("Too many matching controllers, found candidates: {more:?}"),
         }

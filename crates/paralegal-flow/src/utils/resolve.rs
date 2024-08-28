@@ -14,9 +14,12 @@ use rustc_ast::{
     Expr, ExprKind, Path, PathSegment, QSelf, Ty, TyKind,
 };
 use rustc_hir::{self as hir, def_id::DefId};
-use rustc_middle::ty::{
-    self, fast_reject::SimplifiedType, FloatTy, GenericArg, Instance, IntTy, ParamEnv, TyCtxt,
-    UintTy,
+use rustc_middle::{
+    middle::resolve_bound_vars::ResolveBoundVars,
+    ty::{
+        self, fast_reject::SimplifiedType, FloatTy, GenericArg, Instance, IntTy, ParamEnv, TyCtxt,
+        UintTy,
+    },
 };
 use rustc_parse::new_parser_from_source_str;
 use rustc_span::Symbol;
@@ -39,7 +42,7 @@ pub enum ResolutionError {
     EmptyStarts,
     UnconvertibleRes(def::Res),
     CouldNotResolveCrate(Symbol),
-    UnsupportedType(rustc_ast::ptr::P<Ty>),
+    UnsupportedType(Ty),
 }
 
 #[derive(Clone, Debug)]
@@ -223,6 +226,20 @@ fn find_crates(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = DefId> + '
         .map(CrateNum::as_def_id)
 }
 
+fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>, ResolutionError> {
+    match &t.kind {
+        TyKind::Path(qslf, pth) => {
+            let adt = def_path_res(tcx, qslf.as_deref(), pth.segments.as_slice())?;
+            Ok(ty::Ty::new_adt(
+                tcx,
+                tcx.adt_def(adt.def_id()),
+                ty::List::empty(),
+            ))
+        }
+        _ => Err(ResolutionError::UnsupportedType(t.clone())),
+    }
+}
+
 /// Lifted from `clippy_utils`
 pub fn def_path_res(
     tcx: TyCtxt,
@@ -260,27 +277,10 @@ pub fn def_path_res(
             {
                 // handle position == 0
                 let r#trait = def_path_res(tcx, None, &path[..slf.position])?;
-                let r#type = match &slf.ty.kind {
-                    TyKind::Path(qslf, pth) => {
-                        def_path_res(tcx, qslf.as_deref(), pth.segments.as_slice())?
-                    }
-                    other => return Err(ResolutionError::UnsupportedType(slf.ty.clone())),
-                };
-                Box::new(
-                    [Instance::expect_resolve(
-                        tcx,
-                        ParamEnv::reveal_all(),
-                        r#trait.def_id(),
-                        tcx.mk_args(&[ty::Ty::new_adt(
-                            tcx,
-                            tcx.adt_def(r#type.def_id()),
-                            ty::List::empty(),
-                        )
-                        .into()]),
-                    )
-                    .def_id()]
-                    .into_iter(),
-                ) as Box<_>
+                let r#type = resolve_ty(tcx, &slf.ty)?;
+                let mut impls = vec![];
+                tcx.for_each_relevant_impl(r#trait.def_id(), r#type, |i| impls.push(i));
+                Box::new(impls.into_iter()) as Box<_>
             },
             &path[slf.position..],
         ),
