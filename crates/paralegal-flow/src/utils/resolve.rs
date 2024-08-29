@@ -1,4 +1,4 @@
-use std::{hash::Hash, str::FromStr};
+use std::hash::Hash;
 
 use ast::Mutability;
 use hir::{
@@ -8,21 +8,10 @@ use hir::{
     def_id::LOCAL_CRATE,
     ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
 };
-use rustc_ast::{
-    self as ast,
-    token::{Token, TokenKind},
-    Expr, ExprKind, Path, PathSegment, QSelf, Ty, TyKind,
-};
+use rustc_ast::{self as ast, token::TokenKind, ExprKind, PathSegment, QSelf, Ty, TyKind};
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
-use rustc_middle::{
-    middle::resolve_bound_vars::ResolveBoundVars,
-    ty::{
-        self,
-        fast_reject::{self, simplify_type, SimplifiedType},
-        FloatTy, GenericArg, Instance, IntTy, ParamEnv, TyCtxt, UintTy,
-    },
-};
+use rustc_middle::ty::{self, fast_reject::SimplifiedType, FloatTy, IntTy, TyCtxt, UintTy};
 use rustc_parse::new_parser_from_source_str;
 use rustc_span::Symbol;
 
@@ -100,10 +89,7 @@ fn as_primitive_ty(name: Symbol) -> Option<SimplifiedType> {
     }
 }
 
-fn find_primitive_impls<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    name: Symbol,
-) -> impl Iterator<Item = DefId> + 'tcx {
+fn find_primitive_impls(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = DefId> + '_ {
     let Some(ty) = as_primitive_ty(name) else {
         return [].iter().copied();
     };
@@ -315,7 +301,7 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
                 };
                 let ty = def_path_res(tcx, qslf.as_deref(), &pth.segments)?;
                 let impls = tcx.inherent_impls(ty.def_id());
-                Box::new(impls.into_iter().copied()) as Box<_>
+                Box::new(impls.iter().copied()) as Box<_>
             } else {
                 let r#trait = def_path_res(tcx, None, &path[..slf.position])?;
                 let r#type = resolve_ty(tcx, &slf.ty)?;

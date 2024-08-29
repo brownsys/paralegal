@@ -12,7 +12,7 @@ use super::{
     ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind, VerificationHash,
 };
 use crate::{
-    utils::{self, resolve::def_path_res, write_sep, Print, TinyBitSet},
+    utils::{resolve::def_path_res, TinyBitSet},
     Symbol,
 };
 use paralegal_spdg::Identifier;

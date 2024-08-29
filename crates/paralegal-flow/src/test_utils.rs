@@ -242,12 +242,8 @@ impl InlineTestBuilder {
         }
 
         let args = crate::Args::try_from(
-            TopLevelArgs::parse_from([
-                "".into(),
-                "--analyze".into(),
-                format!("{}", self.ctrl_name),
-            ])
-            .args,
+            TopLevelArgs::parse_from(["".into(), "--analyze".into(), self.ctrl_name.to_string()])
+                .args,
         )
         .unwrap();
 
