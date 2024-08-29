@@ -431,12 +431,23 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
                     let instance = Instance::resolve(self.tcx, info.param_env, def_id, args)
                         .unwrap()
                         .unwrap();
-                    assert_eq!(instance.sig(self.tcx).unwrap().inputs().len(), 1);
+                    let num_inputs = instance.sig(self.tcx).unwrap().inputs().len();
                     match model {
                         FlowModel::SubClosure => {
-                            assert_eq!(self.tcx.def_kind(def_id), rustc_hir::def::DefKind::Closure)
+                            use rustc_hir::def::DefKind;
+                            match self.tcx.def_kind(def_id) {
+                                DefKind::Closure => assert_eq!(num_inputs, 1),
+                                DefKind::Fn => assert_eq!(num_inputs, 0),
+                                kind => assert!(
+                                    false,
+                                    "Expected `fn` or `closure` def kind, got {kind:?}"
+                                ),
+                            }
                         }
-                        FlowModel::SubFuture => assert!(self.tcx.generator_is_async(def_id)),
+                        FlowModel::SubFuture => {
+                            assert_eq!(num_inputs, 1);
+                            assert!(self.tcx.generator_is_async(def_id))
+                        }
                     };
                     SkipCall::Replace {
                         instance,
