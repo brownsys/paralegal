@@ -12,15 +12,15 @@ use super::{
     ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind, VerificationHash,
 };
 use crate::{
-    utils,
-    utils::{write_sep, Print, TinyBitSet},
+    utils::{resolve::def_path_res, TinyBitSet},
     Symbol,
 };
 use paralegal_spdg::Identifier;
 
-use rustc_ast::{self as ast, token, tokenstream};
+use rustc_ast::{self as ast, token, tokenstream, ExprKind};
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
+use rustc_parse::parser as rustc_parser;
 use token::*;
 use tokenstream::*;
 
@@ -240,32 +240,30 @@ pub fn tiny_bitset(i: I) -> R<TinyBitSet> {
 pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<DefId>, String> {
     match ann {
         ast::AttrArgs::Delimited(dargs) => {
-            let mut p = nom::multi::separated_list0(
-                assert_token(TokenKind::Comma),
-                nom::multi::separated_list0(
-                    assert_token(TokenKind::ModSep),
-                    nom::combinator::map(identifier, |i| i.to_string()),
-                ),
-            );
-            p(I::from_stream(&dargs.tokens))
-                .map_err(|err: nom::Err<_>| format!("parser failed with error {err:?}"))?
-                .1
-                .into_iter()
-                .map(|strs| {
-                    let segment_vec = strs.iter().map(AsRef::as_ref).collect::<Vec<&str>>();
-                    Ok(utils::resolve::def_path_res(tcx, &segment_vec)
-                        .map_err(|err| {
-                            format!(
-                                "Could not resolve {}: {err:?}",
-                                Print(|f| write_sep(f, "::", &segment_vec, |elem, f| f
-                                    .write_str(elem)))
-                            )
-                        })?
-                        .def_id())
-                })
-                .collect()
+            let mut parser =
+                rustc_parser::Parser::new(&tcx.sess.parse_sess, dargs.tokens.clone(), None);
+            std::iter::from_fn(|| {
+                if parser.token.kind == TokenKind::Eof {
+                    return None;
+                }
+                let ExprKind::Path(qself, path) = &parser.parse_expr().ok()?.kind else {
+                    return Some(Result::Err(format!(
+                        "Expected path expression, got {:?}",
+                        dargs.tokens
+                    )));
+                };
+                if parser.token.kind != TokenKind::Eof {
+                    parser.expect(&TokenKind::Comma).ok()?;
+                }
+                Some(
+                    def_path_res(tcx, qself.as_deref(), &path.segments)
+                        .map_err(|err| format!("Failed resolution: {err:?}",))
+                        .map(|d| d.def_id()),
+                )
+            })
+            .collect()
         }
-        _ => Result::Err("Expected delimoted annotation".to_owned()),
+        _ => Result::Err("Expected delimited annotation".to_owned()),
     }
 }
 

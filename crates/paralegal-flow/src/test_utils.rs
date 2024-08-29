@@ -11,6 +11,7 @@ use rustc_interface::interface;
 use crate::{
     ann::dump_markers,
     desc::{Identifier, ProgramDescription},
+    utils::Print,
     HashSet, EXTRA_RUSTC_ARGS,
 };
 use std::hash::{Hash, Hasher};
@@ -22,6 +23,7 @@ use std::{
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, EdgeSelection},
+    utils::write_sep,
     DefInfo, EdgeInfo, Endpoint, Node, TypeId, SPDG,
 };
 
@@ -202,7 +204,7 @@ impl InlineTestBuilder {
     pub fn new(input: impl Into<String>) -> Self {
         Self {
             input: input.into(),
-            ctrl_name: "main".into(),
+            ctrl_name: "crate::main".into(),
         }
     }
 
@@ -240,12 +242,8 @@ impl InlineTestBuilder {
         }
 
         let args = crate::Args::try_from(
-            TopLevelArgs::parse_from([
-                "".into(),
-                "--analyze".into(),
-                format!("crate::{}", self.ctrl_name),
-            ])
-            .args,
+            TopLevelArgs::parse_from(["".into(), "--analyze".into(), self.ctrl_name.to_string()])
+                .args,
         )
         .unwrap();
 
@@ -321,6 +319,7 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 
     fn ctrl_hashed(self, name: &str) -> Endpoint {
+        let name = name.strip_prefix("crate::").unwrap_or(name);
         let candidates = self
             .graph()
             .desc
@@ -330,7 +329,14 @@ pub trait HasGraph<'g>: Sized + Copy {
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
         match candidates.as_slice() {
-            [] => panic!("Could not find controller '{name}'"),
+            [] => panic!(
+                "Could not find controller '{name}'. Known controllers are {}",
+                Print(|fmt| {
+                    write_sep(fmt, ", ", self.graph().desc.controllers.values(), |c, f| {
+                        f.write_str(c.name.as_str())
+                    })
+                })
+            ),
             [ctrl] => *ctrl,
             more => panic!("Too many matching controllers, found candidates: {more:?}"),
         }
