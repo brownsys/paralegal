@@ -52,7 +52,7 @@ fn qualified_type_without_trait() {
 }
 
 #[test]
-fn reject_arguments() {
+fn reject_generic_arguments_test() {
     InlineTestBuilder::new(stringify!(
         struct MyStruct<T>(Vec<T>);
 
