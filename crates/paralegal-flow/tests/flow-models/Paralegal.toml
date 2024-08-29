@@ -1,6 +1,12 @@
+[dep.serde]
+rust-features = ["saturating_int_impl"]
+
+
 [flow-models."std::thread::spawn"]
 mode = "sub-closure"
 
-
 [flow-models."tokio::spawn"]
 mode = "sub-future"
+
+[flow-models."actix_web::web::block"]
+mode = "sub-closure"

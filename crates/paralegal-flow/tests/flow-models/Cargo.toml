@@ -9,3 +9,4 @@ edition = "2021"
 #async-std = "1"
 paralegal = { path = "../../../paralegal" }
 tokio = { version = "1", features = ["rt"] }
+actix-web = { version = "4" }

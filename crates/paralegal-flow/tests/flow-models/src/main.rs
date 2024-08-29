@@ -26,3 +26,19 @@ async fn async_spawn() {
     let next = tokio::spawn(async move { pass(src) }).await.unwrap();
     target(next);
 }
+
+fn to_block() -> Result<usize, actix_web::error::BlockingError> {
+    Ok(source())
+}
+
+#[paralegal::analyze]
+async fn block_fn() -> Result<(), actix_web::error::BlockingError> {
+    Ok(target(actix_web::web::block(to_block).await?? + 1))
+}
+
+#[paralegal::analyze]
+async fn block_closure(to_close_over: usize) -> Result<(), actix_web::error::BlockingError> {
+    Ok(target(
+        actix_web::web::block(move || Ok(source() + to_close_over)).await?? + 1,
+    ))
+}

@@ -48,3 +48,23 @@ define_test!(async_spawn: graph -> {
     assert!(src.flows_to_data(&pass));
     assert!(pass.flows_to_data(&target));
 });
+
+define_test!(block_fn: graph -> {
+    let src = graph.marked(Identifier::new_intern("source"));
+    let target = graph.marked(Identifier::new_intern("target"));
+
+    assert!(!src.is_empty());
+    assert!(!target.is_empty());
+
+    assert!(src.flows_to_data(&target));
+});
+
+define_test!(block_closure: graph -> {
+    let src = graph.marked(Identifier::new_intern("source"));
+    let target = graph.marked(Identifier::new_intern("target"));
+
+    assert!(!src.is_empty());
+    assert!(!target.is_empty());
+
+    assert!(src.flows_to_data(&target));
+});
