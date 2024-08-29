@@ -204,7 +204,7 @@ impl InlineTestBuilder {
     pub fn new(input: impl Into<String>) -> Self {
         Self {
             input: input.into(),
-            ctrl_name: "main".into(),
+            ctrl_name: "crate::main".into(),
         }
     }
 
