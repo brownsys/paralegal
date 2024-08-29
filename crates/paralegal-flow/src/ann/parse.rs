@@ -247,7 +247,10 @@ pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<De
                     return None;
                 }
                 let ExprKind::Path(qself, path) = &parser.parse_expr().ok()?.kind else {
-                    return Some(Result::Err(format!("Expected path expression")));
+                    return Some(Result::Err(format!(
+                        "Expected path expression, got {:?}",
+                        dargs.tokens
+                    )));
                 };
                 if parser.token.kind != TokenKind::Eof {
                     parser.expect(&TokenKind::Comma).ok()?;
@@ -260,7 +263,7 @@ pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<De
             })
             .collect()
         }
-        _ => Result::Err("Expected delimoted annotation".to_owned()),
+        _ => Result::Err("Expected delimited annotation".to_owned()),
     }
 }
 
