@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{hash::Hash, str::FromStr};
 
 use ast::Mutability;
 use hir::{
@@ -13,6 +13,7 @@ use rustc_ast::{
     token::{Token, TokenKind},
     Expr, ExprKind, Path, PathSegment, QSelf, Ty, TyKind,
 };
+use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
 use rustc_middle::{
     middle::resolve_bound_vars::ResolveBoundVars,
@@ -124,9 +125,11 @@ pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -
             tcx.sess.err(err);
         }
     };
+    let mut hasher = StableHasher::new();
+    path.hash(&mut hasher);
     let mut parser = new_parser_from_source_str(
         &tcx.sess.parse_sess,
-        rustc_span::FileName::Custom("expect resolve".to_string()),
+        rustc_span::FileName::Anon(hasher.finish()),
         path.to_string(),
     );
     let qpath = parser.parse_expr().map_err(|mut e| e.emit()).ok()?;
