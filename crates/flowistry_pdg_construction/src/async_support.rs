@@ -12,6 +12,8 @@ use rustc_middle::{
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
 
+use crate::utils::is_async;
+
 use super::{
     local_analysis::{CallKind, LocalAnalysis},
     utils,
@@ -176,7 +178,7 @@ pub fn determine_async<'tcx>(
     def_id: DefId,
     body: &Body<'tcx>,
 ) -> Option<(Instance<'tcx>, Location, AsyncType)> {
-    let ((generator_def_id, args, loc), asyncness) = if tcx.asyncness(def_id).is_async() {
+    let ((generator_def_id, args, loc), asyncness) = if is_async(tcx, def_id) {
         (get_async_generator(body), AsyncType::Fn)
     } else {
         (
