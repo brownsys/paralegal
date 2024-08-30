@@ -220,6 +220,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         state: &InstructionState<'tcx>,
         input: Place<'tcx>,
     ) -> Vec<DepNode<'tcx>> {
+        trace!("Finding inputs for place {input:?}");
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
             .refs_in_projection(&self.mono_body, self.tcx())
@@ -261,6 +262,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                                     place = new_place;
                                 }
                             }
+                            trace!("Checking conflict status of {place:?} and {alias:?}");
                             places_conflict(
                                 self.tcx(),
                                 &self.mono_body,
@@ -480,7 +482,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             .then_some(CallHandling::ApproxAsyncFn);
         }
 
-        let calling_convention = match call_changes {
+        let (calling_convention, precise) = match call_changes {
             Some(CallChanges {
                 skip: SkipCall::Skip,
             }) => {
@@ -496,9 +498,9 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }) => {
                 trace!("  Replacing call as instructed by user");
                 resolved_fn = instance;
-                calling_convention
+                (calling_convention, false)
             }
-            _ => CallingConvention::from_call_kind(&call_kind, args),
+            _ => (CallingConvention::from_call_kind(&call_kind, args), true),
         };
         if is_virtual(tcx, resolved_def_id) {
             trace!("  bailing because is unresolvable trait method");
@@ -522,6 +524,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         Some(CallHandling::Ready {
             descriptor,
             calling_convention,
+            precise,
         })
     }
 
@@ -548,11 +551,12 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         trace!("Call handling is {}", preamble.as_ref());
 
-        let (child_constructor, calling_convention) = match preamble {
+        let (child_constructor, calling_convention, precise) = match preamble {
             CallHandling::Ready {
                 descriptor,
                 calling_convention,
-            } => (descriptor, calling_convention),
+                precise,
+            } => (descriptor, calling_convention, precise),
             CallHandling::ApproxAsyncFn => {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
@@ -578,6 +582,16 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         let parentable_dsts = child_constructor.parentable_dsts(|n| n.len() == 1);
         let parent_body = &self.mono_body;
 
+        let place_translator = PlaceTranslator::new(
+            self.async_info(),
+            self.def_id,
+            parent_body,
+            self.tcx(),
+            destination,
+            &calling_convention,
+            precise,
+        );
+
         // For each destination node CHILD that is parentable to PLACE,
         // add an edge from CHILD -> PLACE.
         //
@@ -585,14 +599,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
         for (child_dst, _) in parentable_dsts {
-            if let Some(parent_place) = calling_convention.translate_to_parent(
-                child_dst.place,
-                self.async_info(),
-                self.tcx(),
-                parent_body,
-                self.def_id,
-                destination,
-            ) {
+            if let Some(parent_place) = place_translator.translate_to_parent(child_dst.place) {
                 self.apply_mutation(state, location, parent_place);
             }
         }
@@ -790,6 +797,7 @@ pub(crate) enum CallHandling<'tcx, 'a> {
     Ready {
         calling_convention: CallingConvention<'tcx>,
         descriptor: &'a PartialGraph<'tcx>,
+        precise: bool,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),
 }

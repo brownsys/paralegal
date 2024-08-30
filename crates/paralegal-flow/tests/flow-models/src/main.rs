@@ -42,3 +42,36 @@ async fn block_closure(to_close_over: usize) -> Result<(), actix_web::error::Blo
         actix_web::web::block(move || Ok(source() + to_close_over)).await?? + 1,
     ))
 }
+
+#[paralegal::analyze]
+async fn strategic_overtaint(to_close_over: usize) -> Result<(), actix_web::error::BlockingError> {
+    Ok(target(
+        actix_web::web::block(move || Ok((source(), to_close_over)))
+            .await??
+            .0,
+    ))
+}
+
+#[paralegal::analyze]
+async fn strategic_overtaint_2(
+    to_close_over: usize,
+) -> Result<(), actix_web::error::BlockingError> {
+    Ok(target(
+        actix_web::web::block(move || Ok((source(), to_close_over)))
+            .await??
+            .1,
+    ))
+}
+
+#[paralegal::analyze]
+async fn no_taint_without_connection(
+    to_close_over: usize,
+) -> Result<(), actix_web::error::BlockingError> {
+    Ok(target(
+        actix_web::web::block(move || {
+            let _no_use = source();
+            Ok(to_close_over)
+        })
+        .await??,
+    ))
+}

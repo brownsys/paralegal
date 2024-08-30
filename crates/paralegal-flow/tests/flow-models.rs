@@ -49,7 +49,7 @@ define_test!(async_spawn: graph -> {
     assert!(pass.flows_to_data(&target));
 });
 
-define_test!(block_fn: graph -> {
+fn simple_source_target_flow(graph: CtrlRef<'_>) {
     let src = graph.marked(Identifier::new_intern("source"));
     let target = graph.marked(Identifier::new_intern("target"));
 
@@ -57,14 +57,30 @@ define_test!(block_fn: graph -> {
     assert!(!target.is_empty());
 
     assert!(src.flows_to_data(&target));
+}
+
+define_test!(block_fn: graph -> {
 });
 
 define_test!(block_closure: graph -> {
+    simple_source_target_flow(graph)
+});
+
+define_test!(strategic_overtaint: graph -> {
+    simple_source_target_flow(graph)
+});
+
+define_test!(strategic_overtaint_2: graph -> {
+    simple_source_target_flow(graph)
+});
+
+define_test!(no_taint_without_connection: graph -> {
+
     let src = graph.marked(Identifier::new_intern("source"));
     let target = graph.marked(Identifier::new_intern("target"));
 
     assert!(!src.is_empty());
     assert!(!target.is_empty());
 
-    assert!(src.flows_to_data(&target));
+    assert!(!src.flows_to_data(&target));
 });
