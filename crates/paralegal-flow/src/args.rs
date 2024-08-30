@@ -553,11 +553,13 @@ pub struct DepConfig {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 #[serde(tag = "mode", rename_all = "kebab-case")]
 pub enum FlowModel {
+    #[serde(rename_all = "kebab-case")]
     /// Replaces the result of a call to a higher-order function with a call to
     /// the input closure.
-    SubClosure,
+    SubClosure { generic_name: String },
+    #[serde(rename_all = "kebab-case")]
     /// Replaces the result of a higher-order future by an input future.
-    SubFuture,
+    SubFuture { generic_name: String },
 }
 
 /// Additional configuration for the build process/rustc

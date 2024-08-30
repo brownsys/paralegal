@@ -19,8 +19,8 @@ use rustc_hir::{
     BodyId,
 };
 use rustc_middle::{
-    mir::{self, Constant, Location, Place, ProjectionElem},
-    ty::{self, Instance, Ty},
+    mir::{self, Constant, Location, Place, ProjectionElem, Terminator},
+    ty::{self, GenericArgsRef, Instance, Ty},
 };
 use rustc_span::{symbol::Ident, Span as RustSpan, Span};
 use rustc_target::spec::abi::Abi;
@@ -273,6 +273,18 @@ impl FunctionKind {
                 .span_err(tcx.def_span(def_id), "Expected this item to be a function."))
         }
     }
+}
+
+pub fn func_of_term<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    terminator: &Terminator<'tcx>,
+) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+    let mir::TerminatorKind::Call { func, .. } = &terminator.kind else {
+        return None;
+    };
+    let const_ = func.constant()?;
+    let ty = ty_of_const(const_);
+    type_as_fn(tcx, ty)
 }
 
 /// A simplified version of the argument list that is stored in a

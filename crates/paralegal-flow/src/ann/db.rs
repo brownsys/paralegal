@@ -14,7 +14,7 @@ use crate::{
     ann::{Annotation, MarkerAnnotation},
     args::{Args, FlowModel},
     utils::{
-        resolve::expect_resolve_string_to_def_id, ty_of_const, FunctionKind, InstanceExt,
+        func_of_term, resolve::expect_resolve_string_to_def_id, FunctionKind, InstanceExt,
         IntoDefId, TyExt,
     },
     Either, HashMap, HashSet,
@@ -24,7 +24,7 @@ use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
     determine_async,
     encoder::ParalegalDecoder,
-    utils::{is_virtual, try_monomorphize, try_resolve_function, type_as_fn},
+    utils::{is_virtual, try_monomorphize, try_resolve_function},
 };
 use paralegal_spdg::Identifier;
 
@@ -276,14 +276,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             "  Finding reachable markers for terminator {:?}",
             terminator.kind
         );
-        let mir::TerminatorKind::Call { func, .. } = &terminator.kind else {
-            return v.into_iter();
-        };
-        let Some(const_) = func.constant() else {
-            return v.into_iter();
-        };
-        let ty = ty_of_const(const_);
-        let Some((def_id, gargs)) = type_as_fn(self.tcx(), ty) else {
+        let Some((def_id, gargs)) = func_of_term(self.tcx(), terminator) else {
             return v.into_iter();
         };
         let res = if expect_resolve {

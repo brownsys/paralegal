@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
+use flowistry_pdg_construction::{body_cache::BodyCache, utils::is_async, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
 use rustc_hash::FxHashSet;
 use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
@@ -90,7 +90,14 @@ impl<'tcx> InlineJudge<'tcx> {
         let marker_target = info.async_parent.unwrap_or(info.callee);
         let marker_target_def_id = marker_target.def_id();
         if let Some(model) = self.marker_ctx().has_flow_model(marker_target_def_id) {
-            return InlineJudgement::UseFlowModel(model);
+            // If we're replacing an async function skip the poll call.
+            //
+            // I tried to have it replace the poll call only but that didn't seem to work.
+            return if info.async_parent.is_some() {
+                InlineJudgement::AbstractViaType
+            } else {
+                InlineJudgement::UseFlowModel(model)
+            };
         }
         let is_marked = self.marker_ctx.is_marked(marker_target_def_id);
         let judgement = match self.opts.anactrl().inlining_depth() {

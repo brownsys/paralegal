@@ -29,10 +29,10 @@ use petgraph::visit::GraphBase;
 
 use rustc_hir::{self as hir, def, def_id::DefId};
 use rustc_middle::{
-    mir::Location,
+    mir::{Location, Operand},
     ty::{Instance, ParamEnv, TyCtxt},
 };
-use rustc_span::{FileNameDisplayPreference, Span as RustSpan, Symbol};
+use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
 
 mod graph_converter;
 mod inline_judge;
@@ -412,6 +412,90 @@ struct MyCallback<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
+impl FlowModel {
+    fn apply<'tcx>(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        function: Instance<'tcx>,
+        param_env: ParamEnv<'tcx>,
+        arguments: &[Operand<'tcx>],
+        at: RustSpan,
+    ) -> Result<(Instance<'tcx>, CallingConvention<'tcx>), ErrorGuaranteed> {
+        match self {
+            FlowModel::SubClosure { generic_name } | FlowModel::SubFuture { generic_name } => {
+                let name = Symbol::intern(&generic_name);
+                let generics = tcx.generics_of(function.def_id());
+                let Some(param_index) = (0..generics.count()).find(|&idx| {
+                    let param = generics.param_at(idx, tcx);
+                    param.name == name
+                }) else {
+                    return Err(tcx.sess.span_err(
+                        at,
+                        format!("Function has no parameter named {generic_name}"),
+                    ));
+                };
+                let ty = function.args[param_index].expect_ty();
+                let (def_id, args) =
+                    flowistry_pdg_construction::utils::type_as_fn(tcx, ty).unwrap();
+                let instance = Instance::resolve(tcx, param_env, def_id, args)
+                    .unwrap()
+                    .unwrap();
+
+                let expect_indirect = match self {
+                    FlowModel::SubClosure { .. } => {
+                        use rustc_hir::def::DefKind;
+                        match tcx.def_kind(def_id) {
+                            DefKind::Closure => true,
+                            DefKind::Fn => false,
+                            kind => {
+                                return Err(tcx.sess.span_err(
+                                    at,
+                                    format!("Expected `fn` or `closure` def kind, got {kind:?}"),
+                                ))
+                            }
+                        }
+                    }
+                    FlowModel::SubFuture { .. } => {
+                        assert!(tcx.generator_is_async(def_id));
+                        true
+                    }
+                };
+                let poll = tcx.lang_items().poll();
+                let calling_convention = if expect_indirect {
+                    let clj = match arguments {
+                        [clj] => clj,
+                        [gen, _]
+                            if tcx.def_kind(function.def_id()) == hir::def::DefKind::AssocFn
+                                && tcx.associated_item(function.def_id()).trait_item_def_id
+                                    == poll =>
+                        {
+                            gen
+                        }
+                        _ => return Err(tcx.sess.span_err(
+                            at,
+                            format!(
+                                "this function ({:?}) should have only one argument but it has {}",
+                                function.def_id(),
+                                arguments.len()
+                            ),
+                        )),
+                    };
+                    CallingConvention::Indirect {
+                        closure_arg: clj.clone(),
+                        // This is incorrect, but we only support
+                        // non-argument closures at the moment so this
+                        // will never be used.
+                        tupled_arguments: clj.clone(),
+                    }
+                } else {
+                    CallingConvention::Direct(arguments.into())
+                };
+                Ok((instance, calling_convention))
+            }
+        }
+    }
+}
+
 impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
         let changes = CallChanges::default();
@@ -419,45 +503,16 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
         let skip = match self.judge.should_inline(&info) {
             InlineJudgement::AbstractViaType => SkipCall::Skip,
             InlineJudgement::UseFlowModel(model) => {
-                // Set in case of errors
-                assert!(matches!(
-                    model,
-                    FlowModel::SubClosure | FlowModel::SubFuture
-                ));
-                if let [clj] = &info.arguments {
-                    let ty = clj.ty(info.caller_body, self.tcx);
-                    let (def_id, args) =
-                        flowistry_pdg_construction::utils::type_as_fn(self.tcx, ty).unwrap();
-                    let instance = Instance::resolve(self.tcx, info.param_env, def_id, args)
-                        .unwrap()
-                        .unwrap();
-                    let num_inputs = instance.sig(self.tcx).unwrap().inputs().len();
-                    match model {
-                        FlowModel::SubClosure => {
-                            use rustc_hir::def::DefKind;
-                            match self.tcx.def_kind(def_id) {
-                                DefKind::Closure => assert_eq!(num_inputs, 1),
-                                DefKind::Fn => assert_eq!(num_inputs, 0),
-                                kind => assert!(
-                                    false,
-                                    "Expected `fn` or `closure` def kind, got {kind:?}"
-                                ),
-                            }
-                        }
-                        FlowModel::SubFuture => {
-                            assert_eq!(num_inputs, 1);
-                            assert!(self.tcx.generator_is_async(def_id))
-                        }
-                    };
+                if let Ok((instance, calling_convention)) = model.apply(
+                    self.tcx,
+                    info.callee,
+                    info.param_env,
+                    info.arguments,
+                    info.span,
+                ) {
                     SkipCall::Replace {
                         instance,
-                        calling_convention: CallingConvention::Indirect {
-                            closure_arg: clj.clone(),
-                            // This is incorrect, but we only support
-                            // non-argument closures at the moment so this
-                            // will never be used.
-                            tupled_arguments: clj.clone(),
-                        },
+                        calling_convention,
                     }
                 } else {
                     SkipCall::Skip

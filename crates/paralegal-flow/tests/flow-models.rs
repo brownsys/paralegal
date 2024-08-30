@@ -60,6 +60,7 @@ fn simple_source_target_flow(graph: CtrlRef<'_>) {
 }
 
 define_test!(block_fn: graph -> {
+    simple_source_target_flow(graph)
 });
 
 define_test!(block_closure: graph -> {

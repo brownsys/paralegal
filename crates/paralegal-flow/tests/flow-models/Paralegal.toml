@@ -4,9 +4,12 @@ rust-features = ["saturating_int_impl"]
 
 [flow-models."std::thread::spawn"]
 mode = "sub-closure"
+generic-name = "F"
 
 [flow-models."tokio::spawn"]
 mode = "sub-future"
+generic-name = "F"
 
 [flow-models."actix_web::web::block"]
 mode = "sub-closure"
+generic-name = "F"
