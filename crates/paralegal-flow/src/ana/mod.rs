@@ -471,16 +471,19 @@ impl FlowModel {
                         {
                             gen
                         }
-                        _ => return Err(tcx.sess.span_err(
-                            at,
-                            format!(
+                        _ => {
+                            return Err(tcx.sess.span_err(
+                                at,
+                                format!(
                                 "this function ({:?}) should have only one argument but it has {}",
                                 function.def_id(),
                                 arguments.len()
                             ),
-                        )),
+                            ))
+                        }
                     };
                     CallingConvention::Indirect {
+                        once_shim: false,
                         closure_arg: clj.clone(),
                         // This is incorrect, but we only support
                         // non-argument closures at the moment so this

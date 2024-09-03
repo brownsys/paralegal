@@ -14,7 +14,7 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
+    ty::{GenericArgKind, GenericArgsRef, Instance, InstanceDef, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::Span;
@@ -27,7 +27,7 @@ use crate::{
     calling_convention::*,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, is_async, is_virtual, try_monomorphize},
+    utils::{self, is_async, is_virtual, try_monomorphize, type_as_fn},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
@@ -413,6 +413,27 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
             return None;
         };
+
+        let call_kind = if matches!(resolved_fn.def, InstanceDef::ClosureOnceShim { .. }) {
+            // Rustc has inserted a call to the shim that maps `Fn` and `FnMut`
+            // instances to an `FnOnce`. This shim has no body itself so we
+            // can't just inline, we must explicitly simulate it's effects by
+            // changing the target function and by setting the calling
+            // convention to that of a shim.
+
+            // Because this is a well defined internal item we can make
+            // assumptions about its generic arguments.
+            let Some((func_a, _rest)) = generic_args.split_first() else {
+                unreachable!()
+            };
+            let Some((func_t, g)) = type_as_fn(self.tcx(), func_a.expect_ty()) else {
+                unreachable!()
+            };
+            resolved_fn = Instance::expect_resolve(tcx, param_env, func_t, g);
+            CallKind::Indirect { once_shim: true }
+        } else {
+            self.classify_call_kind(called_def_id, resolved_fn, &args, span)
+        };
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
@@ -423,13 +444,16 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
-        let call_kind = self.classify_call_kind(called_def_id, resolved_fn, &args, span);
-
         trace!(
             "  Handling call! with kind {}",
             match &call_kind {
                 CallKind::Direct => "direct",
-                CallKind::Indirect => "indirect",
+                CallKind::Indirect { once_shim } =>
+                    if *once_shim {
+                        "indirect (once shim)"
+                    } else {
+                        "indirect"
+                    },
                 CallKind::AsyncPoll { .. } => "async poll",
             }
         );
@@ -694,7 +718,9 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
-        self.tcx().is_closure(def_id).then_some(CallKind::Indirect)
+        self.tcx()
+            .is_closure(def_id)
+            .then_some(CallKind::Indirect { once_shim: false })
     }
 
     fn terminator_visitor<'b: 'a>(
@@ -786,7 +812,11 @@ pub enum CallKind<'tcx> {
     /// A standard function call like `f(x)`.
     Direct,
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
-    Indirect,
+    Indirect {
+        /// The call takes place via a shim that implements `FnOnce` for a `Fn`
+        /// or `FnMut` closure.
+        once_shim: bool,
+    },
     /// A poll to an async function, like `f.await`.
     AsyncPoll(AsyncFnPollEnv<'tcx>),
 }

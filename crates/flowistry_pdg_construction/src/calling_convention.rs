@@ -21,6 +21,7 @@ pub enum CallingConvention<'tcx> {
     /// tuple that contains the actual argument to the call of the closure
     /// function.
     Indirect {
+        once_shim: bool,
         closure_arg: Operand<'tcx>,
         tupled_arguments: Operand<'tcx>,
     },
@@ -71,7 +72,8 @@ impl<'tcx> CallingConvention<'tcx> {
         match kind {
             CallKind::AsyncPoll(poll) => CallingConvention::Async(poll.generator_data),
             CallKind::Direct => CallingConvention::Direct(args.into()),
-            CallKind::Indirect => CallingConvention::Indirect {
+            CallKind::Indirect { once_shim } => CallingConvention::Indirect {
+                once_shim: *once_shim,
                 closure_arg: args[0].clone(),
                 tupled_arguments: args[1].clone(),
             },
@@ -182,11 +184,33 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
             // Map closure captures to the first argument.
             // Map formal parameters to the second argument.
             CallingConvention::Indirect {
+                once_shim,
                 closure_arg,
                 tupled_arguments,
             } => {
                 if child.local.as_usize() == 1 {
-                    (closure_arg.place()?, &child.projection[..])
+                    // Accounting for shims
+                    let next_idx = if *once_shim {
+                        // If this is a once shim then the signature of the
+                        // function and its call don't match fully. (We are
+                        // calling a closure that takes it's `self` by reference
+                        // with a `self` by value.)
+                        if let Some(fst) = child.projection.first() {
+                            // If there is a first place it must be a deref
+                            assert_eq!(fst, &PlaceElem::Deref);
+                        } else {
+                            // We cannot remap the raw first place as it is a
+                            // reference that does not exist in the caller (as
+                            // the caller passes `self` by value.)
+                            return None;
+                        }
+                        // We skip the first projection element (a deref) to
+                        // account for the difference in signature
+                        1
+                    } else {
+                        0
+                    };
+                    (closure_arg.place()?, &child.projection[next_idx..])
                 } else {
                     let tuple_arg = tupled_arguments.place()?;
                     let _projection = child.projection.to_vec();

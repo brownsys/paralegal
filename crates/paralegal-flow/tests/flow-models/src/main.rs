@@ -43,6 +43,24 @@ async fn block_closure(to_close_over: usize) -> Result<(), actix_web::error::Blo
     ))
 }
 
+pub async fn blocking<F, T>(pool: &str, f: F) -> T
+where
+    F: FnOnce(usize) -> T + 'static + Send,
+    T: 'static + Send,
+{
+    let pool = pool.parse().unwrap();
+    let res = actix_web::web::block(move || (f)(pool)).await.unwrap();
+
+    res
+}
+
+#[paralegal::analyze]
+async fn test_blocking(to_close_over: &str) {
+    let from_scope = 10;
+    let the_closure = move |u| u + source() + from_scope;
+    target(blocking(to_close_over, the_closure).await);
+}
+
 #[paralegal::analyze]
 async fn strategic_overtaint(to_close_over: usize) -> Result<(), actix_web::error::BlockingError> {
     Ok(target(
