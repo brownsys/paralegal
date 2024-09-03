@@ -298,6 +298,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         env!("RUSTC_VERSION").into()
     }
 
+    fn hash_config(&self, args: &Self::Args, hasher: &mut impl std::hash::Hasher) {
+        args.hash_config(hasher);
+    }
+
     fn args(
         &self,
         _target_dir: &rustc_plugin::Utf8Path,
