@@ -161,7 +161,7 @@ fn non_local_item_children_by_name(
             .iter()
             .find(|item| item.ident.name == name)
             .map(|child| Res::from_def_res(child.res.expect_non_local())),
-        DefKind::Impl { of_trait: false } => tcx
+        DefKind::Impl { .. } => tcx
             .associated_item_def_ids(def_id)
             .iter()
             .copied()
