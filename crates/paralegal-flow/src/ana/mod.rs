@@ -501,7 +501,7 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
         let changes = CallChanges::default();
 
         let skip = match self.judge.should_inline(&info) {
-            InlineJudgement::AbstractViaType => SkipCall::Skip,
+            InlineJudgement::AbstractViaType(_) => SkipCall::Skip,
             InlineJudgement::UseFlowModel(model) => {
                 if let Ok((instance, calling_convention)) = model.apply(
                     self.tcx,
@@ -528,11 +528,19 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
         param_env: ParamEnv<'tcx>,
         _loc: Location,
         _parent: Instance<'tcx>,
-        _reason: InlineMissReason,
+        reason: InlineMissReason,
         call_span: rustc_span::Span,
     ) {
-        self.judge
-            .ensure_is_safe_to_approximate(param_env, resolution, call_span, false);
+        self.judge.ensure_is_safe_to_approximate(
+            param_env,
+            resolution,
+            call_span,
+            false,
+            match reason {
+                InlineMissReason::Async(_) => "async",
+                InlineMissReason::TraitMethod => "virtual trait method",
+            },
+        );
     }
 }
 

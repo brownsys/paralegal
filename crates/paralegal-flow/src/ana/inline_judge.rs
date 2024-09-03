@@ -39,17 +39,7 @@ pub enum InlineJudgement {
     /// Use a flow model to abstract the call
     UseFlowModel(&'static FlowModel),
     /// Abstract the call via type signature
-    AbstractViaType,
-}
-
-impl From<bool> for InlineJudgement {
-    fn from(value: bool) -> Self {
-        if value {
-            InlineJudgement::Inline
-        } else {
-            InlineJudgement::AbstractViaType
-        }
-    }
+    AbstractViaType(&'static str),
 }
 
 impl<'tcx> InlineJudge<'tcx> {
@@ -94,28 +84,50 @@ impl<'tcx> InlineJudge<'tcx> {
             //
             // I tried to have it replace the poll call only but that didn't seem to work.
             return if info.async_parent.is_some() {
-                InlineJudgement::AbstractViaType
+                InlineJudgement::AbstractViaType("async parent of flow model")
             } else {
                 InlineJudgement::UseFlowModel(model)
             };
         }
         let is_marked = self.marker_ctx.is_marked(marker_target_def_id);
         let judgement = match self.opts.anactrl().inlining_depth() {
-            _ if !self.included_crates.contains(&marker_target_def_id.krate) || is_marked => {
-                InlineJudgement::AbstractViaType
+            _ if !self.included_crates.contains(&marker_target_def_id.krate)
+                && !self.is_exception(marker_target_def_id) =>
+            {
+                InlineJudgement::AbstractViaType("inlining for crate disabled")
             }
-            InliningDepth::Adaptive => self
-                .marker_ctx
-                .has_transitive_reachable_markers(marker_target)
-                .into(),
-            InliningDepth::Shallow => InlineJudgement::AbstractViaType,
+            _ if is_marked => InlineJudgement::AbstractViaType("marked"),
+            InliningDepth::Adaptive
+                if self
+                    .marker_ctx
+                    .has_transitive_reachable_markers(marker_target) =>
+            {
+                InlineJudgement::Inline
+            }
+            InliningDepth::Adaptive => InlineJudgement::AbstractViaType("adaptive inlining"),
+            InliningDepth::Shallow => {
+                InlineJudgement::AbstractViaType("shallow inlining configured")
+            }
             InliningDepth::Unconstrained => InlineJudgement::Inline,
         };
-        if matches!(judgement, InlineJudgement::AbstractViaType) {
+        if let InlineJudgement::AbstractViaType(reason) = judgement {
             let emit_err = !(is_marked || self.opts.relaxed());
-            self.ensure_is_safe_to_approximate(info.param_env, info.callee, info.span, emit_err)
+            self.ensure_is_safe_to_approximate(
+                info.param_env,
+                info.callee,
+                info.span,
+                emit_err,
+                reason,
+            )
         }
         judgement
+    }
+
+    fn is_exception(&self, def_id: DefId) -> bool {
+        if let Some(parent) = self.tcx.trait_of_item(def_id) {
+            return self.tcx.is_fn_trait(parent);
+        }
+        false
     }
 
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
@@ -128,6 +140,7 @@ impl<'tcx> InlineJudge<'tcx> {
         resolved: Instance<'tcx>,
         call_span: Span,
         emit_err: bool,
+        reason: &'static str,
     ) {
         SafetyChecker {
             tcx: self.tcx(),
@@ -136,6 +149,7 @@ impl<'tcx> InlineJudge<'tcx> {
             resolved,
             call_span,
             marker_ctx: self.marker_ctx.clone(),
+            reason,
         }
         .check()
     }
@@ -158,13 +172,18 @@ struct SafetyChecker<'tcx> {
     resolved: Instance<'tcx>,
     call_span: Span,
     marker_ctx: MarkerCtx<'tcx>,
+    /// Why a call we check wasn't inlined
+    reason: &'static str,
 }
 
 impl<'tcx> SafetyChecker<'tcx> {
     /// Emit an error or a warning with some preformatted messaging.
     fn err(&self, s: &str, span: Span) {
         let sess = self.tcx.sess;
-        let msg = format!("Cannot verify that non-inlined function is safe due to: {s}");
+        let msg = format!(
+            "the call is not safe to abstract as demanded by '{}', because of: {s}",
+            self.reason
+        );
         if self.emit_err {
             let mut diagnostic = sess.struct_span_err(span, msg);
             diagnostic.span_note(self.call_span, "Called from here");
