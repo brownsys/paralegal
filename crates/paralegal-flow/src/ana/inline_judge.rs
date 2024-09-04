@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use flowistry_pdg_construction::{body_cache::BodyCache, utils::is_async, CallInfo};
+use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
 use rustc_hash::FxHashSet;
 use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE};

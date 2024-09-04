@@ -15,7 +15,6 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use crate::utils::TinyBitSet;
 use crate::{num_derive, num_traits::FromPrimitive};

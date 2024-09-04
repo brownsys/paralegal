@@ -413,6 +413,12 @@ struct MyCallback<'tcx> {
 }
 
 impl FlowModel {
+    /// Performs the effects of this model on the provided function.
+    ///
+    /// `function` is what was to be called but for which a flow model exists,
+    /// `arguments` are the arguments to that call.
+    ///
+    /// Returns a new instance to call instead and how it should be called.
     fn apply<'tcx>(
         &self,
         tcx: TyCtxt<'tcx>,
@@ -423,7 +429,7 @@ impl FlowModel {
     ) -> Result<(Instance<'tcx>, CallingConvention<'tcx>), ErrorGuaranteed> {
         match self {
             FlowModel::SubClosure { generic_name } | FlowModel::SubFuture { generic_name } => {
-                let name = Symbol::intern(&generic_name);
+                let name = Symbol::intern(generic_name);
                 let generics = tcx.generics_of(function.def_id());
                 let Some(param_index) = (0..generics.count()).find(|&idx| {
                     let param = generics.param_at(idx, tcx);
