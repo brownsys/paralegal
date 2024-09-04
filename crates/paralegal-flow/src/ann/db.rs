@@ -12,7 +12,7 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
-    args::{Args, FlowModel},
+    args::{Args, Stub},
     utils::{
         func_of_term, resolve::expect_resolve_string_to_def_id, FunctionKind, InstanceExt,
         IntoDefId, TyExt,
@@ -494,7 +494,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         cache.keys().copied().collect::<Vec<_>>()
     }
 
-    pub fn has_flow_model(&self, def_id: DefId) -> Option<&'static FlowModel> {
+    pub fn has_flow_model(&self, def_id: DefId) -> Option<&'static Stub> {
         [def_id]
             .into_iter()
             .chain(
@@ -566,7 +566,7 @@ pub struct MarkerDatabase<'tcx> {
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
     included_crates: FxHashSet<CrateNum>,
-    flow_models: FxHashMap<DefId, &'static FlowModel>,
+    flow_models: FxHashMap<DefId, &'static Stub>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
@@ -579,7 +579,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
     ) -> Self {
         let flow_models = args
             .build_config()
-            .flow_models
+            .stubs
             .iter()
             .filter_map(|(k, v)| {
                 let res = expect_resolve_string_to_def_id(tcx, k, args.relaxed());

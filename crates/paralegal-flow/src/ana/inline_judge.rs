@@ -14,7 +14,7 @@ use rustc_type_ir::TyKind;
 use crate::{
     ana::Print,
     ann::db::MarkerDatabase,
-    args::{FlowModel, InliningDepth},
+    args::{InliningDepth, Stub},
     Args, MarkerCtx, TyCtxt,
 };
 
@@ -37,7 +37,7 @@ pub enum InlineJudgement {
     /// Construct a graph for the called function and merge it
     Inline,
     /// Use a flow model to abstract the call
-    UseFlowModel(&'static FlowModel),
+    UseFlowModel(&'static Stub),
     /// Abstract the call via type signature
     AbstractViaType(&'static str),
 }

@@ -581,7 +581,7 @@ pub struct DepConfig {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 #[serde(tag = "mode", rename_all = "kebab-case")]
-pub enum FlowModel {
+pub enum Stub {
     #[serde(rename_all = "kebab-case")]
     /// Replaces the result of a call to a higher-order function with a call to
     /// the input closure.
@@ -601,5 +601,5 @@ pub struct BuildConfig {
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]
-    pub flow_models: HashMap<String, FlowModel>,
+    pub stubs: HashMap<String, Stub>,
 }

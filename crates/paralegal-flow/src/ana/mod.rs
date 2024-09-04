@@ -6,7 +6,7 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
-    args::FlowModel,
+    args::Stub,
     desc::*,
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
@@ -412,7 +412,7 @@ struct MyCallback<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
-impl FlowModel {
+impl Stub {
     /// Performs the effects of this model on the provided function.
     ///
     /// `function` is what was to be called but for which a flow model exists,
@@ -428,7 +428,7 @@ impl FlowModel {
         at: RustSpan,
     ) -> Result<(Instance<'tcx>, CallingConvention<'tcx>), ErrorGuaranteed> {
         match self {
-            FlowModel::SubClosure { generic_name } | FlowModel::SubFuture { generic_name } => {
+            Stub::SubClosure { generic_name } | Stub::SubFuture { generic_name } => {
                 let name = Symbol::intern(generic_name);
                 let generics = tcx.generics_of(function.def_id());
                 let Some(param_index) = (0..generics.count()).find(|&idx| {
@@ -448,7 +448,7 @@ impl FlowModel {
                     .unwrap();
 
                 let expect_indirect = match self {
-                    FlowModel::SubClosure { .. } => {
+                    Stub::SubClosure { .. } => {
                         use rustc_hir::def::DefKind;
                         match tcx.def_kind(def_id) {
                             DefKind::Closure => true,
@@ -461,7 +461,7 @@ impl FlowModel {
                             }
                         }
                     }
-                    FlowModel::SubFuture { .. } => {
+                    Stub::SubFuture { .. } => {
                         assert!(tcx.generator_is_async(def_id));
                         true
                     }
