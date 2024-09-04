@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 handlebars = "4.5.0"
-paralegal-policy = { path = "../../../paralegal/paralegal/crates/paralegal-policy" }
-paralegal = { path = "../../../paralegal/paralegal/crates/paralegal" }
-parsers = {path = "../parsers"}
-templates = {path = "../templates"}
+paralegal-policy = { path = "../../paralegal/crates/paralegal-policy" }
+paralegal = { path = "../../paralegal/crates/paralegal" }
+parsers = { path = "../parsers" }
+templates = { path = "../templates" }
