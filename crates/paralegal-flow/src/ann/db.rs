@@ -28,6 +28,7 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::Identifier;
 
+use rustc_errors::DiagnosticMessage;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{def::DefKind, def_id::CrateNum};
@@ -37,6 +38,7 @@ use rustc_middle::{
 };
 use rustc_serialize::Decodable;
 
+use rustc_span::Span;
 use rustc_utils::cache::Cache;
 
 use std::{borrow::Cow, fs::File, io::Read, rc::Rc};
@@ -264,6 +266,14 @@ impl<'tcx> MarkerCtx<'tcx> {
             .collect()
     }
 
+    fn span_err(&self, span: Span, msg: impl Into<DiagnosticMessage>) {
+        if self.0.config.relaxed() {
+            self.tcx().sess.span_warn(span, msg.into());
+        } else {
+            self.tcx().sess.span_err(span, msg.into());
+        }
+    }
+
     /// Does this terminator carry a marker?
     fn terminator_reachable_markers(
         &self,
@@ -271,6 +281,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         terminator: &mir::Terminator<'tcx>,
         expect_resolve: bool,
     ) -> impl Iterator<Item = Identifier> + '_ {
+        let param_env = ty::ParamEnv::reveal_all();
         let mut v = vec![];
         trace!(
             "  Finding reachable markers for terminator {:?}",
@@ -279,21 +290,13 @@ impl<'tcx> MarkerCtx<'tcx> {
         let Some((def_id, gargs)) = func_of_term(self.tcx(), terminator) else {
             return v.into_iter();
         };
-        let res = if expect_resolve {
-            let Some(instance) =
-                Instance::resolve(self.tcx(), ty::ParamEnv::reveal_all(), def_id, gargs).unwrap()
+        let mut res = if expect_resolve {
+            let Some(instance) = Instance::resolve(self.tcx(), param_env, def_id, gargs).unwrap()
             else {
-                if self.0.config.relaxed() {
-                    self.tcx().sess.span_warn(
+                self.span_err(
                         terminator.source_info.span,
                         format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
                     );
-                } else {
-                    self.tcx().sess.span_err(
-                        terminator.source_info.span,
-                        format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
-                    );
-                }
                 return v.into_iter();
             };
             MaybeMonomorphized::Monomorphized(instance)
@@ -304,6 +307,27 @@ impl<'tcx> MarkerCtx<'tcx> {
             "    Checking function {} for markers",
             self.tcx().def_path_debug_str(res.def_id())
         );
+
+        if let Some(model) = self.has_flow_model(res.def_id()) {
+            let MaybeMonomorphized::Monomorphized(instance) = &mut res else {
+                self.span_err(
+                    terminator.source_info.span,
+                    "Could not apply stub to an partially resolved function",
+                );
+                return v.into_iter();
+            };
+            if let Ok(new_instance) = model.resolve_alternate_instance(
+                self.tcx(),
+                *instance,
+                param_env,
+                terminator.source_info.span,
+            ) {
+                *instance = new_instance;
+            } else {
+                return v.into_iter();
+            }
+        }
+
         v.extend(self.get_reachable_and_self_markers(res));
 
         // We have to proceed differently than graph construction,
