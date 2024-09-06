@@ -688,7 +688,7 @@ mod call_string_resolver {
                     Either::Right(term) => {
                         let (def_id, args) = func_of_term(tcx, &term).unwrap();
                         let instance = Instance::expect_resolve(tcx, param_env, def_id, args);
-                        if let Some(model) = self.marker_context.has_flow_model(def_id) {
+                        if let Some(model) = self.marker_context.has_stub(def_id) {
                             let TerminatorKind::Call { args, .. } = &term.kind else {
                                 unreachable!()
                             };

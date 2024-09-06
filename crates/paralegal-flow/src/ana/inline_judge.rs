@@ -79,7 +79,7 @@ impl<'tcx> InlineJudge<'tcx> {
     pub fn should_inline(&self, info: &CallInfo<'tcx, '_>) -> InlineJudgement {
         let marker_target = info.async_parent.unwrap_or(info.callee);
         let marker_target_def_id = marker_target.def_id();
-        if let Some(model) = self.marker_ctx().has_flow_model(marker_target_def_id) {
+        if let Some(model) = self.marker_ctx().has_stub(marker_target_def_id) {
             // If we're replacing an async function skip the poll call.
             //
             // I tried to have it replace the poll call only but that didn't seem to work.

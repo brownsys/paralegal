@@ -308,7 +308,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             self.tcx().def_path_debug_str(res.def_id())
         );
 
-        if let Some(model) = self.has_flow_model(res.def_id()) {
+        if let Some(model) = self.has_stub(res.def_id()) {
             let MaybeMonomorphized::Monomorphized(instance) = &mut res else {
                 self.span_err(
                     terminator.source_info.span,
@@ -518,7 +518,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         cache.keys().copied().collect::<Vec<_>>()
     }
 
-    pub fn has_flow_model(&self, def_id: DefId) -> Option<&'static Stub> {
+    pub fn has_stub(&self, def_id: DefId) -> Option<&'static Stub> {
         [def_id]
             .into_iter()
             .chain(
