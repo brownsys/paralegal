@@ -207,26 +207,16 @@ impl<'tcx> MarkerCtx<'tcx> {
         res: impl Into<MaybeMonomorphized<'tcx>>,
     ) -> impl Iterator<Item = Identifier> + '_ {
         let res = res.into();
-        // TODO this check is wrong. This should either check whether this gets inlined or be removed altogether.
-        if res.def_id().is_local() {
-            let mut direct_markers = self
-                .combined_markers(res.def_id())
-                .map(|m| m.marker)
-                .peekable();
-            let non_direct = direct_markers
-                .peek()
-                .is_none()
-                .then(|| self.get_reachable_markers(res));
+        let mut direct_markers = self
+            .combined_markers(res.def_id())
+            .map(|m| m.marker)
+            .peekable();
+        let non_direct = direct_markers
+            .peek()
+            .is_none()
+            .then(|| self.get_reachable_markers(res));
 
-            Either::Right(direct_markers.chain(non_direct.into_iter().flatten().copied()))
-        } else {
-            Either::Left(
-                self.all_function_markers(res)
-                    .map(|m| m.0.marker)
-                    .collect::<Vec<_>>(),
-            )
-        }
-        .into_iter()
+        direct_markers.chain(non_direct.into_iter().flatten().copied())
     }
 
     /// If the transitive marker cache did not contain the answer, this is what
@@ -309,23 +299,22 @@ impl<'tcx> MarkerCtx<'tcx> {
         );
 
         if let Some(model) = self.has_stub(res.def_id()) {
-            let MaybeMonomorphized::Monomorphized(instance) = &mut res else {
+            if let MaybeMonomorphized::Monomorphized(instance) = &mut res {
+                if let Ok(new_instance) = model.resolve_alternate_instance(
+                    self.tcx(),
+                    *instance,
+                    param_env,
+                    terminator.source_info.span,
+                ) {
+                    v.extend(self.get_reachable_and_self_markers(new_instance));
+                }
+            } else {
                 self.span_err(
                     terminator.source_info.span,
                     "Could not apply stub to an partially resolved function",
                 );
-                return v.into_iter();
             };
-            if let Ok(new_instance) = model.resolve_alternate_instance(
-                self.tcx(),
-                *instance,
-                param_env,
-                terminator.source_info.span,
-            ) {
-                *instance = new_instance;
-            } else {
-                return v.into_iter();
-            }
+            return v.into_iter();
         }
 
         v.extend(self.get_reachable_and_self_markers(res));
