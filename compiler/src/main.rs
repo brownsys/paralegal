@@ -39,7 +39,14 @@ fn run(args: &Args) -> Result<()> {
 
     let res = parse(&policy);
     match res {
-        Ok((_, policy)) => compile(policy, &args.out, args.bin),
+        Ok((_, policy)) => compile(
+            policy,
+            args.path
+                .file_name()
+                .map_or("<unnamed>", |n| n.to_str().unwrap()),
+            &args.out,
+            args.bin,
+        ),
         Err(e) => panic!("{}", e),
     }
 }

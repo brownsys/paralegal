@@ -211,8 +211,9 @@ fn compile_definitions(handlebars: &mut Handlebars, definitions: &Vec<Definition
     return results.join("\n");
 }
 
-pub fn compile(policy: Policy, out: &Path, create_bin: bool) -> Result<()> {
+pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) -> Result<()> {
     let mut handlebars = Handlebars::new();
+    handlebars.set_strict_mode(true);
     register_templates(&mut handlebars);
 
     // verify that variables in definitions & policy are properly scoped
@@ -234,16 +235,17 @@ pub fn compile(policy: Policy, out: &Path, create_bin: bool) -> Result<()> {
     }
     let compiled_scope = render_template(&mut handlebars, &map, policy.scope.into());
     map.insert("policy", compiled_scope);
-    let compiled_policy = render_template(
-        &mut handlebars,
-        &map,
-        if create_bin {
-            Template::Main
-        } else {
-            Template::Base
-        },
-    );
+    let compiled_policy = render_template(&mut handlebars, &map, Template::Base);
 
-    fs::write(out, &compiled_policy)?;
+    let main = if create_bin {
+        let mut main_map = HashMap::new();
+        main_map.insert("policy", compiled_policy);
+        main_map.insert("policy-file", policy_name.to_string());
+        render_template(&mut handlebars, &main_map, Template::Main)
+    } else {
+        compiled_policy
+    };
+
+    fs::write(out, &main)?;
     Ok(())
 }
