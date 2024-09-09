@@ -4,8 +4,10 @@ use strum_macros::EnumIter;
 
 #[derive(Debug, EnumIter)]
 pub enum Template {
-    // all policies use base; has infrastructure to set up and run policy
+    // all policies use base
     Base,
+    // If we are creating a runnable binary we use this, which also includes base
+    Main,
     Definition,
     // variable intro
     Roots,
@@ -47,6 +49,7 @@ impl From<Template> for &str {
     fn from(value: Template) -> Self {
         match value {
             Template::Base => "misc/base",
+            Template::Main => "misc/main",
             Template::Definition => "misc/definition",
             Template::Roots => "variable-intros/roots",
             Template::AllNodes => "variable-intros/all-nodes",

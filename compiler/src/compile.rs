@@ -211,7 +211,7 @@ fn compile_definitions(handlebars: &mut Handlebars, definitions: &Vec<Definition
     return results.join("\n");
 }
 
-pub fn compile(policy: Policy, out: &Path) -> Result<()> {
+pub fn compile(policy: Policy, out: &Path, create_bin: bool) -> Result<()> {
     let mut handlebars = Handlebars::new();
     register_templates(&mut handlebars);
 
@@ -234,7 +234,15 @@ pub fn compile(policy: Policy, out: &Path) -> Result<()> {
     }
     let compiled_scope = render_template(&mut handlebars, &map, policy.scope.into());
     map.insert("policy", compiled_scope);
-    let compiled_policy = render_template(&mut handlebars, &map, Template::Base);
+    let compiled_policy = render_template(
+        &mut handlebars,
+        &map,
+        if create_bin {
+            Template::Main
+        } else {
+            Template::Base
+        },
+    );
 
     fs::write(out, &compiled_policy)?;
     Ok(())

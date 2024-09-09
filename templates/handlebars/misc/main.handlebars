@@ -1,0 +1,43 @@
+{{> base}}
+
+use std::path::PathBuf;
+
+use anyhow::Result;
+use clap::Parser;
+
+/// Cleans the environment if we are being run as "cargo run"
+///
+/// Also disables incremental computation to reduce the size of compile
+/// artifacts generated during analysis.
+fn env_setup() {
+    use std::env;
+    for (k, _) in env::vars() {
+        if k.starts_with("CARGO") || k.starts_with("RUSTUP") {
+            env::remove_var(k)
+        }
+    }
+    env::set_var("CARGO_INCREMENTAL", "false");
+}
+
+#[derive(clap::Parser)]
+struct Args {
+    dir: PathBuf,
+    #[clap(long, short)]
+    external_annotations: Option<PathBuf>,
+    #[clap(last = true)]
+    flow_args: Vec<String>,
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    env_setup();
+    let mut cmd = paralegal_policy::SPDGGenCommand::global();
+    if let Some(p) = args.external_annotations.as_ref() {
+        cmd.external_annotations(p);
+    }
+    cmd.get_command()
+        .args(args.flow_args.iter());
+    cmd.run(&args.dir)?.with_context(check)?;
+    println!("Policy successful");
+    Ok(())
+}
