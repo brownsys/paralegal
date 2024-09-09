@@ -11,6 +11,7 @@ fn pass<T>(t: T) -> T {
 #[paralegal::marker(target, arguments = [0])]
 fn target(i: usize) {}
 
+#[allow(dead_code)]
 #[paralegal::analyze]
 fn thread_spawn() {
     let src = source();
@@ -20,6 +21,7 @@ fn thread_spawn() {
 
 fn main() {}
 
+#[allow(dead_code)]
 #[paralegal::analyze]
 async fn async_spawn() {
     let src = source();
@@ -31,11 +33,13 @@ fn to_block() -> Result<usize, actix_web::error::BlockingError> {
     Ok(source())
 }
 
+#[allow(dead_code)]
 #[paralegal::analyze]
 async fn block_fn() -> Result<(), actix_web::error::BlockingError> {
     Ok(target(actix_web::web::block(to_block).await?? + 1))
 }
 
+#[allow(dead_code)]
 #[paralegal::analyze]
 async fn block_closure(to_close_over: usize) -> Result<(), actix_web::error::BlockingError> {
     Ok(target(
@@ -54,6 +58,7 @@ where
     res
 }
 
+#[allow(dead_code)]
 #[paralegal::analyze]
 async fn test_blocking_with_let_bound_closure(to_close_over: &str) {
     let from_scope = 10;
@@ -61,6 +66,7 @@ async fn test_blocking_with_let_bound_closure(to_close_over: &str) {
     target(blocking(to_close_over, the_closure).await);
 }
 
+#[allow(dead_code)]
 #[paralegal::analyze]
 async fn strategic_overtaint(to_close_over: usize) -> Result<(), actix_web::error::BlockingError> {
     Ok(target(
@@ -70,6 +76,7 @@ async fn strategic_overtaint(to_close_over: usize) -> Result<(), actix_web::erro
     ))
 }
 
+#[allow(dead_code)]
 #[paralegal::analyze]
 async fn strategic_overtaint_2(
     to_close_over: usize,
@@ -81,6 +88,7 @@ async fn strategic_overtaint_2(
     ))
 }
 
+#[allow(dead_code)]
 #[paralegal::analyze]
 async fn no_taint_without_connection(
     to_close_over: usize,
