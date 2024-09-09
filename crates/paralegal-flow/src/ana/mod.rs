@@ -333,6 +333,7 @@ fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
 fn default_index() -> <SPDGImpl as GraphBase>::NodeId {
     <SPDGImpl as GraphBase>::NodeId::end()
 }
+
 /// Checks the invariant that [`SPDGGenerator::collect_type_info`] should
 /// produce a map that is a superset of the types found in all the `types` maps
 /// on [`SPDG`].
@@ -348,6 +349,7 @@ fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
             );
         })
 }
+
 fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
     match tcx.def_kind(id) {
         def::DefKind::Closure => DefKind::Closure,
@@ -473,7 +475,7 @@ impl Stub {
 
     /// Performs the effects of this model on the provided function.
     ///
-    /// `function` is what was to be called but for which a flow model exists,
+    /// `function` is what was to be called but for which a stub exists,
     /// `arguments` are the arguments to that call.
     ///
     /// Returns a new instance to call instead and how it should be called.
@@ -531,7 +533,7 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
 
         let skip = match self.judge.should_inline(&info) {
             InlineJudgement::AbstractViaType(_) => SkipCall::Skip,
-            InlineJudgement::UseFlowModel(model) => {
+            InlineJudgement::UseStub(model) => {
                 if let Ok((instance, calling_convention)) = model.apply(
                     self.tcx,
                     info.callee,

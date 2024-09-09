@@ -515,7 +515,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     .then(|| self.tcx().associated_item(def_id).trait_item_def_id)
                     .flatten(),
             )
-            .find_map(|def_id| self.0.flow_models.get(&def_id))
+            .find_map(|def_id| self.0.stubs.get(&def_id))
             .copied()
     }
 }
@@ -579,7 +579,7 @@ pub struct MarkerDatabase<'tcx> {
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
     included_crates: FxHashSet<CrateNum>,
-    flow_models: FxHashMap<DefId, &'static Stub>,
+    stubs: FxHashMap<DefId, &'static Stub>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
@@ -590,7 +590,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
         body_cache: Rc<BodyCache<'tcx>>,
         included_crates: FxHashSet<CrateNum>,
     ) -> Self {
-        let flow_models = args
+        let stubs = args
             .build_config()
             .stubs
             .iter()
@@ -609,7 +609,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             type_markers: Default::default(),
             body_cache,
             included_crates,
-            flow_models,
+            stubs,
         }
     }
 }

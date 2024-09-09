@@ -55,7 +55,7 @@ where
 }
 
 #[paralegal::analyze]
-async fn test_blocking(to_close_over: &str) {
+async fn test_blocking_with_let_bound_closure(to_close_over: &str) {
     let from_scope = 10;
     let the_closure = move |u| u + source() + from_scope;
     target(blocking(to_close_over, the_closure).await);

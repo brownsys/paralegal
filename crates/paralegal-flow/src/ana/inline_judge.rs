@@ -36,8 +36,8 @@ pub struct InlineJudge<'tcx> {
 pub enum InlineJudgement {
     /// Construct a graph for the called function and merge it
     Inline,
-    /// Use a flow model to abstract the call
-    UseFlowModel(&'static Stub),
+    /// Use a stub instead of the call
+    UseStub(&'static Stub),
     /// Abstract the call via type signature
     AbstractViaType(&'static str),
 }
@@ -84,16 +84,14 @@ impl<'tcx> InlineJudge<'tcx> {
             //
             // I tried to have it replace the poll call only but that didn't seem to work.
             return if info.async_parent.is_some() {
-                InlineJudgement::AbstractViaType("async parent of flow model")
+                InlineJudgement::AbstractViaType("async parent of stub")
             } else {
-                InlineJudgement::UseFlowModel(model)
+                InlineJudgement::UseStub(model)
             };
         }
         let is_marked = self.marker_ctx.is_marked(marker_target_def_id);
         let judgement = match self.opts.anactrl().inlining_depth() {
-            _ if !self.included_crates.contains(&marker_target_def_id.krate)
-                && !self.is_exception(marker_target_def_id) =>
-            {
+            _ if !self.included_crates.contains(&marker_target_def_id.krate) => {
                 InlineJudgement::AbstractViaType("inlining for crate disabled")
             }
             _ if is_marked => InlineJudgement::AbstractViaType("marked"),
@@ -121,13 +119,6 @@ impl<'tcx> InlineJudge<'tcx> {
             )
         }
         judgement
-    }
-
-    fn is_exception(&self, def_id: DefId) -> bool {
-        if let Some(parent) = self.tcx.trait_of_item(def_id) {
-            return self.tcx.is_fn_trait(parent);
-        }
-        false
     }
 
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {

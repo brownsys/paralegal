@@ -11,7 +11,7 @@ extern crate lazy_static;
 use paralegal_flow::{define_flow_test_template, test_utils::*};
 use paralegal_spdg::Identifier;
 
-const TEST_CRATE_NAME: &str = "tests/flow-models";
+const TEST_CRATE_NAME: &str = "tests/stub-tests";
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump(TEST_CRATE_NAME);
@@ -63,7 +63,7 @@ define_test!(block_fn: graph -> {
     simple_source_target_flow(graph)
 });
 
-define_test!(test_blocking: graph -> {
+define_test!(test_blocking_with_let_bound_closure: graph -> {
     simple_source_target_flow(graph)
 });
 
