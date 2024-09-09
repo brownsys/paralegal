@@ -1,6 +1,5 @@
-use std::collections::HashMap;
 use handlebars::{no_escape, Handlebars};
-use strum::IntoEnumIterator;
+use std::collections::HashMap;
 use strum_macros::EnumIter;
 
 #[derive(Debug, EnumIter)]
@@ -40,6 +39,10 @@ pub enum Template {
     InCtrler,
 }
 
+#[derive(rust_embed::RustEmbed)]
+#[folder = "handlebars"]
+struct TemplateDirectory;
+
 impl From<Template> for &str {
     fn from(value: Template) -> Self {
         match value {
@@ -50,7 +53,7 @@ impl From<Template> for &str {
             Template::Variable => "variable-intros/variable",
             Template::VariableMarked => "variable-intros/variable-marked",
             Template::VariableOfTypeMarked => "variable-intros/variable-of-type-marked",
-            Template::VariableSourceOf =>  "variable-intros/variable-source-of",
+            Template::VariableSourceOf => "variable-intros/variable-source-of",
             Template::OnlyViaIntro => "misc/only-via-intro",
             Template::FlowsTo => "relations/flows-to",
             Template::NoFlowsTo => "relations/no-flows-to",
@@ -76,23 +79,17 @@ impl From<Template> for &str {
 
 pub fn register_templates(handlebars: &mut Handlebars) {
     handlebars.register_escape_fn(no_escape);
-    for template in Template::iter() {
-        let name : &str = template.into();
-        let path : &str = &format!("templates/src/{name}.handlebars");
-        handlebars
-        .register_template_file(name, path)
-        .expect(&format!(
-            "Could not register {name} template with handlebars from path {path}"
-        ));
-    }
+    handlebars
+        .register_embed_templates::<TemplateDirectory>()
+        .unwrap();
 }
 
 pub fn render_template(
     handlebars: &mut Handlebars,
     map: &HashMap<&str, String>,
     template: Template,
-) -> String { 
-    let name : &str = template.into();
+) -> String {
+    let name: &str = template.into();
     handlebars
         .render(name, &map)
         .expect(&format!("Could not render {name} handlebars template"))
@@ -101,8 +98,8 @@ pub fn render_template(
 pub fn render_only_via_template(
     handlebars: &mut Handlebars,
     map: &HashMap<&str, Vec<String>>,
-) -> String { 
-    let name : &str = Template::OnlyVia.into();
+) -> String {
+    let name: &str = Template::OnlyVia.into();
     handlebars
         .render(name, &map)
         .expect(&format!("Could not render {name} handlebars template"))
