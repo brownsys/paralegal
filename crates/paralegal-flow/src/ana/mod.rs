@@ -6,7 +6,7 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
-    args::FlowModel,
+    args::Stub,
     desc::*,
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
@@ -29,10 +29,10 @@ use petgraph::visit::GraphBase;
 
 use rustc_hir::{self as hir, def, def_id::DefId};
 use rustc_middle::{
-    mir::Location,
+    mir::{Location, Operand},
     ty::{Instance, ParamEnv, TyCtxt},
 };
-use rustc_span::{FileNameDisplayPreference, Span as RustSpan, Symbol};
+use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
 
 mod graph_converter;
 mod inline_judge;
@@ -333,6 +333,7 @@ fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
 fn default_index() -> <SPDGImpl as GraphBase>::NodeId {
     <SPDGImpl as GraphBase>::NodeId::end()
 }
+
 /// Checks the invariant that [`SPDGGenerator::collect_type_info`] should
 /// produce a map that is a superset of the types found in all the `types` maps
 /// on [`SPDG`].
@@ -348,6 +349,7 @@ fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
             );
         })
 }
+
 fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
     match tcx.def_kind(id) {
         def::DefKind::Closure => DefKind::Closure,
@@ -412,41 +414,136 @@ struct MyCallback<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
+impl Stub {
+    pub fn resolve_alternate_instance<'tcx>(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        function: Instance<'tcx>,
+        param_env: ParamEnv<'tcx>,
+        at: RustSpan,
+    ) -> Result<Instance<'tcx>, ErrorGuaranteed> {
+        match self {
+            Stub::SubClosure { generic_name } | Stub::SubFuture { generic_name } => {
+                let name = Symbol::intern(generic_name);
+                let generics = tcx.generics_of(function.def_id());
+                let Some(param_index) = (0..generics.count()).find(|&idx| {
+                    let param = generics.param_at(idx, tcx);
+                    param.name == name
+                }) else {
+                    return Err(tcx.sess.span_err(
+                        at,
+                        format!("Function has no parameter named {generic_name}"),
+                    ));
+                };
+                let ty = function.args[param_index].expect_ty();
+                let (def_id, args) =
+                    flowistry_pdg_construction::utils::type_as_fn(tcx, ty).unwrap();
+                Ok(Instance::resolve(tcx, param_env, def_id, args)
+                    .unwrap()
+                    .unwrap())
+            }
+        }
+    }
+
+    fn indirect_required(
+        &self,
+        tcx: TyCtxt,
+        def_id: DefId,
+        at: RustSpan,
+    ) -> Result<bool, ErrorGuaranteed> {
+        let bool = match self {
+            Stub::SubClosure { .. } => {
+                use rustc_hir::def::DefKind;
+                match tcx.def_kind(def_id) {
+                    DefKind::Closure => true,
+                    DefKind::Fn => false,
+                    kind => {
+                        return Err(tcx.sess.span_err(
+                            at,
+                            format!("Expected `fn` or `closure` def kind, got {kind:?}"),
+                        ))
+                    }
+                }
+            }
+            Stub::SubFuture { .. } => {
+                assert!(tcx.generator_is_async(def_id));
+                true
+            }
+        };
+        Ok(bool)
+    }
+
+    /// Performs the effects of this model on the provided function.
+    ///
+    /// `function` is what was to be called but for which a stub exists,
+    /// `arguments` are the arguments to that call.
+    ///
+    /// Returns a new instance to call instead and how it should be called.
+    pub fn apply<'tcx>(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        function: Instance<'tcx>,
+        param_env: ParamEnv<'tcx>,
+        arguments: &[Operand<'tcx>],
+        at: RustSpan,
+    ) -> Result<(Instance<'tcx>, CallingConvention<'tcx>), ErrorGuaranteed> {
+        let instance = self.resolve_alternate_instance(tcx, function, param_env, at)?;
+        let def_id = instance.def_id();
+
+        let expect_indirect = self.indirect_required(tcx, def_id, at)?;
+        let poll = tcx.lang_items().poll();
+        let calling_convention = if expect_indirect {
+            let clj = match arguments {
+                [clj] => clj,
+                [gen, _]
+                    if tcx.def_kind(function.def_id()) == hir::def::DefKind::AssocFn
+                        && tcx.associated_item(function.def_id()).trait_item_def_id == poll =>
+                {
+                    gen
+                }
+                _ => {
+                    return Err(tcx.sess.span_err(
+                        at,
+                        format!(
+                            "this function ({:?}) should have only one argument but it has {}",
+                            function.def_id(),
+                            arguments.len()
+                        ),
+                    ))
+                }
+            };
+            CallingConvention::Indirect {
+                once_shim: false,
+                closure_arg: clj.clone(),
+                // This is incorrect, but we only support
+                // non-argument closures at the moment so this
+                // will never be used.
+                tupled_arguments: clj.clone(),
+            }
+        } else {
+            CallingConvention::Direct(arguments.into())
+        };
+        Ok((instance, calling_convention))
+    }
+}
+
 impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
         let changes = CallChanges::default();
 
         let skip = match self.judge.should_inline(&info) {
-            InlineJudgement::AbstractViaType => SkipCall::Skip,
-            InlineJudgement::UseFlowModel(model) => {
-                // Set in case of errors
-                assert!(matches!(
-                    model,
-                    FlowModel::SubClosure | FlowModel::SubFuture
-                ));
-                if let [clj] = &info.arguments {
-                    let ty = clj.ty(info.caller_body, self.tcx);
-                    let (def_id, args) =
-                        flowistry_pdg_construction::utils::type_as_fn(self.tcx, ty).unwrap();
-                    let instance = Instance::resolve(self.tcx, info.param_env, def_id, args)
-                        .unwrap()
-                        .unwrap();
-                    assert_eq!(instance.sig(self.tcx).unwrap().inputs().len(), 1);
-                    match model {
-                        FlowModel::SubClosure => {
-                            assert_eq!(self.tcx.def_kind(def_id), rustc_hir::def::DefKind::Closure)
-                        }
-                        FlowModel::SubFuture => assert!(self.tcx.generator_is_async(def_id)),
-                    };
+            InlineJudgement::AbstractViaType(_) => SkipCall::Skip,
+            InlineJudgement::UseStub(model) => {
+                if let Ok((instance, calling_convention)) = model.apply(
+                    self.tcx,
+                    info.callee,
+                    info.param_env,
+                    info.arguments,
+                    info.span,
+                ) {
                     SkipCall::Replace {
                         instance,
-                        calling_convention: CallingConvention::Indirect {
-                            closure_arg: clj.clone(),
-                            // This is incorrect, but we only support
-                            // non-argument closures at the moment so this
-                            // will never be used.
-                            tupled_arguments: clj.clone(),
-                        },
+                        calling_convention,
                     }
                 } else {
                     SkipCall::Skip
@@ -462,11 +559,19 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
         param_env: ParamEnv<'tcx>,
         _loc: Location,
         _parent: Instance<'tcx>,
-        _reason: InlineMissReason,
+        reason: InlineMissReason,
         call_span: rustc_span::Span,
     ) {
-        self.judge
-            .ensure_is_safe_to_approximate(param_env, resolution, call_span, false);
+        self.judge.ensure_is_safe_to_approximate(
+            param_env,
+            resolution,
+            call_span,
+            false,
+            match reason {
+                InlineMissReason::Async(_) => "async",
+                InlineMissReason::TraitMethod => "virtual trait method",
+            },
+        );
     }
 }
 

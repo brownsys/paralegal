@@ -29,6 +29,7 @@ extern crate rustc_ast;
 extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_errors;
 extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_index;
@@ -296,6 +297,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
 
     fn reported_driver_version(&self) -> std::borrow::Cow<'static, str> {
         env!("RUSTC_VERSION").into()
+    }
+
+    fn hash_config(&self, args: &Self::Args, hasher: &mut impl std::hash::Hasher) {
+        args.hash_config(hasher);
     }
 
     fn args(

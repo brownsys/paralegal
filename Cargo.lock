@@ -1149,12 +1149,12 @@ name = "rustc_plugin"
 version = "0.7.4-nightly-2023-08-25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1348edfa020dbe4807a4d99272332dadcbbedff6b587accb95faefe20d2c7129"
-replace = "rustc_plugin 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=d7bde3ae16a7137de594c2dd811030cd761a8993)"
+replace = "rustc_plugin 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=e413907b2ae9a03d2c8e9aca3b72dd451a16b1db)"
 
 [[package]]
 name = "rustc_plugin"
 version = "0.7.4-nightly-2023-08-25"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=d7bde3ae16a7137de594c2dd811030cd761a8993#d7bde3ae16a7137de594c2dd811030cd761a8993"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=e413907b2ae9a03d2c8e9aca3b72dd451a16b1db#e413907b2ae9a03d2c8e9aca3b72dd451a16b1db"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1175,12 +1175,12 @@ name = "rustc_utils"
 version = "0.7.4-nightly-2023-08-25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09428c7086894369685cca54a516acc0f0ab6d0e5a628c094ba83bfddaf1aedf"
-replace = "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=d7bde3ae16a7137de594c2dd811030cd761a8993)"
+replace = "rustc_utils 0.7.4-nightly-2023-08-25 (git+https://github.com/JustusAdam/rustc_plugin?rev=e413907b2ae9a03d2c8e9aca3b72dd451a16b1db)"
 
 [[package]]
 name = "rustc_utils"
 version = "0.7.4-nightly-2023-08-25"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=d7bde3ae16a7137de594c2dd811030cd761a8993#d7bde3ae16a7137de594c2dd811030cd761a8993"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=e413907b2ae9a03d2c8e9aca3b72dd451a16b1db#e413907b2ae9a03d2c8e9aca3b72dd451a16b1db"
 dependencies = [
  "anyhow",
  "cfg-if",

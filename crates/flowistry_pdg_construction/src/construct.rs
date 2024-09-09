@@ -22,6 +22,7 @@ use rustc_utils::cache::Cache;
 use crate::{
     async_support::*,
     body_cache::{self, BodyCache, CachedBody},
+    calling_convention::PlaceTranslator,
     graph::{
         push_call_string_root, DepEdge, DepGraph, DepNode, PartialGraph, SourceUse, TargetUse,
     },
@@ -342,11 +343,12 @@ impl<'tcx> PartialGraph<'tcx> {
             return false;
         };
 
-        let (child_descriptor, calling_convention) = match handling {
+        let (child_descriptor, calling_convention, precise) = match handling {
             CallHandling::Ready {
                 calling_convention,
                 descriptor,
-            } => (descriptor, calling_convention),
+                precise,
+            } => (descriptor, calling_convention, precise),
             CallHandling::ApproxAsyncFn => {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
@@ -378,23 +380,26 @@ impl<'tcx> PartialGraph<'tcx> {
 
         let is_root = |n: CallString| n.len() == 2;
 
+        let translator = PlaceTranslator::new(
+            constructor.async_info(),
+            constructor.def_id,
+            &constructor.mono_body,
+            constructor.tcx(),
+            *destination,
+            &calling_convention,
+            precise,
+        );
+
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
         trace!("PARENT -> CHILD EDGES:");
         for (child_src, _kind) in child_graph.parentable_srcs(is_root) {
-            if let Some(parent_place) = calling_convention.translate_to_parent(
-                child_src.place,
-                constructor.async_info(),
-                constructor.tcx(),
-                &constructor.mono_body,
-                constructor.def_id,
-                *destination,
-            ) {
+            if let Some(translation) = translator.translate_to_parent(child_src.place) {
                 self.register_mutation(
                     results,
                     state,
                     Inputs::Unresolved {
-                        places: vec![(parent_place, None)],
+                        places: vec![(translation, None)],
                     },
                     Either::Right(child_src),
                     location,
@@ -410,14 +415,7 @@ impl<'tcx> PartialGraph<'tcx> {
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
         for (child_dst, kind) in child_graph.parentable_dsts(is_root) {
-            if let Some(parent_place) = calling_convention.translate_to_parent(
-                child_dst.place,
-                constructor.async_info(),
-                constructor.tcx(),
-                &constructor.mono_body,
-                constructor.def_id,
-                *destination,
-            ) {
+            if let Some(parent_place) = translator.translate_to_parent(child_dst.place) {
                 self.register_mutation(
                     results,
                     state,

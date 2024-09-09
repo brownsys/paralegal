@@ -12,9 +12,9 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
-    args::{Args, FlowModel},
+    args::{Args, Stub},
     utils::{
-        resolve::expect_resolve_string_to_def_id, ty_of_const, FunctionKind, InstanceExt,
+        func_of_term, resolve::expect_resolve_string_to_def_id, FunctionKind, InstanceExt,
         IntoDefId, TyExt,
     },
     Either, HashMap, HashSet,
@@ -24,10 +24,11 @@ use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
     determine_async,
     encoder::ParalegalDecoder,
-    utils::{is_virtual, try_monomorphize, try_resolve_function, type_as_fn},
+    utils::{is_virtual, try_monomorphize, try_resolve_function},
 };
 use paralegal_spdg::Identifier;
 
+use rustc_errors::DiagnosticMessage;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{def::DefKind, def_id::CrateNum};
@@ -37,6 +38,7 @@ use rustc_middle::{
 };
 use rustc_serialize::Decodable;
 
+use rustc_span::Span;
 use rustc_utils::cache::Cache;
 
 use std::{borrow::Cow, fs::File, io::Read, rc::Rc};
@@ -205,26 +207,16 @@ impl<'tcx> MarkerCtx<'tcx> {
         res: impl Into<MaybeMonomorphized<'tcx>>,
     ) -> impl Iterator<Item = Identifier> + '_ {
         let res = res.into();
-        // TODO this check is wrong. This should either check whether this gets inlined or be removed altogether.
-        if res.def_id().is_local() {
-            let mut direct_markers = self
-                .combined_markers(res.def_id())
-                .map(|m| m.marker)
-                .peekable();
-            let non_direct = direct_markers
-                .peek()
-                .is_none()
-                .then(|| self.get_reachable_markers(res));
+        let mut direct_markers = self
+            .combined_markers(res.def_id())
+            .map(|m| m.marker)
+            .peekable();
+        let non_direct = direct_markers
+            .peek()
+            .is_none()
+            .then(|| self.get_reachable_markers(res));
 
-            Either::Right(direct_markers.chain(non_direct.into_iter().flatten().copied()))
-        } else {
-            Either::Left(
-                self.all_function_markers(res)
-                    .map(|m| m.0.marker)
-                    .collect::<Vec<_>>(),
-            )
-        }
-        .into_iter()
+        direct_markers.chain(non_direct.into_iter().flatten().copied())
     }
 
     /// If the transitive marker cache did not contain the answer, this is what
@@ -264,6 +256,14 @@ impl<'tcx> MarkerCtx<'tcx> {
             .collect()
     }
 
+    fn span_err(&self, span: Span, msg: impl Into<DiagnosticMessage>) {
+        if self.0.config.relaxed() {
+            self.tcx().sess.span_warn(span, msg.into());
+        } else {
+            self.tcx().sess.span_err(span, msg.into());
+        }
+    }
+
     /// Does this terminator carry a marker?
     fn terminator_reachable_markers(
         &self,
@@ -271,36 +271,22 @@ impl<'tcx> MarkerCtx<'tcx> {
         terminator: &mir::Terminator<'tcx>,
         expect_resolve: bool,
     ) -> impl Iterator<Item = Identifier> + '_ {
+        let param_env = ty::ParamEnv::reveal_all();
         let mut v = vec![];
         trace!(
             "  Finding reachable markers for terminator {:?}",
             terminator.kind
         );
-        let mir::TerminatorKind::Call { func, .. } = &terminator.kind else {
+        let Some((def_id, gargs)) = func_of_term(self.tcx(), terminator) else {
             return v.into_iter();
         };
-        let Some(const_) = func.constant() else {
-            return v.into_iter();
-        };
-        let ty = ty_of_const(const_);
-        let Some((def_id, gargs)) = type_as_fn(self.tcx(), ty) else {
-            return v.into_iter();
-        };
-        let res = if expect_resolve {
-            let Some(instance) =
-                Instance::resolve(self.tcx(), ty::ParamEnv::reveal_all(), def_id, gargs).unwrap()
+        let mut res = if expect_resolve {
+            let Some(instance) = Instance::resolve(self.tcx(), param_env, def_id, gargs).unwrap()
             else {
-                if self.0.config.relaxed() {
-                    self.tcx().sess.span_warn(
+                self.span_err(
                         terminator.source_info.span,
                         format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
                     );
-                } else {
-                    self.tcx().sess.span_err(
-                        terminator.source_info.span,
-                        format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
-                    );
-                }
                 return v.into_iter();
             };
             MaybeMonomorphized::Monomorphized(instance)
@@ -311,6 +297,26 @@ impl<'tcx> MarkerCtx<'tcx> {
             "    Checking function {} for markers",
             self.tcx().def_path_debug_str(res.def_id())
         );
+
+        if let Some(model) = self.has_stub(res.def_id()) {
+            if let MaybeMonomorphized::Monomorphized(instance) = &mut res {
+                if let Ok(new_instance) = model.resolve_alternate_instance(
+                    self.tcx(),
+                    *instance,
+                    param_env,
+                    terminator.source_info.span,
+                ) {
+                    v.extend(self.get_reachable_and_self_markers(new_instance));
+                }
+            } else {
+                self.span_err(
+                    terminator.source_info.span,
+                    "Could not apply stub to an partially resolved function",
+                );
+            };
+            return v.into_iter();
+        }
+
         v.extend(self.get_reachable_and_self_markers(res));
 
         // We have to proceed differently than graph construction,
@@ -501,7 +507,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         cache.keys().copied().collect::<Vec<_>>()
     }
 
-    pub fn has_flow_model(&self, def_id: DefId) -> Option<&'static FlowModel> {
+    pub fn has_stub(&self, def_id: DefId) -> Option<&'static Stub> {
         [def_id]
             .into_iter()
             .chain(
@@ -509,7 +515,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     .then(|| self.tcx().associated_item(def_id).trait_item_def_id)
                     .flatten(),
             )
-            .find_map(|def_id| self.0.flow_models.get(&def_id))
+            .find_map(|def_id| self.0.stubs.get(&def_id))
             .copied()
     }
 }
@@ -573,7 +579,7 @@ pub struct MarkerDatabase<'tcx> {
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
     included_crates: FxHashSet<CrateNum>,
-    flow_models: FxHashMap<DefId, &'static FlowModel>,
+    stubs: FxHashMap<DefId, &'static Stub>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
@@ -584,9 +590,9 @@ impl<'tcx> MarkerDatabase<'tcx> {
         body_cache: Rc<BodyCache<'tcx>>,
         included_crates: FxHashSet<CrateNum>,
     ) -> Self {
-        let flow_models = args
+        let stubs = args
             .build_config()
-            .flow_models
+            .stubs
             .iter()
             .filter_map(|(k, v)| {
                 let res = expect_resolve_string_to_def_id(tcx, k, args.relaxed());
@@ -603,7 +609,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             type_markers: Default::default(),
             body_cache,
             included_crates,
-            flow_models,
+            stubs,
         }
     }
 }

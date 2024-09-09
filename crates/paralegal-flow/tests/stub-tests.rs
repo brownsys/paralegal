@@ -11,7 +11,7 @@ extern crate lazy_static;
 use paralegal_flow::{define_flow_test_template, test_utils::*};
 use paralegal_spdg::Identifier;
 
-const TEST_CRATE_NAME: &str = "tests/flow-models";
+const TEST_CRATE_NAME: &str = "tests/stub-tests";
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump(TEST_CRATE_NAME);
@@ -47,4 +47,45 @@ define_test!(async_spawn: graph -> {
 
     assert!(src.flows_to_data(&pass));
     assert!(pass.flows_to_data(&target));
+});
+
+fn simple_source_target_flow(graph: CtrlRef<'_>) {
+    let src = graph.marked(Identifier::new_intern("source"));
+    let target = graph.marked(Identifier::new_intern("target"));
+
+    assert!(!src.is_empty());
+    assert!(!target.is_empty());
+
+    assert!(src.flows_to_data(&target));
+}
+
+define_test!(block_fn: graph -> {
+    simple_source_target_flow(graph)
+});
+
+define_test!(test_blocking_with_let_bound_closure: graph -> {
+    simple_source_target_flow(graph)
+});
+
+define_test!(block_closure: graph -> {
+    simple_source_target_flow(graph)
+});
+
+define_test!(strategic_overtaint: graph -> {
+    simple_source_target_flow(graph)
+});
+
+define_test!(strategic_overtaint_2: graph -> {
+    simple_source_target_flow(graph)
+});
+
+define_test!(no_taint_without_connection: graph -> {
+
+    let src = graph.marked(Identifier::new_intern("source"));
+    let target = graph.marked(Identifier::new_intern("target"));
+
+    assert!(!src.is_empty());
+    assert!(!target.is_empty());
+
+    assert!(!src.flows_to_data(&target));
 });

@@ -14,7 +14,7 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
+    ty::{GenericArgKind, GenericArgsRef, Instance, InstanceDef, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::Span;
@@ -27,7 +27,7 @@ use crate::{
     calling_convention::*,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, is_async, is_virtual, try_monomorphize},
+    utils::{self, is_async, is_virtual, try_monomorphize, type_as_fn},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
@@ -220,6 +220,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         state: &InstructionState<'tcx>,
         input: Place<'tcx>,
     ) -> Vec<DepNode<'tcx>> {
+        trace!("Finding inputs for place {input:?}");
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
             .refs_in_projection(&self.mono_body, self.tcx())
@@ -261,6 +262,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                                     place = new_place;
                                 }
                             }
+                            trace!("Checking conflict status of {place:?} and {alias:?}");
                             places_conflict(
                                 self.tcx(),
                                 &self.mono_body,
@@ -411,6 +413,27 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
             return None;
         };
+
+        let call_kind = if matches!(resolved_fn.def, InstanceDef::ClosureOnceShim { .. }) {
+            // Rustc has inserted a call to the shim that maps `Fn` and `FnMut`
+            // instances to an `FnOnce`. This shim has no body itself so we
+            // can't just inline, we must explicitly simulate it's effects by
+            // changing the target function and by setting the calling
+            // convention to that of a shim.
+
+            // Because this is a well defined internal item we can make
+            // assumptions about its generic arguments.
+            let Some((func_a, _rest)) = generic_args.split_first() else {
+                unreachable!()
+            };
+            let Some((func_t, g)) = type_as_fn(self.tcx(), func_a.expect_ty()) else {
+                unreachable!()
+            };
+            resolved_fn = Instance::expect_resolve(tcx, param_env, func_t, g);
+            CallKind::Indirect { once_shim: true }
+        } else {
+            self.classify_call_kind(called_def_id, resolved_fn, &args, span)
+        };
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
@@ -421,13 +444,16 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
-        let call_kind = self.classify_call_kind(called_def_id, resolved_fn, &args, span);
-
         trace!(
             "  Handling call! with kind {}",
             match &call_kind {
                 CallKind::Direct => "direct",
-                CallKind::Indirect => "indirect",
+                CallKind::Indirect { once_shim } =>
+                    if *once_shim {
+                        "indirect (once shim)"
+                    } else {
+                        "indirect"
+                    },
                 CallKind::AsyncPoll { .. } => "async poll",
             }
         );
@@ -480,7 +506,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             .then_some(CallHandling::ApproxAsyncFn);
         }
 
-        let calling_convention = match call_changes {
+        let (calling_convention, precise) = match call_changes {
             Some(CallChanges {
                 skip: SkipCall::Skip,
             }) => {
@@ -496,9 +522,9 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }) => {
                 trace!("  Replacing call as instructed by user");
                 resolved_fn = instance;
-                calling_convention
+                (calling_convention, false)
             }
-            _ => CallingConvention::from_call_kind(&call_kind, args),
+            _ => (CallingConvention::from_call_kind(&call_kind, args), true),
         };
         if is_virtual(tcx, resolved_def_id) {
             trace!("  bailing because is unresolvable trait method");
@@ -522,6 +548,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         Some(CallHandling::Ready {
             descriptor,
             calling_convention,
+            precise,
         })
     }
 
@@ -548,11 +575,12 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         trace!("Call handling is {}", preamble.as_ref());
 
-        let (child_constructor, calling_convention) = match preamble {
+        let (child_constructor, calling_convention, precise) = match preamble {
             CallHandling::Ready {
                 descriptor,
                 calling_convention,
-            } => (descriptor, calling_convention),
+                precise,
+            } => (descriptor, calling_convention, precise),
             CallHandling::ApproxAsyncFn => {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
@@ -578,6 +606,16 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         let parentable_dsts = child_constructor.parentable_dsts(|n| n.len() == 1);
         let parent_body = &self.mono_body;
 
+        let place_translator = PlaceTranslator::new(
+            self.async_info(),
+            self.def_id,
+            parent_body,
+            self.tcx(),
+            destination,
+            &calling_convention,
+            precise,
+        );
+
         // For each destination node CHILD that is parentable to PLACE,
         // add an edge from CHILD -> PLACE.
         //
@@ -585,14 +623,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
         for (child_dst, _) in parentable_dsts {
-            if let Some(parent_place) = calling_convention.translate_to_parent(
-                child_dst.place,
-                self.async_info(),
-                self.tcx(),
-                parent_body,
-                self.def_id,
-                destination,
-            ) {
+            if let Some(parent_place) = place_translator.translate_to_parent(child_dst.place) {
                 self.apply_mutation(state, location, parent_place);
             }
         }
@@ -687,7 +718,9 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
-        self.tcx().is_closure(def_id).then_some(CallKind::Indirect)
+        self.tcx()
+            .is_closure(def_id)
+            .then_some(CallKind::Indirect { once_shim: false })
     }
 
     fn terminator_visitor<'b: 'a>(
@@ -779,7 +812,11 @@ pub enum CallKind<'tcx> {
     /// A standard function call like `f(x)`.
     Direct,
     /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
-    Indirect,
+    Indirect {
+        /// The call takes place via a shim that implements `FnOnce` for a `Fn`
+        /// or `FnMut` closure.
+        once_shim: bool,
+    },
     /// A poll to an async function, like `f.await`.
     AsyncPoll(AsyncFnPollEnv<'tcx>),
 }
@@ -790,6 +827,7 @@ pub(crate) enum CallHandling<'tcx, 'a> {
     Ready {
         calling_convention: CallingConvention<'tcx>,
         descriptor: &'a PartialGraph<'tcx>,
+        precise: bool,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),
 }

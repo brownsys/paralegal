@@ -1,0 +1,15 @@
+[dep.serde]
+rust-features = ["saturating_int_impl"]
+
+
+[stubs."std::thread::spawn"]
+mode = "sub-closure"
+generic-name = "F"
+
+[stubs."tokio::spawn"]
+mode = "sub-future"
+generic-name = "F"
+
+[stubs."actix_web::web::block"]
+mode = "sub-closure"
+generic-name = "F"

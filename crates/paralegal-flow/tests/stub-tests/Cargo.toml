@@ -1,5 +1,5 @@
 [package]
-name = "flow-model-tests"
+name = "stub-tests"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,3 +9,4 @@ edition = "2021"
 #async-std = "1"
 paralegal = { path = "../../../paralegal" }
 tokio = { version = "1", features = ["rt"] }
+actix-web = { version = "4" }

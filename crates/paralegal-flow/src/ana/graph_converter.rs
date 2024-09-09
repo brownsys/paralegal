@@ -100,6 +100,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 generator.tcx,
                 def_id,
                 generator.pdg_constructor.body_cache(),
+                generator.marker_ctx().clone(),
             ),
             stats,
         })
@@ -599,12 +600,12 @@ mod call_string_resolver {
         utils::{manufacture_substs_for, try_monomorphize, try_resolve_function},
     };
     use paralegal_spdg::Endpoint;
-    use rustc_middle::ty::Instance;
+    use rustc_middle::{mir::TerminatorKind, ty::Instance};
     use rustc_utils::cache::Cache;
 
-    use crate::{Either, TyCtxt};
+    use crate::{Either, MarkerCtx, TyCtxt};
 
-    use super::{map_either, match_async_trait_assign, AsFnAndArgs};
+    use super::{func_of_term, map_either, match_async_trait_assign, AsFnAndArgs};
 
     /// Cached resolution of [`CallString`]s to [`FnResolution`]s.
     ///
@@ -615,6 +616,7 @@ mod call_string_resolver {
         tcx: TyCtxt<'tcx>,
         entrypoint_is_async: bool,
         body_cache: &'a BodyCache<'tcx>,
+        marker_context: MarkerCtx<'tcx>,
     }
 
     impl<'tcx, 'a> CallStringResolver<'tcx, 'a> {
@@ -645,12 +647,14 @@ mod call_string_resolver {
             tcx: TyCtxt<'tcx>,
             entrypoint: Endpoint,
             body_cache: &'a BodyCache<'tcx>,
+            marker_context: MarkerCtx<'tcx>,
         ) -> Self {
             Self {
                 cache: Default::default(),
                 tcx,
                 entrypoint_is_async: super::entrypoint_is_async(body_cache, tcx, entrypoint),
                 body_cache,
+                marker_context,
             }
         }
 
@@ -681,7 +685,21 @@ mod call_string_resolver {
                     },
                 );
                 let res = match normalized {
-                    Either::Right(term) => term.as_instance_and_args(tcx).unwrap().0,
+                    Either::Right(term) => {
+                        let (def_id, args) = func_of_term(tcx, &term).unwrap();
+                        let instance = Instance::expect_resolve(tcx, param_env, def_id, args);
+                        if let Some(model) = self.marker_context.has_stub(def_id) {
+                            let TerminatorKind::Call { args, .. } = &term.kind else {
+                                unreachable!()
+                            };
+                            model
+                                .apply(tcx, instance, param_env, args, term.source_info.span)
+                                .unwrap()
+                                .0
+                        } else {
+                            term.as_instance_and_args(tcx).unwrap().0
+                        }
+                    }
                     Either::Left(stmt) => {
                         let (def_id, generics) = match_async_trait_assign(&stmt).unwrap();
                         try_resolve_function(tcx, def_id, param_env, generics).unwrap()

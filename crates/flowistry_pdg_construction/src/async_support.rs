@@ -3,7 +3,7 @@ use std::rc::Rc;
 use either::Either;
 use itertools::Itertools;
 use rustc_abi::{FieldIdx, VariantIdx};
-use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
@@ -11,6 +11,8 @@ use rustc_middle::{
     },
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
+
+use crate::utils::is_async;
 
 use super::{
     local_analysis::{CallKind, LocalAnalysis},
@@ -63,7 +65,7 @@ pub fn try_as_async_trait_function<'tcx>(
     tcx: TyCtxt,
     def_id: DefId,
     body: &Body<'tcx>,
-) -> Option<(LocalDefId, GenericArgsRef<'tcx>, Location)> {
+) -> Option<(DefId, GenericArgsRef<'tcx>, Location)> {
     if !has_async_trait_signature(tcx, def_id) {
         return None;
     }
@@ -75,7 +77,7 @@ pub fn try_as_async_trait_function<'tcx>(
                     move |(statement_index, statement)| {
                         let (def_id, generics) = match_async_trait_assign(statement)?;
                         Some((
-                            def_id.as_local()?,
+                            def_id,
                             generics,
                             Location {
                                 block,
@@ -147,7 +149,7 @@ fn match_pin_box_dyn_ty(lang_items: &rustc_hir::LanguageItems, t: ty::Ty) -> boo
     })
 }
 
-fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (LocalDefId, GenericArgsRef<'tcx>, Location) {
+fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (DefId, GenericArgsRef<'tcx>, Location) {
     let block = BasicBlock::from_usize(0);
     let location = Location {
         block,
@@ -163,7 +165,7 @@ fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (LocalDefId, GenericArgsRef<'
     else {
         panic!("Async fn should assign to a generator")
     };
-    (def_id.expect_local(), generic_args, location)
+    (*def_id, generic_args, location)
 }
 
 /// Try to interpret this function as an async function.
@@ -176,7 +178,7 @@ pub fn determine_async<'tcx>(
     def_id: DefId,
     body: &Body<'tcx>,
 ) -> Option<(Instance<'tcx>, Location, AsyncType)> {
-    let ((generator_def_id, args, loc), asyncness) = if tcx.asyncness(def_id).is_async() {
+    let ((generator_def_id, args, loc), asyncness) = if is_async(tcx, def_id) {
         (get_async_generator(body), AsyncType::Fn)
     } else {
         (
@@ -185,8 +187,7 @@ pub fn determine_async<'tcx>(
         )
     };
     let param_env = tcx.param_env_reveal_all_normalized(def_id);
-    let generator_fn =
-        utils::try_resolve_function(tcx, generator_def_id.to_def_id(), param_env, args)?;
+    let generator_fn = utils::try_resolve_function(tcx, generator_def_id, param_env, args)?;
     Some((generator_fn, loc, asyncness))
 }
 

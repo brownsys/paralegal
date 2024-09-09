@@ -13,7 +13,8 @@ use anyhow::Error;
 use clap::ValueEnum;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 
 use crate::utils::TinyBitSet;
 use crate::{num_derive, num_traits::FromPrimitive};
@@ -73,12 +74,16 @@ impl TryFrom<ClapArgs> for Args {
                 .extend(from_env.split(',').map(ToOwned::to_owned));
         }
         let build_config_file = std::path::Path::new("Paralegal.toml");
-        let build_config: BuildConfig = if build_config_file.exists() {
-            toml::from_str(&std::fs::read_to_string(build_config_file)?)?
+        let build_config: (_, BuildConfig) = if let Ok(absolute) = build_config_file.canonicalize()
+        {
+            let config = toml::from_str(&std::fs::read_to_string(&absolute)?)?;
+            (Some(absolute), config)
         } else {
             Default::default()
         };
-        anactrl.include.extend(build_config.include.iter().cloned());
+        anactrl
+            .include
+            .extend(build_config.1.include.iter().cloned());
         let log_level_config = match debug_target {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
             _ => LogLevelConfig::Disabled,
@@ -137,7 +142,7 @@ pub struct Args {
     /// Additional arguments that control debug output specifically
     dump: DumpArgs,
     /// Additional configuration for the build process/rustc
-    build_config: BuildConfig,
+    build_config: (Option<PathBuf>, BuildConfig),
     /// Additional options for cargo
     cargo_args: Vec<String>,
 }
@@ -362,7 +367,20 @@ impl Args {
         self.abort_after_analysis
     }
     pub fn build_config(&self) -> &BuildConfig {
-        &self.build_config
+        &self.build_config.1
+    }
+
+    pub fn hash_config(&self, hasher: &mut impl Hasher) {
+        if self.attach_to_debugger.is_some() {
+            // If we run the debugger try to make the hash fail so we actually run.
+            std::time::Instant::now().hash(hasher);
+        }
+        // TODO Add other relevant arguments
+        config_hash_for_file(&self.build_config.0, hasher);
+        self.relaxed.hash(hasher);
+        self.target.hash(hasher);
+        self.result_path.hash(hasher);
+        config_hash_for_file(&self.marker_control.external_annotations, hasher);
     }
 
     pub fn marker_control(&self) -> &MarkerControl {
@@ -392,6 +410,17 @@ impl Args {
             log::set_max_level(log::LevelFilter::Warn);
         }
     }
+}
+
+fn config_hash_for_file(path: &Option<impl AsRef<Path>>, state: &mut impl Hasher) {
+    path.as_ref()
+        .map(|path| {
+            let path = path.as_ref();
+            Ok::<_, std::io::Error>((path, path.metadata()?.modified()?))
+        })
+        .transpose()
+        .unwrap()
+        .hash(state);
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::Args, Default)]
@@ -552,12 +581,14 @@ pub struct DepConfig {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 #[serde(tag = "mode", rename_all = "kebab-case")]
-pub enum FlowModel {
+pub enum Stub {
+    #[serde(rename_all = "kebab-case")]
     /// Replaces the result of a call to a higher-order function with a call to
     /// the input closure.
-    SubClosure,
+    SubClosure { generic_name: String },
+    #[serde(rename_all = "kebab-case")]
     /// Replaces the result of a higher-order future by an input future.
-    SubFuture,
+    SubFuture { generic_name: String },
 }
 
 /// Additional configuration for the build process/rustc
@@ -570,5 +601,5 @@ pub struct BuildConfig {
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]
-    pub flow_models: HashMap<String, FlowModel>,
+    pub stubs: HashMap<String, Stub>,
 }

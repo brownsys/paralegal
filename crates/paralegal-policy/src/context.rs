@@ -17,7 +17,7 @@ use paralegal_spdg::{
 use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
 use petgraph::prelude::Bfs;
-use petgraph::visit::{EdgeFiltered, EdgeRef, IntoNeighborsDirected, Topo, Walker};
+use petgraph::visit::{EdgeFiltered, EdgeRef, IntoNeighborsDirected, Reversed, Topo, Walker};
 use petgraph::Direction::Outgoing;
 use petgraph::{Direction, Incoming};
 
@@ -923,7 +923,8 @@ impl NodeExt for GlobalNode {
             &ctx.desc.controllers[&self.controller_id()]
         };
         let mut ancestors = HashMap::new();
-        let fg = edge_selection.filter_graph(&g.graph);
+        let filtered = edge_selection.filter_graph(&g.graph);
+        let fg = Reversed(&filtered);
         let mut found = false;
         'outer: for this in petgraph::visit::Bfs::new(&fg, self.local_node()).iter(&fg) {
             for next in fg.neighbors_directed(this, Outgoing) {

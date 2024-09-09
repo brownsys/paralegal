@@ -1,6 +1,0 @@
-[flow-models."std::thread::spawn"]
-mode = "sub-closure"
-
-
-[flow-models."tokio::spawn"]
-mode = "sub-future"
