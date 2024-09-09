@@ -13,8 +13,10 @@ use std::io::Result;
 ///
 /// By default this generates a Rust namespace (`mod`) that contains a function
 /// `check` which, when called, enforces your policy. You should use the
-/// framework in [`paralegal_policy`] to create a suitable binary that calls
-/// this function. It depends on the crates `paralegal_policy` and `anyhow`.
+/// framework in
+/// [`paralegal_policy`](https://brownsys.github.io/paralegal/libs/paralegal_policy/)
+/// to create a suitable binary that calls this function. It depends on the
+/// crates `paralegal_policy` and `anyhow`.
 ///
 /// Alternatively you may use the `--bin` argument, which will instead create a
 /// Rust source file with a `main` function and necessary boilerplate to call
