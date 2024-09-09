@@ -7,8 +7,14 @@ edition = "2021"
 
 [dependencies]
 handlebars = "4.5.0"
-paralegal-policy = { path = "../../paralegal/crates/paralegal-policy" }
-paralegal = { path = "../../paralegal/crates/paralegal" }
 parsers = { path = "../parsers" }
 templates = { path = "../templates" }
 clap = { version = "3", features = ["derive"] }
+
+[dependencies.paralegal-policy]
+git = "https://github.com/brownsys/paralegal"
+rev = "c52fc5ccb2b9a14d307381b5567eb154b86667a9"
+
+[dependencies.paralegal]
+git = "https://github.com/brownsys/paralegal"
+rev = "c52fc5ccb2b9a14d307381b5567eb154b86667a9"
