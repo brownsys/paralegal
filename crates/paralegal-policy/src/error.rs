@@ -1,5 +1,5 @@
 derive(strum_macros::AsRefStr)]
- enum Eval {
+pub enum Eval {
      Not(Box<Eval>),
      Src { code: &'static str, result: bool },
      All(Vec<IterItem>),
@@ -8,7 +8,7 @@ derive(strum_macros::AsRefStr)]
      And { left: Box<Eval>, right: Box<Eval> },
  }
 
- struct IterItem {
+pub struct IterItem {
      item_rendering: String,
      body_eval: Eval,
  }
@@ -149,6 +149,7 @@ derive(strum_macros::AsRefStr)]
  impl<T> FlowsTo for T {}
 
  // TODOM: taken from main.rs in deletion policy. Check that nothing is missing
+ // TODOM: anyhow versioning change
 
 #[macro_export]
 macro_rules! src {

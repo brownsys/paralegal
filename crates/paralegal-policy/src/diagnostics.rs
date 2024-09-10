@@ -235,60 +235,87 @@ impl From<Span> for HighlightedSpan {
     }
 }
 
-impl HighlightedSpan {
-    pub fn write(&self, s: &mut impl std::fmt::Write, coloring: Color) -> std::fmt::Result {
-        use std::io::BufRead;
-        let src_loc = self;
-        let start_line = src_loc.span.start.line as usize;
-        let start_col = src_loc.span.start.col as usize;
-        let end_line = src_loc.span.end.line as usize;
-        let end_col = src_loc.span.end.col as usize;
-        let (hl_start_line, hl_start_col, hl_end_line, hl_end_col) =
-            if let Some(hl) = &src_loc.highlight {
-                (
-                    hl.start.line as usize,
-                    hl.start.col as usize,
-                    hl.end.line as usize,
-                    hl.end.col as usize,
-                )
-            } else {
-                (start_line, start_col, end_line, end_col)
-            };
-        let max_line_len =
-            std::cmp::max(start_line.to_string().len(), end_line.to_string().len());
-            let tab: String = " ".repeat(max_line_len);
-            writeln!(
-                s,
-            for (i, line) in lines {
-                let line_content: String = line.unwrap();
-                let line_num = start_line + i;
-                writeln!(
-                    s,
-                    "{:<max_line_len$} {} {}",
-                    } else {
-                        line_length_while(&line_content, char::is_whitespace)
-                    };
-
-                    writeln!(
-                        s,
-                        "{tab} {} {}{}",
-                    )?;
-                }
-            }
-            writeln!(s, "{tab} {}", "|".blue())
-
-    }
-}
-
 impl DiagnosticPart {
     fn write(&self, s: &mut impl std::fmt::Write) -> std::fmt::Result {
         let severity = self.severity;
         let coloring = severity.color();
 
+        use std::io::BufRead;
+
         writeln!(s, "{}: {}", severity.as_ref().color(coloring), self.message)?;
         if let Some(src_loc) = &self.span {
-            src_loc.write(s, coloring)?
+            let start_line = src_loc.span.start.line as usize;
+            let start_col = src_loc.span.start.col as usize;
+            let end_line = src_loc.span.end.line as usize;
+            let end_col = src_loc.span.end.col as usize;
+            let (hl_start_line, hl_start_col, hl_end_line, hl_end_col) =
+                if let Some(hl) = &src_loc.highlight {
+                    (
+                        hl.start.line as usize,
+                        hl.start.col as usize,
+                        hl.end.line as usize,
+                        hl.end.col as usize,
+                    )
+                } else {
+                    (start_line, start_col, end_line, end_col)
+                };
+            let max_line_len =
+                std::cmp::max(start_line.to_string().len(), end_line.to_string().len());
+            let tab: String = " ".repeat(max_line_len);
+            writeln!(
+                s,
+                "{tab}{} {}:{}:{}",
+                "-->".blue(),
+                src_loc.span.source_file.file_path,
+                start_line,
+                start_col,
+            )?;
+            writeln!(s, "{tab} {}", "|".blue())?;
+            let lines = std::io::BufReader::new(
+                std::fs::File::open(&src_loc.span.source_file.abs_file_path).unwrap(),
+            )
+            .lines()
+            .skip(start_line - 1)
+            .take(end_line - start_line + 1)
+            .enumerate();
+            for (i, line) in lines {
+                let line_content: String = line.unwrap();
+                let line_num = start_line + i;
+
+                writeln!(
+                    s,
+                    "{:<max_line_len$} {} {}",
+                    &line_num.to_string().blue(),
+                    "|".blue(),
+                    line_content.replace('\t', &" ".repeat(TAB_SIZE))
+                )?;
+                if line_num >= hl_start_line && line_num <= hl_end_line {
+                    let end: usize = if line_num == hl_end_line {
+                        line_length_while(&line_content[0..hl_end_col - 1], |_| true)
+                    } else {
+                        line_length_while(&line_content, |_| true)
+                    };
+                    let start: usize = if line_num == hl_start_line {
+                        line_length_while(&line_content[0..hl_start_col - 1], |_| true)
+                    } else {
+                        line_length_while(&line_content, char::is_whitespace)
+                    };
+                    let highlight_len = if end < start {
+                        // TODO figure out how this happens
+                        0
+                    } else {
+                        end - start
+                    };
+                    write!(s, "{tab} {} {:start$}", "|".blue(), "")?;
+                    for _ in 0..highlight_len {
+                        write!(s, "{}", "^".color(coloring))?;
+                    }
+                    writeln!(s)?;
+                }
+            }
+            writeln!(s, "{tab} {}", "|".blue())?;
         }
+
         Ok(())
     }
 }

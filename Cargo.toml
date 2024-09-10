@@ -26,7 +26,7 @@ rustc_plugin = "=0.7.4-nightly-2023-08-25"
 git = "https://github.com/brownsys/flowistry"
 rev = "08c4ad9587b3251a8f7c64aa60be31404e6e04c0"
 default-features = false
-// TODOM: anyhow = { version = "1.0.72", features = ["backtrace"] }
+anyhow = { version = "1.0.72", features = ["backtrace"] }
 
 [profile.release]
 debug = true
