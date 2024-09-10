@@ -159,3 +159,52 @@ macro_rules! src {
         }
     }
 }
+
+// use paralegal_policy::diagnostics::HighlightedSpan;
+
+// struct DisplayAsShow<'a, T>(&'a T);
+
+// impl<T: Show> std::fmt::Display for DisplayAsShow<'_, T> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>, ctx : &Context) -> std::fmt::Result {
+//         self.0.show(f, ctx) // JUSTUS
+//     }
+// }
+
+// trait Show {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result;
+// }
+
+// impl Show for &DefId {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         write!(f, "{}", ctx.desc().def_info[self].name)
+//     }
+// }
+// impl Show for LocalDefId {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         write!(f, "{}", ctx.desc().def_info[&self.to_def_id()].name)
+//     }
+// }
+// impl Show for &SPDG {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         write!(f, "{}", self.name)
+//     }
+// }
+// impl Show for (LocalDefId, &SPDG) {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         self.0.show(f, ctx)?;
+//         self.1.show(f, ctx)
+//     }
+// }
+// impl Show for ControllerId {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         write!(f, "{}", ctx.desc().def_info[self].name)
+//     }
+// }
+
+// impl Show for GlobalNode {
+//     fn show(&self, f: &mut std::fmt::Formatter<'_>, ctx: &Context) -> std::fmt::Result {
+//         let span : HighlightedSpan = highlighted_node_span(ctx, *self);
+//         writeln!(f, "");
+//         span.write(f, Color::Black)
+//     }
+// }
