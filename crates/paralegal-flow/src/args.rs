@@ -9,7 +9,7 @@
 //! allow us to change the name and default value of the argument without having
 //! to migrate the code using that argument.
 
-use anyhow::Error;
+use anyhow::{Context, Error};
 use clap::ValueEnum;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -416,7 +416,8 @@ fn config_hash_for_file(path: &Option<impl AsRef<Path>>, state: &mut impl Hasher
     path.as_ref()
         .map(|path| {
             let path = path.as_ref();
-            Ok::<_, std::io::Error>((path, path.metadata()?.modified()?))
+            (|| anyhow::Ok((path, path.metadata()?.modified()?)))()
+                .with_context(|| format!("with file {}", path.display()))
         })
         .transpose()
         .unwrap()
