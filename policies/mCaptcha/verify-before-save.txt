@@ -1,0 +1,9 @@
+Scope: 
+In verify_pow
+
+Policy:
+1. For each "store" marked save_stats_to_db:
+	A. For each "site_key" marked site_key:
+		a. If "site_key" goes to "store" then:
+	    	i) There is a "auth_check" marked verify_opt_in where:
+				A) "auth_check" affects whether "store" happens
