@@ -155,12 +155,35 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let instruction_info = self.collect_instruction_info(&controllers);
 
-        let inlined_functions = instruction_info
+        let called_functions = instruction_info
             .keys()
             .map(|l| l.function)
             .collect::<HashSet<_>>();
 
-        known_def_ids.extend(&inlined_functions);
+        let inlined_functions = self
+            .pdg_constructor
+            .pdg_cache
+            .borrow()
+            .keys()
+            .map(|k| k.def.def_id())
+            .collect::<HashSet<_>>();
+
+        let analyzed_spans = inlined_functions
+            .iter()
+            .copied()
+            .filter_map(|f| {
+                let body = self.pdg_constructor.body_for_def_id(f);
+                // let body = match  tcx.body_for_def_id(f) {
+                //     Ok(b) => Some(b),
+                //     Err(BodyResolutionError::IsTraitAssocFn(_)) => None,
+                //     Err(e) => panic!("{e:?}"),
+                // }?;
+                let span = body_span(body.body());
+                Some((f, src_loc_for_span(span, tcx)))
+            })
+            .collect::<HashMap<_, _>>();
+
+        known_def_ids.extend(&called_functions);
 
         let type_info = self.collect_type_info();
         known_def_ids.extend(type_info.keys());
@@ -169,10 +192,33 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|id| (*id, def_info_for_item(*id, self.marker_ctx(), tcx)))
             .collect();
 
-        let dedup_locs = 0;
-        let dedup_functions = 0;
-        let seen_locs = 0;
-        let seen_functions = 0;
+        let dedup_locs = analyzed_spans.values().map(Span::line_len).sum();
+        let dedup_functions = analyzed_spans.len() as u32;
+
+        let (seen_locs, seen_functions) = if self.opts.anactrl().inlining_depth().is_adaptive() {
+            let mut total_functions = inlined_functions;
+            let mctx = self.marker_ctx();
+            total_functions.extend(
+                mctx.functions_seen()
+                    .into_iter()
+                    .map(|f| f.def_id())
+                    .filter(|f| !mctx.is_marked(f)),
+            );
+            let mut seen_functions = 0;
+            let locs = total_functions
+                .into_iter()
+                .filter_map(|f| Some(body_span(self.pdg_constructor.body_for_def_id(f).body())))
+                .map(|span| {
+                    seen_functions += 1;
+                    let (_, start_line, _, end_line, _) =
+                        tcx.sess.source_map().span_to_location_info(span);
+                    end_line - start_line + 1
+                })
+                .sum::<usize>() as u32;
+            (locs, seen_functions)
+        } else {
+            (dedup_locs, dedup_functions)
+        };
 
         type_info_sanity_check(&controllers, &type_info);
         ProgramDescription {
@@ -190,7 +236,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             dedup_functions,
             seen_functions,
             seen_locs,
-            analyzed_spans: Default::default(),
+            analyzed_spans,
         }
     }
 

@@ -360,8 +360,8 @@ pub struct ProgramDescription {
     /// `analyzed_locs` of the controllers but deduplicated.
     pub seen_locs: u32,
     #[doc(hidden)]
-    #[serde(with = "ser_localdefid_map")]
-    pub analyzed_spans: HashMap<LocalDefId, Span>,
+    #[serde(with = "ser_defid_map")]
+    pub analyzed_spans: HashMap<DefId, Span>,
 }
 
 /// Metadata about a type

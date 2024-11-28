@@ -41,7 +41,7 @@ pub struct MemoPdgConstructor<'tcx> {
     pub(crate) call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
-    pub(crate) pdg_cache: PdgCache<'tcx>,
+    pub pdg_cache: PdgCache<'tcx>,
     pub(crate) body_cache: Rc<body_cache::BodyCache<'tcx>>,
 }
 
