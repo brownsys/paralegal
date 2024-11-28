@@ -36,19 +36,49 @@ pub use print::*;
 /// sadly, the `Span` value attached to a body directly refers only to the
 /// `#[tracing::instrument]` macro call. This function instead reconstitutes the
 /// span from the collection of spans on each statement.
-pub fn body_span(body: &mir::Body<'_>) -> RustSpan {
-    let combined = body
-        .basic_blocks
-        .iter()
-        .flat_map(|bbdat| {
-            bbdat
-                .statements
-                .iter()
-                .map(|s| s.source_info.span.source_callsite())
-                .chain([bbdat.terminator().source_info.span])
+pub fn body_span<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> RustSpan {
+    let source_map = tcx.sess.source_map();
+    let body_span = body.span;
+
+    // get me an iterator over the (meaningful) spans in this body. We will use
+    // this twice, hence this labmda.
+    let mk_span_iter = || {
+        body.basic_blocks
+            .iter()
+            .flat_map(|bbdat| {
+                bbdat
+                    .statements
+                    .iter()
+                    .map(|s| s.source_info.span)
+                    .chain([bbdat.terminator().source_info.span])
+            })
+            // If macro try to go to the call
+            .map(|s| s.source_callsite())
+            // Discard anything not meaningful
+            .filter(|s| !s.is_dummy() || !s.is_empty())
+    };
+
+    // Probe into the contents of the function. If any span lies within the
+    // range of the function span, this is probably not a
+    // `#[tracing::instrument]` kind of expantion and we can just use the body span.
+    let can_use_body_span = mk_span_iter().any(|sp| sp.contains(body_span));
+
+    if can_use_body_span {
+        return body_span;
+    }
+
+    // This is the slow path, where we need to combine multiple spans and check
+    // that they are in a reasonable range so we generally avoid this.
+
+    let outer_source_file_idx = source_map.lookup_source_file_idx(body_span.data().lo);
+
+    let combined = mk_span_iter()
+        // Here we get rid of any spans that don't lie in our source file.
+        // Apparently this can happen these days in the macro expansions???
+        .filter(|span| {
+            let file_idx = source_map.lookup_source_file_idx(span.data().lo);
+            file_idx == outer_source_file_idx
         })
-        .map(|s| s.source_callsite())
-        .filter(|s| !s.is_dummy() || !s.is_empty())
         .reduce(RustSpan::to)
         .unwrap();
     combined

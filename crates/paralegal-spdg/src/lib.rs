@@ -360,7 +360,8 @@ pub struct ProgramDescription {
     /// `analyzed_locs` of the controllers but deduplicated.
     pub seen_locs: u32,
     #[doc(hidden)]
-    #[serde(with = "ser_defid_map")]
+    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     pub analyzed_spans: HashMap<DefId, Span>,
 }
 

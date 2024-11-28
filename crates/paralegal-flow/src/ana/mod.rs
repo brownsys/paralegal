@@ -178,8 +178,15 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 //     Err(BodyResolutionError::IsTraitAssocFn(_)) => None,
                 //     Err(e) => panic!("{e:?}"),
                 // }?;
-                let span = body_span(body.body());
-                Some((f, src_loc_for_span(span, tcx)))
+                let span = body_span(tcx, body.body());
+                let pspan = src_loc_for_span(span, tcx);
+                assert!(
+                    pspan.start.line <= pspan.end.line,
+                    "Weird span for {f:?}: {pspan:?}. It was created from {span:?}"
+                );
+                let l = pspan.line_len();
+                assert!(l < 5000, "Span for {f:?} is {l} lines long ({span:?})");
+                Some((f, pspan))
             })
             .collect::<HashMap<_, _>>();
 
@@ -207,7 +214,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
             let mut seen_functions = 0;
             let locs = total_functions
                 .into_iter()
-                .filter_map(|f| Some(body_span(self.pdg_constructor.body_for_def_id(f).body())))
+                .filter_map(|f| {
+                    Some(body_span(
+                        tcx,
+                        self.pdg_constructor.body_for_def_id(f).body(),
+                    ))
+                })
                 .map(|span| {
                     seen_functions += 1;
                     let (_, start_line, _, end_line, _) =
