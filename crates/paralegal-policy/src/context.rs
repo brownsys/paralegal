@@ -829,6 +829,7 @@ pub trait NodeExt: private::Sealed {
     /// Returns whether this Node has the marker applied to it directly or via its type.
     fn has_marker<C: HasDiagnosticsBase>(self, ctx: C, marker: Marker) -> bool;
     /// The shortest path between this and a target node
+    #[deprecated = "This function is known to be buggy at the moment. Only use for debugging, don't rely on it for policy correctness."]
     fn shortest_path(
         self,
         to: GlobalNode,
