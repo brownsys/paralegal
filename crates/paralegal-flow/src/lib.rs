@@ -284,18 +284,6 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
     }
 }
 
-/// Dirty workaround. This deals with newer versions of cfg-if, unicode,
-/// once_cell, autoconf etc which cause --check-cfg to be passed to rustc. I
-/// haven't yet figured out why exactly this is happening do in order to just
-/// make it work I am using this workaround. In our nightly version --check-cfg
-/// is an unstable rustc option so I simply make sure we also pass
-/// -Zunstable-options so the compiler does not error.
-fn check_cfg_workaround(args: &mut Vec<String>) {
-    if let Some(pos) = args.iter().position(|elem| elem.starts_with("--check-cfg")) {
-        args.insert(pos, "-Zunstable-options".to_owned());
-    }
-}
-
 impl rustc_plugin::RustcPlugin for DfppPlugin {
     type Args = Args;
 
@@ -396,8 +384,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `with_level` level lower and then increase it with
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
-
-        check_cfg_workaround(&mut compiler_args);
 
         let mut callbacks = match how_to_handle_this_crate(&plugin_args, &mut compiler_args) {
             CrateHandling::JustCompile => {
