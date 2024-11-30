@@ -1,11 +1,12 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 
 use flowistry::mir::FlowistryInput;
 
 use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{ConsumerOptions, RustcFacts};
+use rustc_hash::FxHashMap;
 use rustc_hir::{
-    def_id::{CrateNum, DefId, LocalDefId, LOCAL_CRATE},
+    def_id::{CrateNum, DefId, DefIndex, LocalDefId, LOCAL_CRATE},
     intravisit::{self},
 };
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
@@ -79,13 +80,15 @@ pub struct FlowistryFacts {
 
 pub type LocationIndex = <RustcFacts as FactTypes>::Point;
 
+type BodyMap<'tcx> = FxHashMap<DefIndex, CachedBody<'tcx>>;
+
 /// Allows loading bodies from previosly written artifacts.
 ///
 /// Ensure this cache outlives any flowistry analysis that is performed on the
 /// bodies it returns or risk UB.
 pub struct BodyCache<'tcx> {
     tcx: TyCtxt<'tcx>,
-    cache: Cache<DefId, CachedBody<'tcx>>,
+    cache: Cache<CrateNum, BodyMap<'tcx>>,
 }
 
 impl<'tcx> BodyCache<'tcx> {
@@ -100,21 +103,25 @@ impl<'tcx> BodyCache<'tcx> {
     ///
     /// Returns `None` if the policy forbids loading from this crate.
     pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
-        let cbody = self.cache.get(key, |_| load_body_and_facts(self.tcx, key));
+        let body = self
+            .cache
+            .get(key.krate, |_| load_body_and_facts(self.tcx, key.krate))
+            .get(&key.index)
+            .expect("Invariant broken, body for this is should exist");
         // SAFETY: Theoretically this struct may not outlive the body, but
         // to simplify lifetimes flowistry uses 'tcx anywhere. But if we
         // actually try to provide that we're risking race conditions
         // (because it needs global variables like MIR_BODIES).
         //
         // So until we fix flowistry's lifetimes this is good enough.
-        unsafe { std::mem::transmute(cbody) }
+        unsafe { std::mem::transmute(body) }
     }
 }
 
 /// A visitor to collect all bodies in the crate and write them to disk.
 struct DumpingVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
-    target_dir: PathBuf,
+    targets: Vec<LocalDefId>,
 }
 
 /// Some data in a [Body] is not cross-crate compatible. Usually because it
@@ -150,20 +157,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
         _: rustc_span::Span,
         local_def_id: rustc_hir::def_id::LocalDefId,
     ) {
-        let to_write = CachedBody::retrieve(self.tcx, local_def_id);
-
-        let dir = &self.target_dir;
-        let path = dir.join(
-            self.tcx
-                .def_path(local_def_id.to_def_id())
-                .to_filename_friendly_no_crate(),
-        );
-
-        if !dir.exists() {
-            std::fs::create_dir(dir).unwrap();
-        }
-
-        encode_to_file(self.tcx, path, &to_write);
+        self.targets.push(local_def_id);
 
         intravisit::walk_fn(
             self,
@@ -179,14 +173,32 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 /// calculating the necessary borrowcheck facts to store for later points-to
 /// analysis.
 ///
-/// Ensure this gets called early in the compiler before the unoptimmized mir
+/// Ensure this gets called early in the compiler before the unoptimized mir
 /// bodies are stolen.
-pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt) {
+pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>) {
     let mut vis = DumpingVisitor {
         tcx,
-        target_dir: intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT),
+        targets: vec![],
     };
     tcx.hir().visit_all_item_likes_in_crate(&mut vis);
+
+    let bodies: BodyMap<'tcx> = vis
+        .targets
+        .iter()
+        .map(|local_def_id| {
+            let to_write = CachedBody::retrieve(tcx, *local_def_id);
+
+            (local_def_id.local_def_index, to_write)
+        })
+        .collect();
+    let path = intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT);
+    encode_to_file(tcx, &path, &bodies);
+    assert!(Command::new("gzip")
+        .arg("--fast")
+        .arg(path)
+        .status()
+        .unwrap()
+        .success())
 }
 
 const INTERMEDIATE_ARTIFACT_EXT: &str = "bwbf";
@@ -206,16 +218,25 @@ pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<Pat
 }
 
 /// Try to load a [`CachedBody`] for this id.
-fn load_body_and_facts(tcx: TyCtxt<'_>, def_id: DefId) -> CachedBody<'_> {
-    let paths = local_or_remote_paths(def_id.krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
+fn load_body_and_facts<'tcx>(tcx: TyCtxt<'tcx>, krate: CrateNum) -> BodyMap<'tcx> {
+    let paths = local_or_remote_paths(krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
+    let zipped_ext = INTERMEDIATE_ARTIFACT_EXT.to_owned() + ".gz";
     for path in &paths {
-        let path = path.join(tcx.def_path(def_id).to_filename_friendly_no_crate());
-        if let Ok(data) = decode_from_file(tcx, path) {
-            return data;
-        };
+        let zip_path = path.with_extension(&zipped_ext);
+        if zip_path.exists() {
+            assert!(Command::new("gunzip")
+                .arg("-k")
+                .arg(&zip_path)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let data = decode_from_file(tcx, path).unwrap();
+        std::fs::remove_file(&zip_path).unwrap();
+        return data;
     }
 
-    panic!("No facts for {def_id:?} found at any path tried: {paths:?}");
+    panic!("No facts for {krate:?} found at any path tried: {paths:?}");
 }
 
 /// Create the name of the file in which to store intermediate artifacts.
