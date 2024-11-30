@@ -232,7 +232,7 @@ fn load_body_and_facts<'tcx>(tcx: TyCtxt<'tcx>, krate: CrateNum) -> BodyMap<'tcx
                 .success());
         }
         let data = decode_from_file(tcx, path).unwrap();
-        std::fs::remove_file(&zip_path).unwrap();
+        std::fs::remove_file(&path).unwrap();
         return data;
     }
 
