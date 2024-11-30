@@ -195,6 +195,7 @@ pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>) {
     encode_to_file(tcx, &path, &bodies);
     assert!(Command::new("gzip")
         .arg("--fast")
+        .arg("--force")
         .arg(path)
         .status()
         .unwrap()
