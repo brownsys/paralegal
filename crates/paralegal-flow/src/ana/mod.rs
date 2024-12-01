@@ -233,11 +233,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
         };
 
         type_info_sanity_check(&controllers, &type_info);
-        ProgramDescription {
-            type_info,
-            instruction_info,
-            controllers,
-            def_info,
+
+        let stats = AnalyzerStats {
             marker_annotation_count: self
                 .marker_ctx()
                 .all_annotations()
@@ -248,7 +245,16 @@ impl<'tcx> SPDGGenerator<'tcx> {
             dedup_functions,
             seen_functions,
             seen_locs,
+            time: self.stats.elapsed(),
+        };
+
+        ProgramDescription {
+            type_info,
+            instruction_info,
+            controllers,
+            def_info,
             analyzed_spans,
+            stats,
         }
     }
 

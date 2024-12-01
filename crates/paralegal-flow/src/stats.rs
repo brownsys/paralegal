@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use paralegal_spdg::utils::TruncatedHumanTime;
@@ -22,9 +22,18 @@ pub enum TimedStat {
     Serialization,
 }
 
-#[derive(Default)]
 struct StatsInner {
     timed: enum_map::EnumMap<TimedStat, Option<Duration>>,
+    started: Instant,
+}
+
+impl Default for StatsInner {
+    fn default() -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            timed: Default::default(),
+        }
+    }
 }
 
 impl StatsInner {
@@ -47,6 +56,10 @@ impl Stats {
 
     pub fn get_timed(&self, stat: TimedStat) -> Duration {
         self.0.lock().unwrap().timed[stat].unwrap_or(Duration::ZERO)
+    }
+
+    pub fn elapsed(&self) -> Duration {
+        self.0.lock().unwrap().started.elapsed()
     }
 }
 

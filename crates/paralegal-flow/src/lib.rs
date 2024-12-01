@@ -119,7 +119,6 @@ struct ArgWrapper {
 
 struct Callbacks {
     opts: &'static Args,
-    start: Instant,
     stats: Stats,
 }
 
@@ -137,7 +136,6 @@ impl Callbacks {
         Self {
             opts,
             stats: Default::default(),
-            start: Instant::now(),
         }
     }
 }
@@ -183,7 +181,7 @@ impl rustc_driver::Callbacks for Callbacks {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         self.stats
-            .record_timed(TimedStat::Rustc, self.start.elapsed());
+            .record_timed(TimedStat::Rustc, self.stats.elapsed());
         queries
             .global_ctxt()
             .unwrap()

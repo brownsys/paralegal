@@ -343,8 +343,19 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
+    #[doc(hidden)]
+    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    pub analyzed_spans: HashMap<DefId, Span>,
+    pub stats: AnalyzerStats,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AnalyzerStats {
     /// How many marker annotations were found
     pub marker_annotation_count: u32,
+    /// Total time this rustc invocation took
+    pub time: Duration,
     /// How long rustc ran before out plugin executed
     pub rustc_time: Duration,
     /// The number of functions we produced a PDG for
@@ -359,10 +370,6 @@ pub struct ProgramDescription {
     /// [`Self::seen_functions`]. This is the sum of all
     /// `analyzed_locs` of the controllers but deduplicated.
     pub seen_locs: u32,
-    #[doc(hidden)]
-    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
-    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
-    pub analyzed_spans: HashMap<DefId, Span>,
 }
 
 /// Metadata about a type
