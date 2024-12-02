@@ -321,6 +321,19 @@ pub type TypeInfoMap = HashMap<TypeId, TypeDescription>;
 /// Endpoints with their SPDGs
 pub type ControllerMap = HashMap<Endpoint, SPDG>;
 
+#[doc(hidden)]
+/// How was a given function handled by the analyzer
+#[derive(Serialize, Deserialize, Debug)]
+pub enum FunctionHandling {
+    /// A PDG was generated
+    PDG,
+    /// The function was determined not to assign markers and as a result elided.
+    Elided,
+}
+
+#[doc(hidden)]
+pub type AnalyzedSpans = HashMap<DefId, (Span, FunctionHandling)>;
+
 /// The annotated program dependence graph.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
@@ -346,10 +359,12 @@ pub struct ProgramDescription {
     #[doc(hidden)]
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
-    pub analyzed_spans: HashMap<DefId, Span>,
+    pub analyzed_spans: AnalyzedSpans,
+    /// Statistics about the run of the analyzer
     pub stats: AnalyzerStats,
 }
 
+/// Statistics about a single run of paralegal-flow
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AnalyzerStats {
     /// How many marker annotations were found
@@ -359,10 +374,10 @@ pub struct AnalyzerStats {
     /// How long rustc ran before out plugin executed
     pub rustc_time: Duration,
     /// The number of functions we produced a PDG for
-    pub dedup_functions: u32,
+    pub pdg_functions: u32,
     /// The lines of code corresponding to the functions from
     /// [`Self::dedup_functions`].
-    pub dedup_locs: u32,
+    pub pdg_locs: u32,
     /// The number of functions we produced PDGs for or we inspected to check
     /// for markers.
     pub seen_functions: u32,

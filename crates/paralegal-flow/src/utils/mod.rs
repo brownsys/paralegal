@@ -61,7 +61,7 @@ pub fn body_span<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> RustSpan {
     // Probe into the contents of the function. If any span lies within the
     // range of the function span, this is probably not a
     // `#[tracing::instrument]` kind of expantion and we can just use the body span.
-    let can_use_body_span = mk_span_iter().any(|sp| sp.contains(body_span));
+    let can_use_body_span = mk_span_iter().all(|sp| sp.from_expansion() || body_span.contains(sp));
 
     if can_use_body_span {
         return body_span;

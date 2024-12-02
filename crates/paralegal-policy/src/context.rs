@@ -620,6 +620,7 @@ impl Context {
             .desc
             .analyzed_spans
             .values()
+            .map(|v| &v.0)
             .zip(std::iter::repeat(true))
             .chain(
                 include_signatures

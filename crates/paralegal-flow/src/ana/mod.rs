@@ -6,7 +6,7 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
-    args::Stub,
+    args::{InliningDepth, Stub},
     desc::*,
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
@@ -160,36 +160,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|l| l.function)
             .collect::<HashSet<_>>();
 
-        let inlined_functions = self
-            .pdg_constructor
-            .pdg_cache
-            .borrow()
-            .keys()
-            .map(|k| k.def.def_id())
-            .collect::<HashSet<_>>();
-
-        let analyzed_spans = inlined_functions
-            .iter()
-            .copied()
-            .filter_map(|f| {
-                let body = self.pdg_constructor.body_for_def_id(f);
-                // let body = match  tcx.body_for_def_id(f) {
-                //     Ok(b) => Some(b),
-                //     Err(BodyResolutionError::IsTraitAssocFn(_)) => None,
-                //     Err(e) => panic!("{e:?}"),
-                // }?;
-                let span = body_span(tcx, body.body());
-                let pspan = src_loc_for_span(span, tcx);
-                assert!(
-                    pspan.start.line <= pspan.end.line,
-                    "Weird span for {f:?}: {pspan:?}. It was created from {span:?}"
-                );
-                let l = pspan.line_len();
-                assert!(l < 5000, "Span for {f:?} is {l} lines long ({span:?})");
-                Some((f, pspan))
-            })
-            .collect::<HashMap<_, _>>();
-
         known_def_ids.extend(&called_functions);
 
         let type_info = self.collect_type_info();
@@ -199,54 +169,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|id| (*id, def_info_for_item(*id, self.marker_ctx(), tcx)))
             .collect();
 
-        let dedup_locs = analyzed_spans.values().map(Span::line_len).sum();
-        let dedup_functions = analyzed_spans.len() as u32;
-
-        let (seen_locs, seen_functions) = if self.opts.anactrl().inlining_depth().is_adaptive() {
-            let mut total_functions = inlined_functions;
-            let mctx = self.marker_ctx();
-            total_functions.extend(
-                mctx.functions_seen()
-                    .into_iter()
-                    .map(|f| f.def_id())
-                    .filter(|f| !mctx.is_marked(f)),
-            );
-            let mut seen_functions = 0;
-            let locs = total_functions
-                .into_iter()
-                .filter_map(|f| {
-                    Some(body_span(
-                        tcx,
-                        self.pdg_constructor.body_for_def_id(f).body(),
-                    ))
-                })
-                .map(|span| {
-                    seen_functions += 1;
-                    let (_, start_line, _, end_line, _) =
-                        tcx.sess.source_map().span_to_location_info(span);
-                    end_line - start_line + 1
-                })
-                .sum::<usize>() as u32;
-            (locs, seen_functions)
-        } else {
-            (dedup_locs, dedup_functions)
-        };
-
         type_info_sanity_check(&controllers, &type_info);
 
-        let stats = AnalyzerStats {
-            marker_annotation_count: self
-                .marker_ctx()
-                .all_annotations()
-                .filter_map(|m| m.1.either(Annotation::as_marker, Some))
-                .count() as u32,
-            rustc_time: self.stats.get_timed(TimedStat::Rustc),
-            dedup_locs,
-            dedup_functions,
-            seen_functions,
-            seen_locs,
-            time: self.stats.elapsed(),
-        };
+        let (stats, analyzed_spans) = self.collect_stats_and_analyzed_spans();
 
         ProgramDescription {
             type_info,
@@ -256,6 +181,93 @@ impl<'tcx> SPDGGenerator<'tcx> {
             analyzed_spans,
             stats,
         }
+    }
+
+    fn collect_stats_and_analyzed_spans(&self) -> (AnalyzerStats, AnalyzedSpans) {
+        let tcx = self.tcx;
+
+        let inlined_functions = self
+            .pdg_constructor
+            .pdg_cache
+            .borrow()
+            .keys()
+            .map(|k| k.def.def_id())
+            .collect::<HashSet<_>>();
+
+        let mut seen_locs = 0;
+        let mut seen_functions = 0;
+        let mut pdg_locs = 0;
+        let mut pdg_functions = 0;
+
+        let mctx = self.marker_ctx();
+
+        let analyzed_functions = if matches!(
+            self.opts.anactrl().inlining_depth(),
+            InliningDepth::Adaptive
+        ) {
+            let mctx_seen = mctx
+                .functions_seen()
+                .into_iter()
+                .map(|f| f.def_id())
+                .filter(|f| !mctx.is_marked(f))
+                .collect::<HashSet<_>>();
+            Box::new(mctx_seen.into_iter()) as Box<dyn Iterator<Item = _>>
+        } else {
+            Box::new(inlined_functions.iter().copied()) as Box<_>
+        };
+
+        let analyzed_spans = analyzed_functions
+            .filter_map(|f| {
+                let body = self.pdg_constructor.body_for_def_id(f);
+                let span = body_span(tcx, body.body());
+                let pspan = src_loc_for_span(span, tcx);
+                assert!(
+                    pspan.start.line <= pspan.end.line,
+                    "Weird span for {f:?}: {pspan:?}. It was created from {span:?}"
+                );
+                let l = pspan.line_len();
+                assert!(l < 5000, "Span for {f:?} is {l} lines long ({span:?})");
+
+                seen_locs += pspan.line_len();
+                seen_functions += 1;
+
+                let handling = if inlined_functions.contains(&f) {
+                    pdg_locs += pspan.line_len();
+                    pdg_functions += 1;
+                    FunctionHandling::PDG
+                } else {
+                    FunctionHandling::Elided
+                };
+
+                Some((f, (pspan, handling)))
+            })
+            .collect::<AnalyzedSpans>();
+
+        let missing_functions = inlined_functions
+            .iter()
+            .filter(|i| !analyzed_spans.contains_key(i))
+            .collect::<Vec<_>>();
+
+        assert!(
+            missing_functions.is_empty(),
+            "Missing {} functions in analyzed spans: {missing_functions:?}",
+            missing_functions.len()
+        );
+
+        let stats = AnalyzerStats {
+            marker_annotation_count: mctx
+                .all_annotations()
+                .filter_map(|m| m.1.either(Annotation::as_marker, Some))
+                .count() as u32,
+            rustc_time: self.stats.get_timed(TimedStat::Rustc),
+            pdg_functions,
+            pdg_locs,
+            seen_functions,
+            seen_locs,
+            time: self.stats.elapsed(),
+        };
+
+        (stats, analyzed_spans)
     }
 
     /// Create an [`InstructionInfo`] record for each [`GlobalLocation`]
