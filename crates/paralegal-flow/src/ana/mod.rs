@@ -6,7 +6,7 @@
 
 use crate::{
     ann::{Annotation, MarkerAnnotation},
-    args::{InliningDepth, Stub},
+    args::Stub,
     desc::*,
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
@@ -201,22 +201,21 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let mctx = self.marker_ctx();
 
-        let analyzed_functions = if matches!(
-            self.opts.anactrl().inlining_depth(),
-            InliningDepth::Adaptive
-        ) {
-            let mctx_seen = mctx
-                .functions_seen()
-                .into_iter()
-                .map(|f| f.def_id())
-                .filter(|f| !mctx.is_marked(f))
-                .collect::<HashSet<_>>();
-            Box::new(mctx_seen.into_iter()) as Box<dyn Iterator<Item = _>>
-        } else {
-            Box::new(inlined_functions.iter().copied()) as Box<_>
-        };
+        let analyzed_functions = mctx
+            .functions_seen()
+            .into_iter()
+            .map(|f| f.def_id())
+            .filter(|f| !mctx.is_marked(f))
+            // It's annoying I have to do this merge here, but what the marker
+            // context sees doesn't contain the targets and not just that but
+            // also if those targets are async, then their closures are also not
+            // contained and lastly if we're not doing adaptive depth then we
+            // need to use the inlined functions anyway so this is just easier.
+            .chain(inlined_functions.iter().copied())
+            .collect::<HashSet<_>>();
 
         let analyzed_spans = analyzed_functions
+            .into_iter()
             .filter_map(|f| {
                 let body = self.pdg_constructor.body_for_def_id(f);
                 let span = body_span(tcx, body.body());
@@ -242,17 +241,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 Some((f, (pspan, handling)))
             })
             .collect::<AnalyzedSpans>();
-
-        let missing_functions = inlined_functions
-            .iter()
-            .filter(|i| !analyzed_spans.contains_key(i))
-            .collect::<Vec<_>>();
-
-        assert!(
-            missing_functions.is_empty(),
-            "Missing {} functions in analyzed spans: {missing_functions:?}",
-            missing_functions.len()
-        );
 
         let stats = AnalyzerStats {
             marker_annotation_count: mctx
