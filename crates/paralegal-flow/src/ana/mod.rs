@@ -186,6 +186,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_stats_and_analyzed_spans(&self) -> (AnalyzerStats, AnalyzedSpans) {
         let tcx = self.tcx;
 
+        // In this we don't have to filter out async functions. They are already
+        // not in it. For the top-level (target) an async function immediately
+        // redirects to its closure and never inserts the parent DefId into the
+        // map. For called async functions we skip inlining and therefore also
+        // do not insert the DefId into the map.
         let inlined_functions = self
             .pdg_constructor
             .pdg_cache
@@ -205,6 +210,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .functions_seen()
             .into_iter()
             .map(|f| f.def_id())
+            // Async functions always show up twice, once as the function
+            // itself, once as the generator. Here we filter out one of those
+            // (the function)
+            .filter(|d| !tcx.asyncness(*d).is_async())
             .filter(|f| !mctx.is_marked(f))
             // It's annoying I have to do this merge here, but what the marker
             // context sees doesn't contain the targets and not just that but
@@ -595,7 +604,11 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
         let changes = CallChanges::default();
 
-        let skip = match self.judge.should_inline(&info) {
+        let judgement = self.judge.should_inline(&info);
+
+        debug!("Judgement for {:?}: {judgement}", info.callee.def_id(),);
+
+        let skip = match judgement {
             InlineJudgement::AbstractViaType(_) => SkipCall::Skip,
             InlineJudgement::UseStub(model) => {
                 if let Ok((instance, calling_convention)) = model.apply(
