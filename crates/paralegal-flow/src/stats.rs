@@ -20,6 +20,8 @@ pub enum TimedStat {
     Conversion,
     /// How long it took to serialize the SPDG
     Serialization,
+    /// How long it took to collect and dump the MIR
+    MirEmission,
 }
 
 struct StatsInner {
@@ -61,6 +63,13 @@ impl Stats {
     pub fn elapsed(&self) -> Duration {
         self.0.lock().unwrap().started.elapsed()
     }
+
+    pub fn measure<R>(&self, stat: TimedStat, target: impl FnOnce() -> R) -> R {
+        let start = Instant::now();
+        let r = target();
+        self.record_timed(stat, start.elapsed());
+        r
+    }
 }
 
 impl Default for Stats {
@@ -77,6 +86,11 @@ impl Display for Stats {
                 write!(f, "{}: {} ", s.as_ref(), TruncatedHumanTime::from(dur))?;
             }
         }
+        write!(
+            f,
+            "current runtime: {}",
+            TruncatedHumanTime::from(borrow.started.elapsed())
+        )?;
         Ok(())
     }
 }

@@ -71,11 +71,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         target: &'a FnToAnalyze,
     ) -> Result<Self> {
         let local_def_id = target.def_id;
-        let start = Instant::now();
-        let (dep_graph, stats) = Self::create_flowistry_graph(generator, local_def_id)?;
-        generator
-            .stats
-            .record_timed(TimedStat::Flowistry, start.elapsed());
+        let (dep_graph, stats) = generator.stats.measure(TimedStat::Flowistry, || {
+            Self::create_flowistry_graph(generator, local_def_id)
+        })?;
 
         if generator.opts.dbg().dump_flowistry_pdg() {
             dep_graph.generate_graphviz(format!(
