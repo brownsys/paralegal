@@ -47,14 +47,14 @@ pub struct MemoPdgConstructor<'tcx> {
 
 impl<'tcx> MemoPdgConstructor<'tcx> {
     /// Initialize the constructor.
-    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, compress_artifacts: bool) -> Self {
         Self {
             tcx,
             call_change_callback: None,
             dump_mir: false,
             async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
             pdg_cache: Default::default(),
-            body_cache: Rc::new(BodyCache::new(tcx)),
+            body_cache: Rc::new(BodyCache::new(tcx, compress_artifacts)),
         }
     }
 

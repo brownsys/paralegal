@@ -24,7 +24,7 @@ rustc_plugin = "=0.7.4-nightly-2023-08-25"
 [workspace.dependencies.flowistry]
 # path = "../flowistry/crates/flowistry"
 git = "https://github.com/brownsys/flowistry"
-rev = "08c4ad9587b3251a8f7c64aa60be31404e6e04c0"
+rev = "57627ed24802cb76c745118bbc46f83f402a1e88"
 default-features = false
 
 

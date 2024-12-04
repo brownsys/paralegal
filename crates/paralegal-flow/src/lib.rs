@@ -120,6 +120,7 @@ struct ArgWrapper {
 struct Callbacks {
     opts: &'static Args,
     stats: Stats,
+    rustc_second_timer: Option<Instant>,
 }
 
 struct NoopCallbacks;
@@ -136,11 +137,14 @@ impl Callbacks {
         Self {
             opts,
             stats: Default::default(),
+            rustc_second_timer: None,
         }
     }
 }
 
-struct DumpOnlyCallbacks;
+struct DumpOnlyCallbacks {
+    compress_artifacts: bool,
+}
 
 impl rustc_driver::Callbacks for DumpOnlyCallbacks {
     fn after_expansion<'tcx>(
@@ -149,7 +153,7 @@ impl rustc_driver::Callbacks for DumpOnlyCallbacks {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_mir_and_borrowck_facts(tcx);
+            dump_mir_and_borrowck_facts(tcx, self.compress_artifacts);
             dump_markers(tcx);
         });
         rustc_driver::Compilation::Continue
@@ -162,10 +166,15 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
+        self.stats
+            .record_timed(TimedStat::Rustc, self.stats.elapsed());
         queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_mir_and_borrowck_facts(tcx);
-            dump_markers(tcx);
+            self.stats.measure(TimedStat::MirEmission, || {
+                dump_mir_and_borrowck_facts(tcx, self.opts.anactrl().compress_artifacts());
+                dump_markers(tcx);
+            })
         });
+        self.rustc_second_timer = Some(Instant::now());
         rustc_driver::Compilation::Continue
     }
 
@@ -181,7 +190,7 @@ impl rustc_driver::Callbacks for Callbacks {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         self.stats
-            .record_timed(TimedStat::Rustc, self.stats.elapsed());
+            .record_timed(TimedStat::Rustc, self.rustc_second_timer.unwrap().elapsed());
         queries
             .global_ctxt()
             .unwrap()
@@ -389,7 +398,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             }
             CrateHandling::CompileAndDump => {
                 compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                Box::new(DumpOnlyCallbacks)
+                Box::new(DumpOnlyCallbacks {
+                    compress_artifacts: plugin_args.anactrl().compress_artifacts(),
+                })
             }
             CrateHandling::Analyze => {
                 plugin_args.setup_logging();

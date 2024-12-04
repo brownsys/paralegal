@@ -37,7 +37,7 @@ impl<'tcx> CachedBody<'tcx> {
         let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
             tcx,
             local_def_id,
-            ConsumerOptions::PoloniusInputFacts,
+            ConsumerOptions::RegionInferenceContext,
         );
 
         clean_undecodable_data_from_body(&mut body_with_facts.body);
@@ -45,25 +45,32 @@ impl<'tcx> CachedBody<'tcx> {
         Self {
             body: body_with_facts.body,
             input_facts: FlowistryFacts {
-                subset_base: body_with_facts.input_facts.unwrap().subset_base,
+                subset_base: body_with_facts
+                    .region_inference_context
+                    .outlives_constraints()
+                    .map(|constraint| (constraint.sup, constraint.sub))
+                    .collect(),
             },
         }
     }
 }
 
-impl<'tcx> FlowistryInput<'tcx> for &'tcx CachedBody<'tcx> {
+impl<'tcx> FlowistryInput<'tcx, 'tcx> for &'tcx CachedBody<'tcx> {
     fn body(self) -> &'tcx Body<'tcx> {
         &self.body
     }
 
     fn input_facts_subset_base(
         self,
-    ) -> &'tcx [(
-        <RustcFacts as FactTypes>::Origin,
-        <RustcFacts as FactTypes>::Origin,
-        <RustcFacts as FactTypes>::Point,
-    )] {
-        &self.input_facts.subset_base
+    ) -> Box<
+        dyn Iterator<
+                Item = (
+                    <RustcFacts as FactTypes>::Origin,
+                    <RustcFacts as FactTypes>::Origin,
+                ),
+            > + 'tcx,
+    > {
+        Box::new(self.input_facts.subset_base.iter().copied())
     }
 }
 
@@ -74,7 +81,6 @@ pub struct FlowistryFacts {
     pub subset_base: Vec<(
         <RustcFacts as FactTypes>::Origin,
         <RustcFacts as FactTypes>::Origin,
-        <RustcFacts as FactTypes>::Point,
     )>,
 }
 
@@ -89,13 +95,15 @@ type BodyMap<'tcx> = FxHashMap<DefIndex, CachedBody<'tcx>>;
 pub struct BodyCache<'tcx> {
     tcx: TyCtxt<'tcx>,
     cache: Cache<CrateNum, BodyMap<'tcx>>,
+    compress_artifacts: bool,
 }
 
 impl<'tcx> BodyCache<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, compress_artifacts: bool) -> Self {
         Self {
             tcx,
             cache: Default::default(),
+            compress_artifacts,
         }
     }
 
@@ -105,7 +113,9 @@ impl<'tcx> BodyCache<'tcx> {
     pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
         let body = self
             .cache
-            .get(key.krate, |_| load_body_and_facts(self.tcx, key.krate))
+            .get(key.krate, |_| {
+                load_body_and_facts(self.tcx, key.krate, self.compress_artifacts)
+            })
             .get(&key.index)
             .expect("Invariant broken, body for this is should exist");
         // SAFETY: Theoretically this struct may not outlive the body, but
@@ -175,7 +185,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 ///
 /// Ensure this gets called early in the compiler before the unoptimized mir
 /// bodies are stolen.
-pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>) {
+pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>, compress_artifacts: bool) {
     let mut vis = DumpingVisitor {
         tcx,
         targets: vec![],
@@ -193,13 +203,15 @@ pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>) {
         .collect();
     let path = intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT);
     encode_to_file(tcx, &path, &bodies);
-    assert!(Command::new("gzip")
-        .arg("--fast")
-        .arg("--force")
-        .arg(path)
-        .status()
-        .unwrap()
-        .success())
+    if compress_artifacts {
+        assert!(Command::new("gzip")
+            .arg("--fast")
+            .arg("--force")
+            .arg(path)
+            .status()
+            .unwrap()
+            .success())
+    }
 }
 
 const INTERMEDIATE_ARTIFACT_EXT: &str = "bwbf";
@@ -219,21 +231,35 @@ pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<Pat
 }
 
 /// Try to load a [`CachedBody`] for this id.
-fn load_body_and_facts<'tcx>(tcx: TyCtxt<'tcx>, krate: CrateNum) -> BodyMap<'tcx> {
+fn load_body_and_facts<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    krate: CrateNum,
+    compress_artifacts: bool,
+) -> BodyMap<'tcx> {
     let paths = local_or_remote_paths(krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
     let zipped_ext = INTERMEDIATE_ARTIFACT_EXT.to_owned() + ".gz";
     for path in &paths {
         let zip_path = path.with_extension(&zipped_ext);
-        if zip_path.exists() {
-            assert!(Command::new("gunzip")
-                .arg("-k")
-                .arg(&zip_path)
-                .status()
-                .unwrap()
-                .success());
+
+        let target_path = if compress_artifacts { &zip_path } else { &path };
+
+        if !target_path.exists() {
+            continue;
         }
+
+        assert!(
+            !compress_artifacts
+                || Command::new("gunzip")
+                    .arg("-k")
+                    .arg(&zip_path)
+                    .status()
+                    .unwrap()
+                    .success()
+        );
         let data = decode_from_file(tcx, path).unwrap();
-        std::fs::remove_file(&path).unwrap();
+        if compress_artifacts {
+            std::fs::remove_file(&path).unwrap();
+        }
         return data;
     }
 
