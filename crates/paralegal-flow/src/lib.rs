@@ -162,11 +162,8 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_mir_and_borrowck_facts(tcx);
-            dump_markers(tcx);
-        });
-        rustc_driver::Compilation::Continue
+        //rustc_driver::Compilation::Continue
+        self.run_the_analyzer(queries)
     }
 
     // This used to run `after_parsing` but that now makes `tcx.crates()` empty
@@ -180,12 +177,22 @@ impl rustc_driver::Callbacks for Callbacks {
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
+        rustc_driver::Compilation::Continue
+    }
+}
+
+impl Callbacks {
+    fn run_the_analyzer<'tcx>(
+        &self,
+        queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.stats.elapsed());
-        queries
+        let abort = queries
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
+                dump_markers(tcx);
                 let desc = self.run(tcx)?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
@@ -202,14 +209,18 @@ impl rustc_driver::Callbacks for Callbacks {
 
                 println!("Analysis finished with timing: {}", self.stats);
 
-                anyhow::Ok(if self.opts.abort_after_analysis() {
-                    debug!("Aborting");
-                    rustc_driver::Compilation::Stop
-                } else {
-                    rustc_driver::Compilation::Continue
-                })
+                anyhow::Ok(self.opts.abort_after_analysis())
             })
-            .unwrap()
+            .unwrap();
+
+        if abort {
+            rustc_driver::Compilation::Stop
+        } else {
+            queries.global_ctxt().unwrap().enter(|tcx| {
+                dump_mir_and_borrowck_facts(tcx);
+            });
+            rustc_driver::Compilation::Continue
+        }
     }
 }
 

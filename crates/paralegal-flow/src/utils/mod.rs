@@ -72,7 +72,7 @@ pub fn body_span<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> RustSpan {
 
     let outer_source_file_idx = source_map.lookup_source_file_idx(body_span.data().lo);
 
-    let combined = mk_span_iter()
+    mk_span_iter()
         // Here we get rid of any spans that don't lie in our source file.
         // Apparently this can happen these days in the macro expansions???
         .filter(|span| {
@@ -80,8 +80,7 @@ pub fn body_span<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> RustSpan {
             file_idx == outer_source_file_idx
         })
         .reduce(RustSpan::to)
-        .unwrap();
-    combined
+        .unwrap_or(body_span)
 }
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of
