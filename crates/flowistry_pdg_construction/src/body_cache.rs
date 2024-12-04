@@ -96,6 +96,7 @@ pub struct BodyCache<'tcx> {
     tcx: TyCtxt<'tcx>,
     cache: Cache<CrateNum, BodyMap<'tcx>>,
     compress_artifacts: bool,
+    local_cache: Cache<DefIndex, CachedBody<'tcx>>,
 }
 
 impl<'tcx> BodyCache<'tcx> {
@@ -104,6 +105,7 @@ impl<'tcx> BodyCache<'tcx> {
             tcx,
             cache: Default::default(),
             compress_artifacts,
+            local_cache: Default::default(),
         }
     }
 
@@ -111,13 +113,19 @@ impl<'tcx> BodyCache<'tcx> {
     ///
     /// Returns `None` if the policy forbids loading from this crate.
     pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
-        let body = self
-            .cache
-            .get(key.krate, |_| {
-                load_body_and_facts(self.tcx, key.krate, self.compress_artifacts)
+        let body = if let Some(local) = key.as_local() {
+            self.local_cache.get(local.local_def_index, |_| {
+                CachedBody::retrieve(self.tcx, local)
             })
-            .get(&key.index)
-            .expect("Invariant broken, body for this is should exist");
+        } else {
+            self.cache
+                .get(key.krate, |_| {
+                    load_body_and_facts(self.tcx, key.krate, self.compress_artifacts)
+                })
+                .get(&key.index)
+                .expect("Invariant broken, body for this is should exist")
+        };
+
         // SAFETY: Theoretically this struct may not outlive the body, but
         // to simplify lifetimes flowistry uses 'tcx anywhere. But if we
         // actually try to provide that we're risking race conditions

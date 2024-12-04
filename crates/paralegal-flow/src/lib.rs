@@ -168,14 +168,9 @@ impl rustc_driver::Callbacks for Callbacks {
     ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.stats.elapsed());
-        queries.global_ctxt().unwrap().enter(|tcx| {
-            self.stats.measure(TimedStat::MirEmission, || {
-                dump_mir_and_borrowck_facts(tcx, self.opts.anactrl().compress_artifacts());
-                dump_markers(tcx);
-            })
-        });
+        let compilation = self.run_the_analyzer(queries);
         self.rustc_second_timer = Some(Instant::now());
-        rustc_driver::Compilation::Continue
+        compilation
     }
 
     // This used to run `after_parsing` but that now makes `tcx.crates()` empty
@@ -187,14 +182,24 @@ impl rustc_driver::Callbacks for Callbacks {
         &mut self,
         _handler: &rustc_session::EarlyErrorHandler,
         _compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        _queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.rustc_second_timer.unwrap().elapsed());
-        queries
+        rustc_driver::Compilation::Continue
+    }
+}
+
+impl Callbacks {
+    fn run_the_analyzer<'tcx>(
+        &self,
+        queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> rustc_driver::Compilation {
+        let abort = queries
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
+                dump_markers(tcx);
                 let desc = self.run(tcx)?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
@@ -211,14 +216,20 @@ impl rustc_driver::Callbacks for Callbacks {
 
                 println!("Analysis finished with timing: {}", self.stats);
 
-                anyhow::Ok(if self.opts.abort_after_analysis() {
-                    debug!("Aborting");
-                    rustc_driver::Compilation::Stop
-                } else {
-                    rustc_driver::Compilation::Continue
-                })
+                anyhow::Ok(self.opts.abort_after_analysis())
             })
-            .unwrap()
+            .unwrap();
+
+        if abort {
+            rustc_driver::Compilation::Stop
+        } else {
+            queries.global_ctxt().unwrap().enter(|tcx| {
+                self.stats.measure(TimedStat::MirEmission, || {
+                    dump_mir_and_borrowck_facts(tcx, self.opts.anactrl().compress_artifacts())
+                })
+            });
+            rustc_driver::Compilation::Continue
+        }
     }
 }
 
