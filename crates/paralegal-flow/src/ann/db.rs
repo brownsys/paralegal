@@ -241,6 +241,11 @@ impl<'tcx> MarkerCtx<'tcx> {
             return self.get_reachable_markers(async_fn).into();
         }
         let expect_resolve = res.is_monomorphized();
+        let variable_markers = mono_body
+            .local_decls
+            .iter()
+            .flat_map(|v| self.deep_type_markers(v.ty))
+            .map(|(_, m)| *m);
         mono_body
             .basic_blocks
             .iter()
@@ -251,6 +256,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     expect_resolve,
                 )
             })
+            .chain(variable_markers)
             .collect::<HashSet<_>>()
             .into_iter()
             .collect()

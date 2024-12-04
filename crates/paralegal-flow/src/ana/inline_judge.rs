@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{fmt::Display, rc::Rc};
 
 use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
@@ -40,6 +40,17 @@ pub enum InlineJudgement {
     UseStub(&'static Stub),
     /// Abstract the call via type signature
     AbstractViaType(&'static str),
+}
+
+impl Display for InlineJudgement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_ref())?;
+        match self {
+            Self::AbstractViaType(reason) => write!(f, "({reason})")?,
+            _ => (),
+        }
+        Ok(())
+    }
 }
 
 impl<'tcx> InlineJudge<'tcx> {

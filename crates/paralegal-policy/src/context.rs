@@ -8,8 +8,8 @@ use std::{io::Write, process::exit, sync::Arc};
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
 use paralegal_spdg::{
-    CallString, DefKind, DisplayNode, Endpoint, GlobalNode, HashMap, HashSet, Identifier,
-    InstructionInfo, IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo,
+    CallString, DefKind, DisplayNode, Endpoint, FunctionHandling, GlobalNode, HashMap, HashSet,
+    Identifier, InstructionInfo, IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo,
     ProgramDescription, SPDGImpl, Span, TypeId, SPDG,
 };
 
@@ -615,11 +615,13 @@ impl Context {
         &self,
         mut out: impl Write,
         include_signatures: bool,
+        include_elided_code: bool,
     ) -> std::io::Result<()> {
         let ordered_span_set = self
             .desc
             .analyzed_spans
             .values()
+            .filter(|(_, h)| include_elided_code || matches!(h, FunctionHandling::PDG))
             .map(|v| &v.0)
             .zip(std::iter::repeat(true))
             .chain(
