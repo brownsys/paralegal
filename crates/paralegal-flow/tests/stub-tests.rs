@@ -23,7 +23,7 @@ macro_rules! define_test {
     };
 }
 
-define_test!(thread_spawn: graph -> {
+fn check_source_pass_target(graph: CtrlRef<'_>) {
     let src = graph.marked(Identifier::new_intern("source"));
     let pass = graph.marked(Identifier::new_intern("pass"));
     let target = graph.marked(Identifier::new_intern("target"));
@@ -34,19 +34,22 @@ define_test!(thread_spawn: graph -> {
 
     assert!(src.flows_to_data(&pass));
     assert!(pass.flows_to_data(&target));
+}
+
+define_test!(thread_spawn: graph -> {
+    check_source_pass_target(graph);
+});
+
+define_test!(marked_thread_spawn: graph -> {
+    simple_source_target_flow(graph);
 });
 
 define_test!(async_spawn: graph -> {
-    let src = graph.marked(Identifier::new_intern("source"));
-    let pass = graph.marked(Identifier::new_intern("pass"));
-    let target = graph.marked(Identifier::new_intern("target"));
+    check_source_pass_target(graph);
+});
 
-    assert!(!src.is_empty());
-    assert!(!pass.is_empty());
-    assert!(!target.is_empty());
-
-    assert!(src.flows_to_data(&pass));
-    assert!(pass.flows_to_data(&target));
+define_test!(marked_async_spawn: graph -> {
+    simple_source_target_flow(graph);
 });
 
 fn simple_source_target_flow(graph: CtrlRef<'_>) {

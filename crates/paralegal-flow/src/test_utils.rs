@@ -253,10 +253,11 @@ impl InlineTestBuilder {
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
             .with_query_override(None)
             .compile(move |result| {
-                dump_mir_and_borrowck_facts(result.tcx);
+                let args: &'static _ = Box::leak(Box::new(args));
+                dump_mir_and_borrowck_facts(result.tcx, args.anactrl().compress_artifacts());
                 dump_markers(result.tcx);
                 let tcx = result.tcx;
-                let memo = crate::Callbacks::new(Box::leak(Box::new(args)));
+                let memo = crate::Callbacks::new(args);
                 let pdg = memo.run(tcx).unwrap();
                 let graph = PreFrg::from_description(pdg);
                 f(graph)

@@ -19,6 +19,13 @@ fn thread_spawn() {
     target(next);
 }
 
+#[allow(dead_code)]
+#[paralegal::analyze]
+fn marked_thread_spawn() {
+    let next = std::thread::spawn(source).join().unwrap();
+    target(next);
+}
+
 fn main() {}
 
 #[allow(dead_code)]
@@ -26,6 +33,18 @@ fn main() {}
 async fn async_spawn() {
     let src = source();
     let next = tokio::spawn(async move { pass(src) }).await.unwrap();
+    target(next);
+}
+
+#[paralegal::marker(source, return)]
+async fn async_source() -> usize {
+    0
+}
+
+#[allow(dead_code)]
+#[paralegal::analyze]
+async fn marked_async_spawn() {
+    let next = tokio::spawn(async_source()).await.unwrap();
     target(next);
 }
 
