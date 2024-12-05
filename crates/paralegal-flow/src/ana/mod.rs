@@ -340,7 +340,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .filter(|(id, _)| def_kind_for_item(*id, self.tcx).is_type())
             .into_grouping_map()
             .fold_with(
-                |id, _| (format!("{id:?}"), vec![], vec![]),
+                |id, _| (*id, vec![], vec![]),
                 |mut desc, _, ann| {
                     match ann {
                         Either::Right(MarkerAnnotation { refinement, marker })
@@ -348,7 +348,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                             refinement,
                             marker,
                         })) => {
-                            assert!(refinement.on_self());
+                            assert!(refinement.on_self(), "Cannot refine a marker on a type (tried assigning refinement {refinement} to {:?})", desc.0);
                             desc.2.push(*marker)
                         }
                         Either::Left(Annotation::OType(id)) => desc.1.push(*id),
@@ -358,11 +358,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 },
             )
             .into_iter()
-            .map(|(k, (rendering, otypes, markers))| {
+            .map(|(k, (_, otypes, markers))| {
                 (
                     k,
                     TypeDescription {
-                        rendering,
+                        rendering: format!("{k:?}"),
                         otypes: otypes.into(),
                         markers,
                     },

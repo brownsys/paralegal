@@ -1,3 +1,5 @@
+use std::fmt::{Display, Write};
+
 use either::Either;
 use flowistry_pdg_construction::{body_cache::intermediate_out_dir, encoder::ParalegalEncoder};
 use rustc_ast::Attribute;
@@ -11,7 +13,9 @@ use rustc_middle::{hir::map::Map, ty::TyCtxt};
 use rustc_serialize::Encodable;
 use serde::{Deserialize, Serialize};
 
-use paralegal_spdg::{rustc_proxies, tiny_bitset_pretty, Identifier, TinyBitSet, TypeId};
+use paralegal_spdg::{
+    rustc_proxies, tiny_bitset_pretty, utils::write_sep, Identifier, TinyBitSet, TypeId,
+};
 
 pub mod db;
 pub mod parse;
@@ -108,6 +112,28 @@ pub struct MarkerRefinement {
     on_argument: TinyBitSet,
     #[serde(default = "const_false")]
     on_return: bool,
+}
+
+impl Display for MarkerRefinement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.on_argument.is_empty() {
+            f.write_str("argument = [")?;
+            write_sep(
+                f,
+                ", ",
+                self.on_argument.into_iter_set_in_domain(),
+                |elem, f| elem.fmt(f),
+            )?;
+            f.write_char(']')?;
+            if self.on_return {
+                f.write_str(" + ")?;
+            }
+        }
+        if self.on_return {
+            f.write_str("return")?;
+        }
+        Ok(())
+    }
 }
 
 /// Disaggregated version of [`MarkerRefinement`]. Can be added to an existing
