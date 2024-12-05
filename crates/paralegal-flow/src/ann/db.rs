@@ -43,7 +43,7 @@ use rustc_utils::cache::Cache;
 
 use std::{borrow::Cow, fs::File, io::Read, rc::Rc};
 
-use super::{MarkerMeta, MARKER_META_EXT};
+use super::{MarkerMeta, MarkerRefinement, MARKER_META_EXT};
 
 type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 
@@ -645,7 +645,54 @@ fn load_annotations(
         .collect()
 }
 
-type RawExternalMarkers = HashMap<String, Vec<crate::ann::MarkerAnnotation>>;
+#[derive(serde::Deserialize)]
+struct ExternalAnnotationEntry {
+    marker: Option<Identifier>,
+    #[serde(default)]
+    markers: Vec<Identifier>,
+    #[serde(flatten)]
+    refinement: MarkerRefinement,
+    #[serde(default)]
+    refinements: Vec<MarkerRefinement>,
+}
+
+impl ExternalAnnotationEntry {
+    fn flatten(&self) -> impl Iterator<Item = MarkerAnnotation> + '_ {
+        let refinement_iter = self
+            .refinements
+            .iter()
+            .chain(self.refinements.is_empty().then_some(&self.refinement));
+        self.marker
+            .into_iter()
+            .chain(self.markers.iter().copied())
+            .flat_map(move |marker| {
+                refinement_iter
+                    .clone()
+                    .map(move |refinement| MarkerAnnotation {
+                        marker,
+                        refinement: refinement.clone(),
+                    })
+            })
+    }
+
+    fn check_integrity(&self, tcx: TyCtxt, element: DefId) {
+        let merror = if self.marker.is_none() && self.markers.is_empty() {
+            Some("neither")
+        } else if self.marker.is_some() && !self.markers.is_empty() {
+            Some("both")
+        } else {
+            None
+        };
+        if let Some(complaint) = merror {
+            tcx.sess.err(format!("External marker annotation should specify either a 'marker' or a 'markers' field, found {complaint} for {}", tcx.def_path_str(element)));
+        }
+        if !self.refinement.on_self() && !self.refinements.is_empty() {
+            tcx.sess.err(format!("External marker annotation should specify either a single refinement or the 'refinements' field, found both for {}", tcx.def_path_str(element)));
+        }
+    }
+}
+
+type RawExternalMarkers = HashMap<String, Vec<ExternalAnnotationEntry>>;
 
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.
@@ -665,11 +712,16 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
         .unwrap();
         let new_map: ExternalMarkers = from_toml
             .iter()
-            .filter_map(|(path, marker)| {
-                Some((
-                    expect_resolve_string_to_def_id(tcx, path, opts.relaxed())?,
-                    marker.clone(),
-                ))
+            .filter_map(|(path, entries)| {
+                let def_id = expect_resolve_string_to_def_id(tcx, path, opts.relaxed())?;
+                let markers = entries
+                    .iter()
+                    .flat_map(|entry| {
+                        entry.check_integrity(tcx, def_id);
+                        entry.flatten()
+                    })
+                    .collect();
+                Some((def_id, markers))
             })
             .collect();
         new_map
