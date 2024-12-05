@@ -52,6 +52,18 @@ define_test!(marked_async_spawn: graph -> {
     simple_source_target_flow(graph);
 });
 
+define_test!(blocking_with_marker: graph -> {
+    simple_source_target_flow(graph);
+});
+
+define_test!(marked_blocking_like: graph -> {
+    simple_source_target_flow(graph);
+});
+
+define_test!(test_blocking_like: graph -> {
+    simple_source_target_flow(graph);
+});
+
 fn simple_source_target_flow(graph: CtrlRef<'_>) {
     let src = graph.marked(Identifier::new_intern("source"));
     let target = graph.marked(Identifier::new_intern("target"));

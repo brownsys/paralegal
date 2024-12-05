@@ -26,6 +26,31 @@ fn marked_thread_spawn() {
     target(next);
 }
 
+#[allow(dead_code)]
+#[paralegal::analyze]
+fn marked_blocking_like(to_close_over: &str) {
+    let next = blocking_like(to_close_over, second_source);
+    target(next);
+}
+
+#[allow(dead_code)]
+#[paralegal::analyze]
+fn test_blocking_like(to_close_over: &str) {
+    let next = blocking_like(to_close_over, |_| second_source(0_usize));
+    target(next);
+}
+
+pub fn blocking_like<F, T>(pool: &str, f: F) -> T
+where
+    F: FnOnce(usize) -> T + 'static + Send,
+    T: 'static + Send,
+{
+    let pool = pool.parse().unwrap();
+    let res = std::thread::spawn(move || (f)(pool)).join().unwrap();
+
+    res
+}
+
 fn main() {}
 
 #[allow(dead_code)]
@@ -75,6 +100,17 @@ where
     let res = actix_web::web::block(move || (f)(pool)).await.unwrap();
 
     res
+}
+
+#[paralegal::marker(source, return)]
+fn second_source<T>(_: T) -> usize {
+    0
+}
+
+#[allow(dead_code)]
+#[paralegal::analyze]
+async fn blocking_with_marker(to_close_over: &str) {
+    target(blocking(to_close_over, second_source).await)
 }
 
 #[allow(dead_code)]
