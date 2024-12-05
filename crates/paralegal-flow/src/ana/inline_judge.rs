@@ -183,8 +183,8 @@ impl<'tcx> SafetyChecker<'tcx> {
     fn err(&self, s: &str, span: Span) {
         let sess = self.tcx.sess;
         let msg = format!(
-            "the call is not safe to abstract as demanded by '{}', because of: {s}",
-            self.reason
+            "the call to {:?} is not safe to abstract as demanded by '{}', because of: {s}",
+            self.resolved, self.reason
         );
         if self.emit_err {
             let mut diagnostic = sess.struct_span_err(span, msg);

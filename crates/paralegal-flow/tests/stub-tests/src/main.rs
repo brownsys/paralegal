@@ -33,6 +33,17 @@ fn marked_blocking_like(to_close_over: &str) {
     target(next);
 }
 
+fn contains_source<T>(_: T) -> usize {
+    source()
+}
+
+#[allow(dead_code)]
+#[paralegal::analyze]
+fn marked_blocking_like_2(to_close_over: &str) {
+    let next = blocking_like(to_close_over, contains_source);
+    target(next);
+}
+
 #[allow(dead_code)]
 #[paralegal::analyze]
 fn test_blocking_like(to_close_over: &str) {

@@ -20,8 +20,8 @@ use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::BodyCache, calling_convention::CallingConvention, CallChangeCallback, CallChanges,
-    CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
+    body_cache::BodyCache, calling_convention::CallingConvention, utils::is_async,
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 use inline_judge::InlineJudgement;
 use itertools::Itertools;
@@ -213,7 +213,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             // Async functions always show up twice, once as the function
             // itself, once as the generator. Here we filter out one of those
             // (the function)
-            .filter(|d| !tcx.asyncness(*d).is_async())
+            .filter(|d| !is_async(tcx, *d))
             .filter(|f| !mctx.is_marked(f))
             // It's annoying I have to do this merge here, but what the marker
             // context sees doesn't contain the targets and not just that but
@@ -586,7 +586,7 @@ impl Stub {
                 }
             };
             CallingConvention::Indirect {
-                once_shim: false,
+                shim: None,
                 closure_arg: clj.clone(),
                 // This is incorrect, but we only support
                 // non-argument closures at the moment so this

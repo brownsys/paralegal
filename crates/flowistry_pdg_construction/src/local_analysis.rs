@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet, iter, rc::Rc};
+use std::{borrow::Cow, collections::HashSet, fmt::Display, iter, rc::Rc};
 
 use flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
@@ -14,7 +14,7 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArgKind, GenericArgsRef, Instance, InstanceDef, TyCtxt, TyKind},
+    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::Span;
@@ -27,7 +27,7 @@ use crate::{
     calling_convention::*,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, is_async, is_virtual, try_monomorphize, type_as_fn},
+    utils::{self, handle_shims, is_async, is_virtual, try_monomorphize, ShimType},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
@@ -414,26 +414,15 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return None;
         };
 
-        let call_kind = if matches!(resolved_fn.def, InstanceDef::ClosureOnceShim { .. }) {
-            // Rustc has inserted a call to the shim that maps `Fn` and `FnMut`
-            // instances to an `FnOnce`. This shim has no body itself so we
-            // can't just inline, we must explicitly simulate it's effects by
-            // changing the target function and by setting the calling
-            // convention to that of a shim.
-
-            // Because this is a well defined internal item we can make
-            // assumptions about its generic arguments.
-            let Some((func_a, _rest)) = generic_args.split_first() else {
-                unreachable!()
+        let call_kind =
+            if let Some((instance, shim_type)) = handle_shims(resolved_fn, self.tcx(), param_env) {
+                resolved_fn = instance;
+                CallKind::Indirect {
+                    shim: Some(shim_type),
+                }
+            } else {
+                self.classify_call_kind(called_def_id, resolved_fn, &args, span)
             };
-            let Some((func_t, g)) = type_as_fn(self.tcx(), func_a.expect_ty()) else {
-                unreachable!()
-            };
-            resolved_fn = Instance::expect_resolve(tcx, param_env, func_t, g);
-            CallKind::Indirect { once_shim: true }
-        } else {
-            self.classify_call_kind(called_def_id, resolved_fn, &args, span)
-        };
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
@@ -444,19 +433,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
-        trace!(
-            "  Handling call! with kind {}",
-            match &call_kind {
-                CallKind::Direct => "direct",
-                CallKind::Indirect { once_shim } =>
-                    if *once_shim {
-                        "indirect (once shim)"
-                    } else {
-                        "indirect"
-                    },
-                CallKind::AsyncPoll { .. } => "async poll",
-            }
-        );
+        trace!("  Handling call! with kind {}", call_kind);
 
         // Recursively generate the PDG for the child function.
         let cache_key = resolved_fn;
@@ -720,7 +697,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
         self.tcx()
             .is_closure(def_id)
-            .then_some(CallKind::Indirect { once_shim: false })
+            .then_some(CallKind::Indirect { shim: None })
     }
 
     fn terminator_visitor<'b: 'a>(
@@ -815,10 +792,22 @@ pub enum CallKind<'tcx> {
     Indirect {
         /// The call takes place via a shim that implements `FnOnce` for a `Fn`
         /// or `FnMut` closure.
-        once_shim: bool,
+        shim: Option<ShimType>,
     },
     /// A poll to an async function, like `f.await`.
     AsyncPoll(AsyncFnPollEnv<'tcx>),
+}
+
+impl Display for CallKind<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Direct => f.write_str("direct")?,
+            Self::AsyncPoll(_) => f.write_str("async poll")?,
+            Self::Indirect { shim: None } => f.write_str("indirect")?,
+            Self::Indirect { shim: Some(shim) } => write!(f, "({} shim)", shim.as_ref())?,
+        }
+        Ok(())
+    }
 }
 
 #[derive(strum::AsRefStr)]
