@@ -811,6 +811,7 @@ fn influences_ctrl_impl(
         slf.spdg(),
         nodes,
     )
+    .is_some()
 }
 
 fn is_neighbor_impl(
@@ -854,6 +855,7 @@ fn flows_to_impl(
         slf.spdg(),
         other.nodes().iter().copied(),
     )
+    .is_some()
 }
 
 fn always_happens_before_impl(

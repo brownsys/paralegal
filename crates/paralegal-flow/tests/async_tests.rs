@@ -534,3 +534,64 @@ fn field_precision_at_future_consumption() {
         // assert!(sinks.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
     })
 }
+
+fn control_flow_overtaint_check(ctrl: CtrlRef<'_>) {
+    let checks = ctrl.marked(Identifier::new_intern("is_check"));
+    let sensitive_1 = ctrl.marked(Identifier::new_intern("is_sensitive1"));
+    let sensitive_2 = ctrl.marked(Identifier::new_intern("is_sensitive2"));
+
+    assert!(!checks.is_empty());
+    assert!(!sensitive_1.is_empty());
+    assert!(!sensitive_2.is_empty());
+
+    assert!(checks.flows_to_any(&sensitive_1));
+    assert!(!checks.flows_to_any(&sensitive_2));
+}
+
+#[test]
+fn control_flow_overtaint() {
+    InlineTestBuilder::new(stringify!(
+        #[paralegal_flow::marker(is_check, return)]
+        async fn perform_check(data: usize) -> Result<(), ()> {
+            if data != 0 {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
+        #[paralegal_flow::marker(is_sensitive1, return)]
+        async fn sensitive_action1(data: usize) {}
+
+        #[paralegal_flow::marker(is_sensitive2, return)]
+        async fn sensitive_action2(data: usize) {}
+
+        async fn main(condition: bool, data: usize) -> Result<(), ()> {
+            if condition {
+                perform_check(data).await?;
+
+                sensitive_action1(data).await;
+            } else {
+                sensitive_action2(data).await;
+            }
+            Ok(())
+        }
+    ))
+    .check_ctrl(control_flow_overtaint_check);
+}
+
+define_test!(control_flow_overtaint_tracing: graph -> {
+    control_flow_overtaint_check(graph)
+});
+
+define_test!(control_flow_overtaint_tracing_unasync: graph -> {
+    control_flow_overtaint_check(graph)
+});
+
+define_test!(control_flow_overtaint_async_trait: graph -> {
+    control_flow_overtaint_check(graph)
+});
+
+define_test!(control_flow_overtaint_async_trait_tracing: graph -> {
+    control_flow_overtaint_check(graph)
+});
