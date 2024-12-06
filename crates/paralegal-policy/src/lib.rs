@@ -222,7 +222,7 @@ impl GraphLocation {
     /// if they were severe enough.
     pub fn with_context<A>(
         &self,
-        prop: impl FnOnce(Arc<Context>) -> Result<A>,
+        prop: impl FnOnce(Arc<RootContext>) -> Result<A>,
     ) -> Result<PolicyReturn<A>> {
         self.with_context_configured(Default::default(), prop)
     }
@@ -234,7 +234,7 @@ impl GraphLocation {
     pub fn with_context_configured<A>(
         &self,
         config: Config,
-        prop: impl FnOnce(Arc<Context>) -> Result<A>,
+        prop: impl FnOnce(Arc<RootContext>) -> Result<A>,
     ) -> Result<PolicyReturn<A>> {
         let ctx = Arc::new(self.build_context(config)?);
         assert_warning!(
@@ -263,12 +263,12 @@ impl GraphLocation {
     ///
     /// Prefer using [`Self::with_context`] which takes care of emitting any
     /// diagnostic messages after the property is done.
-    pub fn build_context(&self, config: Config) -> Result<Context> {
+    pub fn build_context(&self, config: Config) -> Result<RootContext> {
         let _ = simple_logger::init_with_env();
 
         let deser_started = Instant::now();
         let desc = ProgramDescription::canonical_read(&self.path)?;
-        let mut ctx = Context::new(desc, config);
+        let mut ctx = RootContext::new(desc, config);
         ctx.stats.pdg_construction = self.construction_time;
         ctx.stats.deserialization = Some(deser_started.elapsed());
         Ok(ctx)

@@ -100,7 +100,7 @@ fn bfs_iter<
 /// [`super::GraphLocation::with_context`] this will be done automatically for
 /// you.
 #[derive(Debug)]
-pub struct Context {
+pub struct RootContext {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
     flows_to: Option<FlowsTo>,
@@ -118,7 +118,7 @@ pub struct ContextStats {
     pub precomputation: Duration,
 }
 
-impl Context {
+impl RootContext {
     /// Construct a [`Context`] from a [`ProgramDescription`].
     ///
     /// This also precomputes some data structures like an index over markers.
@@ -339,24 +339,6 @@ impl Context {
         src.flows_to(sink, self, edge_type)
     }
 
-    /// All nodes that have this marker through a type
-    pub fn nodes_marked_via_type(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_ {
-        self.marked_type(marker).iter().copied().flat_map(|t| {
-            self.all_controllers().flat_map(move |(cid, c)| {
-                c.type_assigns
-                    .iter()
-                    .filter(move |(_, tys)| tys.0.contains(&t))
-                    .map(move |(n, _)| GlobalNode::from_local_node(cid, *n))
-            })
-        })
-    }
-
-    /// All nodes with this marker, be that via type or directly
-    pub fn nodes_marked_any_way(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_ {
-        self.marked_nodes(marker)
-            .chain(self.nodes_marked_via_type(marker))
-    }
-
     /// Find the node that represents the `index`th argument of the controller
     /// `ctrl_id`.
     ///
@@ -402,16 +384,6 @@ impl Context {
         edge_type: EdgeSelection,
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         src.influencees(self, edge_type).into_iter()
-    }
-
-    /// Returns an iterator over all objects marked with `marker`.
-    pub fn marked_nodes(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_ {
-        self.report_marker_if_absent(marker);
-        self.marker_to_ids
-            .get(&marker)
-            .into_iter()
-            .flat_map(|t| &t.nodes)
-            .copied()
     }
 
     #[deprecated = "Use NodeExt::types instead"]
@@ -660,13 +632,58 @@ impl Context {
     }
 }
 
+/// Actions that behave differently depending on the context
+pub trait Context {
+    /// Get the root context object
+    fn root(&self) -> &RootContext;
+
+    /// Returns an iterator over all objects marked with `marker`.
+    fn marked_nodes(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_;
+
+    /// All nodes with this marker, be that via type or directly
+    fn nodes_marked_any_way(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_;
+    /// All nodes that have this marker through a type
+    fn nodes_marked_via_type(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_;
+}
+
+impl Context for RootContext {
+    fn root(&self) -> &RootContext {
+        self
+    }
+
+    fn nodes_marked_any_way(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.marked_nodes(marker)
+            .chain(self.nodes_marked_via_type(marker))
+    }
+
+    fn nodes_marked_via_type(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.marked_type(marker).iter().copied().flat_map(|t| {
+            self.all_controllers().flat_map(move |(cid, c)| {
+                c.type_assigns
+                    .iter()
+                    .filter(move |(_, tys)| tys.0.contains(&t))
+                    .map(move |(n, _)| GlobalNode::from_local_node(cid, *n))
+            })
+        })
+    }
+
+    fn marked_nodes(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.report_marker_if_absent(marker);
+        self.marker_to_ids
+            .get(&marker)
+            .into_iter()
+            .flat_map(|t| &t.nodes)
+            .copied()
+    }
+}
+
 /// Context queries conveniently accessible on nodes
 pub trait NodeQueries<'a>: IntoIterGlobalNodes
 where
     Self::Iter: 'a,
 {
     /// Get other nodes at the same instruction
-    fn siblings(self, ctx: &Context) -> NodeCluster {
+    fn siblings(self, ctx: &RootContext) -> NodeCluster {
         NodeCluster::new(
             self.controller_id(),
             self.iter_global_nodes()
@@ -691,7 +708,7 @@ where
     fn flows_to(
         self,
         sink: impl IntoIterGlobalNodes,
-        ctx: &Context,
+        ctx: &RootContext,
         edge_type: EdgeSelection,
     ) -> bool {
         let cf_id = self.controller_id();
@@ -717,7 +734,10 @@ where
     }
 
     /// Call sites that consume this node directly. E.g. the outgoing edges.
-    fn consuming_call_sites(self, ctx: &'a Context) -> Box<dyn Iterator<Item = CallString> + 'a> {
+    fn consuming_call_sites(
+        self,
+        ctx: &'a RootContext,
+    ) -> Box<dyn Iterator<Item = CallString> + 'a> {
         let ctrl = &ctx.desc.controllers[&self.controller_id()];
 
         Box::new(self.iter_nodes().flat_map(move |local| {
@@ -733,7 +753,7 @@ where
     fn has_ctrl_influence(
         self,
         target: impl IntoIterGlobalNodes + Sized + Copy,
-        ctx: &Context,
+        ctx: &RootContext,
     ) -> bool {
         self.flows_to(target, ctx, EdgeSelection::Control)
             || NodeCluster::try_from_iter(self.influencees(ctx, EdgeSelection::Data))
@@ -744,7 +764,7 @@ where
     /// Returns iterator over all Nodes that influence the given sink Node.
     ///
     /// Does not return the input node. A CallSite sink will return all of the associated CallArgument nodes.
-    fn influencers(self, ctx: &Context, edge_type: EdgeSelection) -> Vec<GlobalNode> {
+    fn influencers(self, ctx: &RootContext, edge_type: EdgeSelection) -> Vec<GlobalNode> {
         use petgraph::visit::*;
         let cf_id = self.controller_id();
         let nodes = self.iter_nodes();
@@ -769,7 +789,7 @@ where
     /// Returns iterator over all Nodes that are influenced by the given src Node.
     ///
     /// Does not return the input node. A CallArgument src will return the associated CallSite.
-    fn influencees(self, ctx: &Context, edge_type: EdgeSelection) -> Vec<GlobalNode> {
+    fn influencees(self, ctx: &RootContext, edge_type: EdgeSelection) -> Vec<GlobalNode> {
         let cf_id = self.controller_id();
 
         let graph = &ctx.desc.controllers[&cf_id].graph;
@@ -812,23 +832,23 @@ mod private {
 /// Extension trait with queries for single nodes
 pub trait NodeExt: private::Sealed {
     /// Returns true if this node has the provided type
-    fn has_type(self, t: TypeId, ctx: &Context) -> bool;
+    fn has_type(self, t: TypeId, ctx: &RootContext) -> bool;
     /// Find the call string for the statement or function that produced this node.
-    fn associated_call_site(self, ctx: &Context) -> CallString;
+    fn associated_call_site(self, ctx: &RootContext) -> CallString;
     /// Get the type(s) of a Node.
-    fn types(self, ctx: &Context) -> &[TypeId];
+    fn types(self, ctx: &RootContext) -> &[TypeId];
     /// Returns a DisplayNode for the given Node
-    fn describe(self, ctx: &Context) -> DisplayNode;
+    fn describe(self, ctx: &RootContext) -> DisplayNode;
     /// Retrieve metadata about a node.
-    fn info(self, ctx: &Context) -> &NodeInfo;
+    fn info(self, ctx: &RootContext) -> &NodeInfo;
     /// Retrieve metadata about the instruction executed by a specific node.
-    fn instruction(self, ctx: &Context) -> &InstructionInfo;
+    fn instruction(self, ctx: &RootContext) -> &InstructionInfo;
     /// Return the immediate successors of this node
-    fn successors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
+    fn successors(self, ctx: &RootContext) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
     /// Return the immediate predecessors of this node
-    fn predecessors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
+    fn predecessors(self, ctx: &RootContext) -> Box<dyn Iterator<Item = GlobalNode> + '_>;
     /// Get the span of a node
-    fn get_location(self, ctx: &Context) -> &Span;
+    fn get_location(self, ctx: &RootContext) -> &Span;
     /// Returns whether this Node has the marker applied to it directly or via its type.
     fn has_marker<C: HasDiagnosticsBase>(self, ctx: C, marker: Marker) -> bool;
     /// The shortest path between this and a target node
@@ -836,47 +856,47 @@ pub trait NodeExt: private::Sealed {
     fn shortest_path(
         self,
         to: GlobalNode,
-        ctx: &Context,
+        ctx: &RootContext,
         edge_selection: EdgeSelection,
     ) -> Option<Box<[GlobalNode]>>;
 }
 
 impl NodeExt for GlobalNode {
-    fn has_type(self, t: TypeId, ctx: &Context) -> bool {
+    fn has_type(self, t: TypeId, ctx: &RootContext) -> bool {
         ctx.desc().controllers[&self.controller_id()]
             .type_assigns
             .get(&self.local_node())
             .map_or(false, |tys| tys.0.contains(&t))
     }
-    fn associated_call_site(self, ctx: &Context) -> CallString {
+    fn associated_call_site(self, ctx: &RootContext) -> CallString {
         ctx.desc.controllers[&self.controller_id()]
             .node_info(self.local_node())
             .at
     }
 
-    fn types(self, ctx: &Context) -> &[TypeId] {
+    fn types(self, ctx: &RootContext) -> &[TypeId] {
         ctx.desc.controllers[&self.controller_id()]
             .type_assigns
             .get(&self.local_node())
             .map_or(&[], |v| v.0.as_ref())
     }
 
-    fn describe(self, ctx: &Context) -> DisplayNode {
+    fn describe(self, ctx: &RootContext) -> DisplayNode {
         DisplayNode::pretty(
             self.local_node(),
             &ctx.desc.controllers[&self.controller_id()],
         )
     }
 
-    fn info(self, ctx: &Context) -> &NodeInfo {
+    fn info(self, ctx: &RootContext) -> &NodeInfo {
         ctx.desc.controllers[&self.controller_id()].node_info(self.local_node())
     }
 
-    fn instruction(self, ctx: &Context) -> &InstructionInfo {
+    fn instruction(self, ctx: &RootContext) -> &InstructionInfo {
         &ctx.desc.instruction_info[&self.info(ctx).at.leaf()]
     }
 
-    fn successors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
+    fn successors(self, ctx: &RootContext) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
         Box::new(
             ctx.desc.controllers[&self.controller_id()]
                 .graph
@@ -885,7 +905,7 @@ impl NodeExt for GlobalNode {
         )
     }
 
-    fn predecessors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
+    fn predecessors(self, ctx: &RootContext) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
         Box::new(
             ctx.desc.controllers[&self.controller_id()]
                 .graph
@@ -893,7 +913,7 @@ impl NodeExt for GlobalNode {
                 .map(move |n| GlobalNode::from_local_node(self.controller_id(), n)),
         )
     }
-    fn get_location(self, ctx: &Context) -> &Span {
+    fn get_location(self, ctx: &RootContext) -> &Span {
         &self.info(ctx).span
     }
 
@@ -913,7 +933,7 @@ impl NodeExt for GlobalNode {
     fn shortest_path(
         self,
         to: Self,
-        ctx: &Context,
+        ctx: &RootContext,
         edge_selection: EdgeSelection,
     ) -> Option<Box<[Self]>> {
         let g = if self.controller_id() != to.controller_id() {
@@ -950,18 +970,18 @@ impl NodeExt for GlobalNode {
 impl<T: Sealed> Sealed for &'_ T {}
 
 impl<T: NodeExt + Copy> NodeExt for &'_ T {
-    fn has_type(self, t: TypeId, ctx: &Context) -> bool {
+    fn has_type(self, t: TypeId, ctx: &RootContext) -> bool {
         (*self).has_type(t, ctx)
     }
-    fn info(self, ctx: &Context) -> &NodeInfo {
+    fn info(self, ctx: &RootContext) -> &NodeInfo {
         (*self).info(ctx)
     }
 
-    fn types(self, ctx: &Context) -> &[TypeId] {
+    fn types(self, ctx: &RootContext) -> &[TypeId] {
         (*self).types(ctx)
     }
 
-    fn describe(self, ctx: &Context) -> DisplayNode {
+    fn describe(self, ctx: &RootContext) -> DisplayNode {
         (*self).describe(ctx)
     }
 
@@ -969,32 +989,32 @@ impl<T: NodeExt + Copy> NodeExt for &'_ T {
         (*self).has_marker(ctx, marker)
     }
 
-    fn successors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
+    fn successors(self, ctx: &RootContext) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
         (*self).successors(ctx)
     }
 
-    fn instruction(self, ctx: &Context) -> &InstructionInfo {
+    fn instruction(self, ctx: &RootContext) -> &InstructionInfo {
         (*self).instruction(ctx)
     }
 
-    fn get_location(self, ctx: &Context) -> &Span {
+    fn get_location(self, ctx: &RootContext) -> &Span {
         (*self).get_location(ctx)
     }
 
-    fn predecessors(self, ctx: &Context) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
+    fn predecessors(self, ctx: &RootContext) -> Box<dyn Iterator<Item = GlobalNode> + '_> {
         (*self).predecessors(ctx)
     }
 
     fn shortest_path(
         self,
         to: GlobalNode,
-        ctx: &Context,
+        ctx: &RootContext,
         edge_selection: EdgeSelection,
     ) -> Option<Box<[GlobalNode]>> {
         (*self).shortest_path(to, ctx, edge_selection)
     }
 
-    fn associated_call_site(self, ctx: &Context) -> CallString {
+    fn associated_call_site(self, ctx: &RootContext) -> CallString {
         (*self).associated_call_site(ctx)
     }
 }
@@ -1004,7 +1024,7 @@ pub struct DisplayDef<'a> {
     /// DefId to display.
     pub def_id: DefId,
     /// Context for the DefId.
-    pub ctx: &'a Context,
+    pub ctx: &'a RootContext,
 }
 
 impl<'a> std::fmt::Display for DisplayDef<'a> {

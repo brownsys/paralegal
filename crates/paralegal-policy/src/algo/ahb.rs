@@ -118,7 +118,7 @@ impl AlwaysHappensBefore {
     }
 }
 
-impl crate::Context {
+impl crate::RootContext {
     /// Enforce that on every data flow path from the `starting_points` to `is_terminal` a
     /// node satisfying `is_checkpoint` is passed.
     ///

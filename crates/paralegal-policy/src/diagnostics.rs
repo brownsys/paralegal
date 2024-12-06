@@ -92,12 +92,13 @@
 
 use colored::*;
 use indexmap::IndexMap;
+use paralegal_spdg::utils::{write_sep, DisplayList};
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{Endpoint, GlobalNode, Identifier, Span, SpanCoord, SPDG};
+use paralegal_spdg::{DisplayPath, Endpoint, GlobalNode, Identifier, Span, SpanCoord, SPDG};
 
-use crate::{Context, NodeExt};
+use crate::{Context, NodeExt, RootContext};
 
 /// Check the condition and emit a [`Diagnostics::error`] if it fails.
 #[macro_export]
@@ -451,7 +452,7 @@ pub trait HasDiagnosticsBase {
     fn record(&self, diagnostic: Diagnostic);
 
     /// Access to [`Context`], usually also available via [`std::ops::Deref`].
-    fn as_ctx(&self) -> &Context;
+    fn as_ctx(&self) -> &RootContext;
 }
 
 impl<T: HasDiagnosticsBase> HasDiagnosticsBase for Arc<T> {
@@ -460,13 +461,13 @@ impl<T: HasDiagnosticsBase> HasDiagnosticsBase for Arc<T> {
         t.record(diagnostic)
     }
 
-    fn as_ctx(&self) -> &Context {
+    fn as_ctx(&self) -> &RootContext {
         self.as_ref().as_ctx()
     }
 }
 
 impl<T: HasDiagnosticsBase> HasDiagnosticsBase for &'_ T {
-    fn as_ctx(&self) -> &Context {
+    fn as_ctx(&self) -> &RootContext {
         (*self).as_ctx()
     }
 
@@ -476,7 +477,7 @@ impl<T: HasDiagnosticsBase> HasDiagnosticsBase for &'_ T {
 }
 
 impl<T: HasDiagnosticsBase> HasDiagnosticsBase for Rc<T> {
-    fn as_ctx(&self) -> &Context {
+    fn as_ctx(&self) -> &RootContext {
         (**self).as_ctx()
     }
 
@@ -683,7 +684,7 @@ pub trait Diagnostics: HasDiagnosticsBase {
     }
 }
 
-fn highlighted_node_span(ctx: &Context, node: GlobalNode) -> HighlightedSpan {
+fn highlighted_node_span(ctx: &RootContext, node: GlobalNode) -> HighlightedSpan {
     let node_span = node.get_location(ctx);
     let stmt_span = &ctx.instruction_at_node(node).span;
     if stmt_span.contains(node_span) {
@@ -758,7 +759,7 @@ pub struct PolicyContext {
 }
 
 impl std::ops::Deref for PolicyContext {
-    type Target = Context;
+    type Target = RootContext;
     fn deref(&self) -> &Self::Target {
         self.as_ctx()
     }
@@ -809,7 +810,7 @@ impl HasDiagnosticsBase for PolicyContext {
         self.inner.record(diagnostic)
     }
 
-    fn as_ctx(&self) -> &Context {
+    fn as_ctx(&self) -> &RootContext {
         self.inner.as_ctx()
     }
 }
@@ -828,7 +829,7 @@ pub struct ControllerContext {
 }
 
 impl std::ops::Deref for ControllerContext {
-    type Target = Context;
+    type Target = RootContext;
     fn deref(&self) -> &Self::Target {
         self.as_ctx()
     }
@@ -893,15 +894,43 @@ impl ControllerContext {
 
 impl HasDiagnosticsBase for ControllerContext {
     fn record(&self, mut diagnostic: Diagnostic) {
-        let name = self.as_ctx().desc().controllers[&self.id].name;
-        diagnostic
-            .context
-            .push(Identifier::new_intern(&format!("[controller: {}]", name)));
+        let ctrl = &self.as_ctx().desc().controllers[&self.id];
+        diagnostic.context.push(Identifier::new_intern(&format!(
+            "[controller: {}]",
+            DisplayPath::from(&ctrl.path)
+        )));
         self.inner.record(diagnostic)
     }
 
-    fn as_ctx(&self) -> &Context {
+    fn as_ctx(&self) -> &RootContext {
         self.inner.as_ctx()
+    }
+}
+
+impl Context for ControllerContext {
+    fn root(&self) -> &RootContext {
+        self.as_ctx()
+    }
+
+    fn marked_nodes(&self, marker: crate::Marker) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.root()
+            .marked_nodes(marker)
+            .filter(|n| n.controller_id() == self.id)
+    }
+
+    fn nodes_marked_via_type(
+        &self,
+        marker: crate::Marker,
+    ) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.root()
+            .nodes_marked_via_type(marker)
+            .filter(|n| n.controller_id() == self.id)
+    }
+
+    fn nodes_marked_any_way(&self, marker: crate::Marker) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.root()
+            .nodes_marked_any_way(marker)
+            .filter(|n| n.controller_id() == self.id)
     }
 }
 
@@ -919,7 +948,7 @@ pub struct CombinatorContext {
 }
 
 impl std::ops::Deref for CombinatorContext {
-    type Target = Context;
+    type Target = RootContext;
     fn deref(&self) -> &Self::Target {
         self.as_ctx()
     }
@@ -952,12 +981,12 @@ impl HasDiagnosticsBase for CombinatorContext {
         self.inner.record(diagnostic)
     }
 
-    fn as_ctx(&self) -> &Context {
+    fn as_ctx(&self) -> &RootContext {
         self.inner.as_ctx()
     }
 }
 
-impl Context {
+impl RootContext {
     /// Add a policy to the diagnostic context.
     ///
     /// See the [module level documentation][self] for more information on
@@ -1034,13 +1063,13 @@ impl DiagnosticsRecorder {
     }
 }
 
-impl HasDiagnosticsBase for Context {
+impl HasDiagnosticsBase for RootContext {
     /// Record a diagnostic message.
     fn record(&self, diagnostic: Diagnostic) {
         self.diagnostics.0.lock().unwrap().insert(diagnostic, ());
     }
 
-    fn as_ctx(&self) -> &Context {
+    fn as_ctx(&self) -> &RootContext {
         self
     }
 }

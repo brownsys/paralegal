@@ -697,6 +697,8 @@ type RawExternalMarkers = HashMap<String, Vec<ExternalAnnotationEntry>>;
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.
 fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
+    //let relaxed = opts.relaxed();
+    let relaxed = false;
     if let Some(annotation_file) = opts.marker_control().external_annotations() {
         let from_toml: RawExternalMarkers = toml::from_str(
             &std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
@@ -713,12 +715,17 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
         let new_map: ExternalMarkers = from_toml
             .iter()
             .filter_map(|(path, entries)| {
-                let def_id = expect_resolve_string_to_def_id(tcx, path, opts.relaxed())?;
+                let def_id = expect_resolve_string_to_def_id(tcx, path, relaxed)?;
                 let markers = entries
                     .iter()
                     .flat_map(|entry| {
                         entry.check_integrity(tcx, def_id);
-                        entry.flatten()
+                        entry.flatten().inspect(|ann| {
+                            // println!(
+                            //     "Registering refinement {:?} for marker {} on {def_id:?}",
+                            //     ann.refinement, ann.marker
+                            // )
+                        })
                     })
                     .collect();
                 Some((def_id, markers))

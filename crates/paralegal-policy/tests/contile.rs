@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use anyhow::{Ok, Result};
 use helpers::Test;
-use paralegal_policy::{Context, Diagnostics, EdgeSelection, NodeExt};
+use paralegal_policy::{RootContext, Diagnostics, EdgeSelection, NodeExt};
 use paralegal_spdg::Identifier;
 
 mod helpers;
 
 const CODE: &str = include_str!("raw-code/contile.rs");
 
-fn policy(ctx: Arc<Context>) -> Result<()> {
+fn policy(ctx: Arc<RootContext>) -> Result<()> {
     let m_sink = Identifier::new_intern("sink");
     let m_sensitive = Identifier::new_intern("sensitive");
     let m_send = Identifier::new_intern("metrics_server");

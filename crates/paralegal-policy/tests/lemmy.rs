@@ -4,7 +4,7 @@ use std::{collections::hash_map::RandomState, sync::Arc};
 
 use helpers::{Result, Test};
 use paralegal_policy::{
-    assert_error, assert_warning, Context, Diagnostics, EdgeSelection, NodeExt, NodeQueries,
+    assert_error, assert_warning, RootContext, Diagnostics, EdgeSelection, NodeExt, NodeQueries,
 };
 use paralegal_spdg::{GlobalNode, Identifier};
 
@@ -38,7 +38,7 @@ const ASYNC_TRAIT_CODE: &str = stringify!(
     async fn save(u: usize) {}
 );
 
-fn async_trait_policy(ctx: Arc<Context>) -> Result<()> {
+fn async_trait_policy(ctx: Arc<RootContext>) -> Result<()> {
     let sinks = ctx
         .marked_nodes(Identifier::new_intern("sink"))
         .collect::<Vec<_>>();
@@ -105,7 +105,7 @@ const CALLING_ASYNC_TRAIT_CODE: &str = stringify!(
     }
 );
 
-fn calling_async_trait_policy(ctx: Arc<Context>) -> Result<()> {
+fn calling_async_trait_policy(ctx: Arc<RootContext>) -> Result<()> {
     let sources = Vec::from_iter(ctx.marked_nodes(Identifier::new_intern("source")));
     let sinks = Vec::from_iter(ctx.marked_nodes(Identifier::new_intern("sink")));
     assert_error!(ctx, !sources.is_empty());
