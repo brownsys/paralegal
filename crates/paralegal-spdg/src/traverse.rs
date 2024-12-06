@@ -69,18 +69,21 @@ pub fn generic_flows_to(
     edge_selection: EdgeSelection,
     spdg: &SPDG,
     other: impl IntoIterator<Item = Node>,
-) -> bool {
+) -> Option<Node> {
     let targets = other.into_iter().collect::<HashSet<_>>();
     let mut from = from.into_iter().peekable();
     if from.peek().is_none() || targets.is_empty() {
-        return false;
+        return None;
     }
 
     let graph = edge_selection.filter_graph(&spdg.graph);
 
     let result = petgraph::visit::depth_first_search(&graph, from, |event| match event {
-        DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(()),
+        DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(d),
         _ => Control::Continue,
     });
-    matches!(result, Control::Break(()))
+    match result {
+        Control::Break(r) => Some(r),
+        _ => None,
+    }
 }

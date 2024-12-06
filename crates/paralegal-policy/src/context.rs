@@ -731,6 +731,42 @@ where
             &ctx.desc.controllers[&cf_id],
             sink.iter_nodes(),
         )
+        .is_some()
+    }
+
+    /// Returns the sink node that is reached
+    ///
+    /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
+    ///
+    /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
+    fn find_flow(
+        self,
+        sink: impl IntoIterGlobalNodes,
+        ctx: &RootContext,
+        edge_type: EdgeSelection,
+    ) -> Option<GlobalNode> {
+        let cf_id = self.controller_id();
+        if sink.controller_id() != cf_id {
+            return None;
+        }
+
+        if let Some(index) = ctx.flows_to.as_ref() {
+            if edge_type.is_data() {
+                let flows_to = &index[&cf_id];
+                return self.iter_nodes().find_map(|src| {
+                    sink.iter_nodes()
+                        .find(|sink| flows_to.data_flows_to[src.index()][sink.index()])
+                        .map(|n| GlobalNode::from_local_node(cf_id, n))
+                });
+            }
+        }
+        generic_flows_to(
+            self.iter_nodes(),
+            edge_type,
+            &ctx.desc.controllers[&cf_id],
+            sink.iter_nodes(),
+        )
+        .map(|n| GlobalNode::from_local_node(cf_id, n))
     }
 
     /// Call sites that consume this node directly. E.g. the outgoing edges.
