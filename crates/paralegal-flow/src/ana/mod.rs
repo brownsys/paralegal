@@ -11,23 +11,28 @@ use crate::{
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
     utils::*,
-    HashMap, HashSet, LogLevelConfig, MarkerCtx,
+    DumpStats, HashMap, HashSet, LogLevelConfig, MarkerCtx, INTERMEDIATE_STAT_EXT,
 };
 
-use std::{rc::Rc, time::Instant};
+use std::{fs::File, rc::Rc, time::Instant};
 
 use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::BodyCache, calling_convention::CallingConvention, utils::is_async,
+    body_cache::{local_or_remote_paths, BodyCache},
+    calling_convention::CallingConvention,
+    utils::is_async,
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 use inline_judge::InlineJudgement;
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
-use rustc_hir::{self as hir, def, def_id::DefId};
+use rustc_hir::{
+    self as hir, def,
+    def_id::{DefId, LOCAL_CRATE},
+};
 use rustc_middle::{
     mir::{Location, Operand},
     ty::{Instance, ParamEnv, TyCtxt},
@@ -38,6 +43,7 @@ mod graph_converter;
 mod inline_judge;
 
 use graph_converter::GraphConverter;
+use std::time::Duration;
 
 pub use self::inline_judge::InlineJudge;
 
@@ -251,6 +257,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
             })
             .collect::<AnalyzedSpans>();
 
+        let prior_stats = self.get_prior_stats();
+        let self_time = self.stats.elapsed();
+
         let stats = AnalyzerStats {
             marker_annotation_count: mctx
                 .all_annotations()
@@ -261,10 +270,38 @@ impl<'tcx> SPDGGenerator<'tcx> {
             pdg_locs,
             seen_functions,
             seen_locs,
-            time: self.stats.elapsed(),
+            self_time,
+            total_time: self_time + prior_stats.total_time,
+            dump_time: prior_stats.dump_time,
         };
 
         (stats, analyzed_spans)
+    }
+
+    fn get_prior_stats(&self) -> DumpStats {
+        self.judge
+            .included_crates()
+            .iter()
+            .copied()
+            .filter(|c| *c != LOCAL_CRATE)
+            .map(|c| {
+                let paths = local_or_remote_paths(c, self.tcx, INTERMEDIATE_STAT_EXT);
+
+                let path = paths.iter().find(|p| p.exists()).unwrap_or_else(|| {
+                    panic!("No stats path found for included crate {c:?}, searched {paths:?}")
+                });
+                serde_json::from_reader(File::open(path).unwrap()).unwrap()
+            })
+            .fold(
+                DumpStats {
+                    total_time: Duration::ZERO,
+                    dump_time: Duration::ZERO,
+                },
+                |one, other: DumpStats| DumpStats {
+                    total_time: one.total_time + other.total_time,
+                    dump_time: one.dump_time + other.dump_time,
+                },
+            )
     }
 
     /// Create an [`InstructionInfo`] record for each [`GlobalLocation`]

@@ -49,13 +49,18 @@ use ann::dump_markers;
 use args::{ClapArgs, Debugger, LogLevelConfig};
 use desc::{utils::write_sep, ProgramDescription};
 
-use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
+use flowistry_pdg_construction::body_cache::{dump_mir_and_borrowck_facts, intermediate_out_dir};
 use log::Level;
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 
 pub use std::collections::{HashMap, HashSet};
-use std::{fmt::Display, time::Instant};
+use std::{
+    fmt::Display,
+    fs::File,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
@@ -142,19 +147,35 @@ impl Callbacks {
     }
 }
 
-struct DumpOnlyCallbacks {
-    compress_artifacts: bool,
+#[derive(serde::Deserialize, serde::Serialize)]
+struct DumpStats {
+    dump_time: Duration,
+    total_time: Duration,
 }
 
-impl rustc_driver::Callbacks for DumpOnlyCallbacks {
+struct DumpOnlyCallbacks<'a> {
+    compress_artifacts: bool,
+    time: &'a mut Duration,
+    output_location: &'a mut Option<PathBuf>,
+}
+
+const INTERMEDIATE_STAT_EXT: &str = "stats.json";
+
+impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
+            let start = Instant::now();
             dump_mir_and_borrowck_facts(tcx, self.compress_artifacts);
             dump_markers(tcx);
+            *self.time = start.elapsed();
+            assert!(self
+                .output_location
+                .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+                .is_none());
         });
         rustc_driver::Compilation::Continue
     }
@@ -403,50 +424,76 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
 
-        let mut callbacks = match how_to_handle_this_crate(&plugin_args, &mut compiler_args) {
-            CrateHandling::JustCompile => {
-                Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
-            }
-            CrateHandling::CompileAndDump => {
-                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                Box::new(DumpOnlyCallbacks {
-                    compress_artifacts: plugin_args.anactrl().compress_artifacts(),
-                })
-            }
-            CrateHandling::Analyze => {
-                plugin_args.setup_logging();
+        let mut output_path_location = None;
+        let mut dump_time = Duration::ZERO;
+        let start = Instant::now();
 
-                let opts = Box::leak(Box::new(plugin_args));
-
-                const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
-                if let Ok(debugger) = std::env::var(RERUN_VAR) {
-                    info!("Restarting with debugger '{debugger}'");
-                    let mut dsplit = debugger.split(' ');
-                    let mut cmd = std::process::Command::new(dsplit.next().unwrap());
-                    cmd.args(dsplit)
-                        .args(std::env::args())
-                        .env_remove(RERUN_VAR);
-                    std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
+        let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
+        let result = {
+            let mut callbacks = match handling {
+                CrateHandling::JustCompile => {
+                    Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
                 }
-
-                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                if opts.verbosity() >= Level::Debug {
-                    compiler_args.push("-Ztrack-diagnostics".to_string());
+                CrateHandling::CompileAndDump => {
+                    compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+                    Box::new(DumpOnlyCallbacks {
+                        compress_artifacts: plugin_args.anactrl().compress_artifacts(),
+                        time: &mut dump_time,
+                        output_location: &mut output_path_location,
+                    })
                 }
+                CrateHandling::Analyze => {
+                    plugin_args.setup_logging();
 
-                if let Some(dbg) = opts.attach_to_debugger() {
-                    dbg.attach()
+                    let opts = Box::leak(Box::new(plugin_args));
+
+                    const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
+                    if let Ok(debugger) = std::env::var(RERUN_VAR) {
+                        info!("Restarting with debugger '{debugger}'");
+                        let mut dsplit = debugger.split(' ');
+                        let mut cmd = std::process::Command::new(dsplit.next().unwrap());
+                        cmd.args(dsplit)
+                            .args(std::env::args())
+                            .env_remove(RERUN_VAR);
+                        std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
+                    }
+
+                    compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+                    if opts.verbosity() >= Level::Debug {
+                        compiler_args.push("-Ztrack-diagnostics".to_string());
+                    }
+
+                    if let Some(dbg) = opts.attach_to_debugger() {
+                        dbg.attach()
+                    }
+
+                    debug!(
+                        "Arguments: {}",
+                        Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
+                    );
+                    Box::new(Callbacks::new(opts))
                 }
+            };
 
-                debug!(
-                    "Arguments: {}",
-                    Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
-                );
-                Box::new(Callbacks::new(opts))
-            }
+            rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run()
         };
-
-        rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run()
+        match handling {
+            CrateHandling::CompileAndDump => {
+                let filepath = output_path_location
+                    .take()
+                    .expect("Output path should be set");
+                serde_json::to_writer(
+                    File::create(filepath).unwrap(),
+                    &DumpStats {
+                        dump_time,
+                        total_time: start.elapsed(),
+                    },
+                )
+                .unwrap();
+            }
+            _ => (),
+        }
+        result
     }
 }
 

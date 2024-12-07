@@ -369,8 +369,12 @@ pub struct ProgramDescription {
 pub struct AnalyzerStats {
     /// How many marker annotations were found
     pub marker_annotation_count: u32,
-    /// Total time this rustc invocation took
-    pub time: Duration,
+    /// Total time used for the last analzyer run
+    pub self_time: Duration,
+    /// Total time spent in compiler invokations for incldued crates
+    pub total_time: Duration,
+    /// Time spent dumping MIR
+    pub dump_time: Duration,
     /// How long rustc ran before out plugin executed
     pub rustc_time: Duration,
     /// The number of functions we produced a PDG for

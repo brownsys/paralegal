@@ -926,6 +926,7 @@ dependencies = [
  "rustc_utils 0.7.4-nightly-2023-08-25 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_bare",
+ "serde_json",
  "serial_test",
  "simple_logger",
  "strum",
