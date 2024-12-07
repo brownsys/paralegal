@@ -5,7 +5,9 @@ use std::{collections::HashSet, sync::Arc};
 use helpers::Test;
 
 use anyhow::Result;
-use paralegal_policy::{assert_error, RootContext, Diagnostics as _, EdgeSelection, NodeExt as _};
+use paralegal_policy::{
+    assert_error, Context, Diagnostics as _, EdgeSelection, NodeExt as _, RootContext,
+};
 use paralegal_spdg::{GlobalNode, Identifier, NodeCluster, SourceUse};
 use petgraph::Outgoing;
 

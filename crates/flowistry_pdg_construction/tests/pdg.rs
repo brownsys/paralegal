@@ -59,9 +59,9 @@ fn pdg(
     rustc_utils::test_utils::CompileBuilder::new(input)
         .with_query_override(None)
         .expect_compile(move |CompileResult { tcx, .. }| {
-            dump_mir_and_borrowck_facts(tcx);
+            dump_mir_and_borrowck_facts(tcx, false);
             let def_id = get_main(tcx);
-            let mut memo = MemoPdgConstructor::new(tcx);
+            let mut memo = MemoPdgConstructor::new(tcx, false);
             configure(tcx, &mut memo);
             let policy = memo.take_call_changes_policy();
             memo.with_call_change_callback(LocalLoadingOnly(policy));

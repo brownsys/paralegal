@@ -4,7 +4,8 @@ use std::{collections::hash_map::RandomState, sync::Arc};
 
 use helpers::{Result, Test};
 use paralegal_policy::{
-    assert_error, assert_warning, RootContext, Diagnostics, EdgeSelection, NodeExt, NodeQueries,
+    assert_error, assert_warning, Context, Diagnostics, EdgeSelection, NodeExt, NodeQueries,
+    RootContext,
 };
 use paralegal_spdg::{GlobalNode, Identifier};
 

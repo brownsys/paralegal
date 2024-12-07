@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{algo::ahb, assert_error, RootContext};
+use paralegal_policy::{algo::ahb, assert_error, Context, RootContext};
 use paralegal_spdg::{HashSet, Identifier};
 
 mod helpers;

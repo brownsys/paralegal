@@ -6,17 +6,18 @@ use std::vec;
 use std::{io::Write, process::exit, sync::Arc};
 
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
-use paralegal_spdg::traverse::{generic_flows_to, EdgeSelection};
+use paralegal_spdg::traverse::{
+    generic_flows_to, generic_influencees, generic_influencers, EdgeSelection,
+};
 use paralegal_spdg::{
     CallString, DefKind, DisplayNode, Endpoint, FunctionHandling, GlobalNode, HashMap, HashSet,
-    Identifier, InstructionInfo, IntoIterGlobalNodes, Node as SPDGNode, NodeCluster, NodeInfo,
-    ProgramDescription, SPDGImpl, Span, TypeId, SPDG,
+    Identifier, InstructionInfo, IntoIterGlobalNodes, NodeCluster, NodeInfo, ProgramDescription,
+    Span, TypeId, SPDG,
 };
 
 use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
-use petgraph::prelude::Bfs;
-use petgraph::visit::{EdgeFiltered, EdgeRef, IntoNeighborsDirected, Reversed, Topo, Walker};
+use petgraph::visit::{EdgeRef, IntoNeighborsDirected, Reversed, Topo, Walker};
 use petgraph::Direction::Outgoing;
 use petgraph::{Direction, Incoming};
 
@@ -57,27 +58,7 @@ impl MarkerTargets {
     }
 }
 
-use petgraph::visit::{GraphRef, IntoNeighbors, Visitable};
-
 use self::private::Sealed;
-
-fn bfs_iter<
-    G: IntoNeighbors + GraphRef + Visitable<NodeId = SPDGNode, Map = <SPDGImpl as Visitable>::Map>,
->(
-    g: G,
-    controller_id: Endpoint,
-    start: impl IntoIterator<Item = SPDGNode>,
-) -> impl Iterator<Item = GlobalNode> {
-    let mut discovered = g.visit_map();
-    let stack: std::collections::VecDeque<petgraph::prelude::NodeIndex> =
-        start.into_iter().collect();
-    for n in stack.iter() {
-        petgraph::visit::VisitMap::visit(&mut discovered, *n);
-    }
-    let bfs = Bfs { stack, discovered };
-    let walker_iter = Walker::iter(bfs, g);
-    walker_iter.map(move |inner| GlobalNode::from_local_node(controller_id, inner))
-}
 
 /// Interface for defining policies.
 ///
@@ -801,25 +782,12 @@ where
     ///
     /// Does not return the input node. A CallSite sink will return all of the associated CallArgument nodes.
     fn influencers(self, ctx: &RootContext, edge_type: EdgeSelection) -> Vec<GlobalNode> {
-        use petgraph::visit::*;
         let cf_id = self.controller_id();
         let nodes = self.iter_nodes();
-
-        let reversed_graph = Reversed(&ctx.desc.controllers[&cf_id].graph);
-
-        match edge_type {
-            EdgeSelection::Data => {
-                let edges_filtered =
-                    EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_data());
-                bfs_iter(&edges_filtered, cf_id, nodes).collect::<Vec<_>>()
-            }
-            EdgeSelection::Control => {
-                let edges_filtered =
-                    EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_control());
-                bfs_iter(&edges_filtered, cf_id, nodes).collect::<Vec<_>>()
-            }
-            EdgeSelection::Both => bfs_iter(reversed_graph, cf_id, nodes).collect::<Vec<_>>(),
-        }
+        generic_influencers(&ctx.desc.controllers[&cf_id].graph, nodes, edge_type)
+            .into_iter()
+            .map(|n| GlobalNode::from_local_node(cf_id, n))
+            .collect()
     }
 
     /// Returns iterator over all Nodes that are influenced by the given src Node.
@@ -842,18 +810,10 @@ where
                     .collect::<Vec<_>>();
             }
         }
-
-        match edge_type {
-            EdgeSelection::Data => {
-                let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_data());
-                bfs_iter(&edges_filtered, cf_id, self.iter_nodes()).collect::<Vec<_>>()
-            }
-            EdgeSelection::Both => bfs_iter(graph, cf_id, self.iter_nodes()).collect::<Vec<_>>(),
-            EdgeSelection::Control => {
-                let edges_filtered = EdgeFiltered::from_fn(graph, |e| e.weight().is_control());
-                bfs_iter(&edges_filtered, cf_id, self.iter_nodes()).collect::<Vec<_>>()
-            }
-        }
+        generic_influencees(graph, self.iter_nodes(), edge_type)
+            .into_iter()
+            .map(move |n| GlobalNode::from_local_node(cf_id, n))
+            .collect()
     }
 }
 

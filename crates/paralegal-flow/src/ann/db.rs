@@ -720,12 +720,7 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                     .iter()
                     .flat_map(|entry| {
                         entry.check_integrity(tcx, def_id);
-                        entry.flatten().inspect(|ann| {
-                            // println!(
-                            //     "Registering refinement {:?} for marker {} on {def_id:?}",
-                            //     ann.refinement, ann.marker
-                            // )
-                        })
+                        entry.flatten()
                     })
                     .collect();
                 Some((def_id, markers))

@@ -1,7 +1,8 @@
 mod helpers;
 
 use helpers::{Result, Test};
-use paralegal_policy::{loc, Diagnostics, Marker};
+use paralegal_policy::{assert_error, loc, Context, Diagnostics, Marker, NodeQueries};
+use paralegal_spdg::Identifier;
 
 macro_rules! marker {
     ($id:ident) => {
@@ -106,6 +107,177 @@ fn has_ctrl_flow_influence() -> Result<()> {
                 err.emit();
             }
         }
+        Ok(())
+    })
+}
+
+#[test]
+fn lemmy_ctrl_influence() -> Result<()> {
+    Test::new(stringify!(
+        #[paralegal::marker(check, return)]
+        async fn check_safe(data: usize) -> Result<(), ()> {
+            Ok(())
+        }
+
+        #[paralegal::marker(sensitive, return)]
+        async fn sensitive_action(data: usize) {}
+
+        #[paralegal::analyze]
+        async fn main(data: usize) -> Result<(), ()> {
+            check_safe(data).await?;
+
+            sensitive_action(data).await;
+            Ok(())
+        }
+    ))?
+    .run(|ctx| {
+        let mut sensitive = ctx
+            .marked_nodes(Identifier::new_intern("sensitive"))
+            .peekable();
+        let checks = ctx
+            .marked_nodes(Identifier::new_intern("check"))
+            .collect::<Box<_>>();
+
+        assert!(sensitive.peek().is_some());
+        assert!(!checks.is_empty());
+
+        assert_error!(
+            ctx,
+            sensitive.all(|sens| { checks.iter().any(|c| c.has_ctrl_influence(sens, &ctx)) })
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn lemmy_blocking_ctrl_influence() -> Result<()> {
+    Test::new(stringify!(
+        #[paralegal::marker(check, return)]
+        async fn check_safe(data: usize) -> Result<(), ()> {
+            Ok(())
+        }
+
+        #[paralegal::marker(sensitive, return)]
+        fn sensitive_action(data: usize) {}
+
+        async fn blocking(f: impl FnOnce() -> ()) {
+            f()
+        }
+
+        #[paralegal::analyze]
+        async fn main(data: usize) -> Result<(), ()> {
+            check_safe(data).await?;
+
+            blocking(|| {
+                sensitive_action(data);
+            })
+            .await;
+            Ok(())
+        }
+    ))?
+    .run(|ctx| {
+        let mut sensitive = ctx
+            .marked_nodes(Identifier::new_intern("sensitive"))
+            .peekable();
+        let checks = ctx
+            .marked_nodes(Identifier::new_intern("check"))
+            .collect::<Box<_>>();
+
+        assert!(sensitive.peek().is_some());
+        assert!(!checks.is_empty());
+
+        assert_error!(
+            ctx,
+            sensitive.all(|sens| { checks.iter().any(|c| c.has_ctrl_influence(sens, &ctx)) })
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn nested_ctrl_influence() -> Result<()> {
+    Test::new(stringify!(
+        #[paralegal::marker(check, return)]
+        async fn check_safe(data: usize) -> Result<(), ()> {
+            Ok(())
+        }
+
+        #[paralegal::marker(sensitive, return)]
+        fn sensitive_action(data: usize) {}
+
+        async fn blocking(data: usize) {
+            sensitive_action(data)
+        }
+
+        #[paralegal::analyze]
+        async fn main(data: usize) -> Result<(), ()> {
+            check_safe(data).await?;
+
+            blocking(data).await;
+            Ok(())
+        }
+    ))?
+    .run(|ctx| {
+        let mut sensitive = ctx
+            .marked_nodes(Identifier::new_intern("sensitive"))
+            .peekable();
+        let checks = ctx
+            .marked_nodes(Identifier::new_intern("check"))
+            .collect::<Box<_>>();
+
+        assert!(sensitive.peek().is_some());
+        assert!(!checks.is_empty());
+
+        assert_error!(
+            ctx,
+            sensitive.all(|sens| { checks.iter().any(|c| c.has_ctrl_influence(sens, &ctx)) })
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn double_nested_ctrl_influence() -> Result<()> {
+    Test::new(stringify!(
+        #[paralegal::marker(check, return)]
+        fn check_safe(data: usize) -> Result<(), ()> {
+            Ok(())
+        }
+
+        #[paralegal::marker(sensitive, return)]
+        fn sensitive_action(data: usize) {}
+
+        fn blocking(data: usize) {
+            wrap(data)
+        }
+
+        fn wrap(data: usize) {
+            sensitive_action(data)
+        }
+
+        #[paralegal::analyze]
+        fn main(data: usize) -> Result<(), ()> {
+            check_safe(data)?;
+
+            blocking(data);
+            Ok(())
+        }
+    ))?
+    .run(|ctx| {
+        let mut sensitive = ctx
+            .marked_nodes(Identifier::new_intern("sensitive"))
+            .peekable();
+        let checks = ctx
+            .marked_nodes(Identifier::new_intern("check"))
+            .collect::<Box<_>>();
+
+        assert!(sensitive.peek().is_some());
+        assert!(!checks.is_empty());
+
+        assert_error!(
+            ctx,
+            sensitive.all(|sens| { checks.iter().any(|c| c.has_ctrl_influence(sens, &ctx)) })
+        );
         Ok(())
     })
 }

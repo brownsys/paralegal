@@ -429,6 +429,17 @@ impl<'tcx> PartialGraph<'tcx> {
                 );
             }
         }
+        self.edges.extend(
+            constructor
+                .find_control_inputs(location)
+                .into_iter()
+                .flat_map(|(ctrl_src, edge)| {
+                    child_graph
+                        .nodes
+                        .iter()
+                        .map(move |dest| (ctrl_src.clone(), dest.clone(), edge.clone()))
+                }),
+        );
         self.nodes.extend(child_graph.nodes);
         self.edges.extend(child_graph.edges);
         true

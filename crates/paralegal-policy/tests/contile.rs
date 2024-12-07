@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Ok, Result};
 use helpers::Test;
-use paralegal_policy::{RootContext, Diagnostics, EdgeSelection, NodeExt};
+use paralegal_policy::{Context, Diagnostics, EdgeSelection, NodeExt, RootContext};
 use paralegal_spdg::Identifier;
 
 mod helpers;

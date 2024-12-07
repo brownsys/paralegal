@@ -98,6 +98,11 @@ const EXISTENTIAL_MISS: &str = stringify!(
 
 #[test]
 fn plume_policy_exists_quantifier() {
+    let test_builder = |code| {
+        let mut builder = InlineTestBuilder::new(code);
+        builder.with_extra_args(["--relaxed".to_string()]);
+        builder
+    };
     let policy = |expect_success, msg| {
         move |ctrl: CtrlRef<'_>| {
             let result = policy(ctrl, |srcs, snks| srcs.flows_to_data(snks));
@@ -110,14 +115,19 @@ fn plume_policy_exists_quantifier() {
             }
         }
     };
-    InlineTestBuilder::new(SIMPLE_BUG).check_ctrl(policy(false, "simple bug"));
-    InlineTestBuilder::new(CORRECT).check_ctrl(policy(true, "correct"));
-    InlineTestBuilder::new(EXISTENTIAL_MISS).check_ctrl(policy(true, "existential fail"));
-    InlineTestBuilder::new(FORALL_FAIL).check_ctrl(policy(true, "Forall false-positive"));
+    test_builder(SIMPLE_BUG).check_ctrl(policy(false, "simple bug"));
+    test_builder(CORRECT).check_ctrl(policy(true, "correct"));
+    test_builder(EXISTENTIAL_MISS).check_ctrl(policy(true, "existential fail"));
+    test_builder(FORALL_FAIL).check_ctrl(policy(true, "Forall false-positive"));
 }
 
 #[test]
 fn plume_policy_forall_quantifier() {
+    let test_builder = |code| {
+        let mut builder = InlineTestBuilder::new(code);
+        builder.with_extra_args(["--relaxed".to_string()]);
+        builder
+    };
     let policy = |expect_success, msg| {
         move |ctrl: CtrlRef<'_>| {
             let result = policy(ctrl, |srcs, snks| {
@@ -132,8 +142,8 @@ fn plume_policy_forall_quantifier() {
             }
         }
     };
-    InlineTestBuilder::new(SIMPLE_BUG).check_ctrl(policy(false, "bug"));
-    InlineTestBuilder::new(CORRECT).check_ctrl(policy(true, "correct"));
-    InlineTestBuilder::new(EXISTENTIAL_MISS).check_ctrl(policy(false, "existential bug"));
-    InlineTestBuilder::new(FORALL_FAIL).check_ctrl(policy(false, "forall false-positive"));
+    test_builder(SIMPLE_BUG).check_ctrl(policy(false, "bug"));
+    test_builder(CORRECT).check_ctrl(policy(true, "correct"));
+    test_builder(EXISTENTIAL_MISS).check_ctrl(policy(false, "existential bug"));
+    test_builder(FORALL_FAIL).check_ctrl(policy(false, "forall false-positive"));
 }

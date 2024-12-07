@@ -2,9 +2,12 @@
 
 use std::collections::HashSet;
 
-use petgraph::visit::{Control, Data, DfsEvent, EdgeFiltered, EdgeRef, IntoEdgeReferences};
+use petgraph::visit::{
+    Bfs, Control, Data, DfsEvent, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoEdges,
+    IntoEdgesDirected, IntoNeighbors, Visitable, Walker, WalkerIter,
+};
 
-use crate::{EdgeInfo, EdgeKind, Node};
+use crate::{EdgeInfo, EdgeKind, Node, SPDGImpl};
 
 use super::SPDG;
 
@@ -85,5 +88,71 @@ pub fn generic_flows_to(
     match result {
         Control::Break(r) => Some(r),
         _ => None,
+    }
+}
+
+fn bfs_iter<G: IntoNeighbors + Visitable<NodeId = Node, Map = <SPDGImpl as Visitable>::Map>>(
+    g: G,
+    start: impl IntoIterator<Item = Node>,
+) -> WalkerIter<Bfs<Node, <G as Visitable>::Map>, G> {
+    let mut discovered = g.visit_map();
+    let stack: std::collections::VecDeque<petgraph::prelude::NodeIndex> =
+        start.into_iter().collect();
+    for n in stack.iter() {
+        petgraph::visit::VisitMap::visit(&mut discovered, *n);
+    }
+    let bfs = Bfs { stack, discovered };
+    Walker::iter(bfs, g)
+}
+
+/// Base function for implementing influencers
+pub fn generic_influencers<
+    G: IntoEdgesDirected
+        + Visitable<NodeId = Node, Map = <SPDGImpl as Visitable>::Map>
+        + Data<EdgeWeight = EdgeInfo>,
+>(
+    g: G,
+    nodes: impl IntoIterator<Item = Node>,
+    edge_selection: EdgeSelection,
+) -> Vec<Node> {
+    use petgraph::visit::*;
+
+    let reversed_graph = Reversed(g);
+
+    match edge_selection {
+        EdgeSelection::Data => {
+            let edges_filtered = EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_data());
+            bfs_iter(&edges_filtered, nodes).collect::<Vec<_>>()
+        }
+        EdgeSelection::Control => {
+            let edges_filtered = EdgeFiltered::from_fn(reversed_graph, |e| e.weight().is_control());
+            bfs_iter(&edges_filtered, nodes).collect::<Vec<_>>()
+        }
+        EdgeSelection::Both => bfs_iter(reversed_graph, nodes).collect::<Vec<_>>(),
+    }
+}
+
+/// Base function for implementing influencees
+pub fn generic_influencees<
+    G: IntoEdges
+        + Visitable<NodeId = Node, Map = <SPDGImpl as Visitable>::Map>
+        + Data<EdgeWeight = EdgeInfo>,
+>(
+    g: G,
+    nodes: impl IntoIterator<Item = Node>,
+    edge_selection: EdgeSelection,
+) -> Vec<Node> {
+    use petgraph::visit::*;
+
+    match edge_selection {
+        EdgeSelection::Data => {
+            let edges_filtered = EdgeFiltered::from_fn(g, |e| e.weight().is_data());
+            bfs_iter(&edges_filtered, nodes).collect::<Vec<_>>()
+        }
+        EdgeSelection::Control => {
+            let edges_filtered = EdgeFiltered::from_fn(g, |e| e.weight().is_control());
+            bfs_iter(&edges_filtered, nodes).collect::<Vec<_>>()
+        }
+        EdgeSelection::Both => bfs_iter(g, nodes).collect::<Vec<_>>(),
     }
 }

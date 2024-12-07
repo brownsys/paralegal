@@ -22,7 +22,7 @@ use std::{
 };
 
 use paralegal_spdg::{
-    traverse::{generic_flows_to, EdgeSelection},
+    traverse::{generic_flows_to, generic_influencers, EdgeSelection},
     utils::write_sep,
     DefInfo, EdgeInfo, Endpoint, Node, TypeId, SPDG,
 };
@@ -32,7 +32,6 @@ use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
 use petgraph::visit::{NodeRef as _, Visitable};
-use petgraph::Direction;
 use std::path::Path;
 
 lazy_static! {
@@ -189,6 +188,7 @@ macro_rules! define_flow_test_template {
 pub struct InlineTestBuilder {
     ctrl_name: String,
     input: String,
+    extra_args: Vec<String>,
 }
 
 impl InlineTestBuilder {
@@ -205,6 +205,7 @@ impl InlineTestBuilder {
         Self {
             input: input.into(),
             ctrl_name: "crate::main".into(),
+            extra_args: Default::default(),
         }
     }
 
@@ -212,6 +213,11 @@ impl InlineTestBuilder {
     /// without warning.
     pub fn with_entrypoint(&mut self, name: impl Into<String>) -> &mut Self {
         self.ctrl_name = name.into();
+        self
+    }
+
+    pub fn with_extra_args(&mut self, args: impl IntoIterator<Item = String>) -> &mut Self {
+        self.extra_args.extend(args);
         self
     }
 
@@ -241,11 +247,12 @@ impl InlineTestBuilder {
             args: crate::ClapArgs,
         }
 
-        let args = crate::Args::try_from(
-            TopLevelArgs::parse_from(["".into(), "--analyze".into(), self.ctrl_name.to_string()])
-                .args,
-        )
-        .unwrap();
+        let args = ["".into(), "--analyze".into(), self.ctrl_name.to_string()]
+            .into_iter()
+            .chain(self.extra_args.iter().cloned())
+            .collect::<Vec<_>>();
+
+        let args = crate::Args::try_from(TopLevelArgs::parse_from(args).args).unwrap();
 
         args.setup_logging();
 
@@ -734,7 +741,7 @@ pub trait FlowsTo {
     /// All edges are data, except the last one. This is meant to convey
     /// a "direct" control flow influence.
     fn influences_ctrl(&self, other: &impl FlowsTo) -> bool {
-        influences_ctrl_impl(self, other, EdgeSelection::Both)
+        influences_ctrl_impl(self, other, EdgeSelection::Data)
     }
 
     /// A special case of a path between `self` and `other`.
@@ -794,22 +801,17 @@ fn influences_ctrl_impl(
         return false;
     }
 
-    let nodes = other
-        .nodes()
-        .iter()
-        .flat_map(|n| {
-            slf.spdg()
-                .graph
-                .edges_directed(*n, Direction::Incoming)
-                .filter(|e| e.weight().kind.is_control())
-                .map(|e| e.source())
-        })
-        .collect::<HashSet<_>>();
+    let ctrl_influencing = generic_influencers(
+        &slf.spdg().graph,
+        other.nodes().iter().copied(),
+        EdgeSelection::Control,
+    );
+
     generic_flows_to(
         slf.nodes().iter().copied(),
         edge_selection,
         slf.spdg(),
-        nodes,
+        ctrl_influencing,
     )
     .is_some()
 }

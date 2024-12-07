@@ -59,21 +59,21 @@ async fn async_send_user_data(user_data: &UserData) {}
 struct UserData {
     pub data: Vec<i64>,
 }
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn top_level_inlining_happens() {
     let mut user_data = get_user_data();
     dp_user_data(&mut user_data);
     send_user_data(&user_data);
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn awaiting_works() {
     let mut user_data = async_get_user_data().await;
     async_dp_user_data(&mut user_data).await;
     async_send_user_data(&user_data).await;
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn two_data_over_boundary() {
     let user_data1 = get_user_data();
     let user_data2 = get_user_data2();
@@ -82,7 +82,7 @@ async fn two_data_over_boundary() {
     send_user_data2(&user_data2);
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn markers() {
     #[paralegal::marker(source, return)]
     async fn src() -> usize {
@@ -95,12 +95,12 @@ async fn markers() {
     snk(src().await).await
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn arguments_work(d: UserData) {
     send_user_data(&d);
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn inlining_crate_local_async_fns() {
     let mut user_data = get_user_data();
     inlineable_async_dp_user_data(&mut user_data).await;
@@ -111,7 +111,7 @@ async fn arity2_inlineable_async_dp_user_data(_: &mut UserData, user_data: &mut 
     dp_user_data(user_data)
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn no_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
@@ -124,7 +124,7 @@ async fn arity2_inlineable_async_dp_user_data2(_: &UserData, user_data: &mut Use
     dp_user_data(user_data)
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn no_mixed_mutability_borrow_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
@@ -138,7 +138,7 @@ async fn send_both(ud1: &UserData, ud2: &UserData) {
     send_user_data2(&ud2);
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn no_immutable_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
@@ -150,7 +150,7 @@ async fn send_both2(ud1: &UserData, ud2: &mut UserData) {
     send_user_data2(&ud2);
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn no_mixed_mutability_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
@@ -162,7 +162,7 @@ async fn move_send_both(ud1: UserData, ud2: UserData) {
     send_user_data2(&ud2);
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn no_value_inlining_overtaint() {
     let mut ud1 = get_user_data();
     let mut ud2 = get_user_data2();
@@ -195,7 +195,7 @@ async fn id_fun<T>(t: T) -> T {
     t
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn remove_poll_match() {
     let p = some_input();
     let x = f().await;
@@ -203,7 +203,7 @@ async fn remove_poll_match() {
     ()
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn no_overtaint_over_poll() {
     let p = some_input();
     let q = another_input();
@@ -212,12 +212,12 @@ async fn no_overtaint_over_poll() {
     another_target(t.1);
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn return_from_async() -> usize {
     some_input()
 }
 
-//#[paralegal::analyze]
+#[paralegal::analyze]
 async fn async_return_from_async() -> usize {
     id_fun(some_input()).await
 }
@@ -291,7 +291,7 @@ struct ControlFlowOvertaintAsyncTraitTestStruct;
 
 #[async_trait]
 impl ControlFlowOvertaintAsyncTrait for ControlFlowOvertaintAsyncTraitTestStruct {
-    //#[paralegal::analyze]
+    #[paralegal::analyze]
     async fn control_flow_overtaint_async_trait(
         &self,
         condition: bool,
@@ -319,7 +319,7 @@ trait ControlFlowOvertaintAsyncTraitTracing {
 
 #[async_trait]
 impl ControlFlowOvertaintAsyncTraitTracing for ControlFlowOvertaintAsyncTraitTestStruct {
-    //#[paralegal::analyze]
+    #[paralegal::analyze]
     #[tracing::instrument(skip_all)]
     async fn control_flow_overtaint_async_trait_tracing(
         &self,

@@ -48,6 +48,7 @@
 //! checker implementation.
 
 #![warn(missing_docs)]
+#![feature(return_position_impl_trait_in_trait)]
 
 extern crate core;
 

@@ -544,8 +544,8 @@ fn control_flow_overtaint_check(ctrl: CtrlRef<'_>) {
     assert!(!sensitive_1.is_empty());
     assert!(!sensitive_2.is_empty());
 
-    assert!(checks.flows_to_any(&sensitive_1));
-    assert!(!checks.flows_to_any(&sensitive_2));
+    assert!(checks.influences_ctrl(&sensitive_1));
+    assert!(!checks.influences_ctrl(&sensitive_2));
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{assert_error, EdgeSelection};
+use paralegal_policy::{assert_error, Context, EdgeSelection};
 use paralegal_spdg::Identifier;
 
 mod helpers;
