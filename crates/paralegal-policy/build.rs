@@ -20,4 +20,8 @@ fn main() {
         let rustup_lib = get_rustup_lib_path();
         println!("cargo:rustc-link-search=native={}", rustup_lib.display());
     }
+
+    let autocfg = autocfg::AutoCfg::new().unwrap();
+
+    autocfg.emit_rustc_version(1, 75);
 }

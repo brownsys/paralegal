@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use petgraph::visit::{
     Bfs, Control, Data, DfsEvent, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoEdges,
-    IntoEdgesDirected, IntoNeighbors, Visitable, Walker, WalkerIter,
+    IntoEdgesDirected, IntoNeighbors, VisitMap, Visitable, Walker, WalkerIter,
 };
 
 use crate::{EdgeInfo, EdgeKind, Node, SPDGImpl};
@@ -91,18 +91,67 @@ pub fn generic_flows_to(
     }
 }
 
+/// The current policy for this iterator is that it does not return the start
+/// nodes *uness* there is a cycle and a node is reachable that way.
 fn bfs_iter<G: IntoNeighbors + Visitable<NodeId = Node, Map = <SPDGImpl as Visitable>::Map>>(
     g: G,
     start: impl IntoIterator<Item = Node>,
 ) -> WalkerIter<Bfs<Node, <G as Visitable>::Map>, G> {
     let mut discovered = g.visit_map();
-    let stack: std::collections::VecDeque<petgraph::prelude::NodeIndex> =
-        start.into_iter().collect();
-    for n in stack.iter() {
-        petgraph::visit::VisitMap::visit(&mut discovered, *n);
+    let mut stack: std::collections::VecDeque<petgraph::prelude::NodeIndex> = Default::default();
+    // prime the stack with all input nodes, otherwise they would be returned
+    // from the iterator.
+    for n in start {
+        for next in g.neighbors(n) {
+            if discovered.visit(next) {
+                stack.push_back(next);
+            }
+        }
     }
     let bfs = Bfs { stack, discovered };
     Walker::iter(bfs, g)
+}
+
+#[cfg(test)]
+mod test {
+    use petgraph::graph::DiGraph;
+
+    use super::bfs_iter;
+
+    #[test]
+    fn iter_sees_nested() {
+        let mut g = DiGraph::<(), ()>::new();
+        let a = g.add_node(());
+        let b = g.add_node(());
+        let c = g.add_node(());
+        let d = g.add_node(());
+
+        g.add_edge(a, b, ());
+        g.add_edge(b, c, ());
+
+        let seen = bfs_iter(&g, [a]).collect::<Vec<_>>();
+        assert!(seen.contains(&b));
+        assert!(seen.contains(&c));
+        assert!(!seen.contains(&d));
+        assert!(!seen.contains(&a));
+    }
+
+    #[test]
+    fn iter_sees_cycle() {
+        let mut g = DiGraph::<(), ()>::new();
+        let a = g.add_node(());
+        let b = g.add_node(());
+        let c = g.add_node(());
+
+        g.add_edge(a, b, ());
+        g.add_edge(b, c, ());
+        g.add_edge(c, a, ());
+
+        let seen = bfs_iter(&g, [a]).collect::<Vec<_>>();
+        assert!(seen.contains(&b));
+        assert!(seen.contains(&c));
+        assert!(seen.contains(&a));
+    }
 }
 
 /// Base function for implementing influencers

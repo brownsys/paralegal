@@ -44,12 +44,12 @@
 //!
 //! ```no_run
 //! use paralegal_policy::{
-//!     Context, assert_error, assert_warning,
+//!     Context, RootContext, assert_error, assert_warning,
 //!     paralegal_spdg::Identifier
 //! };
 //! use std::sync::Arc;
 //!
-//! fn my_check(ctx: Arc<Context>) {
+//! fn my_check(ctx: Arc<RootContext>) {
 //!     ctx.named_policy(Identifier::new_intern("cannot escape"), |ctx| {
 //!         let result_1 = ctx.clone().named_combinator(
 //!             Identifier::new_intern("collect something"),

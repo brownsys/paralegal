@@ -4,7 +4,6 @@ extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
 
-use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
 use hir::def_id::DefId;
 use rustc_interface::interface;
 
@@ -261,7 +260,6 @@ impl InlineTestBuilder {
             .with_query_override(None)
             .compile(move |result| {
                 let args: &'static _ = Box::leak(Box::new(args));
-                dump_mir_and_borrowck_facts(result.tcx, args.anactrl().compress_artifacts());
                 dump_markers(result.tcx);
                 let tcx = result.tcx;
                 let memo = crate::Callbacks::new(args);
@@ -811,7 +809,7 @@ fn influences_ctrl_impl(
         slf.nodes().iter().copied(),
         edge_selection,
         slf.spdg(),
-        ctrl_influencing,
+        dbg!(ctrl_influencing),
     )
     .is_some()
 }

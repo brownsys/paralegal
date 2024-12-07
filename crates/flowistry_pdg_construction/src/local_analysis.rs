@@ -17,7 +17,7 @@ use rustc_middle::{
     ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
-use rustc_span::Span;
+use rustc_span::{DesugaringKind, Span};
 use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt, PlaceExt};
 
 use crate::{
@@ -137,7 +137,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     let ctrl_loc = self.mono_body.terminator_loc(dep);
                     let Terminator {
                         kind: TerminatorKind::SwitchInt { discr, .. },
-                        ..
+                        source_info,
                     } = self.mono_body.basic_blocks[dep].terminator()
                     else {
                         if blocks_seen.insert(dep) {
@@ -145,6 +145,15 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                         }
                         continue;
                     };
+                    if matches!(
+                        source_info.span.desugaring_kind(),
+                        Some(DesugaringKind::Await)
+                    ) {
+                        // We are dealing with control flow that was introduced
+                        // by the "await" state machine. We don't care about
+                        // this sine it's possible semantic impact is negligible.
+                        continue;
+                    }
                     let Some(ctrl_place) = discr.place() else {
                         continue;
                     };
