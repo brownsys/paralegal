@@ -24,7 +24,7 @@ use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
     determine_async,
     encoder::ParalegalDecoder,
-    utils::{is_virtual, try_monomorphize, try_resolve_function},
+    utils::{handle_shims, is_virtual, try_monomorphize, try_resolve_function},
 };
 use paralegal_spdg::Identifier;
 
@@ -295,7 +295,10 @@ impl<'tcx> MarkerCtx<'tcx> {
                     );
                 return v.into_iter();
             };
-            MaybeMonomorphized::Monomorphized(instance)
+            MaybeMonomorphized::Monomorphized(
+                handle_shims(instance, self.tcx(), param_env)
+                    .map_or(instance, |(shimmed, _)| shimmed),
+            )
         } else {
             MaybeMonomorphized::Plain(def_id)
         };
