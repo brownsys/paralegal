@@ -64,6 +64,9 @@ pub type Function = Identifier;
 /// [`ProgramDescription`].
 pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.o";
 
+/// Extension for output files containing statistics of the analzyer run.
+pub const STAT_FILE_EXT: &str = "stat.json";
+
 #[allow(dead_code)]
 mod ser_localdefid_map {
     use serde::{Deserialize, Serialize};
@@ -360,8 +363,6 @@ pub struct ProgramDescription {
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     pub analyzed_spans: AnalyzedSpans,
-    /// Statistics about the run of the analyzer
-    pub stats: AnalyzerStats,
 }
 
 /// Statistics about a single run of paralegal-flow
@@ -377,6 +378,8 @@ pub struct AnalyzerStats {
     pub dump_time: Duration,
     /// How long rustc ran before out plugin executed
     pub rustc_time: Duration,
+    /// How long did it take to serialize the graphs
+    pub serialization_time: Duration,
     /// The number of functions we produced a PDG for
     pub pdg_functions: u32,
     /// The lines of code corresponding to the functions from

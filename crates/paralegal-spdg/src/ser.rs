@@ -5,7 +5,7 @@ use anyhow::{Context, Ok, Result};
 use cfg_if::cfg_if;
 use std::{fs::File, path::Path};
 
-use crate::ProgramDescription;
+use crate::{AnalyzerStats, ProgramDescription};
 
 cfg_if! {
     if #[cfg(feature = "binenc")] {
@@ -67,5 +67,18 @@ impl ProgramDescription {
                     .display()
             )
         })
+    }
+}
+
+impl AnalyzerStats {
+    /// Read the stats from a file using the default encoding (json)
+    pub fn canonical_read(path: impl AsRef<Path>) -> Result<Self> {
+        Ok(serde_json::from_reader(File::open(path)?)?)
+    }
+
+    /// Write the stats to a file using the default encoding (json)
+    pub fn canonical_write(&self, path: impl AsRef<Path>) -> Result<()> {
+        let file = File::create(path)?;
+        Ok(serde_json::to_writer(file, self)?)
     }
 }

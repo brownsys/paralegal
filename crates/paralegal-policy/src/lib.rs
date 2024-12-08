@@ -55,6 +55,7 @@ extern crate core;
 use anyhow::{ensure, Result};
 pub use paralegal_spdg;
 use paralegal_spdg::utils::TruncatedHumanTime;
+use paralegal_spdg::STAT_FILE_EXT;
 pub use paralegal_spdg::{
     traverse::EdgeSelection, GlobalNode, IntoIterGlobalNodes, ProgramDescription,
 };
@@ -202,6 +203,12 @@ impl GraphLocation {
             path: dir.as_ref().join(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
             construction_time: None,
         }
+    }
+
+    /// Get the path where the analyzzer wrote statistics to. Use this path to
+    /// read a [paralegal_spdg::AnalyzerStats::canonical_read].
+    pub fn stats_path(&self) -> PathBuf {
+        self.path.with_extension(STAT_FILE_EXT)
     }
 
     /// Use a completely custom path (directory and file name).

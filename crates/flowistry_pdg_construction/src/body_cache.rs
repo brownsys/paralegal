@@ -1,4 +1,8 @@
-use std::{path::PathBuf, process::Command};
+use std::{
+    path::PathBuf,
+    process::Command,
+    time::{Duration, Instant},
+};
 
 use flowistry::mir::FlowistryInput;
 
@@ -193,13 +197,17 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 ///
 /// Ensure this gets called early in the compiler before the unoptimized mir
 /// bodies are stolen.
-pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>, compress_artifacts: bool) {
+pub fn dump_mir_and_borrowck_facts<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    compress_artifacts: bool,
+) -> (Duration, Duration) {
     let mut vis = DumpingVisitor {
         tcx,
         targets: vec![],
     };
     tcx.hir().visit_all_item_likes_in_crate(&mut vis);
 
+    let tc_start = Instant::now();
     let bodies: BodyMap<'tcx> = vis
         .targets
         .iter()
@@ -209,6 +217,8 @@ pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>, compress_artifacts: 
             (local_def_id.local_def_index, to_write)
         })
         .collect();
+    let tc_time = tc_start.elapsed();
+    let dump_time = Instant::now();
     let path = intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT);
     encode_to_file(tcx, &path, &bodies);
     if compress_artifacts {
@@ -220,6 +230,7 @@ pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>, compress_artifacts: 
             .unwrap()
             .success())
     }
+    (tc_time, dump_time.elapsed())
 }
 
 const INTERMEDIATE_ARTIFACT_EXT: &str = "bwbf";

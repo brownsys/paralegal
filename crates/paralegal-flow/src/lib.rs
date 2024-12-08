@@ -47,10 +47,11 @@ extern crate rustc_type_ir;
 
 use ann::dump_markers;
 use args::{ClapArgs, Debugger, LogLevelConfig};
-use desc::{utils::write_sep, ProgramDescription};
+use desc::utils::write_sep;
 
 use flowistry_pdg_construction::body_cache::{dump_mir_and_borrowck_facts, intermediate_out_dir};
 use log::Level;
+use paralegal_spdg::{AnalyzerStats, STAT_FILE_EXT};
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 
@@ -122,27 +123,24 @@ struct ArgWrapper {
     args: ClapArgs,
 }
 
-struct Callbacks {
+struct Callbacks<'a> {
     opts: &'static Args,
     stats: Stats,
     rustc_second_timer: Option<Instant>,
+    stat_ref: &'a mut Option<AnalyzerStats>,
 }
 
 struct NoopCallbacks;
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
 
-impl Callbacks {
-    pub fn run(&self, tcx: TyCtxt) -> anyhow::Result<ProgramDescription> {
-        tcx.sess.abort_if_errors();
-        discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()
-    }
-
-    pub fn new(opts: &'static Args) -> Self {
+impl<'a> Callbacks<'a> {
+    pub fn new(opts: &'static Args, stat_ref: &'a mut Option<AnalyzerStats>) -> Self {
         Self {
             opts,
             stats: Default::default(),
             rustc_second_timer: None,
+            stat_ref,
         }
     }
 }
@@ -151,11 +149,30 @@ impl Callbacks {
 struct DumpStats {
     dump_time: Duration,
     total_time: Duration,
+    tycheck_time: Duration,
+}
+
+impl DumpStats {
+    fn zero() -> Self {
+        Self {
+            dump_time: Duration::ZERO,
+            total_time: Duration::ZERO,
+            tycheck_time: Duration::ZERO,
+        }
+    }
+
+    fn add(&self, other: &Self) -> Self {
+        Self {
+            total_time: self.total_time + other.total_time,
+            dump_time: self.dump_time + other.dump_time,
+            tycheck_time: self.tycheck_time + other.tycheck_time,
+        }
+    }
 }
 
 struct DumpOnlyCallbacks<'a> {
     compress_artifacts: bool,
-    time: &'a mut Duration,
+    time: &'a mut DumpStats,
     output_location: &'a mut Option<PathBuf>,
 }
 
@@ -168,10 +185,12 @@ impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            let start = Instant::now();
-            dump_mir_and_borrowck_facts(tcx, self.compress_artifacts);
+            let (tycheck_time, dump_time) =
+                dump_mir_and_borrowck_facts(tcx, self.compress_artifacts);
+            let dump_marker_start = Instant::now();
             dump_markers(tcx);
-            *self.time = start.elapsed();
+            self.time.dump_time = dump_marker_start.elapsed() + dump_time;
+            self.time.tycheck_time = tycheck_time;
             assert!(self
                 .output_location
                 .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
@@ -181,7 +200,7 @@ impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
     }
 }
 
-impl rustc_driver::Callbacks for Callbacks {
+impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
@@ -211,9 +230,9 @@ impl rustc_driver::Callbacks for Callbacks {
     }
 }
 
-impl Callbacks {
+impl<'a> Callbacks<'a> {
     fn run_the_analyzer<'tcx>(
-        &self,
+        &mut self,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         let abort = queries
@@ -221,7 +240,9 @@ impl Callbacks {
             .unwrap()
             .enter(|tcx| {
                 dump_markers(tcx);
-                let desc = self.run(tcx)?;
+                tcx.sess.abort_if_errors();
+                let (desc, mut stats) =
+                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
 
@@ -230,13 +251,15 @@ impl Callbacks {
                     paralegal_spdg::dot::dump(&desc, out).unwrap();
                 }
 
-                let ser = Instant::now();
-                desc.canonical_write(self.opts.result_path()).unwrap();
-                self.stats
-                    .record_timed(TimedStat::Serialization, ser.elapsed());
+                self.stats.measure(TimedStat::Serialization, || {
+                    desc.canonical_write(self.opts.result_path()).unwrap()
+                });
+
+                stats.serialization_time = self.stats.get_timed(TimedStat::Serialization);
 
                 println!("Analysis finished with timing: {}", self.stats);
 
+                assert!(self.stat_ref.replace(stats).is_none());
                 anyhow::Ok(self.opts.abort_after_analysis())
             })
             .unwrap();
@@ -425,8 +448,10 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         //println!("compiling {compiler_args:?}");
 
         let mut output_path_location = None;
-        let mut dump_time = Duration::ZERO;
+        let mut dump_stats = DumpStats::zero();
         let start = Instant::now();
+        let mut stat_ref = None;
+        let out_path = plugin_args.result_path().to_owned();
 
         let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
         let result = {
@@ -438,7 +463,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                     compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
                     Box::new(DumpOnlyCallbacks {
                         compress_artifacts: plugin_args.anactrl().compress_artifacts(),
-                        time: &mut dump_time,
+                        time: &mut dump_stats,
                         output_location: &mut output_path_location,
                     })
                 }
@@ -471,7 +496,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                         "Arguments: {}",
                         Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
                     );
-                    Box::new(Callbacks::new(opts))
+                    Box::new(Callbacks::new(opts, &mut stat_ref))
                 }
             };
 
@@ -482,14 +507,17 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 let filepath = output_path_location
                     .take()
                     .expect("Output path should be set");
-                serde_json::to_writer(
-                    File::create(filepath).unwrap(),
-                    &DumpStats {
-                        dump_time,
-                        total_time: start.elapsed(),
-                    },
-                )
-                .unwrap();
+                dump_stats.total_time = start.elapsed();
+                serde_json::to_writer(File::create(filepath).unwrap(), &dump_stats).unwrap();
+            }
+            CrateHandling::Analyze => {
+                let out = File::create(out_path.with_extension(STAT_FILE_EXT)).unwrap();
+                let mut stat = stat_ref.take().expect("stats must have been set");
+                let self_time = start.elapsed();
+                // See ana/mod.rs for explanantions as to these adjustments.
+                stat.self_time = self_time;
+                stat.total_time += self_time;
+                serde_json::to_writer(out, &stat).unwrap();
             }
             _ => (),
         }
@@ -501,7 +529,6 @@ impl Debugger {
     fn attach(self) {
         use std::process::{id, Command};
         use std::thread::sleep;
-        use std::time::Duration;
 
         match self {
             Debugger::CodeLldb => {

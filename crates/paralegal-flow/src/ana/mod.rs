@@ -111,7 +111,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
-    pub fn analyze(&mut self, targets: Vec<FnToAnalyze>) -> Result<ProgramDescription> {
+    pub fn analyze(
+        &mut self,
+        targets: Vec<FnToAnalyze>,
+    ) -> Result<(ProgramDescription, AnalyzerStats)> {
         if let LogLevelConfig::Targeted(s) = self.opts.direct_debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
@@ -156,7 +159,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         controllers: HashMap<Endpoint, SPDG>,
         mut known_def_ids: HashSet<DefId>,
         _targets: &[FnToAnalyze],
-    ) -> ProgramDescription {
+    ) -> (ProgramDescription, AnalyzerStats) {
         let tcx = self.tcx;
 
         let instruction_info = self.collect_instruction_info(&controllers);
@@ -179,14 +182,16 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let (stats, analyzed_spans) = self.collect_stats_and_analyzed_spans();
 
-        ProgramDescription {
-            type_info,
-            instruction_info,
-            controllers,
-            def_info,
-            analyzed_spans,
+        (
+            ProgramDescription {
+                type_info,
+                instruction_info,
+                controllers,
+                def_info,
+                analyzed_spans,
+            },
             stats,
-        }
+        )
     }
 
     fn collect_stats_and_analyzed_spans(&self) -> (AnalyzerStats, AnalyzedSpans) {
@@ -258,8 +263,19 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .collect::<AnalyzedSpans>();
 
         let prior_stats = self.get_prior_stats();
-        let self_time = self.stats.elapsed();
 
+        // A few notes on these stats. We calculate most of them here, because
+        // this is where we easily have access to the information. For example
+        // the included crates, the paths where the intermediate stats are
+        // located and the marker annotations.
+        //
+        // However some pieces of information we don't have and that is how long
+        // *this* run of the analyzer took in total and how long serialziation
+        // took, but we do want to add that to the stats. As a workaround we set
+        // "self_time" and "serialization_time" to 0 and "total_time" to the
+        // accumulated intermediate analyis time. Then, after the serialization
+        // and whatever teardown rustc wants to do is finished we set
+        // "self_time" and increment "total_time". See lib.rs for that.
         let stats = AnalyzerStats {
             marker_annotation_count: mctx
                 .all_annotations()
@@ -270,9 +286,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
             pdg_locs,
             seen_functions,
             seen_locs,
-            self_time,
-            total_time: self_time + prior_stats.total_time,
+            self_time: Duration::ZERO,
+            total_time: prior_stats.total_time,
             dump_time: prior_stats.dump_time,
+            serialization_time: Duration::ZERO,
         };
 
         (stats, analyzed_spans)
@@ -292,16 +309,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 });
                 serde_json::from_reader(File::open(path).unwrap()).unwrap()
             })
-            .fold(
-                DumpStats {
-                    total_time: Duration::ZERO,
-                    dump_time: Duration::ZERO,
-                },
-                |one, other: DumpStats| DumpStats {
-                    total_time: one.total_time + other.total_time,
-                    dump_time: one.dump_time + other.dump_time,
-                },
-            )
+            .fold(DumpStats::zero(), |s, o| s.add(&o))
     }
 
     /// Create an [`InstructionInfo`] record for each [`GlobalLocation`]
