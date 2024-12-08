@@ -516,7 +516,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 let self_time = start.elapsed();
                 // See ana/mod.rs for explanantions as to these adjustments.
                 stat.self_time = self_time;
-                stat.total_time += self_time;
                 serde_json::to_writer(out, &stat).unwrap();
             }
             _ => (),

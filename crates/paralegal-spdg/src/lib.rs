@@ -372,10 +372,12 @@ pub struct AnalyzerStats {
     pub marker_annotation_count: u32,
     /// Total time used for the last analzyer run
     pub self_time: Duration,
-    /// Total time spent in compiler invokations for incldued crates
-    pub total_time: Duration,
     /// Time spent dumping MIR
     pub dump_time: Duration,
+    /// how long the rust typechecker took
+    pub tycheck_time: Duration,
+    /// How long we spent on dependencies
+    pub dep_time: Duration,
     /// How long rustc ran before out plugin executed
     pub rustc_time: Duration,
     /// How long did it take to serialize the graphs

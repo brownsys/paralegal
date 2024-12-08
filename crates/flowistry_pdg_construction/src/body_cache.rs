@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     path::PathBuf,
     process::Command,
     time::{Duration, Instant},
@@ -101,6 +102,7 @@ pub struct BodyCache<'tcx> {
     cache: Cache<CrateNum, BodyMap<'tcx>>,
     compress_artifacts: bool,
     local_cache: Cache<DefIndex, CachedBody<'tcx>>,
+    timer: RefCell<Duration>,
 }
 
 impl<'tcx> BodyCache<'tcx> {
@@ -110,7 +112,12 @@ impl<'tcx> BodyCache<'tcx> {
             cache: Default::default(),
             compress_artifacts,
             local_cache: Default::default(),
+            timer: RefCell::new(Duration::ZERO),
         }
+    }
+
+    pub fn timer(&self) -> Duration {
+        *self.timer.borrow()
     }
 
     /// Serve the body from the cache or read it from the disk.
@@ -119,7 +126,10 @@ impl<'tcx> BodyCache<'tcx> {
     pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
         let body = if let Some(local) = key.as_local() {
             self.local_cache.get(local.local_def_index, |_| {
-                CachedBody::retrieve(self.tcx, local)
+                let start = Instant::now();
+                let res = CachedBody::retrieve(self.tcx, local);
+                *self.timer.borrow_mut() += start.elapsed();
+                res
             })
         } else {
             self.cache

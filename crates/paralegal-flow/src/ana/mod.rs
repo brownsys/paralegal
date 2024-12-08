@@ -288,7 +288,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
             seen_functions,
             seen_locs,
             self_time: Duration::ZERO,
-            total_time: prior_stats.total_time,
+            dep_time: prior_stats.total_time,
+            tycheck_time: prior_stats.tycheck_time + self.pdg_constructor.body_cache().timer(),
             dump_time: prior_stats.dump_time,
             serialization_time: Duration::ZERO,
         };
