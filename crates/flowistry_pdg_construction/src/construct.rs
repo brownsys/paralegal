@@ -43,6 +43,7 @@ pub struct MemoPdgConstructor<'tcx> {
     pub(crate) async_info: Rc<AsyncInfo>,
     pub pdg_cache: PdgCache<'tcx>,
     pub(crate) body_cache: Rc<body_cache::BodyCache<'tcx>>,
+    disable_cache: bool,
 }
 
 impl<'tcx> MemoPdgConstructor<'tcx> {
@@ -55,6 +56,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
             pdg_cache: Default::default(),
             body_cache: Rc::new(BodyCache::new(tcx, compress_artifacts)),
+            disable_cache: false,
         }
     }
 
@@ -67,7 +69,13 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
             pdg_cache: Default::default(),
             body_cache,
+            disable_cache: false,
         }
+    }
+
+    pub fn with_disable_cache(&mut self, disable_cache: bool) -> &mut Self {
+        self.disable_cache = disable_cache;
+        self
     }
 
     /// Dump the MIR of any function that is visited.
@@ -88,7 +96,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
     /// Construct the intermediate PDG for this function. Instantiates any
     /// generic arguments as `dyn <constraints>`.
-    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> &'a PartialGraph<'tcx> {
+    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Rc<PartialGraph<'tcx>> {
         let generics = manufacture_substs_for(self.tcx, function.to_def_id())
             .map_err(|i| vec![i])
             .unwrap();
@@ -110,13 +118,23 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> Option<&'a PartialGraph<'tcx>> {
-        self.pdg_cache.get_maybe_recursive(resolution, |_| {
+    ) -> Option<Rc<PartialGraph<'tcx>>> {
+        let construct = || {
             let g = LocalAnalysis::new(self, resolution).construct_partial();
             trace!("Computed new for {resolution:?}");
             g.check_invariants();
-            g
-        })
+            Rc::new(g)
+        };
+        let mut was_constructed = false;
+        let result = self.pdg_cache.get_maybe_recursive(resolution, |_| {
+            was_constructed = true;
+            construct()
+        });
+        if self.disable_cache && result.is_some() && !was_constructed {
+            Some(construct())
+        } else {
+            result.cloned()
+        }
     }
 
     /// Has a PDG been constructed for this instance before?
@@ -141,7 +159,8 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             // cache. This is because when this async fn is called somewhere we
             // don't want to use this "fake inlined" version.
             return push_call_string_root(
-                self.construct_root(generator.def_id().expect_local()),
+                self.construct_root(generator.def_id().expect_local())
+                    .as_ref(),
                 GlobalLocation {
                     function: function.to_def_id(),
                     location: flowistry_pdg::RichLocation::Location(loc),
@@ -374,7 +393,7 @@ impl<'tcx> PartialGraph<'tcx> {
             }
         };
 
-        let child_graph = push_call_string_root(child_descriptor, gloc);
+        let child_graph = push_call_string_root(child_descriptor.as_ref(), gloc);
 
         trace!("Child graph has generics {:?}", child_descriptor.generics);
 
@@ -523,7 +542,7 @@ impl<'tcx> PartialGraph<'tcx> {
 pub type PdgCacheKey<'tcx> = Instance<'tcx>;
 /// Stores PDG's we have already computed and which we know we can use again
 /// given a certain key.
-pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, PartialGraph<'tcx>>>;
+pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, Rc<PartialGraph<'tcx>>>>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {

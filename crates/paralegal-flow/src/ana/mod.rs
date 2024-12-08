@@ -73,7 +73,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 judge: judge.clone(),
                 tcx,
             })
-            .with_dump_mir(opts.dbg().dump_mir());
+            .with_dump_mir(opts.dbg().dump_mir())
+            .with_disable_cache(!opts.anactrl().pdg_cache());
         Self {
             pdg_constructor,
             opts,

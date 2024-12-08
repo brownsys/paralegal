@@ -824,7 +824,7 @@ pub(crate) enum CallHandling<'tcx, 'a> {
     ApproxAsyncFn,
     Ready {
         calling_convention: CallingConvention<'tcx>,
-        descriptor: &'a PartialGraph<'tcx>,
+        descriptor: Rc<PartialGraph<'tcx>>,
         precise: bool,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),

@@ -472,6 +472,8 @@ struct ClapAnalysisCtrl {
     include: Vec<String>,
     #[clap(long)]
     compress_artifacts: bool,
+    #[clap(long)]
+    no_pdg_cache: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -486,6 +488,7 @@ pub struct AnalysisCtrl {
     inlining_depth: InliningDepth,
     include: Vec<String>,
     compress_artifacts: bool,
+    no_pdg_cache: bool,
 }
 
 impl Default for AnalysisCtrl {
@@ -495,6 +498,7 @@ impl Default for AnalysisCtrl {
             inlining_depth: InliningDepth::Adaptive,
             include: Default::default(),
             compress_artifacts: false,
+            no_pdg_cache: false,
         }
     }
 }
@@ -509,6 +513,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             unconstrained_depth: _,
             include,
             compress_artifacts,
+            no_pdg_cache,
         } = value;
 
         let inlining_depth = if adaptive_depth {
@@ -524,6 +529,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             inlining_depth,
             include,
             compress_artifacts,
+            no_pdg_cache,
         })
     }
 }
@@ -559,6 +565,10 @@ impl AnalysisCtrl {
 
     pub fn compress_artifacts(&self) -> bool {
         self.compress_artifacts
+    }
+
+    pub fn pdg_cache(&self) -> bool {
+        !self.no_pdg_cache
     }
 }
 
