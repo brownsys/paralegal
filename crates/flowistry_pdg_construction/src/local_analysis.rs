@@ -526,15 +526,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
             return None;
         }
-        let Some(descriptor) = self.memo.construct_for(resolved_fn) else {
-            trace!("  Bailing because of recursion.");
-            return None;
-        };
 
-        Some(CallHandling::Ready {
-            descriptor,
-            calling_convention,
-            precise,
+        (!self.memo.is_recursion(resolved_fn)).then(|| {
+            trace!("  Bailing because of recursion.");
+            CallHandling::Ready {
+                calling_convention,
+                descriptor: resolved_fn,
+                precise,
+            }
         })
     }
 
@@ -566,7 +565,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 descriptor,
                 calling_convention,
                 precise,
-            } => (descriptor, calling_convention, precise),
+            } => (
+                self.memo
+                    .construct_for(descriptor)
+                    .expect("Recursion check should have already happened"),
+                calling_convention,
+                precise,
+            ),
             CallHandling::ApproxAsyncFn => {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
@@ -824,7 +829,7 @@ pub(crate) enum CallHandling<'tcx, 'a> {
     ApproxAsyncFn,
     Ready {
         calling_convention: CallingConvention<'tcx>,
-        descriptor: Rc<PartialGraph<'tcx>>,
+        descriptor: Instance<'tcx>,
         precise: bool,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),

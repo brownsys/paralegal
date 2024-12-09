@@ -1,4 +1,7 @@
-use std::{borrow::Cow, rc::Rc};
+use std::{
+    borrow::{Borrow, Cow},
+    rc::Rc,
+};
 
 use either::Either;
 use flowistry::mir::FlowistryInput;
@@ -96,7 +99,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
     /// Construct the intermediate PDG for this function. Instantiates any
     /// generic arguments as `dyn <constraints>`.
-    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Rc<PartialGraph<'tcx>> {
+    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Cow<'a, PartialGraph<'tcx>> {
         let generics = manufacture_substs_for(self.tcx, function.to_def_id())
             .map_err(|i| vec![i])
             .unwrap();
@@ -118,12 +121,12 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> Option<Rc<PartialGraph<'tcx>>> {
+    ) -> Option<Cow<'a, PartialGraph<'tcx>>> {
         let construct = || {
             let g = LocalAnalysis::new(self, resolution).construct_partial();
             trace!("Computed new for {resolution:?}");
             g.check_invariants();
-            Rc::new(g)
+            g
         };
         let mut was_constructed = false;
         let result = self.pdg_cache.get_maybe_recursive(resolution, |_| {
@@ -131,9 +134,9 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             construct()
         });
         if self.disable_cache && result.is_some() && !was_constructed {
-            Some(construct())
+            Some(Cow::Owned(construct()))
         } else {
-            result.cloned()
+            result.map(Cow::Borrowed)
         }
     }
 
@@ -169,6 +172,11 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             .to_petgraph();
         }
         self.construct_root(function).to_petgraph()
+    }
+
+    pub fn is_recursion(&self, instance: Instance<'tcx>) -> bool {
+        // This should be provided by the cache itself.
+        matches!(self.pdg_cache.as_ref().borrow().get(&instance), Some(None))
     }
 
     /// Try to retrieve or load a body for this id.
@@ -367,7 +375,14 @@ impl<'tcx> PartialGraph<'tcx> {
                 calling_convention,
                 descriptor,
                 precise,
-            } => (descriptor, calling_convention, precise),
+            } => (
+                constructor
+                    .memo
+                    .construct_for(descriptor)
+                    .expect("Recursion check should have already happened"),
+                calling_convention,
+                precise,
+            ),
             CallHandling::ApproxAsyncFn => {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
@@ -542,7 +557,7 @@ impl<'tcx> PartialGraph<'tcx> {
 pub type PdgCacheKey<'tcx> = Instance<'tcx>;
 /// Stores PDG's we have already computed and which we know we can use again
 /// given a certain key.
-pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, Rc<PartialGraph<'tcx>>>>;
+pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, PartialGraph<'tcx>>>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {
