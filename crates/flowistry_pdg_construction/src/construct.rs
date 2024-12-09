@@ -1,7 +1,4 @@
-use std::{
-    borrow::{Borrow, Cow},
-    rc::Rc,
-};
+use std::{borrow::Cow, rc::Rc};
 
 use either::Either;
 use flowistry::mir::FlowistryInput;

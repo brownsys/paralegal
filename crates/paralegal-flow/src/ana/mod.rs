@@ -14,7 +14,7 @@ use crate::{
     DumpStats, HashMap, HashSet, LogLevelConfig, MarkerCtx, INTERMEDIATE_STAT_EXT,
 };
 
-use std::{fs::File, rc::Rc, time::Instant};
+use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
 
 use anyhow::Result;
 use either::Either;
@@ -309,7 +309,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 let path = paths.iter().find(|p| p.exists()).unwrap_or_else(|| {
                     panic!("No stats path found for included crate {c:?}, searched {paths:?}")
                 });
-                serde_json::from_reader(File::open(path).unwrap()).unwrap()
+                let rdr = BufReader::new(File::open(path).unwrap());
+                serde_json::from_reader(rdr).unwrap()
             })
             .fold(DumpStats::zero(), |s, o| s.add(&o))
     }

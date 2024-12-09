@@ -3,7 +3,11 @@
 //!
 use anyhow::{Context, Ok, Result};
 use cfg_if::cfg_if;
-use std::{fs::File, path::Path};
+use std::{
+    fs::File,
+    io::{BufReader, BufWriter},
+    path::Path,
+};
 
 use crate::{AnalyzerStats, ProgramDescription};
 
@@ -19,7 +23,7 @@ impl ProgramDescription {
     /// Write `self` using the configured serialization format
     pub fn canonical_write(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        let mut out_file = File::create(path)?;
+        let mut out_file = BufWriter::new(File::create(path)?);
         cfg_if! {
             if #[cfg(feature = "binenc")] {
                 let write = bincode::serialize_into(
@@ -47,15 +51,15 @@ impl ProgramDescription {
     /// Read `self` using the configured serialization format
     pub fn canonical_read(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let in_file = File::open(path)?;
+        let in_file = BufReader::new(File::open(path)?);
         cfg_if! {
             if #[cfg(feature = "binenc")] {
                 let read = bincode::deserialize_from(
-                    &in_file,
+                    in_file,
                 );
             } else  {
                 let read = serde_json::from_reader(
-                    &in_file,
+                    in_file,
                 );
             }
         };

@@ -59,6 +59,7 @@ pub use std::collections::{HashMap, HashSet};
 use std::{
     fmt::Display,
     fs::File,
+    io::BufWriter,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -508,10 +509,12 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                     .take()
                     .expect("Output path should be set");
                 dump_stats.total_time = start.elapsed();
-                serde_json::to_writer(File::create(filepath).unwrap(), &dump_stats).unwrap();
+                let out = BufWriter::new(File::create(filepath).unwrap());
+                serde_json::to_writer(out, &dump_stats).unwrap();
             }
             CrateHandling::Analyze => {
-                let out = File::create(out_path.with_extension(STAT_FILE_EXT)).unwrap();
+                let out =
+                    BufWriter::new(File::create(out_path.with_extension(STAT_FILE_EXT)).unwrap());
                 let mut stat = stat_ref.take().expect("stats must have been set");
                 let self_time = start.elapsed();
                 // See ana/mod.rs for explanantions as to these adjustments.
