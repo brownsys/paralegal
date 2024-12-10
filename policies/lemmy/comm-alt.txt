@@ -1,0 +1,21 @@
+# alternate version of the policy that gives it the same structure
+# as the hyperswitch and mcaptcha policies
+# doing it this way does require refactoring check_community_ban and check_community_deleted
+# into the same function so that they can just have one marker.
+# The lemmy developers really should have done things this way to begin with
+# since they should *always* be called together.
+# If they had, they would have had far fewer bugs...
+# I think this is truer to how a privacy engineer would write the policy (just thinking about a single auth_check).
+# To not require source code changes, just refactor "auth check" into two auth checks,
+# one for ban, one for delete
+
+# (to compile this policy, delete these comments)
+Scope:
+Everywhere
+
+Policy:
+1. For each "write" marked db_write:
+	A. For each "comm" marked community_struct:
+		a. If "comm" goes to "write" then:
+	    	i) There is a "auth check" marked delete_and_ban_check where:
+				A) "auth check" affects whether "write" happens
