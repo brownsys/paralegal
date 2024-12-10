@@ -1,17 +1,18 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use paralegal_policy::{paralegal_spdg::{Identifier, traverse::EdgeSelection}, Context, Diagnostics, Marker, assert_error};
+use paralegal_policy::{paralegal_spdg::{Identifier, traverse::EdgeSelection}, RootContext, Context, Diagnostics, Marker,
+assert_error};
 
 macro_rules! marker {
-    ($id:ident) => {
-        Marker::new_intern(stringify!($id))
-    };
+($id:ident) => {
+Marker::new_intern(stringify!($id))
+};
 }
 
-pub fn check(ctx: Arc<Context>) -> Result<()> {
-    ctx.named_policy(Identifier::new_intern("check"), |ctx| {
+pub fn check(ctx: Arc<RootContext>) -> Result<()> {
+        ctx.named_policy(Identifier::new_intern("check"), |ctx| {
         {{policy}}
         Ok(())
-    })
-}
+        })
+        }

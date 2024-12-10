@@ -1,7 +1,7 @@
 {{intro}};
 let {{var}}_nodes = {{inner_var}}_nodes.filter(|n| {
-    let {{inner_var}} = *n;
-    {{#if everywhere}}self.cx.all_controllers().any(|(c_id, _)| { {{/if}}
-    {{{filter}}}
-    {{#if everywhere}}}){{/if}}
+let {{inner_var}} = *n;
+{{#if everywhere}}ctx.all_controllers().any(|(c_id, _)| { {{/if}}
+{{{filter}}}
+{{#if everywhere}}}){{/if}}
 }).collect::<Vec<_>>();
