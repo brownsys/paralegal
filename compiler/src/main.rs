@@ -49,7 +49,20 @@ fn run(args: &Args) -> Result<()> {
             &args.out,
             args.bin,
         ),
-        Err(e) => panic!("{}", e),
+        Err(e) => match e {
+            nom::Err::Incomplete(_) => {
+                panic!("Incomplete parse")
+            }
+            nom::Err::Failure(e) => {
+                panic!("Parse failure: {}", e)
+            }
+            nom::Err::Error(e) => {
+                for (loc, context) in e.errors {
+                    eprintln!("Error in context {context:?}:\n{loc}\n");
+                }
+                panic!("Parse error")
+            }
+        },
     }
 }
 
