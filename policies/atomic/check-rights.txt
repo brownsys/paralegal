@@ -2,7 +2,7 @@ Scope:
 Everywhere
 
 Definitions:
-1. "stored_resource" is each "resource" marked resource where:
+1. "stored_resource" is each "resource" marked new_resource where:
     A. There is a "commit" marked commit where:
         a. "commit" goes to "resource"
     and
