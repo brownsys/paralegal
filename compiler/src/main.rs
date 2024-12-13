@@ -1,13 +1,12 @@
-mod compile;
-mod verify_scope;
-
 use std::fs;
 use std::path::PathBuf;
 
 use clap::Parser;
-use compile::compile;
 use parsers::parse;
 use std::io::Result;
+
+mod compile;
+mod verify_scope;
 
 /// A compiler for Paralegal's Controlled Natural Language (CNL) policies.
 ///
@@ -41,7 +40,7 @@ fn run(args: &Args) -> Result<()> {
 
     let res = parse(&policy);
     match res {
-        Ok((_, policy)) => compile(
+        Ok((_, policy)) => compile::compile(
             policy,
             args.path
                 .file_name()

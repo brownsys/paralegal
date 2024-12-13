@@ -1,37 +1,42 @@
 use nom::{
     branch::alt,
     bytes::complete::tag,
+    character::complete::space0,
     error::context,
-    sequence::{separated_pair, delimited, terminated}, character::complete::space0,
+    sequence::{delimited, separated_pair, terminated},
 };
 
-use crate::{
-    VariableIntro, Res, common::*,
-};
+use crate::{common::*, Res, VariableIntro};
 
 pub fn variable_def(s: &str) -> Res<&str, VariableIntro> {
-    let mut combinator = context(
-        "variable (introduction)",
-        variable
-    );
+    let mut combinator = context("variable (introduction)", variable);
     let (remainder, variable) = combinator(s)?;
     Ok((
         remainder,
-        VariableIntro::Variable(variable)
+        VariableIntro {
+            variable,
+            intro: crate::VariableIntroType::Variable,
+        },
     ))
 }
 
 pub fn variable_marked(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "variable marked",
-        separated_pair(variable, tag("marked"), marker)
+        separated_pair(variable, tag("marked"), marker),
     );
     let (remainder, (variable, marker)) = combinator(s)?;
     Ok((
         remainder,
-        VariableIntro::VariableMarked((variable, marker))
+        VariableIntro {
+            variable,
+            intro: crate::VariableIntroType::VariableMarked {
+                marker,
+                on_type: false,
+            },
+        },
     ))
-} 
+}
 
 fn variable_type_marked(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
@@ -41,43 +46,52 @@ fn variable_type_marked(s: &str) -> Res<&str, VariableIntro> {
     let (remainder, (variable, marker)) = combinator(s)?;
     Ok((
         remainder,
-        VariableIntro::VariableOfTypeMarked((variable, marker))
+        VariableIntro {
+            variable,
+            intro: crate::VariableIntroType::VariableMarked {
+                marker,
+                on_type: true,
+            },
+        },
     ))
 }
 
 fn variable_source_of(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context(
         "variable source of",
-        separated_pair(variable, tag("that produces"), variable)
+        separated_pair(variable, tag("that produces"), variable),
     );
     let (remainder, (source_of_var, var)) = combinator(s)?;
     Ok((
         remainder,
-        VariableIntro::VariableSourceOf((source_of_var, var))
+        VariableIntro {
+            variable: source_of_var,
+            intro: crate::VariableIntroType::VariableSourceOf(var),
+        },
     ))
 }
 
 fn roots(s: &str) -> Res<&str, VariableIntro> {
-    let mut combinator = context(
-        "roots",
-        terminated(variable, tag("input"))
-    );
+    let mut combinator = context("roots", terminated(variable, tag("input")));
     let (remainder, var) = combinator(s)?;
     Ok((
         remainder,
-        VariableIntro::Roots(var)
+        VariableIntro {
+            variable: var,
+            intro: crate::VariableIntroType::Roots,
+        },
     ))
 }
 
 fn nodes(s: &str) -> Res<&str, VariableIntro> {
-    let mut combinator = context(
-        "nodes",
-        terminated(variable, tag("item"))
-    );
+    let mut combinator = context("nodes", terminated(variable, tag("item")));
     let (remainder, var) = combinator(s)?;
     Ok((
         remainder,
-        VariableIntro::AllNodes(var)
+        VariableIntro {
+            variable: var,
+            intro: crate::VariableIntroType::AllNodes,
+        },
     ))
 }
 
@@ -85,7 +99,7 @@ pub fn variable_intro(s: &str) -> Res<&str, VariableIntro> {
     context(
         "variable intro",
         delimited(
-            space0, 
+            space0,
             alt((
                 roots,
                 nodes,
@@ -94,7 +108,8 @@ pub fn variable_intro(s: &str) -> Res<&str, VariableIntro> {
                 variable_marked,
                 // must try this last b/c it'll partially consume the above
                 variable_def,
-            )), 
-            space0)
+            )),
+            space0,
+        ),
     )(s)
 }

@@ -1,7 +1,7 @@
 use handlebars::Handlebars;
 use parsers::{
     ASTNode, ClauseIntro, Definition, DefinitionScope, Operator, Policy, PolicyScope, Relation,
-    Variable, VariableIntro,
+    Variable, VariableIntro, VariableIntroType,
 };
 use std::fs;
 use std::io::Result;
@@ -15,34 +15,25 @@ fn compile_variable_intro(
     intro: &VariableIntro,
     map: &mut HashMap<&str, String>,
 ) -> (String, String) {
-    match intro {
-        VariableIntro::Roots(var) | VariableIntro::AllNodes(var) => {
-            map.insert("var", var.into());
-        }
-        VariableIntro::Variable(var) => {
-            map.insert("var", var.into());
+    map.insert("var", intro.variable.clone());
+
+    match &intro.intro {
+        VariableIntroType::Roots | VariableIntroType::AllNodes => (),
+        VariableIntroType::Variable => {
             // just insert a non-null string
             map.insert("definition", String::from("true"));
         }
-        VariableIntro::VariableMarked((var, marker))
-        | VariableIntro::VariableOfTypeMarked((var, marker)) => {
-            map.insert("var", var.into());
+        VariableIntroType::VariableMarked { marker, .. } => {
             map.insert("marker", marker.into());
         }
-        VariableIntro::VariableSourceOf((var, type_var)) => {
-            map.insert("var", var.into());
+        VariableIntroType::VariableSourceOf(type_var) => {
             map.insert("type-var", type_var.into());
         }
     };
-    let variable: String = match intro {
-        VariableIntro::Roots(var)
-        | VariableIntro::AllNodes(var)
-        | VariableIntro::Variable(var)
-        | VariableIntro::VariableMarked((var, _))
-        | VariableIntro::VariableOfTypeMarked((var, _))
-        | VariableIntro::VariableSourceOf((var, _)) => var.into(),
-    };
-    (variable, render_template(handlebars, &map, intro.into()))
+    (
+        intro.variable.clone(),
+        render_template(handlebars, &map, intro.into()),
+    )
 }
 
 fn compile_relation(
@@ -51,21 +42,19 @@ fn compile_relation(
     map: &mut HashMap<&str, String>,
 ) -> String {
     match relation {
-        Relation::Influences((var_source, var_sink))
-        | Relation::DoesNotInfluence((var_source, var_sink))
-        | Relation::FlowsTo((var_source, var_sink))
-        | Relation::NoFlowsTo((var_source, var_sink))
-        | Relation::ControlFlow((var_source, var_sink))
-        | Relation::NoControlFlow((var_source, var_sink))
-        | Relation::AssociatedCallSite((var_source, var_sink)) => {
-            map.insert("src", var_source.into());
-            map.insert("sink", var_sink.into());
+        Relation::Binary { left, right, .. } => {
+            map.insert("src", left.into());
+            map.insert("sink", right.into());
         }
-        Relation::IsMarked((var, marker)) | Relation::IsNotMarked((var, marker)) => {
+        Relation::Negation(inner) => {
+            let value = compile_relation(handlebars, &inner, map);
+            map.insert("value", value);
+        }
+        Relation::IsMarked(var, marker) => {
             map.insert("src", var.into());
             map.insert("marker", marker.into());
         }
-    };
+    }
     render_template(handlebars, &map, relation.into())
 }
 
@@ -75,7 +64,7 @@ fn compile_ast_node(handlebars: &mut Handlebars, node: &ASTNode, counter: &mut u
     let mut map: HashMap<&str, String> = HashMap::new();
     match node {
         ASTNode::Relation(relation) => compile_relation(handlebars, relation, &mut map),
-        ASTNode::OnlyVia((src_intro, sink_intro, checkpoint_intro)) => {
+        ASTNode::OnlyVia(src_intro, sink_intro, checkpoint_intro) => {
             // TODO this logic is overcomplicated and gross
             // but I have an SOSP deadline and it works, so fix later...
 

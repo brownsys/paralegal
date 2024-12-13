@@ -28,6 +28,7 @@ pub enum Template {
     IsNotMarked,
     Influences,
     DoesNotInfluence,
+    Negation,
     // clause intro
     ForEach,
     ThereIs,
@@ -76,6 +77,7 @@ impl From<Template> for &str {
             Template::Everywhere => "scope/everywhere.handlebars",
             Template::Somewhere => "scope/somewhere.handlebars",
             Template::InCtrler => "scope/in-ctrler.handlebars",
+            Template::Negation => "relations/negation.handlebars",
         }
     }
 }

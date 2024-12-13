@@ -1,8 +1,15 @@
 use clause::l1_clauses;
 use common::colon;
 use definitions::parse_definitions;
+use nom::{
+    bytes::complete::tag,
+    character::complete::multispace0,
+    combinator::{all_consuming, opt},
+    error::{context, VerboseError},
+    sequence::{delimited, tuple},
+    IResult,
+};
 use scope::scope;
-use nom::{IResult, error::{VerboseError, context}, combinator::{all_consuming, opt}, sequence::{tuple, delimited}, character::complete::multispace0, bytes::complete::tag};
 use templates::Template;
 
 pub type Res<T, U> = IResult<T, U, VerboseError<T>>;
@@ -19,7 +26,7 @@ pub struct Policy {
 pub enum PolicyScope {
     Everywhere,
     Somewhere,
-    InCtrler(String)
+    InCtrler(String),
 }
 
 // definitions are controller-specific by default, but can be specified to be anywhere in the application
@@ -28,7 +35,7 @@ pub enum PolicyScope {
 #[derive(Debug, PartialEq, Eq)]
 pub enum DefinitionScope {
     Ctrler,
-    Everywhere
+    Everywhere,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -37,31 +44,42 @@ pub struct Definition {
     pub variable: Variable,
     pub scope: DefinitionScope,
     pub declaration: VariableIntro,
-    pub filter: ASTNode
+    pub filter: ASTNode,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct VariableIntro {
+    pub variable: Variable,
+    pub intro: VariableIntroType,
 }
 
 // AST data
 #[derive(Debug, PartialEq, Eq)]
-pub enum VariableIntro {
-    Roots(Variable),
-    AllNodes(Variable),
-    Variable(Variable),
-    VariableMarked((Variable, Marker)),
-    VariableOfTypeMarked((Variable, Marker)),
-    VariableSourceOf((Variable, Variable)),
+pub enum VariableIntroType {
+    Roots,
+    AllNodes,
+    Variable,
+    VariableMarked { marker: Marker, on_type: bool },
+    VariableSourceOf(Variable),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Relation {
-    Influences((Variable, Variable)),
-    DoesNotInfluence((Variable, Variable)),
-    FlowsTo((Variable, Variable)),
-    NoFlowsTo((Variable, Variable)),
-    ControlFlow((Variable, Variable)),
-    NoControlFlow((Variable, Variable)),
-    AssociatedCallSite((Variable, Variable)),
-    IsMarked((Variable, Marker)),
-    IsNotMarked((Variable, Marker)),
+    Binary {
+        left: Variable,
+        right: Variable,
+        typ: Binop,
+    },
+    Negation(Box<Relation>),
+    IsMarked(Variable, Marker),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Binop {
+    Data,
+    Control,
+    Both,
+    AssociatedCallSite,
 }
 
 pub type Variable = String;
@@ -76,29 +94,34 @@ pub enum Operator {
 // map templates to their handlebars template file names
 impl From<&VariableIntro> for Template {
     fn from(value: &VariableIntro) -> Self {
-        match value {
-            &VariableIntro::Roots(_) => Template::Roots,
-            &VariableIntro::AllNodes(_) => Template::AllNodes,
-            &VariableIntro::Variable(_) => Template::Variable,
-            &VariableIntro::VariableMarked(_) => Template::VariableMarked,
-            &VariableIntro::VariableOfTypeMarked(_) => Template::VariableOfTypeMarked,
-            &VariableIntro::VariableSourceOf(_) =>  Template::VariableSourceOf,
+        use VariableIntroType::*;
+        match value.intro {
+            Roots => Template::Roots,
+            AllNodes => Template::AllNodes,
+            Variable => Template::Variable,
+            VariableMarked { on_type, .. } => {
+                if on_type {
+                    Template::VariableOfTypeMarked
+                } else {
+                    Template::VariableMarked
+                }
+            }
+            VariableSourceOf(_) => Template::VariableSourceOf,
         }
     }
 }
 
 impl From<&Relation> for Template {
     fn from(value: &Relation) -> Self {
-        match value {
-            &Relation::FlowsTo(_) => Template::FlowsTo,
-            &Relation::NoFlowsTo(_) => Template::NoFlowsTo,
-            &Relation::ControlFlow(_) => Template::ControlFlow,
-            &Relation::NoControlFlow(_) => Template::NoControlFlow,
-            &Relation::AssociatedCallSite(_) => Template::AssociatedCallSite,
-            &Relation::IsMarked(_) => Template::IsMarked,
-            &Relation::IsNotMarked(_) => Template::IsNotMarked,
-            &Relation::Influences(_) => Template::Influences,
-            &Relation::DoesNotInfluence(_) => Template::DoesNotInfluence,
+        match &value {
+            Relation::Binary { typ, .. } => match typ {
+                Binop::AssociatedCallSite => Template::AssociatedCallSite,
+                Binop::Data => Template::FlowsTo,
+                Binop::Control => Template::ControlFlow,
+                Binop::Both => Template::Influences,
+            },
+            Relation::IsMarked { .. } => Template::IsMarked,
+            Relation::Negation(_) => Template::Negation,
         }
     }
 }
@@ -117,7 +140,7 @@ impl From<&str> for Operator {
         match value {
             "and" => Operator::And,
             "or" => Operator::Or,
-            _ => unimplemented!("invalid operator: valid options are 1) and 2) or")
+            _ => unimplemented!("invalid operator: valid options are 1) and 2) or"),
         }
     }
 }
@@ -146,7 +169,7 @@ impl From<&ASTNode> for Template {
     fn from(value: &ASTNode) -> Self {
         match value {
             ASTNode::Relation(relation) => relation.into(),
-            ASTNode::OnlyVia(_) => Template::OnlyVia,
+            ASTNode::OnlyVia { .. } => Template::OnlyVia,
             ASTNode::Clause(clause) => (&clause.intro).into(),
             ASTNode::JoinedNodes(obligation) => (&obligation.op).into(),
         }
@@ -164,44 +187,54 @@ pub struct TwoNodeObligation {
 pub enum ClauseIntro {
     ForEach(VariableIntro),
     ThereIs(VariableIntro),
-    Conditional(Relation)
+    Conditional(Relation),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Clause {
     pub intro: ClauseIntro,
-    pub body: ASTNode
+    pub body: ASTNode,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ASTNode {
     Relation(Relation),
-    OnlyVia((VariableIntro, (Option<Operator>, Vec<VariableIntro>), (Option<Operator>, Vec<VariableIntro>))),
+    OnlyVia(
+        VariableIntro,
+        (Option<Operator>, Vec<VariableIntro>),
+        (Option<Operator>, Vec<VariableIntro>),
+    ),
     Clause(Box<Clause>),
     JoinedNodes(Box<TwoNodeObligation>),
 }
 
 pub fn parse(s: &str) -> Res<&str, Policy> {
     let mut combinator = context(
-        "parse policy", 
-        all_consuming(
-            tuple((
-                scope, 
-                opt(parse_definitions), 
-                delimited(
-                    tuple((multispace0, tag("Policy"), colon)), 
-                    l1_clauses, 
-                    multispace0))
-                )
-        )
+        "parse policy",
+        all_consuming(tuple((
+            scope,
+            opt(parse_definitions),
+            delimited(
+                tuple((multispace0, tag("Policy"), colon)),
+                l1_clauses,
+                multispace0,
+            ),
+        ))),
     );
 
     let (remainder, (scope, option_defs, body)) = combinator(s)?;
-    Ok((remainder, Policy {definitions: option_defs.unwrap_or_default(), scope, body}))
+    Ok((
+        remainder,
+        Policy {
+            definitions: option_defs.unwrap_or_default(),
+            scope,
+            body,
+        },
+    ))
 }
 
-pub mod common;
 pub mod clause;
+pub mod common;
 pub mod definitions;
 pub mod relations;
 pub mod scope;
