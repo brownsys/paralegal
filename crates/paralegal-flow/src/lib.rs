@@ -130,6 +130,7 @@ struct Callbacks<'a> {
     rustc_second_timer: Option<Instant>,
     stat_ref: &'a mut Option<AnalyzerStats>,
     output_location: &'a mut Option<PathBuf>,
+    time: &'a mut DumpStats,
 }
 
 struct NoopCallbacks;
@@ -141,6 +142,7 @@ impl<'a> Callbacks<'a> {
         opts: &'static Args,
         stat_ref: &'a mut Option<AnalyzerStats>,
         output_location: &'a mut Option<PathBuf>,
+        time: &'a mut DumpStats,
     ) -> Self {
         Self {
             opts,
@@ -148,6 +150,7 @@ impl<'a> Callbacks<'a> {
             rustc_second_timer: None,
             stat_ref,
             output_location,
+            time,
         }
     }
 }
@@ -184,6 +187,14 @@ struct DumpOnlyCallbacks<'a> {
 
 const INTERMEDIATE_STAT_EXT: &str = "stats.json";
 
+fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
+    let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
+    let dump_marker_start = Instant::now();
+    dump_markers(tcx);
+    timer.dump_time = dump_marker_start.elapsed() + dump_time;
+    timer.tycheck_time = tycheck_time;
+}
+
 impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
     fn after_expansion<'tcx>(
         &mut self,
@@ -191,11 +202,7 @@ impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
-            let dump_marker_start = Instant::now();
-            dump_markers(tcx);
-            self.time.dump_time = dump_marker_start.elapsed() + dump_time;
-            self.time.tycheck_time = tycheck_time;
+            dump_mir_and_update_stats(tcx, self.time);
             assert!(self
                 .output_location
                 .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
@@ -278,8 +285,9 @@ impl<'a> Callbacks<'a> {
             rustc_driver::Compilation::Stop
         } else {
             queries.global_ctxt().unwrap().enter(|tcx| {
-                self.stats
-                    .measure(TimedStat::MirEmission, || dump_mir_and_borrowck_facts(tcx))
+                self.stats.measure(TimedStat::MirEmission, || {
+                    dump_mir_and_update_stats(tcx, self.time);
+                })
             });
             rustc_driver::Compilation::Continue
         }
@@ -530,6 +538,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                         opts,
                         &mut stat_ref,
                         &mut output_path_location,
+                        &mut dump_stats,
                     ))
                 }
             };
