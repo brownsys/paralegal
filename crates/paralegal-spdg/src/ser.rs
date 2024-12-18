@@ -77,12 +77,13 @@ impl ProgramDescription {
 impl AnalyzerStats {
     /// Read the stats from a file using the default encoding (json)
     pub fn canonical_read(path: impl AsRef<Path>) -> Result<Self> {
-        Ok(serde_json::from_reader(File::open(path)?)?)
+        let reader = BufReader::new(File::open(path.as_ref())?);
+        Ok(serde_json::from_reader(reader)?)
     }
 
     /// Write the stats to a file using the default encoding (json)
     pub fn canonical_write(&self, path: impl AsRef<Path>) -> Result<()> {
-        let file = File::create(path)?;
+        let file = BufWriter::new(File::create(path)?);
         Ok(serde_json::to_writer(file, self)?)
     }
 }

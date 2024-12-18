@@ -470,10 +470,6 @@ struct ClapAnalysisCtrl {
     /// Crates that should be recursed into.
     #[clap(long)]
     include: Vec<String>,
-    #[clap(long)]
-    compress_artifacts: bool,
-    #[clap(long)]
-    no_pdg_cache: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -487,8 +483,6 @@ pub struct AnalysisCtrl {
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
     include: Vec<String>,
-    compress_artifacts: bool,
-    no_pdg_cache: bool,
 }
 
 impl Default for AnalysisCtrl {
@@ -497,8 +491,6 @@ impl Default for AnalysisCtrl {
             analyze: Vec::new(),
             inlining_depth: InliningDepth::Adaptive,
             include: Default::default(),
-            compress_artifacts: false,
-            no_pdg_cache: false,
         }
     }
 }
@@ -512,8 +504,6 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             adaptive_depth,
             unconstrained_depth: _,
             include,
-            compress_artifacts,
-            no_pdg_cache,
         } = value;
 
         let inlining_depth = if adaptive_depth {
@@ -528,8 +518,6 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             analyze,
             inlining_depth,
             include,
-            compress_artifacts,
-            no_pdg_cache,
         })
     }
 }
@@ -561,14 +549,6 @@ impl AnalysisCtrl {
 
     pub fn included(&self) -> &[String] {
         &self.include
-    }
-
-    pub fn compress_artifacts(&self) -> bool {
-        self.compress_artifacts
-    }
-
-    pub fn pdg_cache(&self) -> bool {
-        !self.no_pdg_cache
     }
 }
 

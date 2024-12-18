@@ -172,7 +172,6 @@ impl DumpStats {
 }
 
 struct DumpOnlyCallbacks<'a> {
-    compress_artifacts: bool,
     time: &'a mut DumpStats,
     output_location: &'a mut Option<PathBuf>,
 }
@@ -186,8 +185,7 @@ impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            let (tycheck_time, dump_time) =
-                dump_mir_and_borrowck_facts(tcx, self.compress_artifacts);
+            let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
             let dump_marker_start = Instant::now();
             dump_markers(tcx);
             self.time.dump_time = dump_marker_start.elapsed() + dump_time;
@@ -269,9 +267,8 @@ impl<'a> Callbacks<'a> {
             rustc_driver::Compilation::Stop
         } else {
             queries.global_ctxt().unwrap().enter(|tcx| {
-                self.stats.measure(TimedStat::MirEmission, || {
-                    dump_mir_and_borrowck_facts(tcx, self.opts.anactrl().compress_artifacts())
-                })
+                self.stats
+                    .measure(TimedStat::MirEmission, || dump_mir_and_borrowck_facts(tcx))
             });
             rustc_driver::Compilation::Continue
         }
@@ -463,7 +460,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 CrateHandling::CompileAndDump => {
                     compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
                     Box::new(DumpOnlyCallbacks {
-                        compress_artifacts: plugin_args.anactrl().compress_artifacts(),
                         time: &mut dump_stats,
                         output_location: &mut output_path_location,
                     })
@@ -517,7 +513,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                     BufWriter::new(File::create(out_path.with_extension(STAT_FILE_EXT)).unwrap());
                 let mut stat = stat_ref.take().expect("stats must have been set");
                 let self_time = start.elapsed();
-                // See ana/mod.rs for explanantions as to these adjustments.
+                // See ana/mod.rs for explanations as to these adjustments.
                 stat.self_time = self_time;
                 serde_json::to_writer(out, &stat).unwrap();
             }

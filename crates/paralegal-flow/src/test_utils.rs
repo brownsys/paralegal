@@ -262,7 +262,8 @@ impl InlineTestBuilder {
                 let args: &'static _ = Box::leak(Box::new(args));
                 dump_markers(result.tcx);
                 let tcx = result.tcx;
-                let memo = crate::Callbacks::new(args);
+                let mut stats = None;
+                let memo = crate::Callbacks::new(args, &mut stats);
                 let pdg = memo.run(tcx).unwrap();
                 let graph = PreFrg::from_description(pdg);
                 f(graph)

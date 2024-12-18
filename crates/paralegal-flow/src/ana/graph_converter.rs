@@ -223,7 +223,6 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     .graph
                     .edges_directed(old_node, Direction::Incoming)
                     .filter(|e| e.weight().kind == DepEdgeKind::Data);
-
                 let needs_return_markers = in_edges.clone().next().is_none()
                     || in_edges.any(|e| {
                         let at = e.weight().at;
