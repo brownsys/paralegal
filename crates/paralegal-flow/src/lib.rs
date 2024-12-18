@@ -327,6 +327,7 @@ enum CrateHandling {
 struct CrateInfo {
     name: Option<String>,
     handling: CrateHandling,
+    #[allow(dead_code)]
     is_build_script: bool,
 }
 
