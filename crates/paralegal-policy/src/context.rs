@@ -308,9 +308,13 @@ impl RootContext {
     #[deprecated = "Use NodeQueries::flows_to instead"]
     /// Returns whether a node flows to a node through the configured edge type.
     ///
-    /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
+    /// Nodes do not flow to themselves. CallArgument nodes do flow to their
+    /// respective CallSites.
     ///
-    /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
+    /// If you use flows_to with [`EdgeSelection::Control`], you might want to
+    /// consider using [`RootContext::has_ctrl_influence`], which additionally
+    /// considers intermediate nodes which the src node has data flow to and has
+    /// ctrl influence on the sink.
     pub fn flows_to(
         &self,
         src: impl IntoIterGlobalNodes,
@@ -683,9 +687,13 @@ where
 
     /// Returns whether a node flows to a node through the configured edge type.
     ///
-    /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
+    /// Nodes do not flow to themselves. CallArgument nodes do flow to their
+    /// respective CallSites.
     ///
-    /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
+    /// If you use flows_to with [`EdgeSelection::Control`], you might want to
+    /// consider using [`RootContext::has_ctrl_influence`], which additionally
+    /// considers intermediate nodes which the src node has data flow to and has
+    /// ctrl influence on the sink.
     fn flows_to(
         self,
         sink: impl IntoIterGlobalNodes,
@@ -717,9 +725,13 @@ where
 
     /// Returns the sink node that is reached
     ///
-    /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
+    /// Nodes do not flow to themselves. CallArgument nodes do flow to their
+    /// respective CallSites.
     ///
-    /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
+    /// If you use flows_to with [`EdgeSelection::Control`], you might want to
+    /// consider using [`RootContext::has_ctrl_influence`], which additionally
+    /// considers intermediate nodes which the src node has data flow to and has
+    /// ctrl influence on the sink.
     fn find_flow(
         self,
         sink: impl IntoIterGlobalNodes,
