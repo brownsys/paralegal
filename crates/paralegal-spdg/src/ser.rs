@@ -19,6 +19,9 @@ cfg_if! {
     }
 }
 
+/// A magic hash number used to verify version compatibility of output
+/// artifacts. Used in reading and writing the [`ProgramDescription`] See
+/// build.rs for how this number is created.
 fn ser_magic() -> u64 {
     const SER_MAGIC: &str = env!("SER_MAGIC");
     SER_MAGIC.parse().unwrap()

@@ -21,6 +21,7 @@ fn get_rustup_lib_path() -> PathBuf {
     rustup_lib
 }
 
+/// Helper for calculating a hash of all (modification dates of) Rust files in this crate.
 fn visit_dirs(dir: &Path, hasher: &mut DefaultHasher) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
@@ -31,11 +32,9 @@ fn visit_dirs(dir: &Path, hasher: &mut DefaultHasher) -> Result<()> {
         if path.is_dir() {
             visit_dirs(&path, hasher)?;
         } else if path.extension().map_or(false, |ext| ext == "rs") {
-            // Get the modification time
             let metadata = entry.metadata()?;
             let modified = metadata.modified()?;
 
-            // Convert SystemTime to duration since UNIX_EPOCH
             let duration = modified.duration_since(SystemTime::UNIX_EPOCH)?;
             duration.as_secs().hash(hasher);
             // Tell Cargo to rerun if this source file changes
@@ -45,6 +44,7 @@ fn visit_dirs(dir: &Path, hasher: &mut DefaultHasher) -> Result<()> {
     Ok(())
 }
 
+/// Calculate a hash of all (modification dates of) Rust files in this crate.
 fn calculate_source_hash() -> u64 {
     let mut hasher = DefaultHasher::new();
 
@@ -57,7 +57,6 @@ fn calculate_source_hash() -> u64 {
 }
 
 fn main() {
-    // Calculate the hash of modification times
     let magic = calculate_source_hash();
 
     // Emit the hash as an environment variable
