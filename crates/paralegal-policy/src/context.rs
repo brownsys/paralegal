@@ -1001,6 +1001,7 @@ impl<T: NodeExt + Copy> NodeExt for &'_ T {
         (*self).predecessors(ctx)
     }
 
+    #[allow(deprecated)]
     fn shortest_path(
         self,
         to: GlobalNode,

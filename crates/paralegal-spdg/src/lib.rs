@@ -385,7 +385,7 @@ pub struct AnalyzerStats {
     /// The number of functions we produced a PDG for
     pub pdg_functions: u32,
     /// The lines of code corresponding to the functions from
-    /// [`Self::dedup_functions`].
+    /// [`Self::pdg_functions`].
     pub pdg_locs: u32,
     /// The number of functions we produced PDGs for or we inspected to check
     /// for markers.

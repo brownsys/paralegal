@@ -129,6 +129,7 @@ struct Callbacks<'a> {
     stats: Stats,
     rustc_second_timer: Option<Instant>,
     stat_ref: &'a mut Option<AnalyzerStats>,
+    output_location: &'a mut Option<PathBuf>,
 }
 
 struct NoopCallbacks;
@@ -136,12 +137,17 @@ struct NoopCallbacks;
 impl rustc_driver::Callbacks for NoopCallbacks {}
 
 impl<'a> Callbacks<'a> {
-    pub fn new(opts: &'static Args, stat_ref: &'a mut Option<AnalyzerStats>) -> Self {
+    pub fn new(
+        opts: &'static Args,
+        stat_ref: &'a mut Option<AnalyzerStats>,
+        output_location: &'a mut Option<PathBuf>,
+    ) -> Self {
         Self {
             opts,
             stats: Default::default(),
             rustc_second_timer: None,
             stat_ref,
+            output_location,
         }
     }
 }
@@ -259,6 +265,11 @@ impl<'a> Callbacks<'a> {
                 println!("Analysis finished with timing: {}", self.stats);
 
                 assert!(self.stat_ref.replace(stats).is_none());
+
+                assert!(self
+                    .output_location
+                    .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+                    .is_none());
                 anyhow::Ok(self.opts.abort_after_analysis())
             })
             .unwrap();
@@ -298,14 +309,21 @@ fn add_to_rustflags(new: impl IntoIterator<Item = String>) -> Result<(), std::en
     Ok(())
 }
 
+#[derive(strum::AsRefStr, PartialEq, Eq)]
 enum CrateHandling {
     JustCompile,
     CompileAndDump,
     Analyze,
 }
 
+struct CrateInfo {
+    name: Option<String>,
+    handling: CrateHandling,
+    is_build_script: bool,
+}
+
 /// Also adds and additional features required by the Paralegal build config
-fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>) -> CrateHandling {
+fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>) -> CrateInfo {
     let crate_name = compiler_args
         .iter()
         .enumerate()
@@ -325,8 +343,12 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
         );
     }
 
-    match &crate_name {
-        Some(krate) if krate == "build_script_build" => CrateHandling::JustCompile,
+    let is_build_script = matches!(
+        &crate_name,
+        Some(krate) if krate == "build_script_build"
+    );
+    let handling = match &crate_name {
+        _ if is_build_script => CrateHandling::JustCompile,
         Some(krate)
             if matches!(
                 plugin_args
@@ -341,6 +363,12 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
             CrateHandling::CompileAndDump
         }
         _ => CrateHandling::JustCompile,
+    };
+
+    CrateInfo {
+        name: crate_name,
+        handling,
+        is_build_script,
     }
 }
 
@@ -451,9 +479,14 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         let mut stat_ref = None;
         let out_path = plugin_args.result_path().to_owned();
 
-        let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
+        let info = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
+        println!(
+            "Handling crate {} as {}",
+            info.name.as_ref().map_or("unnamed", String::as_str),
+            info.handling.as_ref()
+        );
         let result = {
-            let mut callbacks = match handling {
+            let mut callbacks = match info.handling {
                 CrateHandling::JustCompile => {
                     Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
                 }
@@ -493,31 +526,35 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                         "Arguments: {}",
                         Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
                     );
-                    Box::new(Callbacks::new(opts, &mut stat_ref))
+                    Box::new(Callbacks::new(
+                        opts,
+                        &mut stat_ref,
+                        &mut output_path_location,
+                    ))
                 }
             };
 
             rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run()
         };
-        match handling {
-            CrateHandling::CompileAndDump => {
-                let filepath = output_path_location
-                    .take()
-                    .expect("Output path should be set");
-                dump_stats.total_time = start.elapsed();
-                let out = BufWriter::new(File::create(filepath).unwrap());
-                serde_json::to_writer(out, &dump_stats).unwrap();
-            }
-            CrateHandling::Analyze => {
-                let out =
-                    BufWriter::new(File::create(out_path.with_extension(STAT_FILE_EXT)).unwrap());
-                let mut stat = stat_ref.take().expect("stats must have been set");
-                let self_time = start.elapsed();
-                // See ana/mod.rs for explanations as to these adjustments.
-                stat.self_time = self_time;
-                serde_json::to_writer(out, &stat).unwrap();
-            }
-            _ => (),
+        if info.handling != CrateHandling::JustCompile {
+            let filepath = output_path_location
+                .take()
+                .expect("Output path should be set");
+            dump_stats.total_time = start.elapsed();
+            println!(
+                "Writing statistics for dependency to {}",
+                filepath.display()
+            );
+            let out = BufWriter::new(File::create(filepath).unwrap());
+            serde_json::to_writer(out, &dump_stats).unwrap();
+        }
+        if info.handling == CrateHandling::Analyze {
+            let out = BufWriter::new(File::create(out_path.with_extension(STAT_FILE_EXT)).unwrap());
+            let mut stat = stat_ref.take().expect("stats must have been set");
+            let self_time = start.elapsed();
+            // See ana/mod.rs for explanations as to these adjustments.
+            stat.self_time = self_time;
+            serde_json::to_writer(out, &stat).unwrap();
         }
         result
     }
