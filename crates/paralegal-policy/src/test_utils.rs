@@ -29,7 +29,11 @@ pub fn get_callsite_or_datasink_node<'a>(
         .unwrap()
 }
 
-pub fn get_callsite_node<'a>(ctx: &'a RootContext, controller: Endpoint, name: &'a str) -> NodeCluster {
+pub fn get_callsite_node<'a>(
+    ctx: &'a RootContext,
+    controller: Endpoint,
+    name: &'a str,
+) -> NodeCluster {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl

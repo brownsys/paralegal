@@ -583,7 +583,7 @@ impl RootContext {
                         self.desc
                             .def_info
                             .iter()
-                            .filter(|(did, _)| self.desc.analyzed_spans.contains_key(&did))
+                            .filter(|(did, _)| self.desc.analyzed_spans.contains_key(did))
                             .map(|(_, i)| (&i.src_info, matches!(i.kind, DefKind::Type)))
                     })
                     .into_iter()

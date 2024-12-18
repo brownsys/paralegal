@@ -222,7 +222,7 @@ pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>) -> (Duration, Durati
     let tc_time = tc_start.elapsed();
     let dump_time = Instant::now();
     let path = intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT);
-    encode_to_file(tcx, &path, &bodies);
+    encode_to_file(tcx, path, &bodies);
     (tc_time, dump_time.elapsed())
 }
 
@@ -243,7 +243,7 @@ pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<Pat
 }
 
 /// Try to load a [`CachedBody`] for this id.
-fn load_body_and_facts<'tcx>(tcx: TyCtxt<'tcx>, krate: CrateNum) -> BodyMap<'tcx> {
+fn load_body_and_facts(tcx: TyCtxt<'_>, krate: CrateNum) -> BodyMap<'_> {
     let paths = local_or_remote_paths(krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
     for path in &paths {
         if !path.exists() {

@@ -437,7 +437,7 @@ impl<'tcx> PartialGraph<'tcx> {
                     child_graph
                         .nodes
                         .iter()
-                        .map(move |dest| (ctrl_src.clone(), dest.clone(), edge.clone()))
+                        .map(move |dest| (ctrl_src, *dest, edge))
                 }),
         );
         self.nodes.extend(child_graph.nodes);

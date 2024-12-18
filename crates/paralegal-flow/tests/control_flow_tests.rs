@@ -2,8 +2,6 @@
 #[macro_use]
 extern crate lazy_static;
 
-use std::fs::File;
-
 use paralegal_flow::test_utils::*;
 
 const CRATE_DIR: &str = "tests/control-flow-tests";

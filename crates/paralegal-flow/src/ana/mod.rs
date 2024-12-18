@@ -236,7 +236,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let analyzed_spans = analyzed_functions
             .into_iter()
-            .filter_map(|f| {
+            .map(|f| {
                 let body = self.pdg_constructor.body_for_def_id(f);
                 let span = body_span(tcx, body.body());
                 let pspan = src_loc_for_span(span, tcx);
@@ -258,7 +258,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     FunctionHandling::Elided
                 };
 
-                Some((f, (pspan, handling)))
+                (f, (pspan, handling))
             })
             .collect::<AnalyzedSpans>();
 

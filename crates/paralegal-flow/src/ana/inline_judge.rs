@@ -45,9 +45,8 @@ pub enum InlineJudgement {
 impl Display for InlineJudgement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_ref())?;
-        match self {
-            Self::AbstractViaType(reason) => write!(f, "({reason})")?,
-            _ => (),
+        if let Self::AbstractViaType(reason) = self {
+            write!(f, "({reason})")?;
         }
         Ok(())
     }
